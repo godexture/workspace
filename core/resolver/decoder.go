@@ -1,0 +1,37 @@
+package resolver
+
+import (
+	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
+)
+
+type DefaultDecoderResolver struct {
+	registry    *registry.Registry[registry.DecoderManifest]
+	baseOptions *ResolveOptions
+}
+
+func NewDefaultDecoderResolver(reg *registry.Registry[registry.DecoderManifest], opts ...Option) *DefaultDecoderResolver {
+	return &DefaultDecoderResolver{
+		registry:    reg,
+		baseOptions: parseOptions(nil, opts...),
+	}
+}
+
+func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ...Option) (registry.DecoderManifest, error) {
+	options := parseOptions(r.baseOptions, opts...)
+
+	var bestManifest registry.DecoderManifest
+	var maxPriority Priority = -1
+
+	for manifest := range r.registry.Enumerate() {
+		if manifest.Accept(stream) {
+			priority := options.PriorityOverrides[manifest.ID()]
+			if priority > maxPriority {
+				maxPriority = priority
+				bestManifest = manifest
+			}
+		}
+	}
+
+	return bestManifest, nil
+}
