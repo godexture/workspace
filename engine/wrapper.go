@@ -4,61 +4,54 @@ import (
 	"context"
 	"io"
 
-	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 )
 
-type Decoder struct {
-	engine DecoderEngine
-
-	inEdge  node.Edge[*media.Packet]
-	outEdge node.Edge[*media.Frame]
-}
-
-func WrapDecoder(engine DecoderEngine) node.Node {
-	return &Decoder{
-		engine: engine,
-	}
-}
-
-func (n *Decoder) Start(ctx context.Context) error {
-	defer n.outEdge.Close()
+func runCodecLoop[I any, O any](
+	ctx context.Context,
+	in node.Edge[I],
+	out node.Edge[O],
+	send func(I) error,
+	receive func() (O, error),
+	flush func() error,
+) error {
+	defer out.Close()
 
 	for {
-		pkt, err := n.inEdge.Pull(ctx)
+		input, err := in.Pull(ctx)
 		if err == io.EOF {
-			return n.engine.Flush()
+			if err := flush(); err != nil {
+				return err
+			}
+			for {
+				output, err := receive()
+				if err == ErrEAGAIN || err == io.EOF || err == ErrEOF {
+					return nil
+				} else if err != nil {
+					return err
+				}
+				if err := out.Push(ctx, output); err != nil {
+					return err
+				}
+			}
 		} else if err != nil {
 			return err
 		}
 
-		if err := n.engine.SendPacket(pkt); err != nil {
+		if err := send(input); err != nil {
 			return err
 		}
 
 		for {
-			frame, err := n.engine.ReceiveFrame()
+			output, err := receive()
 			if err == ErrEAGAIN {
 				break
 			} else if err != nil {
 				return err
 			}
-
-			if err := n.outEdge.Push(ctx, frame); err != nil {
+			if err := out.Push(ctx, output); err != nil {
 				return err
 			}
 		}
-	}
-}
-
-func (n *Decoder) InputPorts() map[string]node.InPort[*media.Packet] {
-	return map[string]node.InPort[*media.Packet]{
-		"in": node.NewInPort[*media.Packet]("in", nil),
-	}
-}
-
-func (n *Decoder) OutputPorts() map[string]node.OutPort[*media.Frame] {
-	return map[string]node.OutPort[*media.Frame]{
-		"out": node.NewOutPort[*media.Frame]("out", media.StreamInfo{}),
 	}
 }

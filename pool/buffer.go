@@ -1,4 +1,3 @@
-// pkg/pool/buffer.go
 package pool
 
 import (
