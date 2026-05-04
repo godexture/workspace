@@ -6,16 +6,16 @@ import (
 	"github.com/godexture/core/node"
 )
 
-type Configration interface {
+type Configuration interface {
 	NodeConfigaration()
 }
 
-type NodeFactory func(config Configration) (node.Node, error)
+type NodeFactory func(config Configuration) (node.Node, error)
 
-type MuxerFactory func(w io.Writer, config Configration) (node.Muxer, error)
-type DemuxerFactory func(r io.Reader, config Configration) (node.Demuxer, error)
+type MuxerFactory func(w io.Writer, config Configuration) (node.Muxer, error)
+type DemuxerFactory func(r io.Reader, config Configuration) (node.Demuxer, error)
 
-type EncoderFactory func(config Configration) (node.Encoder, error)
-type DecoderFactory func(config Configration) (node.Decoder, error)
+type EncoderFactory func(config Configuration) (node.Encoder, error)
+type DecoderFactory func(config Configuration) (node.Decoder, error)
 
-type FilterFactory func(config Configration) (node.Filter, error)
+type FilterFactory func(config Configuration) (node.Filter, error)

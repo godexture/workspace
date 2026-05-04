@@ -27,7 +27,7 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 		SampleRate: sampleRate,
 		Samples:    samples,
 		baseData:   b,
-		Metadata:   metadata.NewBundle(),
+		meta:       metadata.NewBundle(),
 		planes:     make([][]byte, channels),
 	}
 	frame.refCount.Store(1)
@@ -49,7 +49,7 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 
 	frame.Init(func() {
 		pool.Put(b)
-		frame.Metadata.Clear()
+		frame.meta.Clear()
 	})
 
 	return frame

@@ -12,7 +12,7 @@ type Muxer interface {
 	AddStream(codecName string, tb time.Rational) (streamIndex int, err error)
 	SetMetadata(meta *metadata.Bundle) error
 
-	InputPorts() map[string]InPort[*media.Packet]
+	InputPorts() map[string]*InPort[*media.Packet]
 }
 
 type Demuxer interface {
@@ -20,5 +20,5 @@ type Demuxer interface {
 
 	Metadata() *metadata.Bundle
 
-	OutputPorts() map[string]OutPort[*media.Packet]
+	OutputPorts() map[string]*OutPort[*media.Packet]
 }

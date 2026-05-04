@@ -1,4 +1,3 @@
-// core/domain/media/frame_audio.go
 package media
 
 import (
@@ -19,13 +18,15 @@ type AudioFrame struct {
 	Layout     ChannelLayout
 	SampleRate int
 	Samples    int
-	Metadata   *metadata.Bundle
+	meta       *metadata.Bundle
 
 	pts    Pts
 	planes [][]byte
 }
 
 func (f *AudioFrame) Pts() Pts { return f.pts }
+
+func (f *AudioFrame) Metadata() *metadata.Bundle { return f.meta }
 
 func (f *AudioFrame) Planes() [][]byte { return f.planes }
 

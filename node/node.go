@@ -11,9 +11,9 @@ type Node interface {
 }
 
 type InputNode[T any] interface {
-	InputPorts() map[string]InPort[T]
+	InputPorts() map[string]*InPort[T]
 }
 
 type OutputNode[T any] interface {
-	OutputPorts() map[string]OutPort[T]
+	OutputPorts() map[string]*OutPort[T]
 }

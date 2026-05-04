@@ -1,4 +1,3 @@
-// core/resolver/container.go
 package resolver
 
 import (
@@ -12,7 +11,7 @@ type DefaultMuxerResolver struct {
 	registry *registry.Registry[registry.MuxerManifest]
 }
 
-func (r *DefaultMuxerResolver) ResolveMuxer(config registry.Configration) (registry.MuxerManifest, error) {
+func (r *DefaultMuxerResolver) ResolveMuxer(config registry.Configuration) (registry.MuxerManifest, error) {
 	if config == nil {
 		return registry.MuxerManifest{}, fmt.Errorf("muxer profile not specified")
 	}

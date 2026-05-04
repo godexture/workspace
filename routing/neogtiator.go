@@ -1,4 +1,3 @@
-// core/domain/routing/negotiator.go
 package routing
 
 import (

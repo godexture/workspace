@@ -14,7 +14,7 @@ type ResolveOptions struct {
 
 type Option func(*ResolveOptions)
 
-func WithPriority(config registry.Configration, priority Priority) Option {
+func WithPriority(config registry.Configuration, priority Priority) Option {
 	return func(o *ResolveOptions) {
 		if o.PriorityOverrides == nil {
 			o.PriorityOverrides = make(map[reflect.Type]Priority)
