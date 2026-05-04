@@ -11,6 +11,6 @@ type Filter interface {
 
 	Process(ctx context.Context) error
 
-	InputPorts() map[string]InPort[media.Frame]
-	OutputPorts() map[string]OutPort[media.Frame]
+	InputPorts() map[string]*InPort[media.Frame]
+	OutputPorts() map[string]*OutPort[media.Frame]
 }

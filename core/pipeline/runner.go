@@ -1,4 +1,3 @@
-// core/domain/pipeline/runner.go
 package pipeline
 
 import (

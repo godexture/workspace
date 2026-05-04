@@ -1,7 +1,3 @@
-// ============================================================================
-// File: registry/format.go
-// 役割: プラグインの自己登録機構と依存性解決（DI）
-// ============================================================================
 package registry
 
 import (
@@ -26,11 +22,11 @@ func NewRegistry[V Manifest]() *Registry[V] {
 	}
 }
 
-func (r *Registry[V]) Register(config Configration, manifest V) error {
-	if manifest, ok := any(manifest).(BaseManifest); ok {
-		manifest.id = reflect.TypeOf(config)
-	} else {
-		return fmt.Errorf("invalid manifest type: %T", manifest)
+func (r *Registry[V]) Register(config Configuration, manifest V) error {
+	var err error
+	manifest, err = assignManifestID(manifest, reflect.TypeOf(config))
+	if err != nil {
+		return err
 	}
 
 	if defaulter, ok := any(manifest).(Defaulter); ok {
@@ -46,6 +42,41 @@ func (r *Registry[V]) Register(config Configration, manifest V) error {
 	r.items.Store(manifest.ID(), manifest)
 
 	return nil
+}
+
+func assignManifestID[V Manifest](manifest V, id reflect.Type) (V, error) {
+	switch m := any(manifest).(type) {
+	case BaseManifest:
+		m.id = id
+		return any(m).(V), nil
+
+	case TransformManifest:
+		m.BaseManifest.id = id
+		return any(m).(V), nil
+
+	case MuxerManifest:
+		m.BaseManifest.id = id
+		return any(m).(V), nil
+
+	case DemuxerManifest:
+		m.BaseManifest.id = id
+		return any(m).(V), nil
+
+	case EncoderManifest:
+		m.TransformManifest.BaseManifest.id = id
+		return any(m).(V), nil
+
+	case DecoderManifest:
+		m.TransformManifest.BaseManifest.id = id
+		return any(m).(V), nil
+
+	case FilterManifest:
+		m.TransformManifest.BaseManifest.id = id
+		return any(m).(V), nil
+
+	default:
+		return manifest, fmt.Errorf("invalid manifest type: %T", manifest)
+	}
 }
 
 func (r *Registry[V]) Get(id reflect.Type) (V, error) {
