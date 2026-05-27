@@ -35,14 +35,29 @@ func NewDecoder(config Config) *Decoder {
 	if config.CodecID == "" {
 		config.CodecID = media.CodecLPCM
 	}
+
+	isG711 := config.CodecID == media.CodecPCMU || config.CodecID == media.CodecPCMA
+
 	if config.SampleRate <= 0 {
-		config.SampleRate = 48000
+		if isG711 {
+			config.SampleRate = 8000
+		} else {
+			config.SampleRate = 48000
+		}
 	}
 	if config.Format == media.SampleFormatUnknown {
-		config.Format = media.SampleFormatS16
+		if isG711 {
+			config.Format = media.SampleFormatS16
+		} else {
+			config.Format = media.SampleFormatS16
+		}
 	}
 	if config.Layout.ChannelCount() <= 0 {
-		config.Layout = media.LayoutStereo2_0
+		if isG711 {
+			config.Layout = media.LayoutMono1
+		} else {
+			config.Layout = media.LayoutStereo2_0
+		}
 	}
 
 	return &Decoder{config: config}
