@@ -73,12 +73,32 @@ func init() {
 				},
 				Capabilities: []manifest.Capability{pcmCapability{codec: codecID}},
 				TransformFunc: func(s media.StreamInfo) media.Profile {
-					return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+					p.MediaAttributes.Codec = codecID
+					p.Audio.CodecID = codecID
+					if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
+						p.Audio.SampleRate = 8000
+						if s.MediaAttributes.Codec == codecID {
+							// For decoder: input is G.711, output is LPCM (S16)
+							p.Audio.CodecID = media.CodecLPCM
+							p.Audio.Format = media.SampleFormatS16
+						} else {
+							// For encoder: input is LPCM, output is G.711 (U8)
+							p.Audio.Format = media.SampleFormatU8
+						}
+						p.Audio.ChannelLayout = media.LayoutMono1
+					}
+					return p
 				},
 			},
 			Factory: func(cfg registry.Configuration) (node.Decoder, error) {
 				c := DefaultConfig()
 				c.CodecID = codecID
+				if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
+					c.SampleRate = 8000
+					c.Format = media.SampleFormatS16
+					c.Layout = media.LayoutMono1
+				}
 				// TODO: load other config from cfg if available
 				return engine.WrapDecoder(NewDecoderEngine(c)), nil
 			},
