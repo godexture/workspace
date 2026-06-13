@@ -8,6 +8,7 @@ import (
 	mp3codec "github.com/godexture/codec-mp3"
 	pcm "github.com/godexture/codec-pcm"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/sdk/engine"
 	mp3format "github.com/godexture/format-mp3"
 	wav "github.com/godexture/format-wav"
 )
@@ -92,31 +93,81 @@ func main() {
 		}
 
 		if err := dec.SendPacket(pkt); err != nil {
-			fmt.Printf("Error sending packet to decoder: %v\n", err)
-			break
+			if err != engine.ErrEAGAIN {
+				fmt.Printf("Error sending packet to decoder: %v\n", err)
+				break
+			}
 		}
 
+		for {
+			frame, err := dec.ReceiveFrame()
+			if err == engine.ErrEAGAIN {
+				break
+			}
+			if err != nil {
+				fmt.Printf("Error receiving frame from decoder: %v\n", err)
+				return
+			}
+
+			if err := enc.SendFrame(frame); err != nil {
+				fmt.Printf("Error sending frame to encoder: %v\n", err)
+				return
+			}
+
+			for {
+				outPkt, err := enc.ReceivePacket()
+				if err == engine.ErrEAGAIN {
+					break
+				}
+				if err != nil {
+					fmt.Printf("Error receiving packet from encoder: %v\n", err)
+					return
+				}
+
+				if err := mux.WritePacket(0, outPkt); err != nil {
+					fmt.Printf("Error writing packet to muxer: %v\n", err)
+					return
+				}
+				packetCount++
+			}
+		}
+	}
+
+	dec.Flush()
+	for {
 		frame, err := dec.ReceiveFrame()
+		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
+			break
+		}
 		if err != nil {
-			fmt.Printf("Error receiving frame from decoder: %v\n", err)
+			fmt.Printf("Error receiving frame from decoder during flush: %v\n", err)
 			break
 		}
-
-		if err := enc.SendFrame(frame); err != nil {
-			fmt.Printf("Error sending frame to encoder: %v\n", err)
-			break
+		if err := enc.SendFrame(frame); err == nil {
+			for {
+				outPkt, err := enc.ReceivePacket()
+				if err == engine.ErrEAGAIN {
+					break
+				}
+				if err != nil {
+					break
+				}
+				mux.WritePacket(0, outPkt)
+				packetCount++
+			}
 		}
-
+	}
+	
+	enc.Flush()
+	for {
 		outPkt, err := enc.ReceivePacket()
+		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
+			break
+		}
 		if err != nil {
-			fmt.Printf("Error receiving packet from encoder: %v\n", err)
 			break
 		}
-
-		if err := mux.WritePacket(0, outPkt); err != nil {
-			fmt.Printf("Error writing packet to muxer: %v\n", err)
-			break
-		}
+		mux.WritePacket(0, outPkt)
 		packetCount++
 	}
 

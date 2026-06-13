@@ -1,25 +1,24 @@
 package internal
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
-	mp3lib "github.com/hajimehoshi/go-mp3"
 )
 
 // Demuxer はMP3コンテナを読み込む。
-// 注意: go-mp3 ライブラリの制約により、デコード後の出力は常に
-// 16-bit signed LE, 2-channel (Stereo) PCM となる。
-// Mono MP3 の場合でも StreamInfo は LayoutStereo2_0 となる。
 type Demuxer struct {
 	r          io.ReadSeeker
+	br         *bufio.Reader
 	streamInfo media.StreamInfo
 	meta       metadata.Bundle
 	parsed     bool
-	sent       bool
+	pts        int64
+	id3Skipped bool
 }
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
@@ -34,43 +33,48 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return []media.StreamInfo{d.streamInfo}, d.meta, nil
 	}
 
-	// go-mp3 で先頭フレームを解析してサンプルレートを取得する
 	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
 		return nil, metadata.Bundle{}, err
 	}
+	br := bufio.NewReader(d.r)
+	if _, err := SkipID3v2(br); err != nil {
+		return nil, metadata.Bundle{}, fmt.Errorf("mp3 skip id3: %w", err)
+	}
 
-	dec, err := mp3lib.NewDecoder(d.r)
+	header, _, err := NextFrameHeader(br)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 analyze: %w", err)
 	}
 
-	sampleRate := dec.SampleRate()
-
-	// シークして先頭に戻す (ReadPacket で全体を読むため)
-	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
-		return nil, metadata.Bundle{}, err
+	layout := media.LayoutStereo2_0
+	if header.ChannelMode == 3 {
+		layout = media.LayoutMono1
 	}
 
-	// go-mp3 は常に Stereo S16 を出力するため、
-	// StreamInfo のコーデックは "mpeg3" とし、レイアウトはステレオで固定する。
-	// デコーダ (codec-mp3) がこのコーデックを受け入れて変換する。
 	d.streamInfo = media.StreamInfo{
 		Index:     0,
 		Type:      media.MediaAudio,
 		IsDefault: true,
 		Metadata:  *metadata.NewBundle(),
 		MediaAttributes: media.MediaAttributes{
-			Codec: media.CodecMPEG3, // "mpeg3"
+			Codec: media.CodecMPEG3,
 			Audio: media.AudioAttributes{
 				CodecID:       media.CodecMPEG3,
-				SampleRate:    sampleRate,
-				Format:        media.SampleFormatS16, // デコード後の形式
-				ChannelLayout: media.LayoutStereo2_0, // go-mp3 は常にStereo
+				SampleRate:    header.SampleRate,
+				Format:        media.SampleFormatS16, // デコード後の形式(codec-mp3に合わせる)
+				ChannelLayout: layout,
 			},
 		},
 	}
 	d.meta = *metadata.NewBundle()
 	d.parsed = true
+
+	// シークして先頭に戻す
+	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
+		return nil, metadata.Bundle{}, err
+	}
+	d.br = bufio.NewReader(d.r)
+	d.id3Skipped = false
 
 	return []media.StreamInfo{d.streamInfo}, d.meta, nil
 }
@@ -82,25 +86,32 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		}
 	}
 
-	if d.sent {
-		return nil, 0, io.EOF
+	if !d.id3Skipped {
+		if _, err := SkipID3v2(d.br); err != nil {
+			return nil, 0, fmt.Errorf("mp3 skip id3 on read: %w", err)
+		}
+		d.id3Skipped = true
 	}
 
-	// ファイル先頭から全バイトを読み込む
-	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, fmt.Errorf("mp3 seek: %w", err)
-	}
-
-	raw, err := io.ReadAll(d.r)
+	header, data, err := NextFrameHeader(d.br)
 	if err != nil {
-		return nil, 0, fmt.Errorf("mp3 read: %w", err)
+		if err == io.EOF {
+			return nil, 0, io.EOF
+		}
+		return nil, 0, fmt.Errorf("mp3 read packet: %w", err)
 	}
 
-	pkt := media.NewPacket(len(raw))
-	copy(pkt.Data(), raw)
+	pkt := media.NewPacket(len(data))
+	copy(pkt.Data(), data)
 	pkt.MediaType = media.MediaAudio
 	pkt.StreamIndex = 0
+	pkt.PTS = media.Pts(d.pts)
 
-	d.sent = true
+	samplesPerFrame := 1152
+	if header.Version != MPEG1 {
+		samplesPerFrame = 576
+	}
+	d.pts += int64(samplesPerFrame)
+
 	return pkt, 0, nil
 }
