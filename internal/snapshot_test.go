@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal"
+	"github.com/godexture/codec-mp3/internal/mp3"
 )
 
 var testFiles = []string{
@@ -76,10 +76,10 @@ func TestSnapshots(t *testing.T) {
 }
 
 func decodeAll(mp3Data []byte) ([]float32, error) {
-	skipped := internal.SkipId3(mp3Data)
+	skipped := mp3.SkipId3(mp3Data)
 	mp3Data = mp3Data[skipped:]
 
-	var dec internal.Mp3Dec
+	var dec mp3.Mp3Dec
 	dec.Init()
 
 	var allPCM []float32
