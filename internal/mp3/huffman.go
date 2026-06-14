@@ -1,9 +1,7 @@
 package mp3
 
-
-
-// bitStream is the bitstream reader state.
-type bitStream struct {
+// bitReader is the bitReader reader state.
+type bitReader struct {
 	buf   []byte
 	pos   int32
 	limit int32
@@ -29,12 +27,12 @@ type grInfo struct {
 	scfsi            uint8
 }
 
-func Pow43L3(x int) float32 {
+func pow43L3(x int) float32 {
 	var frac float32
 	var sign, mult int = 0, 256
 
 	if x < 129 {
-		return gPow43[16+x]
+		return pow43[16+x]
 	}
 
 	if x < 1024 {
@@ -44,12 +42,11 @@ func Pow43L3(x int) float32 {
 
 	sign = (2 * x) & 64
 	frac = float32((x&63)-sign) / float32((x&^63)+sign)
-	return gPow43[16+((x+sign)>>6)] * (1.0 + frac*(4.0/3.0+frac*(2.0/9.0))) * float32(mult)
+	return pow43[16+((x+sign)>>6)] * (1.0 + frac*(4.0/3.0+frac*(2.0/9.0))) * float32(mult)
 }
 
-
 // huffmanDecodeL3 performs Huffman decoding for a Layer 3 granule.
-func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32, regionLimit int) {
+func huffmanDecodeL3(dst []float32, bs *bitReader, grInfo *grInfo, scf []float32, regionLimit int) {
 	if len(dst) == 0 || bs == nil || grInfo == nil {
 		return
 	}
@@ -99,7 +96,7 @@ func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32
 		sfbCnt := int(grInfo.regionCount[ireg])
 		ireg++
 		codebook := tabs[tabindex[tabNum]:]
-		linbits := int(gLinbits[tabNum])
+		linbits := int(linbits[tabNum])
 
 		if linbits > 0 {
 			for {
@@ -124,14 +121,14 @@ func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32
 							lsb += int(peekBits(linbits))
 							flushBits(linbits)
 							checkBits()
-							val := one * Pow43L3(lsb)
+							val := one * pow43L3(lsb)
 							if int32(bsCache) < 0 {
 								val = -val
 							}
 							dst[dstIdx] = val
 						} else {
 							index := 16 + lsb - 16*int(bsCache>>31)
-							dst[dstIdx] = gPow43[index] * one
+							dst[dstIdx] = pow43[index] * one
 						}
 						dstIdx++
 						if lsb != 0 {
@@ -168,7 +165,7 @@ func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32
 					for j := 0; j < 2; j++ {
 						lsb := leaf & 0x0F
 						index := 16 + lsb - 16*int(bsCache>>31)
-						dst[dstIdx] = gPow43[index] * one
+						dst[dstIdx] = pow43[index] * one
 						dstIdx++
 						if lsb != 0 {
 							flushBits(1)
@@ -247,4 +244,31 @@ func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32
 	}
 
 	bs.pos = int32(regionLimit)
+}
+
+func (bs *bitReader) getBits(n int) uint32 {
+	s := bs.pos & 7
+	shl := n + int(s)
+	pIdx := int(bs.pos >> 3)
+	bs.pos += int32(n)
+	if bs.pos > bs.limit {
+		return 0
+	}
+	readByte := func(idx int) uint32 {
+		if idx < 0 || idx >= len(bs.buf) {
+			return 0
+		}
+		return uint32(bs.buf[idx])
+	}
+	next := readByte(pIdx) & (255 >> s)
+	pIdx++
+	cache := uint32(0)
+	for shl > 8 {
+		shl -= 8
+		cache |= next << shl
+		next = readByte(pIdx)
+		pIdx++
+	}
+	shl -= 8
+	return cache | (next >> -shl)
 }

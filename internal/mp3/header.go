@@ -39,39 +39,40 @@ func ParseHeader(b []byte) (Header, bool) {
 	return h, true
 }
 
-func (h Header) IsMono() bool          { return (h[3] & 0xC0) == 0xC0 }
-func (h Header) IsMsStereo() bool      { return (h[3] & 0xE0) == 0x60 }
-func (h Header) IsFreeFormat() bool    { return (h[2] & 0xF0) == 0 }
-func (h Header) IsCrc() bool           { return (h[1] & 1) == 0 }
-func (h Header) TestPadding() bool     { return (h[2] & 0x2) != 0 }
-func (h Header) TestMpeg1() bool       { return (h[1] & 0x8) != 0 }
-func (h Header) TestNotMpeg25() bool   { return (h[1] & 0x10) != 0 }
-func (h Header) TestIStereo() bool     { return (h[3] & 0x10) != 0 }
-func (h Header) TestMsStereo() bool    { return (h[3] & 0x20) != 0 }
-func (h Header) StereoMode() int       { return int((h[3] >> 6) & 3) }
-func (h Header) StereoModeExt() int    { return int((h[3] >> 4) & 3) }
-func (h Header) Layer() int            { return int((h[1] >> 1) & 3) }
-func (h Header) Bitrate() int          { return int(h[2] >> 4) }
-func (h Header) SampleRate() int       { return int((h[2] >> 2) & 3) }
+func (h Header) IsMono() bool        { return (h[3] & 0xC0) == 0xC0 }
+func (h Header) IsMsStereo() bool    { return (h[3] & 0xE0) == 0x60 }
+func (h Header) IsFreeFormat() bool  { return (h[2] & 0xF0) == 0 }
+func (h Header) IsCrc() bool         { return (h[1] & 1) == 0 }
+func (h Header) TestPadding() bool   { return (h[2] & 0x2) != 0 }
+func (h Header) TestMpeg1() bool     { return (h[1] & 0x8) != 0 }
+func (h Header) TestNotMpeg25() bool { return (h[1] & 0x10) != 0 }
+func (h Header) TestIStereo() bool   { return (h[3] & 0x10) != 0 }
+func (h Header) TestMsStereo() bool  { return (h[3] & 0x20) != 0 }
+func (h Header) StereoMode() int     { return int((h[3] >> 6) & 3) }
+func (h Header) StereoModeExt() int  { return int((h[3] >> 4) & 3) }
+func (h Header) Layer() int          { return int((h[1] >> 1) & 3) }
+func (h Header) Bitrate() int        { return int(h[2] >> 4) }
+func (h Header) SampleRate() int     { return int((h[2] >> 2) & 3) }
 func (h Header) MySampleRate() int {
 	return h.SampleRate() + (int((h[1]>>3)&1)+int((h[1]>>4)&1))*3
 }
 func (h Header) IsFrame576() bool { return (h[1] & 14) == 2 }
 func (h Header) IsLayer1() bool   { return (h[1] & 6) == 6 }
 
+var halfrate = [2][3][15]int{
+	{
+		{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
+		{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
+		{0, 16, 24, 28, 32, 40, 48, 56, 64, 72, 80, 88, 96, 112, 128},
+	},
+	{
+		{0, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160},
+		{0, 16, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192},
+		{0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224},
+	},
+}
+
 func (h Header) BitrateKbps() int {
-	halfrate := [2][3][15]int{
-		{
-			{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
-			{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
-			{0, 16, 24, 28, 32, 40, 48, 56, 64, 72, 80, 88, 96, 112, 128},
-		},
-		{
-			{0, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160},
-			{0, 16, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192},
-			{0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224},
-		},
-	}
 	mpeg1Idx := 0
 	if h.TestMpeg1() {
 		mpeg1Idx = 1
@@ -84,13 +85,14 @@ func (h Header) BitrateKbps() int {
 	return 2 * halfrate[mpeg1Idx][layerIdx][bitrateIdx]
 }
 
+var hzTable = [3]int{44100, 48000, 32000}
+
 func (h Header) SampleRateHz() int {
-	gHz := [3]int{44100, 48000, 32000}
 	rateIdx := h.SampleRate()
 	if rateIdx < 0 || rateIdx > 2 {
 		return 0
 	}
-	hz := gHz[rateIdx]
+	hz := hzTable[rateIdx]
 	if !h.TestMpeg1() {
 		hz >>= 1
 	}
