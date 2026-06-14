@@ -8,14 +8,14 @@ import (
 	mp3codec "github.com/godexture/codec-mp3"
 	pcm "github.com/godexture/codec-pcm"
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
 	mp3format "github.com/godexture/format-mp3"
 	wav "github.com/godexture/format-wav"
+	"github.com/godexture/sdk/engine"
 )
 
 func main() {
-	inputPath := "example/assets/mpeg3.mp3"
-	outputPath := "example/out_mp3.wav"
+	inputPath := "assets/mpeg3.mp3"
+	outputPath := "out_mp3.wav"
 
 	if len(os.Args) >= 2 {
 		inputPath = os.Args[1]
@@ -157,7 +157,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	enc.Flush()
 	for {
 		outPkt, err := enc.ReceivePacket()

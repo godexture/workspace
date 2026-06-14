@@ -1,12 +1,12 @@
 package internal
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
-	mp3lib "github.com/hajimehoshi/go-mp3"
 )
 
 // DecoderConfig はMP3デコーダの設定。
@@ -50,44 +50,110 @@ func (d *Decoder) writeLoop() {
 
 func (d *Decoder) decodeLoop() {
 	defer close(d.outQueue)
-	dec, err := mp3lib.NewDecoder(d.pr)
-	if err != nil {
-		d.err = err
-		return
-	}
 
-	// 1フレームあたりの最大サンプル数 (MPEG1: 1152) * 2(16bit) * 2(stereo) = 4608
-	// 余裕を持って少し大きめに確保する
-	pcmBuf := make([]byte, 8192)
+	var dec Mp3Dec
+	dec.Init()
+
+	buf := make([]byte, 32*1024)
+	bufLen := 0
+	eof := false
+
+	floatPcm := make([]float32, 1152*2)
+	intPcm := make([]int16, 1152*2)
+
+	var sampleRate int
+	var channels int
+	firstFrame := true
+
 	for {
-		n, err := dec.Read(pcmBuf)
-		if n > 0 {
-			data := make([]byte, n)
-			copy(data, pcmBuf[:n])
-
-			const bytesPerSamplePerChannel = 4 // 2 bytes (S16) * 2 channels
-			samples := n / bytesPerSamplePerChannel
-
-			if samples > 0 {
-				frame := media.NewAudioFrame(
-					media.SampleFormatS16,
-					media.LayoutStereo2_0,
-					dec.SampleRate(),
-					samples,
-				)
-				copy(frame.Planes()[0], data)
-				var f media.Frame = frame
-				d.outQueue <- &f
+		// 1. Read from reader if not EOF and buffer has space
+		if !eof && bufLen < len(buf) {
+			n, err := d.pr.Read(buf[bufLen:])
+			if n > 0 {
+				bufLen += n
+			}
+			if err != nil {
+				eof = true
+				if err != io.EOF {
+					d.err = err
+				} else {
+					d.err = engine.ErrEOF
+				}
 			}
 		}
 
-		if err != nil {
-			if err != io.EOF {
-				d.err = err
-			} else {
-				d.err = engine.ErrEOF
+		// 2. Skip ID3 tags on the first iteration
+		if firstFrame && bufLen > 0 {
+			skipped := SkipId3(buf[:bufLen])
+			if skipped > 0 {
+				if skipped < bufLen {
+					copy(buf, buf[skipped:bufLen])
+					bufLen -= skipped
+				} else {
+					bufLen = 0
+				}
 			}
+			firstFrame = false
+		}
+
+		// 3. Terminate if buffer is empty and we hit EOF
+		if bufLen == 0 && eof {
 			return
+		}
+
+		// 4. Try to decode a frame
+		if bufLen == 0 {
+			continue
+		}
+
+		samples, info := dec.DecodeFrame(buf[:bufLen], floatPcm)
+		if info.FrameBytes > 0 {
+			if samples > 0 {
+				sampleRate = info.Hz
+				channels = info.Channels
+
+				decodedSamples := samples * channels
+				FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
+
+				byteLen := decodedSamples * 2
+				byteBuf := make([]byte, byteLen)
+				for i := 0; i < decodedSamples; i++ {
+					binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(intPcm[i]))
+				}
+
+				var layout media.ChannelLayout
+				if channels == 1 {
+					layout = media.LayoutMono1
+				} else {
+					layout = media.LayoutStereo2_0
+				}
+
+				frame := media.NewAudioFrame(
+					media.SampleFormatS16,
+					layout,
+					sampleRate,
+					samples,
+				)
+				copy(frame.Planes()[0], byteBuf)
+				var f media.Frame = frame
+				d.outQueue <- &f
+			}
+
+			// Consume frame bytes
+			if info.FrameBytes < bufLen {
+				copy(buf, buf[info.FrameBytes:bufLen])
+				bufLen -= info.FrameBytes
+			} else {
+				bufLen = 0
+			}
+		} else {
+			if eof {
+				return
+			}
+			if bufLen == len(buf) {
+				copy(buf, buf[1:])
+				bufLen--
+			}
 		}
 	}
 }
