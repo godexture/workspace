@@ -1,11 +1,11 @@
 package mp3
 
-var gMdctWindow = [2][18]float32{
+var mdctWindow = [2][18]float32{
 	{0.99904822, 0.99144486, 0.97629601, 0.95371695, 0.92387953, 0.88701083, 0.84339145, 0.79335334, 0.73727734, 0.04361938, 0.13052619, 0.21643961, 0.30070580, 0.38268343, 0.46174861, 0.53729961, 0.60876143, 0.67559021},
 	{1, 1, 1, 1, 1, 1, 0.99144486, 0.92387953, 0.79335334, 0, 0, 0, 0, 0, 0, 0.13052619, 0.38268343, 0.60876143},
 }
 
-var gTwid9 = [18]float32{
+var twid9 = [18]float32{
 	0.73727734, 0.79335334, 0.84339145, 0.88701083, 0.92387953, 0.95371695, 0.97629601, 0.99144486, 0.99904822, 0.67559021, 0.60876143, 0.53729961, 0.46174861, 0.38268343, 0.30070580, 0.21643961, 0.13052619, 0.04361938,
 }
 
@@ -77,8 +77,8 @@ func imdct36L3(grbuf []float32, overlap []float32, window []float32, nbands int)
 
 		for i := 0; i < 9; i++ {
 			ovl := currOv[i]
-			sum := co[i]*gTwid9[9+i] + si[i]*gTwid9[0+i]
-			currOv[i] = co[i]*gTwid9[0+i] - si[i]*gTwid9[9+i]
+			sum := co[i]*twid9[9+i] + si[i]*twid9[0+i]
+			currOv[i] = co[i]*twid9[0+i] - si[i]*twid9[9+i]
 			currGr[i] = ovl*window[0+i] - sum*window[9+i]
 			currGr[17-i] = ovl*window[9+i] + sum*window[0+i]
 		}
@@ -94,7 +94,7 @@ func l3Idct3(x0, x1, x2 float32, dst []float32) {
 }
 
 func imdct12L3(x []float32, xOffset int, dst []float32, overlap []float32) {
-	var gTwid3 = [6]float32{0.79335334, 0.92387953, 0.99144486, 0.60876143, 0.38268343, 0.13052619}
+	var twid3 = [6]float32{0.79335334, 0.92387953, 0.99144486, 0.60876143, 0.38268343, 0.13052619}
 	var co, si [3]float32
 
 	l3Idct3(-x[xOffset+0], x[xOffset+6]+x[xOffset+3], x[xOffset+12]+x[xOffset+9], co[:])
@@ -103,10 +103,10 @@ func imdct12L3(x []float32, xOffset int, dst []float32, overlap []float32) {
 
 	for i := 0; i < 3; i++ {
 		ovl := overlap[i]
-		sum := co[i]*gTwid3[3+i] + si[i]*gTwid3[0+i]
-		overlap[i] = co[i]*gTwid3[0+i] - si[i]*gTwid3[3+i]
-		dst[i] = ovl*gTwid3[2-i] - sum*gTwid3[5-i]
-		dst[5-i] = ovl*gTwid3[5-i] + sum*gTwid3[2-i]
+		sum := co[i]*twid3[3+i] + si[i]*twid3[0+i]
+		overlap[i] = co[i]*twid3[0+i] - si[i]*twid3[3+i]
+		dst[i] = ovl*twid3[2-i] - sum*twid3[5-i]
+		dst[5-i] = ovl*twid3[5-i] + sum*twid3[2-i]
 	}
 }
 
@@ -128,7 +128,7 @@ func L3ImdctGo(grbuf []float32, overlap []float32, blockType int, nLongBands int
 	grbufOffset := 0
 	overlapOffset := 0
 	if nLongBands > 0 {
-		imdct36L3(grbuf, overlap, gMdctWindow[0][:], nLongBands)
+		imdct36L3(grbuf, overlap, mdctWindow[0][:], nLongBands)
 		grbufOffset += 18 * nLongBands
 		overlapOffset += 9 * nLongBands
 	}
@@ -139,7 +139,7 @@ func L3ImdctGo(grbuf []float32, overlap []float32, blockType int, nLongBands int
 		if blockType == 3 { // STOP_BLOCK_TYPE = 3
 			isStop = 1
 		}
-		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], gMdctWindow[isStop][:], 32-nLongBands)
+		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], mdctWindow[isStop][:], 32-nLongBands)
 	}
 }
 

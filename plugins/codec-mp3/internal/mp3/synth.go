@@ -54,7 +54,7 @@ func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
 	xr := xl[576*(nch-1):]
 	dstr := dstl[nch-1:]
 
-	gWin := [15 * 16]float32{
+	win := [15 * 16]float32{
 		-1, 26, -31, 208, 218, 401, -519, 2063, 2000, 4788, -5517, 7134, 5959, 35640, -39336, 74992,
 		-1, 24, -35, 202, 222, 347, -581, 2080, 1952, 4425, -5879, 7640, 5288, 33791, -41176, 74856,
 		-1, 21, -38, 196, 225, 294, -645, 2087, 1893, 4063, -6237, 8092, 4561, 31947, -43006, 74630,
@@ -102,9 +102,9 @@ func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
 		lins[zlinOffset+4*(i-16)+3] = xr[18*(1+i)]
 
 		load := func(k int) (float32, float32, int, int) {
-			w0 := gWin[wIdx]
+			w0 := win[wIdx]
 			wIdx++
-			w1 := gWin[wIdx]
+			w1 := win[wIdx]
 			wIdx++
 			vzIdx := zlinOffset + 4*i - k*64
 			vyIdx := zlinOffset + 4*i - (15-k)*64
@@ -190,7 +190,7 @@ func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
 }
 
 func dctII(grbuf []float32, n int) {
-	gSec := [24]float32{
+	sec := [24]float32{
 		10.19000816, 0.50060302, 0.50241929, 3.40760851, 0.50547093, 0.52249861, 2.05778098, 0.51544732, 0.56694406, 1.48416460, 0.53104258, 0.64682180, 1.16943991, 0.55310392, 0.78815460, 0.97256821, 0.58293498, 1.06067765, 0.83934963, 0.62250412, 1.72244716, 0.74453628, 0.67480832, 5.10114861,
 	}
 
@@ -205,12 +205,12 @@ func dctII(grbuf []float32, n int) {
 			x3 := grbuf[yIdx+(31-i)*18]
 			t0 := x0 + x3
 			t1 := x1 + x2
-			t2 := (x1 - x2) * gSec[3*i+0]
-			t3 := (x0 - x3) * gSec[3*i+1]
+			t2 := (x1 - x2) * sec[3*i+0]
+			t3 := (x0 - x3) * sec[3*i+1]
 			t[0][i] = t0 + t1
-			t[1][i] = (t0 - t1) * gSec[3*i+2]
+			t[1][i] = (t0 - t1) * sec[3*i+2]
 			t[2][i] = t3 + t2
-			t[3][i] = (t3 - t2) * gSec[3*i+2]
+			t[3][i] = (t3 - t2) * sec[3*i+2]
 		}
 		for i := 0; i < 4; i++ {
 			x0 := t[i][0]
