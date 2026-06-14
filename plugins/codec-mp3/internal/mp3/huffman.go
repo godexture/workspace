@@ -29,7 +29,7 @@ type grInfo struct {
 	scfsi            uint8
 }
 
-func L3Pow43(x int) float32 {
+func Pow43L3(x int) float32 {
 	var frac float32
 	var sign, mult int = 0, 256
 
@@ -48,8 +48,8 @@ func L3Pow43(x int) float32 {
 }
 
 
-// l3HuffmanDecode performs Huffman decoding for a Layer 3 granule.
-func l3HuffmanDecode(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32, regionLimit int) {
+// huffmanDecodeL3 performs Huffman decoding for a Layer 3 granule.
+func huffmanDecodeL3(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32, regionLimit int) {
 	if len(dst) == 0 || bs == nil || grInfo == nil {
 		return
 	}
@@ -124,7 +124,7 @@ func l3HuffmanDecode(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32
 							lsb += int(peekBits(linbits))
 							flushBits(linbits)
 							checkBits()
-							val := one * L3Pow43(lsb)
+							val := one * Pow43L3(lsb)
 							if int32(bsCache) < 0 {
 								val = -val
 							}

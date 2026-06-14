@@ -27,32 +27,32 @@ func FloatToS16(in []float32, out []int16) {
 	}
 }
 
-func mp3dSynthPairFloat(pcm []float32, pcmOffset int, nch int, z []float32, zOffset int) {
-	a := (z[zOffset+14*64] - z[zOffset]) * 29
-	a += (z[zOffset+1*64] + z[zOffset+13*64]) * 213
-	a += (z[zOffset+12*64] - z[zOffset+2*64]) * 459
-	a += (z[zOffset+3*64] + z[zOffset+11*64]) * 2037
-	a += (z[zOffset+10*64] - z[zOffset+4*64]) * 5153
-	a += (z[zOffset+5*64] + z[zOffset+9*64]) * 6574
-	a += (z[zOffset+8*64] - z[zOffset+6*64]) * 37489
-	a += z[zOffset+7*64] * 75038
-	pcm[pcmOffset] = a / 32768.0
+func synthPair(pcm []float32, nch int, z []float32) {
+	a := (z[14*64] - z[0]) * 29
+	a += (z[1*64] + z[13*64]) * 213
+	a += (z[12*64] - z[2*64]) * 459
+	a += (z[3*64] + z[11*64]) * 2037
+	a += (z[10*64] - z[4*64]) * 5153
+	a += (z[5*64] + z[9*64]) * 6574
+	a += (z[8*64] - z[6*64]) * 37489
+	a += z[7*64] * 75038
+	pcm[0] = a / 32768.0
 
-	zOffset += 2
-	a = z[zOffset+14*64] * 104
-	a += z[zOffset+12*64] * 1567
-	a += z[zOffset+10*64] * 9727
-	a += z[zOffset+8*64] * 64019
-	a += z[zOffset+6*64] * -9975
-	a += z[zOffset+4*64] * -45
-	a += z[zOffset+2*64] * 146
-	a += z[zOffset] * -5
-	pcm[pcmOffset+16*nch] = a / 32768.0
+	z2 := z[2:]
+	a = z2[14*64] * 104
+	a += z2[12*64] * 1567
+	a += z2[10*64] * 9727
+	a += z2[8*64] * 64019
+	a += z2[6*64] * -9975
+	a += z2[4*64] * -45
+	a += z2[2*64] * 146
+	a += z2[0] * -5
+	pcm[16*nch] = a / 32768.0
 }
 
-func mp3dSynthFloat(xl []float32, xlOffset int, dstl []float32, dstlOffset int, nch int, lins []float32, linsOffset int) {
-	xrOffset := xlOffset + 576*(nch-1)
-	dstrOffset := dstlOffset + (nch - 1)
+func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
+	xr := xl[576*(nch-1):]
+	dstr := dstl[nch-1:]
 
 	gWin := [15 * 16]float32{
 		-1, 26, -31, 208, 218, 401, -519, 2063, 2000, 4788, -5517, 7134, 5959, 35640, -39336, 74992,
@@ -72,34 +72,34 @@ func mp3dSynthFloat(xl []float32, xlOffset int, dstl []float32, dstlOffset int, 
 		-5, 6, -97, 111, 163, -127, -1498, 1634, 185, 288, -9585, 9838, -8540, 11455, -62684, 65290,
 	}
 
-	zlinOffset := linsOffset + 15*64
+	zlinOffset := 15 * 64
 	wIdx := 0
 
-	lins[zlinOffset+4*15] = xl[xlOffset+18*16]
-	lins[zlinOffset+4*15+1] = xl[xrOffset+18*16]
-	lins[zlinOffset+4*15+2] = xl[xlOffset+0]
-	lins[zlinOffset+4*15+3] = xl[xrOffset+0]
+	lins[zlinOffset+4*15] = xl[18*16]
+	lins[zlinOffset+4*15+1] = xr[18*16]
+	lins[zlinOffset+4*15+2] = xl[0]
+	lins[zlinOffset+4*15+3] = xr[0]
 
-	lins[zlinOffset+4*31] = xl[xlOffset+1+18*16]
-	lins[zlinOffset+4*31+1] = xl[xrOffset+1+18*16]
-	lins[zlinOffset+4*31+2] = xl[xlOffset+1]
-	lins[zlinOffset+4*31+3] = xl[xrOffset+1]
+	lins[zlinOffset+4*31] = xl[1+18*16]
+	lins[zlinOffset+4*31+1] = xr[1+18*16]
+	lins[zlinOffset+4*31+2] = xl[1]
+	lins[zlinOffset+4*31+3] = xr[1]
 
-	mp3dSynthPairFloat(dstl, dstrOffset, nch, lins, linsOffset+4*15+1)
-	mp3dSynthPairFloat(dstl, dstrOffset+32*nch, nch, lins, linsOffset+4*15+64+1)
-	mp3dSynthPairFloat(dstl, dstlOffset, nch, lins, linsOffset+4*15)
-	mp3dSynthPairFloat(dstl, dstlOffset+32*nch, nch, lins, linsOffset+4*15+64)
+	synthPair(dstr, nch, lins[4*15+1:])
+	synthPair(dstr[32*nch:], nch, lins[4*15+64+1:])
+	synthPair(dstl, nch, lins[4*15:])
+	synthPair(dstl[32*nch:], nch, lins[4*15+64:])
 
 	for i := 14; i >= 0; i-- {
-		lins[zlinOffset+4*i] = xl[xlOffset+18*(31-i)]
-		lins[zlinOffset+4*i+1] = xl[xrOffset+18*(31-i)]
-		lins[zlinOffset+4*i+2] = xl[xlOffset+1+18*(31-i)]
-		lins[zlinOffset+4*i+3] = xl[xrOffset+1+18*(31-i)]
+		lins[zlinOffset+4*i] = xl[18*(31-i)]
+		lins[zlinOffset+4*i+1] = xr[18*(31-i)]
+		lins[zlinOffset+4*i+2] = xl[1+18*(31-i)]
+		lins[zlinOffset+4*i+3] = xr[1+18*(31-i)]
 
-		lins[zlinOffset+4*(i+16)] = xl[xlOffset+1+18*(1+i)]
-		lins[zlinOffset+4*(i+16)+1] = xl[xrOffset+1+18*(1+i)]
-		lins[zlinOffset+4*(i-16)+2] = xl[xlOffset+18*(1+i)]
-		lins[zlinOffset+4*(i-16)+3] = xl[xrOffset+18*(1+i)]
+		lins[zlinOffset+4*(i+16)] = xl[1+18*(1+i)]
+		lins[zlinOffset+4*(i+16)+1] = xr[1+18*(1+i)]
+		lins[zlinOffset+4*(i-16)+2] = xl[18*(1+i)]
+		lins[zlinOffset+4*(i-16)+3] = xr[18*(1+i)]
 
 		load := func(k int) (float32, float32, int, int) {
 			w0 := gWin[wIdx]
@@ -178,25 +178,25 @@ func mp3dSynthFloat(xl []float32, xlOffset int, dstl []float32, dstlOffset int, 
 			}
 		}
 
-		dstl[dstrOffset+(15-i)*nch] = a[1] / 32768.0
-		dstl[dstrOffset+(17+i)*nch] = b[1] / 32768.0
-		dstl[dstlOffset+(15-i)*nch] = a[0] / 32768.0
-		dstl[dstlOffset+(17+i)*nch] = b[0] / 32768.0
-		dstl[dstrOffset+(47-i)*nch] = a[3] / 32768.0
-		dstl[dstrOffset+(49+i)*nch] = b[3] / 32768.0
-		dstl[dstlOffset+(47-i)*nch] = a[2] / 32768.0
-		dstl[dstlOffset+(49+i)*nch] = b[2] / 32768.0
+		dstr[(15-i)*nch] = a[1] / 32768.0
+		dstr[(17+i)*nch] = b[1] / 32768.0
+		dstl[(15-i)*nch] = a[0] / 32768.0
+		dstl[(17+i)*nch] = b[0] / 32768.0
+		dstr[(47-i)*nch] = a[3] / 32768.0
+		dstr[(49+i)*nch] = b[3] / 32768.0
+		dstl[(47-i)*nch] = a[2] / 32768.0
+		dstl[(49+i)*nch] = b[2] / 32768.0
 	}
 }
 
-func mp3dDctII(grbuf []float32, grbufOffset int, n int) {
+func dctII(grbuf []float32, n int) {
 	gSec := [24]float32{
 		10.19000816, 0.50060302, 0.50241929, 3.40760851, 0.50547093, 0.52249861, 2.05778098, 0.51544732, 0.56694406, 1.48416460, 0.53104258, 0.64682180, 1.16943991, 0.55310392, 0.78815460, 0.97256821, 0.58293498, 1.06067765, 0.83934963, 0.62250412, 1.72244716, 0.74453628, 0.67480832, 5.10114861,
 	}
 
 	for k := 0; k < n; k++ {
 		var t [4][8]float32
-		yIdx := grbufOffset + k
+		yIdx := k
 
 		for i := 0; i < 8; i++ {
 			x0 := grbuf[yIdx+i*18]
@@ -267,15 +267,15 @@ func mp3dDctII(grbuf []float32, grbufOffset int, n int) {
 }
 
 // synthGranule is the Go native implementation of subband synthesis filtering.
-func synthGranule(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, pcmOffset int, lins []float32) {
+func synthGranule(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, lins []float32) {
 	for i := 0; i < nch; i++ {
-		mp3dDctII(grbuf, 576*i, nbands)
+		dctII(grbuf[576*i:], nbands)
 	}
 
 	copy(lins[:15*64], qmfState[:15*64])
 
 	for i := 0; i < nbands; i += 2 {
-		mp3dSynthFloat(grbuf, i, pcm, pcmOffset+32*nch*i, nch, lins, i*64)
+		synthFloat(grbuf[i:], pcm[32*nch*i:], nch, lins[i*64:])
 	}
 
 	if nch == 1 {

@@ -53,10 +53,10 @@ func l3Dct39(y []float32) {
 	y[8] = s4 + s7
 }
 
-func l3Imdct36(grbuf []float32, grbufOffset int, overlap []float32, overlapOffset int, window []float32, nbands int) {
+func imdct36L3(grbuf []float32, overlap []float32, window []float32, nbands int) {
 	for j := 0; j < nbands; j++ {
-		currGr := grbuf[grbufOffset+j*18 : grbufOffset+j*18+18]
-		currOv := overlap[overlapOffset+j*9 : overlapOffset+j*9+9]
+		currGr := grbuf[j*18 : j*18+18]
+		currOv := overlap[j*9 : j*9+9]
 
 		var co, si [9]float32
 		co[0] = -currGr[0]
@@ -93,7 +93,7 @@ func l3Idct3(x0, x1, x2 float32, dst []float32) {
 	dst[2] = a1 - m1
 }
 
-func l3Imdct12(x []float32, xOffset int, dst []float32, dstOffset int, overlap []float32, overlapOffset int) {
+func imdct12L3(x []float32, xOffset int, dst []float32, overlap []float32) {
 	var gTwid3 = [6]float32{0.79335334, 0.92387953, 0.99144486, 0.60876143, 0.38268343, 0.13052619}
 	var co, si [3]float32
 
@@ -102,25 +102,24 @@ func l3Imdct12(x []float32, xOffset int, dst []float32, dstOffset int, overlap [
 	si[1] = -si[1]
 
 	for i := 0; i < 3; i++ {
-		ovl := overlap[overlapOffset+i]
+		ovl := overlap[i]
 		sum := co[i]*gTwid3[3+i] + si[i]*gTwid3[0+i]
-		overlap[overlapOffset+i] = co[i]*gTwid3[0+i] - si[i]*gTwid3[3+i]
-		dst[dstOffset+i] = ovl*gTwid3[2-i] - sum*gTwid3[5-i]
-		dst[dstOffset+5-i] = ovl*gTwid3[5-i] + sum*gTwid3[2-i]
+		overlap[i] = co[i]*gTwid3[0+i] - si[i]*gTwid3[3+i]
+		dst[i] = ovl*gTwid3[2-i] - sum*gTwid3[5-i]
+		dst[5-i] = ovl*gTwid3[5-i] + sum*gTwid3[2-i]
 	}
 }
 
-func l3ImdctShort(grbuf []float32, grbufOffset int, overlap []float32, overlapOffset int, nbands int) {
-	for ; nbands > 0; nbands-- {
+func imdctShortL3(grbuf []float32, overlap []float32, nbands int) {
+	for j := 0; j < nbands; j++ {
+		currGr := grbuf[j*18:]
+		currOv := overlap[j*9:]
 		var tmp [18]float32
-		copy(tmp[:], grbuf[grbufOffset:grbufOffset+18])
-		copy(grbuf[grbufOffset:grbufOffset+6], overlap[overlapOffset:overlapOffset+6])
-		l3Imdct12(tmp[:], 0, grbuf, grbufOffset+6, overlap, overlapOffset+6)
-		l3Imdct12(tmp[:], 1, grbuf, grbufOffset+12, overlap, overlapOffset+6)
-		l3Imdct12(tmp[:], 2, overlap, overlapOffset, overlap, overlapOffset+6)
-
-		overlapOffset += 9
-		grbufOffset += 18
+		copy(tmp[:], currGr[:18])
+		copy(currGr[:6], currOv[:6])
+		imdct12L3(tmp[:], 0, currGr[6:], currOv[6:])
+		imdct12L3(tmp[:], 1, currGr[12:], currOv[6:])
+		imdct12L3(tmp[:], 2, currOv, currOv[6:])
 	}
 }
 
@@ -129,21 +128,20 @@ func L3ImdctGo(grbuf []float32, overlap []float32, blockType int, nLongBands int
 	grbufOffset := 0
 	overlapOffset := 0
 	if nLongBands > 0 {
-		l3Imdct36(grbuf, grbufOffset, overlap, overlapOffset, gMdctWindow[0][:], nLongBands)
+		imdct36L3(grbuf, overlap, gMdctWindow[0][:], nLongBands)
 		grbufOffset += 18 * nLongBands
 		overlapOffset += 9 * nLongBands
 	}
 	if blockType == 2 { // SHORT_BLOCK_TYPE = 2
-		l3ImdctShort(grbuf, grbufOffset, overlap, overlapOffset, 32-nLongBands)
+		imdctShortL3(grbuf[grbufOffset:], overlap[overlapOffset:], 32-nLongBands)
 	} else {
 		isStop := 0
 		if blockType == 3 { // STOP_BLOCK_TYPE = 3
 			isStop = 1
 		}
-		l3Imdct36(grbuf, grbufOffset, overlap, overlapOffset, gMdctWindow[isStop][:], 32-nLongBands)
+		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], gMdctWindow[isStop][:], 32-nLongBands)
 	}
 }
-
 
 // L3Imdct performs IMDCT on a granule block.
 func L3Imdct(grbuf []float32, overlap []float32, blockType int, nLongBands int) {

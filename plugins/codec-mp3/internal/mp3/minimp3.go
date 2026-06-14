@@ -6,7 +6,7 @@ type Mp3Dec struct {
 	QmfState        [15 * 2 * 32]float32
 	Reserv          int
 	FreeFormatBytes int
-	Header          [4]byte
+	Header          Header
 	ReservBuf       [511]byte
 }
 
@@ -32,42 +32,54 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 	mp3Bytes := len(mp3)
 	frameSize := 0
 	i := 0
-	success := 1
+	success := true
 
-	if mp3Bytes > 4 && dec.Header[0] == 0xff && hdrCompare(dec.Header[:], mp3) {
-		frameSize = hdrFrameBytes(mp3, dec.FreeFormatBytes) + hdrPadding(mp3)
-		if frameSize != mp3Bytes && (frameSize+4 > mp3Bytes || !hdrCompare(mp3, mp3[frameSize:])) {
-			frameSize = 0
+	if mp3Bytes > 4 && dec.Header[0] == 0xff {
+		nextHdr, ok := ParseHeader(mp3)
+		if ok && dec.Header.Compare(nextHdr) {
+			frameSize = nextHdr.FrameBytes(dec.FreeFormatBytes) + nextHdr.Padding()
+			if frameSize != mp3Bytes {
+				if frameSize+4 > mp3Bytes {
+					frameSize = 0
+				} else {
+					nextHdr2, ok2 := ParseHeader(mp3[frameSize:])
+					if !ok2 || !nextHdr.Compare(nextHdr2) {
+						frameSize = 0
+					}
+				}
+			}
 		}
 	}
 
 	if frameSize == 0 {
 		dec.Init()
-		freeFormatBytesPtr := &dec.FreeFormatBytes
-		ptrFrameBytes := &frameSize
-		i = mp3dFindFrame(mp3, mp3Bytes, freeFormatBytesPtr, ptrFrameBytes)
-		if frameSize == 0 || i+frameSize > mp3Bytes {
+		var found bool
+		i, frameSize, dec.FreeFormatBytes, found = FindFrame(mp3, dec.FreeFormatBytes)
+		if !found || i+frameSize > mp3Bytes {
 			return 0, Mp3DecFrameInfo{FrameBytes: i}
 		}
 	}
 
-	hdr := mp3[i : i+4]
-	copy(dec.Header[:], hdr)
+	hdr, ok := ParseHeader(mp3[i : i+4])
+	if !ok {
+		return 0, Mp3DecFrameInfo{}
+	}
+	dec.Header = hdr
 
 	info := Mp3DecFrameInfo{
 		FrameBytes:  i + frameSize,
 		FrameOffset: i,
 		Channels:    2,
-		Hz:          hdrSampleRateHz(hdr),
-		Layer:       4 - hdrGetLayer(hdr),
-		BitrateKbps: hdrBitrateKbps(hdr),
+		Hz:          hdr.SampleRateHz(),
+		Layer:       4 - hdr.Layer(),
+		BitrateKbps: hdr.BitrateKbps(),
 	}
-	if hdrIsMono(hdr) {
+	if hdr.IsMono() {
 		info.Channels = 1
 	}
 
 	if pcm == nil {
-		return hdrFrameSamples(hdr), info
+		return hdr.FrameSamples(), info
 	}
 
 	var bsFrame bitStream
@@ -75,39 +87,39 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 	bsFrame.pos = 0
 	bsFrame.limit = int32((frameSize - 4) * 8)
 
-	if hdrIsCrc(hdr) {
+	if hdr.IsCrc() {
 		getBits(&bsFrame, 16)
 	}
 
 	var scratch decScratch
 
 	if info.Layer == 3 {
-		mainDataBegin := l3ReadSideInfo(&bsFrame, scratch.gr_info[:], hdr)
+		mainDataBegin := readSideInfoL3(&bsFrame, scratch.gr_info[:], hdr)
 		if mainDataBegin < 0 || bsFrame.pos > bsFrame.limit {
 			dec.Init()
 			return 0, info
 		}
-		if l3RestoreReservoir(dec, &bsFrame, &scratch, mainDataBegin) {
+		if restoreReservoirL3(dec, &bsFrame, &scratch, mainDataBegin) {
 			pcmOffset := 0
 			igrLimit := 1
-			if hdrTestMpeg1(hdr) {
+			if hdr.TestMpeg1() {
 				igrLimit = 2
 			}
 			for igr := 0; igr < igrLimit; igr++ {
 				scratch.grbuf = [1200]float32{}
-				l3Decode(dec, &scratch, scratch.gr_info[:], igr*info.Channels, info.Channels)
+				decodeL3(dec, &scratch, scratch.gr_info[:], igr*info.Channels, info.Channels)
 				grbufFlat := scratch.grbuf[:]
 				synFlat := scratch.syn[:]
-				synthGranule(dec.QmfState[:], grbufFlat, 18, info.Channels, pcm, pcmOffset, synFlat)
+				synthGranule(dec.QmfState[:], grbufFlat, 18, info.Channels, pcm[pcmOffset:], synFlat)
 				pcmOffset += 576 * info.Channels
 			}
 		} else {
-			success = 0
+			success = false
 		}
-		l3SaveReservoir(dec, &scratch)
+		saveReservoirL3(dec, &scratch)
 	} else {
 		var sci l12ScaleInfo
-		l12ReadScaleInfo(hdr, &bsFrame, &sci)
+		readScaleInfoL12(hdr, &bsFrame, &sci)
 
 		scratch.grbuf = [1200]float32{}
 
@@ -115,13 +127,13 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		pcmOffset := 0
 		grbufFlat := scratch.grbuf[:]
 		for igr := 0; igr < 3; igr++ {
-			deqVal := l12DequantizeGranule(grbufFlat[iVal:], &bsFrame, &sci, info.Layer|1)
+			deqVal := dequantizeGranuleL12(grbufFlat[iVal:], &bsFrame, &sci, info.Layer|1)
 			iVal += deqVal
 			if iVal == 12 {
 				iVal = 0
-				l12ApplyScf384(&sci, sci.Scf[igr:], grbufFlat)
+				applyScf384L12(&sci, sci.Scf[igr:], grbufFlat)
 				synFlat := scratch.syn[:]
-				synthGranule(dec.QmfState[:], grbufFlat, 12, info.Channels, pcm, pcmOffset, synFlat)
+				synthGranule(dec.QmfState[:], grbufFlat, 12, info.Channels, pcm[pcmOffset:], synFlat)
 				scratch.grbuf = [1200]float32{}
 				pcmOffset += 384 * info.Channels
 			}
@@ -132,7 +144,10 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		}
 	}
 
-	return success * hdrFrameSamples(dec.Header[:]), info
+	if !success {
+		return 0, info
+	}
+	return dec.Header.FrameSamples(), info
 }
 
 
