@@ -1,23 +1,19 @@
 package mp3
-
-/*
-#cgo CFLAGS: -O3 -DMINIMP3_FLOAT_OUTPUT
-#include "minimp3.h"
-
-int mp3dec_skip_id3_bytes(const unsigned char *buf, int size);
-void mp3dec_synth_granule_c(float *qmf_state, float *grbuf, int nbands, int nch, float *pcm, float *lins);
-*/
-import "C"
 import (
 	"unsafe"
 )
 
-// Mp3Dec is the Go wrapper for mp3dec_t.
+// Mp3Dec is the Go decoder state.
 type Mp3Dec struct {
-	cDec C.mp3dec_t
+	MdctOverlap     [2][9 * 32]float32
+	QmfState        [15 * 2 * 32]float32
+	Reserv          int
+	FreeFormatBytes int
+	Header          [4]byte
+	ReservBuf       [511]byte
 }
 
-// Mp3DecFrameInfo is the Go wrapper for mp3dec_frame_info_t.
+// Mp3DecFrameInfo contains parsed MPEG frame header information.
 type Mp3DecFrameInfo struct {
 	FrameBytes  int
 	FrameOffset int
@@ -29,53 +25,118 @@ type Mp3DecFrameInfo struct {
 
 // Init initializes the decoder.
 func (dec *Mp3Dec) Init() {
-	C.mp3dec_init(&dec.cDec)
+	*dec = Mp3Dec{}
 }
 
 // DecodeFrame decodes one MP3 frame to float32 samples.
 // pcm slice must be pre-allocated to hold up to MINIMP3_MAX_SAMPLES_PER_FRAME (1152*2) samples.
 // Returns the number of samples decoded *per channel*, and the frame info.
 func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo) {
-	var cInfo C.mp3dec_frame_info_t
+	mp3Bytes := len(mp3)
+	frameSize := 0
+	i := 0
+	success := 1
 
-	var mp3Ptr *C.uint8_t
-	if len(mp3) > 0 {
-		mp3Ptr = (*C.uint8_t)(unsafe.Pointer(&mp3[0]))
+	if mp3Bytes > 4 && dec.Header[0] == 0xff && hdrCompare(dec.Header[:], mp3) {
+		frameSize = hdrFrameBytes(mp3, dec.FreeFormatBytes) + hdrPadding(mp3)
+		if frameSize != mp3Bytes && (frameSize+4 > mp3Bytes || !hdrCompare(mp3, mp3[frameSize:])) {
+			frameSize = 0
+		}
 	}
 
-	var pcmPtr *C.float
-	if len(pcm) > 0 {
-		pcmPtr = (*C.float)(unsafe.Pointer(&pcm[0]))
+	if frameSize == 0 {
+		dec.Init()
+		freeFormatBytesPtr := &dec.FreeFormatBytes
+		ptrFrameBytes := &frameSize
+		i = mp3dFindFrame(mp3, mp3Bytes, freeFormatBytesPtr, ptrFrameBytes)
+		if frameSize == 0 || i+frameSize > mp3Bytes {
+			return 0, Mp3DecFrameInfo{FrameBytes: i}
+		}
 	}
 
-	samples := int(C.mp3dec_decode_frame(
-		&dec.cDec,
-		mp3Ptr,
-		C.int(len(mp3)),
-		pcmPtr,
-		&cInfo,
-	))
+	hdr := mp3[i : i+4]
+	copy(dec.Header[:], hdr)
 
 	info := Mp3DecFrameInfo{
-		FrameBytes:  int(cInfo.frame_bytes),
-		FrameOffset: int(cInfo.frame_offset),
-		Channels:    int(cInfo.channels),
-		Hz:          int(cInfo.hz),
-		Layer:       int(cInfo.layer),
-		BitrateKbps: int(cInfo.bitrate_kbps),
+		FrameBytes:  i + frameSize,
+		FrameOffset: i,
+		Channels:    2,
+		Hz:          hdrSampleRateHz(hdr),
+		Layer:       4 - hdrGetLayer(hdr),
+		BitrateKbps: hdrBitrateKbps(hdr),
+	}
+	if hdrIsMono(hdr) {
+		info.Channels = 1
 	}
 
-	return samples, info
+	if pcm == nil {
+		return hdrFrameSamples(hdr), info
+	}
+
+	var bsFrame bs_t
+	bsFrame.buf = &mp3[i+4]
+	bsFrame.pos = 0
+	bsFrame.limit = int32((frameSize - 4) * 8)
+
+	if hdrIsCrc(hdr) {
+		getBits(&bsFrame, 16)
+	}
+
+	var scratch mp3dec_scratch_t
+
+	if info.Layer == 3 {
+		mainDataBegin := l3ReadSideInfo(&bsFrame, scratch.gr_info[:], hdr)
+		if mainDataBegin < 0 || bsFrame.pos > bsFrame.limit {
+			dec.Init()
+			return 0, info
+		}
+		if l3RestoreReservoir(dec, &bsFrame, &scratch, mainDataBegin) {
+			pcmOffset := 0
+			igrLimit := 1
+			if hdrTestMpeg1(hdr) {
+				igrLimit = 2
+			}
+			for igr := 0; igr < igrLimit; igr++ {
+				scratch.grbuf = [2][576]float32{}
+				l3Decode(dec, &scratch, scratch.gr_info[:], igr*info.Channels, info.Channels)
+				grbufFlat := unsafe.Slice(&scratch.grbuf[0][0], 1152)
+				synFlat := unsafe.Slice(&scratch.syn[0][0], 2112)
+				Mp3dSynthGranuleFloat(dec.QmfState[:], grbufFlat, 18, info.Channels, pcm, pcmOffset, synFlat)
+				pcmOffset += 576 * info.Channels
+			}
+		} else {
+			success = 0
+		}
+		l3SaveReservoir(dec, &scratch)
+	} else {
+		var sci L12ScaleInfo
+		l12ReadScaleInfo(hdr, &bsFrame, &sci)
+
+		scratch.grbuf = [2][576]float32{}
+
+		iVal := 0
+		pcmOffset := 0
+		grbufFlat := unsafe.Slice(&scratch.grbuf[0][0], 1192)
+		for igr := 0; igr < 3; igr++ {
+			deqVal := l12DequantizeGranule(grbufFlat, iVal, &bsFrame, &sci, info.Layer|1)
+			iVal += deqVal
+			if iVal == 12 {
+				iVal = 0
+				l12ApplyScf384(&sci, sci.Scf[:], igr, grbufFlat, 0)
+				synFlat := unsafe.Slice(&scratch.syn[0][0], 2112)
+				Mp3dSynthGranuleFloat(dec.QmfState[:], grbufFlat, 12, info.Channels, pcm, pcmOffset, synFlat)
+				scratch.grbuf = [2][576]float32{}
+				pcmOffset += 384 * info.Channels
+			}
+			if bsFrame.pos > bsFrame.limit {
+				dec.Init()
+				return 0, info
+			}
+		}
+	}
+
+	return success * hdrFrameSamples(dec.Header[:]), info
 }
 
-// C_synth_granule is a test helper that calls the C mp3d_synth_granule implementation.
-func C_synth_granule(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, lins []float32) {
-	C.mp3dec_synth_granule_c(
-		(*C.float)(unsafe.Pointer(&qmfState[0])),
-		(*C.float)(unsafe.Pointer(&grbuf[0])),
-		C.int(nbands),
-		C.int(nch),
-		(*C.float)(unsafe.Pointer(&pcm[0])),
-		(*C.float)(unsafe.Pointer(&lins[0])),
-	)
-}
+
+
