@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/godexture/codec-mp3/internal/mp3"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
@@ -51,7 +52,7 @@ func (d *Decoder) writeLoop() {
 func (d *Decoder) decodeLoop() {
 	defer close(d.outQueue)
 
-	var dec Mp3Dec
+	var dec mp3.Mp3Dec
 	dec.Init()
 
 	buf := make([]byte, 32*1024)
@@ -84,7 +85,7 @@ func (d *Decoder) decodeLoop() {
 
 		// 2. Skip ID3 tags on the first iteration
 		if firstFrame && bufLen > 0 {
-			skipped := SkipId3(buf[:bufLen])
+			skipped := mp3.SkipId3(buf[:bufLen])
 			if skipped > 0 {
 				if skipped < bufLen {
 					copy(buf, buf[skipped:bufLen])
@@ -113,7 +114,7 @@ func (d *Decoder) decodeLoop() {
 				channels = info.Channels
 
 				decodedSamples := samples * channels
-				FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
+				mp3.FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
 
 				byteLen := decodedSamples * 2
 				byteBuf := make([]byte, byteLen)

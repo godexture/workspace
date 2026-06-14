@@ -1,4 +1,4 @@
-package internal
+package mp3
 
 /*
 #cgo CFLAGS: -O3 -DMINIMP3_FLOAT_OUTPUT
@@ -182,5 +182,59 @@ func hdrCompare(h1, h2 []byte) bool {
 	return hdrValid(h2) &&
 		((h1[1]^h2[1])&0xfe) == 0 &&
 		((h1[2]^h2[2])&0x0c) == 0 &&
-		!(hdrIsFreeFormat(h1) ^ hdrIsFreeFormat(h2))
+		hdrIsFreeFormat(h1) == hdrIsFreeFormat(h2)
+}
+
+const maxFreeFormatFrameSize = 2304
+const maxFrameSyncMatches = 10
+const maxBitreservoirBytes = 511
+const maxL3FramePayloadBytes = 2304
+
+func mp3dMatchFrame(hdr []byte, mp3Bytes int, frameBytes int) bool {
+	i := 0
+	nmatch := 0
+	for ; nmatch < maxFrameSyncMatches; nmatch++ {
+		i += hdrFrameBytes(hdr[i:], frameBytes) + hdrPadding(hdr[i:])
+		if i+hdrSize > mp3Bytes {
+			return nmatch > 0
+		}
+		if !hdrCompare(hdr, hdr[i:]) {
+			return false
+		}
+	}
+	return true
+}
+
+func mp3dFindFrame(mp3 []byte, mp3Bytes int, freeFormatBytes *int, ptrFrameBytes *int) int {
+	i := 0
+	for ; i < mp3Bytes-hdrSize; i++ {
+		curr := mp3[i:]
+		if hdrValid(curr) {
+			frameBytes := hdrFrameBytes(curr, *freeFormatBytes)
+			frameAndPadding := frameBytes + hdrPadding(curr)
+
+			for k := hdrSize; frameBytes == 0 && k < maxFreeFormatFrameSize && i+2*k < mp3Bytes-hdrSize; k++ {
+				if hdrCompare(curr, curr[k:]) {
+					fb := k - hdrPadding(curr)
+					nextfb := fb + hdrPadding(curr[k:])
+					if i+k+nextfb+hdrSize > mp3Bytes || !hdrCompare(curr, curr[k+nextfb:]) {
+						continue
+					}
+					frameAndPadding = k
+					frameBytes = fb
+					*freeFormatBytes = fb
+				}
+			}
+
+			if (frameBytes != 0 && i+frameAndPadding <= mp3Bytes &&
+				mp3dMatchFrame(curr, mp3Bytes-i, frameBytes)) ||
+				(i == 0 && frameAndPadding == mp3Bytes) {
+				*ptrFrameBytes = frameAndPadding
+				return i
+			}
+			*freeFormatBytes = 0
+		}
+	}
+	*ptrFrameBytes = 0
+	return mp3Bytes
 }
