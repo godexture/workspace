@@ -1,12 +1,13 @@
-package internal_test
+package test
 
 import (
-	"encoding/binary"
+	"bufio"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/godexture/codec-mp3/internal/mp3"
@@ -28,8 +29,6 @@ const defaultMaxRMSE = 1e-3    // 波形全体のエネルギー誤差の許容�
 const defaultMaxAbsDiff = 1e-2 // 局所的な（単一サンプルの）最大スパイク誤差の許容値
 
 func TestSnapshots(t *testing.T) {
-	updateSnapshots := os.Getenv("UPDATE_SNAPSHOTS") == "1"
-
 	for _, filename := range testFiles {
 		t.Run(filename, func(t *testing.T) {
 			mp3Path := filepath.Join("testdata", filename)
@@ -47,21 +46,10 @@ func TestSnapshots(t *testing.T) {
 			snapshotDir := filepath.Join("testdata", "snapshots")
 			snapshotPath := filepath.Join(snapshotDir, filename+".snapshot")
 
-			if updateSnapshots {
-				if err := os.MkdirAll(snapshotDir, 0755); err != nil {
-					t.Fatalf("failed to create snapshot directory: %v", err)
-				}
-				if err := saveSnapshot(snapshotPath, pcm); err != nil {
-					t.Fatalf("failed to save snapshot: %v", err)
-				}
-				t.Logf("Updated snapshot for %s", filename)
-				return
-			}
-
 			// Load snapshot and compare
 			expectedPcm, err := loadSnapshot(snapshotPath)
 			if err != nil {
-				t.Fatalf("failed to load snapshot: %v (run UPDATE_SNAPSHOTS=1 go test to generate if missing)", err)
+				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
 			if requireBitExact {
@@ -104,24 +92,6 @@ func decodeAll(mp3Data []byte) ([]float32, error) {
 	return allPCM, nil
 }
 
-func saveSnapshot(path string, data []float32) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 4)
-	for _, val := range data {
-		bits := math.Float32bits(val)
-		binary.LittleEndian.PutUint32(buf, bits)
-		if _, err := f.Write(buf); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func loadSnapshot(path string) ([]float32, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -129,24 +99,21 @@ func loadSnapshot(path string) ([]float32, error) {
 	}
 	defer f.Close()
 
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	size := info.Size()
-	if size%4 != 0 {
-		return nil, fmt.Errorf("invalid snapshot file size: %d", size)
-	}
-
-	data := make([]float32, size/4)
-	buf := make([]byte, 4)
-	for i := range data {
-		if _, err := io.ReadFull(f, buf); err != nil {
-			return nil, err
+	var data []float32
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
 		}
-		bits := binary.LittleEndian.Uint32(buf)
-		data[i] = math.Float32frombits(bits)
+		val, err := strconv.ParseFloat(line, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse float at index %d: %w", len(data), err)
+		}
+		data = append(data, float32(val))
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	return data, nil
 }

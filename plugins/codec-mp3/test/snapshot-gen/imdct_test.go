@@ -1,9 +1,13 @@
-package mp3
+//go:build cgo_test
+
+package main
 
 import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/godexture/codec-mp3/internal/mp3"
 )
 
 func TestL3ImdctMatchesC(t *testing.T) {
@@ -48,7 +52,7 @@ func TestL3ImdctMatchesC(t *testing.T) {
 				C_imdct(grbufC, overlapC, blockType, nLongBands)
 
 				// Call Go version
-				L3Imdct(grbufGo, overlapGo, blockType, nLongBands)
+				mp3.L3Imdct(grbufGo, overlapGo, blockType, nLongBands)
 
 				// Compare grbuf
 				for i := range grbufC {

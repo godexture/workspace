@@ -1,7 +1,4 @@
 package mp3
-import (
-	"unsafe"
-)
 
 // Mp3Dec is the Go decoder state.
 type Mp3Dec struct {
@@ -73,8 +70,8 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		return hdrFrameSamples(hdr), info
 	}
 
-	var bsFrame bs_t
-	bsFrame.buf = &mp3[i+4]
+	var bsFrame bitStream
+	bsFrame.buf = mp3[i+4:]
 	bsFrame.pos = 0
 	bsFrame.limit = int32((frameSize - 4) * 8)
 
@@ -82,7 +79,7 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		getBits(&bsFrame, 16)
 	}
 
-	var scratch mp3dec_scratch_t
+	var scratch decScratch
 
 	if info.Layer == 3 {
 		mainDataBegin := l3ReadSideInfo(&bsFrame, scratch.gr_info[:], hdr)
@@ -97,11 +94,11 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 				igrLimit = 2
 			}
 			for igr := 0; igr < igrLimit; igr++ {
-				scratch.grbuf = [2][576]float32{}
+				scratch.grbuf = [1200]float32{}
 				l3Decode(dec, &scratch, scratch.gr_info[:], igr*info.Channels, info.Channels)
-				grbufFlat := unsafe.Slice(&scratch.grbuf[0][0], 1152)
-				synFlat := unsafe.Slice(&scratch.syn[0][0], 2112)
-				Mp3dSynthGranuleFloat(dec.QmfState[:], grbufFlat, 18, info.Channels, pcm, pcmOffset, synFlat)
+				grbufFlat := scratch.grbuf[:]
+				synFlat := scratch.syn[:]
+				synthGranule(dec.QmfState[:], grbufFlat, 18, info.Channels, pcm, pcmOffset, synFlat)
 				pcmOffset += 576 * info.Channels
 			}
 		} else {
@@ -109,23 +106,23 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		}
 		l3SaveReservoir(dec, &scratch)
 	} else {
-		var sci L12ScaleInfo
+		var sci l12ScaleInfo
 		l12ReadScaleInfo(hdr, &bsFrame, &sci)
 
-		scratch.grbuf = [2][576]float32{}
+		scratch.grbuf = [1200]float32{}
 
 		iVal := 0
 		pcmOffset := 0
-		grbufFlat := unsafe.Slice(&scratch.grbuf[0][0], 1192)
+		grbufFlat := scratch.grbuf[:]
 		for igr := 0; igr < 3; igr++ {
-			deqVal := l12DequantizeGranule(grbufFlat, iVal, &bsFrame, &sci, info.Layer|1)
+			deqVal := l12DequantizeGranule(grbufFlat[iVal:], &bsFrame, &sci, info.Layer|1)
 			iVal += deqVal
 			if iVal == 12 {
 				iVal = 0
-				l12ApplyScf384(&sci, sci.Scf[:], igr, grbufFlat, 0)
-				synFlat := unsafe.Slice(&scratch.syn[0][0], 2112)
-				Mp3dSynthGranuleFloat(dec.QmfState[:], grbufFlat, 12, info.Channels, pcm, pcmOffset, synFlat)
-				scratch.grbuf = [2][576]float32{}
+				l12ApplyScf384(&sci, sci.Scf[igr:], grbufFlat)
+				synFlat := scratch.syn[:]
+				synthGranule(dec.QmfState[:], grbufFlat, 12, info.Channels, pcm, pcmOffset, synFlat)
+				scratch.grbuf = [1200]float32{}
 				pcmOffset += 384 * info.Channels
 			}
 			if bsFrame.pos > bsFrame.limit {

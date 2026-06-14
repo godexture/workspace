@@ -1,19 +1,17 @@
 package mp3
 
-import (
-	"unsafe"
-)
 
-// bs_t is the bitstream reader state.
-type bs_t struct {
-	buf   *byte
+
+// bitStream is the bitstream reader state.
+type bitStream struct {
+	buf   []byte
 	pos   int32
 	limit int32
 }
 
-// L3GrInfo matches the C structure L3_gr_info_t layout exactly.
-type L3GrInfo struct {
-	sfbtab           *byte
+// grInfo matches the C structure L3_gr_info_t layout exactly.
+type grInfo struct {
+	sfbtab           []byte
 	part23Length     uint16
 	bigValues        uint16
 	scalefacCompress uint16
@@ -29,13 +27,6 @@ type L3GrInfo struct {
 	scalefacScale    uint8
 	count1Table      uint8
 	scfsi            uint8
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func L3Pow43(x int) float32 {
@@ -56,29 +47,25 @@ func L3Pow43(x int) float32 {
 	return gPow43[16+((x+sign)>>6)] * (1.0 + frac*(4.0/3.0+frac*(2.0/9.0))) * float32(mult)
 }
 
-func getSfbVal(sfbtab *byte, idx int) byte {
-	return *(*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(sfbtab)) + uintptr(idx)))
-}
 
-// L3HuffmanDecode performs Huffman decoding for a Layer 3 granule.
-func L3HuffmanDecode(dst []float32, bsPtr unsafe.Pointer, grInfoPtr unsafe.Pointer, scf []float32, regionLimit int) {
-	if len(dst) == 0 || bsPtr == nil || grInfoPtr == nil {
+// l3HuffmanDecode performs Huffman decoding for a Layer 3 granule.
+func l3HuffmanDecode(dst []float32, bs *bitStream, grInfo *grInfo, scf []float32, regionLimit int) {
+	if len(dst) == 0 || bs == nil || grInfo == nil {
 		return
 	}
 
-	bs := (*bs_t)(bsPtr)
-	grInfo := (*L3GrInfo)(grInfoPtr)
+	idx := int(bs.pos / 8)
 
-	bsBuf := uintptr(unsafe.Pointer(bs.buf))
-	bsNextPtr := bsBuf + uintptr(bs.pos/8)
-
-	readByte := func(p uintptr) uint32 {
-		return uint32(*(*byte)(unsafe.Pointer(p)))
+	readByte := func(i int) uint32 {
+		if i < 0 || i >= len(bs.buf) {
+			return 0
+		}
+		return uint32(bs.buf[i])
 	}
 
-	bsCache := (((readByte(bsNextPtr)*256+readByte(bsNextPtr+1))*256+readByte(bsNextPtr+2))*256 + readByte(bsNextPtr+3)) << (uint32(bs.pos) & 7)
+	bsCache := (((readByte(idx)*256+readByte(idx+1))*256+readByte(idx+2))*256 + readByte(idx+3)) << (uint32(bs.pos) & 7)
 	bsSh := int32((bs.pos & 7) - 8)
-	bsNextPtr += 4
+	idx += 4
 
 	peekBits := func(n int) uint32 {
 		return bsCache >> (32 - n)
@@ -89,14 +76,14 @@ func L3HuffmanDecode(dst []float32, bsPtr unsafe.Pointer, grInfoPtr unsafe.Point
 	}
 	checkBits := func() {
 		for bsSh >= 0 {
-			val := readByte(bsNextPtr)
-			bsNextPtr++
+			val := readByte(idx)
+			idx++
 			bsCache |= val << bsSh
 			bsSh -= 8
 		}
 	}
 	bsPos := func() int {
-		return int((bsNextPtr-bsBuf)*8 - 24 + uintptr(bsSh))
+		return idx*8 - 24 + int(bsSh)
 	}
 
 	one := float32(0.0)
@@ -116,7 +103,7 @@ func L3HuffmanDecode(dst []float32, bsPtr unsafe.Pointer, grInfoPtr unsafe.Point
 
 		if linbits > 0 {
 			for {
-				np := int(getSfbVal(sfb, sfbIdx)) / 2
+				np := int(sfb[sfbIdx]) / 2
 				sfbIdx++
 				pairsToDecode := min(bigValCnt, np)
 				one = scf[scfIdx]
@@ -163,7 +150,7 @@ func L3HuffmanDecode(dst []float32, bsPtr unsafe.Pointer, grInfoPtr unsafe.Point
 			}
 		} else {
 			for {
-				np := int(getSfbVal(sfb, sfbIdx)) / 2
+				np := int(sfb[sfbIdx]) / 2
 				sfbIdx++
 				pairsToDecode := min(bigValCnt, np)
 				one = scf[scfIdx]
@@ -221,7 +208,7 @@ func L3HuffmanDecode(dst []float32, bsPtr unsafe.Pointer, grInfoPtr unsafe.Point
 		reloadScalefactor := func() bool {
 			np--
 			if np == 0 {
-				val := int(getSfbVal(sfb, sfbIdx))
+				val := int(sfb[sfbIdx])
 				sfbIdx++
 				np = val / 2
 				if np == 0 {

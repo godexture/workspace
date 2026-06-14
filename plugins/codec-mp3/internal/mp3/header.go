@@ -1,15 +1,5 @@
 package mp3
 
-// Header contains the parsed MPEG frame header information.
-type Header struct {
-	FrameBytes  int
-	FrameOffset int
-	Channels    int
-	Hz          int
-	Layer       int
-	BitrateKbps int
-}
-
 // SkipId3 returns the number of bytes at the beginning of the buffer to skip (e.g. ID3 tags).
 func SkipId3(mp3 []byte) int {
 	if len(mp3) == 0 {
@@ -36,40 +26,6 @@ func SkipId3(mp3 []byte) int {
 		return id3v2size
 	}
 	return 0
-}
-
-// BitReader is the Go equivalent of bs_t.
-type BitReader struct {
-	buf   []byte
-	pos   int
-	limit int
-}
-
-func (br *BitReader) Init(buf []byte) {
-	br.buf = buf
-	br.pos = 0
-	br.limit = len(buf) * 8
-}
-
-func (br *BitReader) GetBits(n int) uint32 {
-	s := br.pos & 7
-	shl := n + s
-	pIdx := br.pos >> 3
-	br.pos += n
-	if br.pos > br.limit {
-		return 0
-	}
-	next := uint32(br.buf[pIdx]) & (255 >> s)
-	pIdx++
-	cache := uint32(0)
-	for shl > 8 {
-		shl -= 8
-		cache |= next << shl
-		next = uint32(br.buf[pIdx])
-		pIdx++
-	}
-	shl -= 8
-	return cache | (next >> -shl)
 }
 
 const hdrSize = 4

@@ -1,13 +1,9 @@
 package mp3
 
-import (
-	"unsafe"
-)
 
-// L3Dequantize is kept for compatibility.
-func L3Dequantize(xr []float32, grInfo interface{}, scf []float32) {}
 
-type L12ScaleInfo struct {
+
+type l12ScaleInfo struct {
 	Scf         [3 * 64]float32
 	TotalBands  uint8
 	StereoBands uint8
@@ -26,7 +22,7 @@ var gAllocL2M2 = []L12SubbandAlloc{{60, 4, 4}, {44, 3, 7}, {44, 2, 19}}
 var gAllocL2M1 = []L12SubbandAlloc{{0, 4, 3}, {16, 4, 8}, {32, 3, 12}, {40, 2, 7}}
 var gAllocL2M1Lowrate = []L12SubbandAlloc{{44, 4, 2}, {44, 3, 10}}
 
-func l12SubbandAllocTable(hdr []byte, sci *L12ScaleInfo) []L12SubbandAlloc {
+func l12SubbandAllocTable(hdr []byte, sci *l12ScaleInfo) []L12SubbandAlloc {
 	var alloc []L12SubbandAlloc
 	mode := hdrGetStereoMode(hdr)
 	stereoBands := 32
@@ -93,7 +89,7 @@ var gDeqL12 = [18 * 3]float32{
 	9.53674316e-07 / 9.0, 7.56931807e-07 / 9.0, 6.00777173e-07 / 9.0,
 }
 
-func l12ReadScalefactors(bs *bs_t, pba []uint8, scfcod []uint8, bands int, scf []float32) {
+func l12ReadScalefactors(bs *bitStream, pba []uint8, scfcod []uint8, bands int, scf []float32) {
 	pbaIdx := 0
 	scfIdx := 0
 	for i := 0; i < bands; i++ {
@@ -125,7 +121,7 @@ var gBitallocCodeTab = []byte{
 	0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 }
 
-func l12ReadScaleInfo(hdr []byte, bs *bs_t, sci *L12ScaleInfo) {
+func l12ReadScaleInfo(hdr []byte, bs *bitStream, sci *l12ScaleInfo) {
 	subbandAlloc := l12SubbandAllocTable(hdr, sci)
 
 	k := 0
@@ -175,10 +171,10 @@ func l12ReadScaleInfo(hdr []byte, bs *bs_t, sci *L12ScaleInfo) {
 	}
 }
 
-func l12DequantizeGranule(grbuf []float32, grbufOffset int, bs *bs_t, sci *L12ScaleInfo, groupSize int) int {
+func l12DequantizeGranule(grbuf []float32, bs *bitStream, sci *l12ScaleInfo, groupSize int) int {
 	choff := 576
 	for j := 0; j < 4; j++ {
-		dstOffset := grbufOffset + groupSize*j
+		dstOffset := groupSize*j
 		for i := 0; i < 2*int(sci.TotalBands); i++ {
 			ba := int(sci.Bitalloc[i])
 			if ba != 0 {
@@ -203,8 +199,10 @@ func l12DequantizeGranule(grbuf []float32, grbufOffset int, bs *bs_t, sci *L12Sc
 	return groupSize * 4
 }
 
-func l12ApplyScf384(sci *L12ScaleInfo, scf []float32, scfOffset int, dst []float32, dstOffset int) {
-	copy(dst[dstOffset+576+int(sci.StereoBands)*18:dstOffset+576+int(sci.TotalBands)*18], dst[dstOffset+int(sci.StereoBands)*18:dstOffset+int(sci.TotalBands)*18])
+func l12ApplyScf384(sci *l12ScaleInfo, scf []float32, dst []float32) {
+	copy(dst[576+int(sci.StereoBands)*18:576+int(sci.TotalBands)*18], dst[int(sci.StereoBands)*18:int(sci.TotalBands)*18])
+	dstOffset := 0
+	scfOffset := 0
 	for i := 0; i < int(sci.TotalBands); i++ {
 		for k := 0; k < 12; k++ {
 			dst[dstOffset+k] *= scf[scfOffset+0]
@@ -215,32 +213,37 @@ func l12ApplyScf384(sci *L12ScaleInfo, scf []float32, scfOffset int, dst []float
 	}
 }
 
-type mp3dec_scratch_t struct {
-	bs       bs_t
+type decScratch struct {
+	bs       bitStream
 	maindata [511 + 2304]byte
-	gr_info  [4]L3GrInfo
-	grbuf    [2][576]float32
+	gr_info  [4]grInfo
+	grbuf    [1200]float32
 	scf      [40]float32
-	syn      [18 + 15][2 * 32]float32
+	syn      [2112]float32
 	ist_pos  [2][39]byte
 }
 
-func getBits(bs *bs_t, n int) uint32 {
+func getBits(bs *bitStream, n int) uint32 {
 	s := bs.pos & 7
 	shl := n + int(s)
-	pIdx := bs.pos >> 3
+	pIdx := int(bs.pos >> 3)
 	bs.pos += int32(n)
 	if bs.pos > bs.limit {
 		return 0
 	}
-	bufSlice := unsafe.Slice(bs.buf, int(pIdx)+n+2)
-	next := uint32(bufSlice[pIdx]) & (255 >> s)
+	readByte := func(idx int) uint32 {
+		if idx < 0 || idx >= len(bs.buf) {
+			return 0
+		}
+		return uint32(bs.buf[idx])
+	}
+	next := readByte(pIdx) & (255 >> s)
 	pIdx++
 	cache := uint32(0)
 	for shl > 8 {
 		shl -= 8
 		cache |= next << shl
-		next = uint32(bufSlice[pIdx])
+		next = readByte(pIdx)
 		pIdx++
 	}
 	shl -= 8
@@ -256,11 +259,12 @@ func l3ChangeSign(grbuf []float32) {
 	}
 }
 
-func l3Reorder(grbuf []float32, scratch []float32, sfb *byte, sfbIdx int) {
+func l3Reorder(grbuf []float32, scratch []float32, sfb []byte) {
 	srcIdx := 0
 	dstIdx := 0
+	sfbIdx := 0
 	for {
-		length := int(getSfbVal(sfb, sfbIdx))
+		length := int(sfb[sfbIdx])
 		if length == 0 {
 			break
 		}
@@ -284,32 +288,34 @@ var gAa = [2][8]float32{
 	{0.51449576, 0.47173197, 0.31337745, 0.18191320, 0.09457419, 0.04096558, 0.01419856, 0.00369997},
 }
 
-func l3Antialias(grbuf []float32, grbufOffset int, nbands int) {
+func l3Antialias(grbuf []float32, nbands int) {
+	idx := 0
 	for ; nbands > 0; nbands-- {
 		for i := 0; i < 8; i++ {
-			u := grbuf[grbufOffset+18+i]
-			d := grbuf[grbufOffset+17-i]
-			grbuf[grbufOffset+18+i] = u*gAa[0][i] - d*gAa[1][i]
-			grbuf[grbufOffset+17-i] = u*gAa[1][i] + d*gAa[0][i]
+			u := grbuf[idx+18+i]
+			d := grbuf[idx+17-i]
+			grbuf[idx+18+i] = u*gAa[0][i] - d*gAa[1][i]
+			grbuf[idx+17-i] = u*gAa[1][i] + d*gAa[0][i]
 		}
-		grbufOffset += 18
+		idx += 18
 	}
 }
 
-func l3StereoTopBand(right []float32, rightOffset int, sfb *byte, sfbIdx int, nbands int, maxBand []int) {
+func l3StereoTopBand(right []float32, sfb []byte, sfbIdx int, nbands int, maxBand []int) {
 	maxBand[0] = -1
 	maxBand[1] = -1
 	maxBand[2] = -1
 
+	idx := 0
 	for i := 0; i < nbands; i++ {
-		sfbVal := int(getSfbVal(sfb, sfbIdx+i))
+		sfbVal := int(sfb[sfbIdx+i])
 		for k := 0; k < sfbVal; k += 2 {
-			if right[rightOffset+k] != 0 || right[rightOffset+k+1] != 0 {
+			if right[idx+k] != 0 || right[idx+k+1] != 0 {
 				maxBand[i%3] = i
 				break
 			}
 		}
-		rightOffset += sfbVal
+		idx += sfbVal
 	}
 }
 
@@ -331,14 +337,15 @@ func l3MidsideStereo(left []float32, leftOffset int, n int) {
 
 var gPan = [14]float32{0, 1, 0.21132487, 0.78867513, 0.36602540, 0.63397460, 0.5, 0.5, 0.63397460, 0.36602540, 0.78867513, 0.21132487, 1, 0}
 
-func l3StereoProcess(left []float32, leftOffset int, istPos []byte, sfb *byte, sfbIdx int, hdr []byte, maxBand []int, mpeg2Sh int) {
+func l3StereoProcess(left []float32, istPos []byte, sfb []byte, sfbIdx int, hdr []byte, maxBand []int, mpeg2Sh int) {
 	maxPos := 64
 	if hdrTestMpeg1(hdr) {
 		maxPos = 7
 	}
 
+	idx := 0
 	for i := 0; ; i++ {
-		sfbVal := int(getSfbVal(sfb, sfbIdx+i))
+		sfbVal := int(sfb[sfbIdx+i])
 		if sfbVal == 0 {
 			break
 		}
@@ -360,25 +367,18 @@ func l3StereoProcess(left []float32, leftOffset int, istPos []byte, sfb *byte, s
 					kr = 1.0
 				}
 			}
-			l3IntensityStereoBand(left, leftOffset, sfbVal, kl*s, kr*s)
+			l3IntensityStereoBand(left, idx, sfbVal, kl*s, kr*s)
 		} else if hdrTestMsStereo(hdr) {
-			l3MidsideStereo(left, leftOffset, sfbVal)
+			l3MidsideStereo(left, idx, sfbVal)
 		}
-		leftOffset += sfbVal
+		idx += sfbVal
 	}
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func l3ReadScalefactors(scf []byte, scfOffset int, istPos []byte, istPosOffset int, scfSize []byte, scfCount []byte, scfCountOffset int, bitbuf *bs_t, scfsi int) {
-	scfIdx := scfOffset
-	istIdx := istPosOffset
-	partIdx := scfCountOffset
+func l3ReadScalefactors(scf []byte, istPos []byte, scfSize []byte, scfCount []byte, bitbuf *bitStream, scfsi int) {
+	scfIdx := 0
+	istIdx := 0
+	partIdx := 0
 	for i := 0; i < 4 && scfCount[partIdx+i] != 0; i++ {
 		cnt := int(scfCount[partIdx+i])
 		if (scfsi & 8) != 0 {
@@ -415,7 +415,7 @@ func l3ReadScalefactors(scf []byte, scfOffset int, istPos []byte, istPosOffset i
 	scf[scfIdx+2] = 0
 }
 
-func l3IntensityStereo(left []float32, istPos []byte, gr *L3GrInfo, gr1 *L3GrInfo, hdr []byte) {
+func l3IntensityStereo(left []float32, istPos []byte, gr *grInfo, gr1 *grInfo, hdr []byte) {
 	var maxBand [3]int
 	nSfb := int(gr.nLongSfb + gr.nShortSfb)
 	maxBlocks := 1
@@ -423,7 +423,7 @@ func l3IntensityStereo(left []float32, istPos []byte, gr *L3GrInfo, gr1 *L3GrInf
 		maxBlocks = 3
 	}
 
-	l3StereoTopBand(left, 576, gr.sfbtab, 0, nSfb, maxBand[:])
+	l3StereoTopBand(left[576:], gr.sfbtab, 0, nSfb, maxBand[:])
 	if gr.nLongSfb != 0 {
 		m := max(max(maxBand[0], maxBand[1]), maxBand[2])
 		maxBand[0] = m
@@ -443,7 +443,7 @@ func l3IntensityStereo(left []float32, istPos []byte, gr *L3GrInfo, gr1 *L3GrInf
 			istPos[itop] = istPos[prev]
 		}
 	}
-	l3StereoProcess(left, 0, istPos, gr.sfbtab, 0, hdr, maxBand[:], int(gr1.scalefacCompress&1))
+	l3StereoProcess(left, istPos, gr.sfbtab, 0, hdr, maxBand[:], int(gr1.scalefacCompress&1))
 }
 
 var gExpfrac = [4]float32{9.31322575e-10, 7.83145814e-10, 6.58544508e-10, 5.53767716e-10}
@@ -466,7 +466,7 @@ var gScfPartitions = [3][28]byte{
 var gScfcDecode = [16]byte{0, 1, 2, 3, 12, 5, 6, 7, 9, 10, 11, 13, 14, 15, 18, 19}
 var gMod = [24]byte{5, 5, 4, 4, 5, 5, 4, 1, 4, 3, 1, 1, 5, 6, 6, 1, 4, 4, 4, 1, 4, 3, 1, 1}
 
-func l3DecodeScalefactors(hdr []byte, istPos []byte, istPosOffset int, bs *bs_t, gr *L3GrInfo, scf []float32, ch int) {
+func l3DecodeScalefactors(hdr []byte, istPos []byte, bs *bitStream, gr *grInfo, scf []float32, ch int) {
 	partitionIdx := 0
 	if gr.nShortSfb != 0 {
 		partitionIdx += 1
@@ -506,7 +506,7 @@ func l3DecodeScalefactors(hdr []byte, istPos []byte, istPosOffset int, bs *bs_t,
 		scfsi = -16
 	}
 
-	l3ReadScalefactors(iscf[:], 0, istPos, istPosOffset, scfSize[:], scfPartition, 0, bs, scfsi)
+	l3ReadScalefactors(iscf[:], istPos, scfSize[:], scfPartition, bs, scfsi)
 
 	if gr.nShortSfb != 0 {
 		sh := 3 - scfShift
@@ -532,7 +532,7 @@ func l3DecodeScalefactors(hdr []byte, istPos []byte, istPosOffset int, bs *bs_t,
 	}
 }
 
-func l3RestoreReservoir(h *Mp3Dec, bs *bs_t, s *mp3dec_scratch_t, mainDataBegin int) bool {
+func l3RestoreReservoir(h *Mp3Dec, bs *bitStream, s *decScratch, mainDataBegin int) bool {
 	frameBytes := int((bs.limit - bs.pos) / 8)
 	bytesHave := min(h.Reserv, mainDataBegin)
 
@@ -542,17 +542,16 @@ func l3RestoreReservoir(h *Mp3Dec, bs *bs_t, s *mp3dec_scratch_t, mainDataBegin 
 	}
 	copy(s.maindata[:], h.ReservBuf[startIdx:startIdx+bytesHave])
 
-	bsBufSlice := unsafe.Slice(bs.buf, int(bs.pos/8)+frameBytes)
-	copy(s.maindata[bytesHave:], bsBufSlice[int(bs.pos/8):int(bs.pos/8)+frameBytes])
+	copy(s.maindata[bytesHave:], bs.buf[int(bs.pos/8):int(bs.pos/8)+frameBytes])
 
-	s.bs.buf = &s.maindata[0]
+	s.bs.buf = s.maindata[:]
 	s.bs.pos = 0
 	s.bs.limit = int32((bytesHave + frameBytes) * 8)
 
 	return h.Reserv >= mainDataBegin
 }
 
-func l3SaveReservoir(h *Mp3Dec, s *mp3dec_scratch_t) {
+func l3SaveReservoir(h *Mp3Dec, s *decScratch) {
 	pos := int((s.bs.pos + 7) / 8)
 	remains := int(s.bs.limit/8) - pos
 	if remains > 511 {
@@ -598,7 +597,7 @@ var gScfMixed = [8][40]byte{
 	{4, 4, 4, 4, 4, 4, 6, 6, 4, 4, 4, 6, 6, 6, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 26, 26, 26, 34, 34, 34, 42, 42, 42, 12, 12, 12, 0},
 }
 
-func l3ReadSideInfo(bs *bs_t, gr []L3GrInfo, hdr []byte) int {
+func l3ReadSideInfo(bs *bitStream, gr []grInfo, hdr []byte) int {
 	srIdx := hdrGetMySampleRate(hdr)
 	if srIdx != 0 {
 		srIdx -= 1
@@ -636,7 +635,7 @@ func l3ReadSideInfo(bs *bs_t, gr []L3GrInfo, hdr []byte) int {
 			compressBits = 4
 		}
 		gr[grIdx].scalefacCompress = uint16(getBits(bs, compressBits))
-		gr[grIdx].sfbtab = &gScfLong[srIdx][0]
+		gr[grIdx].sfbtab = gScfLong[srIdx][:]
 		gr[grIdx].nLongSfb = 22
 		gr[grIdx].nShortSfb = 0
 		if getBits(bs, 1) != 0 {
@@ -651,11 +650,11 @@ func l3ReadSideInfo(bs *bs_t, gr []L3GrInfo, hdr []byte) int {
 				scfsi &= 0x0F0F
 				if gr[grIdx].mixedBlockFlag == 0 {
 					gr[grIdx].regionCount[0] = 8
-					gr[grIdx].sfbtab = &gScfShort[srIdx][0]
+					gr[grIdx].sfbtab = gScfShort[srIdx][:]
 					gr[grIdx].nLongSfb = 0
 					gr[grIdx].nShortSfb = 39
 				} else {
-					gr[grIdx].sfbtab = &gScfMixed[srIdx][0]
+					gr[grIdx].sfbtab = gScfMixed[srIdx][:]
 					if hdrTestMpeg1(hdr) {
 						gr[grIdx].nLongSfb = 8
 					} else {
@@ -705,12 +704,12 @@ func l3ReadSideInfo(bs *bs_t, gr []L3GrInfo, hdr []byte) int {
 	return mainDataBegin
 }
 
-func l3Decode(h *Mp3Dec, s *mp3dec_scratch_t, grInfo []L3GrInfo, grInfoOffset int, nch int) {
-	grbufFlat := unsafe.Slice(&s.grbuf[0][0], 1192)
+func l3Decode(h *Mp3Dec, s *decScratch, grInfo []grInfo, grInfoOffset int, nch int) {
+	grbufFlat := s.grbuf[:]
 	for ch := 0; ch < nch; ch++ {
 		layer3grLimit := int(s.bs.pos) + int(grInfo[grInfoOffset+ch].part23Length)
-		l3DecodeScalefactors(h.Header[:], s.ist_pos[ch][:], 0, &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], ch)
-		L3HuffmanDecode(grbufFlat[ch*576:ch*576+576], unsafe.Pointer(&s.bs), unsafe.Pointer(&grInfo[grInfoOffset+ch]), s.scf[:], layer3grLimit)
+		l3DecodeScalefactors(h.Header[:], s.ist_pos[ch][:], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], ch)
+		l3HuffmanDecode(grbufFlat[ch*576:ch*576+576], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], layer3grLimit)
 	}
 
 	if hdrTestIStereo(h.Header[:]) {
@@ -736,9 +735,9 @@ func l3Decode(h *Mp3Dec, s *mp3dec_scratch_t, grInfo []L3GrInfo, grInfoOffset in
 			} else {
 				aaBands = -1
 			}
-			l3Reorder(grbufFlat[ch*576:ch*576+576], scratch[:], gr.sfbtab, 0)
+			l3Reorder(grbufFlat[ch*576:ch*576+576], scratch[:], gr.sfbtab)
 		}
-		l3Antialias(grbufFlat, ch*576, aaBands+1)
+		l3Antialias(grbufFlat[ch*576:], aaBands+1)
 		L3Imdct(grbufFlat[ch*576:ch*576+576], h.MdctOverlap[ch][:], int(gr.blockType), nLongBands)
 		l3ChangeSign(grbufFlat[ch*576 : ch*576+576])
 	}
