@@ -1,8 +1,12 @@
-package mp3
+//go:build cgo_test
+
+package main
 
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/godexture/codec-mp3/internal/mp3"
 )
 
 func TestGoSynthFilterMatchesC(t *testing.T) {
@@ -39,7 +43,7 @@ func TestGoSynthFilterMatchesC(t *testing.T) {
 			C_synth_granule(qmfStateC, grbufC, nbands, nch, pcmC, linsC)
 
 			// Call Go version
-			Mp3dSynthGranuleFloat(qmfStateGo, grbufGo, nbands, nch, pcmGo, 0, linsGo)
+			mp3.Mp3dSynthGranuleFloat(qmfStateGo, grbufGo, nbands, nch, pcmGo, 0, linsGo)
 
 			for i := range pcmC {
 				diff := pcmGo[i] - pcmC[i]

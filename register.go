@@ -46,11 +46,14 @@ func init() {
 				},
 				Capabilities: []manifest.Capability{mp3Capability{}},
 				TransformFunc: func(s media.StreamInfo) media.Profile {
-					// デコード後は常に S16 Stereo
 					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 					p.Audio.CodecID = media.CodecLPCM // デコード後はPCM
 					p.Audio.Format = media.SampleFormatS16
-					p.Audio.ChannelLayout = media.LayoutStereo2_0
+					if s.Audio.ChannelCount() == 1 {
+						p.Audio.ChannelLayout = media.LayoutMono1
+					} else {
+						p.Audio.ChannelLayout = media.LayoutStereo2_0
+					}
 					return p
 				},
 			},

@@ -266,8 +266,8 @@ func mp3dDctII(grbuf []float32, grbufOffset int, n int) {
 	}
 }
 
-// Mp3dSynthGranuleFloat is the Go native implementation of subband synthesis filtering.
-func Mp3dSynthGranuleFloat(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, pcmOffset int, lins []float32) {
+// synthGranule is the Go native implementation of subband synthesis filtering.
+func synthGranule(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, pcmOffset int, lins []float32) {
 	for i := 0; i < nch; i++ {
 		mp3dDctII(grbuf, 576*i, nbands)
 	}

@@ -18,6 +18,7 @@ func (DecoderConfig) NodeConfigaration() {}
 type Decoder struct {
 	inQueue  chan *media.Packet
 	outQueue chan *media.Frame
+	done     chan struct{}
 	pw       *io.PipeWriter
 	pr       *io.PipeReader
 	err      error
@@ -29,6 +30,7 @@ func NewDecoder() *Decoder {
 	d := &Decoder{
 		inQueue:  make(chan *media.Packet, 100),
 		outQueue: make(chan *media.Frame, 100),
+		done:     make(chan struct{}),
 		pw:       pw,
 		pr:       pr,
 	}
@@ -49,8 +51,39 @@ func (d *Decoder) writeLoop() {
 	d.pw.Close()
 }
 
+// processFrame processes raw PCM float samples, converts them to S16 format,
+// and packages them into a media.Frame.
+func processFrame(floatPcm []float32, intPcm []int16, samples int, info mp3.Mp3DecFrameInfo) (media.Frame, error) {
+	channels := info.Channels
+	decodedSamples := samples * channels
+	mp3.FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
+
+	byteLen := decodedSamples * 2
+	byteBuf := make([]byte, byteLen)
+	for i := 0; i < decodedSamples; i++ {
+		binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(intPcm[i]))
+	}
+
+	var layout media.ChannelLayout
+	if channels == 1 {
+		layout = media.LayoutMono1
+	} else {
+		layout = media.LayoutStereo2_0
+	}
+
+	frame := media.NewAudioFrame(
+		media.SampleFormatS16,
+		layout,
+		info.Hz,
+		samples,
+	)
+	copy(frame.Planes()[0], byteBuf)
+	return frame, nil
+}
+
 func (d *Decoder) decodeLoop() {
 	defer close(d.outQueue)
+	defer close(d.done)
 
 	var dec mp3.Mp3Dec
 	dec.Init()
@@ -110,32 +143,19 @@ func (d *Decoder) decodeLoop() {
 		samples, info := dec.DecodeFrame(buf[:bufLen], floatPcm)
 		if info.FrameBytes > 0 {
 			if samples > 0 {
-				sampleRate = info.Hz
-				channels = info.Channels
-
-				decodedSamples := samples * channels
-				mp3.FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
-
-				byteLen := decodedSamples * 2
-				byteBuf := make([]byte, byteLen)
-				for i := 0; i < decodedSamples; i++ {
-					binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(intPcm[i]))
+				if sampleRate == 0 {
+					sampleRate = info.Hz
+					channels = info.Channels
+				} else if info.Hz != sampleRate || info.Channels != channels {
+					d.err = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
+					return
 				}
 
-				var layout media.ChannelLayout
-				if channels == 1 {
-					layout = media.LayoutMono1
-				} else {
-					layout = media.LayoutStereo2_0
+				frame, err := processFrame(floatPcm, intPcm, samples, info)
+				if err != nil {
+					d.err = err
+					return
 				}
-
-				frame := media.NewAudioFrame(
-					media.SampleFormatS16,
-					layout,
-					sampleRate,
-					samples,
-				)
-				copy(frame.Planes()[0], byteBuf)
 				var f media.Frame = frame
 				d.outQueue <- &f
 			}
@@ -175,27 +195,22 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	select {
 	case f, ok := <-d.outQueue:
 		if !ok {
-			if d.err != nil {
+			if d.err != nil && d.err != engine.ErrEOF {
 				return nil, d.err
 			}
 			return nil, engine.ErrEOF
 		}
 		return f, nil
 	default:
-		// flushed かつ inQueue が空なら待機するべきか？
-		// writeLoop が全てを pw に書き込み、decodeLoop が全てを outQueue に書き込むまで
-		// 少しタイムラグがある。
-		// runCodecLoop は flush() 後も receive() をループで呼ぶため
-		// EAGAIN を返して良いが、完全に終了した場合は EOF を返す必要がある。
-		if d.flushed && len(d.inQueue) == 0 {
-			// まだ decodeLoop が終了していない場合は待つために EAGAIN を返す
-			select {
-			case <-d.outQueue: // 閉じているか確認 (上で select しているので不完全だが)
-			default:
-				// no-op
+		select {
+		case <-d.done:
+			if d.err != nil && d.err != engine.ErrEOF {
+				return nil, d.err
 			}
+			return nil, engine.ErrEOF
+		default:
+			return nil, engine.ErrEAGAIN
 		}
-		return nil, engine.ErrEAGAIN
 	}
 }
 
