@@ -1,16 +1,5 @@
 package mp3
 
-/*
-#cgo CFLAGS: -O3 -DMINIMP3_FLOAT_OUTPUT
-#include "minimp3.h"
-
-int mp3dec_skip_id3_bytes(const unsigned char *buf, int size);
-*/
-import "C"
-import (
-	"unsafe"
-)
-
 // Header contains the parsed MPEG frame header information.
 type Header struct {
 	FrameBytes  int
@@ -26,7 +15,27 @@ func SkipId3(mp3 []byte) int {
 	if len(mp3) == 0 {
 		return 0
 	}
-	return int(C.mp3dec_skip_id3_bytes((*C.uint8_t)(unsafe.Pointer(&mp3[0])), C.int(len(mp3))))
+	buf := mp3
+	bufSize := len(mp3)
+
+	// Check ID3v2
+	id3v2size := 0
+	if bufSize >= 10 && buf[0] == 'I' && buf[1] == 'D' && buf[2] == '3' &&
+		!((buf[5]&15) != 0 || (buf[6]&0x80) != 0 || (buf[7]&0x80) != 0 || (buf[8]&0x80) != 0 || (buf[9]&0x80) != 0) {
+		id3v2size = (int(buf[6]&0x7f) << 21) | (int(buf[7]&0x7f) << 14) | (int(buf[8]&0x7f) << 7) | int(buf[9]&0x7f)
+		id3v2size += 10 // header
+		if (buf[5] & 16) != 0 {
+			id3v2size += 10 // footer
+		}
+	}
+
+	if id3v2size > 0 {
+		if id3v2size >= bufSize {
+			return bufSize
+		}
+		return id3v2size
+	}
+	return 0
 }
 
 // BitReader is the Go equivalent of bs_t.
@@ -65,20 +74,20 @@ func (br *BitReader) GetBits(n int) uint32 {
 
 const hdrSize = 4
 
-func hdrIsMono(h []byte) bool         { return (h[3] & 0xC0) == 0xC0 }
-func hdrIsMsStereo(h []byte) bool     { return (h[3] & 0xE0) == 0x60 }
-func hdrIsFreeFormat(h []byte) bool   { return (h[2] & 0xF0) == 0 }
-func hdrIsCrc(h []byte) bool          { return (h[1] & 1) == 0 }
-func hdrTestPadding(h []byte) bool    { return (h[2] & 0x2) != 0 }
-func hdrTestMpeg1(h []byte) bool      { return (h[1] & 0x8) != 0 }
-func hdrTestNotMpeg25(h []byte) bool  { return (h[1] & 0x10) != 0 }
-func hdrTestIStereo(h []byte) bool    { return (h[3] & 0x10) != 0 }
-func hdrTestMsStereo(h []byte) bool   { return (h[3] & 0x20) != 0 }
-func hdrGetStereoMode(h []byte) int   { return int((h[3] >> 6) & 3) }
+func hdrIsMono(h []byte) bool          { return (h[3] & 0xC0) == 0xC0 }
+func hdrIsMsStereo(h []byte) bool      { return (h[3] & 0xE0) == 0x60 }
+func hdrIsFreeFormat(h []byte) bool    { return (h[2] & 0xF0) == 0 }
+func hdrIsCrc(h []byte) bool           { return (h[1] & 1) == 0 }
+func hdrTestPadding(h []byte) bool     { return (h[2] & 0x2) != 0 }
+func hdrTestMpeg1(h []byte) bool       { return (h[1] & 0x8) != 0 }
+func hdrTestNotMpeg25(h []byte) bool   { return (h[1] & 0x10) != 0 }
+func hdrTestIStereo(h []byte) bool     { return (h[3] & 0x10) != 0 }
+func hdrTestMsStereo(h []byte) bool    { return (h[3] & 0x20) != 0 }
+func hdrGetStereoMode(h []byte) int    { return int((h[3] >> 6) & 3) }
 func hdrGetStereoModeExt(h []byte) int { return int((h[3] >> 4) & 3) }
-func hdrGetLayer(h []byte) int        { return int((h[1] >> 1) & 3) }
-func hdrGetBitrate(h []byte) int      { return int(h[2] >> 4) }
-func hdrGetSampleRate(h []byte) int   { return int((h[2] >> 2) & 3) }
+func hdrGetLayer(h []byte) int         { return int((h[1] >> 1) & 3) }
+func hdrGetBitrate(h []byte) int       { return int(h[2] >> 4) }
+func hdrGetSampleRate(h []byte) int    { return int((h[2] >> 2) & 3) }
 func hdrGetMySampleRate(h []byte) int {
 	return hdrGetSampleRate(h) + (int((h[1]>>3)&1)+int((h[1]>>4)&1))*3
 }

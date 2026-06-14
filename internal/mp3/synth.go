@@ -1,24 +1,30 @@
 package mp3
 
-/*
-#cgo CFLAGS: -O3 -DMINIMP3_FLOAT_OUTPUT
-#include "minimp3.h"
-*/
-import "C"
-import (
-	"unsafe"
-)
-
 // FloatToS16 converts float32 PCM samples to int16 PCM samples.
 func FloatToS16(in []float32, out []int16) {
 	if len(in) == 0 || len(out) == 0 {
 		return
 	}
-	C.mp3dec_f32_to_s16(
-		(*C.float)(unsafe.Pointer(&in[0])),
-		(*C.int16_t)(unsafe.Pointer(&out[0])),
-		C.int(len(in)),
-	)
+	n := len(in)
+	if len(out) < n {
+		n = len(out)
+	}
+	for i := 0; i < n; i++ {
+		sample := in[i] * 32768.0
+		if sample >= 32766.5 {
+			out[i] = 32767
+		} else if sample <= -32767.5 {
+			out[i] = -32768
+		} else {
+			var s int16
+			if sample >= 0 {
+				s = int16(sample + 0.5)
+			} else {
+				s = int16(sample - 0.5)
+			}
+			out[i] = s
+		}
+	}
 }
 
 func mp3dSynthPairFloat(pcm []float32, pcmOffset int, nch int, z []float32, zOffset int) {

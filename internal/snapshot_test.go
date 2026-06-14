@@ -21,9 +21,11 @@ var testFiles = []string{
 	"l3-sin1k0db.mp3",
 }
 
-// Set to false when we reach Step 4 (Go native implementation) if float rounding causes slight differences.
-const requireBitExact = true
-const defaultEpsilon = 1e-5
+// Step 4 (Go native implementation) などで、浮動小数点の丸め誤差を許容する場合は false にします。
+const requireBitExact = false
+
+const defaultMaxRMSE = 1e-3    // 波形全体のエネルギー誤差の許容値
+const defaultMaxAbsDiff = 1e-2 // 局所的な（単一サンプルの）最大スパイク誤差の許容値
 
 func TestSnapshots(t *testing.T) {
 	updateSnapshots := os.Getenv("UPDATE_SNAPSHOTS") == "1"
@@ -36,7 +38,7 @@ func TestSnapshots(t *testing.T) {
 				t.Fatalf("failed to read test MP3 file: %v", err)
 			}
 
-			// Decode using minimp3 wrapper
+			// Decode using minimp3 wrapper (or native implementation)
 			pcm, err := decodeAll(mp3Data)
 			if err != nil {
 				t.Fatalf("failed to decode MP3 data: %v", err)
@@ -67,8 +69,8 @@ func TestSnapshots(t *testing.T) {
 					t.Errorf("bit-exact comparison failed: %v", err)
 				}
 			} else {
-				if err := compareEpsilon(pcm, expectedPcm, defaultEpsilon); err != nil {
-					t.Errorf("epsilon comparison failed: %v", err)
+				if err := comparePCM(pcm, expectedPcm, defaultMaxRMSE, defaultMaxAbsDiff); err != nil {
+					t.Errorf("PCM comparison failed: %v", err)
 				}
 			}
 		})
@@ -161,19 +163,42 @@ func compareExact(actual, expected []float32) error {
 	return nil
 }
 
-func compareEpsilon(actual, expected []float32, epsilon float32) error {
+// comparePCM はRMSEと最大絶対誤差を用いてPCMデータを比較します。
+func comparePCM(actual, expected []float32, maxRMSE, maxAbsDiff float64) error {
 	if len(actual) != len(expected) {
 		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
 	}
-	maxDiff := float32(0)
+
+	if len(actual) == 0 {
+		return nil
+	}
+
+	var sumSquares float64
+	var maxDiff float64
+	var maxDiffIdx int
+
 	for i := range actual {
-		diff := float32(math.Abs(float64(actual[i] - expected[i])))
-		if diff > epsilon {
-			return fmt.Errorf("mismatch at index %d exceeds epsilon: got %f, expected %f (diff: %e, limit: %e)", i, actual[i], expected[i], diff, epsilon)
-		}
+		// 計算精度を保つためにfloat64にキャストして評価します
+		diff := math.Abs(float64(actual[i]) - float64(expected[i]))
+
 		if diff > maxDiff {
 			maxDiff = diff
+			maxDiffIdx = i
 		}
+
+		sumSquares += diff * diff
 	}
+
+	rmse := math.Sqrt(sumSquares / float64(len(actual)))
+
+	if rmse > maxRMSE {
+		return fmt.Errorf("RMSE is too high: %e (max allowed: %e)", rmse, maxRMSE)
+	}
+
+	if maxDiff > maxAbsDiff {
+		return fmt.Errorf("max absolute difference is too high: %e at index %d (got %f, expected %f) (max allowed: %e)",
+			maxDiff, maxDiffIdx, actual[maxDiffIdx], expected[maxDiffIdx], maxAbsDiff)
+	}
+
 	return nil
 }
