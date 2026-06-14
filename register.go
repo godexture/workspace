@@ -42,7 +42,7 @@ func init() {
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
 					Name:        "mp3-decoder",
-					Description: "MP3 decoder (codec-mp3 plugin, go-mp3 backend)",
+					Description: "MP3 decoder (codec-mp3 plugin, custom minimp3 backend)",
 				},
 				Capabilities: []manifest.Capability{mp3Capability{}},
 				TransformFunc: func(s media.StreamInfo) media.Profile {
