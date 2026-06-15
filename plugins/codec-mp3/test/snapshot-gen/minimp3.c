@@ -1,7 +1,5 @@
 #define MINIMP3_IMPLEMENTATION
-#ifndef MINIMP3_FLOAT_OUTPUT
-#define MINIMP3_FLOAT_OUTPUT
-#endif
+
 #include "minimp3.h"
 #include "minimp3_ex.h"
 
@@ -12,7 +10,7 @@ int mp3dec_skip_id3_bytes(const uint8_t *buf, int size) {
     return (int)(p - buf);
 }
 
-void mp3dec_synth_granule_c(float *qmf_state, float *grbuf, int nbands, int nch, float *pcm, float *lins) {
+void mp3dec_synth_granule_c(float *qmf_state, float *grbuf, int nbands, int nch, int16_t *pcm, float *lins) {
     mp3d_synth_granule(qmf_state, grbuf, nbands, nch, pcm, lins);
 }
 
@@ -23,4 +21,3 @@ void mp3dec_imdct_gr_c(float *grbuf, float *overlap, int block_type, int n_long_
 void mp3dec_huffman_c(float *dst, void *bs, const void *gr_info, const float *scf, int layer3gr_limit) {
     L3_huffman(dst, (bs_t *)bs, (const L3_gr_info_t *)gr_info, scf, layer3gr_limit);
 }
-

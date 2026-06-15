@@ -107,10 +107,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	pkt.StreamIndex = 0
 	pkt.PTS = media.Pts(d.pts)
 
-	samplesPerFrame := 1152
-	if header.Version != MPEG1 {
-		samplesPerFrame = 576
-	}
+	samplesPerFrame := header.Samples
 	d.pts += int64(samplesPerFrame)
 
 	return pkt, 0, nil
