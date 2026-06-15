@@ -32,8 +32,8 @@ func (EncoderConfig) NodeConfigaration() {}
 //   - Stereo (2ch) のみサポート (Mono は要変換)
 //   - Bitrate オプションを EncoderConfig から読む
 type Encoder struct {
-	config  EncoderConfig
-	flushed bool
+	config    EncoderConfig
+	isFlushed bool
 }
 
 func NewEncoder(config EncoderConfig) *Encoder {
@@ -42,9 +42,8 @@ func NewEncoder(config EncoderConfig) *Encoder {
 	}
 	return &Encoder{config: config}
 }
-
-func (e *Encoder) SendFrame(frame *media.Frame) error {
-	if frame == nil || *frame == nil {
+func (e *Encoder) SendFrame(audioFrame *media.Frame) error {
+	if audioFrame == nil || *audioFrame == nil {
 		return errors.New("codec-mp3 encoder: received nil frame")
 	}
 	// stub: フレームを受け取るが、エンコードは実装されていない
@@ -52,7 +51,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 }
 
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
-	if e.flushed {
+	if e.isFlushed {
 		return nil, engine.ErrEOF
 	}
 	// stub: 常に ErrEAGAIN を返す (未実装)
@@ -60,6 +59,6 @@ func (e *Encoder) ReceivePacket() (*media.Packet, error) {
 }
 
 func (e *Encoder) Flush() error {
-	e.flushed = true
+	e.isFlushed = true
 	return nil
 }

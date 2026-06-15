@@ -1,33 +1,33 @@
 package mp3
 
-// bitReader is the bitReader reader state.
-type bitReader struct {
-	buf   []byte
-	pos   int32
-	limit int32
+// BitStreamReader is the bit stream reader state.
+type BitStreamReader struct {
+	buffer      []byte
+	bitPosition int32
+	bitLimit    int32
 }
 
-// grInfo matches the C structure L3_gr_info_t layout exactly.
-type grInfo struct {
-	sfbtab           []byte
-	part23Length     uint16
-	bigValues        uint16
-	scalefacCompress uint16
-	globalGain       uint8
-	blockType        uint8
-	mixedBlockFlag   uint8
-	nLongSfb         uint8
-	nShortSfb        uint8
-	tableSelect      [3]uint8
-	regionCount      [3]uint8
-	subblockGain     [3]uint8
-	preflag          uint8
-	scalefacScale    uint8
-	count1Table      uint8
-	scfsi            uint8
+// GranuleInfo matches the layout of L3 granule information.
+type GranuleInfo struct {
+	scaleFactorBandTable          []byte
+	part23Length                  uint16
+	bigValues                     uint16
+	scaleFactorCompression          uint16
+	globalGain                      uint8
+	blockType                       uint8
+	mixedBlockFlag                  uint8
+	numberOfLongScaleFactorBands    uint8
+	numberOfShortScaleFactorBands   uint8
+	tableSelect                     [3]uint8
+	regionCount                     [3]uint8
+	subblockGain                    [3]uint8
+	preemphasisFlag                 uint8
+	scaleFactorScale                uint8
+	count1Table                     uint8
+	scfsi                           uint8
 }
 
-func pow43L3(x int) float32 {
+func power43Layer3(x int) float32 {
 	var frac float32
 	var sign, mult int = 0, 256
 
@@ -45,230 +45,229 @@ func pow43L3(x int) float32 {
 	return pow43[16+((x+sign)>>6)] * (1.0 + frac*(4.0/3.0+frac*(2.0/9.0))) * float32(mult)
 }
 
-// huffmanDecodeL3 performs Huffman decoding for a Layer 3 granule.
-func huffmanDecodeL3(dst []float32, bs *bitReader, grInfo *grInfo, scf []float32, regionLimit int) {
-	if len(dst) == 0 || bs == nil || grInfo == nil {
+// huffmanDecodeLayer3 performs Huffman decoding for a Layer 3 granule.
+func huffmanDecodeLayer3(destinationSamples []float32, bitStreamReader *BitStreamReader, granuleInfo *GranuleInfo, scaleFactors []float32, regionLimit int) {
+	if len(destinationSamples) == 0 || bitStreamReader == nil || granuleInfo == nil {
 		return
 	}
 
-	idx := int(bs.pos / 8)
+	byteIndex := int(bitStreamReader.bitPosition / 8)
 
 	readByte := func(i int) uint32 {
-		if i < 0 || i >= len(bs.buf) {
+		if i < 0 || i >= len(bitStreamReader.buffer) {
 			return 0
 		}
-		return uint32(bs.buf[i])
+		return uint32(bitStreamReader.buffer[i])
 	}
 
-	bsCache := (((readByte(idx)*256+readByte(idx+1))*256+readByte(idx+2))*256 + readByte(idx+3)) << (uint32(bs.pos) & 7)
-	bsSh := int32((bs.pos & 7) - 8)
-	idx += 4
+	bitStreamCache := (((readByte(byteIndex)*256+readByte(byteIndex+1))*256+readByte(byteIndex+2))*256 + readByte(byteIndex+3)) << (uint32(bitStreamReader.bitPosition) & 7)
+	bitStreamShift := int32((bitStreamReader.bitPosition & 7) - 8)
+	byteIndex += 4
 
-	peekBits := func(n int) uint32 {
-		return bsCache >> (32 - n)
+	peekBits := func(numberOfBits int) uint32 {
+		return bitStreamCache >> (32 - numberOfBits)
 	}
-	flushBits := func(n int) {
-		bsCache <<= n
-		bsSh += int32(n)
+	flushBits := func(numberOfBits int) {
+		bitStreamCache <<= numberOfBits
+		bitStreamShift += int32(numberOfBits)
 	}
 	checkBits := func() {
-		for bsSh >= 0 {
-			val := readByte(idx)
-			idx++
-			bsCache |= val << bsSh
-			bsSh -= 8
+		for bitStreamShift >= 0 {
+			val := readByte(byteIndex)
+			byteIndex++
+			bitStreamCache |= val << bitStreamShift
+			bitStreamShift -= 8
 		}
 	}
-	bsPos := func() int {
-		return idx*8 - 24 + int(bsSh)
+	bitStreamPosition := func() int {
+		return byteIndex*8 - 24 + int(bitStreamShift)
 	}
 
 	one := float32(0.0)
 	ireg := 0
-	bigValCnt := int(grInfo.bigValues)
-	sfb := grInfo.sfbtab
-	sfbIdx := 0
-	dstIdx := 0
-	scfIdx := 0
+	bigValuesCount := int(granuleInfo.bigValues)
+	scaleFactorBandTable := granuleInfo.scaleFactorBandTable
+	scaleFactorBandIndex := 0
+	destinationIndex := 0
+	scaleFactorIndex := 0
 
-	for bigValCnt > 0 {
-		tabNum := int(grInfo.tableSelect[ireg])
-		sfbCnt := int(grInfo.regionCount[ireg])
+	for bigValuesCount > 0 {
+		tableNumber := int(granuleInfo.tableSelect[ireg])
+		scaleFactorBandCount := int(granuleInfo.regionCount[ireg])
 		ireg++
-		codebook := tabs[tabindex[tabNum]:]
-		linbits := int(linbits[tabNum])
+		codebook := tabs[tableIndex[tableNumber]:]
+		linearBits := int(linearBits[tableNumber])
 
-		if linbits > 0 {
+		if linearBits > 0 {
 			for {
-				np := int(sfb[sfbIdx]) / 2
-				sfbIdx++
-				pairsToDecode := min(bigValCnt, np)
-				one = scf[scfIdx]
-				scfIdx++
+				numberOfPairs := int(scaleFactorBandTable[scaleFactorBandIndex]) / 2
+				scaleFactorBandIndex++
+				pairsToDecode := min(bigValuesCount, numberOfPairs)
+				one = scaleFactors[scaleFactorIndex]
+				scaleFactorIndex++
 				for pairsToDecode > 0 {
-					w := 5
-					leaf := int(codebook[peekBits(w)])
-					for leaf < 0 {
-						flushBits(w)
-						w = leaf & 7
-						leaf = int(codebook[int(peekBits(w))-(leaf>>3)])
+					bitsToRead := 5
+					leafValue := int(codebook[peekBits(bitsToRead)])
+					for leafValue < 0 {
+						flushBits(bitsToRead)
+						bitsToRead = leafValue & 7
+						leafValue = int(codebook[int(peekBits(bitsToRead))-(leafValue>>3)])
 					}
-					flushBits(leaf >> 8)
+					flushBits(leafValue >> 8)
 
 					for j := 0; j < 2; j++ {
-						lsb := leaf & 0x0F
-						if lsb == 15 {
-							lsb += int(peekBits(linbits))
-							flushBits(linbits)
+						leastSignificantBits := leafValue & 0x0F
+						if leastSignificantBits == 15 {
+							leastSignificantBits += int(peekBits(linearBits))
+							flushBits(linearBits)
 							checkBits()
-							val := one * pow43L3(lsb)
-							if int32(bsCache) < 0 {
+							val := one * power43Layer3(leastSignificantBits)
+							if int32(bitStreamCache) < 0 {
 								val = -val
 							}
-							dst[dstIdx] = val
+							destinationSamples[destinationIndex] = val
 						} else {
-							index := 16 + lsb - 16*int(bsCache>>31)
-							dst[dstIdx] = pow43[index] * one
+							index := 16 + leastSignificantBits - 16*int(bitStreamCache>>31)
+							destinationSamples[destinationIndex] = pow43[index] * one
 						}
-						dstIdx++
-						if lsb != 0 {
+						destinationIndex++
+						if leastSignificantBits != 0 {
 							flushBits(1)
 						}
-						leaf >>= 4
+						leafValue >>= 4
 					}
 					checkBits()
 					pairsToDecode--
 				}
-				bigValCnt -= np
-				sfbCnt--
-				if bigValCnt <= 0 || sfbCnt < 0 {
+				bigValuesCount -= numberOfPairs
+				scaleFactorBandCount--
+				if bigValuesCount <= 0 || scaleFactorBandCount < 0 {
 					break
 				}
 			}
 		} else {
 			for {
-				np := int(sfb[sfbIdx]) / 2
-				sfbIdx++
-				pairsToDecode := min(bigValCnt, np)
-				one = scf[scfIdx]
-				scfIdx++
+				numberOfPairs := int(scaleFactorBandTable[scaleFactorBandIndex]) / 2
+				scaleFactorBandIndex++
+				pairsToDecode := min(bigValuesCount, numberOfPairs)
+				one = scaleFactors[scaleFactorIndex]
+				scaleFactorIndex++
 				for pairsToDecode > 0 {
-					w := 5
-					leaf := int(codebook[peekBits(w)])
-					for leaf < 0 {
-						flushBits(w)
-						w = leaf & 7
-						leaf = int(codebook[int(peekBits(w))-(leaf>>3)])
+					bitsToRead := 5
+					leafValue := int(codebook[peekBits(bitsToRead)])
+					for leafValue < 0 {
+						flushBits(bitsToRead)
+						bitsToRead = leafValue & 7
+						leafValue = int(codebook[int(peekBits(bitsToRead))-(leafValue>>3)])
 					}
-					flushBits(leaf >> 8)
+					flushBits(leafValue >> 8)
 
 					for j := 0; j < 2; j++ {
-						lsb := leaf & 0x0F
-						index := 16 + lsb - 16*int(bsCache>>31)
-						dst[dstIdx] = pow43[index] * one
-						dstIdx++
-						if lsb != 0 {
+						leastSignificantBits := leafValue & 0x0F
+						index := 16 + leastSignificantBits - 16*int(bitStreamCache>>31)
+						destinationSamples[destinationIndex] = pow43[index] * one
+						destinationIndex++
+						if leastSignificantBits != 0 {
 							flushBits(1)
 						}
-						leaf >>= 4
+						leafValue >>= 4
 					}
 					checkBits()
 					pairsToDecode--
 				}
-				bigValCnt -= np
-				sfbCnt--
-				if bigValCnt <= 0 || sfbCnt < 0 {
+				bigValuesCount -= numberOfPairs
+				scaleFactorBandCount--
+				if bigValuesCount <= 0 || scaleFactorBandCount < 0 {
 					break
 				}
 			}
 		}
 	}
 
-	np := 1 - bigValCnt
+	numberOfPairs := 1 - bigValuesCount
 	for {
 		var codebookCount1 []byte
-		if grInfo.count1Table != 0 {
+		if granuleInfo.count1Table != 0 {
 			codebookCount1 = tab33[:]
 		} else {
 			codebookCount1 = tab32[:]
 		}
 
-		leaf := int(codebookCount1[peekBits(4)])
-		if (leaf & 8) == 0 {
-			leaf = int(codebookCount1[(leaf>>3)+int((bsCache<<4)>>(32-(leaf&3)))])
+		leafValue := int(codebookCount1[peekBits(4)])
+		if (leafValue & 8) == 0 {
+			leafValue = int(codebookCount1[(leafValue>>3)+int((bitStreamCache<<4)>>(32-(leafValue&3)))])
 		}
-		flushBits(leaf & 7)
-		if bsPos() > regionLimit {
+		flushBits(leafValue & 7)
+		if bitStreamPosition() > regionLimit {
 			break
 		}
 
-		reloadScalefactor := func() bool {
-			np--
-			if np == 0 {
-				val := int(sfb[sfbIdx])
-				sfbIdx++
-				np = val / 2
-				if np == 0 {
+		reloadScaleFactor := func() bool {
+			numberOfPairs--
+			if numberOfPairs == 0 {
+				val := int(scaleFactorBandTable[scaleFactorBandIndex])
+				scaleFactorBandIndex++
+				numberOfPairs = val / 2
+				if numberOfPairs == 0 {
 					return false
 				}
-				one = scf[scfIdx]
-				scfIdx++
+				one = scaleFactors[scaleFactorIndex]
+				scaleFactorIndex++
 			}
 			return true
 		}
 
-		deqCount1 := func(s int) {
-			if (leaf & (128 >> s)) != 0 {
+		dequantizeCount1 := func(s int) {
+			if (leafValue & (128 >> s)) != 0 {
 				val := one
-				if int32(bsCache) < 0 {
+				if int32(bitStreamCache) < 0 {
 					val = -one
 				}
-				dst[dstIdx+s] = val
+				destinationSamples[destinationIndex+s] = val
 				flushBits(1)
 			}
 		}
 
-		if !reloadScalefactor() {
+		if !reloadScaleFactor() {
 			break
 		}
-		deqCount1(0)
-		deqCount1(1)
-		if !reloadScalefactor() {
+		dequantizeCount1(0)
+		dequantizeCount1(1)
+		if !reloadScaleFactor() {
 			break
 		}
-		deqCount1(2)
-		deqCount1(3)
+		dequantizeCount1(2)
+		dequantizeCount1(3)
 
-		dstIdx += 4
+		destinationIndex += 4
 		checkBits()
 	}
 
-	bs.pos = int32(regionLimit)
+	bitStreamReader.bitPosition = int32(regionLimit)
 }
-
-func (bs *bitReader) getBits(n int) uint32 {
-	s := bs.pos & 7
-	shl := n + int(s)
-	pIdx := int(bs.pos >> 3)
-	bs.pos += int32(n)
-	if bs.pos > bs.limit {
+func (r *BitStreamReader) getBits(numberOfBits int) uint32 {
+	bitOffset := r.bitPosition & 7
+	shiftLeft := numberOfBits + int(bitOffset)
+	byteIndex := int(r.bitPosition >> 3)
+	r.bitPosition += int32(numberOfBits)
+	if r.bitPosition > r.bitLimit {
 		return 0
 	}
-	readByte := func(idx int) uint32 {
-		if idx < 0 || idx >= len(bs.buf) {
+	readByte := func(index int) uint32 {
+		if index < 0 || index >= len(r.buffer) {
 			return 0
 		}
-		return uint32(bs.buf[idx])
+		return uint32(r.buffer[index])
 	}
-	next := readByte(pIdx) & (255 >> s)
-	pIdx++
-	cache := uint32(0)
-	for shl > 8 {
-		shl -= 8
-		cache |= next << shl
-		next = readByte(pIdx)
-		pIdx++
+	next := readByte(byteIndex) & (255 >> bitOffset)
+	byteIndex++
+	bitCache := uint32(0)
+	for shiftLeft > 8 {
+		shiftLeft -= 8
+		bitCache |= next << shiftLeft
+		next = readByte(byteIndex)
+		byteIndex++
 	}
-	shl -= 8
-	return cache | (next >> -shl)
+	shiftLeft -= 8
+	return bitCache | (next >> -shiftLeft)
 }

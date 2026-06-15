@@ -41,11 +41,11 @@ func init() {
 			if !ok {
 				return nil, fmt.Errorf("format-mp3 demuxer requires io.ReadSeeker")
 			}
-			dmx, err := NewDemuxerEngine(rs)
+			demuxer, err := NewDemuxerEngine(rs)
 			if err != nil {
 				return nil, err
 			}
-			return engine.WrapDemuxer(dmx), nil
+			return engine.WrapDemuxer(demuxer), nil
 		},
 	}); err != nil {
 		panic(err)

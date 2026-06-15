@@ -1,26 +1,26 @@
 package mp3
 
-type l12ScaleInfo struct {
-	Scf         [3 * 64]float32
-	TotalBands  uint8
-	StereoBands uint8
-	Bitalloc    [64]uint8
-	Scfcod      [64]uint8
+type Layer12ScaleFactorInfo struct {
+	ScaleFactors                [3 * 64]float32
+	TotalBands                  uint8
+	StereoBands                 uint8
+	BitAllocation               [64]uint8
+	ScaleFactorTransmissionCode [64]uint8
 }
 
-type L12SubbandAlloc struct {
-	TabOffset    uint8
-	CodeTabWidth uint8
-	BandCount    uint8
+type Layer12SubbandAllocation struct {
+	TableOffset    uint8
+	CodeTableWidth uint8
+	BandCount      uint8
 }
 
-var allocL1 = []L12SubbandAlloc{{76, 4, 32}}
-var allocL2M2 = []L12SubbandAlloc{{60, 4, 4}, {44, 3, 7}, {44, 2, 19}}
-var allocL2M1 = []L12SubbandAlloc{{0, 4, 3}, {16, 4, 8}, {32, 3, 12}, {40, 2, 7}}
-var allocL2M1Lowrate = []L12SubbandAlloc{{44, 4, 2}, {44, 3, 10}}
+var allocationTableLayer1 = []Layer12SubbandAllocation{{76, 4, 32}}
+var allocationTableLayer2MPEG2 = []Layer12SubbandAllocation{{60, 4, 4}, {44, 3, 7}, {44, 2, 19}}
+var allocationTableLayer2MPEG1 = []Layer12SubbandAllocation{{0, 4, 3}, {16, 4, 8}, {32, 3, 12}, {40, 2, 7}}
+var allocationTableLayer2MPEG1LowRate = []Layer12SubbandAllocation{{44, 4, 2}, {44, 3, 10}}
 
-func subbandAllocTableL12(header Header, sci *l12ScaleInfo) []L12SubbandAlloc {
-	var alloc []L12SubbandAlloc
+func subbandAllocationTableLayer12(header Header, scaleFactorInfo *Layer12ScaleFactorInfo) []Layer12SubbandAllocation {
+	var allocation []Layer12SubbandAllocation
 	mode := header.StereoMode()
 	stereoBands := 32
 	if mode == 3 { // MODE_MONO
@@ -29,15 +29,15 @@ func subbandAllocTableL12(header Header, sci *l12ScaleInfo) []L12SubbandAlloc {
 		stereoBands = (header.StereoModeExt() << 2) + 4
 	}
 
-	nbands := 0
+	numberOfBands := 0
 	if header.IsLayer1() {
-		alloc = allocL1
-		nbands = 32
+		allocation = allocationTableLayer1
+		numberOfBands = 32
 	} else if !header.TestMpeg1() {
-		alloc = allocL2M2
-		nbands = 30
+		allocation = allocationTableLayer2MPEG2
+		numberOfBands = 30
 	} else {
-		sampleRateIdx := header.SampleRate()
+		sampleRateIndex := header.SampleRate()
 		kbps := header.BitrateKbps()
 		if mode != 3 { // mode != MODE_MONO
 			kbps >>= 1
@@ -46,26 +46,26 @@ func subbandAllocTableL12(header Header, sci *l12ScaleInfo) []L12SubbandAlloc {
 			kbps = 192
 		}
 
-		alloc = allocL2M1
-		nbands = 27
+		allocation = allocationTableLayer2MPEG1
+		numberOfBands = 27
 		if kbps < 56 {
-			alloc = allocL2M1Lowrate
-			if sampleRateIdx == 2 {
-				nbands = 12
+			allocation = allocationTableLayer2MPEG1LowRate
+			if sampleRateIndex == 2 {
+				numberOfBands = 12
 			} else {
-				nbands = 8
+				numberOfBands = 8
 			}
-		} else if kbps >= 96 && sampleRateIdx != 1 {
-			nbands = 30
+		} else if kbps >= 96 && sampleRateIndex != 1 {
+			numberOfBands = 30
 		}
 	}
 
-	sci.TotalBands = uint8(nbands)
-	sci.StereoBands = uint8(min(stereoBands, nbands))
-	return alloc
+	scaleFactorInfo.TotalBands = uint8(numberOfBands)
+	scaleFactorInfo.StereoBands = uint8(min(stereoBands, numberOfBands))
+	return allocation
 }
 
-var deqL12 = [18 * 3]float32{
+var dequantizationTableLayer12 = [18 * 3]float32{
 	9.53674316e-07 / 3.0, 7.56931807e-07 / 3.0, 6.00777173e-07 / 3.0,
 	9.53674316e-07 / 7.0, 7.56931807e-07 / 7.0, 6.00777173e-07 / 7.0,
 	9.53674316e-07 / 15.0, 7.56931807e-07 / 15.0, 6.00777173e-07 / 15.0,
@@ -86,29 +86,29 @@ var deqL12 = [18 * 3]float32{
 	9.53674316e-07 / 9.0, 7.56931807e-07 / 9.0, 6.00777173e-07 / 9.0,
 }
 
-func l12ReadScalefactors(bs *bitReader, pba []uint8, scfcod []uint8, bands int, scf []float32) {
-	pbaIdx := 0
-	scfIdx := 0
+func readScaleFactorsLayer12(bitStreamReader *BitStreamReader, bitAllocationTable []uint8, scaleFactorTransmissionCode []uint8, bands int, scaleFactors []float32) {
+	bitAllocationIndex := 0
+	scaleFactorsIndex := 0
 	for i := 0; i < bands; i++ {
 		var s float32 = 0
-		ba := int(pba[pbaIdx])
-		pbaIdx++
+		bitAllocation := int(bitAllocationTable[bitAllocationIndex])
+		bitAllocationIndex++
 		mask := 0
-		if ba != 0 {
-			mask = 4 + int((19>>scfcod[i])&3)
+		if bitAllocation != 0 {
+			mask = 4 + int((19>>scaleFactorTransmissionCode[i])&3)
 		}
 		for m := 4; m > 0; m >>= 1 {
 			if (mask & m) != 0 {
-				b := int(bs.getBits(6))
-				s = deqL12[ba*3-6+b%3] * float32(int(1<<21)>>(b/3))
+				b := int(bitStreamReader.getBits(6))
+				s = dequantizationTableLayer12[bitAllocation*3-6+b%3] * float32(int(1<<21)>>(b/3))
 			}
-			scf[scfIdx] = s
-			scfIdx++
+			scaleFactors[scaleFactorsIndex] = s
+			scaleFactorsIndex++
 		}
 	}
 }
 
-var bitallocCodeTab = []byte{
+var bitAllocationCodeTable = []byte{
 	0, 17, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 	0, 17, 18, 3, 19, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16,
 	0, 17, 18, 3, 19, 4, 5, 16,
@@ -118,139 +118,139 @@ var bitallocCodeTab = []byte{
 	0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 }
 
-func readScaleInfoL12(header Header, bs *bitReader, sci *l12ScaleInfo) {
-	subbandAlloc := subbandAllocTableL12(header, sci)
+func readScaleFactorInfoLayer12(header Header, bitStreamReader *BitStreamReader, scaleFactorInfo *Layer12ScaleFactorInfo) {
+	subbandAllocation := subbandAllocationTableLayer12(header, scaleFactorInfo)
 
-	k := 0
-	baBits := 0
-	baCodeTabOffset := 0
-	subbandAllocIdx := 0
+	searchIndex := 0
+	bitAllocationBits := 0
+	bitAllocationCodeTableOffset := 0
+	subbandAllocationIndex := 0
 
-	for i := 0; i < int(sci.TotalBands); i++ {
-		var ba byte
-		if i == k {
-			sa := subbandAlloc[subbandAllocIdx]
-			subbandAllocIdx++
-			k += int(sa.BandCount)
-			baBits = int(sa.CodeTabWidth)
-			baCodeTabOffset = int(sa.TabOffset)
+	for i := 0; i < int(scaleFactorInfo.TotalBands); i++ {
+		var bitAllocation byte
+		if i == searchIndex {
+			sa := subbandAllocation[subbandAllocationIndex]
+			subbandAllocationIndex++
+			searchIndex += int(sa.BandCount)
+			bitAllocationBits = int(sa.CodeTableWidth)
+			bitAllocationCodeTableOffset = int(sa.TableOffset)
 		}
-		bits := int(bs.getBits(baBits))
-		ba = bitallocCodeTab[baCodeTabOffset+bits]
-		sci.Bitalloc[2*i] = ba
-		if i < int(sci.StereoBands) {
-			bits = int(bs.getBits(baBits))
-			ba = bitallocCodeTab[baCodeTabOffset+bits]
+		bits := int(bitStreamReader.getBits(bitAllocationBits))
+		bitAllocation = bitAllocationCodeTable[bitAllocationCodeTableOffset+bits]
+		scaleFactorInfo.BitAllocation[2*i] = bitAllocation
+		if i < int(scaleFactorInfo.StereoBands) {
+			bits = int(bitStreamReader.getBits(bitAllocationBits))
+			bitAllocation = bitAllocationCodeTable[bitAllocationCodeTableOffset+bits]
 		}
-		if sci.StereoBands != 0 {
-			sci.Bitalloc[2*i+1] = ba
+		if scaleFactorInfo.StereoBands != 0 {
+			scaleFactorInfo.BitAllocation[2*i+1] = bitAllocation
 		} else {
-			sci.Bitalloc[2*i+1] = 0
+			scaleFactorInfo.BitAllocation[2*i+1] = 0
 		}
 	}
 
-	for i := 0; i < 2*int(sci.TotalBands); i++ {
-		if sci.Bitalloc[i] != 0 {
+	for i := 0; i < 2*int(scaleFactorInfo.TotalBands); i++ {
+		if scaleFactorInfo.BitAllocation[i] != 0 {
 			if header.IsLayer1() {
-				sci.Scfcod[i] = 2
+				scaleFactorInfo.ScaleFactorTransmissionCode[i] = 2
 			} else {
-				sci.Scfcod[i] = byte(bs.getBits(2))
+				scaleFactorInfo.ScaleFactorTransmissionCode[i] = byte(bitStreamReader.getBits(2))
 			}
 		} else {
-			sci.Scfcod[i] = 6
+			scaleFactorInfo.ScaleFactorTransmissionCode[i] = 6
 		}
 	}
 
-	l12ReadScalefactors(bs, sci.Bitalloc[:], sci.Scfcod[:], int(sci.TotalBands*2), sci.Scf[:])
+	readScaleFactorsLayer12(bitStreamReader, scaleFactorInfo.BitAllocation[:], scaleFactorInfo.ScaleFactorTransmissionCode[:], int(scaleFactorInfo.TotalBands*2), scaleFactorInfo.ScaleFactors[:])
 
-	for i := int(sci.StereoBands); i < int(sci.TotalBands); i++ {
-		sci.Bitalloc[2*i+1] = 0
+	for i := int(scaleFactorInfo.StereoBands); i < int(scaleFactorInfo.TotalBands); i++ {
+		scaleFactorInfo.BitAllocation[2*i+1] = 0
 	}
 }
 
-func dequantizeGranuleL12(grbuf []float32, bs *bitReader, sci *l12ScaleInfo, groupSize int) int {
-	choff := SamplesPerGranuleLayer3
+func dequantizeGranuleLayer12(granuleBuffer []float32, bitStreamReader *BitStreamReader, scaleFactorInfo *Layer12ScaleFactorInfo, groupSize int) int {
+	channelOffset := SamplesPerGranuleLayer3
 	for j := 0; j < 4; j++ {
-		dstOffset := groupSize * j
-		for i := 0; i < 2*int(sci.TotalBands); i++ {
-			ba := int(sci.Bitalloc[i])
-			if ba != 0 {
-				if ba < 17 {
-					half := (1 << (ba - 1)) - 1
+		destinationOffset := groupSize * j
+		for i := 0; i < 2*int(scaleFactorInfo.TotalBands); i++ {
+			bitAllocation := int(scaleFactorInfo.BitAllocation[i])
+			if bitAllocation != 0 {
+				if bitAllocation < 17 {
+					halfValue := (1 << (bitAllocation - 1)) - 1
 					for k := 0; k < groupSize; k++ {
-						grbuf[dstOffset+k] = float32(int(bs.getBits(ba)) - half)
+						granuleBuffer[destinationOffset+k] = float32(int(bitStreamReader.getBits(bitAllocation)) - halfValue)
 					}
 				} else {
-					mod := uint32((2 << (ba - 17)) + 1)
-					code := bs.getBits(int(mod + 2 - (mod >> 3)))
+					modulus := uint32((2 << (bitAllocation - 17)) + 1)
+					codeValue := bitStreamReader.getBits(int(modulus + 2 - (modulus >> 3)))
 					for k := 0; k < groupSize; k++ {
-						grbuf[dstOffset+k] = float32(int(code%mod) - int(mod/2))
-						code /= mod
+						granuleBuffer[destinationOffset+k] = float32(int(codeValue%modulus) - int(modulus/2))
+						codeValue /= modulus
 					}
 				}
 			}
-			dstOffset += choff
-			choff = 18 - choff
+			destinationOffset += channelOffset
+			channelOffset = 18 - channelOffset
 		}
 	}
 	return groupSize * 4
 }
 
-func applyScf384L12(sci *l12ScaleInfo, scf []float32, dst []float32) {
-	copy(dst[SamplesPerGranuleLayer3+int(sci.StereoBands)*SamplesPerSubbandLayer3:SamplesPerGranuleLayer3+int(sci.TotalBands)*SamplesPerSubbandLayer3], dst[int(sci.StereoBands)*SamplesPerSubbandLayer3:int(sci.TotalBands)*SamplesPerSubbandLayer3])
-	dstOffset := 0
-	scfOffset := 0
-	for i := 0; i < int(sci.TotalBands); i++ {
-		for k := 0; k < SamplesPerSubbandLayer12; k++ {
-			dst[dstOffset+k] *= scf[scfOffset+0]
-			dst[dstOffset+k+SamplesPerGranuleLayer3] *= scf[scfOffset+3]
+func applyScaleFactors384Layer12(scaleFactorInfo *Layer12ScaleFactorInfo, scaleFactors []float32, destination []float32) {
+	copy(destination[SamplesPerGranuleLayer3+int(scaleFactorInfo.StereoBands)*SamplesPerSubbandLayer3:SamplesPerGranuleLayer3+int(scaleFactorInfo.TotalBands)*SamplesPerSubbandLayer3], destination[int(scaleFactorInfo.StereoBands)*SamplesPerSubbandLayer3:int(scaleFactorInfo.TotalBands)*SamplesPerSubbandLayer3])
+	destinationOffset := 0
+	scaleFactorsOffset := 0
+	for i := 0; i < int(scaleFactorInfo.TotalBands); i++ {
+		for k := 0; k < SamplesPerSubbandLayer3; k++ {
+			destination[destinationOffset+k] *= scaleFactors[scaleFactorsOffset+0]
+			destination[destinationOffset+k+SamplesPerGranuleLayer3] *= scaleFactors[scaleFactorsOffset+3]
 		}
-		dstOffset += SamplesPerSubbandLayer3
-		scfOffset += 6
+		destinationOffset += SamplesPerSubbandLayer3
+		scaleFactorsOffset += 6
 	}
 }
 
 type decoderWorkspace struct {
-	bs       bitReader
-	maindata [MaxBitreservoirBytes + MaxFreeFormatFrameSize]byte
-	gr_info  [4]grInfo
-	grbuf    [MaxGranuleBufferSize]float32
-	scf      [MaxScalefactorBands]float32
-	syn      [2112]float32
-	ist_pos  [MaxChannels][MaxScalefactorBands]byte
+	bitStreamReader          BitStreamReader
+	mainData                 [MaxBitreservoirBytes + MaxFreeFormatFrameSize]byte
+	granuleInfo              [4]GranuleInfo
+	granuleBuffer            [MaxGranuleBufferSize]float32
+	scaleFactors             [MaxScalefactorBands]float32
+	synthesisWorkspace       [2112]float32
+	intensityStereoPositions [MaxChannels][MaxScalefactorBands]byte
 }
 
-func changeSignL3(grbuf []float32) {
+func changeSignL3(granuleBuffer []float32) {
 	for b := 0; b < NumSubbands; b += 2 {
 		offset := (b + 1) * SamplesPerSubbandLayer3
 		for i := 1; i < SamplesPerSubbandLayer3; i += 2 {
-			grbuf[offset+i] = -grbuf[offset+i]
+			granuleBuffer[offset+i] = -granuleBuffer[offset+i]
 		}
 	}
 }
 
-func reorderL3(grbuf []float32, scratch []float32, sfb []byte) {
-	srcIdx := 0
-	dstIdx := 0
-	sfbIdx := 0
+func reorderL3(granuleBuffer []float32, scratchBuffer []float32, scaleFactorBandTable []byte) {
+	sourceIndex := 0
+	destinationIndex := 0
+	scaleFactorBandIndex := 0
 	for {
-		length := int(sfb[sfbIdx])
+		length := int(scaleFactorBandTable[scaleFactorBandIndex])
 		if length == 0 {
 			break
 		}
-		sfbIdx += 3
+		scaleFactorBandIndex += 3
 		for i := 0; i < length; i++ {
-			scratch[dstIdx] = grbuf[srcIdx+0*length]
-			dstIdx++
-			scratch[dstIdx] = grbuf[srcIdx+1*length]
-			dstIdx++
-			scratch[dstIdx] = grbuf[srcIdx+2*length]
-			dstIdx++
-			srcIdx++
+			scratchBuffer[destinationIndex] = granuleBuffer[sourceIndex+0*length]
+			destinationIndex++
+			scratchBuffer[destinationIndex] = granuleBuffer[sourceIndex+1*length]
+			destinationIndex++
+			scratchBuffer[destinationIndex] = granuleBuffer[sourceIndex+2*length]
+			destinationIndex++
+			sourceIndex++
 		}
-		srcIdx += 2 * length
+		sourceIndex += 2 * length
 	}
-	copy(grbuf[:dstIdx], scratch[:dstIdx])
+	copy(granuleBuffer[:destinationIndex], scratchBuffer[:destinationIndex])
 }
 
 var aa = [2][8]float32{
@@ -258,72 +258,72 @@ var aa = [2][8]float32{
 	{0.51449576, 0.47173197, 0.31337745, 0.18191320, 0.09457419, 0.04096558, 0.01419856, 0.00369997},
 }
 
-func antialiasL3(grbuf []float32, nbands int) {
-	idx := 0
-	for ; nbands > 0; nbands-- {
+func antialiasLayer3(granuleBuffer []float32, numberOfBands int) {
+	index := 0
+	for ; numberOfBands > 0; numberOfBands-- {
 		for i := 0; i < (SamplesPerSubbandLayer3/2)-1; i++ {
-			u := grbuf[idx+SamplesPerSubbandLayer3+i]
-			d := grbuf[idx+(SamplesPerSubbandLayer3-1)-i]
-			grbuf[idx+SamplesPerSubbandLayer3+i] = u*aa[0][i] - d*aa[1][i]
-			grbuf[idx+(SamplesPerSubbandLayer3-1)-i] = u*aa[1][i] + d*aa[0][i]
+			u := granuleBuffer[index+SamplesPerSubbandLayer3+i]
+			d := granuleBuffer[index+(SamplesPerSubbandLayer3-1)-i]
+			granuleBuffer[index+SamplesPerSubbandLayer3+i] = u*aa[0][i] - d*aa[1][i]
+			granuleBuffer[index+(SamplesPerSubbandLayer3-1)-i] = u*aa[1][i] + d*aa[0][i]
 		}
-		idx += SamplesPerSubbandLayer3
+		index += SamplesPerSubbandLayer3
 	}
 }
 
-func stereoTopBandL3(right []float32, sfb []byte, nbands int, maxBand []int) {
+func stereoTopBandLayer3(rightChannel []float32, scaleFactorBandTable []byte, numberOfBands int, maxBand []int) {
 	maxBand[0] = -1
 	maxBand[1] = -1
 	maxBand[2] = -1
 
-	idx := 0
-	for i := 0; i < nbands; i++ {
-		sfbVal := int(sfb[i])
-		for k := 0; k < sfbVal; k += 2 {
-			if right[idx+k] != 0 || right[idx+k+1] != 0 {
+	byteIndex := 0
+	for i := 0; i < numberOfBands; i++ {
+		scaleFactorBandValue := int(scaleFactorBandTable[i])
+		for k := 0; k < scaleFactorBandValue; k += 2 {
+			if rightChannel[byteIndex+k] != 0 || rightChannel[byteIndex+k+1] != 0 {
 				maxBand[i%3] = i
 				break
 			}
 		}
-		idx += sfbVal
+		byteIndex += scaleFactorBandValue
 	}
 }
 
-func intensityStereoBandL3(left []float32, n int, kl float32, kr float32) {
+func intensityStereoBandLayer3(leftChannel []float32, n int, kl float32, kr float32) {
 	for i := 0; i < n; i++ {
-		left[i+SamplesPerGranuleLayer3] = left[i] * kr
-		left[i] = left[i] * kl
+		leftChannel[i+SamplesPerGranuleLayer3] = leftChannel[i] * kr
+		leftChannel[i] = leftChannel[i] * kl
 	}
 }
 
-func midsideStereoL3(left []float32, n int) {
+func midsideStereoLayer3(leftChannel []float32, n int) {
 	for i := 0; i < n; i++ {
-		a := left[i]
-		b := left[i+SamplesPerGranuleLayer3]
-		left[i] = a + b
-		left[i+SamplesPerGranuleLayer3] = a - b
+		a := leftChannel[i]
+		b := leftChannel[i+SamplesPerGranuleLayer3]
+		leftChannel[i] = a + b
+		leftChannel[i+SamplesPerGranuleLayer3] = a - b
 	}
 }
 
 var pan = [14]float32{0, 1, 0.21132487, 0.78867513, 0.36602540, 0.63397460, 0.5, 0.5, 0.63397460, 0.36602540, 0.78867513, 0.21132487, 1, 0}
 
-func stereoProcessL3(left []float32, istPos []byte, sfb []byte, header Header, maxBand []int, mpeg2Sh int) {
+func stereoProcessLayer3(leftChannel []float32, intensityStereoPosition []byte, scaleFactorBandTable []byte, header Header, maxBand []int, mpeg2Shift int) {
 	maxPos := 64
 	if header.TestMpeg1() {
 		maxPos = 7
 	}
 
-	idx := 0
+	byteIndex := 0
 	for i := 0; ; i++ {
-		sfbVal := int(sfb[i])
-		if sfbVal == 0 {
+		scaleFactorBandValue := int(scaleFactorBandTable[i])
+		if scaleFactorBandValue == 0 {
 			break
 		}
-		ipos := int(istPos[i])
+		ipos := int(intensityStereoPosition[i])
 		if i > maxBand[i%3] && ipos < maxPos {
 			var kl, kr float32
 			var s float32 = 1.0
-			if header.TestMsStereo() {
+			if header.TestMidSideStereo() {
 				s = 1.41421356
 			}
 			if header.TestMpeg1() {
@@ -331,94 +331,94 @@ func stereoProcessL3(left []float32, istPos []byte, sfb []byte, header Header, m
 				kr = pan[2*ipos+1]
 			} else {
 				kl = 1.0
-				kr = L3LdexpQ2(1.0, ((ipos+1)>>1)<<mpeg2Sh)
+				kr = layer3LdexpQ2(1.0, ((ipos+1)>>1)<<mpeg2Shift)
 				if (ipos & 1) != 0 {
 					kl = kr
 					kr = 1.0
 				}
 			}
-			intensityStereoBandL3(left[idx:], sfbVal, kl*s, kr*s)
-		} else if header.TestMsStereo() {
-			midsideStereoL3(left[idx:], sfbVal)
+			intensityStereoBandLayer3(leftChannel[byteIndex:], scaleFactorBandValue, kl*s, kr*s)
+		} else if header.TestMidSideStereo() {
+			midsideStereoLayer3(leftChannel[byteIndex:], scaleFactorBandValue)
 		}
-		idx += sfbVal
+		byteIndex += scaleFactorBandValue
 	}
 }
 
-func readScalefactorsL3(scf []byte, istPos []byte, scfSize []byte, scfCount []byte, bitbuf *bitReader, scfsi int) {
-	scfIdx := 0
-	istIdx := 0
-	partIdx := 0
-	for i := 0; i < 4 && scfCount[partIdx+i] != 0; i++ {
-		cnt := int(scfCount[partIdx+i])
-		if (scfsi & 8) != 0 {
-			copy(scf[scfIdx:scfIdx+cnt], istPos[istIdx:istIdx+cnt])
+func readScaleFactorsLayer3(scaleFactors []byte, intensityStereoPosition []byte, scaleFactorSize []byte, scaleFactorCount []byte, bitStreamReader *BitStreamReader, scaleFactorSelectionInfo int) {
+	scaleFactorsIndex := 0
+	intensityStereoIndex := 0
+	partitionIndex := 0
+	for i := 0; i < 4 && scaleFactorCount[partitionIndex+i] != 0; i++ {
+		cnt := int(scaleFactorCount[partitionIndex+i])
+		if (scaleFactorSelectionInfo & 8) != 0 {
+			copy(scaleFactors[scaleFactorsIndex:scaleFactorsIndex+cnt], intensityStereoPosition[intensityStereoIndex:intensityStereoIndex+cnt])
 		} else {
-			bits := int(scfSize[i])
+			bits := int(scaleFactorSize[i])
 			if bits == 0 {
 				for k := 0; k < cnt; k++ {
-					scf[scfIdx+k] = 0
-					istPos[istIdx+k] = 0
+					scaleFactors[scaleFactorsIndex+k] = 0
+					intensityStereoPosition[intensityStereoIndex+k] = 0
 				}
 			} else {
 				maxScf := -1
-				if scfsi < 0 {
+				if scaleFactorSelectionInfo < 0 {
 					maxScf = (1 << bits) - 1
 				}
 				for k := 0; k < cnt; k++ {
-					s := int(bitbuf.getBits(bits))
+					s := int(bitStreamReader.getBits(bits))
 					if s == maxScf {
-						istPos[istIdx+k] = 255
+						intensityStereoPosition[intensityStereoIndex+k] = 255
 					} else {
-						istPos[istIdx+k] = byte(s)
+						intensityStereoPosition[intensityStereoIndex+k] = byte(s)
 					}
-					scf[scfIdx+k] = byte(s)
+					scaleFactors[scaleFactorsIndex+k] = byte(s)
 				}
 			}
 		}
-		istIdx += cnt
-		scfIdx += cnt
-		scfsi *= 2
+		intensityStereoIndex += cnt
+		scaleFactorsIndex += cnt
+		scaleFactorSelectionInfo *= 2
 	}
-	scf[scfIdx+0] = 0
-	scf[scfIdx+1] = 0
-	scf[scfIdx+2] = 0
+	scaleFactors[scaleFactorsIndex+0] = 0
+	scaleFactors[scaleFactorsIndex+1] = 0
+	scaleFactors[scaleFactorsIndex+2] = 0
 }
 
-func intensityStereoL3(left []float32, istPos []byte, gr *grInfo, gr1 *grInfo, header Header) {
+func intensityStereoLayer3(leftChannel []float32, intensityStereoPosition []byte, granule *GranuleInfo, granule1 *GranuleInfo, header Header) {
 	var maxBand [3]int
-	nSfb := int(gr.nLongSfb + gr.nShortSfb)
+	numberOfScaleFactorBands := int(granule.numberOfLongScaleFactorBands + granule.numberOfShortScaleFactorBands)
 	maxBlocks := 1
-	if gr.nShortSfb != 0 {
+	if granule.numberOfShortScaleFactorBands != 0 {
 		maxBlocks = 3
 	}
 
-	stereoTopBandL3(left[SamplesPerGranuleLayer3:], gr.sfbtab, nSfb, maxBand[:])
-	if gr.nLongSfb != 0 {
+	stereoTopBandLayer3(leftChannel[SamplesPerGranuleLayer3:], granule.scaleFactorBandTable, numberOfScaleFactorBands, maxBand[:])
+	if granule.numberOfLongScaleFactorBands != 0 {
 		m := max(max(maxBand[0], maxBand[1]), maxBand[2])
 		maxBand[0] = m
 		maxBand[1] = m
 		maxBand[2] = m
 	}
 	for i := 0; i < maxBlocks; i++ {
-		defaultPos := 0
+		defaultPosition := 0
 		if header.TestMpeg1() {
-			defaultPos = 3
+			defaultPosition = 3
 		}
-		itop := nSfb - maxBlocks + i
-		prev := itop - maxBlocks
-		if maxBand[i] >= prev {
-			istPos[itop] = byte(defaultPos)
+		itop := numberOfScaleFactorBands - maxBlocks + i
+		previousIndex := itop - maxBlocks
+		if maxBand[i] >= previousIndex {
+			intensityStereoPosition[itop] = byte(defaultPosition)
 		} else {
-			istPos[itop] = istPos[prev]
+			intensityStereoPosition[itop] = intensityStereoPosition[previousIndex]
 		}
 	}
-	stereoProcessL3(left, istPos, gr.sfbtab, header, maxBand[:], int(gr1.scalefacCompress&1))
+	stereoProcessLayer3(leftChannel, intensityStereoPosition, granule.scaleFactorBandTable, header, maxBand[:], int(granule1.scaleFactorCompression&1))
 }
 
 var expfrac = [4]float32{9.31322575e-10, 7.83145814e-10, 6.58544508e-10, 5.53767716e-10}
 
-func L3LdexpQ2(y float32, expQ2 int) float32 {
+func layer3LdexpQ2(y float32, expQ2 int) float32 {
 	for expQ2 > 0 {
 		e := min(120, expQ2)
 		y *= expfrac[e&3] * float32(int(1<<30)>>(e>>2))
@@ -436,105 +436,105 @@ var scfPartitions = [3][28]byte{
 var scfcDecode = [16]byte{0, 1, 2, 3, 12, 5, 6, 7, 9, 10, 11, 13, 14, 15, 18, 19}
 var scfMod = [24]byte{5, 5, 4, 4, 5, 5, 4, 1, 4, 3, 1, 1, 5, 6, 6, 1, 4, 4, 4, 1, 4, 3, 1, 1}
 
-func decodeScalefactorsL3(header Header, istPos []byte, bs *bitReader, gr *grInfo, scf []float32, ch int) {
-	partitionIdx := 0
-	if gr.nShortSfb != 0 {
-		partitionIdx += 1
+func decodeScaleFactorsLayer3(header Header, intensityStereoPosition []byte, bitStreamReader *BitStreamReader, granule *GranuleInfo, scaleFactors []float32, channelIndex int) {
+	partitionIndex := 0
+	if granule.numberOfShortScaleFactorBands != 0 {
+		partitionIndex += 1
 	}
-	if gr.nLongSfb == 0 {
-		partitionIdx += 1
+	if granule.numberOfLongScaleFactorBands == 0 {
+		partitionIndex += 1
 	}
-	scfPartition := scfPartitions[partitionIdx][:]
+	scaleFactorPartition := scfPartitions[partitionIndex][:]
 
-	var scfSize [4]byte
-	var iscf [MaxScalefactorBands]byte
-	scfShift := int(gr.scalefacScale + 1)
-	scfsi := int(gr.scfsi)
+	var scaleFactorSize [4]byte
+	var integerScaleFactors [MaxScalefactorBands]byte
+	scaleFactorShift := int(granule.scaleFactorScale + 1)
+	scaleFactorSelectionInfo := int(granule.scfsi)
 
 	if header.TestMpeg1() {
-		part := int(scfcDecode[gr.scalefacCompress])
-		scfSize[0] = byte(part >> 2)
-		scfSize[1] = byte(part >> 2)
-		scfSize[2] = byte(part & 3)
-		scfSize[3] = byte(part & 3)
+		part := int(scfcDecode[granule.scaleFactorCompression])
+		scaleFactorSize[0] = byte(part >> 2)
+		scaleFactorSize[1] = byte(part >> 2)
+		scaleFactorSize[2] = byte(part & 3)
+		scaleFactorSize[3] = byte(part & 3)
 	} else {
 		ist := 0
-		if header.TestIStereo() && ch != 0 {
+		if header.TestIntensityStereo() && channelIndex != 0 {
 			ist = 1
 		}
-		sfc := int(gr.scalefacCompress >> ist)
+		sfc := int(granule.scaleFactorCompression >> ist)
 		k := ist * 12
 		for ; sfc >= 0; k += 4 {
 			modprod := 1
 			for i := 3; i >= 0; i-- {
-				scfSize[i] = byte((sfc / modprod) % int(scfMod[k+i]))
+				scaleFactorSize[i] = byte((sfc / modprod) % int(scfMod[k+i]))
 				modprod *= int(scfMod[k+i])
 			}
 			sfc -= modprod
 		}
-		scfPartition = scfPartition[k:]
-		scfsi = -16
+		scaleFactorPartition = scaleFactorPartition[k:]
+		scaleFactorSelectionInfo = -16
 	}
 
-	readScalefactorsL3(iscf[:], istPos, scfSize[:], scfPartition, bs, scfsi)
+	readScaleFactorsLayer3(integerScaleFactors[:], intensityStereoPosition, scaleFactorSize[:], scaleFactorPartition, bitStreamReader, scaleFactorSelectionInfo)
 
-	if gr.nShortSfb != 0 {
-		sh := 3 - scfShift
-		for i := 0; i < int(gr.nShortSfb); i += 3 {
-			iscf[int(gr.nLongSfb)+i+0] += gr.subblockGain[0] << sh
-			iscf[int(gr.nLongSfb)+i+1] += gr.subblockGain[1] << sh
-			iscf[int(gr.nLongSfb)+i+2] += gr.subblockGain[2] << sh
+	if granule.numberOfShortScaleFactorBands != 0 {
+		sh := 3 - scaleFactorShift
+		for i := 0; i < int(granule.numberOfShortScaleFactorBands); i += 3 {
+			integerScaleFactors[int(granule.numberOfLongScaleFactorBands)+i+0] += granule.subblockGain[0] << sh
+			integerScaleFactors[int(granule.numberOfLongScaleFactorBands)+i+1] += granule.subblockGain[1] << sh
+			integerScaleFactors[int(granule.numberOfLongScaleFactorBands)+i+2] += granule.subblockGain[2] << sh
 		}
-	} else if gr.preflag != 0 {
+	} else if granule.preemphasisFlag != 0 {
 		preamp := [10]byte{1, 1, 1, 1, 2, 2, 3, 3, 3, 2}
 		for i := 0; i < 10; i++ {
-			iscf[11+i] += preamp[i]
+			integerScaleFactors[11+i] += preamp[i]
 		}
 	}
 
-	gainExp := int(gr.globalGain) - 4 - 210
-	if header.IsMsStereo() {
+	gainExp := int(granule.globalGain) - 4 - 210
+	if header.IsMidSideStereo() {
 		gainExp -= 2
 	}
-	gain := L3LdexpQ2(2048.0, 44-gainExp)
-	for i := 0; i < int(gr.nLongSfb+gr.nShortSfb); i++ {
-		scf[i] = L3LdexpQ2(gain, int(iscf[i])<<scfShift)
+	gain := layer3LdexpQ2(2048.0, 44-gainExp)
+	for i := 0; i < int(granule.numberOfLongScaleFactorBands+granule.numberOfShortScaleFactorBands); i++ {
+		scaleFactors[i] = layer3LdexpQ2(gain, int(integerScaleFactors[i])<<scaleFactorShift)
 	}
 }
 
-func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decoderWorkspace, mainDataBegin int) error {
-	frameBytes := int((bs.limit - bs.pos) / 8)
-	bytesHave := min(h.Reserv, mainDataBegin)
+func restoreReservoirLayer3(decoder *Decoder, bitStreamReader *BitStreamReader, workspace *decoderWorkspace, mainDataBegin int) error {
+	frameBytes := int((bitStreamReader.bitLimit - bitStreamReader.bitPosition) / 8)
+	bytesHave := min(decoder.BitReservoirBytes, mainDataBegin)
 
-	startIdx := h.Reserv - mainDataBegin
+	startIdx := decoder.BitReservoirBytes - mainDataBegin
 	if startIdx < 0 {
 		startIdx = 0
 	}
-	copy(s.maindata[:], h.ReservBuf[startIdx:startIdx+bytesHave])
+	copy(workspace.mainData[:], decoder.ReservoirBuffer[startIdx:startIdx+bytesHave])
 
-	copy(s.maindata[bytesHave:], bs.buf[int(bs.pos/8):int(bs.pos/8)+frameBytes])
+	copy(workspace.mainData[bytesHave:], bitStreamReader.buffer[int(bitStreamReader.bitPosition/8):int(bitStreamReader.bitPosition/8)+frameBytes])
 
-	s.bs.buf = s.maindata[:]
-	s.bs.pos = 0
-	s.bs.limit = int32((bytesHave + frameBytes) * 8)
+	workspace.bitStreamReader.buffer = workspace.mainData[:]
+	workspace.bitStreamReader.bitPosition = 0
+	workspace.bitStreamReader.bitLimit = int32((bytesHave + frameBytes) * 8)
 
-	if h.Reserv < mainDataBegin {
+	if decoder.BitReservoirBytes < mainDataBegin {
 		return ErrInsufficientReservoir
 	}
 	return nil
 }
 
-func saveReservoirL3(h *Mp3Dec, s *decoderWorkspace) {
-	pos := int((s.bs.pos + 7) / 8)
-	remains := int(s.bs.limit/8) - pos
+func saveReservoirLayer3(decoder *Decoder, workspace *decoderWorkspace) {
+	pos := int((workspace.bitStreamReader.bitPosition + 7) / 8)
+	remains := int(workspace.bitStreamReader.bitLimit/8) - pos
 	if remains > MaxBitreservoirBytes {
 		pos += remains - MaxBitreservoirBytes
 		remains = MaxBitreservoirBytes
 	}
 	if remains > 0 {
-		copy(h.ReservBuf[:remains], s.maindata[pos:pos+remains])
+		copy(decoder.ReservoirBuffer[:remains], workspace.mainData[pos:pos+remains])
 	}
-	h.Reserv = remains
+	decoder.BitReservoirBytes = remains
 }
 
 var scfLong = [8][23]byte{
@@ -570,148 +570,148 @@ var scfMixed = [8][MaxScalefactorBands + 1]byte{
 	{4, 4, 4, 4, 4, 4, 6, 6, 4, 4, 4, 6, 6, 6, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 26, 26, 26, 34, 34, 34, 42, 42, 42, 12, 12, 12, 0},
 }
 
-func readSideInfoL3(bs *bitReader, gr []grInfo, header Header) int {
-	srIdx := header.MySampleRate()
-	if srIdx != 0 {
-		srIdx -= 1
+func readSideInformationLayer3(bitStreamReader *BitStreamReader, granuleInfo []GranuleInfo, header Header) int {
+	sampleRateIndex := header.MySampleRate()
+	if sampleRateIndex != 0 {
+		sampleRateIndex -= 1
 	}
-	grCount := 2
+	granuleCount := 2
 	if header.IsMono() {
-		grCount = 1
+		granuleCount = 1
 	}
 	mainDataBegin := 0
-	var scfsi uint32 = 0
+	var scaleFactorSelectionInfo uint32 = 0
 
 	if header.TestMpeg1() {
-		grCount *= 2
-		mainDataBegin = int(bs.getBits(9))
-		scfsi = bs.getBits(7 + grCount)
+		granuleCount *= 2
+		mainDataBegin = int(bitStreamReader.getBits(9))
+		scaleFactorSelectionInfo = bitStreamReader.getBits(7 + granuleCount)
 	} else {
-		mainDataBegin = int(bs.getBits(8+grCount) >> grCount)
+		mainDataBegin = int(bitStreamReader.getBits(8+granuleCount) >> granuleCount)
 	}
 
 	part23Sum := 0
-	initialGrCount := grCount
-	for grIdx := 0; grIdx < initialGrCount; grIdx++ {
+	initialGranuleCount := granuleCount
+	for granuleIndex := 0; granuleIndex < initialGranuleCount; granuleIndex++ {
 		if header.IsMono() {
-			scfsi <<= 4
+			scaleFactorSelectionInfo <<= 4
 		}
-		gr[grIdx].part23Length = uint16(bs.getBits(12))
-		part23Sum += int(gr[grIdx].part23Length)
-		gr[grIdx].bigValues = uint16(bs.getBits(9))
-		if gr[grIdx].bigValues*2 > SamplesPerGranuleLayer3 {
+		granuleInfo[granuleIndex].part23Length = uint16(bitStreamReader.getBits(12))
+		part23Sum += int(granuleInfo[granuleIndex].part23Length)
+		granuleInfo[granuleIndex].bigValues = uint16(bitStreamReader.getBits(9))
+		if granuleInfo[granuleIndex].bigValues*2 > SamplesPerGranuleLayer3 {
 			return -1
 		}
-		gr[grIdx].globalGain = uint8(bs.getBits(8))
+		granuleInfo[granuleIndex].globalGain = uint8(bitStreamReader.getBits(8))
 		compressBits := 9
 		if header.TestMpeg1() {
 			compressBits = 4
 		}
-		gr[grIdx].scalefacCompress = uint16(bs.getBits(compressBits))
-		gr[grIdx].sfbtab = scfLong[srIdx][:]
-		gr[grIdx].nLongSfb = 22
-		gr[grIdx].nShortSfb = 0
-		if bs.getBits(1) != 0 {
-			gr[grIdx].blockType = uint8(bs.getBits(2))
-			if gr[grIdx].blockType == 0 {
+		granuleInfo[granuleIndex].scaleFactorCompression = uint16(bitStreamReader.getBits(compressBits))
+		granuleInfo[granuleIndex].scaleFactorBandTable = scfLong[sampleRateIndex][:]
+		granuleInfo[granuleIndex].numberOfLongScaleFactorBands = 22
+		granuleInfo[granuleIndex].numberOfShortScaleFactorBands = 0
+		if bitStreamReader.getBits(1) != 0 {
+			granuleInfo[granuleIndex].blockType = uint8(bitStreamReader.getBits(2))
+			if granuleInfo[granuleIndex].blockType == 0 {
 				return -1
 			}
-			gr[grIdx].mixedBlockFlag = uint8(bs.getBits(1))
-			gr[grIdx].regionCount[0] = 7
-			gr[grIdx].regionCount[1] = 255
-			if gr[grIdx].blockType == 2 { // SHORT_BLOCK_TYPE = 2
-				scfsi &= 0x0F0F
-				if gr[grIdx].mixedBlockFlag == 0 {
-					gr[grIdx].regionCount[0] = 8
-					gr[grIdx].sfbtab = scfShort[srIdx][:]
-					gr[grIdx].nLongSfb = 0
-					gr[grIdx].nShortSfb = 39
+			granuleInfo[granuleIndex].mixedBlockFlag = uint8(bitStreamReader.getBits(1))
+			granuleInfo[granuleIndex].regionCount[0] = 7
+			granuleInfo[granuleIndex].regionCount[1] = 255
+			if granuleInfo[granuleIndex].blockType == 2 { // SHORT_BLOCK_TYPE = 2
+				scaleFactorSelectionInfo &= 0x0F0F
+				if granuleInfo[granuleIndex].mixedBlockFlag == 0 {
+					granuleInfo[granuleIndex].regionCount[0] = 8
+					granuleInfo[granuleIndex].scaleFactorBandTable = scfShort[sampleRateIndex][:]
+					granuleInfo[granuleIndex].numberOfLongScaleFactorBands = 0
+					granuleInfo[granuleIndex].numberOfShortScaleFactorBands = 39
 				} else {
-					gr[grIdx].sfbtab = scfMixed[srIdx][:]
+					granuleInfo[granuleIndex].scaleFactorBandTable = scfMixed[sampleRateIndex][:]
 					if header.TestMpeg1() {
-						gr[grIdx].nLongSfb = 8
+						granuleInfo[granuleIndex].numberOfLongScaleFactorBands = 8
 					} else {
-						gr[grIdx].nLongSfb = 6
+						granuleInfo[granuleIndex].numberOfLongScaleFactorBands = 6
 					}
-					gr[grIdx].nShortSfb = 30
+					granuleInfo[granuleIndex].numberOfShortScaleFactorBands = 30
 				}
 			}
-			tables := bs.getBits(10)
+			tables := bitStreamReader.getBits(10)
 			tables <<= 5
-			gr[grIdx].subblockGain[0] = uint8(bs.getBits(3))
-			gr[grIdx].subblockGain[1] = uint8(bs.getBits(3))
-			gr[grIdx].subblockGain[2] = uint8(bs.getBits(3))
-			gr[grIdx].tableSelect[0] = uint8(tables >> 10)
-			gr[grIdx].tableSelect[1] = uint8((tables >> 5) & 31)
-			gr[grIdx].tableSelect[2] = uint8(tables & 31)
+			granuleInfo[granuleIndex].subblockGain[0] = uint8(bitStreamReader.getBits(3))
+			granuleInfo[granuleIndex].subblockGain[1] = uint8(bitStreamReader.getBits(3))
+			granuleInfo[granuleIndex].subblockGain[2] = uint8(bitStreamReader.getBits(3))
+			granuleInfo[granuleIndex].tableSelect[0] = uint8(tables >> 10)
+			granuleInfo[granuleIndex].tableSelect[1] = uint8((tables >> 5) & 31)
+			granuleInfo[granuleIndex].tableSelect[2] = uint8(tables & 31)
 		} else {
-			gr[grIdx].blockType = 0
-			gr[grIdx].mixedBlockFlag = 0
-			tables := bs.getBits(15)
-			gr[grIdx].regionCount[0] = uint8(bs.getBits(4))
-			gr[grIdx].regionCount[1] = uint8(bs.getBits(3))
-			gr[grIdx].regionCount[2] = 255
-			gr[grIdx].tableSelect[0] = uint8(tables >> 10)
-			gr[grIdx].tableSelect[1] = uint8((tables >> 5) & 31)
-			gr[grIdx].tableSelect[2] = uint8(tables & 31)
+			granuleInfo[granuleIndex].blockType = 0
+			granuleInfo[granuleIndex].mixedBlockFlag = 0
+			tables := bitStreamReader.getBits(15)
+			granuleInfo[granuleIndex].regionCount[0] = uint8(bitStreamReader.getBits(4))
+			granuleInfo[granuleIndex].regionCount[1] = uint8(bitStreamReader.getBits(3))
+			granuleInfo[granuleIndex].regionCount[2] = 255
+			granuleInfo[granuleIndex].tableSelect[0] = uint8(tables >> 10)
+			granuleInfo[granuleIndex].tableSelect[1] = uint8((tables >> 5) & 31)
+			granuleInfo[granuleIndex].tableSelect[2] = uint8(tables & 31)
 		}
 		if header.TestMpeg1() {
-			gr[grIdx].preflag = uint8(bs.getBits(1))
+			granuleInfo[granuleIndex].preemphasisFlag = uint8(bitStreamReader.getBits(1))
 		} else {
-			if gr[grIdx].scalefacCompress >= 500 {
-				gr[grIdx].preflag = 1
+			if granuleInfo[granuleIndex].scaleFactorCompression >= 500 {
+				granuleInfo[granuleIndex].preemphasisFlag = 1
 			} else {
-				gr[grIdx].preflag = 0
+				granuleInfo[granuleIndex].preemphasisFlag = 0
 			}
 		}
-		gr[grIdx].scalefacScale = uint8(bs.getBits(1))
-		gr[grIdx].count1Table = uint8(bs.getBits(1))
-		gr[grIdx].scfsi = uint8((scfsi >> 12) & 15)
-		scfsi <<= 4
+		granuleInfo[granuleIndex].scaleFactorScale = uint8(bitStreamReader.getBits(1))
+		granuleInfo[granuleIndex].count1Table = uint8(bitStreamReader.getBits(1))
+		granuleInfo[granuleIndex].scfsi = uint8((scaleFactorSelectionInfo >> 12) & 15)
+		scaleFactorSelectionInfo <<= 4
 	}
 
-	if part23Sum+int(bs.pos) > int(bs.limit)+mainDataBegin*8 {
+	if part23Sum+int(bitStreamReader.bitPosition) > int(bitStreamReader.bitLimit)+mainDataBegin*8 {
 		return -1
 	}
 
 	return mainDataBegin
 }
 
-func decodeL3(h *Mp3Dec, s *decoderWorkspace, grInfo []grInfo, grInfoOffset int, nch int) {
-	grbufFlat := s.grbuf[:]
-	for ch := 0; ch < nch; ch++ {
-		layer3grLimit := int(s.bs.pos) + int(grInfo[grInfoOffset+ch].part23Length)
-		decodeScalefactorsL3(h.Header, s.ist_pos[ch][:], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], ch)
-		huffmanDecodeL3(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], layer3grLimit)
+func decodeLayer3(decoder *Decoder, workspace *decoderWorkspace, granuleInfo []GranuleInfo, granuleInfoOffset int, channelCount int) {
+	granuleBufferFlat := workspace.granuleBuffer[:]
+	for ch := 0; ch < channelCount; ch++ {
+		layer3grLimit := int(workspace.bitStreamReader.bitPosition) + int(granuleInfo[granuleInfoOffset+ch].part23Length)
+		decodeScaleFactorsLayer3(decoder.Header, workspace.intensityStereoPositions[ch][:], &workspace.bitStreamReader, &granuleInfo[granuleInfoOffset+ch], workspace.scaleFactors[:], ch)
+		huffmanDecodeLayer3(granuleBufferFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], &workspace.bitStreamReader, &granuleInfo[granuleInfoOffset+ch], workspace.scaleFactors[:], layer3grLimit)
 	}
 
-	if h.Header.TestIStereo() {
-		intensityStereoL3(grbufFlat, s.ist_pos[1][:], &grInfo[grInfoOffset], &grInfo[grInfoOffset+1], h.Header)
-	} else if h.Header.IsMsStereo() {
-		midsideStereoL3(grbufFlat, SamplesPerGranuleLayer3)
+	if decoder.Header.TestIntensityStereo() {
+		intensityStereoLayer3(granuleBufferFlat, workspace.intensityStereoPositions[1][:], &granuleInfo[granuleInfoOffset], &granuleInfo[granuleInfoOffset+1], decoder.Header)
+	} else if decoder.Header.IsMidSideStereo() {
+		midsideStereoLayer3(granuleBufferFlat, SamplesPerGranuleLayer3)
 	}
 
-	for ch := 0; ch < nch; ch++ {
-		gr := &grInfo[grInfoOffset+ch]
+	for ch := 0; ch < channelCount; ch++ {
+		gr := &granuleInfo[granuleInfoOffset+ch]
 		aaBands := 30
-		nLongBands := 0
+		numberOfLongBands := 0
 		if gr.mixedBlockFlag != 0 {
-			nLongBands = 2
+			numberOfLongBands = 2
 		}
-		if h.Header.MySampleRate() == 2 {
-			nLongBands <<= 1
+		if decoder.Header.MySampleRate() == 2 {
+			numberOfLongBands <<= 1
 		}
 		if gr.blockType == 2 { // SHORT_BLOCK_TYPE = 2
-			var scratch [SamplesPerGranuleLayer3]float32
+			var scratchBuffer [SamplesPerGranuleLayer3]float32
 			if gr.mixedBlockFlag != 0 {
-				aaBands = nLongBands - 1
+				aaBands = numberOfLongBands - 1
 			} else {
 				aaBands = -1
 			}
-			reorderL3(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], scratch[:], gr.sfbtab)
+			reorderL3(granuleBufferFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], scratchBuffer[:], gr.scaleFactorBandTable)
 		}
-		antialiasL3(grbufFlat[ch*SamplesPerGranuleLayer3:], aaBands+1) // Actually aaBands is now fixed to 30, so +1 is 31
-		L3Imdct(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], h.MdctOverlap[ch][:], int(gr.blockType), nLongBands)
-		changeSignL3(grbufFlat[ch*SamplesPerGranuleLayer3 : ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3])
+		antialiasLayer3(granuleBufferFlat[ch*SamplesPerGranuleLayer3:], aaBands+1)
+		L3Imdct(granuleBufferFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], decoder.MdctOverlap[ch][:], int(gr.blockType), numberOfLongBands)
+		changeSignL3(granuleBufferFlat[ch*SamplesPerGranuleLayer3 : ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3])
 	}
 }

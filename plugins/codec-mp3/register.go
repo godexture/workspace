@@ -25,13 +25,13 @@ type mp3Capability struct{}
 
 func (mp3Capability) MediaType() media.MediaType { return media.MediaAudio }
 
-func (c mp3Capability) Match(stream media.StreamInfo) bool {
-	return stream.Type == media.MediaAudio &&
-		stream.MediaAttributes.Codec == media.CodecMPEG3
+func (c mp3Capability) Match(streamInfo media.StreamInfo) bool {
+	return streamInfo.Type == media.MediaAudio &&
+		streamInfo.MediaAttributes.Codec == media.CodecMPEG3
 }
 
-func (c mp3Capability) Diagnose(stream media.StreamInfo) bool {
-	return c.Match(stream)
+func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
+	return c.Match(streamInfo)
 }
 
 func init() {
@@ -45,19 +45,19 @@ func init() {
 					Description: "MP3 decoder (codec-mp3 plugin, custom minimp3 backend)",
 				},
 				Capabilities: []manifest.Capability{mp3Capability{}},
-				TransformFunc: func(s media.StreamInfo) media.Profile {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					p.Audio.CodecID = media.CodecLPCM // デコード後はPCM
-					p.Audio.Format = media.SampleFormatS16
-					if s.Audio.ChannelCount() == 1 {
-						p.Audio.ChannelLayout = media.LayoutMono1
+				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
+					profile := media.Profile{Type: streamInfo.Type, MediaAttributes: streamInfo.MediaAttributes}
+					profile.Audio.CodecID = media.CodecLPCM // デコード後はPCM
+					profile.Audio.Format = media.SampleFormatS16
+					if streamInfo.Audio.ChannelCount() == 1 {
+						profile.Audio.ChannelLayout = media.LayoutMono1
 					} else {
-						p.Audio.ChannelLayout = media.LayoutStereo2_0
+						profile.Audio.ChannelLayout = media.LayoutStereo2_0
 					}
-					return p
+					return profile
 				},
 			},
-			Factory: func(cfg registry.Configuration) (node.Decoder, error) {
+			Factory: func(config registry.Configuration) (node.Decoder, error) {
 				return engine.WrapDecoder(internal.NewDecoder()), nil
 			},
 		},
@@ -75,18 +75,18 @@ func init() {
 					Description: "MP3 encoder (codec-mp3 plugin) [STUB: 未実装]",
 				},
 				Capabilities: []manifest.Capability{mp3Capability{}},
-				TransformFunc: func(s media.StreamInfo) media.Profile {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					p.Audio.CodecID = media.CodecMPEG3
-					return p
+				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
+					profile := media.Profile{Type: streamInfo.Type, MediaAttributes: streamInfo.MediaAttributes}
+					profile.Audio.CodecID = media.CodecMPEG3
+					return profile
 				},
 			},
 			Supports: func(codec media.CodecID) bool {
 				return codec == media.CodecMPEG3
 			},
-			Factory: func(cfg registry.Configuration) (node.Encoder, error) {
-				c := internal.EncoderConfig{}
-				return engine.WrapEncoder(internal.NewEncoder(c)), nil
+			Factory: func(config registry.Configuration) (node.Encoder, error) {
+				encoderConfig := internal.EncoderConfig{}
+				return engine.WrapEncoder(internal.NewEncoder(encoderConfig)), nil
 			},
 		},
 	); err != nil {

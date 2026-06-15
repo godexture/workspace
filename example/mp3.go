@@ -26,20 +26,20 @@ func main() {
 
 	fmt.Printf("Converting %s to %s\n", inputPath, outputPath)
 
-	f, err := os.Open(inputPath)
+	file, err := os.Open(inputPath)
 	if err != nil {
 		fmt.Printf("Failed to open input: %v\n", err)
 		return
 	}
-	defer f.Close()
+	defer file.Close()
 
-	demux, err := mp3format.NewDemuxerEngine(f)
+	demuxer, err := mp3format.NewDemuxerEngine(file)
 	if err != nil {
 		fmt.Printf("Failed to create mp3 demuxer: %v\n", err)
 		return
 	}
 
-	streams, _, err := demux.Analyze()
+	streams, _, err := demuxer.Analyze()
 	if err != nil {
 		fmt.Printf("Failed to analyze input: %v\n", err)
 		return
@@ -51,39 +51,39 @@ func main() {
 	}
 
 	// MP3 デコーダ
-	dec := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
 
 	// PCM エンコーダ (LPCM)
-	enc := pcm.NewEncoderEngine(pcm.EncoderConfig{CodecID: media.CodecLPCM})
+	encoder := pcm.NewEncoderEngine(pcm.EncoderConfig{CodecID: media.CodecLPCM})
 
-	outF, err := os.Create(outputPath)
+	outputFile, err := os.Create(outputPath)
 	if err != nil {
 		fmt.Printf("Failed to create output: %v\n", err)
 		return
 	}
-	defer outF.Close()
+	defer outputFile.Close()
 
 	// WAV Muxer
-	mux := wav.NewMuxerEngine(outF)
-	outStream := streams[0]
+	muxer := wav.NewMuxerEngine(outputFile)
+	outputStream := streams[0]
 	// デコード後およびLPCMエンコード後の属性を設定
-	outStream.Codec = media.CodecLPCM
-	outStream.Audio.CodecID = media.CodecLPCM
+	outputStream.Codec = media.CodecLPCM
+	outputStream.Audio.CodecID = media.CodecLPCM
 	// go-mp3は S16 LE を出力するため、エンコーダもそのままスルーする
-	outStream.Audio.Format = media.SampleFormatS16
+	outputStream.Audio.Format = media.SampleFormatS16
 
-	if _, err := mux.AddStream(outStream); err != nil {
+	if _, err := muxer.AddStream(outputStream); err != nil {
 		fmt.Printf("Failed to add stream to muxer: %v\n", err)
 		return
 	}
-	if err := mux.WriteHeader(); err != nil {
+	if err := muxer.WriteHeader(); err != nil {
 		fmt.Printf("Failed to write wav header: %v\n", err)
 		return
 	}
 
 	packetCount := 0
 	for {
-		pkt, _, err := demux.ReadPacket()
+		packet, _, err := demuxer.ReadPacket()
 		if err == io.EOF {
 			break
 		}
@@ -92,7 +92,7 @@ func main() {
 			break
 		}
 
-		if err := dec.SendPacket(pkt); err != nil {
+		if err := decoder.SendPacket(packet); err != nil {
 			if err != engine.ErrEAGAIN {
 				fmt.Printf("Error sending packet to decoder: %v\n", err)
 				break
@@ -100,7 +100,7 @@ func main() {
 		}
 
 		for {
-			frame, err := dec.ReceiveFrame()
+			frame, err := decoder.ReceiveFrame()
 			if err == engine.ErrEAGAIN {
 				break
 			}
@@ -109,13 +109,13 @@ func main() {
 				return
 			}
 
-			if err := enc.SendFrame(frame); err != nil {
+			if err := encoder.SendFrame(frame); err != nil {
 				fmt.Printf("Error sending frame to encoder: %v\n", err)
 				return
 			}
 
 			for {
-				outPkt, err := enc.ReceivePacket()
+				outputPacket, err := encoder.ReceivePacket()
 				if err == engine.ErrEAGAIN {
 					break
 				}
@@ -124,7 +124,7 @@ func main() {
 					return
 				}
 
-				if err := mux.WritePacket(0, outPkt); err != nil {
+				if err := muxer.WritePacket(0, outputPacket); err != nil {
 					fmt.Printf("Error writing packet to muxer: %v\n", err)
 					return
 				}
@@ -133,9 +133,9 @@ func main() {
 		}
 	}
 
-	dec.Flush()
+	decoder.Flush()
 	for {
-		frame, err := dec.ReceiveFrame()
+		frame, err := decoder.ReceiveFrame()
 		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
 			break
 		}
@@ -143,35 +143,35 @@ func main() {
 			fmt.Printf("Error receiving frame from decoder during flush: %v\n", err)
 			break
 		}
-		if err := enc.SendFrame(frame); err == nil {
+		if err := encoder.SendFrame(frame); err == nil {
 			for {
-				outPkt, err := enc.ReceivePacket()
+				outputPacket, err := encoder.ReceivePacket()
 				if err == engine.ErrEAGAIN {
 					break
 				}
 				if err != nil {
 					break
 				}
-				mux.WritePacket(0, outPkt)
+				muxer.WritePacket(0, outputPacket)
 				packetCount++
 			}
 		}
 	}
 
-	enc.Flush()
+	encoder.Flush()
 	for {
-		outPkt, err := enc.ReceivePacket()
+		outputPacket, err := encoder.ReceivePacket()
 		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
 			break
 		}
 		if err != nil {
 			break
 		}
-		mux.WritePacket(0, outPkt)
+		muxer.WritePacket(0, outputPacket)
 		packetCount++
 	}
 
-	if err := mux.WriteTrailer(); err != nil {
+	if err := muxer.WriteTrailer(); err != nil {
 		fmt.Printf("Failed to write wav trailer: %v\n", err)
 		return
 	}
