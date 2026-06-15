@@ -1,14 +1,27 @@
 package header
 
+import "errors"
+
 type Header [4]byte
 
-func ParseHeader(b []byte) (Header, bool) {
+const (
+	SamplesPerFrameLayer1   = 384
+	SamplesPerFrameLayer23  = 1152
+	SamplesPerGranuleLayer3 = 576
+	ChannelModeMono         = 3
+	BytesPerSecMultiplier   = 125
+	ID3v2HeaderSize         = 10
+)
+
+var ErrHeaderTooShort = errors.New("header buffer too short")
+
+func ParseHeader(b []byte) (Header, error) {
 	var h Header
 	if len(b) < 4 {
-		return h, false
+		return h, ErrHeaderTooShort
 	}
 	copy(h[:], b[:4])
-	return h, true
+	return h, nil
 }
 
 func (h Header) IsValid() bool {
@@ -92,13 +105,13 @@ func (h Header) SampleRateHz() int {
 
 func (h Header) FrameSamples() int {
 	if h.IsLayer1() {
-		return 384
+		return SamplesPerFrameLayer1
 	}
 	shift := 0
 	if h.IsFrame576() {
 		shift = 1
 	}
-	return 1152 >> shift
+	return SamplesPerFrameLayer23 >> shift
 }
 
 func (h Header) FrameBytes(freeFormatSize int) int {
@@ -108,7 +121,7 @@ func (h Header) FrameBytes(freeFormatSize int) int {
 	if hz == 0 {
 		return 0
 	}
-	frameBytes := samples * bitrate * 125 / hz
+	frameBytes := samples * bitrate * BytesPerSecMultiplier / hz
 	if h.IsLayer1() {
 		frameBytes &= ^3 // slot align
 	}

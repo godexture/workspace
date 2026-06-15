@@ -20,7 +20,7 @@ type FrameHeader struct {
 	BitRate     int
 	SampleRate  int
 	Padding     int
-	ChannelMode int // 3 is Mono, others are stereo/dual
+	ChannelMode int // header.ChannelModeMono is Mono, others are stereo/dual
 	FrameSize   int
 	Samples     int
 }
@@ -35,7 +35,7 @@ func SkipID3v2(r io.Reader) (int, error) {
 
 	skipped := 0
 	for {
-		peek, err := br.Peek(10)
+		peek, err := br.Peek(header.ID3v2HeaderSize)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -45,7 +45,7 @@ func SkipID3v2(r io.Reader) (int, error) {
 		if bytes.HasPrefix(peek, []byte("ID3")) {
 			// Parse size
 			size := (int(peek[6]) << 21) | (int(peek[7]) << 14) | (int(peek[8]) << 7) | int(peek[9])
-			total := size + 10
+			total := size + header.ID3v2HeaderSize
 			// Skip the bytes
 			_, err = br.Discard(total)
 			if err != nil {
