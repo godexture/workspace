@@ -54,7 +54,7 @@ func synthFloat(grbuf []float32, pcm []float32, nch int, lins []float32) {
 	xl := grbuf
 	xr := grbuf
 	if nch == 2 {
-		xr = grbuf[576:]
+		xr = grbuf[SamplesPerGranuleLayer3:]
 	}
 
 	win := [15 * 16]float32{
@@ -274,7 +274,7 @@ func dctII(grbuf []float32, n int) {
 // synthGranule is the Go native implementation of subband synthesis filtering.
 func synthGranule(qmfState []float32, grbuf []float32, nbands int, nch int, pcm []float32, lins []float32) {
 	for i := 0; i < nch; i++ {
-		dctII(grbuf[576*i:], nbands)
+		dctII(grbuf[SamplesPerGranuleLayer3*i:], nbands)
 	}
 
 	copy(lins[:15*64], qmfState[:15*64])

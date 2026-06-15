@@ -169,7 +169,7 @@ func readScaleInfoL12(header Header, bs *bitReader, sci *l12ScaleInfo) {
 }
 
 func dequantizeGranuleL12(grbuf []float32, bs *bitReader, sci *l12ScaleInfo, groupSize int) int {
-	choff := 576
+	choff := SamplesPerGranuleLayer3
 	for j := 0; j < 4; j++ {
 		dstOffset := groupSize * j
 		for i := 0; i < 2*int(sci.TotalBands); i++ {
@@ -197,33 +197,33 @@ func dequantizeGranuleL12(grbuf []float32, bs *bitReader, sci *l12ScaleInfo, gro
 }
 
 func applyScf384L12(sci *l12ScaleInfo, scf []float32, dst []float32) {
-	copy(dst[576+int(sci.StereoBands)*18:576+int(sci.TotalBands)*18], dst[int(sci.StereoBands)*18:int(sci.TotalBands)*18])
+	copy(dst[SamplesPerGranuleLayer3+int(sci.StereoBands)*SamplesPerSubbandLayer3:SamplesPerGranuleLayer3+int(sci.TotalBands)*SamplesPerSubbandLayer3], dst[int(sci.StereoBands)*SamplesPerSubbandLayer3:int(sci.TotalBands)*SamplesPerSubbandLayer3])
 	dstOffset := 0
 	scfOffset := 0
 	for i := 0; i < int(sci.TotalBands); i++ {
-		for k := 0; k < 12; k++ {
+		for k := 0; k < SamplesPerSubbandLayer12; k++ {
 			dst[dstOffset+k] *= scf[scfOffset+0]
-			dst[dstOffset+k+576] *= scf[scfOffset+3]
+			dst[dstOffset+k+SamplesPerGranuleLayer3] *= scf[scfOffset+3]
 		}
-		dstOffset += 18
+		dstOffset += SamplesPerSubbandLayer3
 		scfOffset += 6
 	}
 }
 
 type decoderWorkspace struct {
 	bs       bitReader
-	maindata [511 + 2304]byte
+	maindata [MaxBitreservoirBytes + MaxFreeFormatFrameSize]byte
 	gr_info  [4]grInfo
-	grbuf    [1200]float32
-	scf      [40]float32
+	grbuf    [MaxGranuleBufferSize]float32
+	scf      [MaxScalefactorBands]float32
 	syn      [2112]float32
-	ist_pos  [2][39]byte
+	ist_pos  [MaxChannels][MaxScalefactorBands]byte
 }
 
 func changeSignL3(grbuf []float32) {
-	for b := 0; b < 32; b += 2 {
-		offset := (b + 1) * 18
-		for i := 1; i < 18; i += 2 {
+	for b := 0; b < NumSubbands; b += 2 {
+		offset := (b + 1) * SamplesPerSubbandLayer3
+		for i := 1; i < SamplesPerSubbandLayer3; i += 2 {
 			grbuf[offset+i] = -grbuf[offset+i]
 		}
 	}
@@ -261,13 +261,13 @@ var aa = [2][8]float32{
 func antialiasL3(grbuf []float32, nbands int) {
 	idx := 0
 	for ; nbands > 0; nbands-- {
-		for i := 0; i < 8; i++ {
-			u := grbuf[idx+18+i]
-			d := grbuf[idx+17-i]
-			grbuf[idx+18+i] = u*aa[0][i] - d*aa[1][i]
-			grbuf[idx+17-i] = u*aa[1][i] + d*aa[0][i]
+		for i := 0; i < (SamplesPerSubbandLayer3/2)-1; i++ {
+			u := grbuf[idx+SamplesPerSubbandLayer3+i]
+			d := grbuf[idx+(SamplesPerSubbandLayer3-1)-i]
+			grbuf[idx+SamplesPerSubbandLayer3+i] = u*aa[0][i] - d*aa[1][i]
+			grbuf[idx+(SamplesPerSubbandLayer3-1)-i] = u*aa[1][i] + d*aa[0][i]
 		}
-		idx += 18
+		idx += SamplesPerSubbandLayer3
 	}
 }
 
@@ -291,7 +291,7 @@ func stereoTopBandL3(right []float32, sfb []byte, nbands int, maxBand []int) {
 
 func intensityStereoBandL3(left []float32, n int, kl float32, kr float32) {
 	for i := 0; i < n; i++ {
-		left[i+576] = left[i] * kr
+		left[i+SamplesPerGranuleLayer3] = left[i] * kr
 		left[i] = left[i] * kl
 	}
 }
@@ -299,9 +299,9 @@ func intensityStereoBandL3(left []float32, n int, kl float32, kr float32) {
 func midsideStereoL3(left []float32, n int) {
 	for i := 0; i < n; i++ {
 		a := left[i]
-		b := left[i+576]
+		b := left[i+SamplesPerGranuleLayer3]
 		left[i] = a + b
-		left[i+576] = a - b
+		left[i+SamplesPerGranuleLayer3] = a - b
 	}
 }
 
@@ -393,7 +393,7 @@ func intensityStereoL3(left []float32, istPos []byte, gr *grInfo, gr1 *grInfo, h
 		maxBlocks = 3
 	}
 
-	stereoTopBandL3(left[576:], gr.sfbtab, nSfb, maxBand[:])
+	stereoTopBandL3(left[SamplesPerGranuleLayer3:], gr.sfbtab, nSfb, maxBand[:])
 	if gr.nLongSfb != 0 {
 		m := max(max(maxBand[0], maxBand[1]), maxBand[2])
 		maxBand[0] = m
@@ -447,7 +447,7 @@ func decodeScalefactorsL3(header Header, istPos []byte, bs *bitReader, gr *grInf
 	scfPartition := scfPartitions[partitionIdx][:]
 
 	var scfSize [4]byte
-	var iscf [40]byte
+	var iscf [MaxScalefactorBands]byte
 	scfShift := int(gr.scalefacScale + 1)
 	scfsi := int(gr.scfsi)
 
@@ -502,7 +502,7 @@ func decodeScalefactorsL3(header Header, istPos []byte, bs *bitReader, gr *grInf
 	}
 }
 
-func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decoderWorkspace, mainDataBegin int) bool {
+func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decoderWorkspace, mainDataBegin int) error {
 	frameBytes := int((bs.limit - bs.pos) / 8)
 	bytesHave := min(h.Reserv, mainDataBegin)
 
@@ -518,15 +518,18 @@ func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decoderWorkspace, mainDataB
 	s.bs.pos = 0
 	s.bs.limit = int32((bytesHave + frameBytes) * 8)
 
-	return h.Reserv >= mainDataBegin
+	if h.Reserv < mainDataBegin {
+		return ErrInsufficientReservoir
+	}
+	return nil
 }
 
 func saveReservoirL3(h *Mp3Dec, s *decoderWorkspace) {
 	pos := int((s.bs.pos + 7) / 8)
 	remains := int(s.bs.limit/8) - pos
-	if remains > 511 {
-		pos += remains - 511
-		remains = 511
+	if remains > MaxBitreservoirBytes {
+		pos += remains - MaxBitreservoirBytes
+		remains = MaxBitreservoirBytes
 	}
 	if remains > 0 {
 		copy(h.ReservBuf[:remains], s.maindata[pos:pos+remains])
@@ -545,7 +548,7 @@ var scfLong = [8][23]byte{
 	{4, 4, 4, 4, 4, 4, 6, 6, 8, 10, 12, 16, 20, 24, 30, 38, 46, 56, 68, 84, 102, 26, 0},
 }
 
-var scfShort = [8][40]byte{
+var scfShort = [8][MaxScalefactorBands + 1]byte{
 	{4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 8, 8, 8, 10, 10, 10, 12, 12, 12, 14, 14, 14, 18, 18, 18, 24, 24, 24, 30, 30, 30, 40, 40, 40, 18, 18, 18, 0},
 	{8, 8, 8, 8, 8, 8, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 24, 24, 24, 28, 28, 28, 36, 36, 36, 2, 2, 2, 2, 2, 2, 2, 2, 2, 26, 26, 26, 0},
 	{4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 6, 6, 8, 8, 8, 10, 10, 10, 14, 14, 14, 18, 18, 18, 26, 26, 26, 32, 32, 32, 42, 42, 42, 18, 18, 18, 0},
@@ -556,7 +559,7 @@ var scfShort = [8][40]byte{
 	{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 26, 26, 26, 34, 34, 34, 42, 42, 42, 12, 12, 12, 0},
 }
 
-var scfMixed = [8][40]byte{
+var scfMixed = [8][MaxScalefactorBands + 1]byte{
 	{6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 10, 10, 10, 12, 12, 12, 14, 14, 14, 18, 18, 18, 24, 24, 24, 30, 30, 30, 40, 40, 40, 18, 18, 18, 0},
 	{12, 12, 12, 4, 4, 4, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 24, 24, 24, 28, 28, 28, 36, 36, 36, 2, 2, 2, 2, 2, 2, 2, 2, 2, 26, 26, 26, 0},
 	{6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 10, 10, 10, 14, 14, 14, 18, 18, 18, 26, 26, 26, 32, 32, 32, 42, 42, 42, 18, 18, 18, 0},
@@ -596,7 +599,7 @@ func readSideInfoL3(bs *bitReader, gr []grInfo, header Header) int {
 		gr[grIdx].part23Length = uint16(bs.getBits(12))
 		part23Sum += int(gr[grIdx].part23Length)
 		gr[grIdx].bigValues = uint16(bs.getBits(9))
-		if gr[grIdx].bigValues > 288 {
+		if gr[grIdx].bigValues*2 > SamplesPerGranuleLayer3 {
 			return -1
 		}
 		gr[grIdx].globalGain = uint8(bs.getBits(8))
@@ -679,18 +682,18 @@ func decodeL3(h *Mp3Dec, s *decoderWorkspace, grInfo []grInfo, grInfoOffset int,
 	for ch := 0; ch < nch; ch++ {
 		layer3grLimit := int(s.bs.pos) + int(grInfo[grInfoOffset+ch].part23Length)
 		decodeScalefactorsL3(h.Header, s.ist_pos[ch][:], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], ch)
-		huffmanDecodeL3(grbufFlat[ch*576:ch*576+576], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], layer3grLimit)
+		huffmanDecodeL3(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], &s.bs, &grInfo[grInfoOffset+ch], s.scf[:], layer3grLimit)
 	}
 
 	if h.Header.TestIStereo() {
 		intensityStereoL3(grbufFlat, s.ist_pos[1][:], &grInfo[grInfoOffset], &grInfo[grInfoOffset+1], h.Header)
 	} else if h.Header.IsMsStereo() {
-		midsideStereoL3(grbufFlat, 576)
+		midsideStereoL3(grbufFlat, SamplesPerGranuleLayer3)
 	}
 
 	for ch := 0; ch < nch; ch++ {
 		gr := &grInfo[grInfoOffset+ch]
-		aaBands := 31
+		aaBands := 30
 		nLongBands := 0
 		if gr.mixedBlockFlag != 0 {
 			nLongBands = 2
@@ -699,16 +702,16 @@ func decodeL3(h *Mp3Dec, s *decoderWorkspace, grInfo []grInfo, grInfoOffset int,
 			nLongBands <<= 1
 		}
 		if gr.blockType == 2 { // SHORT_BLOCK_TYPE = 2
-			var scratch [576]float32
+			var scratch [SamplesPerGranuleLayer3]float32
 			if gr.mixedBlockFlag != 0 {
 				aaBands = nLongBands - 1
 			} else {
 				aaBands = -1
 			}
-			reorderL3(grbufFlat[ch*576:ch*576+576], scratch[:], gr.sfbtab)
+			reorderL3(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], scratch[:], gr.sfbtab)
 		}
-		antialiasL3(grbufFlat[ch*576:], aaBands+1)
-		L3Imdct(grbufFlat[ch*576:ch*576+576], h.MdctOverlap[ch][:], int(gr.blockType), nLongBands)
-		changeSignL3(grbufFlat[ch*576 : ch*576+576])
+		antialiasL3(grbufFlat[ch*SamplesPerGranuleLayer3:], aaBands+1) // Actually aaBands is now fixed to 30, so +1 is 31
+		L3Imdct(grbufFlat[ch*SamplesPerGranuleLayer3:ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3], h.MdctOverlap[ch][:], int(gr.blockType), nLongBands)
+		changeSignL3(grbufFlat[ch*SamplesPerGranuleLayer3 : ch*SamplesPerGranuleLayer3+SamplesPerGranuleLayer3])
 	}
 }
