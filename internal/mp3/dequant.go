@@ -210,7 +210,7 @@ func applyScf384L12(sci *l12ScaleInfo, scf []float32, dst []float32) {
 	}
 }
 
-type decScratch struct {
+type decoderWorkspace struct {
 	bs       bitReader
 	maindata [511 + 2304]byte
 	gr_info  [4]grInfo
@@ -502,7 +502,7 @@ func decodeScalefactorsL3(header Header, istPos []byte, bs *bitReader, gr *grInf
 	}
 }
 
-func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decScratch, mainDataBegin int) bool {
+func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decoderWorkspace, mainDataBegin int) bool {
 	frameBytes := int((bs.limit - bs.pos) / 8)
 	bytesHave := min(h.Reserv, mainDataBegin)
 
@@ -521,7 +521,7 @@ func restoreReservoirL3(h *Mp3Dec, bs *bitReader, s *decScratch, mainDataBegin i
 	return h.Reserv >= mainDataBegin
 }
 
-func saveReservoirL3(h *Mp3Dec, s *decScratch) {
+func saveReservoirL3(h *Mp3Dec, s *decoderWorkspace) {
 	pos := int((s.bs.pos + 7) / 8)
 	remains := int(s.bs.limit/8) - pos
 	if remains > 511 {
@@ -674,7 +674,7 @@ func readSideInfoL3(bs *bitReader, gr []grInfo, header Header) int {
 	return mainDataBegin
 }
 
-func decodeL3(h *Mp3Dec, s *decScratch, grInfo []grInfo, grInfoOffset int, nch int) {
+func decodeL3(h *Mp3Dec, s *decoderWorkspace, grInfo []grInfo, grInfoOffset int, nch int) {
 	grbufFlat := s.grbuf[:]
 	for ch := 0; ch < nch; ch++ {
 		layer3grLimit := int(s.bs.pos) + int(grInfo[grInfoOffset+ch].part23Length)

@@ -8,6 +8,7 @@ type Mp3Dec struct {
 	FreeFormatBytes int
 	Header          Header
 	ReservBuf       [511]byte
+	workspace       decoderWorkspace
 }
 
 // Mp3DecFrameInfo contains parsed MPEG frame header information.
@@ -91,12 +92,10 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 		bsFrame.getBits(16)
 	}
 
-	var scratch decScratch
-
 	if info.Layer == 3 {
-		success = dec.decodeLayer3(info, &bsFrame, &scratch, pcm, hdr)
+		success = dec.decodeLayer3(info, &bsFrame, &dec.workspace, pcm, hdr)
 	} else {
-		success = dec.decodeLayer12(info, &bsFrame, &scratch, pcm, hdr)
+		success = dec.decodeLayer12(info, &bsFrame, &dec.workspace, pcm, hdr)
 	}
 
 	if !success {
@@ -105,7 +104,7 @@ func (dec *Mp3Dec) DecodeFrame(mp3 []byte, pcm []float32) (int, Mp3DecFrameInfo)
 	return dec.Header.FrameSamples(), info
 }
 
-func (dec *Mp3Dec) decodeLayer3(info Mp3DecFrameInfo, bsFrame *bitReader, scratch *decScratch, pcm []float32, hdr Header) bool {
+func (dec *Mp3Dec) decodeLayer3(info Mp3DecFrameInfo, bsFrame *bitReader, scratch *decoderWorkspace, pcm []float32, hdr Header) bool {
 	mainDataBegin := readSideInfoL3(bsFrame, scratch.gr_info[:], hdr)
 	if mainDataBegin < 0 || bsFrame.pos > bsFrame.limit {
 		dec.Init()
@@ -131,7 +130,7 @@ func (dec *Mp3Dec) decodeLayer3(info Mp3DecFrameInfo, bsFrame *bitReader, scratc
 	return success
 }
 
-func (dec *Mp3Dec) decodeLayer12(info Mp3DecFrameInfo, bsFrame *bitReader, scratch *decScratch, pcm []float32, hdr Header) bool {
+func (dec *Mp3Dec) decodeLayer12(info Mp3DecFrameInfo, bsFrame *bitReader, scratch *decoderWorkspace, pcm []float32, hdr Header) bool {
 	var sci l12ScaleInfo
 	readScaleInfoL12(hdr, bsFrame, &sci)
 

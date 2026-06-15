@@ -50,9 +50,12 @@ func synthPair(pcm []float32, nch int, z []float32) {
 	pcm[16*nch] = a / 32768.0
 }
 
-func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
-	xr := xl[576*(nch-1):]
-	dstr := dstl[nch-1:]
+func synthFloat(grbuf []float32, pcm []float32, nch int, lins []float32) {
+	xl := grbuf
+	xr := grbuf
+	if nch == 2 {
+		xr = grbuf[576:]
+	}
 
 	win := [15 * 16]float32{
 		-1, 26, -31, 208, 218, 401, -519, 2063, 2000, 4788, -5517, 7134, 5959, 35640, -39336, 74992,
@@ -85,10 +88,10 @@ func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
 	lins[zlinOffset+4*31+2] = xl[1]
 	lins[zlinOffset+4*31+3] = xr[1]
 
-	synthPair(dstr, nch, lins[4*15+1:])
-	synthPair(dstr[32*nch:], nch, lins[4*15+64+1:])
-	synthPair(dstl, nch, lins[4*15:])
-	synthPair(dstl[32*nch:], nch, lins[4*15+64:])
+	synthPair(pcm[nch-1:], nch, lins[4*15+1:])
+	synthPair(pcm[32*nch+nch-1:], nch, lins[4*15+64+1:])
+	synthPair(pcm, nch, lins[4*15:])
+	synthPair(pcm[32*nch:], nch, lins[4*15+64:])
 
 	for i := 14; i >= 0; i-- {
 		lins[zlinOffset+4*i] = xl[18*(31-i)]
@@ -178,14 +181,16 @@ func synthFloat(xl []float32, dstl []float32, nch int, lins []float32) {
 			}
 		}
 
-		dstr[(15-i)*nch] = a[1] / 32768.0
-		dstr[(17+i)*nch] = b[1] / 32768.0
-		dstl[(15-i)*nch] = a[0] / 32768.0
-		dstl[(17+i)*nch] = b[0] / 32768.0
-		dstr[(47-i)*nch] = a[3] / 32768.0
-		dstr[(49+i)*nch] = b[3] / 32768.0
-		dstl[(47-i)*nch] = a[2] / 32768.0
-		dstl[(49+i)*nch] = b[2] / 32768.0
+		if nch == 2 {
+			pcm[(15-i)*2+1] = a[1] / 32768.0
+			pcm[(17+i)*2+1] = b[1] / 32768.0
+			pcm[(47-i)*2+1] = a[3] / 32768.0
+			pcm[(49+i)*2+1] = b[3] / 32768.0
+		}
+		pcm[(15-i)*nch] = a[0] / 32768.0
+		pcm[(17+i)*nch] = b[0] / 32768.0
+		pcm[(47-i)*nch] = a[2] / 32768.0
+		pcm[(49+i)*nch] = b[2] / 32768.0
 	}
 }
 
