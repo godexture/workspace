@@ -1,9 +1,9 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
-	"io"
 
 	"github.com/godexture/codec-mp3/internal/mp3"
 	"github.com/godexture/core/domain/media"
@@ -16,39 +16,25 @@ type DecoderConfig struct{}
 func (DecoderConfig) NodeConfigaration() {}
 
 type Decoder struct {
-	inQueue  chan *media.Packet
-	outQueue chan *media.Frame
-	done     chan struct{}
-	pw       *io.PipeWriter
-	pr       *io.PipeReader
-	err      error
-	flushed  bool
+	buf        bytes.Buffer
+	dec        mp3.Mp3Dec
+	floatPcm   []float32
+	intPcm     []int16
+	sampleRate int
+	channels   int
+	id3ToSkip  int
+	flushed    bool
+	err        error
 }
 
 func NewDecoder() *Decoder {
-	pr, pw := io.Pipe()
 	d := &Decoder{
-		inQueue:  make(chan *media.Packet, 100),
-		outQueue: make(chan *media.Frame, 100),
-		done:     make(chan struct{}),
-		pw:       pw,
-		pr:       pr,
+		id3ToSkip: -1,
+		floatPcm:  make([]float32, 1152*2),
+		intPcm:    make([]int16, 1152*2),
 	}
-
-	go d.writeLoop()
-	go d.decodeLoop()
-
+	d.dec.Init()
 	return d
-}
-
-func (d *Decoder) writeLoop() {
-	for pkt := range d.inQueue {
-		_, err := d.pw.Write(pkt.Data())
-		if err != nil {
-			return
-		}
-	}
-	d.pw.Close()
 }
 
 // processFrame processes raw PCM float samples, converts them to S16 format,
@@ -57,12 +43,6 @@ func processFrame(floatPcm []float32, intPcm []int16, samples int, info mp3.Mp3D
 	channels := info.Channels
 	decodedSamples := samples * channels
 	mp3.FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
-
-	byteLen := decodedSamples * 2
-	byteBuf := make([]byte, byteLen)
-	for i := 0; i < decodedSamples; i++ {
-		binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(intPcm[i]))
-	}
 
 	var layout media.ChannelLayout
 	if channels == 1 {
@@ -77,106 +57,12 @@ func processFrame(floatPcm []float32, intPcm []int16, samples int, info mp3.Mp3D
 		info.Hz,
 		samples,
 	)
-	copy(frame.Planes()[0], byteBuf)
-	return frame, nil
-}
 
-func (d *Decoder) decodeLoop() {
-	defer close(d.outQueue)
-	defer close(d.done)
-
-	var dec mp3.Mp3Dec
-	dec.Init()
-
-	buf := make([]byte, 32*1024)
-	bufLen := 0
-	eof := false
-
-	floatPcm := make([]float32, 1152*2)
-	intPcm := make([]int16, 1152*2)
-
-	var sampleRate int
-	var channels int
-	firstFrame := true
-
-	for {
-		// 1. Read from reader if not EOF and buffer has space
-		if !eof && bufLen < len(buf) {
-			n, err := d.pr.Read(buf[bufLen:])
-			if n > 0 {
-				bufLen += n
-			}
-			if err != nil {
-				eof = true
-				if err != io.EOF {
-					d.err = err
-				} else {
-					d.err = engine.ErrEOF
-				}
-			}
-		}
-
-		// 2. Skip ID3 tags on the first iteration
-		if firstFrame && bufLen > 0 {
-			skipped := mp3.SkipId3(buf[:bufLen])
-			if skipped > 0 {
-				if skipped < bufLen {
-					copy(buf, buf[skipped:bufLen])
-					bufLen -= skipped
-				} else {
-					bufLen = 0
-				}
-			}
-			firstFrame = false
-		}
-
-		// 3. Terminate if buffer is empty and we hit EOF
-		if bufLen == 0 && eof {
-			return
-		}
-
-		// 4. Try to decode a frame
-		if bufLen == 0 {
-			continue
-		}
-
-		samples, info := dec.DecodeFrame(buf[:bufLen], floatPcm)
-		if info.FrameBytes > 0 {
-			if samples > 0 {
-				if sampleRate == 0 {
-					sampleRate = info.Hz
-					channels = info.Channels
-				} else if info.Hz != sampleRate || info.Channels != channels {
-					d.err = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
-					return
-				}
-
-				frame, err := processFrame(floatPcm, intPcm, samples, info)
-				if err != nil {
-					d.err = err
-					return
-				}
-				var f media.Frame = frame
-				d.outQueue <- &f
-			}
-
-			// Consume frame bytes
-			if info.FrameBytes < bufLen {
-				copy(buf, buf[info.FrameBytes:bufLen])
-				bufLen -= info.FrameBytes
-			} else {
-				bufLen = 0
-			}
-		} else {
-			if eof {
-				return
-			}
-			if bufLen == len(buf) {
-				copy(buf, buf[1:])
-				bufLen--
-			}
-		}
+	plane := frame.Planes()[0]
+	for i := 0; i < decodedSamples; i++ {
+		binary.LittleEndian.PutUint16(plane[i*2:], uint16(intPcm[i]))
 	}
+	return frame, nil
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
@@ -186,38 +72,113 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
+	if d.err != nil {
+		return d.err
+	}
 
-	d.inQueue <- pkt
+	d.buf.Write(pkt.Data())
 	return nil
 }
 
 func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
-	select {
-	case f, ok := <-d.outQueue:
-		if !ok {
-			if d.err != nil && d.err != engine.ErrEOF {
-				return nil, d.err
+	if d.err != nil {
+		return nil, d.err
+	}
+
+	for {
+		// 1. Skip ID3 tags on the first frame
+		if d.id3ToSkip == -1 {
+			bufBytes := d.buf.Bytes()
+			if len(bufBytes) >= 3 && (bufBytes[0] != 'I' || bufBytes[1] != 'D' || bufBytes[2] != '3') {
+				d.id3ToSkip = 0
+			} else if len(bufBytes) >= 10 {
+				if size, ok := mp3.ParseId3v2Size(bufBytes); ok {
+					d.id3ToSkip = size
+				} else {
+					d.id3ToSkip = 0
+				}
+			} else if d.flushed {
+				d.id3ToSkip = 0
+			} else {
+				return nil, engine.ErrEAGAIN
 			}
-			return nil, engine.ErrEOF
 		}
-		return f, nil
-	default:
-		select {
-		case <-d.done:
-			if d.err != nil && d.err != engine.ErrEOF {
-				return nil, d.err
+
+		if d.id3ToSkip > 0 {
+			toSkip := d.id3ToSkip
+			if toSkip > d.buf.Len() {
+				toSkip = d.buf.Len()
 			}
-			return nil, engine.ErrEOF
-		default:
+			d.buf.Next(toSkip)
+			d.id3ToSkip -= toSkip
+			if d.id3ToSkip > 0 {
+				if d.flushed {
+					return nil, engine.ErrEOF
+				}
+				return nil, engine.ErrEAGAIN
+			}
+		}
+
+		// 2. Terminate if buffer is empty
+		if d.buf.Len() == 0 {
+			if d.flushed {
+				return nil, engine.ErrEOF
+			}
+			return nil, engine.ErrEAGAIN
+		}
+
+		// If we don't have enough bytes to read a 4-byte MP3 header, wait for more data.
+		if d.buf.Len() < 4 && !d.flushed {
+			return nil, engine.ErrEAGAIN
+		}
+
+		// 3. Try to decode a frame
+		samples, info := d.dec.DecodeFrame(d.buf.Bytes(), d.floatPcm)
+		if info.FrameBytes > 0 {
+			d.buf.Next(info.FrameBytes)
+
+			if samples > 0 {
+				if d.sampleRate == 0 {
+					d.sampleRate = info.Hz
+					d.channels = info.Channels
+				} else if info.Hz != d.sampleRate || info.Channels != d.channels {
+					d.err = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
+					return nil, d.err
+				}
+
+				frame, err := processFrame(d.floatPcm, d.intPcm, samples, info)
+				if err != nil {
+					d.err = err
+					return nil, d.err
+				}
+				return &frame, nil
+			}
+
+			// If samples == 0, it means it's a headers-only frame or invalid frame.
+			// Try decoding next frame.
+			continue
+		} else {
+			// info.FrameBytes == 0 means not enough data to confirm/decode a frame.
+			if d.flushed {
+				if d.buf.Len() > 0 {
+					d.buf.Reset() // Discard remaining junk bytes
+				}
+				return nil, engine.ErrEOF
+			}
+
+			// If the buffer grows too large without finding a frame (garbage data),
+			// discard a byte to prevent memory leaks and try again.
+			if d.buf.Len() > 64*1024 {
+				d.buf.Next(1)
+				continue
+			}
+
 			return nil, engine.ErrEAGAIN
 		}
 	}
 }
 
 func (d *Decoder) Flush() error {
-	if !d.flushed {
-		d.flushed = true
-		close(d.inQueue)
-	}
+	d.flushed = true
 	return nil
 }

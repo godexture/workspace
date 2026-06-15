@@ -1,29 +1,30 @@
 package mp3
 
-// SkipId3 returns the number of bytes at the beginning of the buffer to skip (e.g. ID3 tags).
-func SkipId3(mp3 []byte) int {
-	if len(mp3) == 0 {
-		return 0
+// ParseId3v2Size returns the total size of an ID3v2 tag (including header) if the buffer contains a valid ID3v2 header.
+// The buffer must be at least 10 bytes long.
+func ParseId3v2Size(buf []byte) (int, bool) {
+	if len(buf) < 10 {
+		return 0, false
 	}
-	buf := mp3
-	bufSize := len(mp3)
-
-	// Check ID3v2
-	id3v2size := 0
-	if bufSize >= 10 && buf[0] == 'I' && buf[1] == 'D' && buf[2] == '3' &&
+	if buf[0] == 'I' && buf[1] == 'D' && buf[2] == '3' &&
 		!((buf[5]&15) != 0 || (buf[6]&0x80) != 0 || (buf[7]&0x80) != 0 || (buf[8]&0x80) != 0 || (buf[9]&0x80) != 0) {
-		id3v2size = (int(buf[6]&0x7f) << 21) | (int(buf[7]&0x7f) << 14) | (int(buf[8]&0x7f) << 7) | int(buf[9]&0x7f)
+		id3v2size := (int(buf[6]&0x7f) << 21) | (int(buf[7]&0x7f) << 14) | (int(buf[8]&0x7f) << 7) | int(buf[9]&0x7f)
 		id3v2size += 10 // header
 		if (buf[5] & 16) != 0 {
 			id3v2size += 10 // footer
 		}
+		return id3v2size, true
 	}
+	return 0, false
+}
 
-	if id3v2size > 0 {
-		if id3v2size >= bufSize {
-			return bufSize
+// SkipId3 returns the number of bytes at the beginning of the buffer to skip (e.g. ID3 tags).
+func SkipId3(mp3 []byte) int {
+	if size, ok := ParseId3v2Size(mp3); ok {
+		if size >= len(mp3) {
+			return len(mp3)
 		}
-		return id3v2size
+		return size
 	}
 	return 0
 }
