@@ -129,17 +129,17 @@ func L3ImdctGo(grbuf []float32, overlap []float32, blockType int, nLongBands int
 	overlapOffset := 0
 	if nLongBands > 0 {
 		imdct36L3(grbuf, overlap, mdctWindow[0][:], nLongBands)
-		grbufOffset += 18 * nLongBands
-		overlapOffset += 9 * nLongBands
+		grbufOffset += SamplesPerSubbandLayer3 * nLongBands
+		overlapOffset += (SamplesPerSubbandLayer3 / 2) * nLongBands
 	}
 	if blockType == 2 { // SHORT_BLOCK_TYPE = 2
-		imdctShortL3(grbuf[grbufOffset:], overlap[overlapOffset:], 32-nLongBands)
+		imdctShortL3(grbuf[grbufOffset:], overlap[overlapOffset:], NumSubbands-nLongBands)
 	} else {
 		isStop := 0
 		if blockType == 3 { // STOP_BLOCK_TYPE = 3
 			isStop = 1
 		}
-		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], mdctWindow[isStop][:], 32-nLongBands)
+		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], mdctWindow[isStop][:], NumSubbands-nLongBands)
 	}
 }
 

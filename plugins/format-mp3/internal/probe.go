@@ -5,19 +5,20 @@ import (
 	"io"
 
 	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/format-mp3/header"
 )
 
 // Probe はMP3ファイルを検出する。
 // MP3同期ワード (0xFF 0xEx ~ 0xFF 0xFx) またはID3v2ヘッダを確認する。
 func Probe(r io.Reader) manifest.ProbeScore {
-	reader := bufio.NewReaderSize(r, 10)
-	header, err := reader.Peek(10)
-	if err != nil && len(header) < 2 {
+	reader := bufio.NewReaderSize(r, header.ID3v2HeaderSize)
+	hdr, err := reader.Peek(header.ID3v2HeaderSize)
+	if err != nil && len(hdr) < 2 {
 		return manifest.ProbeMismatch
 	}
 
-	hasID3 := len(header) >= 3 && string(header[0:3]) == "ID3"
-	hasSync := isMP3SyncWord(header)
+	hasID3 := len(hdr) >= 3 && string(hdr[0:3]) == "ID3"
+	hasSync := isMP3SyncWord(hdr)
 
 	switch {
 	case hasID3 && hasSync:

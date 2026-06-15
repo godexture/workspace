@@ -27,8 +27,8 @@ type Decoder struct {
 
 func NewDecoder() *Decoder {
 	d := &Decoder{
-		floatPcm:  make([]float32, 1152*2),
-		intPcm:    make([]int16, 1152*2),
+		floatPcm: make([]float32, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
+		intPcm:   make([]int16, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
 	}
 	d.dec.Init()
 	return d
@@ -93,7 +93,12 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	pkt := d.packets[0]
 	d.packets = d.packets[1:]
 
-	samples, info := d.dec.DecodeFrame(pkt.Data(), d.floatPcm)
+	samples, info, err := d.dec.DecodeFrame(pkt.Data(), d.floatPcm)
+	if err != nil {
+		// Frame-level decoding errors (like reservoir underflow or corrupted frames)
+		// are transient. Return ErrEAGAIN so the pipeline can process subsequent packets.
+		return nil, engine.ErrEAGAIN
+	}
 	if info.FrameBytes > 0 {
 		if samples > 0 {
 			if d.sampleRate == 0 {

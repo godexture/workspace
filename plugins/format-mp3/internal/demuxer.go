@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-mp3/header"
 )
 
 // Demuxer はMP3コンテナを読み込む。
@@ -41,13 +42,13 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 skip id3: %w", err)
 	}
 
-	header, _, err := NextFrameHeader(br)
+	hdr, _, err := NextFrameHeader(br)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 analyze: %w", err)
 	}
 
 	layout := media.LayoutStereo2_0
-	if header.ChannelMode == 3 {
+	if hdr.ChannelMode == header.ChannelModeMono {
 		layout = media.LayoutMono1
 	}
 
@@ -60,7 +61,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			Codec: media.CodecMPEG3,
 			Audio: media.AudioAttributes{
 				CodecID:       media.CodecMPEG3,
-				SampleRate:    header.SampleRate,
+				SampleRate:    hdr.SampleRate,
 				Format:        media.SampleFormatS16, // デコード後の形式(codec-mp3に合わせる)
 				ChannelLayout: layout,
 			},
@@ -93,7 +94,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		d.id3Skipped = true
 	}
 
-	header, data, err := NextFrameHeader(d.br)
+	hdr, data, err := NextFrameHeader(d.br)
 	if err != nil {
 		if err == io.EOF {
 			return nil, 0, io.EOF
@@ -107,7 +108,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	pkt.StreamIndex = 0
 	pkt.PTS = media.Pts(d.pts)
 
-	samplesPerFrame := header.Samples
+	samplesPerFrame := hdr.Samples
 	d.pts += int64(samplesPerFrame)
 
 	return pkt, 0, nil

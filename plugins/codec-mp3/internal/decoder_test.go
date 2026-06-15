@@ -41,8 +41,6 @@ func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 	}
 }
 
-
-
 func TestDecoder_ChannelLayoutChange(t *testing.T) {
 	dec := NewDecoder()
 	dec.sampleRate = 44100
