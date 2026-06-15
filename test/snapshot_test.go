@@ -27,25 +27,25 @@ var testFiles = []string{
 	"l3-sin1k0db.mp3",
 }
 
-const maxAllowedDiff = 40
+const maxAllowedDiff = 1
 
 func TestSnapshots(t *testing.T) {
-	for _, filename := range testFiles {
-		t.Run(filename, func(t *testing.T) {
-			mp3Path := filepath.Join("testdata", filename)
+	for _, fileName := range testFiles {
+		t.Run(fileName, func(t *testing.T) {
+			mp3Path := filepath.Join("testdata", fileName)
 			mp3Data, err := os.ReadFile(mp3Path)
 			if err != nil {
 				t.Fatalf("failed to read test MP3 file: %v", err)
 			}
 
 			// Decode using Demuxer and Decoder
-			pcm, err := decodeAll(mp3Data)
+			pcmSamples, err := decodeAll(mp3Data)
 			if err != nil {
 				t.Fatalf("failed to decode MP3 data: %v", err)
 			}
 
-			snapshotDir := filepath.Join("testdata", "snapshots")
-			snapshotPath := filepath.Join(snapshotDir, filename+".snapshot")
+			snapshotDirectory := filepath.Join("testdata", "snapshots")
+			snapshotPath := filepath.Join(snapshotDirectory, fileName+".snapshot")
 
 			// Load snapshot and compare
 			expectedPcm, err := loadSnapshot(snapshotPath)
@@ -53,7 +53,7 @@ func TestSnapshots(t *testing.T) {
 				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
-			if err := comparePCM(pcm, expectedPcm, maxAllowedDiff); err != nil {
+			if err := comparePCM(pcmSamples, expectedPcm, maxAllowedDiff); err != nil {
 				t.Errorf("PCM comparison failed: %v", err)
 			}
 		})
@@ -61,22 +61,22 @@ func TestSnapshots(t *testing.T) {
 }
 
 func decodeAll(mp3Data []byte) ([]int16, error) {
-	demux, err := mp3format.NewDemuxerEngine(bytes.NewReader(mp3Data))
+	demuxer, err := mp3format.NewDemuxerEngine(bytes.NewReader(mp3Data))
 	if err != nil {
 		return nil, err
 	}
 
-	_, _, err = demux.Analyze()
+	_, _, err = demuxer.Analyze()
 	if err != nil {
 		return nil, err
 	}
 
-	dec := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
 
-	var allPCM []int16
+	var allPcmSamples []int16
 
 	for {
-		pkt, _, err := demux.ReadPacket()
+		packet, _, err := demuxer.ReadPacket()
 		if err == io.EOF {
 			break
 		}
@@ -84,14 +84,14 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 			return nil, err
 		}
 
-		if err := dec.SendPacket(pkt); err != nil {
+		if err := decoder.SendPacket(packet); err != nil {
 			if err != engine.ErrEAGAIN {
 				return nil, err
 			}
 		}
 
 		for {
-			frame, err := dec.ReceiveFrame()
+			frame, err := decoder.ReceiveFrame()
 			if err == engine.ErrEAGAIN {
 				break
 			}
@@ -99,8 +99,8 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 				return nil, err
 			}
 
-			audioFrame, ok := (*frame).(*media.AudioFrame)
-			if !ok {
+			audioFrame, isAudioFrame := (*frame).(*media.AudioFrame)
+			if !isAudioFrame {
 				return nil, fmt.Errorf("expected AudioFrame")
 			}
 
@@ -110,19 +110,19 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 			totalSamples := samples * channels
 
 			for i := 0; i < totalSamples; i++ {
-				valInt := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
-				allPCM = append(allPCM, valInt)
+				valueInteger := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
+				allPcmSamples = append(allPcmSamples, valueInteger)
 			}
 		}
 	}
 
 	// Flush
-	if err := dec.Flush(); err != nil {
+	if err := decoder.Flush(); err != nil {
 		return nil, err
 	}
 
 	for {
-		frame, err := dec.ReceiveFrame()
+		frame, err := decoder.ReceiveFrame()
 		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
 			break
 		}
@@ -130,8 +130,8 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 			return nil, err
 		}
 
-		audioFrame, ok := (*frame).(*media.AudioFrame)
-		if !ok {
+		audioFrame, isAudioFrame := (*frame).(*media.AudioFrame)
+		if !isAudioFrame {
 			return nil, fmt.Errorf("expected AudioFrame")
 		}
 
@@ -141,38 +141,38 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 		totalSamples := samples * channels
 
 		for i := 0; i < totalSamples; i++ {
-			valInt := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
-			allPCM = append(allPCM, valInt)
+			valueInteger := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
+			allPcmSamples = append(allPcmSamples, valueInteger)
 		}
 	}
 
-	return allPCM, nil
+	return allPcmSamples, nil
 }
 
 func loadSnapshot(path string) ([]int16, error) {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer file.Close()
 
-	var data []int16
-	scanner := bufio.NewScanner(f)
+	var pcmData []int16
+	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		val, err := strconv.ParseInt(line, 10, 16)
+		parsedValue, err := strconv.ParseInt(line, 10, 16)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse int at index %d: %w", len(data), err)
+			return nil, fmt.Errorf("failed to parse int at index %d: %w", len(pcmData), err)
 		}
-		data = append(data, int16(val))
+		pcmData = append(pcmData, int16(parsedValue))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return data, nil
+	return pcmData, nil
 }
 
 func comparePCM(actual, expected []int16, maxAbsDiff int) error {

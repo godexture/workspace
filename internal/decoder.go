@@ -15,106 +15,106 @@ type DecoderConfig struct{}
 func (DecoderConfig) NodeConfigaration() {}
 
 type Decoder struct {
-	packets    []*media.Packet
-	dec        mp3.Mp3Dec
-	floatPcm   []float32
-	intPcm     []int16
-	sampleRate int
-	channels   int
-	flushed    bool
-	err        error
+	packets      []*media.Packet
+	decoder      mp3.Decoder
+	float32PCMSamples []float32
+	int16PCMSamples   []int16
+	sampleRate   int
+	channelCount int
+	isFlushed    bool
+	lastErr      error
 }
 
 func NewDecoder() *Decoder {
 	d := &Decoder{
-		floatPcm: make([]float32, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
-		intPcm:   make([]int16, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
+		float32PCMSamples: make([]float32, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
+		int16PCMSamples:   make([]int16, mp3.SamplesPerFrameLayer23*mp3.MaxChannels),
 	}
-	d.dec.Init()
+	d.decoder.Init()
 	return d
 }
 
 // processFrame processes raw PCM float samples, converts them to S16 format,
 // and packages them into a media.Frame.
-func processFrame(floatPcm []float32, intPcm []int16, samples int, info mp3.Mp3DecFrameInfo) (media.Frame, error) {
-	channels := info.Channels
-	decodedSamples := samples * channels
-	mp3.FloatToS16(floatPcm[:decodedSamples], intPcm[:decodedSamples])
+func processFrame(float32PCMSamples []float32, int16PCMSamples []int16, sampleCount int, frameInfo mp3.DecoderFrameInfo) (media.Frame, error) {
+	channelCount := frameInfo.Channels
+	totalDecodedSamples := sampleCount * channelCount
+	mp3.ConvertFloat32ToSigned16BitPCMSamples(float32PCMSamples[:totalDecodedSamples], int16PCMSamples[:totalDecodedSamples])
 
-	var layout media.ChannelLayout
-	if channels == 1 {
-		layout = media.LayoutMono1
+	var channelLayout media.ChannelLayout
+	if channelCount == 1 {
+		channelLayout = media.LayoutMono1
 	} else {
-		layout = media.LayoutStereo2_0
+		channelLayout = media.LayoutStereo2_0
 	}
 
-	frame := media.NewAudioFrame(
+	audioFrame := media.NewAudioFrame(
 		media.SampleFormatS16,
-		layout,
-		info.Hz,
-		samples,
+		channelLayout,
+		frameInfo.SampleRateHertz,
+		sampleCount,
 	)
 
-	plane := frame.Planes()[0]
-	for i := 0; i < decodedSamples; i++ {
-		binary.LittleEndian.PutUint16(plane[i*2:], uint16(intPcm[i]))
+	audioPlane := audioFrame.Planes()[0]
+	for i := 0; i < totalDecodedSamples; i++ {
+		binary.LittleEndian.PutUint16(audioPlane[i*2:], uint16(int16PCMSamples[i]))
 	}
-	return frame, nil
+	return audioFrame, nil
 }
 
-func (d *Decoder) SendPacket(pkt *media.Packet) error {
-	if pkt == nil {
+func (d *Decoder) SendPacket(packet *media.Packet) error {
+	if packet == nil {
 		return errors.New("codec-mp3 decoder: received nil packet")
 	}
-	if d.flushed {
+	if d.isFlushed {
 		return engine.ErrEOF
 	}
-	if d.err != nil {
-		return d.err
+	if d.lastErr != nil {
+		return d.lastErr
 	}
 
-	d.packets = append(d.packets, pkt)
+	d.packets = append(d.packets, packet)
 	return nil
 }
 
 func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
-	if d.err != nil {
-		return nil, d.err
+	if d.lastErr != nil {
+		return nil, d.lastErr
 	}
 
 	if len(d.packets) == 0 {
-		if d.flushed {
+		if d.isFlushed {
 			return nil, engine.ErrEOF
 		}
 		return nil, engine.ErrEAGAIN
 	}
 
 	// Pop the first packet
-	pkt := d.packets[0]
+	packet := d.packets[0]
 	d.packets = d.packets[1:]
 
-	samples, info, err := d.dec.DecodeFrame(pkt.Data(), d.floatPcm)
+	sampleCount, frameInfo, err := d.decoder.DecodeFrame(packet.Data(), d.float32PCMSamples)
 	if err != nil {
 		// Frame-level decoding errors (like reservoir underflow or corrupted frames)
 		// are transient. Return ErrEAGAIN so the pipeline can process subsequent packets.
 		return nil, engine.ErrEAGAIN
 	}
-	if info.FrameBytes > 0 {
-		if samples > 0 {
+	if frameInfo.FrameBytes > 0 {
+		if sampleCount > 0 {
 			if d.sampleRate == 0 {
-				d.sampleRate = info.Hz
-				d.channels = info.Channels
-			} else if info.Hz != d.sampleRate || info.Channels != d.channels {
-				d.err = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
-				return nil, d.err
+				d.sampleRate = frameInfo.SampleRateHertz
+				d.channelCount = frameInfo.Channels
+			} else if frameInfo.SampleRateHertz != d.sampleRate || frameInfo.Channels != d.channelCount {
+				d.lastErr = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
+				return nil, d.lastErr
 			}
 
-			frame, err := processFrame(d.floatPcm, d.intPcm, samples, info)
+			audioFrame, err := processFrame(d.float32PCMSamples, d.int16PCMSamples, sampleCount, frameInfo)
 			if err != nil {
-				d.err = err
-				return nil, d.err
+				d.lastErr = err
+				return nil, d.lastErr
 			}
-			return &frame, nil
+			return &audioFrame, nil
 		}
 		return nil, engine.ErrEAGAIN
 	}
@@ -123,6 +123,6 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 }
 
 func (d *Decoder) Flush() error {
-	d.flushed = true
+	d.isFlushed = true
 	return nil
 }

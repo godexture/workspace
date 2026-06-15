@@ -2,29 +2,29 @@ package mp3
 
 import "github.com/godexture/format-mp3/header"
 
-// ParseId3v2Size returns the total size of an ID3v2 tag (including header) if the buffer contains a valid ID3v2 header.
+// ParseID3Version2Size returns the total size of an ID3v2 tag (including header) if the buffer contains a valid ID3v2 header.
 // The buffer must be at least 10 bytes long.
-func ParseId3v2Size(buf []byte) (int, bool) {
-	if len(buf) < ID3v2HeaderSize {
+func ParseID3Version2Size(buffer []byte) (int, bool) {
+	if len(buffer) < ID3v2HeaderSize {
 		return 0, false
 	}
-	if buf[0] == 'I' && buf[1] == 'D' && buf[2] == '3' &&
-		!((buf[5]&15) != 0 || (buf[6]&0x80) != 0 || (buf[7]&0x80) != 0 || (buf[8]&0x80) != 0 || (buf[9]&0x80) != 0) {
-		id3v2size := (int(buf[6]&0x7f) << 21) | (int(buf[7]&0x7f) << 14) | (int(buf[8]&0x7f) << 7) | int(buf[9]&0x7f)
-		id3v2size += ID3v2HeaderSize // header
-		if (buf[5] & 16) != 0 {
-			id3v2size += ID3v2HeaderSize // footer
+	if buffer[0] == 'I' && buffer[1] == 'D' && buffer[2] == '3' &&
+		!((buffer[5]&15) != 0 || (buffer[6]&0x80) != 0 || (buffer[7]&0x80) != 0 || (buffer[8]&0x80) != 0 || (buffer[9]&0x80) != 0) {
+		id3Version2Size := (int(buffer[6]&0x7f) << 21) | (int(buffer[7]&0x7f) << 14) | (int(buffer[8]&0x7f) << 7) | int(buffer[9]&0x7f)
+		id3Version2Size += ID3v2HeaderSize // header
+		if (buffer[5] & 16) != 0 {
+			id3Version2Size += ID3v2HeaderSize // footer
 		}
-		return id3v2size, true
+		return id3Version2Size, true
 	}
 	return 0, false
 }
 
-// SkipId3 returns the number of bytes at the beginning of the buffer to skip (e.g. ID3 tags).
-func SkipId3(mp3 []byte) int {
-	if size, ok := ParseId3v2Size(mp3); ok {
-		if size >= len(mp3) {
-			return len(mp3)
+// SkipID3 returns the number of bytes at the beginning of the buffer to skip (e.g. ID3 tags).
+func SkipID3(mp3Data []byte) int {
+	if size, ok := ParseID3Version2Size(mp3Data); ok {
+		if size >= len(mp3Data) {
+			return len(mp3Data)
 		}
 		return size
 	}
@@ -49,57 +49,57 @@ const (
 	MaxFrameSyncMatches    = 10
 )
 
-func matchFrame(mp3 []byte, header Header, freeFormatBytes int) bool {
-	i := 0
-	nmatch := 0
-	currHeader := header
-	for ; nmatch < MaxFrameSyncMatches; nmatch++ {
-		i += currHeader.FrameBytes(freeFormatBytes) + currHeader.Padding()
-		if i+4 > len(mp3) {
-			return nmatch > 0
+func matchFrame(mp3Data []byte, header Header, freeFormatBytes int) bool {
+	byteIndex := 0
+	matchCount := 0
+	currentHeader := header
+	for ; matchCount < MaxFrameSyncMatches; matchCount++ {
+		byteIndex += currentHeader.FrameBytes(freeFormatBytes) + currentHeader.Padding()
+		if byteIndex+4 > len(mp3Data) {
+			return matchCount > 0
 		}
-		nextHdr, err := ParseHeader(mp3[i : i+4])
-		if err != nil || !header.Compare(nextHdr) {
+		nextHeader, err := ParseHeader(mp3Data[byteIndex : byteIndex+4])
+		if err != nil || !header.Compare(nextHeader) {
 			return false
 		}
-		currHeader = nextHdr
+		currentHeader = nextHeader
 	}
 	return true
 }
 
-func FindFrame(mp3 []byte, freeFormatBytes int) (offset int, frameBytes int, newFreeFormatBytes int, found bool) {
-	mp3Bytes := len(mp3)
-	for i := 0; i < mp3Bytes-4; i++ {
-		curr, err := ParseHeader(mp3[i : i+4])
-		if err == nil && curr.IsValid() {
-			frameBytes := curr.FrameBytes(freeFormatBytes)
-			frameAndPadding := frameBytes + curr.Padding()
+func FindFrame(mp3Data []byte, freeFormatBytes int) (offset int, frameBytes int, newFreeFormatBytes int, found bool) {
+	mp3DataLength := len(mp3Data)
+	for byteIndex := 0; byteIndex < mp3DataLength-4; byteIndex++ {
+		currentHeader, err := ParseHeader(mp3Data[byteIndex : byteIndex+4])
+		if err == nil && currentHeader.IsValid() {
+			frameBytes := currentHeader.FrameBytes(freeFormatBytes)
+			frameAndPadding := frameBytes + currentHeader.Padding()
 
-			for k := 4; frameBytes == 0 && k < MaxFreeFormatFrameSize && i+2*k < mp3Bytes-4; k++ {
-				nextHdr, err2 := ParseHeader(mp3[i+k : i+k+4])
-				if err2 == nil && curr.Compare(nextHdr) {
-					fb := k - curr.Padding()
-					nextfb := fb + nextHdr.Padding()
-					if i+k+nextfb+4 > mp3Bytes {
+			for searchIndex := 4; frameBytes == 0 && searchIndex < MaxFreeFormatFrameSize && byteIndex+2*searchIndex < mp3DataLength-4; searchIndex++ {
+				nextHeader, err2 := ParseHeader(mp3Data[byteIndex+searchIndex : byteIndex+searchIndex+4])
+				if err2 == nil && currentHeader.Compare(nextHeader) {
+					fb := searchIndex - currentHeader.Padding()
+					nextFrameBytes := fb + nextHeader.Padding()
+					if byteIndex+searchIndex+nextFrameBytes+4 > mp3DataLength {
 						continue
 					}
-					nextHdr2, err3 := ParseHeader(mp3[i+k+nextfb : i+k+nextfb+4])
-					if err3 != nil || !curr.Compare(nextHdr2) {
+					nextHeader2, err3 := ParseHeader(mp3Data[byteIndex+searchIndex+nextFrameBytes : byteIndex+searchIndex+nextFrameBytes+4])
+					if err3 != nil || !currentHeader.Compare(nextHeader2) {
 						continue
 					}
-					frameAndPadding = k
+					frameAndPadding = searchIndex
 					frameBytes = fb
 					freeFormatBytes = fb
 				}
 			}
 
-			if (frameBytes != 0 && i+frameAndPadding <= mp3Bytes &&
-				matchFrame(mp3[i:], curr, frameBytes)) ||
-				(i == 0 && frameAndPadding == mp3Bytes) {
-				return i, frameAndPadding, freeFormatBytes, true
+			if (frameBytes != 0 && byteIndex+frameAndPadding <= mp3DataLength &&
+				matchFrame(mp3Data[byteIndex:], currentHeader, frameBytes)) ||
+				(byteIndex == 0 && frameAndPadding == mp3DataLength) {
+				return byteIndex, frameAndPadding, freeFormatBytes, true
 			}
 			freeFormatBytes = 0
 		}
 	}
-	return mp3Bytes, 0, 0, false
+	return mp3DataLength, 0, 0, false
 }

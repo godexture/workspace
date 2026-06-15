@@ -9,7 +9,7 @@ var twid9 = [18]float32{
 	0.73727734, 0.79335334, 0.84339145, 0.88701083, 0.92387953, 0.95371695, 0.97629601, 0.99144486, 0.99904822, 0.67559021, 0.60876143, 0.53729961, 0.46174861, 0.38268343, 0.30070580, 0.21643961, 0.13052619, 0.04361938,
 }
 
-func l3Dct39(y []float32) {
+func layer3DiscreteCosineTransform39(y []float32) {
 	s0 := y[0]
 	s2 := y[2]
 	s4 := y[4]
@@ -53,97 +53,97 @@ func l3Dct39(y []float32) {
 	y[8] = s4 + s7
 }
 
-func imdct36L3(grbuf []float32, overlap []float32, window []float32, nbands int) {
-	for j := 0; j < nbands; j++ {
-		currGr := grbuf[j*18 : j*18+18]
-		currOv := overlap[j*9 : j*9+9]
+func l3Imdct36(granuleBuffer []float32, overlapBuffer []float32, windowTable []float32, numberOfBands int) {
+	for j := 0; j < numberOfBands; j++ {
+		currentGranule := granuleBuffer[j*18 : j*18+18]
+		currentOverlap := overlapBuffer[j*9 : j*9+9]
 
-		var co, si [9]float32
-		co[0] = -currGr[0]
-		si[0] = currGr[17]
+		var cos, sin [9]float32
+		cos[0] = -currentGranule[0]
+		sin[0] = currentGranule[17]
 		for i := 0; i < 4; i++ {
-			si[8-2*i] = currGr[4*i+1] - currGr[4*i+2]
-			co[1+2*i] = currGr[4*i+1] + currGr[4*i+2]
-			si[7-2*i] = currGr[4*i+4] - currGr[4*i+3]
-			co[2+2*i] = -(currGr[4*i+3] + currGr[4*i+4])
+			sin[8-2*i] = currentGranule[4*i+1] - currentGranule[4*i+2]
+			cos[1+2*i] = currentGranule[4*i+1] + currentGranule[4*i+2]
+			sin[7-2*i] = currentGranule[4*i+4] - currentGranule[4*i+3]
+			cos[2+2*i] = -(currentGranule[4*i+3] + currentGranule[4*i+4])
 		}
-		l3Dct39(co[:])
-		l3Dct39(si[:])
+		layer3DiscreteCosineTransform39(cos[:])
+		layer3DiscreteCosineTransform39(sin[:])
 
-		si[1] = -si[1]
-		si[3] = -si[3]
-		si[5] = -si[5]
-		si[7] = -si[7]
+		sin[1] = -sin[1]
+		sin[3] = -sin[3]
+		sin[5] = -sin[5]
+		sin[7] = -sin[7]
 
 		for i := 0; i < 9; i++ {
-			ovl := currOv[i]
-			sum := co[i]*twid9[9+i] + si[i]*twid9[0+i]
-			currOv[i] = co[i]*twid9[0+i] - si[i]*twid9[9+i]
-			currGr[i] = ovl*window[0+i] - sum*window[9+i]
-			currGr[17-i] = ovl*window[9+i] + sum*window[0+i]
+			overlapValue := currentOverlap[i]
+			sum := cos[i]*twid9[9+i] + sin[i]*twid9[0+i]
+			currentOverlap[i] = cos[i]*twid9[0+i] - sin[i]*twid9[9+i]
+			currentGranule[i] = overlapValue*windowTable[0+i] - sum*windowTable[9+i]
+			currentGranule[17-i] = overlapValue*windowTable[9+i] + sum*windowTable[0+i]
 		}
 	}
 }
 
-func l3Idct3(x0, x1, x2 float32, dst []float32) {
+func l3Idct3(x0, x1, x2 float32, destinationSamples []float32) {
 	m1 := x1 * 0.86602540
 	a1 := x0 - x2*0.5
-	dst[1] = x0 + x2
-	dst[0] = a1 + m1
-	dst[2] = a1 - m1
+	destinationSamples[1] = x0 + x2
+	destinationSamples[0] = a1 + m1
+	destinationSamples[2] = a1 - m1
 }
 
-func imdct12L3(x []float32, xOffset int, dst []float32, overlap []float32) {
-	var twid3 = [6]float32{0.79335334, 0.92387953, 0.99144486, 0.60876143, 0.38268343, 0.13052619}
-	var co, si [3]float32
+func l3Imdct12(inputSamples []float32, inputOffset int, destinationSamples []float32, overlapBuffer []float32) {
+	var twiddleFactors3 = [6]float32{0.79335334, 0.92387953, 0.99144486, 0.60876143, 0.38268343, 0.13052619}
+	var cos, sin [3]float32
 
-	l3Idct3(-x[xOffset+0], x[xOffset+6]+x[xOffset+3], x[xOffset+12]+x[xOffset+9], co[:])
-	l3Idct3(x[xOffset+15], x[xOffset+12]-x[xOffset+9], x[xOffset+6]-x[xOffset+3], si[:])
-	si[1] = -si[1]
+	l3Idct3(-inputSamples[inputOffset+0], inputSamples[inputOffset+6]+inputSamples[inputOffset+3], inputSamples[inputOffset+12]+inputSamples[inputOffset+9], cos[:])
+	l3Idct3(inputSamples[inputOffset+15], inputSamples[inputOffset+12]-inputSamples[inputOffset+9], inputSamples[inputOffset+6]-inputSamples[inputOffset+3], sin[:])
+	sin[1] = -sin[1]
 
 	for i := 0; i < 3; i++ {
-		ovl := overlap[i]
-		sum := co[i]*twid3[3+i] + si[i]*twid3[0+i]
-		overlap[i] = co[i]*twid3[0+i] - si[i]*twid3[3+i]
-		dst[i] = ovl*twid3[2-i] - sum*twid3[5-i]
-		dst[5-i] = ovl*twid3[5-i] + sum*twid3[2-i]
+		overlapValue := overlapBuffer[i]
+		sum := cos[i]*twiddleFactors3[3+i] + sin[i]*twiddleFactors3[0+i]
+		overlapBuffer[i] = cos[i]*twiddleFactors3[0+i] - sin[i]*twiddleFactors3[3+i]
+		destinationSamples[i] = overlapValue*twiddleFactors3[2-i] - sum*twiddleFactors3[5-i]
+		destinationSamples[5-i] = overlapValue*twiddleFactors3[5-i] + sum*twiddleFactors3[2-i]
 	}
 }
 
-func imdctShortL3(grbuf []float32, overlap []float32, nbands int) {
-	for j := 0; j < nbands; j++ {
-		currGr := grbuf[j*18:]
-		currOv := overlap[j*9:]
-		var tmp [18]float32
-		copy(tmp[:], currGr[:18])
-		copy(currGr[:6], currOv[:6])
-		imdct12L3(tmp[:], 0, currGr[6:], currOv[6:])
-		imdct12L3(tmp[:], 1, currGr[12:], currOv[6:])
-		imdct12L3(tmp[:], 2, currOv, currOv[6:])
+func l3ImdctShort(granuleBuffer []float32, overlapBuffer []float32, numberOfBands int) {
+	for j := 0; j < numberOfBands; j++ {
+		currentGranule := granuleBuffer[j*18:]
+		currentOverlap := overlapBuffer[j*9:]
+		var temporaryBuffer [18]float32
+		copy(temporaryBuffer[:], currentGranule[:18])
+		copy(currentGranule[:6], currentOverlap[:6])
+		l3Imdct12(temporaryBuffer[:], 0, currentGranule[6:], currentOverlap[6:])
+		l3Imdct12(temporaryBuffer[:], 1, currentGranule[12:], currentOverlap[6:])
+		l3Imdct12(temporaryBuffer[:], 2, currentOverlap, currentOverlap[6:])
 	}
 }
 
 // L3ImdctGo is the pure Go implementation of IMDCT.
-func L3ImdctGo(grbuf []float32, overlap []float32, blockType int, nLongBands int) {
-	grbufOffset := 0
+func L3ImdctGo(granuleBuffer []float32, overlapBuffer []float32, blockType int, numberOfLongBands int) {
+	granuleBufferOffset := 0
 	overlapOffset := 0
-	if nLongBands > 0 {
-		imdct36L3(grbuf, overlap, mdctWindow[0][:], nLongBands)
-		grbufOffset += SamplesPerSubbandLayer3 * nLongBands
-		overlapOffset += (SamplesPerSubbandLayer3 / 2) * nLongBands
+	if numberOfLongBands > 0 {
+		l3Imdct36(granuleBuffer, overlapBuffer, mdctWindow[0][:], numberOfLongBands)
+		granuleBufferOffset += SamplesPerSubbandLayer3 * numberOfLongBands
+		overlapOffset += (SamplesPerSubbandLayer3 / 2) * numberOfLongBands
 	}
 	if blockType == 2 { // SHORT_BLOCK_TYPE = 2
-		imdctShortL3(grbuf[grbufOffset:], overlap[overlapOffset:], NumSubbands-nLongBands)
+		l3ImdctShort(granuleBuffer[granuleBufferOffset:], overlapBuffer[overlapOffset:], NumSubbands-numberOfLongBands)
 	} else {
-		isStop := 0
+		isStopBlock := 0
 		if blockType == 3 { // STOP_BLOCK_TYPE = 3
-			isStop = 1
+			isStopBlock = 1
 		}
-		imdct36L3(grbuf[grbufOffset:], overlap[overlapOffset:], mdctWindow[isStop][:], NumSubbands-nLongBands)
+		l3Imdct36(granuleBuffer[granuleBufferOffset:], overlapBuffer[overlapOffset:], mdctWindow[isStopBlock][:], NumSubbands-numberOfLongBands)
 	}
 }
 
 // L3Imdct performs IMDCT on a granule block.
-func L3Imdct(grbuf []float32, overlap []float32, blockType int, nLongBands int) {
-	L3ImdctGo(grbuf, overlap, blockType, nLongBands)
+func L3Imdct(granuleBuffer []float32, overlapBuffer []float32, blockType int, numberOfLongBands int) {
+	L3ImdctGo(granuleBuffer, overlapBuffer, blockType, numberOfLongBands)
 }

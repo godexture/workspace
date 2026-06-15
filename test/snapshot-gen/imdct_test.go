@@ -14,61 +14,56 @@ func TestL3ImdctMatchesC(t *testing.T) {
 	r := rand.New(rand.NewSource(12345))
 
 	blockTypes := []int{0, 1, 2, 3}
-	nLongBandsOptions := []int{0, 2, 4, 8, 32}
+	numberOfLongBandsOptions := []int{0, 2, 4, 8, 32}
 
 	for _, blockType := range blockTypes {
-		for _, nLongBands := range nLongBandsOptions {
-			// nLongBands must be <= 32
+		for _, numberOfLongBands := range numberOfLongBandsOptions {
+			// numberOfLongBands must be <= 32
 			if blockType == 2 {
-				// mixed block: n_long_bands can be 2 or 0 depending on sample rate
-				if nLongBands > 2 {
+				// mixed block: numberOfLongBands can be 2 or 0 depending on sample rate
+				if numberOfLongBands > 2 {
 					continue
-				}
-			} else {
-				if nLongBands > 0 {
-					// for non-mixed blocks, n_long_bands is effectively 0 in minimp3.h logic,
-					// or it is handled by the first if (n_long_bands). Let's test valid scenarios.
 				}
 			}
 
 			t.Run(testing.TB(t).Name(), func(t *testing.T) {
-				grbufC := make([]float32, 576)
-				grbufGo := make([]float32, 576)
-				for i := range grbufC {
+				granuleBufferC := make([]float32, 576)
+				granuleBufferGo := make([]float32, 576)
+				for i := range granuleBufferC {
 					val := r.Float32()*2.0 - 1.0
-					grbufC[i] = val
-					grbufGo[i] = val
+					granuleBufferC[i] = val
+					granuleBufferGo[i] = val
 				}
 
-				overlapC := make([]float32, 9*32)
-				overlapGo := make([]float32, 9*32)
-				for i := range overlapC {
+				overlapBufferC := make([]float32, 9*32)
+				overlapBufferGo := make([]float32, 9*32)
+				for i := range overlapBufferC {
 					val := r.Float32()*2.0 - 1.0
-					overlapC[i] = val
-					overlapGo[i] = val
+					overlapBufferC[i] = val
+					overlapBufferGo[i] = val
 				}
 
 				// Call C version
-				C_imdct(grbufC, overlapC, blockType, nLongBands)
+				C_imdct(granuleBufferC, overlapBufferC, blockType, numberOfLongBands)
 
 				// Call Go version
-				mp3.L3Imdct(grbufGo, overlapGo, blockType, nLongBands)
+				mp3.L3Imdct(granuleBufferGo, overlapBufferGo, blockType, numberOfLongBands)
 
-				// Compare grbuf
-				for i := range grbufC {
-					diff := float64(grbufGo[i] - grbufC[i])
+				// Compare granuleBuffer
+				for i := range granuleBufferC {
+					diff := float64(granuleBufferGo[i] - granuleBufferC[i])
 					if math.Abs(diff) > 1e-5 {
-						t.Errorf("grbuf mismatch at index %d (blockType=%d, nLongBands=%d): Go=%f, C=%f (diff: %e)",
-							i, blockType, nLongBands, grbufGo[i], grbufC[i], diff)
+						t.Errorf("granuleBuffer mismatch at index %d (blockType=%d, numberOfLongBands=%d): Go=%f, C=%f (diff: %e)",
+							i, blockType, numberOfLongBands, granuleBufferGo[i], granuleBufferC[i], diff)
 					}
 				}
 
-				// Compare overlap
-				for i := range overlapC {
-					diff := float64(overlapGo[i] - overlapC[i])
+				// Compare overlapBuffer
+				for i := range overlapBufferC {
+					diff := float64(overlapBufferGo[i] - overlapBufferC[i])
 					if math.Abs(diff) > 1e-5 {
-						t.Errorf("overlap mismatch at index %d (blockType=%d, nLongBands=%d): Go=%f, C=%f (diff: %e)",
-							i, blockType, nLongBands, overlapGo[i], overlapC[i], diff)
+						t.Errorf("overlapBuffer mismatch at index %d (blockType=%d, numberOfLongBands=%d): Go=%f, C=%f (diff: %e)",
+							i, blockType, numberOfLongBands, overlapBufferGo[i], overlapBufferC[i], diff)
 					}
 				}
 			})

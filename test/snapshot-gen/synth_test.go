@@ -12,50 +12,55 @@ import (
 func TestGoSynthFilterMatchesC(t *testing.T) {
 	r := rand.New(rand.NewSource(42))
 
-	nchOptions := []int{1, 2}
-	nbandsOptions := []int{12, 18}
+	channelCountOptions := []int{1, 2}
+	numberOfBandsOptions := []int{12, 18}
 
-	for _, nch := range nchOptions {
-		for _, nbands := range nbandsOptions {
-			qmfStateC := make([]float32, 15*64)
-			qmfStateGo := make([]float32, 15*64)
-			for i := range qmfStateC {
+	for _, channelCount := range channelCountOptions {
+		for _, numberOfBands := range numberOfBandsOptions {
+			quadratureMirrorFilterStateC := make([]float32, 15*64)
+			quadratureMirrorFilterStateGo := make([]float32, 15*64)
+			for i := range quadratureMirrorFilterStateC {
 				val := r.Float32()*2.0 - 1.0
-				qmfStateC[i] = val
-				qmfStateGo[i] = val
+				quadratureMirrorFilterStateC[i] = val
+				quadratureMirrorFilterStateGo[i] = val
 			}
 
-			grbufC := make([]float32, 2*576)
-			grbufGo := make([]float32, 2*576)
-			for i := range grbufC {
+			granuleBufferC := make([]float32, 2*576)
+			granuleBufferGo := make([]float32, 2*576)
+			for i := range granuleBufferC {
 				val := r.Float32()*2.0 - 1.0
-				grbufC[i] = val
-				grbufGo[i] = val
+				granuleBufferC[i] = val
+				granuleBufferGo[i] = val
 			}
 
-			linsC := make([]float32, 33*64)
-			linsGo := make([]float32, 33*64)
+			synthesisWorkspaceC := make([]float32, 33*64)
+			synthesisWorkspaceGo := make([]float32, 33*64)
 
-			pcmC := make([]float32, 1152*2)
-			pcmGo := make([]float32, 1152*2)
+			pcmSamplesC := make([]int16, 1152*2)
+			pcmSamplesGoFloat := make([]float32, 1152*2)
+			pcmSamplesGo := make([]int16, 1152*2)
 
 			// Call C version via helper in minimp3.go
-			C_synth_granule(qmfStateC, grbufC, nbands, nch, pcmC, linsC)
+			C_synth_granule(quadratureMirrorFilterStateC, granuleBufferC, numberOfBands, channelCount, pcmSamplesC, synthesisWorkspaceC)
 
 			// Call Go version
-			mp3.Mp3dSynthGranuleFloat(qmfStateGo, grbufGo, nbands, nch, pcmGo, 0, linsGo)
+			mp3.SynthesizeGranule(quadratureMirrorFilterStateGo, granuleBufferGo, numberOfBands, channelCount, pcmSamplesGoFloat, synthesisWorkspaceGo)
 
-			for i := range pcmC {
-				diff := pcmGo[i] - pcmC[i]
-				if diff < -1e-5 || diff > 1e-5 {
-					t.Fatalf("PCM mismatch for nch=%d, nbands=%d at index %d: Go=%f, C=%f (diff: %e)", nch, nbands, i, pcmGo[i], pcmC[i], diff)
+			// Convert Go float32 samples to int16 samples
+			mp3.ConvertFloat32ToSigned16BitPCMSamples(pcmSamplesGoFloat, pcmSamplesGo)
+
+			for i := range pcmSamplesGo {
+				diff := pcmSamplesGo[i] - pcmSamplesC[i]
+				// Allow minor difference of 1 due to rounding differences in Float32 to Int16
+				if diff < -1 || diff > 1 {
+					t.Fatalf("PCM mismatch for channelCount=%d, numberOfBands=%d at index %d: Go=%d, C=%d (diff: %d)", channelCount, numberOfBands, i, pcmSamplesGo[i], pcmSamplesC[i], diff)
 				}
 			}
 
-			for i := range qmfStateC {
-				diff := qmfStateGo[i] - qmfStateC[i]
+			for i := range quadratureMirrorFilterStateC {
+				diff := quadratureMirrorFilterStateGo[i] - quadratureMirrorFilterStateC[i]
 				if diff < -1e-5 || diff > 1e-5 {
-					t.Fatalf("QMF state mismatch for nch=%d, nbands=%d at index %d: Go=%f, C=%f (diff: %e)", nch, nbands, i, qmfStateGo[i], qmfStateC[i], diff)
+					t.Fatalf("QMF state mismatch for channelCount=%d, numberOfBands=%d at index %d: Go=%f, C=%f (diff: %e)", channelCount, numberOfBands, i, quadratureMirrorFilterStateGo[i], quadratureMirrorFilterStateC[i], diff)
 				}
 			}
 		}
