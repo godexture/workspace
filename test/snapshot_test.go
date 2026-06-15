@@ -2,15 +2,20 @@ package test
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
 	"fmt"
-	"math"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal/mp3"
+	mp3codec "github.com/godexture/codec-mp3"
+	"github.com/godexture/core/domain/media"
+	mp3format "github.com/godexture/format-mp3"
+	"github.com/godexture/sdk/engine"
 )
 
 var testFiles = []string{
@@ -22,11 +27,7 @@ var testFiles = []string{
 	"l3-sin1k0db.mp3",
 }
 
-// Step 4 (Go native implementation) などで、浮動小数点の丸め誤差を許容する場合は false にします。
-const requireBitExact = false
-
-const defaultMaxRMSE = 1e-3    // 波形全体のエネルギー誤差の許容値
-const defaultMaxAbsDiff = 1e-2 // 局所的な（単一サンプルの）最大スパイク誤差の許容値
+const maxAllowedDiff = 40
 
 func TestSnapshots(t *testing.T) {
 	for _, filename := range testFiles {
@@ -37,7 +38,7 @@ func TestSnapshots(t *testing.T) {
 				t.Fatalf("failed to read test MP3 file: %v", err)
 			}
 
-			// Decode using minimp3 wrapper (or native implementation)
+			// Decode using Demuxer and Decoder
 			pcm, err := decodeAll(mp3Data)
 			if err != nil {
 				t.Fatalf("failed to decode MP3 data: %v", err)
@@ -52,65 +53,121 @@ func TestSnapshots(t *testing.T) {
 				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
-			if requireBitExact {
-				if err := compareExact(pcm, expectedPcm); err != nil {
-					t.Errorf("bit-exact comparison failed: %v", err)
-				}
-			} else {
-				if err := comparePCM(pcm, expectedPcm, defaultMaxRMSE, defaultMaxAbsDiff); err != nil {
-					t.Errorf("PCM comparison failed: %v", err)
-				}
+			if err := comparePCM(pcm, expectedPcm, maxAllowedDiff); err != nil {
+				t.Errorf("PCM comparison failed: %v", err)
 			}
 		})
 	}
 }
 
-func decodeAll(mp3Data []byte) ([]float32, error) {
-	skipped := mp3.SkipId3(mp3Data)
-	mp3Data = mp3Data[skipped:]
+func decodeAll(mp3Data []byte) ([]int16, error) {
+	demux, err := mp3format.NewDemuxerEngine(bytes.NewReader(mp3Data))
+	if err != nil {
+		return nil, err
+	}
 
-	var dec mp3.Mp3Dec
-	dec.Init()
+	_, _, err = demux.Analyze()
+	if err != nil {
+		return nil, err
+	}
 
-	var allPCM []float32
-	pcmBuf := make([]float32, 1152*2)
+	dec := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
 
-	offset := 0
-	for offset < len(mp3Data) {
-		remaining := mp3Data[offset:]
-		samples, info := dec.DecodeFrame(remaining, pcmBuf)
-		if info.FrameBytes > 0 {
-			if samples > 0 {
-				decodedSamples := samples * info.Channels
-				allPCM = append(allPCM, pcmBuf[:decodedSamples]...)
-			}
-			offset += info.FrameBytes
-		} else {
+	var allPCM []int16
+
+	for {
+		pkt, _, err := demux.ReadPacket()
+		if err == io.EOF {
 			break
 		}
+		if err != nil {
+			return nil, err
+		}
+
+		if err := dec.SendPacket(pkt); err != nil {
+			if err != engine.ErrEAGAIN {
+				return nil, err
+			}
+		}
+
+		for {
+			frame, err := dec.ReceiveFrame()
+			if err == engine.ErrEAGAIN {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+
+			audioFrame, ok := (*frame).(*media.AudioFrame)
+			if !ok {
+				return nil, fmt.Errorf("expected AudioFrame")
+			}
+
+			plane := audioFrame.Planes()[0]
+			channels := audioFrame.Layout.ChannelCount()
+			samples := audioFrame.Samples
+			totalSamples := samples * channels
+
+			for i := 0; i < totalSamples; i++ {
+				valInt := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
+				allPCM = append(allPCM, valInt)
+			}
+		}
 	}
+
+	// Flush
+	if err := dec.Flush(); err != nil {
+		return nil, err
+	}
+
+	for {
+		frame, err := dec.ReceiveFrame()
+		if err == engine.ErrEOF || err == engine.ErrEAGAIN {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		audioFrame, ok := (*frame).(*media.AudioFrame)
+		if !ok {
+			return nil, fmt.Errorf("expected AudioFrame")
+		}
+
+		plane := audioFrame.Planes()[0]
+		channels := audioFrame.Layout.ChannelCount()
+		samples := audioFrame.Samples
+		totalSamples := samples * channels
+
+		for i := 0; i < totalSamples; i++ {
+			valInt := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
+			allPCM = append(allPCM, valInt)
+		}
+	}
+
 	return allPCM, nil
 }
 
-func loadSnapshot(path string) ([]float32, error) {
+func loadSnapshot(path string) ([]int16, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	var data []float32
+	var data []int16
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		val, err := strconv.ParseFloat(line, 32)
+		val, err := strconv.ParseInt(line, 10, 16)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse float at index %d: %w", len(data), err)
+			return nil, fmt.Errorf("failed to parse int at index %d: %w", len(data), err)
 		}
-		data = append(data, float32(val))
+		data = append(data, int16(val))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -118,54 +175,27 @@ func loadSnapshot(path string) ([]float32, error) {
 	return data, nil
 }
 
-func compareExact(actual, expected []float32) error {
+func comparePCM(actual, expected []int16, maxAbsDiff int) error {
 	if len(actual) != len(expected) {
 		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
 	}
+
+	maxDiff := 0
+	maxDiffIdx := 0
+
 	for i := range actual {
-		if actual[i] != expected[i] {
-			return fmt.Errorf("mismatch at index %d: got %f, expected %f", i, actual[i], expected[i])
+		diff := int(actual[i]) - int(expected[i])
+		if diff < 0 {
+			diff = -diff
 		}
-	}
-	return nil
-}
-
-// comparePCM はRMSEと最大絶対誤差を用いてPCMデータを比較します。
-func comparePCM(actual, expected []float32, maxRMSE, maxAbsDiff float64) error {
-	if len(actual) != len(expected) {
-		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
-	}
-
-	if len(actual) == 0 {
-		return nil
-	}
-
-	var sumSquares float64
-	var maxDiff float64
-	var maxDiffIdx int
-
-	for i := range actual {
-		// 計算精度を保つためにfloat64にキャストして評価します
-		diff := math.Abs(float64(actual[i]) - float64(expected[i]))
-
 		if diff > maxDiff {
 			maxDiff = diff
 			maxDiffIdx = i
 		}
-
-		sumSquares += diff * diff
-	}
-
-	rmse := math.Sqrt(sumSquares / float64(len(actual)))
-
-	if rmse > maxRMSE {
-		return fmt.Errorf("RMSE is too high: %e (max allowed: %e)", rmse, maxRMSE)
 	}
 
 	if maxDiff > maxAbsDiff {
-		return fmt.Errorf("max absolute difference is too high: %e at index %d (got %f, expected %f) (max allowed: %e)",
-			maxDiff, maxDiffIdx, actual[maxDiffIdx], expected[maxDiffIdx], maxAbsDiff)
+		return fmt.Errorf("mismatch too high: max diff was %d at index %d (got %d, expected %d, allowed: %d)", maxDiff, maxDiffIdx, actual[maxDiffIdx], expected[maxDiffIdx], maxAbsDiff)
 	}
-
 	return nil
 }
