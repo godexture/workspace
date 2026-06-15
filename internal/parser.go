@@ -25,38 +25,38 @@ type FrameHeader struct {
 	Samples     int
 }
 
-// SkipID3v2 skips the ID3v2 tags at the current reader position.
+// SkipID3Version2 skips the ID3v2 tags at the current reader position.
 // It returns the number of bytes skipped.
-func SkipID3v2(r io.Reader) (int, error) {
-	br, ok := r.(*bufio.Reader)
-	if !ok {
-		return 0, errors.New("SkipID3v2 requires bufio.Reader")
+func SkipID3Version2(r io.Reader) (int, error) {
+	br, isBufferedReader := r.(*bufio.Reader)
+	if !isBufferedReader {
+		return 0, errors.New("SkipID3Version2 requires bufio.Reader")
 	}
 
-	skipped := 0
+	skippedBytesCount := 0
 	for {
-		peek, err := br.Peek(header.ID3v2HeaderSize)
+		peekedBytes, err := br.Peek(header.ID3v2HeaderSize)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return skipped, err
+			return skippedBytesCount, err
 		}
-		if bytes.HasPrefix(peek, []byte("ID3")) {
+		if bytes.HasPrefix(peekedBytes, []byte("ID3")) {
 			// Parse size
-			size := (int(peek[6]) << 21) | (int(peek[7]) << 14) | (int(peek[8]) << 7) | int(peek[9])
-			total := size + header.ID3v2HeaderSize
+			tagSize := (int(peekedBytes[6]) << 21) | (int(peekedBytes[7]) << 14) | (int(peekedBytes[8]) << 7) | int(peekedBytes[9])
+			totalSize := tagSize + header.ID3v2HeaderSize
 			// Skip the bytes
-			_, err = br.Discard(total)
+			_, err = br.Discard(totalSize)
 			if err != nil {
-				return skipped, err
+				return skippedBytesCount, err
 			}
-			skipped += total
+			skippedBytesCount += totalSize
 		} else {
 			break
 		}
 	}
-	return skipped, nil
+	return skippedBytesCount, nil
 }
 
 type Header = header.Header
@@ -65,13 +65,13 @@ type Header = header.Header
 func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 	for {
 		// Read 1 byte at a time until we see 0xFF
-		b, err := br.ReadByte()
+		currentByte, err := br.ReadByte()
 		if err != nil {
 			return FrameHeader{}, nil, err
 		}
 
-		if b == 0xFF {
-			peek, err := br.Peek(3)
+		if currentByte == 0xFF {
+			peekedBytes, err := br.Peek(3)
 			if err != nil {
 				if err == io.EOF {
 					return FrameHeader{}, nil, io.EOF
@@ -80,32 +80,32 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 			}
 
 			// Parse header
-			var h Header
-			h[0] = 0xFF
-			copy(h[1:], peek[:3])
+			var currentHeader Header
+			currentHeader[0] = 0xFF
+			copy(currentHeader[1:], peekedBytes[:3])
 
-			if h.IsValid() {
+			if currentHeader.IsValid() {
 				// Calculate Frame Size
-				frameBytes := h.FrameBytes(0)
-				totalSize := frameBytes + h.Padding()
+				frameBytes := currentHeader.FrameBytes(0)
+				totalSize := frameBytes + currentHeader.Padding()
 				if totalSize <= 4 {
 					continue
 				}
 
 				// Verify sync word by checking the next frame's header if possible
-				verifyBytes := totalSize + 3
-				nextPeek, peekErr := br.Peek(verifyBytes)
+				verificationBytesCount := totalSize + 3
+				nextFramePeekedBytes, err := br.Peek(verificationBytesCount)
 
-				if peekErr == nil {
-					var nextHdr Header
-					copy(nextHdr[:], nextPeek[totalSize-1:totalSize+3])
-					if !h.Compare(nextHdr) {
+				if err == nil {
+					var nextHeader Header
+					copy(nextHeader[:], nextFramePeekedBytes[totalSize-1:totalSize+3])
+					if !currentHeader.Compare(nextHeader) {
 						// False sync word! Continue searching.
 						continue
 					}
 				} else {
-					_, peekErr2 := br.Peek(totalSize - 1)
-					if peekErr2 != nil {
+					_, err2 := br.Peek(totalSize - 1)
+					if err2 != nil {
 						// Not enough data for a full frame, continue searching
 						continue
 					}
@@ -116,33 +116,33 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 
 				// Read the rest of the frame data
 				frameData := make([]byte, totalSize)
-				frameData[0] = h[0]
-				frameData[1] = h[1]
-				frameData[2] = h[2]
-				frameData[3] = h[3]
+				frameData[0] = currentHeader[0]
+				frameData[1] = currentHeader[1]
+				frameData[2] = currentHeader[2]
+				frameData[3] = currentHeader[3]
 
 				_, err = io.ReadFull(br, frameData[4:])
 				if err != nil {
 					return FrameHeader{}, nil, err
 				}
 
-				versionCode := h.VersionCode()
-				layer := h.Layer()
-				sampleRate := h.SampleRateHz()
-				bitrate := h.BitrateKbps() * 1000
+				versionCode := currentHeader.VersionCode()
+				layer := currentHeader.Layer()
+				sampleRate := currentHeader.SampleRateHz()
+				bitrate := currentHeader.BitrateKbps() * 1000
 
-				fh := FrameHeader{
+				frameHeader := FrameHeader{
 					Version:     versionCode,
 					Layer:       layer,
 					BitRate:     bitrate,
 					SampleRate:  sampleRate,
-					Padding:     h.Padding(),
-					ChannelMode: h.StereoMode(),
+					Padding:     currentHeader.Padding(),
+					ChannelMode: currentHeader.StereoMode(),
 					FrameSize:   totalSize,
-					Samples:     h.FrameSamples(),
+					Samples:     currentHeader.FrameSamples(),
 				}
 
-				return fh, frameData, nil
+				return frameHeader, frameData, nil
 			}
 		}
 	}

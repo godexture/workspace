@@ -15,13 +15,13 @@ const (
 
 var ErrHeaderTooShort = errors.New("header buffer too short")
 
-func ParseHeader(b []byte) (Header, error) {
-	var h Header
-	if len(b) < 4 {
-		return h, ErrHeaderTooShort
+func ParseHeader(headerBytes []byte) (Header, error) {
+	var header Header
+	if len(headerBytes) < 4 {
+		return header, ErrHeaderTooShort
 	}
-	copy(h[:], b[:4])
-	return h, nil
+	copy(header[:], headerBytes[:4])
+	return header, nil
 }
 
 func (h Header) IsValid() bool {
@@ -40,14 +40,14 @@ func (h Header) Compare(other Header) bool {
 }
 
 func (h Header) IsMono() bool        { return (h[3] & 0xC0) == 0xC0 }
-func (h Header) IsMsStereo() bool    { return (h[3] & 0xE0) == 0x60 }
+func (h Header) IsMidSideStereo() bool    { return (h[3] & 0xE0) == 0x60 }
 func (h Header) IsFreeFormat() bool  { return (h[2] & 0xF0) == 0 }
-func (h Header) IsCrc() bool         { return (h[1] & 1) == 0 }
+func (h Header) IsCyclicRedundancyCheck() bool         { return (h[1] & 1) == 0 }
 func (h Header) TestPadding() bool   { return (h[2] & 0x2) != 0 }
 func (h Header) TestMpeg1() bool     { return (h[1] & 0x8) != 0 }
 func (h Header) TestNotMpeg25() bool { return (h[1] & 0x10) != 0 }
-func (h Header) TestIStereo() bool   { return (h[3] & 0x10) != 0 }
-func (h Header) TestMsStereo() bool  { return (h[3] & 0x20) != 0 }
+func (h Header) TestIntensityStereo() bool   { return (h[3] & 0x10) != 0 }
+func (h Header) TestMidSideStereo() bool  { return (h[3] & 0x20) != 0 }
 func (h Header) StereoMode() int     { return int((h[3] >> 6) & 3) }
 func (h Header) StereoModeExt() int  { return int((h[3] >> 4) & 3) }
 func (h Header) Layer() int          { return int((h[1] >> 1) & 3) }
@@ -60,7 +60,7 @@ func (h Header) VersionCode() int { return (int(h[1]) >> 3) & 0x03 }
 func (h Header) IsFrame576() bool { return (h[1] & 14) == 2 }
 func (h Header) IsLayer1() bool   { return (h[1] & 6) == 6 }
 
-var halfrate = [2][3][15]int{
+var halfRateTable = [2][3][15]int{
 	{
 		{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
 		{0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80},
@@ -74,33 +74,33 @@ var halfrate = [2][3][15]int{
 }
 
 func (h Header) BitrateKbps() int {
-	mpeg1Idx := 0
+	mpeg1Index := 0
 	if h.TestMpeg1() {
-		mpeg1Idx = 1
+		mpeg1Index = 1
 	}
-	layerIdx := h.Layer() - 1
-	bitrateIdx := h.Bitrate()
-	if layerIdx < 0 || layerIdx > 2 || bitrateIdx < 0 || bitrateIdx > 14 {
+	layerIndex := h.Layer() - 1
+	bitrateIndex := h.Bitrate()
+	if layerIndex < 0 || layerIndex > 2 || bitrateIndex < 0 || bitrateIndex > 14 {
 		return 0
 	}
-	return 2 * halfrate[mpeg1Idx][layerIdx][bitrateIdx]
+	return 2 * halfRateTable[mpeg1Index][layerIndex][bitrateIndex]
 }
 
-var hzTable = [3]int{44100, 48000, 32000}
+var hertzTable = [3]int{44100, 48000, 32000}
 
 func (h Header) SampleRateHz() int {
-	rateIdx := h.SampleRate()
-	if rateIdx < 0 || rateIdx > 2 {
+	rateIndex := h.SampleRate()
+	if rateIndex < 0 || rateIndex > 2 {
 		return 0
 	}
-	hz := hzTable[rateIdx]
+	sampleRateHertz := hertzTable[rateIndex]
 	if !h.TestMpeg1() {
-		hz >>= 1
+		sampleRateHertz >>= 1
 	}
 	if !h.TestNotMpeg25() {
-		hz >>= 1
+		sampleRateHertz >>= 1
 	}
-	return hz
+	return sampleRateHertz
 }
 
 func (h Header) FrameSamples() int {
@@ -117,11 +117,11 @@ func (h Header) FrameSamples() int {
 func (h Header) FrameBytes(freeFormatSize int) int {
 	samples := h.FrameSamples()
 	bitrate := h.BitrateKbps()
-	hz := h.SampleRateHz()
-	if hz == 0 {
+	sampleRateHertz := h.SampleRateHz()
+	if sampleRateHertz == 0 {
 		return 0
 	}
-	frameBytes := samples * bitrate * BytesPerSecMultiplier / hz
+	frameBytes := samples * bitrate * BytesPerSecMultiplier / sampleRateHertz
 	if h.IsLayer1() {
 		frameBytes &= ^3 // slot align
 	}
