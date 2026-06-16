@@ -86,7 +86,7 @@ func (m *Muxer) WriteTrailer() error {
 		return errors.New("wav muxer stream is not configured")
 	}
 
-	formatTag, bitsPerSample, err := wavFormatForAudioAttributes(m.stream.MediaAttributes.Audio)
+	formatTag, bitsPerSample, err := wavFormatForMediaAttributes(m.stream.MediaAttributes)
 	if err != nil {
 		return err
 	}
@@ -178,14 +178,14 @@ func (m *Muxer) WriteTrailer() error {
 	return err
 }
 
-func wavFormatForAudioAttributes(attr media.AudioAttributes) (audioFormat uint16, bitsPerSample uint16, err error) {
-	switch attr.CodecID {
+func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16, bitsPerSample uint16, err error) {
+	switch attr.Codec {
 	case media.CodecPCMA:
 		return wavAudioALaw, 8, nil
 	case media.CodecPCMU:
 		return wavAudioULaw, 8, nil
 	case media.CodecLPCM, "":
-		switch attr.Format.Packed() {
+		switch attr.Audio.Format.Packed() {
 		case media.SampleFormatU8:
 			return wavAudioPCM, 8, nil
 		case media.SampleFormatS16:
@@ -197,9 +197,9 @@ func wavFormatForAudioAttributes(attr media.AudioAttributes) (audioFormat uint16
 		case media.SampleFormatF64:
 			return wavAudioIEEEF, 64, nil
 		default:
-			return 0, 0, fmt.Errorf("unsupported wav sample format: %s", attr.Format)
+			return 0, 0, fmt.Errorf("unsupported wav sample format: %s", attr.Audio.Format)
 		}
 	default:
-		return 0, 0, fmt.Errorf("unsupported wav codec: %s", attr.CodecID)
+		return 0, 0, fmt.Errorf("unsupported wav codec: %s", attr.Codec)
 	}
 }
