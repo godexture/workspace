@@ -5,11 +5,11 @@ import (
 	"io"
 	"os"
 
-	mp3codec "github.com/godexture/codec-mp3"
+	mp3Codec "github.com/godexture/codec-mp3"
 	pcm "github.com/godexture/codec-pcm"
 	"github.com/godexture/core/domain/media"
-	mp3format "github.com/godexture/format-mp3"
-	wav "github.com/godexture/format-wav"
+	mp3Format "github.com/godexture/format-mp3"
+	wavFormat "github.com/godexture/format-wav"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -33,7 +33,7 @@ func main() {
 	}
 	defer file.Close()
 
-	demuxer, err := mp3format.NewDemuxerEngine(file)
+	demuxer, err := mp3Format.NewDemuxerEngine(file)
 	if err != nil {
 		fmt.Printf("Failed to create mp3 demuxer: %v\n", err)
 		return
@@ -51,7 +51,7 @@ func main() {
 	}
 
 	// MP3 デコーダ
-	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+	decoder := mp3Codec.NewDecoderEngine(mp3Codec.DecoderConfig{})
 
 	// PCM エンコーダ (LPCM)
 	encoder := pcm.NewEncoderEngine(pcm.EncoderConfig{CodecID: media.CodecLPCM})
@@ -64,13 +64,13 @@ func main() {
 	defer outputFile.Close()
 
 	// WAV Muxer
-	muxer := wav.NewMuxerEngine(outputFile)
+	muxer := wavFormat.NewMuxerEngine(outputFile)
 	outputStream := streams[0]
 	// デコード後およびLPCMエンコード後の属性を設定
 	outputStream.Codec = media.CodecLPCM
 	outputStream.Audio.CodecID = media.CodecLPCM
-	// go-mp3は S16 LE を出力するため、エンコーダもそのままスルーする
-	outputStream.Audio.Format = media.SampleFormatS16
+	// デコーダは float32 PCM を出力するため、エンコーダもそのままスルーする
+	outputStream.Audio.Format = media.SampleFormatF32
 
 	if _, err := muxer.AddStream(outputStream); err != nil {
 		fmt.Printf("Failed to add stream to muxer: %v\n", err)

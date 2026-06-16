@@ -55,8 +55,7 @@ func TestDecoder_ChannelLayoutChange(t *testing.T) {
 	}
 
 	float32PCMSamples := make([]float32, 1152)
-	int16PCMSamples := make([]int16, 1152)
-	audioFrame, err := processFrame(float32PCMSamples, int16PCMSamples, 576, frameInfo)
+	audioFrame, err := processFrame(float32PCMSamples, 576, frameInfo)
 	if err != nil {
 		t.Fatalf("processFrame failed: %v", err)
 	}

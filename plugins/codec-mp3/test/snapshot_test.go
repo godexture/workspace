@@ -1,3 +1,5 @@
+//go:generate go run ./snapshot-generator
+
 package test
 
 import (
@@ -6,62 +8,51 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	mp3codec "github.com/godexture/codec-mp3"
+	"github.com/godexture/codec-mp3/test/config"
 	"github.com/godexture/core/domain/media"
 	mp3format "github.com/godexture/format-mp3"
 	"github.com/godexture/sdk/engine"
 )
 
-var testFiles = []string{
-	"l1-fl4.mp3",
-	"l2-fl13.mp3",
-	"l3-he_32khz.mp3",
-	"l3-hecommon.mp3",
-	"l3-nonstandard-id3v2.mp3",
-	"l3-sin1k0db.mp3",
-}
+const maxAllowedDiff = 1e-6
 
-const maxAllowedDiff = 1
-
-func TestSnapshots(t *testing.T) {
-	for _, fileName := range testFiles {
+func Test_Snapshots(t *testing.T) {
+	for _, fileName := range config.EnumerateTestdataFiles() {
 		t.Run(fileName, func(t *testing.T) {
-			mp3Path := filepath.Join("testdata", fileName)
-			mp3Data, err := os.ReadFile(mp3Path)
+			t.Parallel()
+
+			dataPath := config.BuildTestdataPath(fileName)
+			data, err := os.ReadFile(dataPath)
 			if err != nil {
 				t.Fatalf("failed to read test MP3 file: %v", err)
 			}
 
-			// Decode using Demuxer and Decoder
-			pcmSamples, err := decodeAll(mp3Data)
+			actual, err := decode(data)
 			if err != nil {
 				t.Fatalf("failed to decode MP3 data: %v", err)
 			}
 
-			snapshotDirectory := filepath.Join("testdata", "snapshots")
-			snapshotPath := filepath.Join(snapshotDirectory, fileName+".snapshot")
-
-			// Load snapshot and compare
-			expectedPcm, err := loadSnapshot(snapshotPath)
+			expected, err := loadSnapshot(config.BuildSnapshotPath(fileName))
 			if err != nil {
 				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
-			if err := comparePCM(pcmSamples, expectedPcm, maxAllowedDiff); err != nil {
+			if err := comparePCM(actual, expected, maxAllowedDiff); err != nil {
 				t.Errorf("PCM comparison failed: %v", err)
 			}
 		})
 	}
 }
 
-func decodeAll(mp3Data []byte) ([]int16, error) {
-	demuxer, err := mp3format.NewDemuxerEngine(bytes.NewReader(mp3Data))
+func decode(data []byte) ([]float32, error) {
+	demuxer, err := mp3format.NewDemuxerEngine(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +64,7 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 
 	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
 
-	var allPcmSamples []int16
+	var pcm []float32
 
 	for {
 		packet, _, err := demuxer.ReadPacket()
@@ -110,8 +101,8 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 			totalSamples := samples * channels
 
 			for i := 0; i < totalSamples; i++ {
-				valueInteger := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
-				allPcmSamples = append(allPcmSamples, valueInteger)
+				sample := math.Float32frombits(binary.LittleEndian.Uint32(plane[i<<2 : (i+1)<<2]))
+				pcm = append(pcm, sample)
 			}
 		}
 	}
@@ -141,61 +132,69 @@ func decodeAll(mp3Data []byte) ([]int16, error) {
 		totalSamples := samples * channels
 
 		for i := 0; i < totalSamples; i++ {
-			valueInteger := int16(binary.LittleEndian.Uint16(plane[i*2 : i*2+2]))
-			allPcmSamples = append(allPcmSamples, valueInteger)
+			sample := math.Float32frombits(binary.LittleEndian.Uint32(plane[i<<2 : (i+1)<<2]))
+			pcm = append(pcm, sample)
 		}
 	}
 
-	return allPcmSamples, nil
+	return pcm, nil
 }
 
-func loadSnapshot(path string) ([]int16, error) {
+func loadSnapshot(path string) ([]float32, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	var pcmData []int16
+	var pcm []float32
 	scanner := bufio.NewScanner(file)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		parsedValue, err := strconv.ParseInt(line, 10, 16)
+
+		parsedValue, err := strconv.ParseFloat(line, 32)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse int at index %d: %w", len(pcmData), err)
+			return nil, fmt.Errorf("failed to parse float at index %d: %w", len(pcm), err)
 		}
-		pcmData = append(pcmData, int16(parsedValue))
+
+		pcm = append(pcm, float32(parsedValue))
 	}
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return pcmData, nil
+
+	return pcm, nil
 }
 
-func comparePCM(actual, expected []int16, maxAbsDiff int) error {
+func comparePCM(actual, expected []float32, maxAbsDiff float32) error {
 	if len(actual) != len(expected) {
 		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
 	}
 
-	maxDiff := 0
-	maxDiffIdx := 0
+	var (
+		maxDiff      float32 = 0
+		maxDiffIndex int     = -1
+	)
 
 	for i := range actual {
-		diff := int(actual[i]) - int(expected[i])
+		diff := actual[i] - expected[i]
 		if diff < 0 {
 			diff = -diff
 		}
 		if diff > maxDiff {
 			maxDiff = diff
-			maxDiffIdx = i
+			maxDiffIndex = i
 		}
 	}
 
 	if maxDiff > maxAbsDiff {
-		return fmt.Errorf("mismatch too high: max diff was %d at index %d (got %d, expected %d, allowed: %d)", maxDiff, maxDiffIdx, actual[maxDiffIdx], expected[maxDiffIdx], maxAbsDiff)
+		return fmt.Errorf("mismatch too high: max diff was %f at index %d (got %f, expected %f, allowed: %f)", maxDiff, maxDiffIndex, actual[maxDiffIndex], expected[maxDiffIndex], maxAbsDiff)
 	}
+
 	return nil
 }

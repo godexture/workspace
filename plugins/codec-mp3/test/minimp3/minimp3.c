@@ -1,3 +1,4 @@
+#define MINIMP3_FLOAT_OUTPUT
 #define MINIMP3_IMPLEMENTATION
 
 #include "minimp3.h"
@@ -10,7 +11,7 @@ int mp3dec_skip_id3_bytes(const uint8_t *buf, int size) {
     return (int)(p - buf);
 }
 
-void mp3dec_synth_granule_c(float *qmf_state, float *grbuf, int nbands, int nch, int16_t *pcm, float *lins) {
+void mp3dec_synth_granule_c(float *qmf_state, float *grbuf, int nbands, int nch, float *pcm, float *lins) {
     mp3d_synth_granule(qmf_state, grbuf, nbands, nch, pcm, lins);
 }
 
