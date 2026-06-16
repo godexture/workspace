@@ -37,7 +37,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return nil, metadata.Bundle{}, err
 	}
 	br := bufio.NewReader(d.r)
-	if _, err := SkipID3Version2(br); err != nil {
+	if _, err := SkipID3v2(br); err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 skip id3: %w", err)
 	}
 
@@ -87,7 +87,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	}
 
 	if !d.id3Skipped {
-		if _, err := SkipID3Version2(d.br); err != nil {
+		if _, err := SkipID3v2(d.br); err != nil {
 			return nil, 0, fmt.Errorf("mp3 skip id3 on read: %w", err)
 		}
 		d.id3Skipped = true

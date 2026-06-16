@@ -25,12 +25,12 @@ type FrameHeader struct {
 	Samples     int
 }
 
-// SkipID3Version2 skips the ID3v2 tags at the current reader position.
+// SkipID3v2 skips the ID3v2 tags at the current reader position.
 // It returns the number of bytes skipped.
-func SkipID3Version2(r io.Reader) (int, error) {
+func SkipID3v2(r io.Reader) (int, error) {
 	br, isBufferedReader := r.(*bufio.Reader)
 	if !isBufferedReader {
-		return 0, errors.New("SkipID3Version2 requires bufio.Reader")
+		return 0, errors.New("SkipID3v2 requires bufio.Reader")
 	}
 
 	skippedBytesCount := 0
