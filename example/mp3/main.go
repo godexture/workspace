@@ -7,12 +7,13 @@ import (
 
 	mp3Codec "github.com/godexture/codec-mp3"
 	pcm "github.com/godexture/codec-pcm"
+	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/pipeline"
+	"github.com/godexture/core/resolver"
 	mp3Format "github.com/godexture/format-mp3"
 	wavFormat "github.com/godexture/format-wav"
-	"github.com/godexture/sdk/engine"
 )
 
 func main() {
@@ -35,13 +36,20 @@ func main() {
 	}
 	defer file.Close()
 
-	demuxer, err := mp3Format.NewDemuxerEngine(file)
+	// Resolve Demuxer Node from registry
+	demuxResolver := resolver.NewDefaultDemuxerResolver(godec.DefaultRegistry.Demuxers)
+	demuxManifest, err := demuxResolver.ResolveDemuxer(file)
 	if err != nil {
-		fmt.Printf("Failed to create mp3 demuxer: %v\n", err)
+		fmt.Printf("Failed to resolve demuxer: %v\n", err)
+		return
+	}
+	demuxNode, err := demuxManifest.Factory(file, mp3Format.Config{})
+	if err != nil {
+		fmt.Printf("Failed to create demuxer node: %v\n", err)
 		return
 	}
 
-	streams, _, err := demuxer.Analyze()
+	streams, err := demuxNode.Streams()
 	if err != nil {
 		fmt.Printf("Failed to analyze input: %v\n", err)
 		return
@@ -52,8 +60,31 @@ func main() {
 		return
 	}
 
-	decoder := mp3Codec.NewDecoderEngine(mp3Codec.DecoderConfig{})
-	encoder := pcm.NewEncoderEngine(pcm.EncoderConfig{CodecID: media.CodecLPCM})
+	// Resolve Decoder Node from registry
+	decResolver := resolver.NewDefaultDecoderResolver(godec.DefaultRegistry.Decoders)
+	decManifest, err := decResolver.ResolveDecoder(streams[0])
+	if err != nil {
+		fmt.Printf("Failed to resolve decoder: %v\n", err)
+		return
+	}
+	decNode, err := decManifest.Factory(mp3Codec.DecoderConfig{})
+	if err != nil {
+		fmt.Printf("Failed to create decoder node: %v\n", err)
+		return
+	}
+
+	// Resolve Encoder Node from registry
+	encResolver := resolver.NewDefaultEncoderResolver(godec.DefaultRegistry.Encoders)
+	encManifest, err := encResolver.ResolveEncoder(media.CodecLPCM)
+	if err != nil {
+		fmt.Printf("Failed to resolve encoder: %v\n", err)
+		return
+	}
+	encNode, err := encManifest.Factory(pcm.EncoderConfig{CodecID: media.CodecLPCM})
+	if err != nil {
+		fmt.Printf("Failed to create encoder node: %v\n", err)
+		return
+	}
 
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
@@ -62,22 +93,28 @@ func main() {
 	}
 	defer outputFile.Close()
 
-	muxer := wavFormat.NewMuxerEngine(outputFile)
+	// Resolve Muxer Node from registry
+	muxResolver := resolver.NewDefaultMuxerResolver(godec.DefaultRegistry.Muxers)
+	muxManifest, err := muxResolver.ResolveMuxer(wavFormat.Config{})
+	if err != nil {
+		fmt.Printf("Failed to resolve muxer: %v\n", err)
+		return
+	}
+	muxNode, err := muxManifest.Factory(outputFile, wavFormat.Config{})
+	if err != nil {
+		fmt.Printf("Failed to create muxer node: %v\n", err)
+		return
+	}
 
 	outputStream := streams[0]
 	outputStream.Codec = media.CodecLPCM
 	outputStream.Audio.CodecID = media.CodecLPCM
 	outputStream.Audio.Format = media.SampleFormatF32
 
-	if _, err := muxer.AddStream(outputStream); err != nil {
+	if _, err := muxNode.AddStream(outputStream); err != nil {
 		fmt.Printf("Failed to add stream to muxer: %v\n", err)
 		return
 	}
-
-	demuxNode := engine.WrapDemuxer(demuxer)
-	decNode := engine.WrapDecoder(decoder)
-	encNode := engine.WrapEncoder(encoder)
-	muxNode := engine.WrapMuxer(muxer)
 
 	if err := pipeline.Link(demuxNode, "out", decNode, "in"); err != nil {
 		fmt.Printf("Failed to link demuxer and decoder: %v\n", err)

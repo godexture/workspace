@@ -83,3 +83,10 @@ func (n *DemuxerAdapter) OutputPorts() map[string]*node.OutPort[*media.Packet] {
 		"out": n.out,
 	}
 }
+
+func (n *DemuxerAdapter) Streams() ([]media.StreamInfo, error) {
+	if err := n.ensureAnalyzed(); err != nil {
+		return nil, err
+	}
+	return n.streams, nil
+}
