@@ -1,7 +1,8 @@
 package mp3codec
 
 import (
-	internal "github.com/godexture/codec-mp3/internal"
+	"github.com/godexture/codec-mp3/internal"
+	"github.com/godexture/codec-mp3/internal/domain"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -10,8 +11,8 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-type DecoderConfig = internal.DecoderConfig
-type EncoderConfig = internal.EncoderConfig
+type DecoderConfig = domain.DecoderConfig
+type EncoderConfig = domain.EncoderConfig
 
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder()
@@ -37,7 +38,7 @@ func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
 func init() {
 	// --- Decoder ---
 	if err := godec.DefaultRegistry.Decoders.Register(
-		internal.DecoderConfig{},
+		domain.DecoderConfig{},
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -67,7 +68,7 @@ func init() {
 
 	// --- Encoder (stub) ---
 	if err := godec.DefaultRegistry.Encoders.Register(
-		internal.EncoderConfig{},
+		domain.EncoderConfig{},
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -85,7 +86,7 @@ func init() {
 				return codec == media.CodecMPEG3
 			},
 			Factory: func(config registry.Configuration) (node.Encoder, error) {
-				encoderConfig := internal.EncoderConfig{}
+				encoderConfig := domain.EncoderConfig{}
 				return engine.WrapEncoder(internal.NewEncoder(encoderConfig)), nil
 			},
 		},

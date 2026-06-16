@@ -1,20 +1,11 @@
 package internal
 
 import (
-	"errors"
-
+	"github.com/godexture/codec-mp3/internal/domain"
+	mp3domain "github.com/godexture/codec-mp3/internal/mp3/domain"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
-
-// EncoderConfig はMP3エンコーダの設定。
-type EncoderConfig struct {
-	// Bitrate はMP3のビットレート (kbps)。デフォルト: 128
-	// TODO: エンコーダ実装時に使用する
-	Bitrate int
-}
-
-func (EncoderConfig) NodeConfigaration() {}
 
 // Encoder は media.AudioFrame → MP3 パケットに変換する。
 //
@@ -32,11 +23,11 @@ func (EncoderConfig) NodeConfigaration() {}
 //   - Stereo (2ch) のみサポート (Mono は要変換)
 //   - Bitrate オプションを EncoderConfig から読む
 type Encoder struct {
-	config    EncoderConfig
+	config    domain.EncoderConfig
 	isFlushed bool
 }
 
-func NewEncoder(config EncoderConfig) *Encoder {
+func NewEncoder(config domain.EncoderConfig) *Encoder {
 	if config.Bitrate <= 0 {
 		config.Bitrate = 128
 	}
@@ -44,7 +35,7 @@ func NewEncoder(config EncoderConfig) *Encoder {
 }
 func (e *Encoder) SendFrame(audioFrame *media.Frame) error {
 	if audioFrame == nil || *audioFrame == nil {
-		return errors.New("codec-mp3 encoder: received nil frame")
+		return mp3domain.ErrNilFrame
 	}
 	// stub: フレームを受け取るが、エンコードは実装されていない
 	return nil

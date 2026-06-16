@@ -2,27 +2,22 @@ package internal
 
 import (
 	"encoding/binary"
-	"errors"
 
 	"github.com/godexture/codec-mp3/internal/mp3"
+	"github.com/godexture/codec-mp3/internal/mp3/domain"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
 
-// DecoderConfig はMP3デコーダの設定。
-type DecoderConfig struct{}
-
-func (DecoderConfig) NodeConfigaration() {}
-
 type Decoder struct {
-	packets      []*media.Packet
-	decoder      mp3.Decoder
+	packets           []*media.Packet
+	decoder           mp3.Decoder
 	float32PCMSamples []float32
 	int16PCMSamples   []int16
-	sampleRate   int
-	channelCount int
-	isFlushed    bool
-	lastErr      error
+	sampleRate        int
+	channelCount      int
+	isFlushed         bool
+	lastErr           error
 }
 
 func NewDecoder() *Decoder {
@@ -36,10 +31,10 @@ func NewDecoder() *Decoder {
 
 // processFrame processes raw PCM float samples, converts them to S16 format,
 // and packages them into a media.Frame.
-func processFrame(float32PCMSamples []float32, int16PCMSamples []int16, sampleCount int, frameInfo mp3.DecoderFrameInfo) (media.Frame, error) {
+func processFrame(float32PCMSamples []float32, int16PCMSamples []int16, sampleCount int, frameInfo domain.FrameInfo) (media.Frame, error) {
 	channelCount := frameInfo.Channels
 	totalDecodedSamples := sampleCount * channelCount
-	mp3.ConvertFloat32ToSigned16BitPCMSamples(float32PCMSamples[:totalDecodedSamples], int16PCMSamples[:totalDecodedSamples])
+	mp3.ConvertF32ToS16(float32PCMSamples[:totalDecodedSamples], int16PCMSamples[:totalDecodedSamples])
 
 	var channelLayout media.ChannelLayout
 	if channelCount == 1 {
@@ -64,7 +59,7 @@ func processFrame(float32PCMSamples []float32, int16PCMSamples []int16, sampleCo
 
 func (d *Decoder) SendPacket(packet *media.Packet) error {
 	if packet == nil {
-		return errors.New("codec-mp3 decoder: received nil packet")
+		return domain.ErrNilPacket
 	}
 	if d.isFlushed {
 		return engine.ErrEOF
@@ -105,7 +100,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 				d.sampleRate = frameInfo.SampleRateHertz
 				d.channelCount = frameInfo.Channels
 			} else if frameInfo.SampleRateHertz != d.sampleRate || frameInfo.Channels != d.channelCount {
-				d.lastErr = errors.New("codec-mp3 decoder: sample rate or channels changed mid-stream")
+				d.lastErr = domain.ErrFormatChanged
 				return nil, d.lastErr
 			}
 

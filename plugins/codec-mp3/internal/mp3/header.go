@@ -36,12 +36,11 @@ type Header = header.Header
 var ParseHeader = header.ParseHeader
 
 const (
-	SamplesPerFrameLayer1   = header.SamplesPerFrameLayer1
-	SamplesPerFrameLayer23  = header.SamplesPerFrameLayer23
-	SamplesPerGranuleLayer3 = header.SamplesPerGranuleLayer3
-	ChannelModeMono         = header.ChannelModeMono
-	BytesPerSecMultiplier   = header.BytesPerSecMultiplier
-	ID3v2HeaderSize         = header.ID3v2HeaderSize
+	SamplesPerFrameLayer1  = header.SamplesPerFrameLayer1
+	SamplesPerFrameLayer23 = header.SamplesPerFrameLayer23
+	ChannelModeMono        = header.ChannelModeMono
+	BytesPerSecMultiplier  = header.BytesPerSecMultiplier
+	ID3v2HeaderSize        = header.ID3v2HeaderSize
 )
 
 const (

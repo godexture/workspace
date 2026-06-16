@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/godexture/codec-mp3/internal"
+	"github.com/godexture/codec-mp3/internal/domain"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
@@ -23,7 +24,7 @@ func TestDecoder_EmptyPacket(t *testing.T) {
 }
 
 func TestEncoder_Stub(t *testing.T) {
-	encoder := internal.NewEncoder(internal.EncoderConfig{})
+	encoder := internal.NewEncoder(domain.EncoderConfig{})
 	audioFrame := media.NewAudioFrame(media.SampleFormatS16, media.LayoutStereo2_0, 44100, 1024)
 	var f media.Frame = audioFrame
 	err := encoder.SendFrame(&f)
