@@ -69,11 +69,9 @@ func init() {
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 				codecID := s.MediaAttributes.Codec
-				p.MediaAttributes.Codec = codecID
-				p.Audio.CodecID = codecID
+				p.Codec = media.CodecLPCM
 				if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
 					p.Audio.SampleRate = 8000
-					p.Audio.CodecID = media.CodecLPCM
 					p.Audio.Format = media.SampleFormatS16
 					p.Audio.ChannelLayout = media.LayoutMono1
 				}
