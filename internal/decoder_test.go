@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal/mp3"
+	"github.com/godexture/codec-mp3/internal/mp3/domain"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
@@ -47,7 +47,7 @@ func TestDecoder_ChannelLayoutChange(t *testing.T) {
 	decoder.channelCount = 2
 
 	// Mock info indicating a layout change (e.g. mono: 1 channel)
-	frameInfo := mp3.DecoderFrameInfo{
+	frameInfo := domain.FrameInfo{
 		FrameBytes:      10,
 		FrameOffset:     0,
 		Channels:        1,

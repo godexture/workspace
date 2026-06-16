@@ -1,38 +1,16 @@
-package mp3
+package layer3
 
-// BitReader is the bit stream reader state.
-type BitReader struct {
-	buffer   []byte
-	position int32
-	limit    int32
-}
+import (
+	"github.com/godexture/codec-mp3/internal/mp3/bits"
+)
 
-// GranuleInfo matches the layout of L3 granule information.
-type GranuleInfo struct {
-	scaleFactorBandTable      []byte
-	part23Length              uint16
-	bigValues                 uint16
-	scaleFactorCompression    uint16
-	globalGain                uint8
-	blockType                 uint8
-	mixedBlockFlag            uint8
-	longScaleFactorBandCount  uint8
-	shortScaleFactorBandCount uint8
-	tableSelect               [3]uint8
-	regionCount               [3]uint8
-	subBlockGain              [3]uint8
-	preEmphasisFlag           uint8
-	scaleFactorScale          uint8
-	count1Table               uint8
-	scaleFactorSelectionInfo  uint8
-}
-
-func power43Layer3(value int) float32 {
+// linearize calculates power of 4/3 for the given value
+func linearize(value int) float32 {
 	var fraction float32
 	var signOffset, multiplier int = 0, 256
 
 	if value < 129 {
-		return pow43[16+value]
+		return linearizeTable[16+value]
 	}
 
 	if value < 1024 {
@@ -42,26 +20,26 @@ func power43Layer3(value int) float32 {
 
 	signOffset = (2 * value) & 64
 	fraction = float32((value&63)-signOffset) / float32((value&^63)+signOffset)
-	return pow43[16+((value+signOffset)>>6)] * (1.0 + fraction*(4.0/3.0+fraction*(2.0/9.0))) * float32(multiplier)
+	return linearizeTable[16+((value+signOffset)>>6)] * (1.0 + fraction*(4.0/3.0+fraction*(2.0/9.0))) * float32(multiplier)
 }
 
-// huffmanDecodeLayer3 performs Huffman decoding for a Layer 3 granule.
-func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *GranuleInfo, scaleFactors []float32, regionLimit int) {
+// HuffmanDecode performs Huffman decoding for a granule.
+func HuffmanDecode(samples []float32, bitReader *bits.BitReader, granule *GranuleInfo, scaleFactors []float32, regionLimit int) {
 	if len(samples) == 0 || bitReader == nil || granule == nil {
 		return
 	}
 
-	byteIndex := int(bitReader.position / 8)
+	byteIndex := int(bitReader.Position / 8)
 
 	readByte := func(i int) uint32 {
-		if i < 0 || i >= len(bitReader.buffer) {
+		if i < 0 || i >= len(bitReader.Buffer) {
 			return 0
 		}
-		return uint32(bitReader.buffer[i])
+		return uint32(bitReader.Buffer[i])
 	}
 
-	bitCache := (((readByte(byteIndex)*256+readByte(byteIndex+1))*256+readByte(byteIndex+2))*256 + readByte(byteIndex+3)) << (uint32(bitReader.position) & 7)
-	bitShift := int32((bitReader.position & 7) - 8)
+	bitCache := (((readByte(byteIndex)<<8+readByte(byteIndex+1))<<8+readByte(byteIndex+2))<<8 + readByte(byteIndex+3)) << (uint32(bitReader.Position) & 7)
+	bitShift := int32((bitReader.Position & 7) - 8)
 	byteIndex += 4
 
 	peekBits := func(width int) uint32 {
@@ -85,20 +63,20 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 
 	scaleFactor := float32(0.0)
 	regionIndex := 0
-	bigValuePairs := int(granule.bigValues)
-	scaleFactorBandTable := granule.scaleFactorBandTable
+	bigValuePairs := int(granule.BigValues)
+	scaleFactorBandTable := granule.ScaleFactorBandTable
 	scaleFactorBandIndex := 0
 	sampleIndex := 0
 	scaleFactorIndex := 0
 
 	for bigValuePairs > 0 {
-		tableNumber := int(granule.tableSelect[regionIndex])
-		scaleFactorBandCount := int(granule.regionCount[regionIndex])
+		tableNumber := int(granule.TableSelect[regionIndex])
+		scaleFactorBandCount := int(granule.RegionCount[regionIndex])
 		regionIndex++
-		codeBook := tabs[tableIndex[tableNumber]:]
-		linearBits := int(linearBits[tableNumber])
+		codeBook := huffmanTables[huffmanTableOffsets[tableNumber]:]
+		linearBitsVal := int(huffmanTablelinearBits[tableNumber])
 
-		if linearBits > 0 {
+		if linearBitsVal > 0 {
 			for {
 				pairsInBand := int(scaleFactorBandTable[scaleFactorBandIndex]) / 2
 				scaleFactorBandIndex++
@@ -118,17 +96,17 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 					for j := 0; j < 2; j++ {
 						decodedValue := leafValue & 0x0F
 						if decodedValue == 15 {
-							decodedValue += int(peekBits(linearBits))
-							flushBits(linearBits)
+							decodedValue += int(peekBits(linearBitsVal))
+							flushBits(linearBitsVal)
 							checkBits()
-							val := scaleFactor * power43Layer3(decodedValue)
+							val := scaleFactor * linearize(decodedValue)
 							if int32(bitCache) < 0 {
 								val = -val
 							}
 							samples[sampleIndex] = val
 						} else {
-							index := 16 + decodedValue - 16*int(bitCache>>31)
-							samples[sampleIndex] = pow43[index] * scaleFactor
+							index := 16 + decodedValue - int(bitCache>>31)<<4
+							samples[sampleIndex] = linearizeTable[index] * scaleFactor
 						}
 						sampleIndex++
 						if decodedValue != 0 {
@@ -147,7 +125,7 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 			}
 		} else {
 			for {
-				pairsInBand := int(scaleFactorBandTable[scaleFactorBandIndex]) / 2
+				pairsInBand := int(scaleFactorBandTable[scaleFactorBandIndex]) >> 1
 				scaleFactorBandIndex++
 				pairsToDecode := min(bigValuePairs, pairsInBand)
 				scaleFactor = scaleFactors[scaleFactorIndex]
@@ -164,8 +142,8 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 
 					for j := 0; j < 2; j++ {
 						decodedValue := leafValue & 0x0F
-						index := 16 + decodedValue - 16*int(bitCache>>31)
-						samples[sampleIndex] = pow43[index] * scaleFactor
+						index := 16 + decodedValue - int(bitCache>>31)<<4
+						samples[sampleIndex] = linearizeTable[index] * scaleFactor
 						sampleIndex++
 						if decodedValue != 0 {
 							flushBits(1)
@@ -187,10 +165,10 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 	remainingPairsInBand := 1 - bigValuePairs
 	for {
 		var codeBookCount1 []byte
-		if granule.count1Table != 0 {
-			codeBookCount1 = tab33[:]
+		if granule.Count1Table != 0 {
+			codeBookCount1 = huffmanCount1TableB[:]
 		} else {
-			codeBookCount1 = tab32[:]
+			codeBookCount1 = huffmanCount1TableA[:]
 		}
 
 		leafValue := int(codeBookCount1[peekBits(4)])
@@ -207,7 +185,7 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 			if remainingPairsInBand == 0 {
 				val := int(scaleFactorBandTable[scaleFactorBandIndex])
 				scaleFactorBandIndex++
-				remainingPairsInBand = val / 2
+				remainingPairsInBand = val >> 1
 				if remainingPairsInBand == 0 {
 					return false
 				}
@@ -243,31 +221,5 @@ func huffmanDecodeLayer3(samples []float32, bitReader *BitReader, granule *Granu
 		checkBits()
 	}
 
-	bitReader.position = int32(regionLimit)
-}
-func (r *BitReader) getBits(width int) uint32 {
-	bitOffset := r.position & 7
-	shiftLeft := width + int(bitOffset)
-	byteIndex := int(r.position >> 3)
-	r.position += int32(width)
-	if r.position > r.limit {
-		return 0
-	}
-	readByte := func(index int) uint32 {
-		if index < 0 || index >= len(r.buffer) {
-			return 0
-		}
-		return uint32(r.buffer[index])
-	}
-	next := readByte(byteIndex) & (255 >> bitOffset)
-	byteIndex++
-	bitCache := uint32(0)
-	for shiftLeft > 8 {
-		shiftLeft -= 8
-		bitCache |= next << shiftLeft
-		next = readByte(byteIndex)
-		byteIndex++
-	}
-	shiftLeft -= 8
-	return bitCache | (next >> -shiftLeft)
+	bitReader.Position = int32(regionLimit)
 }
