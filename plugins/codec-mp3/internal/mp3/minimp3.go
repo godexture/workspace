@@ -4,29 +4,29 @@ import "errors"
 
 var (
 	ErrInvalidSideInfo       = errors.New("invalid side info")
-	ErrBitstreamUnderflow    = errors.New("bitstream buffer underflow")
+	ErrBitStreamUnderflow    = errors.New("bitStream buffer underflow")
 	ErrInsufficientReservoir = errors.New("insufficient data in reservoir")
 )
 
 const (
-	MaxBitreservoirBytes     = 511
+	MaxBitReservoirBytes     = 511
 	MaxGranuleBufferSize     = SamplesPerGranuleLayer3 * 2
-	MaxScalefactorBands      = 39
-	NumSubbands              = 32
-	SamplesPerSubbandLayer3  = 18
-	SamplesPerSubbandLayer12 = 12
+	MaxScaleFactorBands      = 39
+	NumSubBands              = 32
+	SamplesPerSubBandLayer3  = 18
+	SamplesPerSubBandLayer12 = 12
 	MaxChannels              = 2
 	QMFHistoryBlocks         = 15
 )
 
 // Decoder is the Go decoder state.
 type Decoder struct {
-	MdctOverlap                 [MaxChannels][(SamplesPerSubbandLayer3 / 2) * NumSubbands]float32
-	QuadratureMirrorFilterState [QMFHistoryBlocks * MaxChannels * NumSubbands]float32
+	MdctOverlap                 [MaxChannels][(SamplesPerSubBandLayer3 / 2) * NumSubBands]float32
+	QuadratureMirrorFilterState [QMFHistoryBlocks * MaxChannels * NumSubBands]float32
 	BitReservoirBytes           int
 	FreeFormatBytes             int
 	Header                      Header
-	ReservoirBuffer             [MaxBitreservoirBytes]byte
+	ReservoirBuffer             [MaxBitReservoirBytes]byte
 	workspace                   decoderWorkspace
 }
 
@@ -43,7 +43,7 @@ type DecoderFrameInfo struct {
 // Init initializes the decoder.
 func (d *Decoder) Init() {
 	*d = Decoder{}
-}// DecodeFrame decodes one MP3 frame to float32 samples.
+} // DecodeFrame decodes one MP3 frame to float32 samples.
 // pcmSamples slice must be pre-allocated to hold up to SamplesPerFrameLayer23 * 2 samples.
 // Returns the number of samples decoded *per channel*, the frame info, and any error encountered.
 func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, DecoderFrameInfo, error) {
@@ -99,10 +99,10 @@ func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, Decode
 		return header.FrameSamples(), frameInfo, nil
 	}
 
-	var bitStreamFrame BitStreamReader
+	var bitStreamFrame BitReader
 	bitStreamFrame.buffer = mp3Data[byteIndex+4:]
-	bitStreamFrame.bitPosition = 0
-	bitStreamFrame.bitLimit = int32((frameSize - 4) * 8)
+	bitStreamFrame.position = 0
+	bitStreamFrame.limit = int32((frameSize - 4) * 8)
 
 	if header.IsCyclicRedundancyCheck() {
 		bitStreamFrame.getBits(16)
@@ -120,14 +120,14 @@ func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, Decode
 	return d.Header.FrameSamples(), frameInfo, nil
 }
 
-func (d *Decoder) decodeLayer3(frameInfo DecoderFrameInfo, bitStreamFrame *BitStreamReader, workspace *decoderWorkspace, pcmSamples []float32, header Header) error {
-	mainDataBegin := readSideInformationLayer3(bitStreamFrame, workspace.granuleInfo[:], header)
-	if mainDataBegin < 0 || bitStreamFrame.bitPosition > bitStreamFrame.bitLimit {
+func (d *Decoder) decodeLayer3(frameInfo DecoderFrameInfo, bitStreamFrame *BitReader, workspace *decoderWorkspace, pcmSamples []float32, header Header) error {
+	mainDataBegin := readSideInfoLayer3(bitStreamFrame, workspace.granuleInfo[:], header)
+	if mainDataBegin < 0 || bitStreamFrame.position > bitStreamFrame.limit {
 		d.Init()
 		if mainDataBegin < 0 {
 			return ErrInvalidSideInfo
 		}
-		return ErrBitstreamUnderflow
+		return ErrBitStreamUnderflow
 	}
 	if err := restoreReservoirLayer3(d, bitStreamFrame, workspace, mainDataBegin); err != nil {
 		saveReservoirLayer3(d, workspace)
@@ -135,41 +135,41 @@ func (d *Decoder) decodeLayer3(frameInfo DecoderFrameInfo, bitStreamFrame *BitSt
 	}
 	pcmOffset := 0
 	granuleLimit := 1
-	if header.TestMpeg1() {
+	if header.IsMPEG1() {
 		granuleLimit = 2
 	}
 	for granuleIndex := 0; granuleIndex < granuleLimit; granuleIndex++ {
-		workspace.granuleBuffer = [MaxGranuleBufferSize]float32{}
+		workspace.granule = [MaxGranuleBufferSize]float32{}
 		decodeLayer3(d, workspace, workspace.granuleInfo[:], granuleIndex*frameInfo.Channels, frameInfo.Channels)
-		SynthesizeGranule(d.QuadratureMirrorFilterState[:], workspace.granuleBuffer[:], SamplesPerSubbandLayer3, frameInfo.Channels, pcmSamples[pcmOffset:], workspace.synthesisWorkspace[:])
+		SynthesizeGranule(d.QuadratureMirrorFilterState[:], workspace.granule[:], SamplesPerSubBandLayer3, frameInfo.Channels, pcmSamples[pcmOffset:], workspace.synthesisWorkspace[:])
 		pcmOffset += SamplesPerGranuleLayer3 * frameInfo.Channels
 	}
 	saveReservoirLayer3(d, workspace)
 	return nil
 }
 
-func (d *Decoder) decodeLayer12(frameInfo DecoderFrameInfo, bitStreamFrame *BitStreamReader, workspace *decoderWorkspace, pcmSamples []float32, header Header) error {
+func (d *Decoder) decodeLayer12(frameInfo DecoderFrameInfo, bitStreamFrame *BitReader, workspace *decoderWorkspace, pcmSamples []float32, header Header) error {
 	var scaleFactorInfo Layer12ScaleFactorInfo
 	readScaleFactorInfoLayer12(header, bitStreamFrame, &scaleFactorInfo)
 
-	workspace.granuleBuffer = [MaxGranuleBufferSize]float32{}
+	workspace.granule = [MaxGranuleBufferSize]float32{}
 
 	iVal := 0
 	pcmOffset := 0
-	granuleBufferFlat := workspace.granuleBuffer[:]
+	granuleFlat := workspace.granule[:]
 	for granuleIndex := 0; granuleIndex < 3; granuleIndex++ {
-		dequantizedSamplesCount := dequantizeGranuleLayer12(granuleBufferFlat[iVal:], bitStreamFrame, &scaleFactorInfo, frameInfo.MpegLayer|1)
+		dequantizedSamplesCount := dequantizeGranuleLayer12(granuleFlat[iVal:], bitStreamFrame, &scaleFactorInfo, frameInfo.MpegLayer|1)
 		iVal += dequantizedSamplesCount
-		if iVal == SamplesPerSubbandLayer12 {
+		if iVal == SamplesPerSubBandLayer12 {
 			iVal = 0
-			applyScaleFactors384Layer12(&scaleFactorInfo, scaleFactorInfo.ScaleFactors[granuleIndex:], granuleBufferFlat)
-			SynthesizeGranule(d.QuadratureMirrorFilterState[:], granuleBufferFlat, SamplesPerSubbandLayer12, frameInfo.Channels, pcmSamples[pcmOffset:], workspace.synthesisWorkspace[:])
-			workspace.granuleBuffer = [MaxGranuleBufferSize]float32{}
+			applyScaleFactors384Layer12(&scaleFactorInfo, scaleFactorInfo.ScaleFactors[granuleIndex:], granuleFlat)
+			SynthesizeGranule(d.QuadratureMirrorFilterState[:], granuleFlat, SamplesPerSubBandLayer12, frameInfo.Channels, pcmSamples[pcmOffset:], workspace.synthesisWorkspace[:])
+			workspace.granule = [MaxGranuleBufferSize]float32{}
 			pcmOffset += SamplesPerFrameLayer1 * frameInfo.Channels
 		}
-		if bitStreamFrame.bitPosition > bitStreamFrame.bitLimit {
+		if bitStreamFrame.position > bitStreamFrame.limit {
 			d.Init()
-			return ErrBitstreamUnderflow
+			return ErrBitStreamUnderflow
 		}
 	}
 	return nil
