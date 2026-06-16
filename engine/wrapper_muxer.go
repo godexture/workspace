@@ -7,7 +7,6 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/core/domain/time"
 	"github.com/godexture/core/node"
 )
 
@@ -47,34 +46,8 @@ func (n *MuxerAdapter) Start(ctx context.Context) error {
 	}
 }
 
-func (n *MuxerAdapter) AddStream(codecName string, _ time.Rational) (int, error) {
-	codec := media.CodecID(codecName)
-	if codec == "" {
-		codec = media.CodecLPCM
-	}
-
-	format := media.SampleFormatS16
-	layout := media.LayoutStereo2_0
-
-	if codec != media.CodecLPCM {
-		format = media.SampleFormatUnknown
-		layout = media.NewUnspecified(0)
-	}
-
-	return n.engine.AddStream(media.StreamInfo{
-		Index:     0,
-		Type:      media.MediaAudio,
-		IsDefault: true,
-		MediaAttributes: media.MediaAttributes{
-			Codec: codec,
-			Audio: media.AudioAttributes{
-				CodecID:       codec,
-				SampleRate:    48000,
-				Format:        format,
-				ChannelLayout: layout,
-			},
-		},
-	})
+func (n *MuxerAdapter) AddStream(info media.StreamInfo) (int, error) {
+	return n.engine.AddStream(info)
 }
 
 func (n *MuxerAdapter) SetMetadata(meta *metadata.Bundle) error {
