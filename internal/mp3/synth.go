@@ -50,11 +50,11 @@ func synthesizePair(pcmSamples []float32, channelCount int, zBuffer []float32) {
 	pcmSamples[16*channelCount] = accumulator / 32768.0
 }
 
-func synthesizeFloat(granuleBuffer []float32, pcmSamples []float32, channelCount int, synthesisWorkspace []float32) {
-	leftGranule := granuleBuffer
-	rightGranule := granuleBuffer
+func synthesizeFloat(granule []float32, pcmSamples []float32, channelCount int, workspace []float32) {
+	leftGranule := granule
+	rightGranule := granule
 	if channelCount == 2 {
-		rightGranule = granuleBuffer[SamplesPerGranuleLayer3:]
+		rightGranule = granule[SamplesPerGranuleLayer3:]
 	}
 
 	windowTable := [15 * 16]float32{
@@ -78,31 +78,31 @@ func synthesizeFloat(granuleBuffer []float32, pcmSamples []float32, channelCount
 	zLineOffset := 15 * 64
 	windowIndex := 0
 
-	synthesisWorkspace[zLineOffset+4*15] = leftGranule[18*16]
-	synthesisWorkspace[zLineOffset+4*15+1] = rightGranule[18*16]
-	synthesisWorkspace[zLineOffset+4*15+2] = leftGranule[0]
-	synthesisWorkspace[zLineOffset+4*15+3] = rightGranule[0]
+	workspace[zLineOffset+4*15] = leftGranule[18*16]
+	workspace[zLineOffset+4*15+1] = rightGranule[18*16]
+	workspace[zLineOffset+4*15+2] = leftGranule[0]
+	workspace[zLineOffset+4*15+3] = rightGranule[0]
 
-	synthesisWorkspace[zLineOffset+4*31] = leftGranule[1+18*16]
-	synthesisWorkspace[zLineOffset+4*31+1] = rightGranule[1+18*16]
-	synthesisWorkspace[zLineOffset+4*31+2] = leftGranule[1]
-	synthesisWorkspace[zLineOffset+4*31+3] = rightGranule[1]
+	workspace[zLineOffset+4*31] = leftGranule[1+18*16]
+	workspace[zLineOffset+4*31+1] = rightGranule[1+18*16]
+	workspace[zLineOffset+4*31+2] = leftGranule[1]
+	workspace[zLineOffset+4*31+3] = rightGranule[1]
 
-	synthesizePair(pcmSamples[channelCount-1:], channelCount, synthesisWorkspace[4*15+1:])
-	synthesizePair(pcmSamples[32*channelCount+channelCount-1:], channelCount, synthesisWorkspace[4*15+64+1:])
-	synthesizePair(pcmSamples, channelCount, synthesisWorkspace[4*15:])
-	synthesizePair(pcmSamples[32*channelCount:], channelCount, synthesisWorkspace[4*15+64:])
+	synthesizePair(pcmSamples[channelCount-1:], channelCount, workspace[4*15+1:])
+	synthesizePair(pcmSamples[32*channelCount+channelCount-1:], channelCount, workspace[4*15+64+1:])
+	synthesizePair(pcmSamples, channelCount, workspace[4*15:])
+	synthesizePair(pcmSamples[32*channelCount:], channelCount, workspace[4*15+64:])
 
 	for i := 14; i >= 0; i-- {
-		synthesisWorkspace[zLineOffset+4*i] = leftGranule[18*(31-i)]
-		synthesisWorkspace[zLineOffset+4*i+1] = rightGranule[18*(31-i)]
-		synthesisWorkspace[zLineOffset+4*i+2] = leftGranule[1+18*(31-i)]
-		synthesisWorkspace[zLineOffset+4*i+3] = rightGranule[1+18*(31-i)]
+		workspace[zLineOffset+4*i] = leftGranule[18*(31-i)]
+		workspace[zLineOffset+4*i+1] = rightGranule[18*(31-i)]
+		workspace[zLineOffset+4*i+2] = leftGranule[1+18*(31-i)]
+		workspace[zLineOffset+4*i+3] = rightGranule[1+18*(31-i)]
 
-		synthesisWorkspace[zLineOffset+4*(i+16)] = leftGranule[1+18*(1+i)]
-		synthesisWorkspace[zLineOffset+4*(i+16)+1] = rightGranule[1+18*(1+i)]
-		synthesisWorkspace[zLineOffset+4*(i-16)+2] = leftGranule[18*(1+i)]
-		synthesisWorkspace[zLineOffset+4*(i-16)+3] = rightGranule[18*(1+i)]
+		workspace[zLineOffset+4*(i+16)] = leftGranule[1+18*(1+i)]
+		workspace[zLineOffset+4*(i+16)+1] = rightGranule[1+18*(1+i)]
+		workspace[zLineOffset+4*(i-16)+2] = leftGranule[18*(1+i)]
+		workspace[zLineOffset+4*(i-16)+3] = rightGranule[18*(1+i)]
 
 		load := func(k int) (float32, float32, int, int) {
 			w0 := windowTable[windowIndex]
@@ -120,64 +120,64 @@ func synthesizeFloat(granuleBuffer []float32, pcmSamples []float32, channelCount
 		{
 			w0, w1, vZeroIndex, vYIndex := load(0)
 			for j := 0; j < 4; j++ {
-				b[j] = synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] = synthesisWorkspace[vZeroIndex+j]*w0 - synthesisWorkspace[vYIndex+j]*w1
+				b[j] = workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] = workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
 			}
 		}
 		// S2(1)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(1)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vYIndex+j]*w1 - synthesisWorkspace[vZeroIndex+j]*w0
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
 			}
 		}
 		// S1(2)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(2)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vZeroIndex+j]*w0 - synthesisWorkspace[vYIndex+j]*w1
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
 			}
 		}
 		// S2(3)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(3)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vYIndex+j]*w1 - synthesisWorkspace[vZeroIndex+j]*w0
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
 			}
 		}
 		// S1(4)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(4)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vZeroIndex+j]*w0 - synthesisWorkspace[vYIndex+j]*w1
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
 			}
 		}
 		// S2(5)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(5)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vYIndex+j]*w1 - synthesisWorkspace[vZeroIndex+j]*w0
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
 			}
 		}
 		// S1(6)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(6)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vZeroIndex+j]*w0 - synthesisWorkspace[vYIndex+j]*w1
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
 			}
 		}
 		// S2(7)
 		{
 			w0, w1, vZeroIndex, vYIndex := load(7)
 			for j := 0; j < 4; j++ {
-				b[j] += synthesisWorkspace[vZeroIndex+j]*w1 + synthesisWorkspace[vYIndex+j]*w0
-				a[j] += synthesisWorkspace[vYIndex+j]*w1 - synthesisWorkspace[vZeroIndex+j]*w0
+				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
+				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
 			}
 		}
 
@@ -194,38 +194,38 @@ func synthesizeFloat(granuleBuffer []float32, pcmSamples []float32, channelCount
 	}
 }
 
-func discreteCosineTransformType2(granuleBuffer []float32, bandCount int) {
-	cosineCoefficients := [24]float32{
+func dctType2(granule []float32, bandCount int) {
+	cosinecoefficients := [24]float32{
 		10.19000816, 0.50060302, 0.50241929, 3.40760851, 0.50547093, 0.52249861, 2.05778098, 0.51544732, 0.56694406, 1.48416460, 0.53104258, 0.64682180, 1.16943991, 0.55310392, 0.78815460, 0.97256821, 0.58293498, 1.06067765, 0.83934963, 0.62250412, 1.72244716, 0.74453628, 0.67480832, 5.10114861,
 	}
 
 	for k := 0; k < bandCount; k++ {
-		var temporaryBuffer [4][8]float32
+		var temp [4][8]float32
 		yIndex := k
 
 		for i := 0; i < 8; i++ {
-			x0 := granuleBuffer[yIndex+i*18]
-			x1 := granuleBuffer[yIndex+(15-i)*18]
-			x2 := granuleBuffer[yIndex+(16+i)*18]
-			x3 := granuleBuffer[yIndex+(31-i)*18]
+			x0 := granule[yIndex+i*18]
+			x1 := granule[yIndex+(15-i)*18]
+			x2 := granule[yIndex+(16+i)*18]
+			x3 := granule[yIndex+(31-i)*18]
 			t0 := x0 + x3
 			t1 := x1 + x2
-			t2 := (x1 - x2) * cosineCoefficients[3*i+0]
-			t3 := (x0 - x3) * cosineCoefficients[3*i+1]
-			temporaryBuffer[0][i] = t0 + t1
-			temporaryBuffer[1][i] = (t0 - t1) * cosineCoefficients[3*i+2]
-			temporaryBuffer[2][i] = t3 + t2
-			temporaryBuffer[3][i] = (t3 - t2) * cosineCoefficients[3*i+2]
+			t2 := (x1 - x2) * cosinecoefficients[3*i+0]
+			t3 := (x0 - x3) * cosinecoefficients[3*i+1]
+			temp[0][i] = t0 + t1
+			temp[1][i] = (t0 - t1) * cosinecoefficients[3*i+2]
+			temp[2][i] = t3 + t2
+			temp[3][i] = (t3 - t2) * cosinecoefficients[3*i+2]
 		}
 		for i := 0; i < 4; i++ {
-			x0 := temporaryBuffer[i][0]
-			x1 := temporaryBuffer[i][1]
-			x2 := temporaryBuffer[i][2]
-			x3 := temporaryBuffer[i][3]
-			x4 := temporaryBuffer[i][4]
-			x5 := temporaryBuffer[i][5]
-			x6 := temporaryBuffer[i][6]
-			x7 := temporaryBuffer[i][7]
+			x0 := temp[i][0]
+			x1 := temp[i][1]
+			x2 := temp[i][2]
+			x3 := temp[i][3]
+			x4 := temp[i][4]
+			x5 := temp[i][5]
+			x6 := temp[i][6]
+			x7 := temp[i][7]
 
 			xtTemporary := x0 - x7
 			x0 += x7
@@ -239,8 +239,8 @@ func discreteCosineTransformType2(granuleBuffer []float32, bandCount int) {
 			x0 += x3
 			x3 = x1 - x2
 			x1 += x2
-			temporaryBuffer[i][0] = x0 + x1
-			temporaryBuffer[i][4] = (x0 - x1) * 0.70710677
+			temp[i][0] = x0 + x1
+			temp[i][4] = (x0 - x1) * 0.70710677
 			x5 = x5 + x6
 			x6 = (x6 + x7) * 0.70710677
 			x7 = x7 + xtTemporary
@@ -250,44 +250,44 @@ func discreteCosineTransformType2(granuleBuffer []float32, bandCount int) {
 			x5 -= x7 * 0.198912367
 			x0 = xtTemporary - x6
 			xtTemporary += x6
-			temporaryBuffer[i][1] = (xtTemporary + x7) * 0.50979561
-			temporaryBuffer[i][2] = (x4 + x3) * 0.54119611
-			temporaryBuffer[i][3] = (x0 - x5) * 0.60134488
-			temporaryBuffer[i][5] = (x0 + x5) * 0.89997619
-			temporaryBuffer[i][6] = (x4 - x3) * 1.30656302
-			temporaryBuffer[i][7] = (xtTemporary - x7) * 2.56291556
+			temp[i][1] = (xtTemporary + x7) * 0.50979561
+			temp[i][2] = (x4 + x3) * 0.54119611
+			temp[i][3] = (x0 - x5) * 0.60134488
+			temp[i][5] = (x0 + x5) * 0.89997619
+			temp[i][6] = (x4 - x3) * 1.30656302
+			temp[i][7] = (xtTemporary - x7) * 2.56291556
 		}
 		for i := 0; i < 7; i++ {
-			granuleBuffer[yIndex+0*18] = temporaryBuffer[0][i]
-			granuleBuffer[yIndex+1*18] = temporaryBuffer[2][i] + temporaryBuffer[3][i] + temporaryBuffer[3][i+1]
-			granuleBuffer[yIndex+2*18] = temporaryBuffer[1][i] + temporaryBuffer[1][i+1]
-			granuleBuffer[yIndex+3*18] = temporaryBuffer[2][i+1] + temporaryBuffer[3][i] + temporaryBuffer[3][i+1]
+			granule[yIndex+0*18] = temp[0][i]
+			granule[yIndex+1*18] = temp[2][i] + temp[3][i] + temp[3][i+1]
+			granule[yIndex+2*18] = temp[1][i] + temp[1][i+1]
+			granule[yIndex+3*18] = temp[2][i+1] + temp[3][i] + temp[3][i+1]
 			yIndex += 4 * 18
 		}
-		granuleBuffer[yIndex+0*18] = temporaryBuffer[0][7]
-		granuleBuffer[yIndex+1*18] = temporaryBuffer[2][7] + temporaryBuffer[3][7]
-		granuleBuffer[yIndex+2*18] = temporaryBuffer[1][7]
-		granuleBuffer[yIndex+3*18] = temporaryBuffer[3][7]
+		granule[yIndex+0*18] = temp[0][7]
+		granule[yIndex+1*18] = temp[2][7] + temp[3][7]
+		granule[yIndex+2*18] = temp[1][7]
+		granule[yIndex+3*18] = temp[3][7]
 	}
 }
 
-// SynthesizeGranule is the Go native implementation of subband synthesis filtering.
-func SynthesizeGranule(quadratureMirrorFilterState []float32, granuleBuffer []float32, numberOfBands int, channelCount int, pcmSamples []float32, synthesisWorkspace []float32) {
+// SynthesizeGranule is the Go native implementation of subBand synthesis filtering.
+func SynthesizeGranule(quadratureMirrorFilterState []float32, granule []float32, bandCount int, channelCount int, pcmSamples []float32, synthesisWorkspace []float32) {
 	for i := 0; i < channelCount; i++ {
-		discreteCosineTransformType2(granuleBuffer[SamplesPerGranuleLayer3*i:], numberOfBands)
+		dctType2(granule[SamplesPerGranuleLayer3*i:], bandCount)
 	}
 
 	copy(synthesisWorkspace[:15*64], quadratureMirrorFilterState[:15*64])
 
-	for i := 0; i < numberOfBands; i += 2 {
-		synthesizeFloat(granuleBuffer[i:], pcmSamples[32*channelCount*i:], channelCount, synthesisWorkspace[i*64:])
+	for i := 0; i < bandCount; i += 2 {
+		synthesizeFloat(granule[i:], pcmSamples[32*channelCount*i:], channelCount, synthesisWorkspace[i*64:])
 	}
 
 	if channelCount == 1 {
 		for i := 0; i < 15*64; i += 2 {
-			quadratureMirrorFilterState[i] = synthesisWorkspace[numberOfBands*64+i]
+			quadratureMirrorFilterState[i] = synthesisWorkspace[bandCount*64+i]
 		}
 	} else {
-		copy(quadratureMirrorFilterState[:15*64], synthesisWorkspace[numberOfBands*64:numberOfBands*64+15*64])
+		copy(quadratureMirrorFilterState[:15*64], synthesisWorkspace[bandCount*64:bandCount*64+15*64])
 	}
 }
