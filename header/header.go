@@ -5,12 +5,15 @@ import "errors"
 type Header [4]byte
 
 const (
-	SamplesPerFrameLayer1   = 384
-	SamplesPerFrameLayer23  = 1152
-	SamplesPerGranuleLayer3 = 576
-	ChannelModeMono         = 3
-	BytesPerSecMultiplier   = 125
-	ID3v2HeaderSize         = 10
+	MaxChannels              = 2
+	SamplesPerFrameLayer1    = 384
+	SamplesPerFrameLayer23   = 1152
+	SamplesPerGranuleLayer3  = 576
+	SamplesPerSubBandLayer12 = 12
+	SamplesPerSubBandLayer3  = 18
+	ChannelModeMono          = 3
+	BytesPerSecMultiplier    = 125
+	ID3v2HeaderSize          = 10
 )
 
 var ErrHeaderTooShort = errors.New("header buffer too short")
