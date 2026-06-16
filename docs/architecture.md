@@ -24,7 +24,7 @@ packages/
 │   ├── pipeline/       # パイプライン組み立て・実行 (Link, Runner, ChanEdge)
 │   ├── registry/       # プラグイン登録管理 (Registry[V], Bundle, Manifest)
 │   ├── resolver/       # 自動解決ロジック (Demuxer/Decoder/Encoder/Muxer Resolver)
-│   ├── routing/        # 変換パス探索 (Negotiator, Candidate)
+│   ├── routing/        # 変換パス決定・探索 (Negotiator, Router, Candidate)
 │   ├── internal/
 │   │   └── xsync/      # スレッドセーフ Map (内部使用)
 │   └── test/           # 統合テスト

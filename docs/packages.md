@@ -245,19 +245,27 @@ type Candidate interface {
     Transform(p media.Profile) media.Profile
 }
 
-type Negotiator struct { ... }
+type Router struct { ... }
 
-// plugins を候補として Negotiator を初期化
-func NewNegotiator(plugins iter.Seq[Candidate]) *Negotiator
+// plugins を候補として Router を初期化
+func NewRouter(plugins iter.Seq[Candidate]) *Router
 
 // src から target に到達できる変換ノード列を返す
 // 直接受け入れ可能なら nil, nil を返す
-func (n *Negotiator) FindPath(src media.Profile, target Candidate) ([]Candidate, error)
+func (r *Router) FindPath(src media.Profile, target Candidate) ([]Candidate, error)
 
 // iter.Seq[T] を iter.Seq[Candidate] に変換するユーティリティ
 func AsCandidates[T Candidate](seq iter.Seq[T]) iter.Seq[Candidate]
 
 var ErrNoPathFound = errors.New("routing: no valid conversion path found")
+
+type Negotiator struct { ... }
+
+// registry.Bundle を使って Negotiator を初期化
+func NewNegotiator(reg *registry.Bundle) *Negotiator
+
+// 入力データとターゲットコーデックなどから Geometry（パイプライン構造）を自動決定する
+func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpec) (*pipeline.Geometry, error)
 ```
 
 ---
