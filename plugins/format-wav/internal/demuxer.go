@@ -74,7 +74,6 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			MediaAttributes: media.MediaAttributes{
 				Codec: codec,
 				Audio: media.AudioAttributes{
-					CodecID:       codec,
 					SampleRate:    int(header.sampleRate),
 					Format:        sampleFormatFromWAV(header.audioFormat, header.bitsPerSamp),
 					ChannelLayout: layoutFromChannelCount(int(header.channels)),

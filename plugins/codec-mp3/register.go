@@ -53,7 +53,7 @@ func init() {
 						Type:            streamInfo.Type,
 						MediaAttributes: streamInfo.MediaAttributes,
 					}
-					profile.Audio.CodecID = media.CodecLPCM
+					profile.Codec = media.CodecLPCM
 					profile.Audio.Format = media.SampleFormatF32
 
 					if streamInfo.Audio.ChannelCount() == 1 {
@@ -86,7 +86,7 @@ func init() {
 				Capabilities: []manifest.Capability{mp3Capability{}},
 				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
 					profile := media.Profile{Type: streamInfo.Type, MediaAttributes: streamInfo.MediaAttributes}
-					profile.Audio.CodecID = media.CodecMPEG3
+					profile.Codec = media.CodecMPEG3
 					return profile
 				},
 			},
