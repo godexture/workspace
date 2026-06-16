@@ -11,6 +11,12 @@ type DefaultMuxerResolver struct {
 	registry *registry.Registry[registry.MuxerManifest]
 }
 
+func NewDefaultMuxerResolver(reg *registry.Registry[registry.MuxerManifest]) *DefaultMuxerResolver {
+	return &DefaultMuxerResolver{
+		registry: reg,
+	}
+}
+
 func (r *DefaultMuxerResolver) ResolveMuxer(config registry.Configuration) (registry.MuxerManifest, error) {
 	if config == nil {
 		return registry.MuxerManifest{}, fmt.Errorf("muxer profile not specified")
