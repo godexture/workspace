@@ -2,10 +2,10 @@ package domain
 
 type DecoderConfig struct{}
 
-func (DecoderConfig) NodeConfigaration() {}
+func (DecoderConfig) NodeConfiguration() {}
 
 type EncoderConfig struct {
 	Bitrate int
 }
 
-func (EncoderConfig) NodeConfigaration() {}
+func (EncoderConfig) NodeConfiguration() {}
