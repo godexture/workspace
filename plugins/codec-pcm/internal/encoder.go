@@ -11,7 +11,7 @@ type EncoderConfig struct {
 	CodecID media.CodecID
 }
 
-func (EncoderConfig) NodeConfigaration() {}
+func (EncoderConfig) NodeConfiguration() {}
 
 type Encoder struct {
 	config  EncoderConfig

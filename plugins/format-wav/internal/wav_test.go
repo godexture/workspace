@@ -7,7 +7,7 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-func TestProbeRecognizesWAVSignature(t *testing.T) {
+func TestProbercognizesWAVSignature(t *testing.T) {
 	data := buildTestWAV(t, []byte{0x01, 0x02, 0x03, 0x04})
 
 	if got := Probe(bytes.NewReader(data)); got != 100 {

@@ -28,7 +28,7 @@ func (mp3Capability) MediaType() media.MediaType { return media.MediaAudio }
 
 func (c mp3Capability) Match(streamInfo media.StreamInfo) bool {
 	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecMPEG3
+		streamInfo.MediaAttributes.Codec == media.CodecMP3
 }
 
 func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
@@ -37,7 +37,7 @@ func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
 
 func init() {
 	// --- Decoder ---
-	if err := godec.DefaultRegistry.Decoders.Register(
+	if err := godec.Register(
 		domain.DecoderConfig{},
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
@@ -75,7 +75,7 @@ func init() {
 	}
 
 	// --- Encoder (stub) ---
-	if err := godec.DefaultRegistry.Encoders.Register(
+	if err := godec.Register(
 		domain.EncoderConfig{},
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
@@ -86,13 +86,13 @@ func init() {
 				Capabilities: []manifest.Capability{mp3Capability{}},
 				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
 					profile := media.Profile{Type: streamInfo.Type, MediaAttributes: streamInfo.MediaAttributes}
-					profile.Codec = media.CodecMPEG3
+					profile.Codec = media.CodecMP3
 					return profile
 				},
 			},
 
 			Supports: func(codec media.CodecID) bool {
-				return codec == media.CodecMPEG3
+				return codec == media.CodecMP3
 			},
 
 			Factory: func(config registry.Configuration) (node.Encoder, error) {

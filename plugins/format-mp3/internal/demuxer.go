@@ -57,7 +57,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		IsDefault: true,
 		Metadata:  *metadata.NewBundle(),
 		MediaAttributes: media.MediaAttributes{
-			Codec: media.CodecMPEG3,
+			Codec: media.CodecMP3,
 			Audio: media.AudioAttributes{
 				SampleRate:    frameHeader.SampleRate,
 				Format:        media.SampleFormatS16, // デコード後の形式(codec-mp3に合わせる)

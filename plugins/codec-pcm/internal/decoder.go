@@ -14,7 +14,7 @@ type Config struct {
 	Layout     media.ChannelLayout
 }
 
-func (Config) NodeConfigaration() {}
+func (Config) NodeConfiguration() {}
 
 func DefaultConfig() Config {
 	return Config{

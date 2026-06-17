@@ -313,12 +313,12 @@ cap.Diagnose(profile) // → error (詳細なエラーメッセージ付き)
 
 ---
 
-## `manifest.Probere` — フォーマット検出関数
+## `manifest.Prober` — フォーマット検出関数
 
 Demuxer プラグインが提供するフォーマット検出ロジックです。
 
 ```go
-type Probere func(r io.Reader) ProbeScore
+type Prober func(r io.Reader) ProbeScore
 ```
 
 `DefaultDemuxerResolver` は全登録 Demuxer の `Probe` を呼び出し、  

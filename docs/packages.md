@@ -162,7 +162,7 @@ type Bundle struct {
 |---|-----------|------|
 | `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は `reflect.Type` を返す |
 | `TransformManifest` | `BaseManifest`, `Capabilities []manifest.Capability`, `TransformFunc func(StreamInfo) Profile` | 変換ノード共通 |
-| `DemuxerManifest` | `BaseManifest`, `Probe manifest.Probere`, `Factory DemuxerFactory` | デマックスプラグイン |
+| `DemuxerManifest` | `BaseManifest`, `Probe manifest.Prober`, `Factory DemuxerFactory` | デマックスプラグイン |
 | `MuxerManifest` | `BaseManifest`, `Factory MuxerFactory` | マックスプラグイン |
 | `DecoderManifest` | `TransformManifest`, `Factory DecoderFactory` | デコーダプラグイン |
 | `EncoderManifest` | `TransformManifest`, `Supports func(CodecID) bool`, `Factory EncoderFactory` | エンコーダプラグイン |
@@ -559,7 +559,7 @@ const (
     ProbeExactSignature     ProbeScore = 100
 )
 
-type Probere func(r io.Reader) ProbeScore
+type Prober func(r io.Reader) ProbeScore
 
 // ノードタイプ
 type NodeType string

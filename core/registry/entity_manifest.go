@@ -36,7 +36,7 @@ type MuxerManifest struct {
 
 type DemuxerManifest struct {
 	BaseManifest
-	Probe   manifest.Probere
+	Probe   manifest.Prober
 	Factory DemuxerFactory
 }
 
