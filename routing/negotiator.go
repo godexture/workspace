@@ -12,29 +12,58 @@ import (
 )
 
 type Negotiator struct {
-	registry *registry.Bundle
+	demuxResolver resolver.DemuxerResolver
+	decResolver   resolver.DecoderResolver
+	encResolver   resolver.EncoderResolver
+	muxResolver   resolver.MuxerResolver
 }
 
-func NewNegotiator(reg *registry.Bundle) *Negotiator {
-	return &Negotiator{registry: reg}
+func NewNegotiator(
+	mux resolver.MuxerResolver,
+	demux resolver.DemuxerResolver,
+	enc resolver.EncoderResolver,
+	dec resolver.DecoderResolver,
+) *Negotiator {
+	return &Negotiator{
+		demuxResolver: demux,
+		decResolver:   dec,
+		encResolver:   enc,
+		muxResolver:   mux,
+	}
 }
 
 type ConversionSpec struct {
-	Input               io.ReadSeeker
-	Output              io.Writer
-	DemuxConfig         registry.Configuration
+	Input  io.ReadSeeker
+	Output io.Writer
+
+	DemuxConfig       registry.Configuration
+	SelectInputStream func(streams []media.StreamInfo) (media.StreamInfo, error)
+
 	DecodeConfig        registry.Configuration
 	DecodeConfigFactory func(stream media.StreamInfo) registry.Configuration
-	TargetCodec         media.CodecID
-	EncodeConfig        registry.Configuration
+
+	TargetCodec  media.CodecID
+	EncodeConfig registry.Configuration
+
 	MuxConfig           registry.Configuration
 	PrepareOutputStream func(inStream media.StreamInfo) media.StreamInfo
 }
 
 func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpec) (*pipeline.Geometry, error) {
+	if n.decResolver == nil || n.encResolver == nil || n.demuxResolver == nil || n.muxResolver == nil {
+		return nil, fmt.Errorf("all resolvers must be provided")
+	}
+
+	if spec.Input == nil {
+		return nil, fmt.Errorf("input must not be nil")
+	}
+
+	if spec.Output == nil {
+		return nil, fmt.Errorf("output must not be nil")
+	}
+
 	// 1. Resolve & create Demuxer
-	demuxResolver := resolver.NewDefaultDemuxerResolver(n.registry.Demuxers)
-	demuxManifest, err := demuxResolver.ResolveDemuxer(spec.Input)
+	demuxManifest, err := n.demuxResolver.ResolveDemuxer(spec.Input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve demuxer: %w", err)
 	}
@@ -50,11 +79,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if len(streams) == 0 {
 		return nil, fmt.Errorf("no streams found in input")
 	}
+
 	inputStream := streams[0]
+	if spec.SelectInputStream != nil {
+		inputStream, err = spec.SelectInputStream(streams)
+		if err != nil {
+			return nil, fmt.Errorf("failed to select input stream: %w", err)
+		}
+	}
 
 	// 2. Resolve & create Decoder
-	decResolver := resolver.NewDefaultDecoderResolver(n.registry.Decoders)
-	decManifest, err := decResolver.ResolveDecoder(inputStream)
+	decManifest, err := n.decResolver.ResolveDecoder(inputStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve decoder: %w", err)
 	}
@@ -69,8 +104,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 
 	// 3. Resolve & create Encoder
-	encResolver := resolver.NewDefaultEncoderResolver(n.registry.Encoders)
-	encManifest, err := encResolver.ResolveEncoder(spec.TargetCodec)
+	encManifest, err := n.encResolver.ResolveEncoder(spec.TargetCodec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve encoder: %w", err)
 	}
@@ -80,8 +114,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 
 	// 4. Resolve & create Muxer
-	muxResolver := resolver.NewDefaultMuxerResolver(n.registry.Muxers)
-	muxManifest, err := muxResolver.ResolveMuxer(spec.MuxConfig)
+	muxManifest, err := n.muxResolver.ResolveMuxer(spec.MuxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve muxer: %w", err)
 	}
