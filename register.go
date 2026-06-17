@@ -15,7 +15,7 @@ import (
 // Config はformat-mp3プラグインの設定型。キーとして使われる。
 type Config struct{}
 
-func (Config) NodeConfigaration() {}
+func (Config) NodeConfiguration() {}
 
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
@@ -30,7 +30,7 @@ func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
 }
 
 func init() {
-	if err := godec.DefaultRegistry.Demuxers.Register(Config{}, registry.DemuxerManifest{
+	if err := godec.Register(Config{}, registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-demuxer",
 			Description: "MP3 demuxer (format-mp3 plugin)",
@@ -51,7 +51,7 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.DefaultRegistry.Muxers.Register(Config{}, registry.MuxerManifest{
+	if err := godec.Register(Config{}, registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-muxer",
 			Description: "MP3 muxer (format-mp3 plugin)",
