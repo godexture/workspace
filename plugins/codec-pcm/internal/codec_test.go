@@ -12,7 +12,7 @@ func TestDecoderEncoderRoundtrip(t *testing.T) {
 	dec := NewDecoder(DefaultConfig())
 	enc := NewEncoder(EncoderConfig{})
 
-	in := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB}
+	in := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD}
 	pkt := media.NewPacket(len(in), media.WithPts(42), media.WithDts(42), media.WithStreamIndex(0))
 	copy(pkt.Data(), in)
 	pkt.MediaType = media.MediaAudio

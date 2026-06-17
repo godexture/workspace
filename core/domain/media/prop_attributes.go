@@ -12,7 +12,6 @@ type VideoAttributes struct {
 }
 
 type AudioAttributes struct {
-	CodecID       CodecID
 	SampleRate    int
 	Format        SampleFormat
 	ChannelLayout ChannelLayout

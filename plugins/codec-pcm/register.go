@@ -54,78 +54,107 @@ func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
 }
 
 func init() {
-	codecs := []struct {
-		id   media.CodecID
-		name string
-	}{
-		{media.CodecLPCM, "pcm"},
-		{media.CodecPCMU, "pcmu"},
-		{media.CodecPCMA, "pcma"},
-	}
-
-	for _, c := range codecs {
-		codecID := c.id
-		if err := godec.DefaultRegistry.Decoders.Register(Config{}, registry.DecoderManifest{
-			TransformManifest: registry.TransformManifest{
-				BaseManifest: registry.BaseManifest{
-					Name:        c.name + "-decoder",
-					Description: c.name + " decoder",
-				},
-				Capabilities: []manifest.Capability{pcmCapability{codec: codecID}},
-				TransformFunc: func(s media.StreamInfo) media.Profile {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					p.MediaAttributes.Codec = codecID
-					p.Audio.CodecID = codecID
-					if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
-						p.Audio.SampleRate = 8000
-						if s.MediaAttributes.Codec == codecID {
-							// For decoder: input is G.711, output is LPCM (S16)
-							p.Audio.CodecID = media.CodecLPCM
-							p.Audio.Format = media.SampleFormatS16
-						} else {
-							// For encoder: input is LPCM, output is G.711 (U8)
-							p.Audio.Format = media.SampleFormatU8
-						}
-						p.Audio.ChannelLayout = media.LayoutMono1
-					}
-					return p
-				},
+	// --- Decoder ---
+	if err := godec.DefaultRegistry.Decoders.Register(Config{}, registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{
+				Name:        "pcm-decoder",
+				Description: "PCM/G.711 decoder",
 			},
-			Factory: func(cfg registry.Configuration) (node.Decoder, error) {
-				c := DefaultConfig()
-				c.CodecID = codecID
+			Capabilities: []manifest.Capability{
+				pcmCapability{codec: media.CodecLPCM},
+				pcmCapability{codec: media.CodecPCMU},
+				pcmCapability{codec: media.CodecPCMA},
+			},
+			TransformFunc: func(s media.StreamInfo) media.Profile {
+				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+				codecID := s.MediaAttributes.Codec
+				p.Codec = media.CodecLPCM
 				if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
+					p.Audio.SampleRate = 8000
+					p.Audio.Format = media.SampleFormatS16
+					p.Audio.ChannelLayout = media.LayoutMono1
+				}
+				return p
+			},
+		},
+		Factory: func(cfg registry.Configuration) (node.Decoder, error) {
+			c := DefaultConfig()
+			if cfg != nil {
+				if pcmCfg, ok := cfg.(Config); ok {
+					if pcmCfg.CodecID != "" {
+						c.CodecID = pcmCfg.CodecID
+					}
+					if pcmCfg.SampleRate > 0 {
+						c.SampleRate = pcmCfg.SampleRate
+					}
+					if pcmCfg.Format != media.SampleFormatUnknown {
+						c.Format = pcmCfg.Format
+					}
+					if pcmCfg.Layout.ChannelCount() > 0 {
+						c.Layout = pcmCfg.Layout
+					}
+				} else if pcmCfgPtr, ok := cfg.(*Config); ok && pcmCfgPtr != nil {
+					if pcmCfgPtr.CodecID != "" {
+						c.CodecID = pcmCfgPtr.CodecID
+					}
+					if pcmCfgPtr.SampleRate > 0 {
+						c.SampleRate = pcmCfgPtr.SampleRate
+					}
+					if pcmCfgPtr.Format != media.SampleFormatUnknown {
+						c.Format = pcmCfgPtr.Format
+					}
+					if pcmCfgPtr.Layout.ChannelCount() > 0 {
+						c.Layout = pcmCfgPtr.Layout
+					}
+				}
+			}
+			// Set G.711 default sample rate & layout if not explicitly set
+			if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
+				if c.SampleRate == 48000 {
 					c.SampleRate = 8000
-					c.Format = media.SampleFormatS16
+				}
+				if c.Layout == media.LayoutStereo2_0 {
 					c.Layout = media.LayoutMono1
 				}
-				// TODO: load other config from cfg if available
-				return engine.WrapDecoder(NewDecoderEngine(c)), nil
-			},
-		}); err != nil {
-			panic(err)
-		}
+			}
+			return engine.WrapDecoder(NewDecoderEngine(c)), nil
+		},
+	}); err != nil {
+		panic(err)
+	}
 
-		if err := godec.DefaultRegistry.Encoders.Register(EncoderConfig{}, registry.EncoderManifest{
-			TransformManifest: registry.TransformManifest{
-				BaseManifest: registry.BaseManifest{
-					Name:        c.name + "-encoder",
-					Description: c.name + " encoder",
-				},
-				Capabilities: []manifest.Capability{pcmCapability{codec: codecID}},
-				TransformFunc: func(s media.StreamInfo) media.Profile {
-					return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-				},
+	// --- Encoder ---
+	if err := godec.DefaultRegistry.Encoders.Register(EncoderConfig{}, registry.EncoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{
+				Name:        "pcm-encoder",
+				Description: "PCM/G.711 encoder",
 			},
-			Supports: func(codec media.CodecID) bool {
-				return codec == codecID
+			Capabilities: []manifest.Capability{
+				pcmCapability{codec: media.CodecLPCM},
+				pcmCapability{codec: media.CodecPCMU},
+				pcmCapability{codec: media.CodecPCMA},
 			},
-			Factory: func(cfg registry.Configuration) (node.Encoder, error) {
-				_ = cfg
-				return engine.WrapEncoder(NewEncoderEngine(EncoderConfig{CodecID: codecID})), nil
+			TransformFunc: func(s media.StreamInfo) media.Profile {
+				return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 			},
-		}); err != nil {
-			panic(err)
-		}
+		},
+		Supports: func(codec media.CodecID) bool {
+			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA
+		},
+		Factory: func(cfg registry.Configuration) (node.Encoder, error) {
+			encCfg := EncoderConfig{CodecID: media.CodecLPCM}
+			if cfg != nil {
+				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
+					encCfg = pcmEncCfg
+				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
+					encCfg = *pcmEncCfgPtr
+				}
+			}
+			return engine.WrapEncoder(NewEncoderEngine(encCfg)), nil
+		},
+	}); err != nil {
+		panic(err)
 	}
 }

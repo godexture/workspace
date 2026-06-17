@@ -88,7 +88,6 @@ func buildTestWAV(t *testing.T, payload []byte) []byte {
 		MediaAttributes: media.MediaAttributes{
 			Codec: media.CodecLPCM,
 			Audio: media.AudioAttributes{
-				CodecID:       media.CodecLPCM,
 				SampleRate:    48000,
 				Format:        media.SampleFormatS16,
 				ChannelLayout: media.LayoutMono1,
