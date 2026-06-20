@@ -1,6 +1,6 @@
 module github.com/godexture/codec-mp3
 
-go 1.26.1
+go 1.26.4
 
 require (
 	github.com/godexture/core v0.0.0
@@ -8,7 +8,10 @@ require (
 	github.com/godexture/sdk v0.0.0
 )
 
-require golang.org/x/sync v0.20.0 // indirect
+require (
+	github.com/moznion/go-optional v0.13.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+)
 
 replace github.com/godexture/core => ../../core
 
