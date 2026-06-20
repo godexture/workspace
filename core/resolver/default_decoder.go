@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"fmt"
+
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
 )
@@ -31,6 +33,10 @@ func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ..
 				bestManifest = manifest
 			}
 		}
+	}
+
+	if maxPriority < 0 {
+		return bestManifest, fmt.Errorf("no decoder found for codec: %s", stream.Codec)
 	}
 
 	return bestManifest, nil

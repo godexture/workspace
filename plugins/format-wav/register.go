@@ -14,7 +14,7 @@ import (
 
 type Config struct{}
 
-func (Config) NodeConfigaration() {}
+func (Config) NodeConfiguration() {}
 
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
@@ -37,7 +37,7 @@ func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
 }
 
 func init() {
-	if err := godec.DefaultRegistry.Demuxers.Register(Config{}, registry.DemuxerManifest{
+	if err := godec.Register(Config{}, registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-demuxer",
 			Description: "WAV demuxer",
@@ -59,7 +59,7 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.DefaultRegistry.Muxers.Register(Config{}, registry.MuxerManifest{
+	if err := godec.Register(Config{}, registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-muxer",
 			Description: "WAV muxer",

@@ -7,7 +7,7 @@ import (
 )
 
 type Configuration interface {
-	NodeConfigaration()
+	NodeConfiguration()
 }
 
 type NodeFactory func(config Configuration) (node.Node, error)

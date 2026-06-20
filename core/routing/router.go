@@ -7,12 +7,12 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-type Negotiator struct {
+type Router struct {
 	availablePlugins []Candidate
 }
 
-func NewNegotiator(plugins iter.Seq[Candidate]) *Negotiator {
-	return &Negotiator{
+func NewRouter(plugins iter.Seq[Candidate]) *Router {
+	return &Router{
 		availablePlugins: slices.Collect(plugins),
 	}
 }
@@ -22,7 +22,7 @@ type searchState struct {
 	path    []Candidate
 }
 
-func (n *Negotiator) FindPath(src media.Profile, target Candidate) ([]Candidate, error) {
+func (r *Router) FindPath(src media.Profile, target Candidate) ([]Candidate, error) {
 	if target.Accept(src) {
 		return nil, nil
 	}
@@ -36,7 +36,7 @@ func (n *Negotiator) FindPath(src media.Profile, target Candidate) ([]Candidate,
 		current := queue[0]
 		queue = queue[1:]
 
-		for _, plugin := range n.availablePlugins {
+		for _, plugin := range r.availablePlugins {
 			if !plugin.Accept(current.profile) {
 				continue
 			}

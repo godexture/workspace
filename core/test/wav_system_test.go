@@ -18,7 +18,6 @@ func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {
 		MediaAttributes: media.MediaAttributes{
 			Codec: media.CodecLPCM,
 			Audio: media.AudioAttributes{
-				CodecID:       media.CodecLPCM,
 				SampleRate:    48000,
 				Format:        media.SampleFormatS16,
 				ChannelLayout: media.LayoutMono1,

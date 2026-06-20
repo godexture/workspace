@@ -209,5 +209,5 @@ muxEngine.WriteTrailer()
 
 現在 `ResolverBundle` フィールドを持つ `NewPipeline()` が定義されていますが、  
 Resolver を使った自動配線 (`ContainerResolver`, `CodecResolver`) は未実装です。  
-`routing.Negotiator` (変換パス BFS 探索) と組み合わせた自動パイプライン構築が  
+`routing.Router` (変換パス BFS 探索) と組み合わせた自動パイプライン構築が  
 想定されています。

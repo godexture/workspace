@@ -345,7 +345,7 @@ enc, err := manifest.Factory(nil)
 
 ---
 
-## routing.Negotiator による変換パス探索
+## routing.Router による変換パス探索
 
 変換パスを BFS で自動探索します。  
 例: `media.SampleFormatF32` → `media.SampleFormatS16` が直接受け入れられない場合に  
@@ -354,10 +354,10 @@ enc, err := manifest.Factory(nil)
 ```go
 // 全フィルタを Candidate として収集
 candidates := routing.AsCandidates(registry.Filters.Enumerate())
-negotiator := routing.NewNegotiator(candidates)
+router := routing.NewRouter(candidates)
 
 // src から target に到達するフィルタ列を探索
-path, err := negotiator.FindPath(srcProfile, targetCandidate)
+path, err := router.FindPath(srcProfile, targetCandidate)
 if errors.Is(err, routing.ErrNoPathFound) {
     return fmt.Errorf("no conversion path")
 }

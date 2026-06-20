@@ -6,7 +6,7 @@ import "io"
 // Higher scores indicate stronger evidence of a format match.
 type ProbeScore int
 
-type Probere func(r io.Reader) ProbeScore
+type Prober func(r io.Reader) ProbeScore
 
 const (
 	// ProbeMismatch (0):

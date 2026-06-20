@@ -55,7 +55,7 @@ func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
 
 func init() {
 	// --- Decoder ---
-	if err := godec.DefaultRegistry.Decoders.Register(Config{}, registry.DecoderManifest{
+	if err := godec.Register(Config{}, registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-decoder",
@@ -125,7 +125,7 @@ func init() {
 	}
 
 	// --- Encoder ---
-	if err := godec.DefaultRegistry.Encoders.Register(EncoderConfig{}, registry.EncoderManifest{
+	if err := godec.Register(EncoderConfig{}, registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-encoder",

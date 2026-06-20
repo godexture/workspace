@@ -7,7 +7,7 @@ import (
 
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/core/routing"
 
 	_ "github.com/godexture/codec-mp3"
 	_ "github.com/godexture/codec-pcm"
@@ -39,8 +39,9 @@ func main() {
 	defer outputFile.Close()
 
 	// 1. Negotiate Geometry
-	negotiator := pipeline.NewNegotiator(&godec.DefaultRegistry)
-	spec := pipeline.ConversionSpec{
+	negotiator := godec.NewNegotiator()
+
+	spec := routing.ConversionSpec{
 		Input:       inputFile,
 		Output:      outputFile,
 		TargetCodec: media.CodecLPCM,
@@ -54,7 +55,7 @@ func main() {
 	}
 
 	// 2. Build Pipeline
-	builder := pipeline.NewBuilder()
+	builder := godec.NewBuilder()
 	nodes, err := builder.Build(geometry)
 	if err != nil {
 		fmt.Printf("Failed to build pipeline: %v\n", err)
@@ -62,7 +63,7 @@ func main() {
 	}
 
 	// 3. Run Pipeline
-	runner := pipeline.NewRunner()
+	runner := godec.NewRunner()
 	if err := runner.Run(context.Background(), nodes); err != nil {
 		fmt.Printf("Pipeline execution failed: %v\n", err)
 		return
