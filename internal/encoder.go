@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/binary"
 	"errors"
 
 	"github.com/godexture/core/domain/media"
@@ -8,7 +9,8 @@ import (
 )
 
 type EncoderConfig struct {
-	CodecID media.CodecID
+	CodecID   media.CodecID
+	ByteOrder binary.ByteOrder
 }
 
 func (EncoderConfig) NodeConfiguration() {}
@@ -22,6 +24,9 @@ type Encoder struct {
 func NewEncoder(config EncoderConfig) *Encoder {
 	if config.CodecID == "" {
 		config.CodecID = media.CodecLPCM
+	}
+	if config.ByteOrder == nil {
+		config.ByteOrder = binary.LittleEndian
 	}
 	return &Encoder{config: config}
 }
@@ -43,9 +48,9 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	data := af.Planes()[0]
 	switch e.config.CodecID {
 	case media.CodecPCMU:
-		data = EncodePCMU(data)
+		data = EncodePCMU(data, e.config.ByteOrder)
 	case media.CodecPCMA:
-		data = EncodePCMA(data)
+		data = EncodePCMA(data, e.config.ByteOrder)
 	}
 
 	pkt := media.NewPacket(len(data))

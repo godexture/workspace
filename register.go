@@ -1,6 +1,7 @@
 package pcm
 
 import (
+	"encoding/binary"
 	internal "github.com/godexture/codec-pcm/internal"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
@@ -94,6 +95,9 @@ func init() {
 					if pcmCfg.Layout.ChannelCount() > 0 {
 						c.Layout = pcmCfg.Layout
 					}
+					if pcmCfg.ByteOrder != nil {
+						c.ByteOrder = pcmCfg.ByteOrder
+					}
 				} else if pcmCfgPtr, ok := cfg.(*Config); ok && pcmCfgPtr != nil {
 					if pcmCfgPtr.CodecID != "" {
 						c.CodecID = pcmCfgPtr.CodecID
@@ -106,6 +110,9 @@ func init() {
 					}
 					if pcmCfgPtr.Layout.ChannelCount() > 0 {
 						c.Layout = pcmCfgPtr.Layout
+					}
+					if pcmCfgPtr.ByteOrder != nil {
+						c.ByteOrder = pcmCfgPtr.ByteOrder
 					}
 				}
 			}
@@ -144,12 +151,18 @@ func init() {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA
 		},
 		Factory: func(cfg registry.Configuration) (node.Encoder, error) {
-			encCfg := EncoderConfig{CodecID: media.CodecLPCM}
+			encCfg := EncoderConfig{CodecID: media.CodecLPCM, ByteOrder: binary.LittleEndian}
 			if cfg != nil {
 				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
-					encCfg = pcmEncCfg
+					encCfg.CodecID = pcmEncCfg.CodecID
+					if pcmEncCfg.ByteOrder != nil {
+						encCfg.ByteOrder = pcmEncCfg.ByteOrder
+					}
 				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
-					encCfg = *pcmEncCfgPtr
+					encCfg.CodecID = pcmEncCfgPtr.CodecID
+					if pcmEncCfgPtr.ByteOrder != nil {
+						encCfg.ByteOrder = pcmEncCfgPtr.ByteOrder
+					}
 				}
 			}
 			return engine.WrapEncoder(NewEncoderEngine(encCfg)), nil
