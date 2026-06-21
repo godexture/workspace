@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/binary"
 	"errors"
 
 	"github.com/godexture/core/domain/media"
@@ -12,6 +13,7 @@ type Config struct {
 	SampleRate int
 	Format     media.SampleFormat
 	Layout     media.ChannelLayout
+	ByteOrder  binary.ByteOrder
 }
 
 func (Config) NodeConfiguration() {}
@@ -22,6 +24,7 @@ func DefaultConfig() Config {
 		SampleRate: 48000,
 		Format:     media.SampleFormatS16,
 		Layout:     media.LayoutStereo2_0,
+		ByteOrder:  binary.LittleEndian,
 	}
 }
 
@@ -34,6 +37,9 @@ type Decoder struct {
 func NewDecoder(config Config) *Decoder {
 	if config.CodecID == "" {
 		config.CodecID = media.CodecLPCM
+	}
+	if config.ByteOrder == nil {
+		config.ByteOrder = binary.LittleEndian
 	}
 
 	isG711 := config.CodecID == media.CodecPCMU || config.CodecID == media.CodecPCMA
@@ -89,9 +95,9 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	data := pkt.Data()
 	switch d.config.CodecID {
 	case media.CodecPCMU:
-		data = DecodePCMU(data)
+		data = DecodePCMU(data, d.config.ByteOrder)
 	case media.CodecPCMA:
-		data = DecodePCMA(data)
+		data = DecodePCMA(data, d.config.ByteOrder)
 	}
 
 	bytesPerSample := d.config.Format.BytesPerSample()

@@ -89,37 +89,37 @@ func LinearToALaw(pcm int16) byte {
 	return aVal ^ 0x55
 }
 
-func DecodePCMU(data []byte) []byte {
+func DecodePCMU(data []byte, order binary.ByteOrder) []byte {
 	out := make([]byte, len(data)*2)
 	for i := 0; i < len(data); i++ {
 		val := ULawToLinear(data[i])
-		binary.LittleEndian.PutUint16(out[i*2:], uint16(val))
+		order.PutUint16(out[i*2:], uint16(val))
 	}
 	return out
 }
 
-func DecodePCMA(data []byte) []byte {
+func DecodePCMA(data []byte, order binary.ByteOrder) []byte {
 	out := make([]byte, len(data)*2)
 	for i := 0; i < len(data); i++ {
 		val := ALawToLinear(data[i])
-		binary.LittleEndian.PutUint16(out[i*2:], uint16(val))
+		order.PutUint16(out[i*2:], uint16(val))
 	}
 	return out
 }
 
-func EncodePCMU(data []byte) []byte {
+func EncodePCMU(data []byte, order binary.ByteOrder) []byte {
 	out := make([]byte, len(data)/2)
 	for i := 0; i < len(out); i++ {
-		val := int16(binary.LittleEndian.Uint16(data[i*2:]))
+		val := int16(order.Uint16(data[i*2:]))
 		out[i] = LinearToULaw(val)
 	}
 	return out
 }
 
-func EncodePCMA(data []byte) []byte {
+func EncodePCMA(data []byte, order binary.ByteOrder) []byte {
 	out := make([]byte, len(data)/2)
 	for i := 0; i < len(out); i++ {
-		val := int16(binary.LittleEndian.Uint16(data[i*2:]))
+		val := int16(order.Uint16(data[i*2:]))
 		out[i] = LinearToALaw(val)
 	}
 	return out
