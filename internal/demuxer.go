@@ -209,6 +209,8 @@ func sampleFormatFromHeader(audioFormat, bitsPerSample uint16) (media.SampleForm
 			return media.SampleFormatU8, nil
 		case 16:
 			return media.SampleFormatS16, nil
+		case 24:
+			return media.SampleFormatS24, nil
 		case 32:
 			return media.SampleFormatS32, nil
 		default:

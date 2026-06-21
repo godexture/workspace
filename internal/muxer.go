@@ -190,6 +190,8 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 			return wavAudioPCM, 8, nil
 		case media.SampleFormatS16:
 			return wavAudioPCM, 16, nil
+		case media.SampleFormatS24:
+			return wavAudioPCM, 24, nil
 		case media.SampleFormatS32:
 			return wavAudioPCM, 32, nil
 		case media.SampleFormatF32:
