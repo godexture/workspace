@@ -12,7 +12,9 @@ import (
 	engine "github.com/godexture/sdk/engine"
 )
 
-type Config struct{}
+type Config struct {
+	ForceRF64 bool
+}
 
 func (Config) NodeConfiguration() {}
 
@@ -64,8 +66,18 @@ func init() {
 			Name:        "wav-muxer",
 			Description: "WAV muxer",
 		},
-		Factory: func(w io.Writer, _ registry.Configuration) (node.Muxer, error) {
-			return engine.WrapMuxer(NewMuxerEngine(w)), nil
+		Factory: func(w io.Writer, cfg registry.Configuration) (node.Muxer, error) {
+			forceRF64 := false
+			if cfg != nil {
+				if wavCfg, ok := cfg.(Config); ok {
+					forceRF64 = wavCfg.ForceRF64
+				} else if wavCfgPtr, ok := cfg.(*Config); ok && wavCfgPtr != nil {
+					forceRF64 = wavCfgPtr.ForceRF64
+				}
+			}
+			mux := NewMuxer(w)
+			mux.ForceRF64 = forceRF64
+			return engine.WrapMuxer(mux), nil
 		},
 	}); err != nil {
 		panic(err)
