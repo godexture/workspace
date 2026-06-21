@@ -3,8 +3,11 @@ package internal_test
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
+	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -189,4 +192,157 @@ func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
 
 	metadata.AssertBundleValue(t, &bundle, metadata.KeyTitle("Implicit Title"))
 	metadata.AssertBundleSlice(t, &bundle, []metadata.KeyArtist{"Implicit Artist"})
+}
+
+func TestDemuxerSeek_CBR(t *testing.T) {
+	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(audio))
+	if err != nil {
+		t.Fatalf("NewDemuxer returned error: %v", err)
+	}
+
+	_, _, err = demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	// Seek to 0.5 seconds
+	if err := demuxer.Seek(500 * time.Millisecond); err != nil {
+		t.Fatalf("Seek returned error: %v", err)
+	}
+
+	pkt, _, err := demuxer.ReadPacket()
+	if err != nil && err != io.EOF {
+		t.Fatalf("ReadPacket returned error: %v", err)
+	}
+
+	if pkt == nil || len(pkt.Data()) == 0 {
+		t.Fatalf("expected a valid packet after seek")
+	}
+
+	// Make sure the PTS is somewhat correct
+	if pkt.PTS <= 0 {
+		t.Errorf("expected PTS to be > 0 after seek to 0.5s, got %d", pkt.PTS)
+	}
+}
+
+type trackingReader struct {
+	*bytes.Reader
+	lastSeekOffset int64
+}
+
+func (tr *trackingReader) Seek(offset int64, whence int) (int64, error) {
+	off, err := tr.Reader.Seek(offset, whence)
+	if err == nil && whence == io.SeekStart {
+		tr.lastSeekOffset = off
+	}
+	return off, err
+}
+
+func TestDemuxerSeek_Xing(t *testing.T) {
+	// Frame size = 417 bytes.
+	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
+	frame1 := make([]byte, 417)
+	copy(frame1[0:4], []byte{0xFF, 0xFB, 0x90, 0x00})
+	copy(frame1[36:40], []byte("Xing"))
+	// Flags (Frames | Bytes | TOC)
+	binary.BigEndian.PutUint32(frame1[40:44], 7)
+	// Frames = 100
+	binary.BigEndian.PutUint32(frame1[44:48], 100)
+	// Bytes = 41700
+	binary.BigEndian.PutUint32(frame1[48:52], 41700)
+	// TOC
+	for i := 0; i < 100; i++ {
+		frame1[52+i] = byte(i * 255 / 99)
+	}
+
+	frame2Header := []byte{0xFF, 0xFB, 0x90, 0x00}
+	
+	// Create payload
+	payload := append(frame1, frame2Header...)
+	
+	tr := &trackingReader{Reader: bytes.NewReader(payload)}
+	demuxer, err := internal.NewDemuxer(tr)
+	if err != nil {
+		t.Fatalf("NewDemuxer returned error: %v", err)
+	}
+
+	_, _, err = demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	// Xing duration = 100 frames * 1152 samples / 44100 = 2.6122 seconds
+	// Let's seek to 50% of duration
+	duration := time.Duration(100 * 1152) * time.Second / 44100
+	seekTime := duration/2 + 1*time.Nanosecond
+	if err := demuxer.Seek(seekTime); err != nil {
+		t.Fatalf("Seek returned error: %v", err)
+	}
+
+	// 50% TOC index is 50. TOC[50] = 50 * 255 / 99 = 128.
+	// Expected offset = (128 / 256) * 41700 = 20850.
+	// targetOffset = firstFrameOffset (0) + 20850 = 20850.
+	expectedOffset := int64(20850)
+	if tr.lastSeekOffset != expectedOffset {
+		t.Errorf("expected seek offset %d, got %d", expectedOffset, tr.lastSeekOffset)
+	}
+}
+
+func TestDemuxerSeek_VBRI(t *testing.T) {
+	// Frame size = 417 bytes.
+	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
+	frame1 := make([]byte, 417)
+	copy(frame1[0:4], []byte{0xFF, 0xFB, 0x90, 0x00})
+	copy(frame1[36:40], []byte("VBRI"))
+	binary.BigEndian.PutUint16(frame1[40:42], 1) // version
+	binary.BigEndian.PutUint16(frame1[42:44], 0) // delay
+	binary.BigEndian.PutUint16(frame1[44:46], 0) // quality
+	binary.BigEndian.PutUint32(frame1[46:50], 41700) // bytes
+	binary.BigEndian.PutUint32(frame1[50:54], 100) // frames
+	binary.BigEndian.PutUint16(frame1[54:56], 10) // TOC entries
+	binary.BigEndian.PutUint16(frame1[56:58], 1) // scale
+	binary.BigEndian.PutUint16(frame1[58:60], 2) // entry size
+	binary.BigEndian.PutUint16(frame1[60:62], 10) // frames per entry
+	for i := 0; i < 10; i++ {
+		// Each entry size is 4170 bytes
+		binary.BigEndian.PutUint16(frame1[62+i*2:64+i*2], 4170)
+	}
+
+	frame2Header := []byte{0xFF, 0xFB, 0x90, 0x00}
+	
+	payload := append(frame1, frame2Header...)
+	
+	tr := &trackingReader{Reader: bytes.NewReader(payload)}
+	demuxer, err := internal.NewDemuxer(tr)
+	if err != nil {
+		t.Fatalf("NewDemuxer returned error: %v", err)
+	}
+
+	_, _, err = demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	// VBRI duration = 100 frames * 1152 samples / 44100 = 2.6122 seconds
+	// durationPerEntry = 10 frames * 1152 samples / 44100 = 0.26122 seconds
+	// Seek to 50% of duration (5.0 entries)
+	duration := time.Duration(100 * 1152) * time.Second / 44100
+	seekTime := duration/2 + 1*time.Nanosecond
+	if err := demuxer.Seek(seekTime); err != nil {
+		t.Fatalf("Seek returned error: %v", err)
+	}
+
+	// 5.0 entries means entryIndex = 5, fraction = 0.0
+	// startOffset = TOC[4] = 4170 * 5 = 20850. (Wait, TOC[0]=4170, TOC[1]=8340, TOC[2]=12510, TOC[3]=16680, TOC[4]=20850).
+	// endOffset = TOC[5] = 25020.
+	// Since fraction = 0, expected offset = 20850.
+	expectedOffset := int64(20850)
+	if tr.lastSeekOffset != expectedOffset {
+		t.Errorf("expected seek offset %d, got %d", expectedOffset, tr.lastSeekOffset)
+	}
 }
