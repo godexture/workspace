@@ -91,7 +91,8 @@ func (m *Muxer) WriteTrailer() error {
 		return err
 	}
 
-	channels := m.stream.MediaAttributes.Audio.ChannelLayout.ChannelCount()
+	layout := m.stream.MediaAttributes.Audio.ChannelLayout
+	channels := layout.ChannelCount()
 	if channels <= 0 {
 		return errors.New("wav muxer requires a valid channel layout")
 	}
@@ -114,14 +115,27 @@ func (m *Muxer) WriteTrailer() error {
 		pad = 1
 	}
 
+	useExtensible := channels >= 3 || bitsPerSample > 16
+	if !useExtensible {
+		defaultLayout := layoutFromChannelCount(channels)
+		if layout.Mask() != defaultLayout.Mask() {
+			useExtensible = true
+		}
+	}
+
+	fmtSize := uint32(16)
+	if useExtensible {
+		fmtSize = 40
+	}
+
 	var out bytes.Buffer
-	out.Grow(44 + dataSize + pad)
+	out.Grow(20 + int(fmtSize) + 8 + dataSize + pad)
 
 	if _, err := out.WriteString("RIFF"); err != nil {
 		return err
 	}
 
-	riffSize := uint32(36 + dataSize + pad)
+	riffSize := uint32(4 + 8) + fmtSize + 8 + uint32(dataSize) + uint32(pad)
 	if err := binary.Write(&out, binary.LittleEndian, riffSize); err != nil {
 		return err
 	}
@@ -133,10 +147,16 @@ func (m *Muxer) WriteTrailer() error {
 	if _, err := out.WriteString("fmt "); err != nil {
 		return err
 	}
-	if err := binary.Write(&out, binary.LittleEndian, uint32(16)); err != nil {
+	if err := binary.Write(&out, binary.LittleEndian, fmtSize); err != nil {
 		return err
 	}
-	if err := binary.Write(&out, binary.LittleEndian, formatTag); err != nil {
+
+	writeFormatTag := formatTag
+	if useExtensible {
+		writeFormatTag = wavAudioExtensible
+	}
+
+	if err := binary.Write(&out, binary.LittleEndian, writeFormatTag); err != nil {
 		return err
 	}
 	if err := binary.Write(&out, binary.LittleEndian, uint16(channels)); err != nil {
@@ -153,6 +173,30 @@ func (m *Muxer) WriteTrailer() error {
 	}
 	if err := binary.Write(&out, binary.LittleEndian, bitsPerSample); err != nil {
 		return err
+	}
+
+	if useExtensible {
+		if err := binary.Write(&out, binary.LittleEndian, uint16(22)); err != nil { // cbSize
+			return err
+		}
+		if err := binary.Write(&out, binary.LittleEndian, bitsPerSample); err != nil { // validBitsPerSample
+			return err
+		}
+		channelMask := uint32(layout.Mask())
+		if err := binary.Write(&out, binary.LittleEndian, channelMask); err != nil {
+			return err
+		}
+		
+		var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+		if err := binary.Write(&out, binary.LittleEndian, formatTag); err != nil {
+			return err
+		}
+		if err := binary.Write(&out, binary.LittleEndian, uint16(0)); err != nil {
+			return err
+		}
+		if _, err := out.Write(subFormatBase); err != nil {
+			return err
+		}
 	}
 
 	if _, err := out.WriteString("data"); err != nil {

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,8 +19,9 @@ const (
 
 	wavAudioPCM   = 1
 	wavAudioIEEEF = 3
-	wavAudioALaw  = 6
-	wavAudioULaw  = 7
+	wavAudioALaw       = 6
+	wavAudioULaw       = 7
+	wavAudioExtensible = 0xFFFE
 )
 
 type wavHeader struct {
@@ -27,6 +29,10 @@ type wavHeader struct {
 	channels    uint16
 	sampleRate  uint32
 	bitsPerSamp uint16
+
+	validBits   uint16
+	channelMask uint32
+	subFormat   [16]byte
 
 	dataOffset int64
 	dataSize   uint32
@@ -58,12 +64,28 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		}
 
 		d.header = header
+		audioFormat := header.audioFormat
+		
+		if audioFormat == wavAudioExtensible {
+			var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+			if bytes.Equal(header.subFormat[4:], subFormatBase) {
+				audioFormat = binary.LittleEndian.Uint16(header.subFormat[0:2])
+			}
+		}
+
 		codec := media.CodecLPCM
-		switch header.audioFormat {
+		switch audioFormat {
 		case wavAudioALaw:
 			codec = media.CodecPCMA
 		case wavAudioULaw:
 			codec = media.CodecPCMU
+		}
+
+		var layout media.ChannelLayout
+		if header.audioFormat == wavAudioExtensible && header.channelMask != 0 {
+			layout = media.NewNativeLayout(media.ChannelPosition(header.channelMask))
+		} else {
+			layout = layoutFromChannelCount(int(header.channels))
 		}
 
 		d.streamInfo = media.StreamInfo{
@@ -75,8 +97,8 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 				Codec: codec,
 				Audio: media.AudioAttributes{
 					SampleRate:    int(header.sampleRate),
-					Format:        sampleFormatFromWAV(header.audioFormat, header.bitsPerSamp),
-					ChannelLayout: layoutFromChannelCount(int(header.channels)),
+					Format:        sampleFormatFromWAV(audioFormat, header.bitsPerSamp),
+					ChannelLayout: layout,
 				},
 			},
 		}
@@ -165,6 +187,20 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 			header.channels = binary.LittleEndian.Uint16(buf[2:4])
 			header.sampleRate = binary.LittleEndian.Uint32(buf[4:8])
 			header.bitsPerSamp = binary.LittleEndian.Uint16(buf[14:16])
+
+			if header.audioFormat == wavAudioExtensible {
+				if chunkSize < 40 {
+					return wavHeader{}, errors.New("wav extensible fmt chunk too small")
+				}
+				cbSize := binary.LittleEndian.Uint16(buf[16:18])
+				if cbSize >= 22 {
+					header.validBits = binary.LittleEndian.Uint16(buf[18:20])
+					header.channelMask = binary.LittleEndian.Uint32(buf[20:24])
+					copy(header.subFormat[:], buf[24:40])
+				} else {
+					return wavHeader{}, errors.New("wav extensible cbSize too small")
+				}
+			}
 
 		case wavTagData:
 			header.dataOffset = chunkStart
