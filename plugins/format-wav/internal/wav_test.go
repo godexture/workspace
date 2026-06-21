@@ -3,10 +3,48 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/godexture/core/domain/media"
 )
+
+type seekableBuffer struct {
+	buf []byte
+	off int64
+}
+
+func (s *seekableBuffer) Write(p []byte) (n int, err error) {
+	end := s.off + int64(len(p))
+	if end > int64(len(s.buf)) {
+		newBuf := make([]byte, end)
+		copy(newBuf, s.buf)
+		s.buf = newBuf
+	}
+	copy(s.buf[s.off:], p)
+	s.off = end
+	return len(p), nil
+}
+
+func (s *seekableBuffer) Seek(offset int64, whence int) (int64, error) {
+	var newOff int64
+	switch whence {
+	case io.SeekStart:
+		newOff = offset
+	case io.SeekCurrent:
+		newOff = s.off + offset
+	case io.SeekEnd:
+		newOff = int64(len(s.buf)) + offset
+	default:
+		return 0, fmt.Errorf("invalid whence: %d", whence)
+	}
+	if newOff < 0 {
+		return 0, fmt.Errorf("negative position: %d", newOff)
+	}
+	s.off = newOff
+	return newOff, nil
+}
 
 func TestProbercognizesWAVSignature(t *testing.T) {
 	data := buildTestWAV(t, []byte{0x01, 0x02, 0x03, 0x04})
@@ -59,7 +97,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
 
-	var out bytes.Buffer
+	var out seekableBuffer
 	muxer := NewMuxer(&out)
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
@@ -74,8 +112,8 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	if !bytes.Equal(out.Bytes(), wavData) {
-		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.Bytes()), len(wavData))
+	if !bytes.Equal(out.buf, wavData) {
+		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.buf), len(wavData))
 	}
 }
 
@@ -136,7 +174,7 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
 
-	var out bytes.Buffer
+	var out seekableBuffer
 	muxer := NewMuxer(&out)
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
@@ -151,8 +189,8 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	if !bytes.Equal(out.Bytes(), wavData) {
-		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.Bytes()), len(wavData))
+	if !bytes.Equal(out.buf, wavData) {
+		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.buf), len(wavData))
 	}
 }
 
@@ -170,7 +208,7 @@ func buildTestWAV(t *testing.T, payload []byte) []byte {
 func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttributes) []byte {
 	t.Helper()
 
-	var out bytes.Buffer
+	var out seekableBuffer
 	muxer := NewMuxer(&out)
 	stream := media.StreamInfo{
 		Type:            media.MediaAudio,
@@ -193,7 +231,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	return out.Bytes()
+	return out.buf
 }
 
 func TestRF64RoundTrip(t *testing.T) {
@@ -208,7 +246,7 @@ func TestRF64RoundTrip(t *testing.T) {
 
 	// Simulate 5 GB data
 	fakeSize := uint64(5 * 1024 * 1024 * 1024)
-	headerBytes, err := buildWAVHeader(attr, fakeSize)
+	headerBytes, err := buildWAVHeader(attr, fakeSize, false)
 	if err != nil {
 		t.Fatalf("buildWAVHeader() error = %v", err)
 	}
@@ -277,7 +315,7 @@ func TestProbeRecognizesRF64Signature(t *testing.T) {
 
 	// Force RF64
 	fakeSize := uint64(5 * 1024 * 1024 * 1024)
-	headerBytes, err := buildWAVHeader(attr, fakeSize)
+	headerBytes, err := buildWAVHeader(attr, fakeSize, false)
 	if err != nil {
 		t.Fatalf("buildWAVHeader() error = %v", err)
 	}
@@ -297,7 +335,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 		0x00, 0x00, 0x00, 0x40, // 2.0f
 	}
 
-	var out bytes.Buffer
+	var out seekableBuffer
 	muxer := NewMuxer(&out)
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
@@ -327,7 +365,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	wavData := out.Bytes()
+	wavData := out.buf
 
 	// Verify that the wavData contains "fact" chunk.
 	if !bytes.Contains(wavData, []byte("fact")) {
@@ -543,6 +581,117 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 	}
 	if stream.MediaAttributes.Audio.ChannelLayout.Mask() != customLayout.Mask() {
 		t.Fatalf("stream channel mask = 0x%x, want 0x%x", stream.MediaAttributes.Audio.ChannelLayout.Mask(), customLayout.Mask())
+	}
+}
+
+func TestWAVMuxerNonSeekable(t *testing.T) {
+	var out bytes.Buffer
+	muxer := NewMuxer(&out)
+	stream := media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecLPCM,
+			Audio: media.AudioAttributes{
+				SampleRate:    48000,
+				Format:        media.SampleFormatS16,
+				ChannelLayout: media.LayoutMono1,
+			},
+		},
+	}
+
+	if _, err := muxer.AddStream(stream); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+	if err := muxer.WriteHeader(); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+
+	pkt := media.NewPacket(4)
+	copy(pkt.Data(), []byte{0x01, 0x02, 0x03, 0x04})
+	if err := muxer.WritePacket(0, pkt); err != nil {
+		t.Fatalf("WritePacket() error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+
+	wavData := out.Bytes()
+	if len(wavData) < 44 {
+		t.Fatalf("produced WAV data is too short: %d bytes", len(wavData))
+	}
+	riffSize := binary.LittleEndian.Uint32(wavData[4:8])
+	if riffSize != 0xFFFFFFFF {
+		t.Errorf("expected RIFF size to be 0xFFFFFFFF, got 0x%x", riffSize)
+	}
+	dataIdx := bytes.Index(wavData, []byte("data"))
+	if dataIdx == -1 {
+		t.Fatalf("expected data chunk")
+	}
+	dataSize := binary.LittleEndian.Uint32(wavData[dataIdx+4 : dataIdx+8])
+	if dataSize != 0xFFFFFFFF {
+		t.Errorf("expected data chunk size to be 0xFFFFFFFF, got 0x%x", dataSize)
+	}
+}
+
+func TestWAVMuxerForceRF64(t *testing.T) {
+	var out seekableBuffer
+	muxer := NewMuxer(&out)
+	muxer.ForceRF64 = true
+	stream := media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecLPCM,
+			Audio: media.AudioAttributes{
+				SampleRate:    48000,
+				Format:        media.SampleFormatS16,
+				ChannelLayout: media.LayoutMono1,
+			},
+		},
+	}
+
+	if _, err := muxer.AddStream(stream); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+	if err := muxer.WriteHeader(); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+
+	pkt := media.NewPacket(4)
+	copy(pkt.Data(), []byte{0x01, 0x02, 0x03, 0x04})
+	if err := muxer.WritePacket(0, pkt); err != nil {
+		t.Fatalf("WritePacket() error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+
+	wavData := out.buf
+	if len(wavData) < 12 {
+		t.Fatalf("produced RF64 WAV data is too short: %d bytes", len(wavData))
+	}
+	if string(wavData[0:4]) != "RF64" {
+		t.Errorf("expected RF64 signature, got %q", string(wavData[0:4]))
+	}
+
+	ds64Idx := bytes.Index(wavData, []byte("ds64"))
+	if ds64Idx == -1 {
+		t.Fatalf("expected ds64 chunk")
+	}
+	riffSize64 := binary.LittleEndian.Uint64(wavData[ds64Idx+8 : ds64Idx+16])
+	dataSize64 := binary.LittleEndian.Uint64(wavData[ds64Idx+16 : ds64Idx+24])
+	numSamples64 := binary.LittleEndian.Uint64(wavData[ds64Idx+24 : ds64Idx+32])
+
+	expectedDataSize := uint64(4)
+	if dataSize64 != expectedDataSize {
+		t.Errorf("expected dataSize in ds64 to be %d, got %d", expectedDataSize, dataSize64)
+	}
+	if numSamples64 != 2 {
+		t.Errorf("expected numSamples in ds64 to be 2, got %d", numSamples64)
+	}
+	
+	expectedRiffSize := uint64(76)
+	if riffSize64 != expectedRiffSize {
+		t.Errorf("expected riffSize in ds64 to be %d, got %d", expectedRiffSize, riffSize64)
 	}
 }
 

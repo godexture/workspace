@@ -14,11 +14,20 @@ import (
 type Muxer struct {
 	w io.Writer
 
-	streamSet bool
-	stream    media.StreamInfo
-	meta      metadata.Bundle
-	packets   [][]byte
-	closed    bool
+	streamSet     bool
+	stream        media.StreamInfo
+	meta          metadata.Bundle
+	closed        bool
+	headerWritten bool
+
+	// Configuration Options
+	ForceRF64 bool
+
+	// Seekable streaming mode
+	seekable   bool
+	dataSize   uint64
+	headerSize int64
+	startPos   int64
 }
 
 func NewMuxer(w io.Writer) *Muxer {
@@ -52,6 +61,38 @@ func (m *Muxer) WriteHeader() error {
 	if !m.streamSet {
 		return errors.New("wav muxer stream is not configured")
 	}
+	if m.headerWritten {
+		return errors.New("wav muxer header already written")
+	}
+
+	if seeker, ok := m.w.(io.Seeker); ok {
+		m.seekable = true
+		pos, err := seeker.Seek(0, io.SeekCurrent)
+		if err == nil {
+			m.startPos = pos
+		}
+
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, m.ForceRF64)
+		if err != nil {
+			return err
+		}
+
+		m.headerSize = int64(len(headerBytes))
+		if _, err := m.w.Write(headerBytes); err != nil {
+			return err
+		}
+	} else {
+		m.seekable = false
+		// For non-seekable streams, write header with unknown size immediately and do not buffer in memory
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), m.ForceRF64)
+		if err != nil {
+			return err
+		}
+		if _, err := m.w.Write(headerBytes); err != nil {
+			return err
+		}
+	}
+	m.headerWritten = true
 
 	return nil
 }
@@ -69,12 +110,21 @@ func (m *Muxer) WritePacket(streamIndex int, pkt *media.Packet) error {
 		return errors.New("wav muxer received nil packet")
 	}
 
-	data := append([]byte(nil), pkt.Data()...)
-	m.packets = append(m.packets, data)
+	if !m.headerWritten {
+		if err := m.WriteHeader(); err != nil {
+			return err
+		}
+	}
+
+	n, err := m.w.Write(pkt.Data())
+	if err != nil {
+		return err
+	}
+	m.dataSize += uint64(n)
 	return nil
 }
 
-func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error) {
+func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool) ([]byte, error) {
 	formatTag, bitsPerSample, err := wavFormatForMediaAttributes(attr)
 	if err != nil {
 		return nil, err
@@ -94,8 +144,10 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 	blockAlign := channels * int(bitsPerSample/8)
 	byteRate := sampleRate * blockAlign
 
+	isUnknownSize := dataSize == ^uint64(0)
+
 	pad := uint64(0)
-	if dataSize%2 == 1 {
+	if !isUnknownSize && dataSize%2 == 1 {
 		pad = 1
 	}
 
@@ -124,13 +176,24 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 		factSize = 12
 	}
 
-	riffSize := uint64(4) + 8 + uint64(fmtSize) + uint64(factSize) + 8 + dataSize + pad
-	useRF64 := riffSize >= 0xFFFFFFFF
+	var riffSize uint64
+	if isUnknownSize {
+		riffSize = 0xFFFFFFFF
+	} else {
+		riffSize = uint64(4) + 8 + uint64(fmtSize) + uint64(factSize) + 8 + dataSize + pad
+	}
+
+	useRF64 := forceRF64
+	if !isUnknownSize && riffSize >= 0xFFFFFFFF {
+		useRF64 = true
+	}
 
 	ds64TotalSize := uint64(0)
 	if useRF64 {
 		ds64TotalSize = 36 // 8 bytes header + 28 bytes payload
-		riffSize += ds64TotalSize
+		if !isUnknownSize {
+			riffSize += ds64TotalSize
+		}
 	}
 
 	var headerBuf bytes.Buffer
@@ -148,13 +211,19 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 	if useRF64 {
 		headerBuf.WriteString("ds64")
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(28))
-		binary.Write(&headerBuf, binary.LittleEndian, riffSize)
-		binary.Write(&headerBuf, binary.LittleEndian, dataSize)
-		numSamples := uint64(0)
-		if blockAlign > 0 {
-			numSamples = dataSize / uint64(blockAlign)
+		if isUnknownSize {
+			binary.Write(&headerBuf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
+			binary.Write(&headerBuf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
+			binary.Write(&headerBuf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
+		} else {
+			binary.Write(&headerBuf, binary.LittleEndian, riffSize)
+			binary.Write(&headerBuf, binary.LittleEndian, dataSize)
+			numSamples := uint64(0)
+			if blockAlign > 0 {
+				numSamples = dataSize / uint64(blockAlign)
+			}
+			binary.Write(&headerBuf, binary.LittleEndian, numSamples)
 		}
-		binary.Write(&headerBuf, binary.LittleEndian, numSamples)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0)) // tableLength
 	}
 
@@ -168,10 +237,10 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 	binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)
 
 	if useExtensible {
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(22)) // cbSize
-		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample) // validBitsPerSample
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))            // cbSize
+		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)         // validBitsPerSample
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
-		
+
 		var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
@@ -181,14 +250,18 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 	if writeFact {
 		headerBuf.WriteString("fact")
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(4))
-		numSamples := uint64(0)
-		if blockAlign > 0 {
-			numSamples = dataSize / uint64(blockAlign)
-		}
-		if useRF64 && numSamples > 0xFFFFFFFF {
+		if isUnknownSize {
 			binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
 		} else {
-			binary.Write(&headerBuf, binary.LittleEndian, uint32(numSamples))
+			numSamples := uint64(0)
+			if blockAlign > 0 {
+				numSamples = dataSize / uint64(blockAlign)
+			}
+			if useRF64 && numSamples > 0xFFFFFFFF {
+				binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
+			} else {
+				binary.Write(&headerBuf, binary.LittleEndian, uint32(numSamples))
+			}
 		}
 	}
 
@@ -196,7 +269,11 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error)
 	if useRF64 {
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
 	} else {
-		binary.Write(&headerBuf, binary.LittleEndian, uint32(dataSize))
+		if isUnknownSize {
+			binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
+		} else {
+			binary.Write(&headerBuf, binary.LittleEndian, uint32(dataSize))
+		}
 	}
 
 	return headerBuf.Bytes(), nil
@@ -214,29 +291,34 @@ func (m *Muxer) WriteTrailer() error {
 		return errors.New("wav muxer stream is not configured")
 	}
 
-	var dataSize uint64
-	for _, pkt := range m.packets {
-		dataSize += uint64(len(pkt))
+	if !m.headerWritten {
+		return errors.New("wav muxer header was never written")
 	}
 
-	headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, dataSize)
-	if err != nil {
-		return err
-	}
-
-	if _, err := m.w.Write(headerBytes); err != nil {
-		return err
-	}
-
-	for _, pkt := range m.packets {
-		if _, err := m.w.Write(pkt); err != nil {
+	if m.dataSize%2 == 1 {
+		if _, err := m.w.Write([]byte{0}); err != nil {
 			return err
 		}
 	}
 
-	if dataSize%2 == 1 {
-		if _, err := m.w.Write([]byte{0}); err != nil {
-			return err
+	if m.seekable {
+		if seeker, ok := m.w.(io.Seeker); ok {
+			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, m.ForceRF64)
+			if err != nil {
+				return err
+			}
+
+			if int64(len(headerBytes)) != m.headerSize {
+				return fmt.Errorf("wav header size changed (original: %d, new: %d), cannot overwrite in streaming mode", m.headerSize, len(headerBytes))
+			}
+
+			if _, err := seeker.Seek(m.startPos, io.SeekStart); err != nil {
+				return fmt.Errorf("seek to start of wav file failed: %w", err)
+			}
+
+			if _, err := m.w.Write(headerBytes); err != nil {
+				return fmt.Errorf("overwrite wav header failed: %w", err)
+			}
 		}
 	}
 

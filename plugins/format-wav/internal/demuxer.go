@@ -30,6 +30,7 @@ type wavHeader struct {
 	channels    uint16
 	sampleRate  uint32
 	bitsPerSamp uint16
+	blockAlign  uint16
 
 	validBits   uint16
 	channelMask uint32
@@ -49,6 +50,7 @@ type Demuxer struct {
 	meta       metadata.Bundle
 	parsed     bool
 	sent       bool
+	bytesRead  uint64
 }
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
@@ -119,28 +121,58 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		}
 	}
 
-	if d.sent {
-		return nil, 0, io.EOF
-	}
-
-	if _, err := d.r.Seek(d.header.dataOffset, io.SeekStart); err != nil {
-		return nil, 0, fmt.Errorf("seek data chunk: %w", err)
-	}
-
 	if uint64(d.header.dataSize) > uint64(int(^uint(0)>>1)) {
 		return nil, 0, errors.New("wav data chunk is too large for memory")
 	}
 
-	packet := media.NewPacket(int(d.header.dataSize))
-	if _, err := io.ReadFull(d.r, packet.Data()); err != nil {
+	if d.bytesRead >= d.header.dataSize {
+		return nil, 0, io.EOF
+	}
+
+	if !d.sent {
+		if _, err := d.r.Seek(d.header.dataOffset, io.SeekStart); err != nil {
+			return nil, 0, fmt.Errorf("seek data chunk: %w", err)
+		}
+		d.sent = true
+	}
+
+	chunkSize := uint64(32768)
+	if d.header.blockAlign > 0 {
+		chunkSize = (chunkSize / uint64(d.header.blockAlign)) * uint64(d.header.blockAlign)
+		if chunkSize == 0 {
+			chunkSize = uint64(d.header.blockAlign)
+		}
+	}
+
+	remaining := d.header.dataSize - d.bytesRead
+	if chunkSize > remaining {
+		chunkSize = remaining
+	}
+
+	packet := media.NewPacket(int(chunkSize))
+	n, err := io.ReadFull(d.r, packet.Data())
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		packet.Release()
 		return nil, 0, fmt.Errorf("read wav data: %w", err)
 	}
 
+	if n == 0 {
+		packet.Release()
+		return nil, 0, io.EOF
+	}
+
+	if n < int(chunkSize) {
+		p2 := media.NewPacket(n)
+		copy(p2.Data(), packet.Data()[:n])
+		packet.Release()
+		packet = p2
+	}
+
+	d.bytesRead += uint64(n)
+
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 
-	d.sent = true
 	return packet, 0, nil
 }
 
@@ -210,6 +242,7 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 			header.audioFormat = binary.LittleEndian.Uint16(buf[0:2])
 			header.channels = binary.LittleEndian.Uint16(buf[2:4])
 			header.sampleRate = binary.LittleEndian.Uint32(buf[4:8])
+			header.blockAlign = binary.LittleEndian.Uint16(buf[12:14])
 			header.bitsPerSamp = binary.LittleEndian.Uint16(buf[14:16])
 
 			if header.audioFormat == wavAudioExtensible {
