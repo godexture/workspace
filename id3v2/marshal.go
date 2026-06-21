@@ -1,4 +1,4 @@
-package id3
+package id3v2
 
 import (
 	"fmt"
@@ -10,7 +10,9 @@ import (
 	"github.com/godexture/sdk/date"
 )
 
-var v2FrameIDs = map[string]string{
+const commentLanguage = "eng"
+
+var frameIDs = map[string]string{
 	"AENC": "CRA",
 	"APIC": "PIC",
 	"COMM": "COM",
@@ -90,7 +92,7 @@ type encoder struct {
 
 func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 	if opts.Version == 0 {
-		opts.Version = Version2v3
+		opts.Version = Version3
 	}
 
 	e := &encoder{
@@ -100,13 +102,12 @@ func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 
 	e.addTextFrame("TIT2", string(metadata.Get[metadata.KeyTitle](&bundle)))
 
-	e.addTextFrame("TPE1", string(metadata.Get[metadata.KeyArtist](&bundle)))
-
-	artists := metadata.Enumerate[metadata.KeyArtist](&bundle)
+	var artists []string
+	for _, a := range metadata.Enumerate[metadata.KeyArtist](&bundle) {
+		artists = append(artists, string(a))
+	}
 	if len(artists) > 0 {
-		for i := 0; i < min(3, len(artists)); i++ {
-			e.addTextFrame(fmt.Sprintf("TPE%d", i+2), string(artists[i]))
-		}
+		e.addTextFrame("TPE1", strings.Join(artists, "\x00"))
 	}
 
 	e.addTextFrame("TALB", string(metadata.Get[metadata.KeyAlbum](&bundle)))
@@ -114,11 +115,11 @@ func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 	// Date mapping
 	dateVal := date.Partial(metadata.Get[metadata.KeyDate](&bundle))
 	if dateVal.HasValue() {
-		if e.opts.Version == Version2v4 {
+		if e.opts.Version == Version4 {
 			e.addTextFrame("TDRC", dateVal.ToISOString())
 		} else {
 			var yearKey, dateKey string
-			if e.opts.Version == Version2v2 {
+			if e.opts.Version == Version2 {
 				yearKey = "TYE"
 				dateKey = "TDA"
 			} else {
@@ -146,16 +147,31 @@ func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 	thumbnails := metadata.Get[metadata.KeyThumbnail](&bundle)
 	if len(thumbnails) > 0 {
 		e.addAttachedPictureFrames(thumbnails)
-	} else if apic, ok := bundle.GetRaw("APIC"); ok {
-		e.addRawAttachedPictureFrame(apic)
-	} else if pic, ok := bundle.GetRaw("PIC"); ok {
-		if e.opts.Version != Version2v2 {
-			thumb := decodePICFrame(pic)
-			if len(thumb.Data) > 0 {
-				e.addAttachedPictureFrame(thumb)
+	} else if apics, ok := bundle.GetRaw("APIC"); ok {
+		for _, apic := range apics {
+			e.addRawAttachedPictureFrame(apic)
+		}
+	} else if pics, ok := bundle.GetRaw("PIC"); ok {
+		for _, pic := range pics {
+			if e.opts.Version != Version2 {
+				thumb := decodePICFrame(pic)
+				if len(thumb.Data) > 0 {
+					e.addAttachedPictureFrame(thumb)
+				}
+			} else {
+				e.frames = append(e.frames, e.buildFrame("PIC", pic))
 			}
-		} else {
-			e.frames = append(e.frames, e.buildFrame("PIC", pic))
+		}
+	}
+
+	rawFrames := bundle.AllRaw()
+	for frameID, payloads := range rawFrames {
+		if frameID == "APIC" || frameID == "PIC" {
+			continue
+		}
+		for _, payload := range payloads {
+			mappedID := e.mapFrameID(frameID)
+			e.frames = append(e.frames, e.buildFrame(mappedID, payload))
 		}
 	}
 
@@ -170,7 +186,7 @@ func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 
 	tag := make([]byte, 0, HeaderSize+payloadSize)
 	tag = append(tag, 'I', 'D', '3', byte(e.opts.Version), 0x00, 0x00)
-	tag = append(tag, encodeSyncSafeInt(payloadSize)...)
+	tag = append(tag, EncodeSyncSafeInt(payloadSize)...)
 	for _, frame := range e.frames {
 		tag = append(tag, frame...)
 	}
@@ -178,8 +194,8 @@ func Marshal(bundle metadata.Bundle, opts MarshalOptions) ([]byte, error) {
 }
 
 func (e *encoder) mapFrameID(id string) string {
-	if e.opts.Version == Version2v2 {
-		if mapped, ok := v2FrameIDs[id]; ok {
+	if e.opts.Version == Version2 {
+		if mapped, ok := frameIDs[id]; ok {
 			return mapped
 		}
 	}
@@ -248,7 +264,7 @@ func (e *encoder) addLyricsFrame(value string) {
 	e.frames = append(e.frames, e.buildFrame(mappedID, payload))
 }
 
-func (e *encoder) addAttachedPictureFrames(thumbnails metadata.KeyThumbnail) {
+func (e *encoder) addAttachedPictureFrames(thumbnails []metadata.Thumbnail) {
 	for _, thumbnail := range thumbnails {
 		e.addAttachedPictureFrame(thumbnail)
 	}
@@ -272,8 +288,8 @@ func (e *encoder) addAttachedPictureFrame(thumbnail metadata.Thumbnail) {
 	var payload []byte
 	var mappedID string
 
-	if e.opts.Version == Version2v2 {
-		format := mimeToFormat2v2(mimeType)
+	if e.opts.Version == Version2 {
+		format := mimeToFormat(mimeType)
 		payload = []byte{encByte}
 		payload = append(payload, []byte(format)...)
 		payload = append(payload, pictureType)
@@ -298,7 +314,7 @@ func (e *encoder) addRawAttachedPictureFrame(payload []byte) {
 	if len(payload) == 0 {
 		return
 	}
-	if e.opts.Version == Version2v2 {
+	if e.opts.Version == Version2 {
 		thumb := decodeAPICFrame(payload)
 		if len(thumb.Data) > 0 {
 			e.addAttachedPictureFrame(thumb)
@@ -317,7 +333,7 @@ func (e *encoder) getTerminator(encByte byte) []byte {
 }
 
 func (e *encoder) buildFrame(frameID string, payload []byte) []byte {
-	if e.opts.Version == Version2v2 {
+	if e.opts.Version == Version2 {
 		id := frameID
 		if len(id) > 3 {
 			id = id[:3]
@@ -351,8 +367,8 @@ func (e *encoder) buildFrame(frameID string, payload []byte) []byte {
 	frame = append(frame, []byte(id)...)
 
 	size := len(payload)
-	if e.opts.Version == Version2v4 {
-		frame = append(frame, encodeSyncSafeInt(size)...)
+	if e.opts.Version == Version4 {
+		frame = append(frame, EncodeSyncSafeInt(size)...)
 	} else {
 		frame = append(frame,
 			byte((size>>24)&0xFF),
@@ -367,7 +383,7 @@ func (e *encoder) buildFrame(frameID string, payload []byte) []byte {
 	return frame
 }
 
-func mimeToFormat2v2(mime string) string {
+func mimeToFormat(mime string) string {
 	mime = strings.ToLower(mime)
 	if strings.Contains(mime, "png") {
 		return "PNG"

@@ -1,10 +1,11 @@
-package id3
+package id3v2
 
 import (
 	"bytes"
 	"strings"
 
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/metadata-id3/internal/id3text"
 )
 
 func decodeAPICFrame(frameData []byte) metadata.Thumbnail {
@@ -37,7 +38,7 @@ func decodeAPICFrame(frameData []byte) metadata.Thumbnail {
 
 	return metadata.Thumbnail{
 		Data:        append([]byte(nil), frameData[dataStart:]...),
-		MIMEType:    trimString(string(frameData[mimeStart:mimeEnd])),
+		MIMEType:    id3text.TrimString(string(frameData[mimeStart:mimeEnd])),
 		PictureType: metadata.PictureType(pictureType),
 		Description: decodeEncodedText(encoding, frameData[descriptionStart:descriptionBytesEnd]),
 	}
@@ -88,6 +89,6 @@ func picFormatToMIME(format []byte) string {
 	case "JPG":
 		return "image/jpeg"
 	default:
-		return trimString(string(format))
+		return id3text.TrimString(string(format))
 	}
 }
