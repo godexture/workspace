@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
@@ -19,10 +20,28 @@ type DemuxerAdapter struct {
 }
 
 func WrapDemuxer(engine DemuxerEngine) node.Demuxer {
-	return &DemuxerAdapter{
+	adapter := &DemuxerAdapter{
 		engine: engine,
 		out:    node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
 	}
+
+	if seeker, ok := engine.(SeekerEngine); ok {
+		return &SeekableDemuxerAdapter{
+			DemuxerAdapter: adapter,
+			seeker:         seeker,
+		}
+	}
+
+	return adapter
+}
+
+type SeekableDemuxerAdapter struct {
+	*DemuxerAdapter
+	seeker SeekerEngine
+}
+
+func (n *SeekableDemuxerAdapter) Seek(offset time.Duration) error {
+	return n.seeker.Seek(offset)
 }
 
 func (n *DemuxerAdapter) ensureAnalyzed() error {

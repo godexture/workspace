@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 )
@@ -18,6 +20,10 @@ type MuxerEngine interface {
 type DemuxerEngine interface {
 	Analyze() (streams []media.StreamInfo, globalMeta metadata.Bundle, err error)
 	ReadPacket() (pkt *media.Packet, streamIndex int, err error)
+}
+
+type SeekerEngine interface {
+	Seek(offset time.Duration) error
 }
 
 type EncoderEngine interface {
