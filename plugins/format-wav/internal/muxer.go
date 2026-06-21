@@ -74,41 +74,25 @@ func (m *Muxer) WritePacket(streamIndex int, pkt *media.Packet) error {
 	return nil
 }
 
-func (m *Muxer) WriteTrailer() error {
-	if m.closed {
-		return nil
-	}
-	defer func() {
-		m.closed = true
-	}()
-
-	if !m.streamSet {
-		return errors.New("wav muxer stream is not configured")
-	}
-
-	formatTag, bitsPerSample, err := wavFormatForMediaAttributes(m.stream.MediaAttributes)
+func buildWAVHeader(attr media.MediaAttributes, dataSize uint64) ([]byte, error) {
+	formatTag, bitsPerSample, err := wavFormatForMediaAttributes(attr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	layout := m.stream.MediaAttributes.Audio.ChannelLayout
+	layout := attr.Audio.ChannelLayout
 	channels := layout.ChannelCount()
 	if channels <= 0 {
-		return errors.New("wav muxer requires a valid channel layout")
+		return nil, errors.New("wav muxer requires a valid channel layout")
 	}
 
-	sampleRate := m.stream.MediaAttributes.Audio.SampleRate
+	sampleRate := attr.Audio.SampleRate
 	if sampleRate <= 0 {
-		return errors.New("wav muxer requires a valid sample rate")
+		return nil, errors.New("wav muxer requires a valid sample rate")
 	}
 
 	blockAlign := channels * int(bitsPerSample/8)
 	byteRate := sampleRate * blockAlign
-
-	var dataSize uint64
-	for _, pkt := range m.packets {
-		dataSize += uint64(len(pkt))
-	}
 
 	pad := uint64(0)
 	if dataSize%2 == 1 {
@@ -215,7 +199,32 @@ func (m *Muxer) WriteTrailer() error {
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(dataSize))
 	}
 
-	if _, err := m.w.Write(headerBuf.Bytes()); err != nil {
+	return headerBuf.Bytes(), nil
+}
+
+func (m *Muxer) WriteTrailer() error {
+	if m.closed {
+		return nil
+	}
+	defer func() {
+		m.closed = true
+	}()
+
+	if !m.streamSet {
+		return errors.New("wav muxer stream is not configured")
+	}
+
+	var dataSize uint64
+	for _, pkt := range m.packets {
+		dataSize += uint64(len(pkt))
+	}
+
+	headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, dataSize)
+	if err != nil {
+		return err
+	}
+
+	if _, err := m.w.Write(headerBytes); err != nil {
 		return err
 	}
 
@@ -225,7 +234,7 @@ func (m *Muxer) WriteTrailer() error {
 		}
 	}
 
-	if pad == 1 {
+	if dataSize%2 == 1 {
 		if _, err := m.w.Write([]byte{0}); err != nil {
 			return err
 		}
