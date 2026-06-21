@@ -1,6 +1,8 @@
 package node
 
 import (
+	"time"
+
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 )
@@ -21,4 +23,8 @@ type Demuxer interface {
 	Streams() ([]media.StreamInfo, error)
 
 	OutputPorts() map[string]*OutPort[*media.Packet]
+}
+
+type Seeker interface {
+	Seek(offset time.Duration) error
 }
