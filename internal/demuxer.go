@@ -285,7 +285,15 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 		return wavHeader{}, errors.New("wav header missing audio parameters")
 	}
 
-	if _, err := sampleFormatFromHeader(header.audioFormat, header.bitsPerSamp); err != nil {
+	audioFormat := header.audioFormat
+	if audioFormat == wavAudioExtensible {
+		var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+		if bytes.Equal(header.subFormat[4:], subFormatBase) {
+			audioFormat = binary.LittleEndian.Uint16(header.subFormat[0:2])
+		}
+	}
+
+	if _, err := sampleFormatFromHeader(audioFormat, header.bitsPerSamp); err != nil {
 		return wavHeader{}, err
 	}
 
