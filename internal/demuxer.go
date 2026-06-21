@@ -37,11 +37,8 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
 		return nil, metadata.Bundle{}, err
 	}
-	fileBytes, err := io.ReadAll(d.r)
-	if err != nil {
-		return nil, metadata.Bundle{}, fmt.Errorf("mp3 read metadata: %w", err)
-	}
-	parsedMetadata, err := id3.Parse(fileBytes)
+
+	parsedMetadata, err := id3.ParseReader(d.r)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 parse metadata: %w", err)
 	}
