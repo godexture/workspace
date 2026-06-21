@@ -35,10 +35,10 @@ type wavHeader struct {
 	channelMask uint32
 	subFormat   [16]byte
 
-	numSamples  uint32
+	numSamples  uint64
 
 	dataOffset int64
-	dataSize   uint32
+	dataSize   uint64
 }
 
 type Demuxer struct {
@@ -128,7 +128,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	}
 
 	if uint64(d.header.dataSize) > uint64(int(^uint(0)>>1)) {
-		return nil, 0, errors.New("wav data chunk is too large")
+		return nil, 0, errors.New("wav data chunk is too large for memory")
 	}
 
 	packet := media.NewPacket(int(d.header.dataSize))
@@ -154,7 +154,11 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 		return wavHeader{}, fmt.Errorf("read riff header: %w", err)
 	}
 
-	if string(riff[0:4]) != wavTagRIFF || string(riff[8:12]) != wavTagWAVE {
+	isRF64 := string(riff[0:4]) == "RF64"
+	if string(riff[0:4]) != wavTagRIFF && !isRF64 {
+		return wavHeader{}, errors.New("not a wav file")
+	}
+	if string(riff[8:12]) != wavTagWAVE {
 		return wavHeader{}, errors.New("not a wav file")
 	}
 
@@ -176,6 +180,23 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 		}
 
 		switch string(chunkID[:]) {
+		case "ds64":
+			if chunkSize < 28 {
+				return wavHeader{}, errors.New("wav ds64 chunk too small")
+			}
+			buf := make([]byte, 28)
+			if _, err := io.ReadFull(r, buf); err != nil {
+				return wavHeader{}, fmt.Errorf("read ds64 chunk: %w", err)
+			}
+			header.dataSize = binary.LittleEndian.Uint64(buf[8:16])
+			header.numSamples = binary.LittleEndian.Uint64(buf[16:24])
+
+			if chunkSize > 28 {
+				if _, err := r.Seek(int64(chunkSize-28), io.SeekCurrent); err != nil {
+					return wavHeader{}, fmt.Errorf("skip ds64 chunk remainder: %w", err)
+				}
+			}
+
 		case wavTagFmt:
 			if chunkSize < 16 {
 				return wavHeader{}, errors.New("wav fmt chunk too small")
@@ -209,8 +230,12 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 			if chunkSize < 4 {
 				return wavHeader{}, errors.New("wav fact chunk too small")
 			}
-			if err := binary.Read(r, binary.LittleEndian, &header.numSamples); err != nil {
+			var numSamples32 uint32
+			if err := binary.Read(r, binary.LittleEndian, &numSamples32); err != nil {
 				return wavHeader{}, fmt.Errorf("read fact chunk: %w", err)
+			}
+			if numSamples32 != 0xFFFFFFFF {
+				header.numSamples = uint64(numSamples32)
 			}
 			if chunkSize > 4 {
 				if _, err := r.Seek(int64(chunkSize-4), io.SeekCurrent); err != nil {
@@ -220,8 +245,17 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 
 		case wavTagData:
 			header.dataOffset = chunkStart
-			header.dataSize = chunkSize
-			if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
+			if chunkSize == 0xFFFFFFFF && header.dataSize != 0 {
+				// use ds64 dataSize
+			} else {
+				header.dataSize = uint64(chunkSize)
+			}
+
+			if header.audioFormat != 0 {
+				break
+			}
+
+			if _, err := r.Seek(int64(header.dataSize), io.SeekCurrent); err != nil {
 				return wavHeader{}, fmt.Errorf("skip data chunk: %w", err)
 			}
 
@@ -231,7 +265,12 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 			}
 		}
 
-		if chunkSize%2 == 1 {
+		actualSize := uint64(chunkSize)
+		if string(chunkID[:]) == wavTagData {
+			actualSize = header.dataSize
+		}
+
+		if actualSize%2 == 1 {
 			if _, err := r.Seek(1, io.SeekCurrent); err != nil {
 				return wavHeader{}, err
 			}

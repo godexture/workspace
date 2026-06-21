@@ -105,12 +105,12 @@ func (m *Muxer) WriteTrailer() error {
 	blockAlign := channels * int(bitsPerSample/8)
 	byteRate := sampleRate * blockAlign
 
-	var dataSize int
+	var dataSize uint64
 	for _, pkt := range m.packets {
-		dataSize += len(pkt)
+		dataSize += uint64(len(pkt))
 	}
 
-	pad := 0
+	pad := uint64(0)
 	if dataSize%2 == 1 {
 		pad = 1
 	}
@@ -140,106 +140,98 @@ func (m *Muxer) WriteTrailer() error {
 		factSize = 12
 	}
 
-	var out bytes.Buffer
-	out.Grow(20 + int(fmtSize) + int(factSize) + 8 + dataSize + pad)
+	riffSize := uint64(4) + 8 + uint64(fmtSize) + uint64(factSize) + 8 + dataSize + pad
+	useRF64 := riffSize >= 0xFFFFFFFF
 
-	if _, err := out.WriteString("RIFF"); err != nil {
-		return err
-	}
-
-	riffSize := uint32(4 + 8) + fmtSize + factSize + 8 + uint32(dataSize) + uint32(pad)
-	if err := binary.Write(&out, binary.LittleEndian, riffSize); err != nil {
-		return err
+	ds64TotalSize := uint64(0)
+	if useRF64 {
+		ds64TotalSize = 36 // 8 bytes header + 28 bytes payload
+		riffSize += ds64TotalSize
 	}
 
-	if _, err := out.WriteString("WAVE"); err != nil {
-		return err
+	var headerBuf bytes.Buffer
+
+	if useRF64 {
+		headerBuf.WriteString("RF64")
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
+	} else {
+		headerBuf.WriteString("RIFF")
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(riffSize))
 	}
 
-	if _, err := out.WriteString("fmt "); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, fmtSize); err != nil {
-		return err
+	headerBuf.WriteString("WAVE")
+
+	if useRF64 {
+		headerBuf.WriteString("ds64")
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(28))
+		binary.Write(&headerBuf, binary.LittleEndian, riffSize)
+		binary.Write(&headerBuf, binary.LittleEndian, dataSize)
+		numSamples := uint64(0)
+		if blockAlign > 0 {
+			numSamples = dataSize / uint64(blockAlign)
+		}
+		binary.Write(&headerBuf, binary.LittleEndian, numSamples)
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(0)) // tableLength
 	}
 
-	if err := binary.Write(&out, binary.LittleEndian, writeFormatTag); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, uint16(channels)); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, uint32(sampleRate)); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, uint32(byteRate)); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, uint16(blockAlign)); err != nil {
-		return err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, bitsPerSample); err != nil {
-		return err
-	}
+	headerBuf.WriteString("fmt ")
+	binary.Write(&headerBuf, binary.LittleEndian, fmtSize)
+	binary.Write(&headerBuf, binary.LittleEndian, writeFormatTag)
+	binary.Write(&headerBuf, binary.LittleEndian, uint16(channels))
+	binary.Write(&headerBuf, binary.LittleEndian, uint32(sampleRate))
+	binary.Write(&headerBuf, binary.LittleEndian, uint32(byteRate))
+	binary.Write(&headerBuf, binary.LittleEndian, uint16(blockAlign))
+	binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)
 
 	if useExtensible {
-		if err := binary.Write(&out, binary.LittleEndian, uint16(22)); err != nil { // cbSize
-			return err
-		}
-		if err := binary.Write(&out, binary.LittleEndian, bitsPerSample); err != nil { // validBitsPerSample
-			return err
-		}
-		channelMask := uint32(layout.Mask())
-		if err := binary.Write(&out, binary.LittleEndian, channelMask); err != nil {
-			return err
-		}
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(22)) // cbSize
+		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample) // validBitsPerSample
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
 		
 		var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
-		if err := binary.Write(&out, binary.LittleEndian, formatTag); err != nil {
-			return err
-		}
-		if err := binary.Write(&out, binary.LittleEndian, uint16(0)); err != nil {
-			return err
-		}
-		if _, err := out.Write(subFormatBase); err != nil {
-			return err
-		}
+		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
+		headerBuf.Write(subFormatBase)
 	}
 
 	if writeFact {
-		if _, err := out.WriteString("fact"); err != nil {
-			return err
+		headerBuf.WriteString("fact")
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(4))
+		numSamples := uint64(0)
+		if blockAlign > 0 {
+			numSamples = dataSize / uint64(blockAlign)
 		}
-		if err := binary.Write(&out, binary.LittleEndian, uint32(4)); err != nil {
-			return err
-		}
-		numSamples := uint32(dataSize / blockAlign)
-		if err := binary.Write(&out, binary.LittleEndian, numSamples); err != nil {
-			return err
+		if useRF64 && numSamples > 0xFFFFFFFF {
+			binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
+		} else {
+			binary.Write(&headerBuf, binary.LittleEndian, uint32(numSamples))
 		}
 	}
 
-	if _, err := out.WriteString("data"); err != nil {
-		return err
+	headerBuf.WriteString("data")
+	if useRF64 {
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
+	} else {
+		binary.Write(&headerBuf, binary.LittleEndian, uint32(dataSize))
 	}
-	if err := binary.Write(&out, binary.LittleEndian, uint32(dataSize)); err != nil {
+
+	if _, err := m.w.Write(headerBuf.Bytes()); err != nil {
 		return err
 	}
 
 	for _, pkt := range m.packets {
-		if _, err := out.Write(pkt); err != nil {
+		if _, err := m.w.Write(pkt); err != nil {
 			return err
 		}
 	}
 
 	if pad == 1 {
-		if err := out.WriteByte(0); err != nil {
+		if _, err := m.w.Write([]byte{0}); err != nil {
 			return err
 		}
 	}
 
-	_, err = m.w.Write(out.Bytes())
-	return err
+	return nil
 }
 
 func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16, bitsPerSample uint16, err error) {
