@@ -15,6 +15,7 @@ const (
 	wavTagRIFF = "RIFF"
 	wavTagWAVE = "WAVE"
 	wavTagFmt  = "fmt "
+	wavTagFact = "fact"
 	wavTagData = "data"
 
 	wavAudioPCM   = 1
@@ -33,6 +34,8 @@ type wavHeader struct {
 	validBits   uint16
 	channelMask uint32
 	subFormat   [16]byte
+
+	numSamples  uint32
 
 	dataOffset int64
 	dataSize   uint32
@@ -199,6 +202,19 @@ func parseHeader(r io.ReadSeeker) (wavHeader, error) {
 					copy(header.subFormat[:], buf[24:40])
 				} else {
 					return wavHeader{}, errors.New("wav extensible cbSize too small")
+				}
+			}
+
+		case wavTagFact:
+			if chunkSize < 4 {
+				return wavHeader{}, errors.New("wav fact chunk too small")
+			}
+			if err := binary.Read(r, binary.LittleEndian, &header.numSamples); err != nil {
+				return wavHeader{}, fmt.Errorf("read fact chunk: %w", err)
+			}
+			if chunkSize > 4 {
+				if _, err := r.Seek(int64(chunkSize-4), io.SeekCurrent); err != nil {
+					return wavHeader{}, fmt.Errorf("skip fact chunk remainder: %w", err)
 				}
 			}
 

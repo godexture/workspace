@@ -128,14 +128,26 @@ func (m *Muxer) WriteTrailer() error {
 		fmtSize = 40
 	}
 
+	writeFormatTag := formatTag
+	if useExtensible {
+		writeFormatTag = wavAudioExtensible
+	}
+
+	writeFact := writeFormatTag != wavAudioPCM
+
+	factSize := uint32(0)
+	if writeFact {
+		factSize = 12
+	}
+
 	var out bytes.Buffer
-	out.Grow(20 + int(fmtSize) + 8 + dataSize + pad)
+	out.Grow(20 + int(fmtSize) + int(factSize) + 8 + dataSize + pad)
 
 	if _, err := out.WriteString("RIFF"); err != nil {
 		return err
 	}
 
-	riffSize := uint32(4 + 8) + fmtSize + 8 + uint32(dataSize) + uint32(pad)
+	riffSize := uint32(4 + 8) + fmtSize + factSize + 8 + uint32(dataSize) + uint32(pad)
 	if err := binary.Write(&out, binary.LittleEndian, riffSize); err != nil {
 		return err
 	}
@@ -149,11 +161,6 @@ func (m *Muxer) WriteTrailer() error {
 	}
 	if err := binary.Write(&out, binary.LittleEndian, fmtSize); err != nil {
 		return err
-	}
-
-	writeFormatTag := formatTag
-	if useExtensible {
-		writeFormatTag = wavAudioExtensible
 	}
 
 	if err := binary.Write(&out, binary.LittleEndian, writeFormatTag); err != nil {
@@ -195,6 +202,19 @@ func (m *Muxer) WriteTrailer() error {
 			return err
 		}
 		if _, err := out.Write(subFormatBase); err != nil {
+			return err
+		}
+	}
+
+	if writeFact {
+		if _, err := out.WriteString("fact"); err != nil {
+			return err
+		}
+		if err := binary.Write(&out, binary.LittleEndian, uint32(4)); err != nil {
+			return err
+		}
+		numSamples := uint32(dataSize / blockAlign)
+		if err := binary.Write(&out, binary.LittleEndian, numSamples); err != nil {
 			return err
 		}
 	}
