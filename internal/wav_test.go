@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/godexture/core/domain/media"
 )
@@ -692,6 +693,51 @@ func TestWAVMuxerForceRF64(t *testing.T) {
 	expectedRiffSize := uint64(76)
 	if riffSize64 != expectedRiffSize {
 		t.Errorf("expected riffSize in ds64 to be %d, got %d", expectedRiffSize, riffSize64)
+	}
+}
+
+func TestWAVDemuxerSeek(t *testing.T) {
+	
+	// Create a WAV with 48000 Hz, 16-bit, Mono. 1 second of data.
+	// 48000 samples * 2 bytes = 96000 bytes
+	payload := make([]byte, 96000)
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+
+	attr := media.MediaAttributes{
+		Codec: media.CodecLPCM,
+		Audio: media.AudioAttributes{
+			SampleRate:    48000,
+			Format:        media.SampleFormatS16,
+			ChannelLayout: media.LayoutMono1,
+		},
+	}
+	wavData := buildTestWAVWithAttr(t, payload, attr)
+
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	if err != nil {
+		t.Fatalf("NewDemuxer() error = %v", err)
+	}
+
+	// Seek to 0.5 seconds
+	if err := demuxer.Seek(500 * time.Millisecond); err != nil {
+		t.Fatalf("Seek() error = %v", err)
+	}
+
+	// 0.5s = 24000 samples = 48000 bytes.
+	// We expect the next read packet to start from offset 48000 of the original payload.
+	pkt, _, err := demuxer.ReadPacket()
+	if err != nil && err != io.EOF {
+		t.Fatalf("ReadPacket() error = %v", err)
+	}
+
+	if len(pkt.Data()) == 0 {
+		t.Fatalf("ReadPacket() returned empty packet")
+	}
+
+	if pkt.Data()[0] != payload[48000] {
+		t.Errorf("expected first byte to be %v, got %v", payload[48000], pkt.Data()[0])
 	}
 }
 

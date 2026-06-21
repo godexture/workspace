@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
@@ -174,6 +175,30 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	packet.StreamIndex = 0
 
 	return packet, 0, nil
+}
+
+func (d *Demuxer) Seek(offset time.Duration) error {
+	if !d.parsed {
+		if _, _, err := d.Analyze(); err != nil {
+			return err
+		}
+	}
+
+	targetSample := int64(offset) * int64(d.header.sampleRate) / int64(time.Second)
+	targetByteOffset := targetSample * int64(d.header.blockAlign)
+
+	if targetByteOffset > int64(d.header.dataSize) {
+		targetByteOffset = int64(d.header.dataSize)
+	}
+
+	newPos := d.header.dataOffset + targetByteOffset
+	if _, err := d.r.Seek(newPos, io.SeekStart); err != nil {
+		return fmt.Errorf("seek data chunk: %w", err)
+	}
+
+	d.bytesRead = uint64(targetByteOffset)
+	d.sent = true
+	return nil
 }
 
 func parseHeader(r io.ReadSeeker) (wavHeader, error) {
