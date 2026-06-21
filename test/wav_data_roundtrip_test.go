@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	wavpkg "github.com/godexture/format-wav"
+	"github.com/godexture/sdk/testutil"
 )
 
 func TestWaveFilesInDataRoundtrip(t *testing.T) {
@@ -47,8 +48,9 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 				t.Fatalf("no streams detected in %s", e.Name())
 			}
 
-			var out bytes.Buffer
-			muxer := wavpkg.NewMuxerEngine(&out)
+			f := testutil.NewBuffer(nil)
+
+			muxer := wavpkg.NewMuxerEngine(f)
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}
@@ -73,7 +75,8 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 				t.Fatalf("WriteTrailer: %v", err)
 			}
 
-			remuxed := out.Bytes()
+			remuxed := f.Bytes()
+
 			if !bytes.Equal(orig, remuxed) {
 				t.Fatalf("file %s roundtrip mismatch: original %d bytes vs remuxed %d bytes", e.Name(), len(orig), len(remuxed))
 			}
