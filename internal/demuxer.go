@@ -103,7 +103,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			Codec: media.CodecMP3,
 			Audio: media.AudioAttributes{
 				SampleRate:    frameHeader.SampleRate,
-				Format:        media.SampleFormatS16, // デコード後の形式(codec-mp3に合わせる)
+				Format:        media.SampleFormatF32, // デコード後の形式(codec-mp3に合わせる)
 				ChannelLayout: channelLayout,
 			},
 		},
