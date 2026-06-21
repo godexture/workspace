@@ -7,6 +7,8 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/metadata-id3/id3v1"
+	"github.com/godexture/metadata-id3/id3v2"
 )
 
 // Muxer はMP3パケットをストリームに書き出す。
@@ -16,6 +18,8 @@ type Muxer struct {
 	w          io.Writer
 	streamSet  bool
 	streamInfo media.StreamInfo
+	metadata   metadata.Bundle
+	headerDone bool
 }
 
 func NewMuxer(w io.Writer) *Muxer {
@@ -34,13 +38,27 @@ func (m *Muxer) AddStream(streamInfo media.StreamInfo) (int, error) {
 }
 
 func (m *Muxer) SetMetadata(metadataBundle metadata.Bundle) error {
-	// TODO: ID3v2 タグの書き込みをサポートする
-	// 参照: https://id3.org/id3v2.3.0
+	m.metadata = metadataBundle
 	return nil
 }
 
 func (m *Muxer) WriteHeader() error {
-	// MP3はストリーム形式のためヘッダーは不要
+	if m.headerDone {
+		return nil
+	}
+	if !m.streamSet {
+		return errors.New("mp3 muxer stream is not configured")
+	}
+	tag, err := id3v2.Marshal(m.metadata, id3v2.MarshalOptions{Version: id3v2.Version3})
+	if err != nil {
+		return fmt.Errorf("mp3 muxer build id3: %w", err)
+	}
+	if len(tag) > 0 {
+		if _, err := m.w.Write(tag); err != nil {
+			return err
+		}
+	}
+	m.headerDone = true
 	return nil
 }
 
@@ -54,11 +72,22 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if packet == nil {
 		return errors.New("mp3 muxer received nil packet")
 	}
+	if err := m.WriteHeader(); err != nil {
+		return err
+	}
 	_, err := m.w.Write(packet.Data())
 	return err
 }
 
 func (m *Muxer) WriteTrailer() error {
-	// MP3はストリーム形式のためトレーラーは不要
+	tag, err := id3v1.Marshal(m.metadata)
+	if err != nil {
+		return fmt.Errorf("mp3 muxer build id3v1: %w", err)
+	}
+	if len(tag) > 0 {
+		if _, err := m.w.Write(tag); err != nil {
+			return err
+		}
+	}
 	return nil
 }

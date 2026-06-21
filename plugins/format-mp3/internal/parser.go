@@ -2,11 +2,11 @@ package internal
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"io"
 
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/metadata-id3/id3v2"
 )
 
 var (
@@ -27,36 +27,8 @@ type FrameHeader struct {
 
 // SkipID3v2 skips the ID3v2 tags at the current reader position.
 // It returns the number of bytes skipped.
-func SkipID3v2(r io.Reader) (int, error) {
-	br, isBufferedReader := r.(*bufio.Reader)
-	if !isBufferedReader {
-		return 0, errors.New("SkipID3v2 requires bufio.Reader")
-	}
-
-	skippedBytesCount := 0
-	for {
-		peekedBytes, err := br.Peek(header.ID3v2HeaderSize)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return skippedBytesCount, err
-		}
-		if bytes.HasPrefix(peekedBytes, []byte("ID3")) {
-			// Parse size
-			tagSize := (int(peekedBytes[6]) << 21) | (int(peekedBytes[7]) << 14) | (int(peekedBytes[8]) << 7) | int(peekedBytes[9])
-			totalSize := tagSize + header.ID3v2HeaderSize
-			// Skip the bytes
-			_, err = br.Discard(totalSize)
-			if err != nil {
-				return skippedBytesCount, err
-			}
-			skippedBytesCount += totalSize
-		} else {
-			break
-		}
-	}
-	return skippedBytesCount, nil
+func SkipID3v2(r *bufio.Reader) (int, error) {
+	return id3v2.Skip(r)
 }
 
 type Header = header.Header

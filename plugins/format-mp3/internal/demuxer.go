@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/format-mp3/header"
+	id3 "github.com/godexture/metadata-id3"
 )
 
 // Demuxer はMP3コンテナを読み込む。
@@ -36,6 +37,14 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
 		return nil, metadata.Bundle{}, err
 	}
+
+	parsedMetadata, err := id3.ParseReader(d.r)
+	if err != nil {
+		return nil, metadata.Bundle{}, fmt.Errorf("mp3 parse metadata: %w", err)
+	}
+	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
+		return nil, metadata.Bundle{}, err
+	}
 	br := bufio.NewReader(d.r)
 	if _, err := SkipID3v2(br); err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 skip id3: %w", err)
@@ -55,7 +64,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		Index:     0,
 		Type:      media.MediaAudio,
 		IsDefault: true,
-		Metadata:  *metadata.NewBundle(),
+		Metadata:  *parsedMetadata,
 		MediaAttributes: media.MediaAttributes{
 			Codec: media.CodecMP3,
 			Audio: media.AudioAttributes{
@@ -65,7 +74,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			},
 		},
 	}
-	d.metadataBundle = *metadata.NewBundle()
+	d.metadataBundle = *parsedMetadata
 	d.parsed = true
 
 	// シークして先頭に戻す
