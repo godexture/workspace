@@ -39,7 +39,7 @@ func (k KeyDuration) single()    {}
 func (k KeyDate) single()        {}
 func (k KeyTitle) single()       {}
 func (k KeyDescription) single() {}
-func (k KeyArtist) single()      {}
+
 func (k KeyComposer) single()    {}
 func (k KeyComment) single()     {}
 func (k KeyLyrics) single()      {}
