@@ -85,7 +85,7 @@ func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
 	}
 
 	metadata.AssertBundleValue(t, &bundle, metadata.KeyTitle("Test"))
-	metadata.AssertBundleValue(t, &bundle, metadata.KeyArtist("Artist"))
+	metadata.AssertBundleSlice(t, &bundle, []metadata.KeyArtist{"Artist"})
 	metadata.AssertBundleValue(t, &streams[0].Metadata, metadata.KeyTitle("Test"))
 }
 
@@ -114,7 +114,7 @@ func TestMuxer_WritesID3Metadata(t *testing.T) {
 
 	meta := *metadata.NewBundle()
 	meta.Set(metadata.KeyTitle("Written Title"))
-	meta.Set(metadata.KeyArtist("Written Artist"))
+	meta.PushBack(metadata.KeyArtist("Written Artist"))
 	if err := muxer.SetMetadata(meta); err != nil {
 		t.Fatalf("SetMetadata returned error: %v", err)
 	}
@@ -138,5 +138,55 @@ func TestMuxer_WritesID3Metadata(t *testing.T) {
 	}
 
 	metadata.AssertBundleValue(t, &bundle, metadata.KeyTitle("Written Title"))
-	metadata.AssertBundleValue(t, &bundle, metadata.KeyArtist("Written Artist"))
+	metadata.AssertBundleSlice(t, &bundle, []metadata.KeyArtist{"Written Artist"})
+}
+
+func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
+	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	muxer := internal.NewMuxer(&out)
+	stream := media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecMP3,
+			Audio: media.AudioAttributes{
+				SampleRate:    44100,
+				Format:        media.SampleFormatS16,
+				ChannelLayout: media.LayoutStereo2_0,
+			},
+		},
+	}
+	if _, err := muxer.AddStream(stream); err != nil {
+		t.Fatalf("AddStream returned error: %v", err)
+	}
+
+	meta := *metadata.NewBundle()
+	meta.Set(metadata.KeyTitle("Implicit Title"))
+	meta.PushBack(metadata.KeyArtist("Implicit Artist"))
+	if err := muxer.SetMetadata(meta); err != nil {
+		t.Fatalf("SetMetadata returned error: %v", err)
+	}
+	// WriteHeader explicitly omitted to test implicit write during WritePacket
+
+	pkt := media.NewPacket(len(audio))
+	copy(pkt.Data(), audio)
+	if err := muxer.WritePacket(0, pkt); err != nil {
+		t.Fatalf("WritePacket returned error: %v", err)
+	}
+
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(out.Bytes()))
+	if err != nil {
+		t.Fatalf("NewDemuxer returned error: %v", err)
+	}
+	_, bundle, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	metadata.AssertBundleValue(t, &bundle, metadata.KeyTitle("Implicit Title"))
+	metadata.AssertBundleSlice(t, &bundle, []metadata.KeyArtist{"Implicit Artist"})
 }

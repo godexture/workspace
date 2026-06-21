@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/godexture/format-mp3/header"
-	id3 "github.com/godexture/metadata-id3"
+	"github.com/godexture/metadata-id3/id3v2"
 )
 
 var (
@@ -27,11 +27,8 @@ type FrameHeader struct {
 
 // SkipID3v2 skips the ID3v2 tags at the current reader position.
 // It returns the number of bytes skipped.
-func SkipID3v2(r io.Reader) (int, error) {
-	if _, isBufferedReader := r.(*bufio.Reader); !isBufferedReader {
-		return 0, errors.New("SkipID3v2 requires bufio.Reader")
-	}
-	return id3.SkipID3v2(r)
+func SkipID3v2(r *bufio.Reader) (int, error) {
+	return id3v2.Skip(r)
 }
 
 type Header = header.Header

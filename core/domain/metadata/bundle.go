@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-type keyRaw map[any][]byte
+type keyRaw map[string][][]byte
 
 type single interface {
 	single()
@@ -76,18 +76,18 @@ func (b *Bundle) PushBack(value multiple) {
 	b.data[tp] = items
 }
 
-func (b *Bundle) SetRaw(key string, value []byte) {
+func (b *Bundle) AddRaw(key string, value []byte) {
 	raw := Get[keyRaw](b)
 	if raw == nil {
 		raw = make(keyRaw)
 	}
 
-	raw[key] = value
+	raw[key] = append(raw[key], value)
 
 	b.Set(raw)
 }
 
-func (b *Bundle) GetRaw(key string) ([]byte, bool) {
+func (b *Bundle) GetRaw(key string) ([][]byte, bool) {
 	raw := Get[keyRaw](b)
 	if raw == nil {
 		return nil, false
@@ -96,6 +96,10 @@ func (b *Bundle) GetRaw(key string) ([]byte, bool) {
 	value, exists := raw[key]
 
 	return value, exists
+}
+
+func (b *Bundle) AllRaw() map[string][][]byte {
+	return Get[keyRaw](b)
 }
 
 func AssertBundleValue[T interface {

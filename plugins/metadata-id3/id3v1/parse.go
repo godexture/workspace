@@ -1,22 +1,32 @@
-package id3
+package id3v1
 
 import (
 	"bytes"
 
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/metadata-id3/internal/id3text"
 	"github.com/godexture/sdk/date"
 )
 
-func parseTrailingV1(buffer []byte, bundle *metadata.Bundle) {
-	if !HasV1Tag(buffer) {
+const TagSize = 128
+
+func HasTag(buffer []byte) bool {
+	return len(buffer) >= TagSize && bytes.Equal(buffer[len(buffer)-TagSize:len(buffer)-TagSize+3], []byte("TAG"))
+}
+
+func Parse(buffer []byte, bundle *metadata.Bundle) {
+	if !HasTag(buffer) {
 		return
 	}
 
-	tag := buffer[len(buffer)-V1TagSize:]
-	bundle.SetNonZeroIfEmpty(metadata.KeyTitle(decodeV1String(tag[3:33])))
-	bundle.SetNonZeroIfEmpty(metadata.KeyArtist(decodeV1String(tag[33:63])))
-	bundle.SetNonZeroIfEmpty(metadata.KeyAlbum(decodeV1String(tag[63:93])))
-	yearStr := decodeV1String(tag[93:97])
+	tag := buffer[len(buffer)-TagSize:]
+	bundle.SetNonZeroIfEmpty(metadata.KeyTitle(decodeString(tag[3:33])))
+	artist := decodeString(tag[33:63])
+	if artist != "" {
+		bundle.PushBack(metadata.KeyArtist(artist))
+	}
+	bundle.SetNonZeroIfEmpty(metadata.KeyAlbum(decodeString(tag[63:93])))
+	yearStr := decodeString(tag[93:97])
 	if yearStr != "" {
 		if d, err := date.NewPartial(yearStr); err == nil {
 			bundle.SetNonZeroIfEmpty(metadata.KeyDate(d))
@@ -25,29 +35,29 @@ func parseTrailingV1(buffer []byte, bundle *metadata.Bundle) {
 
 	commentField := tag[97:127]
 	if len(commentField) == 30 && commentField[28] == 0 && commentField[29] != 0 {
-		bundle.SetNonZeroIfEmpty(metadata.KeyComment(decodeV1String(commentField[:28])))
+		bundle.SetNonZeroIfEmpty(metadata.KeyComment(decodeString(commentField[:28])))
 		bundle.SetNonZeroIfEmpty(metadata.KeyTrackNumber(commentField[29]))
 	} else {
-		bundle.SetNonZeroIfEmpty(metadata.KeyComment(decodeV1String(commentField)))
+		bundle.SetNonZeroIfEmpty(metadata.KeyComment(decodeString(commentField)))
 	}
 
-	if genre := decodeV1Genre(tag[127]); genre != "" {
+	if genre := decodeGenre(tag[127]); genre != "" {
 		bundle.SetNonZeroIfEmpty(metadata.KeyGenre(genre))
 	}
 }
 
-func decodeV1String(payload []byte) string {
-	return trimString(latin1ToUTF8(bytes.TrimRight(payload, "\x00")))
+func decodeString(payload []byte) string {
+	return id3text.TrimString(id3text.Latin1ToUTF8(bytes.TrimRight(payload, "\x00")))
 }
 
-func decodeV1Genre(index byte) string {
-	if int(index) >= len(v1Genres) {
+func decodeGenre(index byte) string {
+	if int(index) >= len(genres) {
 		return ""
 	}
-	return v1Genres[index]
+	return genres[index]
 }
 
-var v1Genres = []string{
+var genres = []string{
 	"Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop",
 	"Jazz", "Metal", "New Age", "Oldies", "Other", "Pop", "R&B", "Rap",
 	"Reggae", "Rock", "Techno", "Industrial", "Alternative", "Ska", "Death Metal", "Pranks",

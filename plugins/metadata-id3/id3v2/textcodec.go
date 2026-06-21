@@ -1,4 +1,4 @@
-package id3
+package id3v2
 
 import (
 	"bytes"
@@ -7,7 +7,25 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/godexture/metadata-id3/internal/id3text"
 )
+
+func decodeTextFrames(frameData []byte) []string {
+	if len(frameData) == 0 {
+		return nil
+	}
+	text := decodeEncodedText(frameData[0], frameData[1:])
+	parts := strings.Split(text, "\x00")
+	var res []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			res = append(res, p)
+		}
+	}
+	return res
+}
 
 func decodeTextFrame(frameData []byte) string {
 	if len(frameData) == 0 {
@@ -49,7 +67,7 @@ func decodeTrackOrDiskNumberFrame(frameData []byte) (trackNumber int64, totalTra
 }
 
 func decodeURLFrame(frameData []byte) string {
-	return trimString(string(bytes.Trim(frameData, "\x00")))
+	return id3text.TrimString(string(bytes.Trim(frameData, "\x00")))
 }
 
 func decodeUserURLValue(frameData []byte) string {
@@ -62,7 +80,7 @@ func decodeUserURLValue(frameData []byte) string {
 	if valueStart >= len(payload) {
 		return ""
 	}
-	return trimString(string(bytes.Trim(payload[valueStart:], "\x00")))
+	return id3text.TrimString(string(bytes.Trim(payload[valueStart:], "\x00")))
 }
 
 func skipEncodedString(payload []byte, encoding byte) int {
@@ -113,17 +131,17 @@ func terminatorSize(encoding byte) int {
 func decodeEncodedText(encoding byte, payload []byte) string {
 	switch encoding {
 	case 0:
-		return trimString(latin1ToUTF8(payload))
+		return id3text.TrimString(id3text.Latin1ToUTF8(payload))
 	case 1:
-		return trimString(decodeUTF16(payload, true))
+		return id3text.TrimString(decodeUTF16(payload, true))
 	case 2:
-		return trimString(decodeUTF16(payload, false))
+		return id3text.TrimString(decodeUTF16(payload, false))
 	case 3:
 		if utf8.Valid(payload) {
-			return trimString(string(payload))
+			return id3text.TrimString(string(payload))
 		}
 	}
-	return trimString(string(bytes.Trim(payload, "\x00")))
+	return id3text.TrimString(string(bytes.Trim(payload, "\x00")))
 }
 
 func decodeUTF16(payload []byte, withBOM bool) string {
@@ -149,18 +167,6 @@ func decodeUTF16(payload []byte, withBOM bool) string {
 	return string(utf16.Decode(u16))
 }
 
-func trimString(value string) string {
-	return strings.Trim(value, "\x00 \t\r\n")
-}
-
-func latin1ToUTF8(payload []byte) string {
-	runes := make([]rune, len(payload))
-	for i, b := range payload {
-		runes[i] = rune(b)
-	}
-	return string(runes)
-}
-
 func removeUnsynchronisation(payload []byte) []byte {
 	out := make([]byte, 0, len(payload))
 	for i := 0; i < len(payload); i++ {
@@ -184,14 +190,14 @@ func utf16LittleEndian(payload []byte) uint16 {
 
 func encodeText(value string, targetEncoding Encoding, version Version) (byte, []byte) {
 	if targetEncoding == EncodingDefault {
-		if version == Version2v4 {
+		if version == Version4 {
 			targetEncoding = EncodingUTF8
 		} else {
 			targetEncoding = EncodingUTF16
 		}
 	}
 
-	if version < Version2v4 {
+	if version < Version4 {
 		if targetEncoding == EncodingUTF8 || targetEncoding == EncodingUTF16BE {
 			var encodingName string
 			switch targetEncoding {

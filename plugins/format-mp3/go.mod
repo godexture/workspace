@@ -8,10 +8,7 @@ require (
 	github.com/godexture/sdk v0.0.0
 )
 
-require (
-	github.com/moznion/go-optional v0.13.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-)
+require golang.org/x/sync v0.20.0 // indirect
 
 replace github.com/godexture/core => ../../core
 

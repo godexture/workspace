@@ -1,4 +1,4 @@
-package id3
+package id3v2
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ type dateContext struct {
 	tdrc string
 }
 
-func parseLeadingV2(buffer []byte, bundle *metadata.Bundle) {
+func Parse(buffer []byte, bundle *metadata.Bundle) {
 	offset := 0
 	ctx := &dateContext{}
 
@@ -39,7 +39,7 @@ func parseLeadingV2(buffer []byte, bundle *metadata.Bundle) {
 			tagPayload = removeUnsynchronisation(tagPayload)
 		}
 
-		parseV2Frames(header.VersionMajor, tagPayload, bundle, ctx)
+		parseFrames(header.VersionMajor, tagPayload, bundle, ctx)
 
 		offset = tagEnd
 	}
@@ -68,14 +68,14 @@ func parseLeadingV2(buffer []byte, bundle *metadata.Bundle) {
 	}
 }
 
-func parseV2Frames(version byte, payload []byte, bundle *metadata.Bundle, ctx *dateContext) {
+func parseFrames(version byte, payload []byte, bundle *metadata.Bundle, ctx *dateContext) {
 	frameHeaderSize := 10
 	if version == 2 {
 		frameHeaderSize = 6
 	}
 
 	for offset := 0; offset+frameHeaderSize <= len(payload); {
-		frameID, frameSize, nextOffset, ok := parseFrameHeader(version, payload, offset)
+		frameID, frameSize, flags, nextOffset, ok := parseFrameHeader(version, payload, offset)
 		if !ok {
 			return
 		}
@@ -84,6 +84,44 @@ func parseV2Frames(version byte, payload []byte, bundle *metadata.Bundle, ctx *d
 		}
 
 		frameData := payload[nextOffset : nextOffset+frameSize]
+
+		if len(flags) == 2 {
+			compressed := false
+			encrypted := false
+			hasDataLength := false
+			unsync := false
+
+			if version == 3 {
+				compressed = (flags[1] & 0x80) != 0
+				encrypted = (flags[1] & 0x40) != 0
+			} else if version == 4 {
+				compressed = (flags[1] & 0x08) != 0
+				encrypted = (flags[1] & 0x04) != 0
+				unsync = (flags[1] & 0x02) != 0
+				hasDataLength = (flags[1] & 0x01) != 0
+			}
+
+			if compressed {
+				offset = nextOffset + frameSize
+				continue
+			}
+
+			if hasDataLength {
+				if len(frameData) >= 4 {
+					frameData = frameData[4:]
+				}
+			}
+
+			if encrypted {
+				if len(frameData) >= 1 {
+					frameData = frameData[1:]
+				}
+			}
+			if unsync {
+				frameData = removeUnsynchronisation(frameData)
+			}
+		}
+
 		if strings.Trim(frameID, "\x00") == "" {
 			return
 		}
@@ -92,33 +130,34 @@ func parseV2Frames(version byte, payload []byte, bundle *metadata.Bundle, ctx *d
 	}
 }
 
-func parseFrameHeader(version byte, payload []byte, offset int) (string, int, int, bool) {
+func parseFrameHeader(version byte, payload []byte, offset int) (string, int, []byte, int, bool) {
 	if version == 2 {
 		if offset+6 > len(payload) {
-			return "", 0, 0, false
+			return "", 0, nil, 0, false
 		}
 		headerBytes := payload[offset : offset+6]
 		if bytes.Equal(headerBytes[:3], []byte{0, 0, 0}) {
-			return "", 0, 0, false
+			return "", 0, nil, 0, false
 		}
 		frameID := string(headerBytes[:3])
 		frameSize := int(headerBytes[3])<<16 | int(headerBytes[4])<<8 | int(headerBytes[5])
-		return frameID, frameSize, offset + 6, true
+		return frameID, frameSize, nil, offset + 6, true
 	}
 
 	if offset+10 > len(payload) {
-		return "", 0, 0, false
+		return "", 0, nil, 0, false
 	}
 	headerBytes := payload[offset : offset+10]
 	if bytes.Equal(headerBytes[:4], []byte{0, 0, 0, 0}) {
-		return "", 0, 0, false
+		return "", 0, nil, 0, false
 	}
 	frameID := string(headerBytes[:4])
 	frameSize := int(binary.BigEndian.Uint32(headerBytes[4:8]))
 	if version == 4 {
-		frameSize = decodeSyncSafeInt(headerBytes[4:8])
+		frameSize = DecodeSyncSafeInt(headerBytes[4:8])
 	}
-	return frameID, frameSize, offset + 10, true
+	flags := headerBytes[8:10]
+	return frameID, frameSize, flags, offset + 10, true
 }
 
 func applyFrame(bundle *metadata.Bundle, frameID string, frameData []byte, ctx *dateContext) {
@@ -127,10 +166,16 @@ func applyFrame(bundle *metadata.Bundle, frameID string, frameData []byte, ctx *
 		bundle.SetNonZero(metadata.KeyTitle(decodeTextFrame(frameData)))
 
 	case "TPE1", "TP1":
-		bundle.Set(metadata.KeyArtist(decodeTextFrame(frameData)))
+		artists := decodeTextFrames(frameData)
+		for _, a := range artists {
+			bundle.PushBack(metadata.KeyArtist(a))
+		}
 
 	case "TPE2", "TP2", "TPE3", "TP3", "TPE4", "TP4":
-		bundle.PushBack(metadata.KeyArtist(decodeTextFrame(frameData)))
+		artists := decodeTextFrames(frameData)
+		for _, a := range artists {
+			bundle.PushBack(metadata.KeyArtist(a))
+		}
 
 	case "TCOM", "TCM":
 		bundle.SetNonZero(metadata.KeyComposer(decodeTextFrame(frameData)))
@@ -183,13 +228,13 @@ func applyFrame(bundle *metadata.Bundle, frameID string, frameData []byte, ctx *
 
 	case "APIC":
 		addThumbnail(bundle, decodeAPICFrame(frameData))
-		bundle.SetRaw(frameID, frameData)
+		bundle.AddRaw(frameID, frameData)
 
 	case "PIC":
 		addThumbnail(bundle, decodePICFrame(frameData))
-		bundle.SetRaw(frameID, frameData)
+		bundle.AddRaw(frameID, frameData)
 
 	default:
-		bundle.SetRaw(frameID, frameData)
+		bundle.AddRaw(frameID, frameData)
 	}
 }
