@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"os"
 	"testing"
 	"time"
 
+	mp3codec "github.com/godexture/codec-mp3"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
 )
 
@@ -793,5 +796,283 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(readPkt.Data(), originalAudio) {
 		t.Errorf("audio payload mismatch: got %v, want %v", readPkt.Data(), originalAudio)
+	}
+}
+
+func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
+	tests := []struct {
+		name          string
+		audioFormat   uint16
+		bitsPerSample uint16
+		channels      uint16
+		sampleRate    uint32
+		blockAlign    uint16
+		payload       []byte
+		wantCodec     media.CodecID
+	}{
+		{
+			name:          "MS ADPCM",
+			audioFormat:   wavAudioMSADPCM,
+			bitsPerSample: 4,
+			channels:      1,
+			sampleRate:    8000,
+			blockAlign:    256,
+			payload:       []byte{0x00, 0x01, 0x02, 0x03},
+			wantCodec:     media.CodecMSADPCM,
+		},
+		{
+			name:          "IMA ADPCM",
+			audioFormat:   wavAudioIMAADPCM,
+			bitsPerSample: 4,
+			channels:      2,
+			sampleRate:    22050,
+			blockAlign:    512,
+			payload:       []byte{0x10, 0x11, 0x12, 0x13},
+			wantCodec:     media.CodecIMAADPCM,
+		},
+		{
+			name:          "MP3",
+			audioFormat:   wavAudioMP3,
+			bitsPerSample: 0,
+			channels:      2,
+			sampleRate:    44100,
+			blockAlign:    1,
+			payload:       append([]byte{0xff, 0xfb, 0x90, 0x64}, make([]byte, 413)...),
+			wantCodec:     media.CodecMP3,
+		},
+		{
+			name:          "GSM",
+			audioFormat:   wavAudioGSM,
+			bitsPerSample: 0,
+			channels:      1,
+			sampleRate:    8000,
+			blockAlign:    65,
+			payload:       bytes.Repeat([]byte{0x55}, 65),
+			wantCodec:     media.CodecGSM,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wavData := buildWAVWithFormatTag(t, tt.audioFormat, tt.bitsPerSample, tt.channels, tt.sampleRate, tt.blockAlign, tt.payload)
+
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			if err != nil {
+				t.Fatalf("NewDemuxer() error = %v", err)
+			}
+
+			streams, _, err := demuxer.Analyze()
+			if err != nil {
+				t.Fatalf("Analyze() error = %v", err)
+			}
+			if len(streams) != 1 {
+				t.Fatalf("Analyze() returned %d streams, want 1", len(streams))
+			}
+
+			stream := streams[0]
+			if stream.MediaAttributes.Codec != tt.wantCodec {
+				t.Fatalf("codec = %s, want %s", stream.MediaAttributes.Codec, tt.wantCodec)
+			}
+			if stream.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+				t.Fatalf("sample format = %s, want unknown", stream.MediaAttributes.Audio.Format)
+			}
+			if stream.MediaAttributes.Audio.SampleRate != int(tt.sampleRate) {
+				t.Fatalf("sample rate = %d, want %d", stream.MediaAttributes.Audio.SampleRate, tt.sampleRate)
+			}
+			if stream.MediaAttributes.Audio.ChannelLayout.ChannelCount() != int(tt.channels) {
+				t.Fatalf("channels = %d, want %d", stream.MediaAttributes.Audio.ChannelLayout.ChannelCount(), tt.channels)
+			}
+
+			pkt, streamIndex, err := demuxer.ReadPacket()
+			if err != nil {
+				t.Fatalf("ReadPacket() error = %v", err)
+			}
+			if streamIndex != 0 {
+				t.Fatalf("streamIndex = %d, want 0", streamIndex)
+			}
+			if !bytes.Equal(pkt.Data(), tt.payload) {
+				t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), tt.payload)
+			}
+		})
+	}
+}
+
+func TestWAVMP3PacketizationDecodes(t *testing.T) {
+	mp3Data, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	wavData := buildWAVWithFormatTag(t, wavAudioMP3, 0, 2, 44100, 1, mp3Data)
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	if err != nil {
+		t.Fatalf("NewDemuxer() error = %v", err)
+	}
+
+	streams, _, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if len(streams) != 1 {
+		t.Fatalf("Analyze() returned %d streams, want 1", len(streams))
+	}
+	if streams[0].MediaAttributes.Codec != media.CodecMP3 {
+		t.Fatalf("codec = %s, want %s", streams[0].MediaAttributes.Codec, media.CodecMP3)
+	}
+
+	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+	decodedFrames := 0
+	decodedSamples := 0
+
+	for i := 0; i < 4; i++ {
+		pkt, _, err := demuxer.ReadPacket()
+		if err != nil {
+			t.Fatalf("ReadPacket() error = %v", err)
+		}
+		if len(pkt.Data()) == 0 {
+			t.Fatal("ReadPacket() returned an empty packet")
+		}
+		if len(pkt.Data()) >= len(mp3Data) {
+			t.Fatalf("packet length = %d, want less than full mp3 payload %d", len(pkt.Data()), len(mp3Data))
+		}
+
+		if err := decoder.SendPacket(pkt); err != nil {
+			t.Fatalf("SendPacket() error = %v", err)
+		}
+
+		for {
+			frame, err := decoder.ReceiveFrame()
+			if err == engine.ErrEAGAIN {
+				break
+			}
+			if err != nil {
+				t.Fatalf("ReceiveFrame() error = %v", err)
+			}
+
+			audioFrame, ok := (*frame).(*media.AudioFrame)
+			if !ok {
+				t.Fatalf("decoded frame type = %T, want *media.AudioFrame", *frame)
+			}
+			decodedFrames++
+			decodedSamples += audioFrame.Samples
+		}
+	}
+
+	if decodedFrames == 0 || decodedSamples == 0 {
+		t.Fatalf("decodedFrames = %d decodedSamples = %d, want non-zero", decodedFrames, decodedSamples)
+	}
+}
+
+func TestWAVAnalyzeUnsupportedFormatTag(t *testing.T) {
+	wavData := buildWAVWithFormatTag(t, 0x1234, 8, 1, 8000, 1, []byte{0x00})
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	if err != nil {
+		t.Fatalf("NewDemuxer() error = %v", err)
+	}
+
+	if _, _, err := demuxer.Analyze(); err == nil || err.Error() != "unsupported wav audio format tag: 4660" {
+		t.Fatalf("Analyze() error = %v, want unsupported format tag", err)
+	}
+}
+
+func buildWAVWithFormatTag(t *testing.T, audioFormat uint16, bitsPerSample uint16, channels uint16, sampleRate uint32, blockAlign uint16, payload []byte) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	fmtSize := uint32(18)
+	factSize := uint32(4)
+	dataPad := uint32(len(payload) % 2)
+	riffSize := uint32(4) + 8 + fmtSize + 8 + factSize + 8 + uint32(len(payload)) + dataPad
+	byteRate := uint32(blockAlign) * sampleRate
+
+	buf.WriteString(wavTagRIFF)
+	binary.Write(&buf, binary.LittleEndian, riffSize)
+	buf.WriteString(wavTagWAVE)
+
+	buf.WriteString(wavTagFmt)
+	binary.Write(&buf, binary.LittleEndian, fmtSize)
+	binary.Write(&buf, binary.LittleEndian, audioFormat)
+	binary.Write(&buf, binary.LittleEndian, channels)
+	binary.Write(&buf, binary.LittleEndian, sampleRate)
+	binary.Write(&buf, binary.LittleEndian, byteRate)
+	binary.Write(&buf, binary.LittleEndian, blockAlign)
+	binary.Write(&buf, binary.LittleEndian, bitsPerSample)
+	binary.Write(&buf, binary.LittleEndian, uint16(0))
+
+	buf.WriteString(wavTagFact)
+	binary.Write(&buf, binary.LittleEndian, factSize)
+	binary.Write(&buf, binary.LittleEndian, uint32(0))
+
+	buf.WriteString(wavTagData)
+	binary.Write(&buf, binary.LittleEndian, uint32(len(payload)))
+	buf.Write(payload)
+	if dataPad != 0 {
+		buf.WriteByte(0)
+	}
+
+	return buf.Bytes()
+}
+
+func TestWAVADPCMRoundTrip(t *testing.T) {
+	tests := []struct {
+		name     string
+		codec    media.CodecID
+		channels int
+	}{
+		{"MS ADPCM Mono", media.CodecMSADPCM, 1},
+		{"MS ADPCM Stereo", media.CodecMSADPCM, 2},
+		{"IMA ADPCM Mono", media.CodecIMAADPCM, 1},
+		{"IMA ADPCM Stereo", media.CodecIMAADPCM, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockAlign := 256 * tt.channels
+			original := make([]byte, blockAlign*3)
+			for i := range original {
+				original[i] = byte(i % 256)
+			}
+
+			attr := media.MediaAttributes{
+				Codec: tt.codec,
+				Audio: media.AudioAttributes{
+					SampleRate:    8000,
+					Format:        media.SampleFormatUnknown,
+					ChannelLayout: layoutFromChannelCount(tt.channels),
+				},
+			}
+
+			wavData := buildTestWAVWithAttr(t, original, attr)
+
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			if err != nil {
+				t.Fatalf("NewDemuxer() error = %v", err)
+			}
+
+			streams, _, err := demuxer.Analyze()
+			if err != nil {
+				t.Fatalf("Analyze() error = %v", err)
+			}
+			if len(streams) != 1 {
+				t.Fatalf("Analyze() returned %d streams, want 1", len(streams))
+			}
+
+			stream := streams[0]
+			if stream.MediaAttributes.Codec != tt.codec {
+				t.Errorf("codec = %s, want %s", stream.MediaAttributes.Codec, tt.codec)
+			}
+			if stream.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+				t.Errorf("format = %s, want unknown", stream.MediaAttributes.Audio.Format)
+			}
+
+			pkt, _, err := demuxer.ReadPacket()
+			if err != nil {
+				t.Fatalf("ReadPacket() error = %v", err)
+			}
+
+			if !bytes.Equal(pkt.Data(), original) {
+				t.Errorf("payload mismatch: got %d bytes, want %d bytes", len(pkt.Data()), len(original))
+			}
+		})
 	}
 }

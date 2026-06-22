@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 
+	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
+	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
+	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
@@ -43,6 +46,7 @@ func NewDecoder(config Config) *Decoder {
 	}
 
 	isG711 := config.CodecID == media.CodecPCMU || config.CodecID == media.CodecPCMA
+	isADPCM := config.CodecID == media.CodecMSADPCM || config.CodecID == media.CodecIMAADPCM
 
 	if config.SampleRate <= 0 {
 		if isG711 {
@@ -52,7 +56,7 @@ func NewDecoder(config Config) *Decoder {
 		}
 	}
 	if config.Format == media.SampleFormatUnknown {
-		if isG711 {
+		if isG711 || isADPCM {
 			config.Format = media.SampleFormatS16
 		} else {
 			config.Format = media.SampleFormatS16
@@ -93,11 +97,22 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	d.pending = nil
 
 	data := pkt.Data()
+	var err error
 	switch d.config.CodecID {
 	case media.CodecPCMU:
-		data = DecodePCMU(data, d.config.ByteOrder)
+		data = g711.DecodePCMU(data, d.config.ByteOrder)
 	case media.CodecPCMA:
-		data = DecodePCMA(data, d.config.ByteOrder)
+		data = g711.DecodePCMA(data, d.config.ByteOrder)
+	case media.CodecMSADPCM:
+		data, err = msadpcm.Decode(data, d.config.Layout.ChannelCount(), d.config.ByteOrder)
+		if err != nil {
+			return nil, err
+		}
+	case media.CodecIMAADPCM:
+		data, err = imaadpcm.Decode(data, d.config.Layout.ChannelCount(), d.config.ByteOrder)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	bytesPerSample := d.config.Format.BytesPerSample()
