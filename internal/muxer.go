@@ -66,9 +66,11 @@ func (m *Muxer) WriteHeader() error {
 	}
 
 	if seeker, ok := m.w.(io.Seeker); ok {
-		m.seekable = true
 		pos, err := seeker.Seek(0, io.SeekCurrent)
-		if err == nil {
+		if err != nil {
+			m.seekable = false
+		} else {
+			m.seekable = true
 			m.startPos = pos
 		}
 
@@ -371,4 +373,3 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 		return 0, 0, fmt.Errorf("unsupported wav codec: %s", attr.Codec)
 	}
 }
-
