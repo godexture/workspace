@@ -33,14 +33,19 @@ func Trim(buffer []byte) (start int, end int) {
 
 func Parse(buffer []byte) (*metadata.Bundle, error) {
 	bundle := metadata.NewBundle()
-	id3v2.Parse(buffer, bundle)
 	id3v1.Parse(buffer, bundle)
+
+	v2Bundle := metadata.NewBundle()
+	id3v2.Parse(buffer, v2Bundle)
+	bundle.Merge(v2Bundle)
+
 	return bundle, nil
 }
 
 // ParseReader parses ID3v2 and ID3v1 tags from an io.ReadSeeker.
 func ParseReader(r io.ReadSeeker) (*metadata.Bundle, error) {
 	bundle := metadata.NewBundle()
+	v2Bundle := metadata.NewBundle()
 
 	if _, err := r.Seek(0, io.SeekStart); err == nil {
 		fileSize, sizeErr := r.Seek(0, io.SeekEnd)
@@ -73,7 +78,7 @@ func ParseReader(r io.ReadSeeker) (*metadata.Bundle, error) {
 			if _, err := r.Seek(0, io.SeekStart); err == nil {
 				id3v2Buf := make([]byte, int(totalID3v2Size))
 				if _, err := io.ReadFull(r, id3v2Buf); err == nil {
-					id3v2.Parse(id3v2Buf, bundle)
+					id3v2.Parse(id3v2Buf, v2Bundle)
 				}
 			}
 		}
@@ -85,6 +90,8 @@ func ParseReader(r io.ReadSeeker) (*metadata.Bundle, error) {
 			id3v1.Parse(id3v1Buf, bundle)
 		}
 	}
+
+	bundle.Merge(v2Bundle)
 
 	return bundle, nil
 }

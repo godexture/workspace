@@ -127,3 +127,54 @@ func AssertBundleSlice[T interface {
 		t.Fatalf("Got (%v) = %v, expected %v", reflect.TypeFor[T](), got, expected)
 	}
 }
+
+func (b *Bundle) Merge(other *Bundle) {
+	if other == nil {
+		return
+	}
+	for tp, val := range other.data {
+		if tp == reflect.TypeFor[keyRaw]() {
+			destRaw := b.data[tp]
+			if destRaw == nil {
+				destRaw = make(keyRaw)
+				b.data[tp] = destRaw
+			}
+			rawMap := destRaw.(keyRaw)
+			srcRaw := val.(keyRaw)
+			for k, v := range srcRaw {
+				rawMap[k] = append(rawMap[k], v...)
+			}
+			continue
+		}
+
+		if tp.Kind() == reflect.Slice {
+			destSliceVal := reflect.ValueOf(b.data[tp])
+			if !destSliceVal.IsValid() {
+				srcSliceVal := reflect.ValueOf(val)
+				newSlice := reflect.MakeSlice(tp, srcSliceVal.Len(), srcSliceVal.Len())
+				reflect.Copy(newSlice, srcSliceVal)
+				b.data[tp] = newSlice.Interface()
+				continue
+			}
+
+			srcSliceVal := reflect.ValueOf(val)
+			for i := 0; i < srcSliceVal.Len(); i++ {
+				elem := srcSliceVal.Index(i)
+				found := false
+				for j := 0; j < destSliceVal.Len(); j++ {
+					if reflect.DeepEqual(destSliceVal.Index(j).Interface(), elem.Interface()) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					destSliceVal = reflect.Append(destSliceVal, elem)
+				}
+			}
+			b.data[tp] = destSliceVal.Interface()
+			continue
+		}
+
+		(*baseBundle)(b).setNonZero(val)
+	}
+}

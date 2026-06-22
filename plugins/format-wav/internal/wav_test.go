@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
 )
 
 type seekableBuffer struct {
@@ -247,7 +248,7 @@ func TestRF64RoundTrip(t *testing.T) {
 
 	// Simulate 5 GB data
 	fakeSize := uint64(5 * 1024 * 1024 * 1024)
-	headerBytes, err := buildWAVHeader(attr, fakeSize, false)
+	headerBytes, err := buildWAVHeader(attr, fakeSize, 0, false)
 	if err != nil {
 		t.Fatalf("buildWAVHeader() error = %v", err)
 	}
@@ -316,7 +317,7 @@ func TestProbeRecognizesRF64Signature(t *testing.T) {
 
 	// Force RF64
 	fakeSize := uint64(5 * 1024 * 1024 * 1024)
-	headerBytes, err := buildWAVHeader(attr, fakeSize, false)
+	headerBytes, err := buildWAVHeader(attr, fakeSize, 0, false)
 	if err != nil {
 		t.Fatalf("buildWAVHeader() error = %v", err)
 	}
@@ -738,6 +739,97 @@ func TestWAVDemuxerSeek(t *testing.T) {
 
 	if pkt.Data()[0] != payload[48000] {
 		t.Errorf("expected first byte to be %v, got %v", payload[48000], pkt.Data()[0])
+	}
+}
+
+func TestWAVMetadataRoundTrip(t *testing.T) {
+	originalAudio := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
+	
+	attr := media.MediaAttributes{
+		Codec: media.CodecLPCM,
+		Audio: media.AudioAttributes{
+			SampleRate:    48000,
+			Format:        media.SampleFormatS16,
+			ChannelLayout: media.LayoutMono1,
+		},
+	}
+	stream := media.StreamInfo{
+		Index:           0,
+		Type:            media.MediaAudio,
+		IsDefault:       true,
+		MediaAttributes: attr,
+	}
+
+	meta := metadata.NewBundle()
+	meta.Set(metadata.KeyTitle("Test Odd"))
+	meta.PushBack(metadata.KeyArtist("ArtistEven"))
+	meta.Set(metadata.KeyGenre("Genre"))
+	
+	cuePayload := []byte{0x01, 0x02, 0x03}
+	meta.AddRaw("cue ", cuePayload)
+	
+	smplPayload := []byte{0x01, 0x02, 0x03, 0x04}
+	meta.AddRaw("smpl", smplPayload)
+
+	var out seekableBuffer
+	muxer := NewMuxer(&out)
+	if _, err := muxer.AddStream(stream); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+	if err := muxer.SetMetadata(*meta); err != nil {
+		t.Fatalf("SetMetadata() error = %v", err)
+	}
+	if err := muxer.WriteHeader(); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+	pkt := media.NewPacket(len(originalAudio))
+	copy(pkt.Data(), originalAudio)
+	if err := muxer.WritePacket(0, pkt); err != nil {
+		t.Fatalf("WritePacket() error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+
+	demuxer, err := NewDemuxer(bytes.NewReader(out.buf))
+	if err != nil {
+		t.Fatalf("NewDemuxer() error = %v", err)
+	}
+
+	streams, parsedMeta, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if len(streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(streams))
+	}
+
+	if got := metadata.Get[metadata.KeyTitle](&parsedMeta); got != "Test Odd" {
+		t.Errorf("Title = %q, want %q", got, "Test Odd")
+	}
+	artists := metadata.Enumerate[metadata.KeyArtist](&parsedMeta)
+	if len(artists) != 1 || artists[0] != "ArtistEven" {
+		t.Errorf("Artists = %v, want [%q]", artists, "ArtistEven")
+	}
+	if got := metadata.Get[metadata.KeyGenre](&parsedMeta); got != "Genre" {
+		t.Errorf("Genre = %q, want %q", got, "Genre")
+	}
+
+	if rawCue, exists := parsedMeta.GetRaw("cue "); !exists || !bytes.Equal(rawCue[0], cuePayload) {
+		t.Errorf("cue chunk = %v, want %v", rawCue, cuePayload)
+	}
+
+	if rawSmpl, exists := parsedMeta.GetRaw("smpl"); !exists || !bytes.Equal(rawSmpl[0], smplPayload) {
+		t.Errorf("smpl chunk = %v, want %v", rawSmpl, smplPayload)
+	}
+
+	readPkt, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatalf("ReadPacket() error = %v", err)
+	}
+	if !bytes.Equal(readPkt.Data(), originalAudio) {
+		t.Errorf("audio payload mismatch: got %v, want %v", readPkt.Data(), originalAudio)
 	}
 }
 

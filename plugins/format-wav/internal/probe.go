@@ -15,11 +15,11 @@ func Probe(r io.Reader) manifest.ProbeScore {
 		return manifest.ProbeMismatch
 	}
 
-	isRF64 := string(header[0:4]) == "RF64"
-	if string(header[0:4]) != "RIFF" && !isRF64 {
+	isRF64 := string(header[0:4]) == wavTagRF64
+	if string(header[0:4]) != wavTagRIFF && !isRF64 {
 		return manifest.ProbeMismatch
 	}
-	if string(header[8:12]) != "WAVE" {
+	if string(header[8:12]) != wavTagWAVE {
 		return manifest.ProbeMismatch
 	}
 
@@ -33,7 +33,7 @@ func Probe(r io.Reader) manifest.ProbeScore {
 
 	if len(chunk) >= 16 {
 		sig := string(chunk[12:16])
-		if sig == "fmt " || (isRF64 && sig == "ds64") {
+		if sig == wavTagFmt || (isRF64 && sig == wavTagDS64) {
 			return manifest.ProbeExactSignature
 		}
 	}
