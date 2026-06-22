@@ -2,6 +2,7 @@ package pcm
 
 import (
 	"encoding/binary"
+
 	internal "github.com/godexture/codec-pcm/internal"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
@@ -66,6 +67,8 @@ func init() {
 				pcmCapability{codec: media.CodecLPCM},
 				pcmCapability{codec: media.CodecPCMU},
 				pcmCapability{codec: media.CodecPCMA},
+				pcmCapability{codec: media.CodecMSADPCM},
+				pcmCapability{codec: media.CodecIMAADPCM},
 			},
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
@@ -75,6 +78,8 @@ func init() {
 					p.Audio.SampleRate = 8000
 					p.Audio.Format = media.SampleFormatS16
 					p.Audio.ChannelLayout = media.LayoutMono1
+				} else if codecID == media.CodecMSADPCM || codecID == media.CodecIMAADPCM {
+					p.Audio.Format = media.SampleFormatS16
 				}
 				return p
 			},
@@ -142,13 +147,15 @@ func init() {
 				pcmCapability{codec: media.CodecLPCM},
 				pcmCapability{codec: media.CodecPCMU},
 				pcmCapability{codec: media.CodecPCMA},
+				pcmCapability{codec: media.CodecMSADPCM},
+				pcmCapability{codec: media.CodecIMAADPCM},
 			},
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 			},
 		},
 		Supports: func(codec media.CodecID) bool {
-			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA
+			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
 		Factory: func(cfg registry.Configuration) (node.Encoder, error) {
 			encCfg := EncoderConfig{CodecID: media.CodecLPCM, ByteOrder: binary.LittleEndian}

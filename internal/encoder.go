@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 
+	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
+	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
+	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
@@ -46,11 +49,22 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	}
 
 	data := af.Planes()[0]
+	var err error
 	switch e.config.CodecID {
 	case media.CodecPCMU:
-		data = EncodePCMU(data, e.config.ByteOrder)
+		data = g711.EncodePCMU(data, e.config.ByteOrder)
 	case media.CodecPCMA:
-		data = EncodePCMA(data, e.config.ByteOrder)
+		data = g711.EncodePCMA(data, e.config.ByteOrder)
+	case media.CodecMSADPCM:
+		data, err = msadpcm.Encode(data, af.Layout.ChannelCount(), e.config.ByteOrder)
+		if err != nil {
+			return err
+		}
+	case media.CodecIMAADPCM:
+		data, err = imaadpcm.Encode(data, af.Layout.ChannelCount(), e.config.ByteOrder)
+		if err != nil {
+			return err
+		}
 	}
 
 	pkt := media.NewPacket(len(data))
