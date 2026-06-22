@@ -36,9 +36,13 @@ const (
 	wavInfoTagCopyright = "ICOP"
 
 	wavAudioPCM        = 1
+	wavAudioMSADPCM    = 2
 	wavAudioIEEEFloat  = 3
 	wavAudioALaw       = 6
 	wavAudioULaw       = 7
+	wavAudioIMAADPCM   = 0x0011
+	wavAudioGSM        = 0x0031
+	wavAudioMP3        = 0x0055
 	wavAudioExtensible = 0xFFFE
 )
 
@@ -300,16 +304,11 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 		}
 	}
 
-	if header.channels == 0 || header.sampleRate == 0 || header.bitsPerSample == 0 {
+	if header.audioFormat == 0 || header.channels == 0 || header.sampleRate == 0 {
 		return wavHeader{}, errors.New("wav header missing audio parameters")
 	}
 
-	audioFormat := header.audioFormat
-	if audioFormat == wavAudioExtensible {
-		if bytes.Equal(header.subFormat[4:], wavSubFormatBase) {
-			audioFormat = binary.LittleEndian.Uint16(header.subFormat[0:2])
-		}
-	}
+	audioFormat := wavResolvedAudioFormat(header)
 
 	if _, err := sampleFormatFromHeader(audioFormat, header.bitsPerSample); err != nil {
 		return wavHeader{}, err
@@ -319,6 +318,35 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 	meta.Merge(id3Meta)
 
 	return header, nil
+}
+
+func wavResolvedAudioFormat(header wavHeader) uint16 {
+	if header.audioFormat == wavAudioExtensible && bytes.Equal(header.subFormat[4:], wavSubFormatBase) {
+		return binary.LittleEndian.Uint16(header.subFormat[0:2])
+	}
+
+	return header.audioFormat
+}
+
+func codecFromWAVAudioFormat(audioFormat uint16) (media.CodecID, bool) {
+	switch audioFormat {
+	case wavAudioPCM, wavAudioIEEEFloat:
+		return media.CodecLPCM, true
+	case wavAudioALaw:
+		return media.CodecPCMA, true
+	case wavAudioULaw:
+		return media.CodecPCMU, true
+	case wavAudioMSADPCM:
+		return media.CodecMSADPCM, true
+	case wavAudioIMAADPCM:
+		return media.CodecIMAADPCM, true
+	case wavAudioMP3:
+		return media.CodecMP3, true
+	case wavAudioGSM:
+		return media.CodecGSM, true
+	default:
+		return "", false
+	}
 }
 
 func sampleFormatFromHeader(audioFormat, bitsPerSample uint16) (media.SampleFormat, error) {
@@ -352,6 +380,9 @@ func sampleFormatFromHeader(audioFormat, bitsPerSample uint16) (media.SampleForm
 			return media.SampleFormatUnknown, fmt.Errorf("unsupported g711 bit depth: %d", bitsPerSample)
 		}
 		return media.SampleFormatU8, nil
+
+	case wavAudioMSADPCM, wavAudioIMAADPCM, wavAudioMP3, wavAudioGSM:
+		return media.SampleFormatUnknown, nil
 
 	default:
 		return media.SampleFormatUnknown, fmt.Errorf("unsupported wav audio format tag: %d", audioFormat)

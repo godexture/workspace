@@ -43,7 +43,8 @@ func (m *Muxer) AddStream(info media.StreamInfo) (int, error) {
 		return 0, errors.New("wav muxer expects an audio stream")
 	}
 
-	if info.MediaAttributes.Audio.Format == media.SampleFormatUnknown {
+	isCompressed := info.MediaAttributes.Codec == media.CodecMSADPCM || info.MediaAttributes.Codec == media.CodecIMAADPCM || info.MediaAttributes.Codec == media.CodecMP3 || info.MediaAttributes.Codec == media.CodecGSM
+	if info.MediaAttributes.Audio.Format == media.SampleFormatUnknown && !isCompressed {
 		return 0, errors.New("wav muxer requires an audio sample format")
 	}
 
@@ -143,7 +144,12 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		return nil, errors.New("wav muxer requires a valid sample rate")
 	}
 
-	blockAlign := channels * int(bitsPerSample/8)
+	var blockAlign int
+	if attr.Codec == media.CodecMSADPCM || attr.Codec == media.CodecIMAADPCM {
+		blockAlign = 256 * channels
+	} else {
+		blockAlign = channels * int(bitsPerSample/8)
+	}
 	byteRate := sampleRate * blockAlign
 
 	isUnknownSize := dataSize == ^uint64(0)
@@ -164,6 +170,10 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	fmtSize := uint32(16)
 	if useExtensible {
 		fmtSize = 40
+	} else if attr.Codec == media.CodecMSADPCM {
+		fmtSize = 50
+	} else if attr.Codec == media.CodecIMAADPCM {
+		fmtSize = 20
 	}
 
 	writeFormatTag := formatTag
@@ -246,6 +256,29 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
 		headerBuf.Write(wavSubFormatBase)
+	} else if attr.Codec == media.CodecMSADPCM {
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(32)) // cbSize
+		var samplesPerBlock uint16
+		if channels == 1 {
+			samplesPerBlock = uint16((blockAlign-7)*2 + 2)
+		} else {
+			samplesPerBlock = uint16((blockAlign-16)*1 + 2)
+		}
+		binary.Write(&headerBuf, binary.LittleEndian, samplesPerBlock)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(7)) // numCoefficients
+		coeffs := [...]int16{256, 0, 512, -258, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232}
+		for _, c := range coeffs {
+			binary.Write(&headerBuf, binary.LittleEndian, c)
+		}
+	} else if attr.Codec == media.CodecIMAADPCM {
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(2)) // cbSize
+		var samplesPerBlock uint16
+		if channels == 1 {
+			samplesPerBlock = uint16((blockAlign-4)*2 + 1)
+		} else {
+			samplesPerBlock = uint16((blockAlign-8)*1 + 1)
+		}
+		binary.Write(&headerBuf, binary.LittleEndian, samplesPerBlock)
 	}
 
 	if writeFact {
@@ -352,6 +385,10 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 		return wavAudioALaw, 8, nil
 	case media.CodecPCMU:
 		return wavAudioULaw, 8, nil
+	case media.CodecMSADPCM:
+		return wavAudioMSADPCM, 4, nil
+	case media.CodecIMAADPCM:
+		return wavAudioIMAADPCM, 4, nil
 	case media.CodecLPCM, "":
 		switch attr.Audio.Format.Packed() {
 		case media.SampleFormatU8:
