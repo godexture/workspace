@@ -39,7 +39,7 @@ func TestMarshal(t *testing.T) {
 		t.Fatalf("expected tag size %d, got %d", TagSize, len(tag))
 	}
 
-	if !bytes.Equal(tag[0:3], []byte("TAG")) {
+	if !bytes.Equal(tag[0:3], []byte(tagHeader)) {
 		t.Errorf("expected TAG header, got %q", tag[0:3])
 	}
 

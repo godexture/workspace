@@ -10,7 +10,7 @@ import (
 
 func Marshal(bundle metadata.Bundle) ([]byte, error) {
 	tag := make([]byte, TagSize)
-	copy(tag[0:3], "TAG")
+	copy(tag[0:3], tagHeader)
 
 	title := metadata.Get[metadata.KeyTitle](&bundle)
 	copy(tag[3:33], encodeString(string(title), 30))

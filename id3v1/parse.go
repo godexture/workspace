@@ -8,10 +8,13 @@ import (
 	"github.com/godexture/sdk/date"
 )
 
-const TagSize = 128
+const (
+	TagSize   = 128
+	tagHeader = "TAG"
+)
 
 func HasTag(buffer []byte) bool {
-	return len(buffer) >= TagSize && bytes.Equal(buffer[len(buffer)-TagSize:len(buffer)-TagSize+3], []byte("TAG"))
+	return len(buffer) >= TagSize && bytes.Equal(buffer[len(buffer)-TagSize:len(buffer)-TagSize+3], []byte(tagHeader))
 }
 
 func Parse(buffer []byte, bundle *metadata.Bundle) {
