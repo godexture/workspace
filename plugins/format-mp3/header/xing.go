@@ -15,7 +15,7 @@ type XingHeader struct {
 }
 
 func ParseXingHeader(frameData []byte, isMPEG1 bool, isMono bool) (*XingHeader, error) {
-	offset := 21
+	var offset int
 	if isMPEG1 {
 		if isMono {
 			offset = 21

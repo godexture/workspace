@@ -197,11 +197,11 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 			byteOffset := int64((val / 256.0) * float64(totalBytes))
 			targetOffset = d.firstFrameOffset + byteOffset
 		} else {
-			if d.bitRate <= 0 {
-				return errors.New("mp3 demuxer: unable to seek, unknown bitrate")
+			var err error
+			targetOffset, err = d.getBitrateBasedOffset(offset)
+			if err != nil {
+				return err
 			}
-			byteOffset := int64(offset.Seconds() * float64(d.bitRate) / 8.0)
-			targetOffset = d.firstFrameOffset + byteOffset
 		}
 	} else if d.vbriHeader != nil && len(d.vbriHeader.TOC) > 0 && d.duration > 0 {
 		totalFrames := float64(d.vbriHeader.Frames)
@@ -230,18 +230,18 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 			byteOffset := float64(startOffset) + float64(endOffset-startOffset)*fraction
 			targetOffset = d.firstFrameOffset + int64(byteOffset)
 		} else {
-			if d.bitRate <= 0 {
-				return errors.New("mp3 demuxer: unable to seek, unknown bitrate")
+			var err error
+			targetOffset, err = d.getBitrateBasedOffset(offset)
+			if err != nil {
+				return err
 			}
-			byteOffset := int64(offset.Seconds() * float64(d.bitRate) / 8.0)
-			targetOffset = d.firstFrameOffset + byteOffset
 		}
 	} else {
-		if d.bitRate <= 0 {
-			return errors.New("mp3 demuxer: unable to seek, unknown bitrate")
+		var err error
+		targetOffset, err = d.getBitrateBasedOffset(offset)
+		if err != nil {
+			return err
 		}
-		byteOffset := int64(offset.Seconds() * float64(d.bitRate) / 8.0)
-		targetOffset = d.firstFrameOffset + byteOffset
 	}
 
 	if _, err := d.r.Seek(targetOffset, io.SeekStart); err != nil {
@@ -257,6 +257,13 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 	return nil
 }
 
+func (d *Demuxer) getBitrateBasedOffset(offset time.Duration) (int64, error) {
+	if d.bitRate <= 0 {
+		return 0, errors.New("mp3 demuxer: unable to seek, unknown bitrate")
+	}
+	byteOffset := int64(offset.Seconds() * float64(d.bitRate) / 8.0)
+	return d.firstFrameOffset + byteOffset, nil
+}
 func getFileSize(r io.ReadSeeker) (int64, error) {
 	current, err := r.Seek(0, io.SeekCurrent)
 	if err != nil {
