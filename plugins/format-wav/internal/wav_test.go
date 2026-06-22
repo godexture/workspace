@@ -3,50 +3,14 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"testing"
 	"time"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/sdk/testutil"
 )
-
-type seekableBuffer struct {
-	buf []byte
-	off int64
-}
-
-func (s *seekableBuffer) Write(p []byte) (n int, err error) {
-	end := s.off + int64(len(p))
-	if end > int64(len(s.buf)) {
-		newBuf := make([]byte, end)
-		copy(newBuf, s.buf)
-		s.buf = newBuf
-	}
-	copy(s.buf[s.off:], p)
-	s.off = end
-	return len(p), nil
-}
-
-func (s *seekableBuffer) Seek(offset int64, whence int) (int64, error) {
-	var newOff int64
-	switch whence {
-	case io.SeekStart:
-		newOff = offset
-	case io.SeekCurrent:
-		newOff = s.off + offset
-	case io.SeekEnd:
-		newOff = int64(len(s.buf)) + offset
-	default:
-		return 0, fmt.Errorf("invalid whence: %d", whence)
-	}
-	if newOff < 0 {
-		return 0, fmt.Errorf("negative position: %d", newOff)
-	}
-	s.off = newOff
-	return newOff, nil
-}
 
 func TestProbercognizesWAVSignature(t *testing.T) {
 	data := buildTestWAV(t, []byte{0x01, 0x02, 0x03, 0x04})
@@ -99,8 +63,8 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
 
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -114,17 +78,17 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	if !bytes.Equal(out.buf, wavData) {
-		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.buf), len(wavData))
+	if !bytes.Equal(out.Bytes(), wavData) {
+		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.Bytes()), len(wavData))
 	}
 }
 
 func TestWAVRoundTripPCM24(t *testing.T) {
 	// 24-bit PCM (3 bytes per sample). Let's do 2 channels. 3 samples each = 18 bytes.
 	original := []byte{
-		0x01, 0x02, 0x03,  0x04, 0x05, 0x06, // sample 1 (L, R)
-		0x07, 0x08, 0x09,  0x0a, 0x0b, 0x0c, // sample 2 (L, R)
-		0x0d, 0x0e, 0x0f,  0x10, 0x11, 0x12, // sample 3 (L, R)
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // sample 1 (L, R)
+		0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, // sample 2 (L, R)
+		0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, // sample 3 (L, R)
 	}
 
 	attr := media.MediaAttributes{
@@ -176,8 +140,8 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
 
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -191,8 +155,8 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	if !bytes.Equal(out.buf, wavData) {
-		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.buf), len(wavData))
+	if !bytes.Equal(out.Bytes(), wavData) {
+		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.Bytes()), len(wavData))
 	}
 }
 
@@ -210,8 +174,8 @@ func buildTestWAV(t *testing.T, payload []byte) []byte {
 func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttributes) []byte {
 	t.Helper()
 
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	stream := media.StreamInfo{
 		Type:            media.MediaAudio,
 		MediaAttributes: attr,
@@ -233,7 +197,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	return out.buf
+	return out.Bytes()
 }
 
 func TestRF64RoundTrip(t *testing.T) {
@@ -329,7 +293,6 @@ func TestProbeRecognizesRF64Signature(t *testing.T) {
 	}
 }
 
-
 func TestWAVRoundTripFloat32(t *testing.T) {
 	// 1 channel, Float32. This should trigger writeFact (since F32 is non-PCM).
 	original := []byte{
@@ -337,8 +300,8 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 		0x00, 0x00, 0x00, 0x40, // 2.0f
 	}
 
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -367,7 +330,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	wavData := out.buf
+	wavData := out.Bytes()
 
 	// Verify that the wavData contains "fact" chunk.
 	if !bytes.Contains(wavData, []byte("fact")) {
@@ -417,20 +380,20 @@ func TestRF64Demuxer(t *testing.T) {
 	// ds64
 	buf.WriteString("ds64")
 	binary.Write(&buf, binary.LittleEndian, uint32(28))
-	binary.Write(&buf, binary.LittleEndian, uint64(1000))      // riffSize
-	binary.Write(&buf, binary.LittleEndian, uint64(100))       // dataSize
-	binary.Write(&buf, binary.LittleEndian, uint64(50))        // numSamples
-	binary.Write(&buf, binary.LittleEndian, uint32(0))         // tableLength
+	binary.Write(&buf, binary.LittleEndian, uint64(1000)) // riffSize
+	binary.Write(&buf, binary.LittleEndian, uint64(100))  // dataSize
+	binary.Write(&buf, binary.LittleEndian, uint64(50))   // numSamples
+	binary.Write(&buf, binary.LittleEndian, uint32(0))    // tableLength
 
 	// fmt
 	buf.WriteString("fmt ")
 	binary.Write(&buf, binary.LittleEndian, uint32(16))
-	binary.Write(&buf, binary.LittleEndian, uint16(1))         // format PCM
-	binary.Write(&buf, binary.LittleEndian, uint16(1))         // channels
-	binary.Write(&buf, binary.LittleEndian, uint32(48000))     // sampleRate
-	binary.Write(&buf, binary.LittleEndian, uint32(96000))     // byteRate
-	binary.Write(&buf, binary.LittleEndian, uint16(2))         // blockAlign
-	binary.Write(&buf, binary.LittleEndian, uint16(16))        // bitsPerSample
+	binary.Write(&buf, binary.LittleEndian, uint16(1))     // format PCM
+	binary.Write(&buf, binary.LittleEndian, uint16(1))     // channels
+	binary.Write(&buf, binary.LittleEndian, uint32(48000)) // sampleRate
+	binary.Write(&buf, binary.LittleEndian, uint32(96000)) // byteRate
+	binary.Write(&buf, binary.LittleEndian, uint16(2))     // blockAlign
+	binary.Write(&buf, binary.LittleEndian, uint16(16))    // bitsPerSample
 
 	// data
 	buf.WriteString("data")
@@ -636,8 +599,8 @@ func TestWAVMuxerNonSeekable(t *testing.T) {
 }
 
 func TestWAVMuxerForceRF64(t *testing.T) {
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	muxer.ForceRF64 = true
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
@@ -667,7 +630,7 @@ func TestWAVMuxerForceRF64(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	wavData := out.buf
+	wavData := out.Bytes()
 	if len(wavData) < 12 {
 		t.Fatalf("produced RF64 WAV data is too short: %d bytes", len(wavData))
 	}
@@ -690,7 +653,7 @@ func TestWAVMuxerForceRF64(t *testing.T) {
 	if numSamples64 != 2 {
 		t.Errorf("expected numSamples in ds64 to be 2, got %d", numSamples64)
 	}
-	
+
 	expectedRiffSize := uint64(76)
 	if riffSize64 != expectedRiffSize {
 		t.Errorf("expected riffSize in ds64 to be %d, got %d", expectedRiffSize, riffSize64)
@@ -698,7 +661,7 @@ func TestWAVMuxerForceRF64(t *testing.T) {
 }
 
 func TestWAVDemuxerSeek(t *testing.T) {
-	
+
 	// Create a WAV with 48000 Hz, 16-bit, Mono. 1 second of data.
 	// 48000 samples * 2 bytes = 96000 bytes
 	payload := make([]byte, 96000)
@@ -744,7 +707,7 @@ func TestWAVDemuxerSeek(t *testing.T) {
 
 func TestWAVMetadataRoundTrip(t *testing.T) {
 	originalAudio := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
-	
+
 	attr := media.MediaAttributes{
 		Codec: media.CodecLPCM,
 		Audio: media.AudioAttributes{
@@ -764,15 +727,15 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 	meta.Set(metadata.KeyTitle("Test Odd"))
 	meta.PushBack(metadata.KeyArtist("ArtistEven"))
 	meta.Set(metadata.KeyGenre("Genre"))
-	
+
 	cuePayload := []byte{0x01, 0x02, 0x03}
 	meta.AddRaw("cue ", cuePayload)
-	
+
 	smplPayload := []byte{0x01, 0x02, 0x03, 0x04}
 	meta.AddRaw("smpl", smplPayload)
 
-	var out seekableBuffer
-	muxer := NewMuxer(&out)
+	out := testutil.NewBuffer(nil)
+	muxer := NewMuxer(out)
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -791,7 +754,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(out.buf))
+	demuxer, err := NewDemuxer(bytes.NewReader(out.Bytes()))
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -832,5 +795,3 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 		t.Errorf("audio payload mismatch: got %v, want %v", readPkt.Data(), originalAudio)
 	}
 }
-
-
