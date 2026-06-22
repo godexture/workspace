@@ -41,7 +41,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 
 		d.header = header
 		audioFormat := header.audioFormat
-		
+
 		if audioFormat == wavAudioExtensible {
 			if bytes.Equal(header.subFormat[4:], wavSubFormatBase) {
 				audioFormat = binary.LittleEndian.Uint16(header.subFormat[0:2])
@@ -72,7 +72,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 				Codec: codec,
 				Audio: media.AudioAttributes{
 					SampleRate:    int(header.sampleRate),
-					Format:        sampleFormatFromWAV(audioFormat, header.bitsPerSamp),
+					Format:        sampleFormatFromWAV(audioFormat, header.bitsPerSample),
 					ChannelLayout: layout,
 				},
 			},

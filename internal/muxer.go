@@ -363,9 +363,9 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 		case media.SampleFormatS32:
 			return wavAudioPCM, 32, nil
 		case media.SampleFormatF32:
-			return wavAudioIEEEF, 32, nil
+			return wavAudioIEEEFloat, 32, nil
 		case media.SampleFormatF64:
-			return wavAudioIEEEF, 64, nil
+			return wavAudioIEEEFloat, 64, nil
 		default:
 			return 0, 0, fmt.Errorf("unsupported wav sample format: %s", attr.Audio.Format)
 		}
