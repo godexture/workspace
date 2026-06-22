@@ -72,7 +72,7 @@ func (m *Muxer) WriteHeader() error {
 			m.startPos = pos
 		}
 
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, 0, m.ForceRF64)
 		if err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func (m *Muxer) WriteHeader() error {
 	} else {
 		m.seekable = false
 		// For non-seekable streams, write header with unknown size immediately and do not buffer in memory
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), 0, m.ForceRF64)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (m *Muxer) WritePacket(streamIndex int, pkt *media.Packet) error {
 	return nil
 }
 
-func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool) ([]byte, error) {
+func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uint64, forceRF64 bool) ([]byte, error) {
 	formatTag, bitsPerSample, err := wavFormatForMediaAttributes(attr)
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool)
 	if isUnknownSize {
 		riffSize = 0xFFFFFFFF
 	} else {
-		riffSize = uint64(4) + 8 + uint64(fmtSize) + uint64(factSize) + 8 + dataSize + pad
+		riffSize = uint64(4) + 8 + uint64(fmtSize) + uint64(factSize) + 8 + dataSize + pad + trailerSize
 	}
 
 	useRF64 := forceRF64
@@ -199,17 +199,17 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool)
 	var headerBuf bytes.Buffer
 
 	if useRF64 {
-		headerBuf.WriteString("RF64")
+		headerBuf.WriteString(wavTagRF64)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
 	} else {
-		headerBuf.WriteString("RIFF")
+		headerBuf.WriteString(wavTagRIFF)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(riffSize))
 	}
 
-	headerBuf.WriteString("WAVE")
+	headerBuf.WriteString(wavTagWAVE)
 
 	if useRF64 {
-		headerBuf.WriteString("ds64")
+		headerBuf.WriteString(wavTagDS64)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(28))
 		if isUnknownSize {
 			binary.Write(&headerBuf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
@@ -227,7 +227,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0)) // tableLength
 	}
 
-	headerBuf.WriteString("fmt ")
+	headerBuf.WriteString(wavTagFmt)
 	binary.Write(&headerBuf, binary.LittleEndian, fmtSize)
 	binary.Write(&headerBuf, binary.LittleEndian, writeFormatTag)
 	binary.Write(&headerBuf, binary.LittleEndian, uint16(channels))
@@ -241,14 +241,13 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool)
 		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)         // validBitsPerSample
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
 
-		var subFormatBase = []byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
-		headerBuf.Write(subFormatBase)
+		headerBuf.Write(wavSubFormatBase)
 	}
 
 	if writeFact {
-		headerBuf.WriteString("fact")
+		headerBuf.WriteString(wavTagFact)
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(4))
 		if isUnknownSize {
 			binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
@@ -265,7 +264,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, forceRF64 bool)
 		}
 	}
 
-	headerBuf.WriteString("data")
+	headerBuf.WriteString(wavTagData)
 	if useRF64 {
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
 	} else {
@@ -301,9 +300,29 @@ func (m *Muxer) WriteTrailer() error {
 		}
 	}
 
+	var trailerBytes []byte
+	if listChunk := buildListInfoChunk(m.meta); len(listChunk) > 0 {
+		trailerBytes = append(trailerBytes, listChunk...)
+	}
+	if id3Chunk := buildID3Chunk(m.meta); len(id3Chunk) > 0 {
+		trailerBytes = append(trailerBytes, id3Chunk...)
+	}
+	if cueChunk := buildRawChunk(wavTagCue, m.meta); len(cueChunk) > 0 {
+		trailerBytes = append(trailerBytes, cueChunk...)
+	}
+	if smplChunk := buildRawChunk(wavTagSmpl, m.meta); len(smplChunk) > 0 {
+		trailerBytes = append(trailerBytes, smplChunk...)
+	}
+
+	if len(trailerBytes) > 0 {
+		if _, err := m.w.Write(trailerBytes); err != nil {
+			return err
+		}
+	}
+
 	if m.seekable {
 		if seeker, ok := m.w.(io.Seeker); ok {
-			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, m.ForceRF64)
+			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, uint64(len(trailerBytes)), m.ForceRF64)
 			if err != nil {
 				return err
 			}
@@ -352,3 +371,4 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 		return 0, 0, fmt.Errorf("unsupported wav codec: %s", attr.Codec)
 	}
 }
+
