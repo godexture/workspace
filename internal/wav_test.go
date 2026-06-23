@@ -708,6 +708,88 @@ func TestWAVDemuxerSeek(t *testing.T) {
 	}
 }
 
+func TestWAVDemuxerSeekADPCM(t *testing.T) {
+	tests := []struct {
+		name     string
+		codec    media.CodecID
+		channels int
+	}{
+		{"MS ADPCM Mono", media.CodecMSADPCM, 1},
+		{"MS ADPCM Stereo", media.CodecMSADPCM, 2},
+		{"IMA ADPCM Mono", media.CodecIMAADPCM, 1},
+		{"IMA ADPCM Stereo", media.CodecIMAADPCM, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockAlign := 256 * tt.channels
+			// Create a 10-block payload
+			original := make([]byte, blockAlign*10)
+			for i := range original {
+				original[i] = byte(i % 256)
+			}
+
+			attr := media.MediaAttributes{
+				Codec: tt.codec,
+				Audio: media.AudioAttributes{
+					SampleRate:    8000,
+					Format:        media.SampleFormatUnknown,
+					ChannelLayout: layoutFromChannelCount(tt.channels),
+				},
+			}
+
+			wavData := buildTestWAVWithAttr(t, original, attr)
+
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			if err != nil {
+				t.Fatalf("NewDemuxer() error = %v", err)
+			}
+
+			// We need to call Analyze/read first to make sure stream is parsed
+			streams, _, err := demuxer.Analyze()
+			if err != nil {
+				t.Fatalf("Analyze() error = %v", err)
+			}
+			if len(streams) != 1 {
+				t.Fatalf("Analyze() returned %d streams, want 1", len(streams))
+			}
+
+			// Determine samplesPerBlock
+			var samplesPerBlock int
+			if tt.codec == media.CodecMSADPCM {
+				if tt.channels == 1 {
+					samplesPerBlock = (blockAlign - 7) * 2 + 2
+				} else {
+					samplesPerBlock = (blockAlign - 14) * 1 + 2
+				}
+			} else {
+				samplesPerBlock = (blockAlign - 4*tt.channels) * 2 / tt.channels + 1
+			}
+
+			// Seek to the start of the 5th block (block index 4)
+			// Samples at the start of block 4: 4 * samplesPerBlock
+			targetSample := int64(4 * samplesPerBlock)
+			// duration = targetSample / sampleRate
+			duration := time.Duration(targetSample) * time.Second / 8000
+
+			if err := demuxer.Seek(duration); err != nil {
+				t.Fatalf("Seek() error = %v", err)
+			}
+
+			// The next read packet should be exactly the 5th block of the original payload
+			pkt, _, err := demuxer.ReadPacket()
+			if err != nil {
+				t.Fatalf("ReadPacket() error = %v", err)
+			}
+
+			expectedBlock := original[blockAlign*4 : blockAlign*5]
+			if !bytes.Equal(pkt.Data(), expectedBlock) {
+				t.Errorf("block mismatch: got %v, want %v", pkt.Data()[:10], expectedBlock[:10])
+			}
+		})
+	}
+}
+
 func TestWAVMetadataRoundTrip(t *testing.T) {
 	originalAudio := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 
