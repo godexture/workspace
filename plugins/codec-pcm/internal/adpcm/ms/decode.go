@@ -82,8 +82,8 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	sample2L := int32(int16(binary.LittleEndian.Uint16(block[10:12])))
 	sample2R := int32(int16(binary.LittleEndian.Uint16(block[12:14])))
 
-	samplesPerBlock := (len(block)-14)*2 + 4
-	out := make([]byte, samplesPerBlock*2)
+	totalSamples := (len(block)-14)*2 + 4
+	out := make([]byte, totalSamples*2)
 
 	bits.WriteS16(out, 0, int16(sample2L), byteOrder)
 	bits.WriteS16(out, 2, int16(sample2R), byteOrder)

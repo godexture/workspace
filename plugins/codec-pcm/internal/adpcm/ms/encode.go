@@ -5,6 +5,17 @@ import (
 	"fmt"
 )
 
+func BytesPerPCMBlock(channels int) int {
+	blockAlign := 256 * channels
+	var samplesPerBlock int
+	if channels == 1 {
+		samplesPerBlock = (blockAlign-7)*2 + 2
+	} else {
+		samplesPerBlock = (blockAlign-14)*1 + 2
+	}
+	return samplesPerBlock * channels * 2
+}
+
 func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for MS ADPCM: %d", channels)
@@ -160,7 +171,13 @@ func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, i
 	pred := (sample1*coeff1 + sample2*coeff2) / 256
 	diff := target - pred
 
-	signedNybble := diff / delta
+	var signedNybble int32
+	if diff >= 0 {
+		signedNybble = (diff + (delta / 2)) / delta
+	} else {
+		signedNybble = (diff - (delta / 2)) / delta
+	}
+
 	if signedNybble < -8 {
 		signedNybble = -8
 	} else if signedNybble > 7 {

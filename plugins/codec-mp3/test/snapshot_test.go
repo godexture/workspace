@@ -3,15 +3,12 @@
 package test
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"strconv"
-	"strings"
 	"testing"
 
 	mp3codec "github.com/godexture/codec-mp3"
@@ -19,6 +16,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	mp3format "github.com/godexture/format-mp3"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/testutil"
 )
 
 const maxAllowedDiff = 1e-6
@@ -39,12 +37,12 @@ func Test_Snapshots(t *testing.T) {
 				t.Fatalf("failed to decode MP3 data: %v", err)
 			}
 
-			expected, err := loadSnapshot(config.BuildSnapshotPath(fileName))
+			expected, err := testutil.LoadSnapshot(config.BuildSnapshotPath(fileName))
 			if err != nil {
 				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
-			if err := comparePCM(actual, expected, maxAllowedDiff); err != nil {
+			if err := testutil.ComparePCM(actual, expected, maxAllowedDiff); err != nil {
 				t.Errorf("PCM comparison failed: %v", err)
 			}
 		})
@@ -140,61 +138,3 @@ func decode(data []byte) ([]float32, error) {
 	return pcm, nil
 }
 
-func loadSnapshot(path string) ([]float32, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var pcm []float32
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		parsedValue, err := strconv.ParseFloat(line, 32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse float at index %d: %w", len(pcm), err)
-		}
-
-		pcm = append(pcm, float32(parsedValue))
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return pcm, nil
-}
-
-func comparePCM(actual, expected []float32, maxAbsDiff float32) error {
-	if len(actual) != len(expected) {
-		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
-	}
-
-	var (
-		maxDiff      float32 = 0
-		maxDiffIndex int     = -1
-	)
-
-	for i := range actual {
-		diff := actual[i] - expected[i]
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff > maxDiff {
-			maxDiff = diff
-			maxDiffIndex = i
-		}
-	}
-
-	if maxDiff > maxAbsDiff {
-		return fmt.Errorf("mismatch too high: max diff was %f at index %d (got %f, expected %f, allowed: %f)", maxDiff, maxDiffIndex, actual[maxDiffIndex], expected[maxDiffIndex], maxAbsDiff)
-	}
-
-	return nil
-}

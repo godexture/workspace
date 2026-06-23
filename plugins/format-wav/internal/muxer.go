@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
@@ -150,7 +151,28 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	} else {
 		blockAlign = channels * int(bitsPerSample/8)
 	}
-	byteRate := sampleRate * blockAlign
+
+	samplesPerBlock := 1
+	if attr.Codec == media.CodecMSADPCM {
+		if channels == 1 {
+			samplesPerBlock = (blockAlign-7)*2 + 2
+		} else {
+			samplesPerBlock = (blockAlign-14)*1 + 2
+		}
+	} else if attr.Codec == media.CodecIMAADPCM {
+		if channels == 1 {
+			samplesPerBlock = (blockAlign-4)*2 + 1
+		} else {
+			samplesPerBlock = (blockAlign-8)*1 + 1
+		}
+	}
+
+	var byteRate int
+	if attr.Codec == media.CodecMSADPCM || attr.Codec == media.CodecIMAADPCM {
+		byteRate = (sampleRate * blockAlign) / samplesPerBlock
+	} else {
+		byteRate = sampleRate * blockAlign
+	}
 
 	isUnknownSize := dataSize == ^uint64(0)
 
@@ -232,12 +254,13 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 			binary.Write(&headerBuf, binary.LittleEndian, dataSize)
 			numSamples := uint64(0)
 			if blockAlign > 0 {
-				numSamples = dataSize / uint64(blockAlign)
+				numSamples = (dataSize / uint64(blockAlign)) * uint64(samplesPerBlock)
 			}
 			binary.Write(&headerBuf, binary.LittleEndian, numSamples)
 		}
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0)) // tableLength
 	}
+	log.Printf("Last channels: %d", bitsPerSample)
 
 	headerBuf.WriteString(wavTagFmt)
 	binary.Write(&headerBuf, binary.LittleEndian, fmtSize)
@@ -258,27 +281,15 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		headerBuf.Write(wavSubFormatBase)
 	} else if attr.Codec == media.CodecMSADPCM {
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(32)) // cbSize
-		var samplesPerBlock uint16
-		if channels == 1 {
-			samplesPerBlock = uint16((blockAlign-7)*2 + 2)
-		} else {
-			samplesPerBlock = uint16((blockAlign-14)*1 + 2)
-		}
-		binary.Write(&headerBuf, binary.LittleEndian, samplesPerBlock)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(samplesPerBlock))
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(7)) // numCoefficients
-		coeffs := [...]int16{256, 0, 512, -258, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232}
+		coeffs := [...]int16{256, 0, 512, -256, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232}
 		for _, c := range coeffs {
 			binary.Write(&headerBuf, binary.LittleEndian, c)
 		}
 	} else if attr.Codec == media.CodecIMAADPCM {
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(2)) // cbSize
-		var samplesPerBlock uint16
-		if channels == 1 {
-			samplesPerBlock = uint16((blockAlign-4)*2 + 1)
-		} else {
-			samplesPerBlock = uint16((blockAlign-8)*1 + 1)
-		}
-		binary.Write(&headerBuf, binary.LittleEndian, samplesPerBlock)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(samplesPerBlock))
 	}
 
 	if writeFact {
@@ -289,7 +300,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		} else {
 			numSamples := uint64(0)
 			if blockAlign > 0 {
-				numSamples = dataSize / uint64(blockAlign)
+				numSamples = (dataSize / uint64(blockAlign)) * uint64(samplesPerBlock)
 			}
 			if useRF64 && numSamples > 0xFFFFFFFF {
 				binary.Write(&headerBuf, binary.LittleEndian, uint32(0xFFFFFFFF))
