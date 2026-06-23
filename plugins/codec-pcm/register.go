@@ -84,8 +84,21 @@ func init() {
 				return p
 			},
 		},
-		Factory: func(cfg registry.Configuration) (node.Decoder, error) {
+		Factory: func(stream media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
 			c := DefaultConfig()
+			if stream.MediaAttributes.Codec != "" {
+				c.CodecID = stream.MediaAttributes.Codec
+			}
+			if stream.MediaAttributes.Audio.SampleRate > 0 {
+				c.SampleRate = stream.MediaAttributes.Audio.SampleRate
+			}
+			if stream.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+				c.Format = stream.MediaAttributes.Audio.Format
+			}
+			if stream.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
+				c.Layout = stream.MediaAttributes.Audio.ChannelLayout
+			}
+
 			if cfg != nil {
 				if pcmCfg, ok := cfg.(Config); ok {
 					if pcmCfg.CodecID != "" {
@@ -157,16 +170,20 @@ func init() {
 		Supports: func(codec media.CodecID) bool {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
-		Factory: func(cfg registry.Configuration) (node.Encoder, error) {
-			encCfg := EncoderConfig{CodecID: media.CodecLPCM, ByteOrder: binary.LittleEndian}
+		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
+			encCfg := EncoderConfig{CodecID: targetCodec, ByteOrder: binary.LittleEndian}
 			if cfg != nil {
 				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
-					encCfg.CodecID = pcmEncCfg.CodecID
+					if pcmEncCfg.CodecID != "" {
+						encCfg.CodecID = pcmEncCfg.CodecID
+					}
 					if pcmEncCfg.ByteOrder != nil {
 						encCfg.ByteOrder = pcmEncCfg.ByteOrder
 					}
 				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
-					encCfg.CodecID = pcmEncCfgPtr.CodecID
+					if pcmEncCfgPtr.CodecID != "" {
+						encCfg.CodecID = pcmEncCfgPtr.CodecID
+					}
 					if pcmEncCfgPtr.ByteOrder != nil {
 						encCfg.ByteOrder = pcmEncCfgPtr.ByteOrder
 					}

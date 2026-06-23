@@ -40,7 +40,6 @@ type ConversionSpec struct {
 	SelectInputStream func(streams []media.StreamInfo) (media.StreamInfo, error)
 
 	DecodeConfig        registry.Configuration
-	DecodeConfigFactory func(stream media.StreamInfo) registry.Configuration
 
 	TargetCodec  media.CodecID
 	EncodeConfig registry.Configuration
@@ -94,13 +93,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, fmt.Errorf("failed to resolve decoder: %w", err)
 	}
 
-	decConfig := spec.DecodeConfig
-	if spec.DecodeConfigFactory != nil {
-		decConfig = spec.DecodeConfigFactory(inputStream)
-	}
-	decNode, err := decManifest.Factory(decConfig)
+	decNode, err := decManifest.Factory(inputStream, spec.DecodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decoder: %w", err)
+	}
+
+	// Prepare intermediate stream (uncompressed audio/video properties)
+	intermediateStream := inputStream
+	if decManifest.TransformFunc != nil {
+		decProfile := decManifest.Transform(intermediateStream)
+		intermediateStream.Type = decProfile.Type
+		intermediateStream.MediaAttributes = decProfile.MediaAttributes
 	}
 
 	// 3. Resolve & create Encoder
@@ -108,7 +111,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve encoder: %w", err)
 	}
-	encNode, err := encManifest.Factory(spec.EncodeConfig)
+	encNode, err := encManifest.Factory(intermediateStream, spec.TargetCodec, spec.EncodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %w", err)
 	}
@@ -124,8 +127,18 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 
 	// 5. Prepare output stream and add to muxer
-	outputStream := inputStream
+	outputStream := intermediateStream
+
+	// Apply encoder transform if present to update format, layout, codec, etc.
+	if encManifest.TransformFunc != nil {
+		encProfile := encManifest.Transform(outputStream)
+		outputStream.Type = encProfile.Type
+		outputStream.MediaAttributes = encProfile.MediaAttributes
+	}
+
+	// Fallback/override to ensure TargetCodec is explicitly set on the output stream
 	outputStream.Codec = spec.TargetCodec
+
 	if spec.PrepareOutputStream != nil {
 		outputStream = spec.PrepareOutputStream(outputStream)
 	}

@@ -1065,13 +1065,20 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 				t.Errorf("format = %s, want unknown", stream.MediaAttributes.Audio.Format)
 			}
 
-			pkt, _, err := demuxer.ReadPacket()
-			if err != nil {
-				t.Fatalf("ReadPacket() error = %v", err)
+			var gotPayload []byte
+			for {
+				pkt, _, err := demuxer.ReadPacket()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatalf("ReadPacket() error = %v", err)
+				}
+				gotPayload = append(gotPayload, pkt.Data()...)
 			}
 
-			if !bytes.Equal(pkt.Data(), original) {
-				t.Errorf("payload mismatch: got %d bytes, want %d bytes", len(pkt.Data()), len(original))
+			if !bytes.Equal(gotPayload, original) {
+				t.Errorf("payload mismatch: got %d bytes, want %d bytes", len(gotPayload), len(original))
 			}
 		})
 	}
