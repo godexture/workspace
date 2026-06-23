@@ -20,7 +20,7 @@ func Decode(block []byte, channels int, byteOrder binary.ByteOrder) ([]byte, err
 
 		return decodeMono(block, byteOrder)
 	} else {
-		if len(block) < 16 {
+		if len(block) < 14 {
 			return nil, errors.New("MS ADPCM stereo block too small")
 		}
 
@@ -51,24 +51,11 @@ func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	for _, b := range block[7:] {
 		nybbles := [2]uint8{(b >> 4) & 0x0F, b & 0x0F}
 		for _, nybble := range nybbles {
-			signedNybble := int32(nybble)
-			if nybble >= 8 {
-				signedNybble -= 16
-			}
-			pred := (sample1*coeff1 + sample2*coeff2) / 256
-			sample := pred + signedNybble*delta
-			if sample < -32768 {
-				sample = -32768
-			} else if sample > 32767 {
-				sample = 32767
-			}
+			var sample int32
+			sample, delta = decodeStep(nybble, coeff1, coeff2, delta, sample1, sample2)
 			bits.WriteS16(out, outIdx, int16(sample), byteOrder)
 			outIdx += 2
 
-			delta = (delta * adaptionTable[nybble]) / 256
-			if delta < 16 {
-				delta = 16
-			}
 			sample2 = sample1
 			sample1 = sample
 		}
@@ -95,7 +82,7 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	sample2L := int32(int16(binary.LittleEndian.Uint16(block[10:12])))
 	sample2R := int32(int16(binary.LittleEndian.Uint16(block[12:14])))
 
-	samplesPerBlock := (len(block)-16)*2 + 4
+	samplesPerBlock := (len(block)-14)*2 + 4
 	out := make([]byte, samplesPerBlock*2)
 
 	bits.WriteS16(out, 0, int16(sample2L), byteOrder)
@@ -107,54 +94,47 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	coeff1R, coeff2R := coeffs[predR][0], coeffs[predR][1]
 
 	outIdx := 8
-	for _, b := range block[16:] {
+	for _, b := range block[14:] {
 		nybbleL := (b >> 4) & 0x0F
 		nybbleR := b & 0x0F
 
-		// Left
-		signedL := int32(nybbleL)
-		if nybbleL >= 8 {
-			signedL -= 16
-		}
-		predValL := (sample1L*coeff1L + sample2L*coeff2L) / 256
-		sampleL := predValL + signedL*deltaL
-		if sampleL < -32768 {
-			sampleL = -32768
-		} else if sampleL > 32767 {
-			sampleL = 32767
-		}
+		var sampleL int32
+		sampleL, deltaL = decodeStep(nybbleL, coeff1L, coeff2L, deltaL, sample1L, sample2L)
 
-		// Right
-		signedR := int32(nybbleR)
-		if nybbleR >= 8 {
-			signedR -= 16
-		}
-		predValR := (sample1R*coeff1R + sample2R*coeff2R) / 256
-		sampleR := predValR + signedR*deltaR
-		if sampleR < -32768 {
-			sampleR = -32768
-		} else if sampleR > 32767 {
-			sampleR = 32767
-		}
+		var sampleR int32
+		sampleR, deltaR = decodeStep(nybbleR, coeff1R, coeff2R, deltaR, sample1R, sample2R)
 
 		bits.WriteS16(out, outIdx, int16(sampleL), byteOrder)
 		bits.WriteS16(out, outIdx+2, int16(sampleR), byteOrder)
 		outIdx += 4
 
-		deltaL = (deltaL * adaptionTable[nybbleL]) / 256
-		if deltaL < 16 {
-			deltaL = 16
-		}
 		sample2L = sample1L
 		sample1L = sampleL
 
-		deltaR = (deltaR * adaptionTable[nybbleR]) / 256
-		if deltaR < 16 {
-			deltaR = 16
-		}
 		sample2R = sample1R
 		sample1R = sampleR
 	}
 
 	return out, nil
+}
+
+func decodeStep(nybble uint8, coeff1, coeff2, delta, sample1, sample2 int32) (int32, int32) {
+	signedNybble := int32(nybble)
+	if nybble >= 8 {
+		signedNybble -= 16
+	}
+	pred := (sample1*coeff1 + sample2*coeff2) / 256
+	sample := pred + signedNybble*delta
+	if sample < -32768 {
+		sample = -32768
+	} else if sample > 32767 {
+		sample = 32767
+	}
+
+	delta = (delta * adaptionTable[nybble]) / 256
+	if delta < 16 {
+		delta = 16
+	}
+
+	return sample, delta
 }

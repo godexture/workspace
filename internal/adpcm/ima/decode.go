@@ -39,40 +39,9 @@ func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	for _, b := range block[4:] {
 		nybbles := [2]uint8{b & 0x0F, (b >> 4) & 0x0F}
 		for _, nybble := range nybbles {
-			step := stepTable[stepIndex]
-			diff := step / 8
-			if (nybble & 4) != 0 {
-				diff += step
-			}
-			if (nybble & 2) != 0 {
-				diff += step / 2
-			}
-			if (nybble & 1) != 0 {
-				diff += step / 4
-			}
-
-			if (nybble & 8) != 0 {
-				sample -= diff
-			} else {
-				sample += diff
-			}
-
-			if sample < -32768 {
-				sample = -32768
-			} else if sample > 32767 {
-				sample = 32767
-			}
-
+			sample, stepIndex = decodeStep(nybble, stepIndex, sample)
 			bits.WriteS16(out, outIdx, int16(sample), byteOrder)
 			outIdx += 2
-
-			stepIndex += indexTable[nybble]
-			if stepIndex < 0 {
-				stepIndex = 0
-			}
-			if stepIndex > 88 {
-				stepIndex = 88
-			}
 		}
 	}
 	return out, nil
@@ -113,39 +82,9 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 		for _, b := range chunkL {
 			nybbles := [2]uint8{b & 0x0F, (b >> 4) & 0x0F}
 			for _, nybble := range nybbles {
-				step := stepTable[stepIndexL]
-				diff := step / 8
-				if (nybble & 4) != 0 {
-					diff += step
-				}
-				if (nybble & 2) != 0 {
-					diff += step / 2
-				}
-				if (nybble & 1) != 0 {
-					diff += step / 4
-				}
-
-				if (nybble & 8) != 0 {
-					sampleL -= diff
-				} else {
-					sampleL += diff
-				}
-				if sampleL < -32768 {
-					sampleL = -32768
-				} else if sampleL > 32767 {
-					sampleL = 32767
-				}
-
+				sampleL, stepIndexL = decodeStep(nybble, stepIndexL, sampleL)
 				decL[lIdx] = int16(sampleL)
 				lIdx++
-
-				stepIndexL += indexTable[nybble]
-				if stepIndexL < 0 {
-					stepIndexL = 0
-				}
-				if stepIndexL > 88 {
-					stepIndexL = 88
-				}
 			}
 		}
 
@@ -153,39 +92,9 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 		for _, b := range chunkR {
 			nybbles := [2]uint8{b & 0x0F, (b >> 4) & 0x0F}
 			for _, nybble := range nybbles {
-				step := stepTable[stepIndexR]
-				diff := step / 8
-				if (nybble & 4) != 0 {
-					diff += step
-				}
-				if (nybble & 2) != 0 {
-					diff += step / 2
-				}
-				if (nybble & 1) != 0 {
-					diff += step / 4
-				}
-
-				if (nybble & 8) != 0 {
-					sampleR -= diff
-				} else {
-					sampleR += diff
-				}
-				if sampleR < -32768 {
-					sampleR = -32768
-				} else if sampleR > 32767 {
-					sampleR = 32767
-				}
-
+				sampleR, stepIndexR = decodeStep(nybble, stepIndexR, sampleR)
 				decR[rIdx] = int16(sampleR)
 				rIdx++
-
-				stepIndexR += indexTable[nybble]
-				if stepIndexR < 0 {
-					stepIndexR = 0
-				}
-				if stepIndexR > 88 {
-					stepIndexR = 88
-				}
 			}
 		}
 
@@ -196,4 +105,40 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 		}
 	}
 	return out, nil
+}
+
+func decodeStep(nybble uint8, stepIndex int32, sample int32) (int32, int32) {
+	step := stepTable[stepIndex]
+	diff := step / 8
+	if (nybble & 4) != 0 {
+		diff += step
+	}
+	if (nybble & 2) != 0 {
+		diff += step / 2
+	}
+	if (nybble & 1) != 0 {
+		diff += step / 4
+	}
+
+	if (nybble & 8) != 0 {
+		sample -= diff
+	} else {
+		sample += diff
+	}
+
+	if sample < -32768 {
+		sample = -32768
+	} else if sample > 32767 {
+		sample = 32767
+	}
+
+	stepIndex += indexTable[nybble]
+	if stepIndex < 0 {
+		stepIndex = 0
+	}
+	if stepIndex > 88 {
+		stepIndex = 88
+	}
+
+	return sample, stepIndex
 }

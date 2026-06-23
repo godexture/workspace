@@ -20,7 +20,7 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 	if channels == 1 {
 		samplesPerBlock = (blockAlign-7)*2 + 2
 	} else {
-		samplesPerBlock = (blockAlign-16)*1 + 2
+		samplesPerBlock = (blockAlign-14)*1 + 2
 	}
 
 	blockSize := samplesPerBlock * channels
@@ -83,37 +83,12 @@ func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16) {
 		nybbles := [2]uint8{0, 0}
 		for n := 0; n < 2; n++ {
 			target := int32(chunkSamples[sIdx+n])
-			pred := (s1*coeff1 + s2*coeff2) / 256
-			diff := target - pred
-
-			signedNybble := diff / delta
-			if signedNybble < -8 {
-				signedNybble = -8
-			} else if signedNybble > 7 {
-				signedNybble = 7
-			}
-
-			nybble := uint8(signedNybble)
-			if signedNybble < 0 {
-				nybble = uint8(signedNybble + 16)
-			}
-
-			nybbles[n] = nybble
-
-			restored := pred + signedNybble*delta
-			if restored < -32768 {
-				restored = -32768
-			} else if restored > 32767 {
-				restored = 32767
-			}
-
+			var nybble uint8
+			var restored int32
+			nybble, restored, delta = encodeStep(target, coeff1, coeff2, delta, s1, s2)
 			s2 = s1
 			s1 = restored
-
-			delta = (delta * adaptionTable[nybble]) / 256
-			if delta < 16 {
-				delta = 16
-			}
+			nybbles[n] = nybble
 		}
 		block[blockIdx] = (nybbles[0] << 4) | nybbles[1]
 		blockIdx++
@@ -152,59 +127,21 @@ func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
 	s1L, s2L := int32(sample1L), int32(sample2L)
 	s1R, s2R := int32(sample1R), int32(sample2R)
 
-	blockIdx := 16
+	blockIdx := 14
 	for sIdx := 2; sIdx < samplesPerBlock; sIdx++ {
 		targetL := int32(chunkSamples[sIdx*2])
-		predValL := (s1L*coeff1L + s2L*coeff2L) / 256
-		diffL := targetL - predValL
-		signedL := diffL / deltaL
-		if signedL < -8 {
-			signedL = -8
-		} else if signedL > 7 {
-			signedL = 7
-		}
-		nybbleL := uint8(signedL)
-		if signedL < 0 {
-			nybbleL = uint8(signedL + 16)
-		}
-		restoredL := predValL + signedL*deltaL
-		if restoredL < -32768 {
-			restoredL = -32768
-		} else if restoredL > 32767 {
-			restoredL = 32767
-		}
+		var nybbleL uint8
+		var restoredL int32
+		nybbleL, restoredL, deltaL = encodeStep(targetL, coeff1L, coeff2L, deltaL, s1L, s2L)
 		s2L = s1L
 		s1L = restoredL
-		deltaL = (deltaL * adaptionTable[nybbleL]) / 256
-		if deltaL < 16 {
-			deltaL = 16
-		}
 
 		targetR := int32(chunkSamples[sIdx*2+1])
-		predValR := (s1R*coeff1R + s2R*coeff2R) / 256
-		diffR := targetR - predValR
-		signedR := diffR / deltaR
-		if signedR < -8 {
-			signedR = -8
-		} else if signedR > 7 {
-			signedR = 7
-		}
-		nybbleR := uint8(signedR)
-		if signedR < 0 {
-			nybbleR = uint8(signedR + 16)
-		}
-		restoredR := predValR + signedR*deltaR
-		if restoredR < -32768 {
-			restoredR = -32768
-		} else if restoredR > 32767 {
-			restoredR = 32767
-		}
+		var nybbleR uint8
+		var restoredR int32
+		nybbleR, restoredR, deltaR = encodeStep(targetR, coeff1R, coeff2R, deltaR, s1R, s2R)
 		s2R = s1R
 		s1R = restoredR
-		deltaR = (deltaR * adaptionTable[nybbleR]) / 256
-		if deltaR < 16 {
-			deltaR = 16
-		}
 
 		block[blockIdx] = (nybbleL << 4) | nybbleR
 		blockIdx++
@@ -217,4 +154,25 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, int32, int32) {
+	pred := (sample1*coeff1 + sample2*coeff2) / 256
+	diff := target - pred
+
+	signedNybble := diff / delta
+	if signedNybble < -8 {
+		signedNybble = -8
+	} else if signedNybble > 7 {
+		signedNybble = 7
+	}
+
+	nybble := uint8(signedNybble)
+	if signedNybble < 0 {
+		nybble = uint8(signedNybble + 16)
+	}
+
+	restored, delta := decodeStep(nybble, coeff1, coeff2, delta, sample1, sample2)
+
+	return nybble, restored, delta
 }

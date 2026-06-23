@@ -73,61 +73,11 @@ func encodeMono(block []byte, samplesPerBlock int, samples []int16) {
 		nybbles := [2]uint8{0, 0}
 		for n := 0; n < 2; n++ {
 			target := int32(samples[sIdx+n])
-			diff := target - int32(sample)
-
-			nybble := uint8(0)
-			if diff < 0 {
-				nybble |= 8
-				diff = -diff
-			}
-
-			step := stepTable[stepIndex]
-			if diff >= step {
-				nybble |= 4
-				diff -= step
-			}
-			if diff >= step/2 {
-				nybble |= 2
-				diff -= step / 2
-			}
-			if diff >= step/4 {
-				nybble |= 1
-			}
-
-			nybbles[n] = nybble
-
-			predDiff := step / 8
-			if (nybble & 4) != 0 {
-				predDiff += step
-			}
-			if (nybble & 2) != 0 {
-				predDiff += step / 2
-			}
-			if (nybble & 1) != 0 {
-				predDiff += step / 4
-			}
-
+			var nybble uint8
 			var newSample int32
-			if (nybble & 8) != 0 {
-				newSample = int32(sample) - predDiff
-			} else {
-				newSample = int32(sample) + predDiff
-			}
-
-			if newSample < -32768 {
-				newSample = -32768
-			} else if newSample > 32767 {
-				newSample = 32767
-			}
+			nybble, stepIndex, newSample = encodeStep(target, stepIndex, int32(sample))
 			sample = int16(newSample)
-
-			stepIndex += indexTable[nybble]
-			if stepIndex < 0 {
-				stepIndex = 0
-			}
-			if stepIndex > 88 {
-				stepIndex = 88
-			}
+			nybbles[n] = nybble
 		}
 		block[blockIdx] = nybbles[0] | (nybbles[1] << 4)
 		blockIdx++
@@ -156,106 +106,18 @@ func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
 
 		for j := 0; j < 8; j++ {
 			targetL := int32(chunkSamples[(sIdx+j)*2])
-			diffL := targetL - int32(sampleL)
-			nybbleL := uint8(0)
-			if diffL < 0 {
-				nybbleL |= 8
-				diffL = -diffL
-			}
-			stepL := stepTable[stepIndexL]
-			if diffL >= stepL {
-				nybbleL |= 4
-				diffL -= stepL
-			}
-			if diffL >= stepL/2 {
-				nybbleL |= 2
-				diffL -= stepL / 2
-			}
-			if diffL >= stepL/4 {
-				nybbleL |= 1
-			}
+			var nybbleL uint8
+			var newL int32
+			nybbleL, stepIndexL, newL = encodeStep(targetL, stepIndexL, int32(sampleL))
+			sampleL = int16(newL)
 			nybblesL[j] = nybbleL
 
-			predL := stepL / 8
-			if (nybbleL & 4) != 0 {
-				predL += stepL
-			}
-			if (nybbleL & 2) != 0 {
-				predL += stepL / 2
-			}
-			if (nybbleL & 1) != 0 {
-				predL += stepL / 4
-			}
-			var newL int32
-			if (nybbleL & 8) != 0 {
-				newL = int32(sampleL) - predL
-			} else {
-				newL = int32(sampleL) + predL
-			}
-			if newL < -32768 {
-				newL = -32768
-			} else if newL > 32767 {
-				newL = 32767
-			}
-			sampleL = int16(newL)
-			stepIndexL += indexTable[nybbleL]
-			if stepIndexL < 0 {
-				stepIndexL = 0
-			}
-			if stepIndexL > 88 {
-				stepIndexL = 88
-			}
-
 			targetR := int32(chunkSamples[(sIdx+j)*2+1])
-			diffR := targetR - int32(sampleR)
-			nybbleR := uint8(0)
-			if diffR < 0 {
-				nybbleR |= 8
-				diffR = -diffR
-			}
-			stepR := stepTable[stepIndexR]
-			if diffR >= stepR {
-				nybbleR |= 4
-				diffR -= stepR
-			}
-			if diffR >= stepR/2 {
-				nybbleR |= 2
-				diffR -= stepR / 2
-			}
-			if diffR >= stepR/4 {
-				nybbleR |= 1
-			}
-			nybblesR[j] = nybbleR
-
-			predR := stepR / 8
-			if (nybbleR & 4) != 0 {
-				predR += stepR
-			}
-			if (nybbleR & 2) != 0 {
-				predR += stepR / 2
-			}
-			if (nybbleR & 1) != 0 {
-				predR += stepR / 4
-			}
+			var nybbleR uint8
 			var newR int32
-			if (nybbleR & 8) != 0 {
-				newR = int32(sampleR) - predR
-			} else {
-				newR = int32(sampleR) + predR
-			}
-			if newR < -32768 {
-				newR = -32768
-			} else if newR > 32767 {
-				newR = 32767
-			}
+			nybbleR, stepIndexR, newR = encodeStep(targetR, stepIndexR, int32(sampleR))
 			sampleR = int16(newR)
-			stepIndexR += indexTable[nybbleR]
-			if stepIndexR < 0 {
-				stepIndexR = 0
-			}
-			if stepIndexR > 88 {
-				stepIndexR = 88
-			}
+			nybblesR[j] = nybbleR
 		}
 
 		for j := 0; j < 4; j++ {
@@ -267,4 +129,31 @@ func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
 		blockIdx += 8
 	}
 
+}
+
+func encodeStep(target int32, stepIndex int32, sample int32) (uint8, int32, int32) {
+	diff := target - sample
+
+	nybble := uint8(0)
+	if diff < 0 {
+		nybble |= 8
+		diff = -diff
+	}
+
+	step := stepTable[stepIndex]
+	if diff >= step {
+		nybble |= 4
+		diff -= step
+	}
+	if diff >= step/2 {
+		nybble |= 2
+		diff -= step / 2
+	}
+	if diff >= step/4 {
+		nybble |= 1
+	}
+
+	sample, stepIndex = decodeStep(nybble, stepIndex, sample)
+
+	return nybble, stepIndex, sample
 }
