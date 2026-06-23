@@ -122,14 +122,14 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	}
 	decRes := &mockDecoderResolver{
 		resolved: registry.DecoderManifest{
-			Factory: func(config registry.Configuration) (node.Decoder, error) {
+			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
 				return dec, nil
 			},
 		},
 	}
 	encRes := &mockEncoderResolver{
 		resolved: registry.EncoderManifest{
-			Factory: func(config registry.Configuration) (node.Encoder, error) {
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
 				return enc, nil
 			},
 		},
@@ -186,3 +186,97 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 		t.Errorf("expected target codec %s, got %s", media.CodecLPCM, mux.addedStreams[0].Codec)
 	}
 }
+
+func TestNegotiator_AppliesTransforms(t *testing.T) {
+	// 1. Input stream starts with Unknown format and MSADPCM codec
+	streamIn := media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecMSADPCM,
+			Audio: media.AudioAttributes{
+				SampleRate: 44100,
+				Format:     media.SampleFormatUnknown,
+			},
+		},
+	}
+	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}}
+	dec := &mockDecoder{}
+	enc := &mockEncoder{}
+	mux := &mockMuxer{}
+
+	demuxRes := &mockDemuxerResolver{
+		resolved: registry.DemuxerManifest{
+			Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
+				return demux, nil
+			},
+		},
+	}
+
+	// Decoder Transform converts MSADPCM to LPCM and sets the format to S16
+	decRes := &mockDecoderResolver{
+		resolved: registry.DecoderManifest{
+			TransformManifest: registry.TransformManifest{
+				TransformFunc: func(s media.StreamInfo) media.Profile {
+					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+					if s.Codec == media.CodecMSADPCM {
+						p.Codec = media.CodecLPCM
+						p.Audio.Format = media.SampleFormatS16
+					}
+					return p
+				},
+			},
+			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
+				return dec, nil
+			},
+		},
+	}
+
+	// Encoder Transform passes it through
+	encRes := &mockEncoderResolver{
+		resolved: registry.EncoderManifest{
+			TransformManifest: registry.TransformManifest{
+				TransformFunc: func(s media.StreamInfo) media.Profile {
+					return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+				},
+			},
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
+				return enc, nil
+			},
+		},
+	}
+
+	muxRes := &mockMuxerResolver{
+		resolved: registry.MuxerManifest{
+			Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
+				return mux, nil
+			},
+		},
+	}
+
+	neg := NewNegotiator(muxRes, demuxRes, encRes, decRes)
+
+	spec := ConversionSpec{
+		Input:       strings.NewReader("dummy input"),
+		Output:      &strings.Builder{},
+		TargetCodec: media.CodecLPCM,
+		MuxConfig:   dummyConfig{},
+	}
+
+	_, err := neg.NegotiateConversion(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("failed to negotiate conversion: %v", err)
+	}
+
+	if len(mux.addedStreams) != 1 {
+		t.Fatalf("expected 1 stream added to muxer, got %d", len(mux.addedStreams))
+	}
+
+	outStream := mux.addedStreams[0]
+	if outStream.Codec != media.CodecLPCM {
+		t.Errorf("expected codec %s, got %s", media.CodecLPCM, outStream.Codec)
+	}
+	if outStream.Audio.Format != media.SampleFormatS16 {
+		t.Errorf("expected sample format %s, got %s", media.SampleFormatS16, outStream.Audio.Format)
+	}
+}
+
