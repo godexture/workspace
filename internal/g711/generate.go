@@ -65,21 +65,21 @@ func ALawToLinear(aVal byte) int16 {
 		sample = (int16(mantissa) << 4) + 0x108
 		sample <<= (exponent - 1)
 	}
-	if sign != 0 {
+	if sign == 0 {
 		return -sample
 	}
 	return sample
 }
 
 func LinearToALaw(pcm int16) byte {
-	sign := int16(0)
+	sign := int16(0x80)
 	if pcm < 0 {
 		if pcm == -32768 {
 			pcm = 32767
 		} else {
 			pcm = -pcm
 		}
-		sign = 0x80
+		sign = 0
 	}
 	var exponent int16
 	var mantissa int16

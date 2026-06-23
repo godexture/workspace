@@ -3,6 +3,8 @@ package internal
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"math"
 
 	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
@@ -19,9 +21,12 @@ type EncoderConfig struct {
 func (EncoderConfig) NodeConfiguration() {}
 
 type Encoder struct {
-	config  EncoderConfig
-	pending *media.Packet
-	flushed bool
+	config       EncoderConfig
+	pendingQueue []*media.Packet
+	flushed      bool
+	buffer       []byte
+	lastChannels int
+	lastPts      media.Pts
 }
 
 func NewEncoder(config EncoderConfig) *Encoder {
@@ -38,9 +43,6 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	if frame == nil || *frame == nil {
 		return errors.New("codec-pcm encoder received nil frame")
 	}
-	if e.pending != nil {
-		return errors.New("codec-pcm encoder has an unconsumed packet")
-	}
 
 	f := *frame
 	af, ok := f.(*media.AudioFrame)
@@ -49,6 +51,17 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	}
 
 	data := af.Planes()[0]
+	if e.config.CodecID != media.CodecLPCM {
+		if af.Format == media.SampleFormatF32 {
+			data = convertF32ToS16(data)
+		} else if af.Format != media.SampleFormatS16 {
+			return fmt.Errorf("unsupported sample format for pcm encoder: %v", af.Format)
+		}
+	}
+
+	e.lastChannels = af.Layout.ChannelCount()
+	e.lastPts = f.Pts()
+
 	var err error
 	switch e.config.CodecID {
 	case media.CodecPCMU:
@@ -56,14 +69,44 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	case media.CodecPCMA:
 		data = g711.EncodePCMA(data, e.config.ByteOrder)
 	case media.CodecMSADPCM:
-		data, err = msadpcm.Encode(data, af.Layout.ChannelCount(), e.config.ByteOrder)
+		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels)
+		e.buffer = append(e.buffer, data...)
+		numBlocks := len(e.buffer) / bytesPerBlock
+		if numBlocks == 0 {
+			return nil
+		}
+		toEncode := e.buffer[:numBlocks*bytesPerBlock]
+		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder)
 		if err != nil {
 			return err
 		}
+		remaining := len(e.buffer) - numBlocks*bytesPerBlock
+		if remaining > 0 {
+			newBuf := make([]byte, remaining)
+			copy(newBuf, e.buffer[numBlocks*bytesPerBlock:])
+			e.buffer = newBuf
+		} else {
+			e.buffer = nil
+		}
 	case media.CodecIMAADPCM:
-		data, err = imaadpcm.Encode(data, af.Layout.ChannelCount(), e.config.ByteOrder)
+		bytesPerBlock := imaadpcm.BytesPerPCMBlock(e.lastChannels)
+		e.buffer = append(e.buffer, data...)
+		numBlocks := len(e.buffer) / bytesPerBlock
+		if numBlocks == 0 {
+			return nil
+		}
+		toEncode := e.buffer[:numBlocks*bytesPerBlock]
+		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder)
 		if err != nil {
 			return err
+		}
+		remaining := len(e.buffer) - numBlocks*bytesPerBlock
+		if remaining > 0 {
+			newBuf := make([]byte, remaining)
+			copy(newBuf, e.buffer[numBlocks*bytesPerBlock:])
+			e.buffer = newBuf
+		} else {
+			e.buffer = nil
 		}
 	}
 
@@ -71,27 +114,75 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	copy(pkt.Data(), data)
 	pkt.MediaType = media.MediaAudio
 	pkt.StreamIndex = 0
-	pkt.PTS = f.Pts()
-	pkt.DTS = media.Dts(f.Pts())
+	pkt.PTS = e.lastPts
+	pkt.DTS = media.Dts(e.lastPts)
 
-	e.pending = pkt
+	e.pendingQueue = append(e.pendingQueue, pkt)
 	return nil
 }
 
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
-	if e.pending == nil {
+	if len(e.pendingQueue) == 0 {
 		if e.flushed {
 			return nil, engine.ErrEOF
 		}
 		return nil, engine.ErrEAGAIN
 	}
 
-	pkt := e.pending
-	e.pending = nil
+	pkt := e.pendingQueue[0]
+	e.pendingQueue = e.pendingQueue[1:]
 	return pkt, nil
 }
 
 func (e *Encoder) Flush() error {
 	e.flushed = true
+	if len(e.buffer) > 0 {
+		var data []byte
+		var err error
+		switch e.config.CodecID {
+		case media.CodecMSADPCM:
+			data, err = msadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder)
+		case media.CodecIMAADPCM:
+			data, err = imaadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder)
+		}
+		if err != nil {
+			return err
+		}
+
+		if len(data) > 0 {
+			pkt := media.NewPacket(len(data))
+			copy(pkt.Data(), data)
+			pkt.MediaType = media.MediaAudio
+			pkt.StreamIndex = 0
+			pkt.PTS = e.lastPts
+			pkt.DTS = media.Dts(e.lastPts)
+			e.pendingQueue = append(e.pendingQueue, pkt)
+		}
+		e.buffer = nil
+	}
 	return nil
+}
+
+func convertF32ToS16(f32Data []byte) []byte {
+	samples := len(f32Data) / 4
+	s16Data := make([]byte, samples*2)
+	for i := 0; i < samples; i++ {
+		fBits := binary.LittleEndian.Uint32(f32Data[i*4 : i*4+4])
+		fVal := math.Float32frombits(fBits)
+
+		if fVal > 1.0 {
+			fVal = 1.0
+		} else if fVal < -1.0 {
+			fVal = -1.0
+		}
+
+		var s16Val int16
+		if fVal < 0 {
+			s16Val = int16(fVal * 32768)
+		} else {
+			s16Val = int16(fVal * 32767)
+		}
+		binary.LittleEndian.PutUint16(s16Data[i*2:i*2+2], uint16(s16Val))
+	}
+	return s16Data
 }

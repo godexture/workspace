@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+func BytesPerPCMBlock(channels int) int {
+	blockAlign := 256 * channels
+	samplesPerBlock := (blockAlign-4*channels)*2/channels + 1
+	return samplesPerBlock * channels * 2
+}
+
 func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for IMA ADPCM: %d", channels)
