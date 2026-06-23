@@ -27,6 +27,8 @@ type Encoder struct {
 	buffer       []byte
 	lastChannels int
 	lastPts      media.Pts
+
+	imaState *imaadpcm.EncodeState
 }
 
 func NewEncoder(config EncoderConfig) *Encoder {
@@ -36,7 +38,10 @@ func NewEncoder(config EncoderConfig) *Encoder {
 	if config.ByteOrder == nil {
 		config.ByteOrder = binary.LittleEndian
 	}
-	return &Encoder{config: config}
+	return &Encoder{
+		config:   config,
+		imaState: &imaadpcm.EncodeState{},
+	}
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -96,7 +101,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 			return nil
 		}
 		toEncode := e.buffer[:numBlocks*bytesPerBlock]
-		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder)
+		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder, e.imaState)
 		if err != nil {
 			return err
 		}
@@ -143,7 +148,7 @@ func (e *Encoder) Flush() error {
 		case media.CodecMSADPCM:
 			data, err = msadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder)
 		case media.CodecIMAADPCM:
-			data, err = imaadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder)
+			data, err = imaadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder, e.imaState)
 		}
 		if err != nil {
 			return err

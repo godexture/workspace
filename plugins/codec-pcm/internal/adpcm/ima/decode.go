@@ -14,17 +14,21 @@ func Decode(block []byte, channels int, byteOrder binary.ByteOrder) ([]byte, err
 	}
 
 	if channels == 1 {
+		if len(block) < 4 {
+			return nil, errors.New("IMA ADPCM mono block too small")
+		}
+
 		return decodeMono(block, byteOrder)
 	} else {
+		if len(block) < 8 {
+			return nil, errors.New("IMA ADPCM stereo block too small")
+		}
+
 		return decodeStereo(block, byteOrder)
 	}
 }
 
 func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
-
-	if len(block) < 4 {
-		return nil, errors.New("IMA ADPCM mono block too small")
-	}
 	sample := int32(int16(binary.LittleEndian.Uint16(block[0:2])))
 	stepIndex := int32(block[2])
 	if stepIndex > 88 {
@@ -48,10 +52,6 @@ func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 }
 
 func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
-
-	if len(block) < 8 {
-		return nil, errors.New("IMA ADPCM stereo block too small")
-	}
 	sampleL := int32(int16(binary.LittleEndian.Uint16(block[0:2])))
 	stepIndexL := int32(block[2])
 	if stepIndexL > 88 {

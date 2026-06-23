@@ -40,7 +40,8 @@ func TestADPCMRoundtrip(t *testing.T) {
 			if tt.codec == media.CodecMSADPCM {
 				encoded, err = msadpcm.Encode(pcm, tt.channels, binary.LittleEndian)
 			} else {
-				encoded, err = imaadpcm.Encode(pcm, tt.channels, binary.LittleEndian)
+				state := &imaadpcm.EncodeState{}
+				encoded, err = imaadpcm.Encode(pcm, tt.channels, binary.LittleEndian, state)
 			}
 			if err != nil {
 				t.Fatalf("Encode error = %v", err)

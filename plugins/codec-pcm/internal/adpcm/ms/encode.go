@@ -69,7 +69,7 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 }
 
 func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16) {
-	predictor := 0
+	predictor := findBestPredictor(chunkSamples, samplesPerBlock, 1, 0)
 	coeff1 := coeffs[predictor][0]
 	coeff2 := coeffs[predictor][1]
 
@@ -108,7 +108,8 @@ func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16) {
 }
 
 func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
-	predL, predR := 0, 0
+	predL := findBestPredictor(chunkSamples, samplesPerBlock, 2, 0)
+	predR := findBestPredictor(chunkSamples, samplesPerBlock, 2, 1)
 	coeff1L, coeff2L := coeffs[predL][0], coeffs[predL][1]
 	coeff1R, coeff2R := coeffs[predR][0], coeffs[predR][1]
 
@@ -193,3 +194,41 @@ func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, i
 
 	return nybble, restored, delta
 }
+
+func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offset int) int {
+	bestPredictor := 0
+	var minError int64 = -1
+
+	sample2 := chunkSamples[0*step+offset]
+	sample1 := chunkSamples[1*step+offset]
+	initialDelta := int32(abs(int(sample1) - int(sample2)))
+	if initialDelta < 16 {
+		initialDelta = 16
+	}
+
+	for p := 0; p < 7; p++ {
+		coeff1 := coeffs[p][0]
+		coeff2 := coeffs[p][1]
+
+		s1 := int32(sample1)
+		s2 := int32(sample2)
+		delta := initialDelta
+		var totalError int64
+
+		for sIdx := 2; sIdx < samplesPerBlock; sIdx++ {
+			target := int32(chunkSamples[sIdx*step+offset])
+			_, restored, nextDelta := encodeStep(target, coeff1, coeff2, delta, s1, s2)
+			totalError += int64(abs(int(target - restored)))
+			s2 = s1
+			s1 = restored
+			delta = nextDelta
+		}
+
+		if minError == -1 || totalError < minError {
+			minError = totalError
+			bestPredictor = p
+		}
+	}
+	return bestPredictor
+}
+

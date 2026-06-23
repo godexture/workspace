@@ -111,8 +111,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 func (d *Demuxer) readRawPacket() (*media.Packet, int, error) {
 	chunkSize := uint64(wavPacketChunkSize)
 	if d.header.blockAlign > 0 {
-		isADPCM := d.streamInfo.MediaAttributes.Codec == media.CodecMSADPCM || d.streamInfo.MediaAttributes.Codec == media.CodecIMAADPCM
-		if isADPCM {
+		if d.samplesPerBlock() > 1 {
 			chunkSize = uint64(d.header.blockAlign)
 		} else {
 			chunkSize = (chunkSize / uint64(d.header.blockAlign)) * uint64(d.header.blockAlign)
@@ -268,8 +267,16 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 		}
 	}
 
+	samplesPerBlock := int64(d.samplesPerBlock())
 	targetSample := int64(offset) * int64(d.header.sampleRate) / int64(time.Second)
-	targetByteOffset := targetSample * int64(d.header.blockAlign)
+
+	var targetByteOffset int64
+	if samplesPerBlock > 1 {
+		targetBlock := targetSample / samplesPerBlock
+		targetByteOffset = targetBlock * int64(d.header.blockAlign)
+	} else {
+		targetByteOffset = targetSample * int64(d.header.blockAlign)
+	}
 
 	if targetByteOffset > int64(d.header.dataSize) {
 		targetByteOffset = int64(d.header.dataSize)
@@ -284,4 +291,30 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 	d.sent = true
 	d.mp3FreeFormatBytes = 0
 	return nil
+}
+
+func (d *Demuxer) samplesPerBlock() int {
+	audioFormat := wavResolvedAudioFormat(d.header)
+	channels := int(d.header.channels)
+	blockAlign := int(d.header.blockAlign)
+
+	switch audioFormat {
+	case wavAudioPCM, wavAudioIEEEFloat, wavAudioALaw, wavAudioULaw:
+		return 1
+	case wavAudioMSADPCM:
+		if channels == 1 {
+			return (blockAlign-7)*2 + 2
+		} else {
+			return (blockAlign-14)*1 + 2
+		}
+	case wavAudioIMAADPCM:
+		if channels > 0 {
+			return (blockAlign-4*channels)*2/channels + 1
+		}
+		return 1
+	case wavAudioGSM:
+		return 320
+	default:
+		return 1
+	}
 }
