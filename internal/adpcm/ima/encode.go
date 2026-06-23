@@ -11,7 +11,16 @@ func BytesPerPCMBlock(channels int) int {
 	return samplesPerBlock * channels * 2
 }
 
-func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
+type EncodeState struct {
+	StepIndexL    int32
+	StepIndexR    int32
+	NotFirstBlock bool
+}
+
+func Encode(linear []byte, channels int, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
+	if state == nil {
+		state = &EncodeState{}
+	}
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for IMA ADPCM: %d", channels)
 	}
@@ -54,10 +63,21 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 		block := out[outIdx : outIdx+blockAlign]
 
 		if channels == 1 {
-			encodeMono(block, samplesPerBlock, chunkSamples)
+			if !state.NotFirstBlock && samplesPerBlock > 1 {
+				diff := int32(chunkSamples[1]) - int32(chunkSamples[0])
+				state.StepIndexL = guessStepIndex(diff)
+			}
+			state.StepIndexL = encodeMono(block, samplesPerBlock, chunkSamples, state.StepIndexL)
 		} else {
-			encodeStereo(block, samplesPerBlock, chunkSamples)
+			if !state.NotFirstBlock && samplesPerBlock > 1 {
+				diffL := int32(chunkSamples[2]) - int32(chunkSamples[0])
+				diffR := int32(chunkSamples[3]) - int32(chunkSamples[1])
+				state.StepIndexL = guessStepIndex(diffL)
+				state.StepIndexR = guessStepIndex(diffR)
+			}
+			state.StepIndexL, state.StepIndexR = encodeStereo(block, samplesPerBlock, chunkSamples, state.StepIndexL, state.StepIndexR)
 		}
+		state.NotFirstBlock = true
 
 		outIdx += blockAlign
 	}
@@ -65,9 +85,8 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 	return out, nil
 }
 
-func encodeMono(block []byte, samplesPerBlock int, samples []int16) {
+func encodeMono(block []byte, samplesPerBlock int, samples []int16, stepIndex int32) int32 {
 	sample := samples[0]
-	stepIndex := int32(0)
 
 	binary.LittleEndian.PutUint16(block[0:2], uint16(sample))
 	block[2] = byte(stepIndex)
@@ -88,14 +107,12 @@ func encodeMono(block []byte, samplesPerBlock int, samples []int16) {
 		block[blockIdx] = nybbles[0] | (nybbles[1] << 4)
 		blockIdx++
 	}
-
+	return stepIndex
 }
 
-func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
+func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16, stepIndexL int32, stepIndexR int32) (int32, int32) {
 	sampleL := chunkSamples[0]
 	sampleR := chunkSamples[1]
-	stepIndexL := int32(0)
-	stepIndexR := int32(0)
 
 	binary.LittleEndian.PutUint16(block[0:2], uint16(sampleL))
 	block[2] = byte(stepIndexL)
@@ -135,6 +152,7 @@ func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
 		blockIdx += 8
 	}
 
+	return stepIndexL, stepIndexR
 }
 
 func encodeStep(target int32, stepIndex int32, sample int32) (uint8, int32, int32) {
@@ -162,4 +180,23 @@ func encodeStep(target int32, stepIndex int32, sample int32) (uint8, int32, int3
 	sample, stepIndex = decodeStep(nybble, stepIndex, sample)
 
 	return nybble, stepIndex, sample
+}
+
+func guessStepIndex(diff int32) int32 {
+	if diff < 0 {
+		diff = -diff
+	}
+	idealStep := diff / 2
+	if idealStep < 7 {
+		return 0
+	}
+	for i, s := range stepTable {
+		if s > idealStep {
+			if i > 0 {
+				return int32(i - 1)
+			}
+			return 0
+		}
+	}
+	return 88
 }

@@ -28,7 +28,7 @@ var configs = []codecConfig{
 	{name: "pcmu", codecID: media.CodecPCMU, sampleRate: 8000, channelLayout: media.LayoutMono1, format: media.SampleFormatS16, maxDiff: 0.025},
 	{name: "pcma", codecID: media.CodecPCMA, sampleRate: 8000, channelLayout: media.LayoutMono1, format: media.SampleFormatS16, maxDiff: 0.025},
 	{name: "msadpcm", codecID: media.CodecMSADPCM, sampleRate: 8000, channelLayout: media.LayoutStereo2_0, format: media.SampleFormatS16, maxDiff: 0.15},
-	{name: "imaadpcm", codecID: media.CodecIMAADPCM, sampleRate: 8000, channelLayout: media.LayoutStereo2_0, format: media.SampleFormatS16, maxDiff: 0.45},
+	{name: "imaadpcm", codecID: media.CodecIMAADPCM, sampleRate: 8000, channelLayout: media.LayoutStereo2_0, format: media.SampleFormatS16, maxDiff: 0.15},
 }
 
 func generateSineWave(sampleRate int, channels int, duration float64) []float32 {
