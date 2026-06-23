@@ -262,7 +262,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		if channels == 1 {
 			samplesPerBlock = uint16((blockAlign-7)*2 + 2)
 		} else {
-			samplesPerBlock = uint16((blockAlign-16)*1 + 2)
+			samplesPerBlock = uint16((blockAlign-14)*1 + 2)
 		}
 		binary.Write(&headerBuf, binary.LittleEndian, samplesPerBlock)
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(7)) // numCoefficients

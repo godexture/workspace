@@ -111,7 +111,12 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 func (d *Demuxer) readRawPacket() (*media.Packet, int, error) {
 	chunkSize := uint64(wavPacketChunkSize)
 	if d.header.blockAlign > 0 {
-		chunkSize = (chunkSize / uint64(d.header.blockAlign)) * uint64(d.header.blockAlign)
+		isADPCM := d.streamInfo.MediaAttributes.Codec == media.CodecMSADPCM || d.streamInfo.MediaAttributes.Codec == media.CodecIMAADPCM
+		if isADPCM {
+			chunkSize = uint64(d.header.blockAlign)
+		} else {
+			chunkSize = (chunkSize / uint64(d.header.blockAlign)) * uint64(d.header.blockAlign)
+		}
 		if chunkSize == 0 {
 			chunkSize = uint64(d.header.blockAlign)
 		}
