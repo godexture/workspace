@@ -36,7 +36,7 @@ func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.
 		cfg.Format = format
 	}
 	if layout.ChannelCount() > 0 {
-		cfg.Layout = layout
+		cfg.ChannelLayout = layout
 	}
 	return cfg
 }
@@ -72,31 +72,23 @@ func init() {
 			},
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-				codecID := s.MediaAttributes.Codec
-				p.Codec = media.CodecLPCM
-				if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
-					p.Audio.SampleRate = 8000
-					p.Audio.Format = media.SampleFormatS16
-					p.Audio.ChannelLayout = media.LayoutMono1
-				} else if codecID == media.CodecMSADPCM || codecID == media.CodecIMAADPCM {
-					p.Audio.Format = media.SampleFormatS16
-				}
+				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
 				return p
 			},
 		},
-		Factory: func(stream media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
+		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
 			c := DefaultConfig()
-			if stream.MediaAttributes.Codec != "" {
-				c.CodecID = stream.MediaAttributes.Codec
+			if s.MediaAttributes.Codec != "" {
+				c.CodecID = s.MediaAttributes.Codec
 			}
-			if stream.MediaAttributes.Audio.SampleRate > 0 {
-				c.SampleRate = stream.MediaAttributes.Audio.SampleRate
+			if s.MediaAttributes.Audio.SampleRate > 0 {
+				c.SampleRate = s.MediaAttributes.Audio.SampleRate
 			}
-			if stream.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
-				c.Format = stream.MediaAttributes.Audio.Format
+			if s.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+				c.Format = s.MediaAttributes.Audio.Format
 			}
-			if stream.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
-				c.Layout = stream.MediaAttributes.Audio.ChannelLayout
+			if s.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
+				c.ChannelLayout = s.MediaAttributes.Audio.ChannelLayout
 			}
 
 			if cfg != nil {
@@ -110,8 +102,8 @@ func init() {
 					if pcmCfg.Format != media.SampleFormatUnknown {
 						c.Format = pcmCfg.Format
 					}
-					if pcmCfg.Layout.ChannelCount() > 0 {
-						c.Layout = pcmCfg.Layout
+					if pcmCfg.ChannelLayout.ChannelCount() > 0 {
+						c.ChannelLayout = pcmCfg.ChannelLayout
 					}
 					if pcmCfg.ByteOrder != nil {
 						c.ByteOrder = pcmCfg.ByteOrder
@@ -126,8 +118,8 @@ func init() {
 					if pcmCfgPtr.Format != media.SampleFormatUnknown {
 						c.Format = pcmCfgPtr.Format
 					}
-					if pcmCfgPtr.Layout.ChannelCount() > 0 {
-						c.Layout = pcmCfgPtr.Layout
+					if pcmCfgPtr.ChannelLayout.ChannelCount() > 0 {
+						c.ChannelLayout = pcmCfgPtr.ChannelLayout
 					}
 					if pcmCfgPtr.ByteOrder != nil {
 						c.ByteOrder = pcmCfgPtr.ByteOrder
@@ -135,14 +127,14 @@ func init() {
 				}
 			}
 			// Set G.711 default sample rate & layout if not explicitly set
-			if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
-				if c.SampleRate == 48000 {
-					c.SampleRate = 8000
-				}
-				if c.Layout == media.LayoutStereo2_0 {
-					c.Layout = media.LayoutMono1
-				}
-			}
+			// if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
+			// 	if c.SampleRate == 48000 {
+			// 		c.SampleRate = 8000
+			// 	}
+			// 	if c.Layout == media.LayoutStereo2_0 {
+			// 		c.Layout = media.LayoutMono1
+			// 	}
+			// }
 			return engine.WrapDecoder(NewDecoderEngine(c)), nil
 		},
 	}); err != nil {
