@@ -1,4 +1,4 @@
-package testutil
+package audio
 
 import (
 	"bufio"
@@ -57,36 +57,6 @@ func SaveSnapshot(path string, pcm []float32) error {
 
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("failed to flush buffer: %w", err)
-	}
-
-	return nil
-}
-
-// ComparePCM compares actual and expected float32 PCM samples and returns an error if the difference exceeds maxAbsDiff.
-func ComparePCM(actual, expected []float32, maxAbsDiff float32) error {
-	if len(actual) != len(expected) {
-		return fmt.Errorf("length mismatch: got %d, expected %d", len(actual), len(expected))
-	}
-
-	var (
-		maxDiff      float32 = 0
-		maxDiffIndex int     = -1
-	)
-
-	for i := range actual {
-		diff := actual[i] - expected[i]
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff > maxDiff {
-			maxDiff = diff
-			maxDiffIndex = i
-		}
-	}
-
-	if maxDiff > maxAbsDiff {
-		return fmt.Errorf("mismatch too high: max diff was %f at index %d (got %f, expected %f, allowed: %f)",
-			maxDiff, maxDiffIndex, actual[maxDiffIndex], expected[maxDiffIndex], maxAbsDiff)
 	}
 
 	return nil
