@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
@@ -153,13 +152,14 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	}
 
 	samplesPerBlock := 1
-	if attr.Codec == media.CodecMSADPCM {
+	switch attr.Codec {
+	case media.CodecMSADPCM:
 		if channels == 1 {
 			samplesPerBlock = (blockAlign-7)*2 + 2
 		} else {
 			samplesPerBlock = (blockAlign-14)*1 + 2
 		}
-	} else if attr.Codec == media.CodecIMAADPCM {
+	case media.CodecIMAADPCM:
 		if channels == 1 {
 			samplesPerBlock = (blockAlign-4)*2 + 1
 		} else {
@@ -260,7 +260,6 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		}
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(0)) // tableLength
 	}
-	log.Printf("Last channels: %d", bitsPerSample)
 
 	headerBuf.WriteString(wavTagFmt)
 	binary.Write(&headerBuf, binary.LittleEndian, fmtSize)
