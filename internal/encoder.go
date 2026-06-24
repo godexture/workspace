@@ -10,6 +10,7 @@ import (
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
 	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/sdk/buffer"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -24,7 +25,7 @@ type Encoder struct {
 	config       EncoderConfig
 	pendingQueue []*media.Packet
 	flushed      bool
-	buffer       []byte
+	buf          *buffer.BlockBuffer
 	lastChannels int
 	lastPts      media.Pts
 
@@ -40,6 +41,7 @@ func NewEncoder(config EncoderConfig) *Encoder {
 	}
 	return &Encoder{
 		config:   config,
+		buf:      &buffer.BlockBuffer{},
 		imaState: &imaadpcm.EncodeState{},
 	}
 }
@@ -75,43 +77,25 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		data = g711.EncodePCMA(data, e.config.ByteOrder)
 	case media.CodecMSADPCM:
 		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels)
-		e.buffer = append(e.buffer, data...)
-		numBlocks := len(e.buffer) / bytesPerBlock
-		if numBlocks == 0 {
+		e.buf.Append(data)
+		toEncode := e.buf.TakeBlocks(bytesPerBlock)
+		if toEncode == nil {
 			return nil
 		}
-		toEncode := e.buffer[:numBlocks*bytesPerBlock]
 		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder)
 		if err != nil {
 			return err
 		}
-		remaining := len(e.buffer) - numBlocks*bytesPerBlock
-		if remaining > 0 {
-			newBuf := make([]byte, remaining)
-			copy(newBuf, e.buffer[numBlocks*bytesPerBlock:])
-			e.buffer = newBuf
-		} else {
-			e.buffer = nil
-		}
 	case media.CodecIMAADPCM:
 		bytesPerBlock := imaadpcm.BytesPerPCMBlock(e.lastChannels)
-		e.buffer = append(e.buffer, data...)
-		numBlocks := len(e.buffer) / bytesPerBlock
-		if numBlocks == 0 {
+		e.buf.Append(data)
+		toEncode := e.buf.TakeBlocks(bytesPerBlock)
+		if toEncode == nil {
 			return nil
 		}
-		toEncode := e.buffer[:numBlocks*bytesPerBlock]
 		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder, e.imaState)
 		if err != nil {
 			return err
-		}
-		remaining := len(e.buffer) - numBlocks*bytesPerBlock
-		if remaining > 0 {
-			newBuf := make([]byte, remaining)
-			copy(newBuf, e.buffer[numBlocks*bytesPerBlock:])
-			e.buffer = newBuf
-		} else {
-			e.buffer = nil
 		}
 	}
 
@@ -141,14 +125,15 @@ func (e *Encoder) ReceivePacket() (*media.Packet, error) {
 
 func (e *Encoder) Flush() error {
 	e.flushed = true
-	if len(e.buffer) > 0 {
+	remains := e.buf.TakeAll()
+	if len(remains) > 0 {
 		var data []byte
 		var err error
 		switch e.config.CodecID {
 		case media.CodecMSADPCM:
-			data, err = msadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder)
+			data, err = msadpcm.Encode(remains, e.lastChannels, e.config.ByteOrder)
 		case media.CodecIMAADPCM:
-			data, err = imaadpcm.Encode(e.buffer, e.lastChannels, e.config.ByteOrder, e.imaState)
+			data, err = imaadpcm.Encode(remains, e.lastChannels, e.config.ByteOrder, e.imaState)
 		}
 		if err != nil {
 			return err
@@ -163,7 +148,6 @@ func (e *Encoder) Flush() error {
 			pkt.DTS = media.Dts(e.lastPts)
 			e.pendingQueue = append(e.pendingQueue, pkt)
 		}
-		e.buffer = nil
 	}
 	return nil
 }
