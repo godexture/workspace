@@ -39,7 +39,7 @@ type ConversionSpec struct {
 	DemuxConfig       registry.Configuration
 	SelectInputStream func(streams []media.StreamInfo) (media.StreamInfo, error)
 
-	DecodeConfig        registry.Configuration
+	DecodeConfig registry.Configuration
 
 	TargetCodec  media.CodecID
 	EncodeConfig registry.Configuration
