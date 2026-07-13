@@ -1,23 +1,13 @@
 package internal
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
-)
-
-const (
-	flacMarker = "fLaC"
-
-	metadataTypeStreamInfo = 0
-	streamInfoLength       = 34
-
-	streamInfoMetadataKey = "flac.streaminfo"
-	maxFLACChannels       = 8
 )
 
 type DecoderConfig struct {
@@ -37,7 +27,7 @@ func DefaultDecoderConfig() DecoderConfig { return DecoderConfig{} }
 
 func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
 	config := DefaultDecoderConfig()
-	if raw, ok := stream.Metadata.GetRaw(streamInfoMetadataKey); ok && len(raw) > 0 {
+	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
 		config.StreamInfo = append([]byte(nil), raw[0]...)
 	}
 	if stream.Audio.SampleRate > 0 {
@@ -62,16 +52,7 @@ type Decoder struct {
 	flushed   bool
 }
 
-type streamInfo struct {
-	minBlockSize  uint16
-	maxBlockSize  uint16
-	minFrameSize  uint32
-	maxFrameSize  uint32
-	sampleRate    int
-	channels      int
-	bitsPerSample int
-	totalSamples  uint64
-}
+type streamInfo = streaminfo.StreamInfo
 
 type frameHeader struct {
 	blockSize         int
@@ -90,7 +71,7 @@ type decodedFrame struct {
 func NewDecoder(config DecoderConfig) *Decoder {
 	decoder := &Decoder{config: config}
 	if len(config.StreamInfo) > 0 {
-		info, err := parseStreamInfo(config.StreamInfo)
+		info, err := streaminfo.Parse(config.StreamInfo)
 		if err != nil {
 			decoder.configErr = err
 		} else {
@@ -99,7 +80,7 @@ func NewDecoder(config DecoderConfig) *Decoder {
 		}
 	} else if config.SampleRate > 0 || config.Channels > 0 || config.BitsPerSample > 0 {
 		decoder.info = streamInfoFromConfig(config)
-		if err := validateStreamInfo(decoder.info); err != nil {
+		if err := streaminfo.Validate(decoder.info); err != nil {
 			decoder.configErr = err
 		} else {
 			decoder.parsed = true
@@ -181,7 +162,7 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 	if len(d.buffer) < 4 {
 		return 0, io.ErrUnexpectedEOF
 	}
-	if string(d.buffer[:4]) != flacMarker {
+	if string(d.buffer[:4]) != streaminfo.Marker {
 		return 0, errors.New("not a native FLAC stream")
 	}
 
@@ -191,23 +172,22 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 		if len(d.buffer)-offset < 4 {
 			return 0, io.ErrUnexpectedEOF
 		}
-		header := d.buffer[offset]
-		isLast := header&0x80 != 0
-		blockType := header & 0x7f
-		length := int(d.buffer[offset+1])<<16 | int(d.buffer[offset+2])<<8 | int(d.buffer[offset+3])
+		var header [4]byte
+		copy(header[:], d.buffer[offset:offset+4])
+		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
 		offset += 4
 		if len(d.buffer)-offset < length {
 			return 0, io.ErrUnexpectedEOF
 		}
 
-		if blockType == metadataTypeStreamInfo {
+		if blockType == streaminfo.MetadataTypeStreamInfo {
 			if seenStreamInfo {
 				return 0, errors.New("duplicate FLAC STREAMINFO block")
 			}
-			if length != streamInfoLength {
+			if length != streaminfo.Length {
 				return 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
 			}
-			info, err := parseStreamInfo(d.buffer[offset : offset+length])
+			info, err := streaminfo.Parse(d.buffer[offset : offset+length])
 			if err != nil {
 				return 0, err
 			}
@@ -229,60 +209,24 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 	return offset, nil
 }
 
-func parseStreamInfo(data []byte) (streamInfo, error) {
-	if len(data) != streamInfoLength {
-		return streamInfo{}, fmt.Errorf("invalid STREAMINFO length: %d", len(data))
-	}
-	info := streamInfo{
-		minBlockSize:  binary.BigEndian.Uint16(data[0:2]),
-		maxBlockSize:  binary.BigEndian.Uint16(data[2:4]),
-		minFrameSize:  uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6]),
-		maxFrameSize:  uint32(data[7])<<16 | uint32(data[8])<<8 | uint32(data[9]),
-		sampleRate:    int(data[10])<<12 | int(data[11])<<4 | int(data[12]>>4),
-		channels:      int((data[12]>>1)&0x07) + 1,
-		bitsPerSample: int(((uint16(data[12])&0x01)<<4)|uint16(data[13]>>4)) + 1,
-		totalSamples:  (uint64(data[13]&0x0f) << 32) | uint64(binary.BigEndian.Uint32(data[14:18])),
-	}
-	if err := validateStreamInfo(info); err != nil {
-		return streamInfo{}, err
-	}
-	return info, nil
-}
-
 func streamInfoFromConfig(config DecoderConfig) streamInfo {
 	info := streamInfo{
-		minBlockSize:  1,
-		maxBlockSize:  65535,
-		sampleRate:    config.SampleRate,
-		channels:      config.Channels,
-		bitsPerSample: config.BitsPerSample,
+		MinBlockSize:  1,
+		MaxBlockSize:  65535,
+		SampleRate:    config.SampleRate,
+		Channels:      config.Channels,
+		BitsPerSample: config.BitsPerSample,
 	}
-	if info.sampleRate <= 0 {
-		info.sampleRate = 44100
+	if info.SampleRate <= 0 {
+		info.SampleRate = 44100
 	}
-	if info.channels <= 0 {
-		info.channels = 2
+	if info.Channels <= 0 {
+		info.Channels = 2
 	}
-	if info.bitsPerSample <= 0 {
-		info.bitsPerSample = 16
+	if info.BitsPerSample <= 0 {
+		info.BitsPerSample = 16
 	}
 	return info
-}
-
-func validateStreamInfo(info streamInfo) error {
-	if info.minBlockSize == 0 || info.maxBlockSize == 0 || info.minBlockSize > info.maxBlockSize {
-		return errors.New("invalid FLAC block size in STREAMINFO")
-	}
-	if info.sampleRate <= 0 {
-		return errors.New("invalid FLAC sample rate in STREAMINFO")
-	}
-	if info.channels <= 0 || info.channels > maxFLACChannels {
-		return fmt.Errorf("invalid FLAC channel count: %d", info.channels)
-	}
-	if info.bitsPerSample <= 0 || info.bitsPerSample > 32 {
-		return fmt.Errorf("unsupported FLAC bit depth: %d", info.bitsPerSample)
-	}
-	return nil
 }
 
 func bitDepthFromSampleFormat(format media.SampleFormat) int {
