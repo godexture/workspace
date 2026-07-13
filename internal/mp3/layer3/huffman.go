@@ -1,7 +1,7 @@
 package layer3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
+	"github.com/godexture/sdk/bits"
 )
 
 // linearize calculates power of 4/3 for the given value
@@ -24,22 +24,15 @@ func linearize(value int) float32 {
 }
 
 // HuffmanDecode performs Huffman decoding for a granule.
-func HuffmanDecode(samples []float32, bitReader *bits.BitReader, granule *GranuleInfo, scaleFactors []float32, regionLimit int) {
+func HuffmanDecode(samples []float32, bitReader *bits.Reader, granule *GranuleInfo, scaleFactors []float32, regionLimit int) {
 	if len(samples) == 0 || bitReader == nil || granule == nil {
 		return
 	}
 
-	byteIndex := int(bitReader.Position / 8)
+	byteIndex := int(bitReader.Position() / 8)
 
-	readByte := func(i int) uint32 {
-		if i < 0 || i >= len(bitReader.Buffer) {
-			return 0
-		}
-		return uint32(bitReader.Buffer[i])
-	}
-
-	bitCache := (((readByte(byteIndex)<<8+readByte(byteIndex+1))<<8+readByte(byteIndex+2))<<8 + readByte(byteIndex+3)) << (uint32(bitReader.Position) & 7)
-	bitShift := int32((bitReader.Position & 7) - 8)
+	bitCache := (((bitReader.ByteAt(byteIndex)<<8+bitReader.ByteAt(byteIndex+1))<<8+bitReader.ByteAt(byteIndex+2))<<8 + bitReader.ByteAt(byteIndex+3)) << (uint32(bitReader.Position()) & 7)
+	bitShift := int32((bitReader.Position() & 7) - 8)
 	byteIndex += 4
 
 	peekBits := func(width int) uint32 {
@@ -51,7 +44,7 @@ func HuffmanDecode(samples []float32, bitReader *bits.BitReader, granule *Granul
 	}
 	checkBits := func() {
 		for bitShift >= 0 {
-			val := readByte(byteIndex)
+			val := bitReader.ByteAt(byteIndex)
 			byteIndex++
 			bitCache |= val << bitShift
 			bitShift -= 8
@@ -221,5 +214,5 @@ func HuffmanDecode(samples []float32, bitReader *bits.BitReader, granule *Granul
 		checkBits()
 	}
 
-	bitReader.Position = int32(regionLimit)
+	bitReader.Seek(int32(regionLimit))
 }

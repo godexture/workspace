@@ -1,9 +1,9 @@
 package layer12
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/codec-mp3/internal/mp3/domain"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/sdk/bits"
 )
 
 const (
@@ -19,7 +19,7 @@ const (
 )
 
 func Decode(
-	bitStreamFrame *bits.BitReader,
+	bitStreamFrame *bits.Reader,
 	channels int,
 	mpegLayer int,
 	h header.Header,
@@ -42,7 +42,7 @@ func Decode(
 			granule = [maxGranuleBufferSize]float32{}
 			pcmOffset += header.SamplesPerFrameLayer1 * channels
 		}
-		if bitStreamFrame.Position > bitStreamFrame.Limit {
+		if bitStreamFrame.Overrun() {
 			return domain.ErrBitStreamUnderflow
 		}
 	}

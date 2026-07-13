@@ -1,8 +1,8 @@
 package layer3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/sdk/bits"
 )
 
 func reorder(granule []float32, scratch []float32, scaleFactorBandTable []byte) {
@@ -40,7 +40,7 @@ func ldexpQ2(val float32, exponent int) float32 {
 	return val
 }
 
-func readScaleFactors(scaleFactors []byte, intensityStereoPosition []byte, scaleFactorSize []byte, scaleFactorCount []byte, bitReader *bits.BitReader, scaleFactorSelectionInfo int) {
+func readScaleFactors(scaleFactors []byte, intensityStereoPosition []byte, scaleFactorSize []byte, scaleFactorCount []byte, bitReader *bits.Reader, scaleFactorSelectionInfo int) {
 	scaleFactorIndex := 0
 	intensityStereoIndex := 0
 	partitionIndex := 0
@@ -61,7 +61,7 @@ func readScaleFactors(scaleFactors []byte, intensityStereoPosition []byte, scale
 					maxScaleFactor = (1 << bitLength) - 1
 				}
 				for k := 0; k < partitionSize; k++ {
-					scfValue := int(bitReader.GetBits(bitLength))
+					scfValue := int(bitReader.Bits32(uint8(bitLength)))
 					if scfValue == maxScaleFactor {
 						intensityStereoPosition[intensityStereoIndex+k] = 255
 					} else {
@@ -89,7 +89,7 @@ var scaleFactorBandPartitionSizes = [3][28]byte{
 var mpeg1CompressDecodeTable = [16]byte{0, 1, 2, 3, 12, 5, 6, 7, 9, 10, 11, 13, 14, 15, 18, 19}
 var mpeg2Moduli = [24]byte{5, 5, 4, 4, 5, 5, 4, 1, 4, 3, 1, 1, 5, 6, 6, 1, 4, 4, 4, 1, 4, 3, 1, 1}
 
-func DecodeScaleFactors(h header.Header, intensityStereoPosition []byte, bitReader *bits.BitReader, granule *GranuleInfo, scaleFactors []float32, channelIndex int) {
+func DecodeScaleFactors(h header.Header, intensityStereoPosition []byte, bitReader *bits.Reader, granule *GranuleInfo, scaleFactors []float32, channelIndex int) {
 	partitionIndex := 0
 	if granule.ShortScaleFactorBandCount != 0 {
 		partitionIndex += 1
