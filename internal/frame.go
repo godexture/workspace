@@ -4,13 +4,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/bits"
 )
 
 func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
-	reader := newBitReader(data)
+	reader := bits.New(data)
 	header, err := readFrameHeader(reader, info)
 	if err != nil {
 		return decodedFrame{}, err
@@ -43,54 +45,56 @@ func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
 
 	decorrelate(samples, header.channelAssignment)
 
-	reader.alignByte()
-	if _, err := reader.readBits(16); err != nil {
-		return decodedFrame{}, err
+	reader.SkipToByte()
+	reader.Bits64(16) // CRC-16, not validated
+
+	if reader.Overrun() {
+		return decodedFrame{}, io.ErrUnexpectedEOF
 	}
 
 	return decodedFrame{
 		header:  header,
 		samples: samples,
-		bytes:   reader.bytePos(),
+		bytes:   reader.BytePos(),
 	}, nil
 }
 
-func readFrameHeader(r *bitReader, info streamInfo) (frameHeader, error) {
-	sync, err := r.readBits(14)
+func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
+	sync, err := r.ReadBits64(14)
 	if err != nil {
 		return frameHeader{}, err
 	}
 	if sync != 0x3ffe {
 		return frameHeader{}, errors.New("invalid FLAC frame sync")
 	}
-	reserved, err := r.readBits(1)
+	reserved, err := r.ReadBits64(1)
 	if err != nil {
 		return frameHeader{}, err
 	}
 	if reserved != 0 {
 		return frameHeader{}, errors.New("invalid FLAC reserved frame header bit")
 	}
-	if _, err := r.readBits(1); err != nil { // blocking strategy
+	if _, err := r.ReadBits64(1); err != nil { // blocking strategy
 		return frameHeader{}, err
 	}
 
-	blockSizeCode, err := r.readBits(4)
+	blockSizeCode, err := r.ReadBits64(4)
 	if err != nil {
 		return frameHeader{}, err
 	}
-	sampleRateCode, err := r.readBits(4)
+	sampleRateCode, err := r.ReadBits64(4)
 	if err != nil {
 		return frameHeader{}, err
 	}
-	channelAssignment, err := r.readBits(4)
+	channelAssignment, err := r.ReadBits64(4)
 	if err != nil {
 		return frameHeader{}, err
 	}
-	bitDepthCode, err := r.readBits(3)
+	bitDepthCode, err := r.ReadBits64(3)
 	if err != nil {
 		return frameHeader{}, err
 	}
-	reserved, err = r.readBits(1)
+	reserved, err = r.ReadBits64(1)
 	if err != nil {
 		return frameHeader{}, err
 	}
@@ -119,7 +123,7 @@ func readFrameHeader(r *bitReader, info streamInfo) (frameHeader, error) {
 		return frameHeader{}, err
 	}
 
-	if _, err := r.readBits(8); err != nil { // CRC-8, currently not validated
+	if _, err := r.ReadBits64(8); err != nil { // CRC-8, currently not validated
 		return frameHeader{}, err
 	}
 
@@ -132,8 +136,8 @@ func readFrameHeader(r *bitReader, info streamInfo) (frameHeader, error) {
 	}, nil
 }
 
-func readUTF8CodedNumber(r *bitReader) (uint64, error) {
-	first, err := r.readByteAligned()
+func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
+	first, err := r.ReadByte()
 	if err != nil {
 		return 0, err
 	}
@@ -153,7 +157,7 @@ func readUTF8CodedNumber(r *bitReader) (uint64, error) {
 
 	value := uint64(first & (0xff >> (length + 1)))
 	for i := 1; i < length; i++ {
-		b, err := r.readByteAligned()
+		b, err := r.ReadByte()
 		if err != nil {
 			return 0, err
 		}
@@ -165,7 +169,7 @@ func readUTF8CodedNumber(r *bitReader) (uint64, error) {
 	return value, nil
 }
 
-func decodeBlockSize(r *bitReader, code uint8, info streamInfo) (int, error) {
+func decodeBlockSize(r *bits.Reader, code uint8, info streamInfo) (int, error) {
 	switch code {
 	case 0:
 		return 0, errors.New("reserved FLAC block size code")
@@ -174,10 +178,10 @@ func decodeBlockSize(r *bitReader, code uint8, info streamInfo) (int, error) {
 	case 2, 3, 4, 5:
 		return 576 << (code - 2), nil
 	case 6:
-		value, err := r.readBits(8)
+		value, err := r.ReadBits64(8)
 		return int(value) + 1, err
 	case 7:
-		value, err := r.readBits(16)
+		value, err := r.ReadBits64(16)
 		return int(value) + 1, err
 	case 8, 9, 10, 11, 12, 13, 14, 15:
 		return 256 << (code - 8), nil
@@ -186,7 +190,7 @@ func decodeBlockSize(r *bitReader, code uint8, info streamInfo) (int, error) {
 	}
 }
 
-func decodeSampleRate(r *bitReader, code uint8, info streamInfo) (int, error) {
+func decodeSampleRate(r *bits.Reader, code uint8, info streamInfo) (int, error) {
 	switch code {
 	case 0:
 		return info.SampleRate, nil
@@ -213,13 +217,13 @@ func decodeSampleRate(r *bitReader, code uint8, info streamInfo) (int, error) {
 	case 11:
 		return 96000, nil
 	case 12:
-		value, err := r.readBits(8)
+		value, err := r.ReadBits64(8)
 		return int(value) * 1000, err
 	case 13:
-		value, err := r.readBits(16)
+		value, err := r.ReadBits64(16)
 		return int(value), err
 	case 14:
-		value, err := r.readBits(16)
+		value, err := r.ReadBits64(16)
 		return int(value) * 10, err
 	default:
 		return 0, errors.New("reserved FLAC sample rate code")
@@ -258,26 +262,26 @@ func decodeChannelCount(channelAssignment uint8, info streamInfo) (int, error) {
 	}
 }
 
-func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
-	zero, err := r.readBits(1)
+func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error) {
+	zero, err := r.ReadBits64(1)
 	if err != nil {
 		return nil, err
 	}
 	if zero != 0 {
 		return nil, errors.New("invalid FLAC subframe header")
 	}
-	typeCode, err := r.readBits(6)
+	typeCode, err := r.ReadBits64(6)
 	if err != nil {
 		return nil, err
 	}
-	wastedFlag, err := r.readBits(1)
+	wastedFlag, err := r.ReadBits64(1)
 	if err != nil {
 		return nil, err
 	}
 
 	wastedBits := uint64(0)
 	if wastedFlag != 0 {
-		wastedBits, err = r.readUnary()
+		wastedBits, err = r.ReadUnary64()
 		if err != nil {
 			return nil, err
 		}
@@ -291,7 +295,7 @@ func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
 	samples := make([]int32, blockSize)
 	switch {
 	case typeCode == 0:
-		value, err := r.readSigned(uint8(bitsPerSample))
+		value, err := r.ReadSigned32(uint8(bitsPerSample))
 		if err != nil {
 			return nil, err
 		}
@@ -301,11 +305,7 @@ func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
 
 	case typeCode == 1:
 		for i := range samples {
-			value, err := r.readSigned(uint8(bitsPerSample))
-			if err != nil {
-				return nil, err
-			}
-			samples[i] = value
+			samples[i] = r.Signed32(uint8(bitsPerSample))
 		}
 
 	case typeCode >= 8 && typeCode <= 12:
@@ -329,7 +329,7 @@ func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
 		if err := readWarmupSamples(r, samples, order, bitsPerSample); err != nil {
 			return nil, err
 		}
-		precisionRaw, err := r.readBits(4)
+		precisionRaw, err := r.ReadBits64(4)
 		if err != nil {
 			return nil, err
 		}
@@ -337,14 +337,14 @@ func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
 			return nil, errors.New("invalid FLAC LPC coefficient precision")
 		}
 		precision := int(precisionRaw) + 1
-		shiftRaw, err := r.readBits(5)
+		shiftRaw, err := r.ReadBits64(5)
 		if err != nil {
 			return nil, err
 		}
 		shift := signExtend(shiftRaw, 5)
 		coefficients := make([]int32, order)
 		for i := range coefficients {
-			coeff, err := r.readSigned(uint8(precision))
+			coeff, err := r.ReadSigned32(uint8(precision))
 			if err != nil {
 				return nil, err
 			}
@@ -379,12 +379,12 @@ func readSubframe(r *bitReader, blockSize, bitsPerSample int) ([]int32, error) {
 	return samples, nil
 }
 
-func readWarmupSamples(r *bitReader, samples []int32, order, bitsPerSample int) error {
+func readWarmupSamples(r *bits.Reader, samples []int32, order, bitsPerSample int) error {
 	if order > len(samples) {
 		return errors.New("FLAC predictor order exceeds block size")
 	}
 	for i := 0; i < order; i++ {
-		value, err := r.readSigned(uint8(bitsPerSample))
+		value, err := r.ReadSigned32(uint8(bitsPerSample))
 		if err != nil {
 			return err
 		}
@@ -393,8 +393,14 @@ func readWarmupSamples(r *bitReader, samples []int32, order, bitsPerSample int) 
 	return nil
 }
 
-func readResidual(r *bitReader, blockSize, predictorOrder int) ([]int32, error) {
-	method, err := r.readBits(2)
+// readResidual reads a FLAC residual coding block. Structural validity
+// checks here (reserved coding method, partition math, decoded size) are
+// FLAC-spec requirements and always return an error. The per-sample reads
+// inside each partition are the hot path, so they use the Fast tier (no
+// per-call error); a truncated stream in that inner loop surfaces later via
+// Reader.Overrun() rather than aborting this function early.
+func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int32, error) {
+	method, err := r.ReadBits64(2)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +416,7 @@ func readResidual(r *bitReader, blockSize, predictorOrder int) ([]int32, error) 
 	default:
 		return nil, errors.New("reserved FLAC residual coding method")
 	}
-	partitionOrderRaw, err := r.readBits(4)
+	partitionOrderRaw, err := r.ReadBits64(4)
 	if err != nil {
 		return nil, err
 	}
@@ -432,31 +438,23 @@ func readResidual(r *bitReader, blockSize, predictorOrder int) ([]int32, error) 
 			return nil, errors.New("FLAC residual partition smaller than predictor order")
 		}
 
-		param, err := r.readBits(paramBits)
+		param, err := r.ReadBits64(paramBits)
 		if err != nil {
 			return nil, err
 		}
 		if param == escape {
-			rawBits, err := r.readBits(5)
+			rawBits, err := r.ReadBits64(5)
 			if err != nil {
 				return nil, err
 			}
 			for i := 0; i < samplesInPartition; i++ {
-				value, err := r.readSigned(uint8(rawBits))
-				if err != nil {
-					return nil, err
-				}
-				residual = append(residual, value)
+				residual = append(residual, r.Signed32(uint8(rawBits)))
 			}
 			continue
 		}
 
 		for i := 0; i < samplesInPartition; i++ {
-			value, err := readRiceSigned(r, uint8(param))
-			if err != nil {
-				return nil, err
-			}
-			residual = append(residual, value)
+			residual = append(residual, readRiceSigned(r, uint8(param)))
 		}
 	}
 	if len(residual) != residualCount {
@@ -465,20 +463,18 @@ func readResidual(r *bitReader, blockSize, predictorOrder int) ([]int32, error) 
 	return residual, nil
 }
 
-func readRiceSigned(r *bitReader, param uint8) (int32, error) {
-	quotient, err := r.readUnary()
-	if err != nil {
-		return 0, err
-	}
-	remainder, err := r.readBits(param)
-	if err != nil {
-		return 0, err
-	}
+// readRiceSigned decodes one Rice-coded residual sample. It is called per
+// sample (potentially thousands of times per frame), so it uses the Fast
+// tier: a truncated stream here is detected in aggregate via Overrun()
+// rather than per call.
+func readRiceSigned(r *bits.Reader, param uint8) int32 {
+	quotient := r.Unary64()
+	remainder := r.Bits64(param)
 	unsigned := (quotient << param) | remainder
 	if unsigned&1 == 0 {
-		return int32(unsigned >> 1), nil
+		return int32(unsigned >> 1)
 	}
-	return -int32((unsigned >> 1) + 1), nil
+	return -int32((unsigned >> 1) + 1)
 }
 
 func fixedPrediction(samples []int32, index, order int) int32 {
