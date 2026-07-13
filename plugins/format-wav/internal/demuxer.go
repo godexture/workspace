@@ -1,36 +1,20 @@
 package internal
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	mp3header "github.com/godexture/format-mp3/header"
 )
 
 const (
-	wavTagRIFF = "RIFF"
-	wavTagWAVE = "WAVE"
-	wavTagFmt  = "fmt "
-	wavTagData = "data"
-
-	wavAudioPCM   = 1
-	wavAudioIEEEF = 3
-	wavAudioALaw  = 6
-	wavAudioULaw  = 7
+	wavPacketChunkSize = 32768
+	wavMP3ProbeBytes   = 8192
 )
-
-type wavHeader struct {
-	audioFormat uint16
-	channels    uint16
-	sampleRate  uint32
-	bitsPerSamp uint16
-
-	dataOffset int64
-	dataSize   uint32
-}
 
 type Demuxer struct {
 	r io.ReadSeeker
@@ -40,6 +24,9 @@ type Demuxer struct {
 	meta       metadata.Bundle
 	parsed     bool
 	sent       bool
+	bytesRead  uint64
+
+	mp3FreeFormatBytes int
 }
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
@@ -52,35 +39,40 @@ func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
 
 func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	if !d.parsed {
-		header, err := parseHeader(d.r)
+		d.meta = *metadata.NewBundle()
+		header, err := parseHeader(d.r, &d.meta)
 		if err != nil {
 			return nil, metadata.Bundle{}, err
 		}
 
 		d.header = header
-		codec := media.CodecLPCM
-		switch header.audioFormat {
-		case wavAudioALaw:
-			codec = media.CodecPCMA
-		case wavAudioULaw:
-			codec = media.CodecPCMU
+		audioFormat := wavResolvedAudioFormat(header)
+		codec, ok := codecFromWAVAudioFormat(audioFormat)
+		if !ok {
+			return nil, metadata.Bundle{}, fmt.Errorf("unsupported wav audio format tag: %d", audioFormat)
+		}
+
+		var layout media.ChannelLayout
+		if header.audioFormat == wavAudioExtensible && header.channelMask != 0 {
+			layout = media.NewNativeLayout(media.ChannelPosition(header.channelMask))
+		} else {
+			layout = layoutFromChannelCount(int(header.channels))
 		}
 
 		d.streamInfo = media.StreamInfo{
 			Index:     0,
 			Type:      media.MediaAudio,
 			IsDefault: true,
-			Metadata:  *metadata.NewBundle(),
+			Metadata:  d.meta,
 			MediaAttributes: media.MediaAttributes{
 				Codec: codec,
 				Audio: media.AudioAttributes{
 					SampleRate:    int(header.sampleRate),
-					Format:        sampleFormatFromWAV(header.audioFormat, header.bitsPerSamp),
-					ChannelLayout: layoutFromChannelCount(int(header.channels)),
+					Format:        sampleFormatFromWAV(audioFormat, header.bitsPerSample),
+					ChannelLayout: layout,
 				},
 			},
 		}
-		d.meta = *metadata.NewBundle()
 		d.parsed = true
 	}
 
@@ -94,176 +86,235 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		}
 	}
 
-	if d.sent {
+	if uint64(d.header.dataSize) > uint64(int(^uint(0)>>1)) {
+		return nil, 0, errors.New("wav data chunk is too large for memory")
+	}
+
+	if d.bytesRead >= d.header.dataSize {
 		return nil, 0, io.EOF
 	}
 
-	if _, err := d.r.Seek(d.header.dataOffset, io.SeekStart); err != nil {
-		return nil, 0, fmt.Errorf("seek data chunk: %w", err)
+	if !d.sent {
+		if _, err := d.r.Seek(d.header.dataOffset, io.SeekStart); err != nil {
+			return nil, 0, fmt.Errorf("seek data chunk: %w", err)
+		}
+		d.sent = true
 	}
 
-	if uint64(d.header.dataSize) > uint64(int(^uint(0)>>1)) {
-		return nil, 0, errors.New("wav data chunk is too large")
+	if d.streamInfo.Codec == media.CodecMP3 {
+		return d.readMP3Packet()
 	}
 
-	packet := media.NewPacket(int(d.header.dataSize))
-	if _, err := io.ReadFull(d.r, packet.Data()); err != nil {
+	return d.readRawPacket()
+}
+
+func (d *Demuxer) readRawPacket() (*media.Packet, int, error) {
+	chunkSize := uint64(wavPacketChunkSize)
+	if d.header.blockAlign > 0 {
+		if d.samplesPerBlock() > 1 {
+			chunkSize = uint64(d.header.blockAlign)
+		} else {
+			chunkSize = (chunkSize / uint64(d.header.blockAlign)) * uint64(d.header.blockAlign)
+		}
+		if chunkSize == 0 {
+			chunkSize = uint64(d.header.blockAlign)
+		}
+	}
+
+	remaining := d.header.dataSize - d.bytesRead
+	if chunkSize > remaining {
+		chunkSize = remaining
+	}
+
+	packet := media.NewPacket(int(chunkSize))
+	n, err := io.ReadFull(d.r, packet.Data())
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		packet.Release()
 		return nil, 0, fmt.Errorf("read wav data: %w", err)
 	}
 
+	if n == 0 {
+		packet.Release()
+		return nil, 0, io.EOF
+	}
+
+	if n < int(chunkSize) {
+		p2 := media.NewPacket(n)
+		copy(p2.Data(), packet.Data()[:n])
+		packet.Release()
+		packet = p2
+	}
+
+	d.bytesRead += uint64(n)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 
-	d.sent = true
 	return packet, 0, nil
 }
 
-func parseHeader(r io.ReadSeeker) (wavHeader, error) {
-	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return wavHeader{}, err
+func (d *Demuxer) readMP3Packet() (*media.Packet, int, error) {
+	remaining := d.header.dataSize - d.bytesRead
+	probeSize := remaining
+	if probeSize > wavMP3ProbeBytes {
+		probeSize = wavMP3ProbeBytes
 	}
 
-	var riff [12]byte
-	if _, err := io.ReadFull(r, riff[:]); err != nil {
-		return wavHeader{}, fmt.Errorf("read riff header: %w", err)
+	probe := make([]byte, int(probeSize))
+	n, err := io.ReadFull(d.r, probe)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, 0, fmt.Errorf("read wav mp3 data: %w", err)
+	}
+	if n == 0 {
+		return nil, 0, io.EOF
+	}
+	probe = probe[:n]
+
+	offset, frameBytes, freeFormatBytes, found := findMP3Frame(probe, d.mp3FreeFormatBytes)
+	if !found {
+		return nil, 0, errors.New("wav mp3 data does not contain a complete mp3 frame")
+	}
+	if offset+frameBytes > len(probe) {
+		return nil, 0, errors.New("wav mp3 frame exceeds probe window")
 	}
 
-	if string(riff[0:4]) != wavTagRIFF || string(riff[8:12]) != wavTagWAVE {
-		return wavHeader{}, errors.New("not a wav file")
-	}
-
-	var header wavHeader
-	for {
-		var chunkID [4]byte
-		if _, err := io.ReadFull(r, chunkID[:]); err != nil {
-			return wavHeader{}, fmt.Errorf("read chunk id: %w", err)
-		}
-
-		var chunkSize uint32
-		if err := binary.Read(r, binary.LittleEndian, &chunkSize); err != nil {
-			return wavHeader{}, fmt.Errorf("read chunk size: %w", err)
-		}
-
-		chunkStart, err := r.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return wavHeader{}, err
-		}
-
-		switch string(chunkID[:]) {
-		case wavTagFmt:
-			if chunkSize < 16 {
-				return wavHeader{}, errors.New("wav fmt chunk too small")
-			}
-
-			buf := make([]byte, chunkSize)
-			if _, err := io.ReadFull(r, buf); err != nil {
-				return wavHeader{}, fmt.Errorf("read fmt chunk: %w", err)
-			}
-
-			header.audioFormat = binary.LittleEndian.Uint16(buf[0:2])
-			header.channels = binary.LittleEndian.Uint16(buf[2:4])
-			header.sampleRate = binary.LittleEndian.Uint32(buf[4:8])
-			header.bitsPerSamp = binary.LittleEndian.Uint16(buf[14:16])
-
-		case wavTagData:
-			header.dataOffset = chunkStart
-			header.dataSize = chunkSize
-			if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-				return wavHeader{}, fmt.Errorf("skip data chunk: %w", err)
-			}
-
-		default:
-			if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-				return wavHeader{}, fmt.Errorf("skip chunk %q: %w", chunkID, err)
-			}
-		}
-
-		if chunkSize%2 == 1 {
-			if _, err := r.Seek(1, io.SeekCurrent); err != nil {
-				return wavHeader{}, err
-			}
-		}
-
-		if header.audioFormat != 0 && header.dataOffset != 0 {
-			break
+	d.mp3FreeFormatBytes = freeFormatBytes
+	consumed := offset + frameBytes
+	if unread := len(probe) - consumed; unread > 0 {
+		if _, err := d.r.Seek(int64(-unread), io.SeekCurrent); err != nil {
+			return nil, 0, fmt.Errorf("rewind wav mp3 probe: %w", err)
 		}
 	}
 
-	if header.channels == 0 || header.sampleRate == 0 || header.bitsPerSamp == 0 {
-		return wavHeader{}, errors.New("wav header missing audio parameters")
-	}
+	packet := media.NewPacket(frameBytes)
+	copy(packet.Data(), probe[offset:consumed])
+	d.bytesRead += uint64(consumed)
+	packet.MediaType = media.MediaAudio
+	packet.StreamIndex = 0
 
-	if _, err := sampleFormatFromHeader(header.audioFormat, header.bitsPerSamp); err != nil {
-		return wavHeader{}, err
-	}
-
-	return header, nil
+	return packet, 0, nil
 }
 
-func sampleFormatFromHeader(audioFormat, bitsPerSample uint16) (media.SampleFormat, error) {
+func findMP3Frame(data []byte, freeFormatBytes int) (offset int, frameBytes int, newFreeFormatBytes int, found bool) {
+	for i := 0; i+4 <= len(data); i++ {
+		h, err := mp3header.ParseHeader(data[i : i+4])
+		if err != nil || !h.IsValid() {
+			continue
+		}
+
+		currentFreeFormatBytes := freeFormatBytes
+		frameBytes = h.FrameBytes(currentFreeFormatBytes)
+		frameAndPadding := frameBytes + h.Padding()
+
+		for step := 4; frameBytes == 0 && step < 2304 && i+2*step <= len(data)-4; step++ {
+			nextHeader, err := mp3header.ParseHeader(data[i+step : i+step+4])
+			if err != nil || !h.Compare(nextHeader) {
+				continue
+			}
+
+			foundFrameBytes := step - h.Padding()
+			nextFrameBytes := foundFrameBytes + nextHeader.Padding()
+			if i+step+nextFrameBytes+4 > len(data) {
+				continue
+			}
+
+			nextHeader2, err := mp3header.ParseHeader(data[i+step+nextFrameBytes : i+step+nextFrameBytes+4])
+			if err != nil || !h.Compare(nextHeader2) {
+				continue
+			}
+
+			frameAndPadding = step
+			frameBytes = foundFrameBytes
+			currentFreeFormatBytes = foundFrameBytes
+		}
+
+		if frameBytes == 0 || i+frameAndPadding > len(data) {
+			continue
+		}
+
+		if matchMP3Frames(data[i:], h, currentFreeFormatBytes) || (i == 0 && frameAndPadding == len(data)) {
+			return i, frameAndPadding, currentFreeFormatBytes, true
+		}
+	}
+
+	return len(data), 0, 0, false
+}
+
+func matchMP3Frames(data []byte, first mp3header.Header, freeFormatBytes int) bool {
+	byteIndex := 0
+	matchCount := 0
+	current := first
+
+	for ; matchCount < 10; matchCount++ {
+		byteIndex += current.FrameBytes(freeFormatBytes) + current.Padding()
+		if byteIndex+4 > len(data) {
+			return matchCount > 0
+		}
+
+		next, err := mp3header.ParseHeader(data[byteIndex : byteIndex+4])
+		if err != nil || !first.Compare(next) {
+			return false
+		}
+		current = next
+	}
+
+	return true
+}
+
+func (d *Demuxer) Seek(offset time.Duration) error {
+	if !d.parsed {
+		if _, _, err := d.Analyze(); err != nil {
+			return err
+		}
+	}
+
+	samplesPerBlock := int64(d.samplesPerBlock())
+	targetSample := int64(offset) * int64(d.header.sampleRate) / int64(time.Second)
+
+	var targetByteOffset int64
+	if samplesPerBlock > 1 {
+		targetBlock := targetSample / samplesPerBlock
+		targetByteOffset = targetBlock * int64(d.header.blockAlign)
+	} else {
+		targetByteOffset = targetSample * int64(d.header.blockAlign)
+	}
+
+	if targetByteOffset > int64(d.header.dataSize) {
+		targetByteOffset = int64(d.header.dataSize)
+	}
+
+	newPos := d.header.dataOffset + targetByteOffset
+	if _, err := d.r.Seek(newPos, io.SeekStart); err != nil {
+		return fmt.Errorf("seek data chunk: %w", err)
+	}
+
+	d.bytesRead = uint64(targetByteOffset)
+	d.sent = true
+	d.mp3FreeFormatBytes = 0
+	return nil
+}
+
+func (d *Demuxer) samplesPerBlock() int {
+	audioFormat := wavResolvedAudioFormat(d.header)
+	channels := int(d.header.channels)
+	blockAlign := int(d.header.blockAlign)
+
 	switch audioFormat {
-	case wavAudioPCM:
-		switch bitsPerSample {
-		case 8:
-			return media.SampleFormatU8, nil
-		case 16:
-			return media.SampleFormatS16, nil
-		case 32:
-			return media.SampleFormatS32, nil
-		default:
-			return media.SampleFormatUnknown, fmt.Errorf("unsupported pcm bit depth: %d", bitsPerSample)
+	case wavAudioPCM, wavAudioIEEEFloat, wavAudioALaw, wavAudioULaw:
+		return 1
+	case wavAudioMSADPCM:
+		if channels == 1 {
+			return (blockAlign-7)*2 + 2
+		} else {
+			return (blockAlign-14)*1 + 2
 		}
-
-	case wavAudioIEEEF:
-		switch bitsPerSample {
-		case 32:
-			return media.SampleFormatF32, nil
-		case 64:
-			return media.SampleFormatF64, nil
-		default:
-			return media.SampleFormatUnknown, fmt.Errorf("unsupported float bit depth: %d", bitsPerSample)
+	case wavAudioIMAADPCM:
+		if channels > 0 {
+			return (blockAlign-4*channels)*2/channels + 1
 		}
-
-	case wavAudioALaw, wavAudioULaw:
-		if bitsPerSample != 8 {
-			return media.SampleFormatUnknown, fmt.Errorf("unsupported g711 bit depth: %d", bitsPerSample)
-		}
-		return media.SampleFormatU8, nil
-
+		return 1
+	case wavAudioGSM:
+		return 320
 	default:
-		return media.SampleFormatUnknown, fmt.Errorf("unsupported wav audio format tag: %d", audioFormat)
-	}
-}
-
-func sampleFormatFromWAV(audioFormat uint16, bitsPerSample uint16) media.SampleFormat {
-	format, err := sampleFormatFromHeader(audioFormat, bitsPerSample)
-	if err != nil {
-		return media.SampleFormatUnknown
-	}
-
-	return format
-}
-
-func layoutFromChannelCount(channels int) media.ChannelLayout {
-	switch channels {
-	case 1:
-		return media.LayoutMono1
-	case 2:
-		return media.LayoutStereo2_0
-	case 3:
-		return media.LayoutStereo3_0
-	case 4:
-		return media.LayoutQuad4_0
-	case 5:
-		return media.LayoutFront5_0
-	case 6:
-		return media.LayoutFront5_1
-	case 7:
-		return media.LayoutSide7_0
-	case 8:
-		return media.LayoutSurround7_1
-	default:
-		return media.NewUnspecified(channels)
+		return 1
 	}
 }

@@ -44,7 +44,7 @@ func main() {
 	spec := routing.ConversionSpec{
 		Input:       inputFile,
 		Output:      outputFile,
-		TargetCodec: media.CodecLPCM,
+		TargetCodec: media.CodecMSADPCM,
 		MuxConfig:   wav.Config{},
 	}
 

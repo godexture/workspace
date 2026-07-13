@@ -10,6 +10,7 @@ const (
 	// Interleaved
 	SampleFormatU8  SampleFormat = "u8"  // Unsigned 8-bit
 	SampleFormatS16 SampleFormat = "s16" // Signed 16-bit
+	SampleFormatS24 SampleFormat = "s24" // Signed 24-bit
 	SampleFormatS32 SampleFormat = "s32" // Signed 32-bit
 	SampleFormatF32 SampleFormat = "f32" // Float 32-bit
 	SampleFormatF64 SampleFormat = "f64" // Double 64-bit
@@ -17,6 +18,7 @@ const (
 	// Planar
 	SampleFormatU8P  SampleFormat = "u8p"  // Unsigned 8-bit
 	SampleFormatS16P SampleFormat = "s16p" // Signed 16-bit
+	SampleFormatS24P SampleFormat = "s24p" // Signed 24-bit
 	SampleFormatS32P SampleFormat = "s32p" // Signed 32-bit
 	SampleFormatF32P SampleFormat = "f32p" // Float 32-bit (recommended)
 	SampleFormatF64P SampleFormat = "f64p" // Double 64-bit
@@ -33,6 +35,8 @@ func (f SampleFormat) BytesPerSample() int {
 		return 1
 	case SampleFormatS16, SampleFormatS16P:
 		return 2
+	case SampleFormatS24, SampleFormatS24P:
+		return 3
 	case SampleFormatS32, SampleFormatF32, SampleFormatS32P, SampleFormatF32P:
 		return 4
 	case SampleFormatF64, SampleFormatF64P:

@@ -1,6 +1,8 @@
 package pcm
 
 import (
+	"encoding/binary"
+
 	internal "github.com/godexture/codec-pcm/internal"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
@@ -34,7 +36,7 @@ func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.
 		cfg.Format = format
 	}
 	if layout.ChannelCount() > 0 {
-		cfg.Layout = layout
+		cfg.ChannelLayout = layout
 	}
 	return cfg
 }
@@ -65,21 +67,30 @@ func init() {
 				pcmCapability{codec: media.CodecLPCM},
 				pcmCapability{codec: media.CodecPCMU},
 				pcmCapability{codec: media.CodecPCMA},
+				pcmCapability{codec: media.CodecMSADPCM},
+				pcmCapability{codec: media.CodecIMAADPCM},
 			},
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-				codecID := s.MediaAttributes.Codec
-				p.Codec = media.CodecLPCM
-				if codecID == media.CodecPCMU || codecID == media.CodecPCMA {
-					p.Audio.SampleRate = 8000
-					p.Audio.Format = media.SampleFormatS16
-					p.Audio.ChannelLayout = media.LayoutMono1
-				}
+				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
 				return p
 			},
 		},
-		Factory: func(cfg registry.Configuration) (node.Decoder, error) {
+		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
 			c := DefaultConfig()
+			if s.MediaAttributes.Codec != "" {
+				c.CodecID = s.MediaAttributes.Codec
+			}
+			if s.MediaAttributes.Audio.SampleRate > 0 {
+				c.SampleRate = s.MediaAttributes.Audio.SampleRate
+			}
+			if s.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+				c.Format = s.MediaAttributes.Audio.Format
+			}
+			if s.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
+				c.ChannelLayout = s.MediaAttributes.Audio.ChannelLayout
+			}
+
 			if cfg != nil {
 				if pcmCfg, ok := cfg.(Config); ok {
 					if pcmCfg.CodecID != "" {
@@ -91,8 +102,11 @@ func init() {
 					if pcmCfg.Format != media.SampleFormatUnknown {
 						c.Format = pcmCfg.Format
 					}
-					if pcmCfg.Layout.ChannelCount() > 0 {
-						c.Layout = pcmCfg.Layout
+					if pcmCfg.ChannelLayout.ChannelCount() > 0 {
+						c.ChannelLayout = pcmCfg.ChannelLayout
+					}
+					if pcmCfg.ByteOrder != nil {
+						c.ByteOrder = pcmCfg.ByteOrder
 					}
 				} else if pcmCfgPtr, ok := cfg.(*Config); ok && pcmCfgPtr != nil {
 					if pcmCfgPtr.CodecID != "" {
@@ -104,20 +118,23 @@ func init() {
 					if pcmCfgPtr.Format != media.SampleFormatUnknown {
 						c.Format = pcmCfgPtr.Format
 					}
-					if pcmCfgPtr.Layout.ChannelCount() > 0 {
-						c.Layout = pcmCfgPtr.Layout
+					if pcmCfgPtr.ChannelLayout.ChannelCount() > 0 {
+						c.ChannelLayout = pcmCfgPtr.ChannelLayout
+					}
+					if pcmCfgPtr.ByteOrder != nil {
+						c.ByteOrder = pcmCfgPtr.ByteOrder
 					}
 				}
 			}
 			// Set G.711 default sample rate & layout if not explicitly set
-			if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
-				if c.SampleRate == 48000 {
-					c.SampleRate = 8000
-				}
-				if c.Layout == media.LayoutStereo2_0 {
-					c.Layout = media.LayoutMono1
-				}
-			}
+			// if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
+			// 	if c.SampleRate == 48000 {
+			// 		c.SampleRate = 8000
+			// 	}
+			// 	if c.Layout == media.LayoutStereo2_0 {
+			// 		c.Layout = media.LayoutMono1
+			// 	}
+			// }
 			return engine.WrapDecoder(NewDecoderEngine(c)), nil
 		},
 	}); err != nil {
@@ -135,21 +152,33 @@ func init() {
 				pcmCapability{codec: media.CodecLPCM},
 				pcmCapability{codec: media.CodecPCMU},
 				pcmCapability{codec: media.CodecPCMA},
+				pcmCapability{codec: media.CodecMSADPCM},
+				pcmCapability{codec: media.CodecIMAADPCM},
 			},
 			TransformFunc: func(s media.StreamInfo) media.Profile {
 				return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 			},
 		},
 		Supports: func(codec media.CodecID) bool {
-			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA
+			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
-		Factory: func(cfg registry.Configuration) (node.Encoder, error) {
-			encCfg := EncoderConfig{CodecID: media.CodecLPCM}
+		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
+			encCfg := EncoderConfig{CodecID: targetCodec, ByteOrder: binary.LittleEndian}
 			if cfg != nil {
 				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
-					encCfg = pcmEncCfg
+					if pcmEncCfg.CodecID != "" {
+						encCfg.CodecID = pcmEncCfg.CodecID
+					}
+					if pcmEncCfg.ByteOrder != nil {
+						encCfg.ByteOrder = pcmEncCfg.ByteOrder
+					}
 				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
-					encCfg = *pcmEncCfgPtr
+					if pcmEncCfgPtr.CodecID != "" {
+						encCfg.CodecID = pcmEncCfgPtr.CodecID
+					}
+					if pcmEncCfgPtr.ByteOrder != nil {
+						encCfg.ByteOrder = pcmEncCfgPtr.ByteOrder
+					}
 				}
 			}
 			return engine.WrapEncoder(NewEncoderEngine(encCfg)), nil

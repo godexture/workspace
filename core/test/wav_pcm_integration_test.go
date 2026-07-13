@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	wav "github.com/godexture/format-wav"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/testutil"
 )
 
 func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
@@ -53,8 +54,9 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 			decoder := pcm.NewDecoderEngine(cfg)
 			encoder := pcm.NewEncoderEngine(pcm.EncoderConfig{})
 
-			var out bytes.Buffer
-			muxer := wav.NewMuxerEngine(&out)
+			f := testutil.NewBuffer(nil)
+
+			muxer := wav.NewMuxerEngine(f)
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}
@@ -98,8 +100,10 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 				t.Fatalf("WriteTrailer: %v", err)
 			}
 
-			if !bytes.Equal(input, out.Bytes()) {
-				t.Fatalf("integration roundtrip mismatch for %s: input=%d output=%d", e.Name(), len(input), len(out.Bytes()))
+			remuxed := f.Bytes()
+
+			if !bytes.Equal(input, remuxed) {
+				t.Fatalf("integration roundtrip mismatch for %s: input=%d output=%d", e.Name(), len(input), len(remuxed))
 			}
 		})
 	}

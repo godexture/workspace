@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/core/pipeline"
 	wav "github.com/godexture/format-wav"
 	eng "github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/testutil"
 )
 
 func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
@@ -55,8 +56,9 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 			decEngine := pcm.NewDecoderEngine(cfg)
 			encEngine := pcm.NewEncoderEngine(pcm.EncoderConfig{})
 
-			var out bytes.Buffer
-			muxEngine := wav.NewMuxerEngine(&out)
+			f := testutil.NewBuffer(nil)
+
+			muxEngine := wav.NewMuxerEngine(f)
 			if _, err := muxEngine.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}
@@ -85,8 +87,10 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("runner.Run: %v", err)
 			}
 
-			if !bytes.Equal(input, out.Bytes()) {
-				t.Fatalf("runner roundtrip mismatch for %s: input=%d output=%d", e.Name(), len(input), len(out.Bytes()))
+			remuxed := f.Bytes()
+
+			if !bytes.Equal(input, remuxed) {
+				t.Fatalf("runner roundtrip mismatch for %s: input=%d output=%d", e.Name(), len(input), len(remuxed))
 			}
 		})
 	}
