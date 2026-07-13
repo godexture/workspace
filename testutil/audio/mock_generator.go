@@ -37,6 +37,41 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 			}
 			binary.LittleEndian.PutUint16(plane[i*2:(i+1)*2], uint16(s16))
 		}
+	case media.SampleFormatS24:
+		for i, val := range pcm {
+			if val > 1.0 {
+				val = 1.0
+			} else if val < -1.0 {
+				val = -1.0
+			}
+			value := int32(val * 8388608.0)
+			if value > 8388607 {
+				value = 8388607
+			}
+			if value < -8388608 {
+				value = -8388608
+			}
+			offset := i * 3
+			plane[offset] = byte(value)
+			plane[offset+1] = byte(value >> 8)
+			plane[offset+2] = byte(value >> 16)
+		}
+	case media.SampleFormatS32:
+		for i, val := range pcm {
+			if val > 1.0 {
+				val = 1.0
+			} else if val < -1.0 {
+				val = -1.0
+			}
+			value := int64(val * 2147483648.0)
+			if value > 2147483647 {
+				value = 2147483647
+			}
+			if value < -2147483648 {
+				value = -2147483648
+			}
+			binary.LittleEndian.PutUint32(plane[i*4:(i+1)*4], uint32(int32(value)))
+		}
 	default:
 		return nil, fmt.Errorf("unsupported format for creation: %v", attrs.Format)
 	}
