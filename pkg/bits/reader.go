@@ -142,12 +142,22 @@ func (r *Reader) Unary64() uint64 {
 
 // Signed32 reads width bits (width in [1, 32]) and sign-extends the result.
 func (r *Reader) Signed32(width uint8) int32 {
-	assertf(width > 0 && width <= 32, "bits: Signed32 width out of range: %d", width)
+	assertf(width <= 32, "bits: Signed32 width out of range: %d", width)
 	value := r.Bits64(width)
 	if value&(uint64(1)<<(width-1)) != 0 {
 		value |= ^uint64(0) << width
 	}
 	return int32(value)
+}
+
+// Signed64 reads width bits (width in [1, 64]) and sign-extends the result.
+func (r *Reader) Signed64(width uint8) int64 {
+	assertf(width <= 64, "bits: Signed64 width out of range: %d", width)
+	value := r.Bits64(width)
+	if width < 64 && value&(uint64(1)<<(width-1)) != 0 {
+		value |= ^uint64(0) << width
+	}
+	return int64(value)
 }
 
 // SkipToByte advances the position to the next byte boundary without
@@ -223,6 +233,14 @@ func (r *Reader) ReadBits64(width uint8) (uint64, error) {
 // ReadSigned32 is the Checked-tier wrapper around Signed32.
 func (r *Reader) ReadSigned32(width uint8) (int32, error) {
 	v := r.Signed32(width)
+	if r.Overrun() {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return v, nil
+}
+
+func (r *Reader) ReadSigned64(width uint8) (int64, error) {
+	v := r.Signed64(width)
 	if r.Overrun() {
 		return 0, io.ErrUnexpectedEOF
 	}

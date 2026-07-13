@@ -11,6 +11,9 @@ func TestBitsBasic(t *testing.T) {
 	if got := r.Bit(); got != 1 {
 		t.Fatalf("Bit() #1 = %d, want 1", got)
 	}
+	if got := r.Bits64(0); got != 0 {
+		t.Fatalf("Bits64(0) = %b, want 0", got)
+	}
 	if got := r.Bits64(3); got != 0b011 {
 		t.Fatalf("Bits64(3) = %b, want 011", got)
 	}
@@ -47,6 +50,20 @@ func TestSigned32(t *testing.T) {
 	r := New([]byte{0b1111_0000})
 	if got := r.Signed32(4); got != -1 {
 		t.Fatalf("Signed32(4) = %d, want -1", got)
+	}
+	if got := r.Signed32(0); got != 0 {
+		t.Fatalf("Signed32(0) = %d, want 0", got)
+	}
+}
+
+func TestSigned64(t *testing.T) {
+	// 4-bit two's complement -1 = 1111
+	r := New([]byte{0b1111_0000})
+	if got := r.Signed64(4); got != -1 {
+		t.Fatalf("Signed64(4) = %d, want -1", got)
+	}
+	if got := r.Signed64(0); got != 0 {
+		t.Fatalf("Signed64(0) = %d, want 0", got)
 	}
 }
 

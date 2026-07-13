@@ -17,8 +17,11 @@ func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
 	if err != nil {
 		return decodedFrame{}, err
 	}
+	if header.headerBytes < 1 || header.headerBytes > len(data) || crc8(data[:header.headerBytes-1]) != header.headerCRC {
+		return decodedFrame{}, errors.New("invalid FLAC frame header CRC-8")
+	}
 
-	samples := make([][]int32, header.channels)
+	samples := make([][]int64, header.channels)
 	for ch := 0; ch < header.channels; ch++ {
 		bitsPerSample := header.bitsPerSample
 		switch header.channelAssignment {
@@ -46,12 +49,20 @@ func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
 	decorrelate(samples, header.channelAssignment)
 
 	reader.SkipToByte()
-	reader.Bits64(16) // CRC-16, not validated
+	footerStart := reader.BytePos()
+	footer, err := reader.ReadBits64(16)
+	if err != nil {
+		return decodedFrame{}, err
+	}
+	if footerStart > len(data) || crc16(data[:footerStart]) != uint16(footer) {
+		return decodedFrame{}, errors.New("invalid FLAC frame footer CRC-16")
+	}
 
 	if reader.Overrun() {
 		return decodedFrame{}, io.ErrUnexpectedEOF
 	}
 
+	header.frameBytes = reader.BytePos()
 	return decodedFrame{
 		header:  header,
 		samples: samples,
@@ -74,7 +85,8 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 	if reserved != 0 {
 		return frameHeader{}, errors.New("invalid FLAC reserved frame header bit")
 	}
-	if _, err := r.ReadBits64(1); err != nil { // blocking strategy
+	blockingStrategy, err := r.ReadBits64(1)
+	if err != nil {
 		return frameHeader{}, err
 	}
 
@@ -102,7 +114,8 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 		return frameHeader{}, errors.New("invalid FLAC reserved frame header bit")
 	}
 
-	if _, err := readUTF8CodedNumber(r); err != nil {
+	number, err := readUTF8CodedNumber(r)
+	if err != nil {
 		return frameHeader{}, fmt.Errorf("decode FLAC frame number: %w", err)
 	}
 
@@ -123,7 +136,8 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 		return frameHeader{}, err
 	}
 
-	if _, err := r.ReadBits64(8); err != nil { // CRC-8, currently not validated
+	headerCRC, err := r.ReadBits64(8)
+	if err != nil {
 		return frameHeader{}, err
 	}
 
@@ -133,7 +147,41 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 		channels:          channels,
 		channelAssignment: uint8(channelAssignment),
 		bitsPerSample:     bitsPerSample,
+		blockingStrategy:  blockingStrategy != 0,
+		number:            number,
+		headerBytes:       r.BytePos(),
+		headerCRC:         byte(headerCRC),
 	}, nil
+}
+
+func crc8(data []byte) byte {
+	var crc byte
+	for _, value := range data {
+		crc ^= value
+		for i := 0; i < 8; i++ {
+			if crc&0x80 != 0 {
+				crc = crc<<1 ^ 0x07
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
+}
+
+func crc16(data []byte) uint16 {
+	var crc uint16
+	for _, value := range data {
+		crc ^= uint16(value) << 8
+		for i := 0; i < 8; i++ {
+			if crc&0x8000 != 0 {
+				crc = crc<<1 ^ 0x8005
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
 }
 
 func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
@@ -244,8 +292,10 @@ func decodeBitsPerSample(code uint8, info streamInfo) (int, error) {
 		return 20, nil
 	case 6:
 		return 24, nil
-	case 3, 7:
+	case 3:
 		return 0, errors.New("reserved FLAC bit depth code")
+	case 7:
+		return 32, nil
 	default:
 		return info.BitsPerSample, nil
 	}
@@ -262,7 +312,7 @@ func decodeChannelCount(channelAssignment uint8, info streamInfo) (int, error) {
 	}
 }
 
-func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error) {
+func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error) {
 	zero, err := r.ReadBits64(1)
 	if err != nil {
 		return nil, err
@@ -292,10 +342,10 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error)
 		bitsPerSample -= int(wastedBits)
 	}
 
-	samples := make([]int32, blockSize)
+	samples := make([]int64, blockSize)
 	switch {
 	case typeCode == 0:
-		value, err := r.ReadSigned32(uint8(bitsPerSample))
+		value, err := r.ReadSigned64(uint8(bitsPerSample))
 		if err != nil {
 			return nil, err
 		}
@@ -305,7 +355,7 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error)
 
 	case typeCode == 1:
 		for i := range samples {
-			samples[i] = r.Signed32(uint8(bitsPerSample))
+			samples[i] = r.Signed64(uint8(bitsPerSample))
 		}
 
 	case typeCode >= 8 && typeCode <= 12:
@@ -342,9 +392,9 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error)
 			return nil, err
 		}
 		shift := signExtend(shiftRaw, 5)
-		coefficients := make([]int32, order)
+		coefficients := make([]int64, order)
 		for i := range coefficients {
-			coeff, err := r.ReadSigned32(uint8(precision))
+			coeff, err := r.ReadSigned64(uint8(precision))
 			if err != nil {
 				return nil, err
 			}
@@ -364,7 +414,7 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error)
 			} else {
 				sum <<= -shift
 			}
-			samples[i] = int32(sum) + residual[i-order]
+			samples[i] = sum + residual[i-order]
 		}
 
 	default:
@@ -379,12 +429,12 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int32, error)
 	return samples, nil
 }
 
-func readWarmupSamples(r *bits.Reader, samples []int32, order, bitsPerSample int) error {
+func readWarmupSamples(r *bits.Reader, samples []int64, order, bitsPerSample int) error {
 	if order > len(samples) {
 		return errors.New("FLAC predictor order exceeds block size")
 	}
 	for i := 0; i < order; i++ {
-		value, err := r.ReadSigned32(uint8(bitsPerSample))
+		value, err := r.ReadSigned64(uint8(bitsPerSample))
 		if err != nil {
 			return err
 		}
@@ -399,7 +449,7 @@ func readWarmupSamples(r *bits.Reader, samples []int32, order, bitsPerSample int
 // inside each partition are the hot path, so they use the Fast tier (no
 // per-call error); a truncated stream in that inner loop surfaces later via
 // Reader.Overrun() rather than aborting this function early.
-func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int32, error) {
+func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error) {
 	method, err := r.ReadBits64(2)
 	if err != nil {
 		return nil, err
@@ -427,7 +477,7 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int32, error
 	}
 
 	residualCount := blockSize - predictorOrder
-	residual := make([]int32, 0, residualCount)
+	residual := make([]int64, 0, residualCount)
 	partitionSamples := blockSize / partitions
 	for partition := 0; partition < partitions; partition++ {
 		samplesInPartition := partitionSamples
@@ -448,7 +498,7 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int32, error
 				return nil, err
 			}
 			for i := 0; i < samplesInPartition; i++ {
-				residual = append(residual, r.Signed32(uint8(rawBits)))
+				residual = append(residual, r.Signed64(uint8(rawBits)))
 			}
 			continue
 		}
@@ -467,17 +517,17 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int32, error
 // sample (potentially thousands of times per frame), so it uses the Fast
 // tier: a truncated stream here is detected in aggregate via Overrun()
 // rather than per call.
-func readRiceSigned(r *bits.Reader, param uint8) int32 {
+func readRiceSigned(r *bits.Reader, param uint8) int64 {
 	quotient := r.Unary64()
 	remainder := r.Bits64(param)
 	unsigned := (quotient << param) | remainder
 	if unsigned&1 == 0 {
-		return int32(unsigned >> 1)
+		return int64(unsigned >> 1)
 	}
-	return -int32((unsigned >> 1) + 1)
+	return -int64((unsigned >> 1) + 1)
 }
 
-func fixedPrediction(samples []int32, index, order int) int32 {
+func fixedPrediction(samples []int64, index, order int) int64 {
 	switch order {
 	case 0:
 		return 0
@@ -494,7 +544,7 @@ func fixedPrediction(samples []int32, index, order int) int32 {
 	}
 }
 
-func decorrelate(samples [][]int32, assignment uint8) {
+func decorrelate(samples [][]int64, assignment uint8) {
 	if len(samples) != 2 {
 		return
 	}
@@ -520,7 +570,13 @@ func decorrelate(samples [][]int32, assignment uint8) {
 func buildAudioFrame(decoded decodedFrame) (*media.AudioFrame, error) {
 	format := streaminfo.SampleFormat(decoded.header.bitsPerSample)
 	layout := streaminfo.ChannelLayout(decoded.header.channels)
-	frame := media.NewAudioFrame(format, layout, decoded.header.sampleRate, decoded.header.blockSize)
+	frame := media.NewAudioFrame(
+		format,
+		layout,
+		decoded.header.sampleRate,
+		decoded.header.blockSize,
+		media.WithAudioBitsPerSample(decoded.header.bitsPerSample),
+	)
 	plane := frame.Planes()[0]
 
 	bytesPerSample := format.BytesPerSample()

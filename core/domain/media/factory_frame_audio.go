@@ -13,6 +13,12 @@ func WithAudioPts(pts Pts) AudioFrameOption {
 	}
 }
 
+func WithAudioBitsPerSample(bitsPerSample int) AudioFrameOption {
+	return func(f *AudioFrame) {
+		f.BitsPerSample = bitsPerSample
+	}
+}
+
 func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, samples int, opts ...AudioFrameOption) *AudioFrame {
 	channels := layout.ChannelCount()
 	bytesPerSample := format.BytesPerSample()
@@ -22,13 +28,14 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 	(*b) = (*b)[:totalBytes]
 
 	frame := &AudioFrame{
-		Format:     format,
-		Layout:     layout,
-		SampleRate: sampleRate,
-		Samples:    samples,
-		baseData:   b,
-		meta:       metadata.NewBundle(),
-		planes:     make([][]byte, channels),
+		Format:        format,
+		BitsPerSample: defaultBitsPerSample(format),
+		Layout:        layout,
+		SampleRate:    sampleRate,
+		Samples:       samples,
+		baseData:      b,
+		meta:          metadata.NewBundle(),
+		planes:        make([][]byte, channels),
 	}
 	frame.refCount.Store(1)
 
@@ -53,4 +60,19 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 	})
 
 	return frame
+}
+
+func defaultBitsPerSample(format SampleFormat) int {
+	switch format.Packed() {
+	case SampleFormatU8:
+		return 8
+	case SampleFormatS16:
+		return 16
+	case SampleFormatS24:
+		return 24
+	case SampleFormatS32:
+		return 32
+	default:
+		return 0
+	}
 }
