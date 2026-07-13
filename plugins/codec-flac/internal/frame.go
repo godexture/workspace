@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/streaminfo"
 )
 
 func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
@@ -181,14 +182,14 @@ func decodeBlockSize(r *bitReader, code uint8, info streamInfo) (int, error) {
 	case 8, 9, 10, 11, 12, 13, 14, 15:
 		return 256 << (code - 8), nil
 	default:
-		return int(info.maxBlockSize), nil
+		return int(info.MaxBlockSize), nil
 	}
 }
 
 func decodeSampleRate(r *bitReader, code uint8, info streamInfo) (int, error) {
 	switch code {
 	case 0:
-		return info.sampleRate, nil
+		return info.SampleRate, nil
 	case 1:
 		return 88200, nil
 	case 2:
@@ -228,7 +229,7 @@ func decodeSampleRate(r *bitReader, code uint8, info streamInfo) (int, error) {
 func decodeBitsPerSample(code uint8, info streamInfo) (int, error) {
 	switch code {
 	case 0:
-		return info.bitsPerSample, nil
+		return info.BitsPerSample, nil
 	case 1:
 		return 8, nil
 	case 2:
@@ -242,7 +243,7 @@ func decodeBitsPerSample(code uint8, info streamInfo) (int, error) {
 	case 3, 7:
 		return 0, errors.New("reserved FLAC bit depth code")
 	default:
-		return info.bitsPerSample, nil
+		return info.BitsPerSample, nil
 	}
 }
 
@@ -521,8 +522,8 @@ func decorrelate(samples [][]int32, assignment uint8) {
 }
 
 func buildAudioFrame(decoded decodedFrame) (*media.AudioFrame, error) {
-	format := sampleFormatForBitDepth(decoded.header.bitsPerSample)
-	layout := layoutFromChannelCount(decoded.header.channels)
+	format := streaminfo.SampleFormat(decoded.header.bitsPerSample)
+	layout := streaminfo.ChannelLayout(decoded.header.channels)
 	frame := media.NewAudioFrame(format, layout, decoded.header.sampleRate, decoded.header.blockSize)
 	plane := frame.Planes()[0]
 
@@ -542,36 +543,6 @@ func buildAudioFrame(decoded decodedFrame) (*media.AudioFrame, error) {
 		}
 	}
 	return frame, nil
-}
-
-func sampleFormatForBitDepth(bitsPerSample int) media.SampleFormat {
-	if bitsPerSample <= 16 {
-		return media.SampleFormatS16
-	}
-	return media.SampleFormatS32
-}
-
-func layoutFromChannelCount(channels int) media.ChannelLayout {
-	switch channels {
-	case 1:
-		return media.LayoutMono1
-	case 2:
-		return media.LayoutStereo2_0
-	case 3:
-		return media.LayoutStereo3_0
-	case 4:
-		return media.LayoutQuad4_0
-	case 5:
-		return media.LayoutFront5_0
-	case 6:
-		return media.LayoutFront5_1
-	case 7:
-		return media.LayoutSide6_1
-	case 8:
-		return media.LayoutWide7_1
-	default:
-		return media.NewUnspecified(channels)
-	}
 }
 
 func signExtend(value uint64, bits uint8) int {

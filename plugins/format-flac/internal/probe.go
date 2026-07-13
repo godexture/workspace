@@ -6,11 +6,12 @@ import (
 	"io"
 
 	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/format-flac/streaminfo"
 )
 
 func Probe(r io.Reader) manifest.ProbeScore {
 	reader := bufio.NewReader(r)
-	header, err := reader.Peek(len(flacMarker))
+	header, err := reader.Peek(len(streaminfo.Marker))
 	if err != nil {
 		if errors.Is(err, bufio.ErrBufferFull) || errors.Is(err, io.EOF) {
 			if len(header) > 0 && flacMarkerHasPrefix(header) {
@@ -20,7 +21,7 @@ func Probe(r io.Reader) manifest.ProbeScore {
 		return manifest.ProbeMismatch
 	}
 
-	if string(header) != flacMarker {
+	if string(header) != streaminfo.Marker {
 		return manifest.ProbeMismatch
 	}
 
@@ -28,11 +29,11 @@ func Probe(r io.Reader) manifest.ProbeScore {
 }
 
 func flacMarkerHasPrefix(data []byte) bool {
-	if len(data) > len(flacMarker) {
+	if len(data) > len(streaminfo.Marker) {
 		return false
 	}
 	for i := range data {
-		if data[i] != flacMarker[i] {
+		if data[i] != streaminfo.Marker[i] {
 			return false
 		}
 	}
