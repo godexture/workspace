@@ -1,6 +1,6 @@
-module github.com/godexture/codec-flac
+module github.com/godexture/format-flac
 
-go 1.26.1
+go 1.26.4
 
 require (
 	github.com/godexture/core v0.0.0

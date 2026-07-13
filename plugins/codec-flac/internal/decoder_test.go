@@ -49,13 +49,23 @@ func TestDecoder_SendNilPacket(t *testing.T) {
 	}
 }
 
-func TestDecoder_DecodeRFC9639AppendixDExample1(t *testing.T) {
+func TestDecoder_DecodeRawFrameRFC9639AppendixDExample1(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	assertDecodeAppendixDExample1(t, data[42:], DecoderConfig{StreamInfo: data[8:42]})
+}
+
+func TestDecoder_DecodeNativeStreamCompatibility(t *testing.T) {
+	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	assertDecodeAppendixDExample1(t, data, DefaultDecoderConfig())
+}
+
+func assertDecodeAppendixDExample1(t *testing.T, data []byte, config DecoderConfig) {
+	t.Helper()
 	packet := media.NewPacket(len(data))
 	copy(packet.Data(), data)
 	packet.MediaType = media.MediaAudio
 
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(config)
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
 	}

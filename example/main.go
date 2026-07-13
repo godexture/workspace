@@ -9,8 +9,10 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/routing"
 
+	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-mp3"
 	_ "github.com/godexture/codec-pcm"
+	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-mp3"
 	wav "github.com/godexture/format-wav"
 )
@@ -44,7 +46,7 @@ func main() {
 	spec := routing.ConversionSpec{
 		Input:       inputFile,
 		Output:      outputFile,
-		TargetCodec: media.CodecMSADPCM,
+		TargetCodec: media.CodecLPCM,
 		MuxConfig:   wav.Config{},
 	}
 

@@ -16,22 +16,50 @@ const (
 	metadataTypeStreamInfo = 0
 	streamInfoLength       = 34
 
-	maxFLACChannels = 8
+	streamInfoMetadataKey = "flac.streaminfo"
+	maxFLACChannels       = 8
 )
 
-type DecoderConfig struct{}
+type DecoderConfig struct {
+	// StreamInfo is the 34-byte FLAC STREAMINFO metadata block. Demuxers should
+	// provide this for demuxed frame packets so the decoder does not parse the
+	// native FLAC container itself.
+	StreamInfo []byte
+
+	SampleRate    int
+	Channels      int
+	BitsPerSample int
+}
 
 func (DecoderConfig) NodeConfiguration() {}
 
 func DefaultDecoderConfig() DecoderConfig { return DecoderConfig{} }
 
+func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
+	config := DefaultDecoderConfig()
+	if raw, ok := stream.Metadata.GetRaw(streamInfoMetadataKey); ok && len(raw) > 0 {
+		config.StreamInfo = append([]byte(nil), raw[0]...)
+	}
+	if stream.Audio.SampleRate > 0 {
+		config.SampleRate = stream.Audio.SampleRate
+	}
+	if channels := stream.Audio.ChannelCount(); channels > 0 {
+		config.Channels = channels
+	}
+	if bitsPerSample := bitDepthFromSampleFormat(stream.Audio.Format); bitsPerSample > 0 {
+		config.BitsPerSample = bitsPerSample
+	}
+	return config
+}
+
 type Decoder struct {
 	config DecoderConfig
 
-	buffer  []byte
-	parsed  bool
-	info    streamInfo
-	flushed bool
+	buffer    []byte
+	parsed    bool
+	info      streamInfo
+	configErr error
+	flushed   bool
 }
 
 type streamInfo struct {
@@ -60,7 +88,24 @@ type decodedFrame struct {
 }
 
 func NewDecoder(config DecoderConfig) *Decoder {
-	return &Decoder{config: config}
+	decoder := &Decoder{config: config}
+	if len(config.StreamInfo) > 0 {
+		info, err := parseStreamInfo(config.StreamInfo)
+		if err != nil {
+			decoder.configErr = err
+		} else {
+			decoder.info = info
+			decoder.parsed = true
+		}
+	} else if config.SampleRate > 0 || config.Channels > 0 || config.BitsPerSample > 0 {
+		decoder.info = streamInfoFromConfig(config)
+		if err := validateStreamInfo(decoder.info); err != nil {
+			decoder.configErr = err
+		} else {
+			decoder.parsed = true
+		}
+	}
+	return decoder
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
@@ -75,6 +120,9 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 }
 
 func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
+	if d.configErr != nil {
+		return nil, d.configErr
+	}
 	if len(d.buffer) == 0 {
 		if d.flushed {
 			return nil, engine.ErrEOF
@@ -195,17 +243,57 @@ func parseStreamInfo(data []byte) (streamInfo, error) {
 		bitsPerSample: int(((uint16(data[12])&0x01)<<4)|uint16(data[13]>>4)) + 1,
 		totalSamples:  (uint64(data[13]&0x0f) << 32) | uint64(binary.BigEndian.Uint32(data[14:18])),
 	}
-	if info.minBlockSize == 0 || info.maxBlockSize == 0 || info.minBlockSize > info.maxBlockSize {
-		return streamInfo{}, errors.New("invalid FLAC block size in STREAMINFO")
-	}
-	if info.sampleRate <= 0 {
-		return streamInfo{}, errors.New("invalid FLAC sample rate in STREAMINFO")
-	}
-	if info.channels <= 0 || info.channels > maxFLACChannels {
-		return streamInfo{}, fmt.Errorf("invalid FLAC channel count: %d", info.channels)
-	}
-	if info.bitsPerSample <= 0 || info.bitsPerSample > 32 {
-		return streamInfo{}, fmt.Errorf("unsupported FLAC bit depth: %d", info.bitsPerSample)
+	if err := validateStreamInfo(info); err != nil {
+		return streamInfo{}, err
 	}
 	return info, nil
+}
+
+func streamInfoFromConfig(config DecoderConfig) streamInfo {
+	info := streamInfo{
+		minBlockSize:  1,
+		maxBlockSize:  65535,
+		sampleRate:    config.SampleRate,
+		channels:      config.Channels,
+		bitsPerSample: config.BitsPerSample,
+	}
+	if info.sampleRate <= 0 {
+		info.sampleRate = 44100
+	}
+	if info.channels <= 0 {
+		info.channels = 2
+	}
+	if info.bitsPerSample <= 0 {
+		info.bitsPerSample = 16
+	}
+	return info
+}
+
+func validateStreamInfo(info streamInfo) error {
+	if info.minBlockSize == 0 || info.maxBlockSize == 0 || info.minBlockSize > info.maxBlockSize {
+		return errors.New("invalid FLAC block size in STREAMINFO")
+	}
+	if info.sampleRate <= 0 {
+		return errors.New("invalid FLAC sample rate in STREAMINFO")
+	}
+	if info.channels <= 0 || info.channels > maxFLACChannels {
+		return fmt.Errorf("invalid FLAC channel count: %d", info.channels)
+	}
+	if info.bitsPerSample <= 0 || info.bitsPerSample > 32 {
+		return fmt.Errorf("unsupported FLAC bit depth: %d", info.bitsPerSample)
+	}
+	return nil
+}
+
+func bitDepthFromSampleFormat(format media.SampleFormat) int {
+	switch format.Packed() {
+	case media.SampleFormatU8:
+		return 8
+	case media.SampleFormatS16:
+		return 16
+	case media.SampleFormatS32:
+		return 32
+	default:
+		return 0
+	}
 }
