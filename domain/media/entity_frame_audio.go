@@ -14,11 +14,15 @@ type AudioFrame struct {
 	ResourceBase
 	baseData *[]byte
 
-	Format     SampleFormat
-	Layout     ChannelLayout
-	SampleRate int
-	Samples    int
-	meta       *metadata.Bundle
+	Format SampleFormat
+	// BitsPerSample is the significant sample width carried by this frame.
+	// It may differ from the container's nominal format width (for example,
+	// FLAC 12-bit samples are carried in an S16 frame).
+	BitsPerSample int
+	Layout        ChannelLayout
+	SampleRate    int
+	Samples       int
+	meta          *metadata.Bundle
 
 	pts    Pts
 	planes [][]byte
