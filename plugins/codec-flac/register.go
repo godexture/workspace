@@ -11,8 +11,11 @@ import (
 )
 
 type DecoderConfig = internal.DecoderConfig
+type EncoderConfig = internal.EncoderConfig
 
 func DefaultDecoderConfig() DecoderConfig { return internal.DefaultDecoderConfig() }
+
+func DefaultEncoderConfig() EncoderConfig { return internal.DefaultEncoderConfig() }
 
 func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
 	return internal.NewDecoderConfigFromStreamInfo(stream)
@@ -22,7 +25,13 @@ func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder(config)
 }
 
+func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
+	return internal.NewEncoder(config)
+}
+
 type flacCapability struct{}
+
+type lpcmCapability struct{}
 
 func (flacCapability) MediaType() media.MediaType { return media.MediaAudio }
 
@@ -32,6 +41,17 @@ func (c flacCapability) Match(streamInfo media.StreamInfo) bool {
 }
 
 func (c flacCapability) Diagnose(streamInfo media.StreamInfo) bool {
+	return c.Match(streamInfo)
+}
+
+func (lpcmCapability) MediaType() media.MediaType { return media.MediaAudio }
+
+func (c lpcmCapability) Match(streamInfo media.StreamInfo) bool {
+	return streamInfo.Type == media.MediaAudio &&
+		streamInfo.MediaAttributes.Codec == media.CodecLPCM
+}
+
+func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
 	return c.Match(streamInfo)
 }
 
@@ -67,6 +87,44 @@ func init() {
 					}
 				}
 				return engine.WrapDecoder(internal.NewDecoder(decoderConfig)), nil
+			},
+		},
+	); err != nil {
+		panic(err)
+	}
+
+	if err := godec.Register(
+		internal.DefaultEncoderConfig(),
+		registry.EncoderManifest{
+			TransformManifest: registry.TransformManifest{
+				BaseManifest: registry.BaseManifest{
+					Name:        "flac-encoder",
+					Description: "FLAC encoder",
+				},
+				Capabilities: []manifest.Capability{lpcmCapability{}},
+				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
+					profile := media.Profile{
+						Type:            streamInfo.Type,
+						MediaAttributes: streamInfo.MediaAttributes,
+					}
+					profile.Codec = media.CodecFLAC
+					return profile
+				},
+			},
+			Supports: func(codec media.CodecID) bool {
+				return codec == media.CodecFLAC
+			},
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
+				encoderConfig := internal.DefaultEncoderConfig()
+				encoderConfig = internal.MergeEncoderConfigForFactory(encoderConfig, inStream)
+				if config != nil {
+					if flacConfig, ok := config.(internal.EncoderConfig); ok {
+						encoderConfig = internal.MergeEncoderConfigForFactory(flacConfig, inStream)
+					} else if flacConfigPtr, ok := config.(*internal.EncoderConfig); ok && flacConfigPtr != nil {
+						encoderConfig = internal.MergeEncoderConfigForFactory(*flacConfigPtr, inStream)
+					}
+				}
+				return engine.WrapEncoder(internal.NewEncoder(encoderConfig)), nil
 			},
 		},
 	); err != nil {
