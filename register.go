@@ -14,6 +14,10 @@ type DecoderConfig = internal.DecoderConfig
 
 func DefaultDecoderConfig() DecoderConfig { return internal.DefaultDecoderConfig() }
 
+func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
+	return internal.NewDecoderConfigFromStreamInfo(stream)
+}
+
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder(config)
 }
@@ -53,10 +57,14 @@ func init() {
 					return profile
 				},
 			},
-			Factory: func(config registry.Configuration) (node.Decoder, error) {
+			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
 				decoderConfig, ok := config.(internal.DecoderConfig)
 				if !ok {
-					decoderConfig = internal.DefaultDecoderConfig()
+					if decoderConfigPtr, ptrOK := config.(*internal.DecoderConfig); ptrOK && decoderConfigPtr != nil {
+						decoderConfig = *decoderConfigPtr
+					} else {
+						decoderConfig = internal.NewDecoderConfigFromStreamInfo(stream)
+					}
 				}
 				return engine.WrapDecoder(internal.NewDecoder(decoderConfig)), nil
 			},
