@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/streaminfo"
 )
 
 const appendixDExample1Hex = "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a"
@@ -55,7 +56,7 @@ func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
 	if stream.Audio.Format != media.SampleFormatS16 {
 		t.Fatalf("format = %s, want %s", stream.Audio.Format, media.SampleFormatS16)
 	}
-	if raw, ok := stream.Metadata.GetRaw(streamInfoMetadataKey); !ok || len(raw) != 1 || len(raw[0]) != streamInfoLength {
+	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); !ok || len(raw) != 1 || len(raw[0]) != streaminfo.Length {
 		t.Fatalf("missing STREAMINFO raw metadata: ok=%v len=%d", ok, len(raw))
 	}
 
