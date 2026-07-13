@@ -27,6 +27,7 @@ type StreamInfo struct {
 	Channels      int
 	BitsPerSample int
 	TotalSamples  uint64
+	MD5           [16]byte
 }
 
 // ParseBlockHeader decodes a 4-byte FLAC metadata block header into its
@@ -53,6 +54,7 @@ func Parse(data []byte) (StreamInfo, error) {
 		BitsPerSample: int(((uint16(data[12])&0x01)<<4)|uint16(data[13]>>4)) + 1,
 		TotalSamples:  (uint64(data[13]&0x0f) << 32) | uint64(binary.BigEndian.Uint32(data[14:18])),
 	}
+	copy(info.MD5[:], data[18:34])
 	if err := Validate(info); err != nil {
 		return StreamInfo{}, err
 	}
@@ -65,13 +67,13 @@ func Validate(info StreamInfo) error {
 	if info.MinBlockSize == 0 || info.MaxBlockSize == 0 || info.MinBlockSize > info.MaxBlockSize {
 		return errors.New("invalid FLAC block size in STREAMINFO")
 	}
-	if info.SampleRate <= 0 {
+	if info.SampleRate <= 0 || info.SampleRate > 1048575 {
 		return errors.New("invalid FLAC sample rate in STREAMINFO")
 	}
 	if info.Channels <= 0 || info.Channels > MaxChannels {
 		return fmt.Errorf("invalid FLAC channel count: %d", info.Channels)
 	}
-	if info.BitsPerSample <= 0 || info.BitsPerSample > 32 {
+	if info.BitsPerSample < 4 || info.BitsPerSample > 32 {
 		return fmt.Errorf("unsupported FLAC bit depth: %d", info.BitsPerSample)
 	}
 	return nil
