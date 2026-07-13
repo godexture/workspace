@@ -1,8 +1,8 @@
 package layer3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/sdk/bits"
 )
 
 const (
@@ -49,7 +49,7 @@ func (d *Decoder) Init() {
 }
 
 type Workspace struct {
-	bitReader                bits.BitReader
+	bitReader                bits.Reader
 	mainData                 [maxBitReservoirBytes + 2304]byte // 2304 is MaxFreeFormatFrameSize
 	granuleInfo              [4]GranuleInfo
 	granule                  [maxGranuleBufferSize]float32

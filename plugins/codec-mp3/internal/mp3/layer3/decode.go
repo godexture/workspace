@@ -1,9 +1,9 @@
 package layer3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/codec-mp3/internal/mp3/domain"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/sdk/bits"
 )
 
 var scaleFactorBandWidthsLongBlocks = [8][23]byte{
@@ -39,7 +39,25 @@ var scaleFactorBandWidthsMixedBlocks = [8][maxScaleFactorBands + 1]byte{
 	{4, 4, 4, 4, 4, 4, 6, 6, 4, 4, 4, 6, 6, 6, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 26, 26, 26, 34, 34, 34, 42, 42, 42, 12, 12, 12, 0},
 }
 
-func readSideInfo(bitReader *bits.BitReader, granuleInfo []GranuleInfo, h header.Header) int {
+// readSideInfo reads the granule side info that precedes a frame's main
+// data. Reads use the Checked tier (ReadBits64) because this runs once per
+// frame (a few dozen calls) rather than per sample: a truncated read is
+// reported as domain.ErrBitStreamUnderflow, distinct from the structurally
+// invalid cases below (domain.ErrInvalidSideInfo), which mirror the
+// original implementation's sentinel -1 return.
+func readSideInfo(bitReader *bits.Reader, granuleInfo []GranuleInfo, h header.Header) (int, error) {
+	var readErr error
+	read := func(n uint8) uint64 {
+		if readErr != nil {
+			return 0
+		}
+		v, err := bitReader.ReadBits64(n)
+		if err != nil {
+			readErr = err
+		}
+		return v
+	}
+
 	sampleRateIndex := h.UnifiedSampleRateIndex()
 	if sampleRateIndex != 0 {
 		sampleRateIndex -= 1
@@ -53,10 +71,10 @@ func readSideInfo(bitReader *bits.BitReader, granuleInfo []GranuleInfo, h header
 
 	if h.IsMPEG1() {
 		numGranules *= 2
-		mainDataOffset = int(bitReader.GetBits(9))
-		scfSelectInfo = bitReader.GetBits(7 + numGranules)
+		mainDataOffset = int(read(9))
+		scfSelectInfo = uint32(read(uint8(7 + numGranules)))
 	} else {
-		mainDataOffset = int(bitReader.GetBits(8+numGranules) >> numGranules)
+		mainDataOffset = int(read(uint8(8+numGranules)) >> numGranules)
 	}
 
 	part23LengthSum := 0
@@ -66,26 +84,26 @@ func readSideInfo(bitReader *bits.BitReader, granuleInfo []GranuleInfo, h header
 			scfSelectInfo <<= 4
 		}
 		granuleInfo[granuleIndex].ScaleFactorBandTable = scaleFactorBandWidthsLongBlocks[sampleRateIndex][:]
-		granuleInfo[granuleIndex].Part23Length = uint16(bitReader.GetBits(12))
+		granuleInfo[granuleIndex].Part23Length = uint16(read(12))
 		part23LengthSum += int(granuleInfo[granuleIndex].Part23Length)
-		granuleInfo[granuleIndex].BigValues = uint16(bitReader.GetBits(9))
+		granuleInfo[granuleIndex].BigValues = uint16(read(9))
 		if granuleInfo[granuleIndex].BigValues*2 > SamplesPerGranule {
-			return -1
+			return -1, domain.ErrInvalidSideInfo
 		}
-		granuleInfo[granuleIndex].GlobalGain = uint8(bitReader.GetBits(8))
-		compressionBitLength := 9
+		granuleInfo[granuleIndex].GlobalGain = uint8(read(8))
+		compressionBitLength := uint8(9)
 		if h.IsMPEG1() {
 			compressionBitLength = 4
 		}
-		granuleInfo[granuleIndex].ScaleFactorCompression = uint16(bitReader.GetBits(compressionBitLength))
+		granuleInfo[granuleIndex].ScaleFactorCompression = uint16(read(compressionBitLength))
 		granuleInfo[granuleIndex].LongScaleFactorBandCount = 22
 		granuleInfo[granuleIndex].ShortScaleFactorBandCount = 0
-		if bitReader.GetBits(1) != 0 {
-			granuleInfo[granuleIndex].BlockType = uint8(bitReader.GetBits(2))
+		if read(1) != 0 {
+			granuleInfo[granuleIndex].BlockType = uint8(read(2))
 			if granuleInfo[granuleIndex].BlockType == 0 {
-				return -1
+				return -1, domain.ErrInvalidSideInfo
 			}
-			granuleInfo[granuleIndex].MixedBlockFlag = uint8(bitReader.GetBits(1))
+			granuleInfo[granuleIndex].MixedBlockFlag = uint8(read(1))
 			granuleInfo[granuleIndex].RegionCount[0] = 7
 			granuleInfo[granuleIndex].RegionCount[1] = 255
 			if granuleInfo[granuleIndex].BlockType == 2 { // SHORT_BLOCK_TYPE = 2
@@ -105,27 +123,27 @@ func readSideInfo(bitReader *bits.BitReader, granuleInfo []GranuleInfo, h header
 					granuleInfo[granuleIndex].ShortScaleFactorBandCount = 30
 				}
 			}
-			tableSelectionCode := bitReader.GetBits(10)
+			tableSelectionCode := read(10)
 			tableSelectionCode <<= 5
-			granuleInfo[granuleIndex].SubBlockGain[0] = uint8(bitReader.GetBits(3))
-			granuleInfo[granuleIndex].SubBlockGain[1] = uint8(bitReader.GetBits(3))
-			granuleInfo[granuleIndex].SubBlockGain[2] = uint8(bitReader.GetBits(3))
+			granuleInfo[granuleIndex].SubBlockGain[0] = uint8(read(3))
+			granuleInfo[granuleIndex].SubBlockGain[1] = uint8(read(3))
+			granuleInfo[granuleIndex].SubBlockGain[2] = uint8(read(3))
 			granuleInfo[granuleIndex].TableSelect[0] = uint8(tableSelectionCode >> 10)
 			granuleInfo[granuleIndex].TableSelect[1] = uint8((tableSelectionCode >> 5) & 31)
 			granuleInfo[granuleIndex].TableSelect[2] = uint8(tableSelectionCode & 31)
 		} else {
 			granuleInfo[granuleIndex].BlockType = 0
 			granuleInfo[granuleIndex].MixedBlockFlag = 0
-			tableSelectionCode := bitReader.GetBits(15)
-			granuleInfo[granuleIndex].RegionCount[0] = uint8(bitReader.GetBits(4))
-			granuleInfo[granuleIndex].RegionCount[1] = uint8(bitReader.GetBits(3))
+			tableSelectionCode := read(15)
+			granuleInfo[granuleIndex].RegionCount[0] = uint8(read(4))
+			granuleInfo[granuleIndex].RegionCount[1] = uint8(read(3))
 			granuleInfo[granuleIndex].RegionCount[2] = 255
 			granuleInfo[granuleIndex].TableSelect[0] = uint8(tableSelectionCode >> 10)
 			granuleInfo[granuleIndex].TableSelect[1] = uint8((tableSelectionCode >> 5) & 31)
 			granuleInfo[granuleIndex].TableSelect[2] = uint8(tableSelectionCode & 31)
 		}
 		if h.IsMPEG1() {
-			granuleInfo[granuleIndex].PreEmphasisFlag = uint8(bitReader.GetBits(1))
+			granuleInfo[granuleIndex].PreEmphasisFlag = uint8(read(1))
 		} else {
 			if granuleInfo[granuleIndex].ScaleFactorCompression >= 500 {
 				granuleInfo[granuleIndex].PreEmphasisFlag = 1
@@ -133,17 +151,21 @@ func readSideInfo(bitReader *bits.BitReader, granuleInfo []GranuleInfo, h header
 				granuleInfo[granuleIndex].PreEmphasisFlag = 0
 			}
 		}
-		granuleInfo[granuleIndex].ScaleFactorScale = uint8(bitReader.GetBits(1))
-		granuleInfo[granuleIndex].Count1Table = uint8(bitReader.GetBits(1))
+		granuleInfo[granuleIndex].ScaleFactorScale = uint8(read(1))
+		granuleInfo[granuleIndex].Count1Table = uint8(read(1))
 		granuleInfo[granuleIndex].ScaleFactorSelectionInfo = uint8((scfSelectInfo >> 12) & 15)
 		scfSelectInfo <<= 4
 	}
 
-	if part23LengthSum+int(bitReader.Position) > int(bitReader.Limit)+mainDataOffset*8 {
-		return -1
+	if readErr != nil {
+		return -1, domain.ErrBitStreamUnderflow
 	}
 
-	return mainDataOffset
+	if part23LengthSum > int(bitReader.Remaining())+mainDataOffset*8 {
+		return -1, domain.ErrInvalidSideInfo
+	}
+
+	return mainDataOffset, nil
 }
 
 func changeSign(granule []float32) {
@@ -158,7 +180,7 @@ func changeSign(granule []float32) {
 func decodeGranule(decoder *Decoder, workspace *Workspace, granuleInfo []GranuleInfo, granuleInfoOffset int, channelCount int, h header.Header) {
 	granuleSamples := workspace.granule[:]
 	for channel := 0; channel < channelCount; channel++ {
-		granuleBitLimit := int(workspace.bitReader.Position) + int(granuleInfo[granuleInfoOffset+channel].Part23Length)
+		granuleBitLimit := int(workspace.bitReader.Position()) + int(granuleInfo[granuleInfoOffset+channel].Part23Length)
 		DecodeScaleFactors(h, workspace.intensityStereoPositions[channel][:], &workspace.bitReader, &granuleInfo[granuleInfoOffset+channel], workspace.scaleFactors[:], channel)
 		HuffmanDecode(granuleSamples[channel*SamplesPerGranule:channel*SamplesPerGranule+SamplesPerGranule], &workspace.bitReader, &granuleInfo[granuleInfoOffset+channel], workspace.scaleFactors[:], granuleBitLimit)
 	}
@@ -197,18 +219,15 @@ func decodeGranule(decoder *Decoder, workspace *Workspace, granuleInfo []Granule
 func Decode(
 	decoder *Decoder,
 	workspace *Workspace,
-	bitStreamFrame *bits.BitReader,
+	bitStreamFrame *bits.Reader,
 	channels int,
 	h header.Header,
 	synthesize func(granule []float32, pcmOffset int),
 ) error {
-	mainDataBegin := readSideInfo(bitStreamFrame, workspace.granuleInfo[:], h)
-	if mainDataBegin < 0 || bitStreamFrame.Position > bitStreamFrame.Limit {
+	mainDataBegin, err := readSideInfo(bitStreamFrame, workspace.granuleInfo[:], h)
+	if err != nil {
 		decoder.Init()
-		if mainDataBegin < 0 {
-			return domain.ErrInvalidSideInfo
-		}
-		return domain.ErrBitStreamUnderflow
+		return err
 	}
 	if err := restoreReservoir(decoder, bitStreamFrame, workspace, mainDataBegin); err != nil {
 		saveReservoir(decoder, workspace)
@@ -224,6 +243,10 @@ func Decode(
 		decodeGranule(decoder, workspace, workspace.granuleInfo[:], granuleIndex*channels, channels, h)
 		synthesize(workspace.granule[:], pcmOffset)
 		pcmOffset += SamplesPerGranule * channels
+	}
+	if workspace.bitReader.Overrun() {
+		decoder.Init()
+		return domain.ErrBitStreamUnderflow
 	}
 	saveReservoir(decoder, workspace)
 	return nil

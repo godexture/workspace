@@ -1,12 +1,12 @@
 package layer3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/codec-mp3/internal/mp3/domain"
+	"github.com/godexture/sdk/bits"
 )
 
-func restoreReservoir(decoder *Decoder, bitReader *bits.BitReader, workspace *Workspace, mainDataOffset int) error {
-	remainingFrameBytes := int((bitReader.Limit - bitReader.Position) / 8)
+func restoreReservoir(decoder *Decoder, bitReader *bits.Reader, workspace *Workspace, mainDataOffset int) error {
+	unread := bitReader.Unread()
 	availableReservoirBytes := min(decoder.bitReservoirBytes, mainDataOffset)
 
 	reservoirStartIndex := decoder.bitReservoirBytes - mainDataOffset
@@ -15,11 +15,9 @@ func restoreReservoir(decoder *Decoder, bitReader *bits.BitReader, workspace *Wo
 	}
 	copy(workspace.mainData[:], decoder.reservoirBuffer[reservoirStartIndex:reservoirStartIndex+availableReservoirBytes])
 
-	copy(workspace.mainData[availableReservoirBytes:], bitReader.Buffer[int(bitReader.Position/8):int(bitReader.Position/8)+remainingFrameBytes])
+	copy(workspace.mainData[availableReservoirBytes:], unread)
 
-	workspace.bitReader.Buffer = workspace.mainData[:]
-	workspace.bitReader.Position = 0
-	workspace.bitReader.Limit = int32((availableReservoirBytes + remainingFrameBytes) * 8)
+	workspace.bitReader.Init(workspace.mainData[:], 0, int32((availableReservoirBytes+len(unread))*8))
 
 	if decoder.bitReservoirBytes < mainDataOffset {
 		return domain.ErrInsufficientReservoir
@@ -28,14 +26,12 @@ func restoreReservoir(decoder *Decoder, bitReader *bits.BitReader, workspace *Wo
 }
 
 func saveReservoir(decoder *Decoder, workspace *Workspace) {
-	bufferPosition := int((workspace.bitReader.Position + 7) / 8)
-	remainingBytes := int(workspace.bitReader.Limit/8) - bufferPosition
-	if remainingBytes > maxBitReservoirBytes {
-		bufferPosition += remainingBytes - maxBitReservoirBytes
-		remainingBytes = maxBitReservoirBytes
+	unread := workspace.bitReader.Unread()
+	if len(unread) > maxBitReservoirBytes {
+		unread = unread[len(unread)-maxBitReservoirBytes:]
 	}
-	if remainingBytes > 0 {
-		copy(decoder.reservoirBuffer[:remainingBytes], workspace.mainData[bufferPosition:bufferPosition+remainingBytes])
+	if len(unread) > 0 {
+		copy(decoder.reservoirBuffer[:len(unread)], unread)
 	}
-	decoder.bitReservoirBytes = remainingBytes
+	decoder.bitReservoirBytes = len(unread)
 }
