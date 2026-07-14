@@ -3,41 +3,41 @@
 package test
 
 import (
-	"bytes"
-	"context"
 	"testing"
 
 	mp3codec "github.com/godexture/codec-mp3"
 	"github.com/godexture/codec-mp3/test/config"
+	"github.com/godexture/core/domain/media"
 	mp3format "github.com/godexture/format-mp3"
+	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
+	"github.com/godexture/sdk/testutil/audio"
 )
 
 var compareOption = testutil.CompareOptions{MaxAbsDiff: 1e-6, MaxRMSE: 1e-6, MinSNR: 100.0}
 
-func Test_Snapshots(t *testing.T) {
+func TestSnapshots(t *testing.T) {
 	for _, fileName := range config.EnumerateTestdataFiles() {
 		t.Run(fileName, func(t *testing.T) {
 			t.Parallel()
 
 			dataPath := config.BuildTestdataPath(fileName)
+			snapshotPath := config.BuildSnapshotPath(fileName)
 
-			expectedPCM, err := testutil.LoadSnapshot(config.BuildSnapshotPath(fileName))
+			snapshot, err := audio.LoadSnapshot(snapshotPath)
 			if err != nil {
-				t.Fatalf("failed to load expected PCM snapshot: %v", err)
+				t.Fatalf("failed to load snapshot: %v", err)
 			}
 
-			testutil.RunSnapshotDecode(t, expectedPCM, dataPath, compareOption, decode)
+			testutil.RunSnapshotTests(t, testutil.SnapshotConfig{
+				MediaPath: dataPath,
+				Expected:  snapshot,
+				Opts:      compareOption,
+				Demux:     mp3format.NewDemuxerEngine,
+				Decode: func(_ media.StreamInfo) engine.DecoderEngine {
+					return mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+				},
+			})
 		})
 	}
-}
-
-func decode(data []byte) ([]float32, error) {
-	demuxer, err := mp3format.NewDemuxerEngine(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-
-	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
-	return testutil.DecodeToFloat32(context.Background(), demuxer, decoder)
 }

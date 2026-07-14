@@ -46,10 +46,12 @@ type decodedFrame struct {
 	bytes   int
 }
 
-func NewDecoder(config DecoderConfig) *Decoder {
+func NewDecoder(stream media.StreamInfo, config DecoderConfig) *Decoder {
 	decoder := &Decoder{config: config}
-	if len(config.StreamInfo) > 0 {
-		info, err := streaminfo.Parse(config.StreamInfo)
+
+	hasRawStreamInfo := false
+	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
+		info, err := streaminfo.Parse(raw[0])
 		if err != nil {
 			decoder.configErr = err
 		} else {
@@ -57,8 +59,11 @@ func NewDecoder(config DecoderConfig) *Decoder {
 			decoder.parsed = true
 			decoder.initMD5()
 		}
-	} else if config.SampleRate > 0 || config.Channels > 0 || config.BitsPerSample > 0 {
-		decoder.info = streamInfoFromConfig(config)
+		hasRawStreamInfo = true
+	}
+
+	if !hasRawStreamInfo && (stream.Audio.SampleRate > 0 || stream.Audio.ChannelCount() > 0 || stream.Audio.Format != media.SampleFormatUnknown) {
+		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), bitDepthFromSampleFormat(stream.Audio.Format))
 		if err := streaminfo.Validate(decoder.info); err != nil {
 			decoder.configErr = err
 		} else {
@@ -67,6 +72,39 @@ func NewDecoder(config DecoderConfig) *Decoder {
 		}
 	}
 	return decoder
+}
+
+func buildStreamInfo(sampleRate, channels, bitsPerSample int) streamInfo {
+	info := streamInfo{
+		MinBlockSize:  16,
+		MaxBlockSize:  65535,
+		SampleRate:    sampleRate,
+		Channels:      channels,
+		BitsPerSample: bitsPerSample,
+	}
+	if info.SampleRate <= 0 {
+		info.SampleRate = 44100
+	}
+	if info.Channels <= 0 {
+		info.Channels = 2
+	}
+	if info.BitsPerSample <= 0 {
+		info.BitsPerSample = 16
+	}
+	return info
+}
+
+func bitDepthFromSampleFormat(format media.SampleFormat) int {
+	switch format.Packed() {
+	case media.SampleFormatU8:
+		return 8
+	case media.SampleFormatS16:
+		return 16
+	case media.SampleFormatS32:
+		return 32
+	default:
+		return 0
+	}
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {

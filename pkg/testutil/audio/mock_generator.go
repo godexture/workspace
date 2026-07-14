@@ -22,6 +22,21 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 		for i, val := range pcm {
 			binary.LittleEndian.PutUint32(plane[i*4:(i+1)*4], math.Float32bits(val))
 		}
+	case media.SampleFormatU8:
+		for i, val := range pcm {
+			if val > 1.0 {
+				val = 1.0
+			} else if val < -1.0 {
+				val = -1.0
+			}
+			var u8 byte
+			if val < 0 {
+				u8 = byte(val*128 + 128)
+			} else {
+				u8 = byte(val*127 + 128)
+			}
+			plane[i] = u8
+		}
 	case media.SampleFormatS16:
 		for i, val := range pcm {
 			if val > 1.0 {

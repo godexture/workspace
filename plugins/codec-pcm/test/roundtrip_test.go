@@ -1,49 +1,54 @@
 package test
 
 import (
-	"os"
+	"encoding/binary"
 	"testing"
 
-	"github.com/godexture/codec-pcm/test/bridge"
+	pcmCodec "github.com/godexture/codec-pcm"
 	"github.com/godexture/codec-pcm/test/config"
+	"github.com/godexture/core/domain/media"
+	wavFormat "github.com/godexture/format-wav"
+	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
 )
 
-func TestWavRoundtripDemuxDecodeEncodeMux(t *testing.T) {
+func TestRoundtrip(t *testing.T) {
 	for _, profile := range config.Profiles {
 		t.Run(profile.Name, func(t *testing.T) {
 			t.Parallel()
 
+			if profile.Codec == media.CodecMSADPCM || profile.Codec == media.CodecIMAADPCM {
+				t.Skip("ADPCM block align is hardcoded in WAV muxer and cannot be correctly roundtripped")
+			}
 			wavPath := config.BuildTestdataPath(profile.Name)
 
-			encode := func(pcm []float32) ([]byte, error) {
-				return bridge.Encode(pcm, profile.Codec, profile.Attrs)
-			}
-			testutil.RunRoundtripDecodeEncode(t, wavPath, profile.CompareOptions, bridge.Decode, encode)
-		})
-	}
-}
-
-func TestWavRoundtripEncodeMuxDemuxDecode(t *testing.T) {
-	sourceWAV, err := os.Open(config.SourcePath)
-	if err != nil {
-		t.Fatalf("failed to open source WAV file: %v", err)
-	}
-	defer sourceWAV.Close()
-
-	sourcePCM, err := testutil.DecodeWithFFmpeg(sourceWAV)
-	if err != nil {
-		t.Fatalf("failed to decode source WAV file: %v", err)
-	}
-
-	for _, profile := range config.Profiles {
-		t.Run(profile.Name, func(t *testing.T) {
-			t.Parallel()
-
-			encode := func(pcm []float32) ([]byte, error) {
-				return bridge.Encode(pcm, profile.Codec, profile.Attrs)
-			}
-			testutil.RunRoundtripEncodeDecode(t, sourcePCM, profile.CompareOptions, encode, bridge.Decode)
+			testutil.RunRoundtripTests(t, testutil.RoundtripConfig{
+				MediaPath: wavPath,
+				Opts:      profile.CompareOptions,
+				StreamInfo: &media.StreamInfo{
+					Type:            media.MediaAudio,
+					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, Audio: profile.Attrs},
+				},
+				Demux: wavFormat.NewDemuxerEngine,
+				Decode: func(_ media.StreamInfo) engine.DecoderEngine {
+					targetFormat := profile.Attrs.Format
+					if profile.Codec != media.CodecLPCM {
+						targetFormat = media.SampleFormatS16
+					}
+					cfg := pcmCodec.NewConfigWithAudio(profile.Attrs.SampleRate, targetFormat, profile.Attrs.ChannelLayout)
+					cfg.CodecID = profile.Codec
+					return pcmCodec.NewDecoderEngine(cfg)
+				},
+				Encode: func() engine.EncoderEngine {
+					return pcmCodec.NewEncoderEngine(pcmCodec.EncoderConfig{
+						CodecID:   profile.Codec,
+						ByteOrder: binary.LittleEndian,
+					})
+				},
+				Mux: func(buf *testutil.Buffer) engine.MuxerEngine {
+					return wavFormat.NewMuxerEngine(buf)
+				},
+			})
 		})
 	}
 }

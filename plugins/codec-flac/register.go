@@ -13,16 +13,10 @@ import (
 type DecoderConfig = internal.DecoderConfig
 type EncoderConfig = internal.EncoderConfig
 
-func DefaultDecoderConfig() DecoderConfig { return internal.DefaultDecoderConfig() }
+var DefaultEncoderConfig = internal.DefaultEncoderConfig
 
-func DefaultEncoderConfig() EncoderConfig { return internal.DefaultEncoderConfig() }
-
-func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
-	return internal.NewDecoderConfigFromStreamInfo(stream)
-}
-
-func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
-	return internal.NewDecoder(config)
+func NewDecoderEngine(stream media.StreamInfo, config DecoderConfig) engine.DecoderEngine {
+	return internal.NewDecoder(stream, config)
 }
 
 func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
@@ -57,7 +51,7 @@ func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
 
 func init() {
 	if err := godec.Register(
-		internal.DefaultDecoderConfig(),
+		internal.DecoderConfig{},
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -83,10 +77,10 @@ func init() {
 					if decoderConfigPtr, ptrOK := config.(*internal.DecoderConfig); ptrOK && decoderConfigPtr != nil {
 						decoderConfig = *decoderConfigPtr
 					} else {
-						decoderConfig = internal.NewDecoderConfigFromStreamInfo(stream)
+						decoderConfig = internal.DecoderConfig{}
 					}
 				}
-				return engine.WrapDecoder(internal.NewDecoder(decoderConfig)), nil
+				return engine.WrapDecoder(internal.NewDecoder(stream, decoderConfig)), nil
 			},
 		},
 	); err != nil {
@@ -94,7 +88,7 @@ func init() {
 	}
 
 	if err := godec.Register(
-		internal.DefaultEncoderConfig(),
+		internal.DefaultEncoderConfig,
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -115,7 +109,7 @@ func init() {
 				return codec == media.CodecFLAC
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
-				encoderConfig := internal.DefaultEncoderConfig()
+				encoderConfig := internal.DefaultEncoderConfig
 				encoderConfig = internal.MergeEncoderConfigForFactory(encoderConfig, inStream)
 				if config != nil {
 					if flacConfig, ok := config.(internal.EncoderConfig); ok {
