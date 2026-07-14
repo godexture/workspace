@@ -32,7 +32,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
 	}
 
-	info, streamInfoBlock, audioOffset, err := parseNativeFLACHeader(d.r)
+	info, streamInfoBlock, extraBlocks, audioOffset, err := parseNativeFLACHeader(d.r)
 	if err != nil {
 		return nil, metadata.Bundle{}, err
 	}
@@ -41,6 +41,9 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	streamMetadata.AddRaw(streaminfo.MetadataKey, streamInfoBlock)
 
 	globalMetadata := metadata.NewBundle()
+	for _, block := range extraBlocks {
+		globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
+	}
 	if info.TotalSamples > 0 && info.SampleRate > 0 {
 		seconds := float64(info.TotalSamples) / float64(info.SampleRate)
 		_ = seconds // reserved for a future duration key without adding precision loss here

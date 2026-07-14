@@ -15,7 +15,10 @@ const (
 	Length                 = 34
 
 	MetadataKey = "flac.streaminfo"
-	MaxChannels = 8
+	// MetadataBlockKey stores opaque FLAC metadata blocks. Each value contains
+	// the four-byte FLAC block header followed by its payload.
+	MetadataBlockKey = "flac.metadata.block"
+	MaxChannels      = 8
 )
 
 type StreamInfo struct {
