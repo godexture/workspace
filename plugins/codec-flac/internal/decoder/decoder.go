@@ -1,21 +1,30 @@
-package internal
+package decoder
 
 import (
+	"crypto/md5"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
 )
 
+type hashState struct {
+	hash   hash.Hash
+	active bool
+}
+
 type Decoder struct {
-	config DecoderConfig
+	config flac.DecoderConfig
 
 	buffer      []byte
 	parsed      bool
-	info        streamInfo
+	info        streaminfo.StreamInfo
 	configErr   error
 	flushed     bool
 	terminalErr error
@@ -25,28 +34,7 @@ type Decoder struct {
 	md5Scratch  []byte
 }
 
-type streamInfo = streaminfo.StreamInfo
-
-type frameHeader struct {
-	blockSize         int
-	sampleRate        int
-	channels          int
-	channelAssignment uint8
-	bitsPerSample     int
-	blockingStrategy  bool
-	number            uint64
-	headerBytes       int
-	headerCRC         byte
-	frameBytes        int
-}
-
-type decodedFrame struct {
-	header  frameHeader
-	samples [][]int64
-	bytes   int
-}
-
-func NewDecoder(stream media.StreamInfo, config DecoderConfig) *Decoder {
+func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
 	decoder := &Decoder{config: config}
 
 	hasRawStreamInfo := false
@@ -63,7 +51,7 @@ func NewDecoder(stream media.StreamInfo, config DecoderConfig) *Decoder {
 	}
 
 	if !hasRawStreamInfo && (stream.Audio.SampleRate > 0 || stream.Audio.ChannelCount() > 0 || stream.Audio.Format != media.SampleFormatUnknown) {
-		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), bitDepthFromSampleFormat(stream.Audio.Format))
+		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), flac.BitDepthFromSampleFormat(stream.Audio.Format))
 		if err := streaminfo.Validate(decoder.info); err != nil {
 			decoder.configErr = err
 		} else {
@@ -74,8 +62,8 @@ func NewDecoder(stream media.StreamInfo, config DecoderConfig) *Decoder {
 	return decoder
 }
 
-func buildStreamInfo(sampleRate, channels, bitsPerSample int) streamInfo {
-	info := streamInfo{
+func buildStreamInfo(sampleRate, channels, bitsPerSample int) streaminfo.StreamInfo {
+	info := streaminfo.StreamInfo{
 		MinBlockSize:  16,
 		MaxBlockSize:  65535,
 		SampleRate:    sampleRate,
@@ -92,19 +80,6 @@ func buildStreamInfo(sampleRate, channels, bitsPerSample int) streamInfo {
 		info.BitsPerSample = 16
 	}
 	return info
-}
-
-func bitDepthFromSampleFormat(format media.SampleFormat) int {
-	switch format.Packed() {
-	case media.SampleFormatU8:
-		return 8
-	case media.SampleFormatS16:
-		return 16
-	case media.SampleFormatS32:
-		return 32
-	default:
-		return 0
-	}
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
@@ -159,7 +134,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, engine.ErrEAGAIN
 	}
 
-	decoded, err := decodeFrame(d.buffer, d.info)
+	decoded, err := DecodeFrame(d.buffer, d.info)
 	if err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			if d.flushed {
@@ -169,8 +144,8 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		}
 		return nil, err
 	}
-	d.buffer = d.buffer[decoded.bytes:]
-	if err := d.validateFrame(decoded.header); err != nil {
+	d.buffer = d.buffer[decoded.Bytes:]
+	if err := d.validateFrame(decoded.Header); err != nil {
 		return nil, err
 	}
 	d.updateMD5(decoded)
@@ -243,4 +218,66 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 		return 0, errors.New("missing FLAC STREAMINFO block")
 	}
 	return offset, nil
+}
+
+func (d *Decoder) initMD5() {
+	if d.info.MD5 != [16]byte{} {
+		d.md5Hash.hash = md5.New()
+		d.md5Hash.active = true
+	}
+}
+
+func (d *Decoder) validateFrame(header flac.FrameHeader) error {
+	if d.frameCount == 0 {
+		if header.Number != 0 {
+			return fmt.Errorf("invalid first FLAC frame number: %d", header.Number)
+		}
+	} else if header.BlockingStrategy {
+		if header.Number != d.sampleCount {
+			return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.Number, d.sampleCount)
+		}
+	} else if header.Number != d.frameCount && header.Number != d.sampleCount {
+		return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.sampleCount)
+	}
+	if d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
+		return fmt.Errorf("FLAC frame block size %d exceeds STREAMINFO maximum %d", header.BlockSize, d.info.MaxBlockSize)
+	}
+	d.frameCount++
+	d.sampleCount += uint64(header.BlockSize)
+	return nil
+}
+
+func (d *Decoder) validateEnd() error {
+	if d.info.TotalSamples > 0 && d.sampleCount != d.info.TotalSamples {
+		return fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
+	}
+	if !d.md5Hash.active {
+		return nil
+	}
+	var got [16]byte
+	copy(got[:], d.md5Hash.hash.Sum(nil))
+	if got != d.info.MD5 {
+		return fmt.Errorf("FLAC PCM MD5 mismatch: got %x, want %x", got, d.info.MD5)
+	}
+	return nil
+}
+
+func (d *Decoder) updateMD5(decoded *flac.Frame) {
+	if !d.md5Hash.active {
+		return
+	}
+	width := (decoded.Header.BitsPerSample + 7) / 8
+	needed := decoded.Header.BlockSize * decoded.Header.Channels * width
+	if cap(d.md5Scratch) < needed+4 {
+		d.md5Scratch = make([]byte, needed+4)
+	}
+	buf := d.md5Scratch[:needed+4]
+	offset := 0
+	for i := 0; i < decoded.Header.BlockSize; i++ {
+		for ch := 0; ch < decoded.Header.Channels; ch++ {
+			binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(decoded.Samples[ch][i]))
+			offset += width
+		}
+	}
+	d.md5Hash.hash.Write(buf[:needed])
 }

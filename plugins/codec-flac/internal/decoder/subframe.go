@@ -1,13 +1,14 @@
-package internal
+package decoder
 
 import (
 	"errors"
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
 )
 
-func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error) {
+func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error) {
 	originalBitsPerSample := bitsPerSample
 	zero, err := r.ReadBits64(1)
 	if err != nil {
@@ -59,7 +60,7 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 		if err := readWarmupSamples(r, samples, order, bitsPerSample); err != nil {
 			return nil, err
 		}
-		residual, err := readResidual(r, blockSize, order)
+		residual, err := DecodeResidual(r, blockSize, order)
 		if err != nil {
 			return nil, err
 		}
@@ -111,7 +112,7 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			}
 			coefficients[i] = coeff
 		}
-		residual, err := readResidual(r, blockSize, order)
+		residual, err := DecodeResidual(r, blockSize, order)
 		if err != nil {
 			return nil, err
 		}
@@ -141,29 +142,12 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			samples[i] <<= wastedBits
 		}
 	}
-	if err := validateSubframeSampleRange(samples, originalBitsPerSample); err != nil {
+	if err := flac.ValidateSampleRange(samples, originalBitsPerSample); err != nil {
 		return nil, err
 	}
 	return samples, nil
 }
 
-func validateSubframeSampleRange(samples []int64, bitsPerSample int) error {
-	min, max, err := sampleRangeBounds(bitsPerSample)
-	if err != nil {
-		return err
-	}
-	for _, sample := range samples {
-		if sample < min || sample > max {
-			return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, bitsPerSample)
-		}
-	}
-	return nil
-}
-
-// sampleRangeBounds hoists the bit-depth check and min/max computation out
-// of the per-sample prediction loops (fixed/LPC), which used to call
-// validateSubframeSampleRange on a freshly sliced single-element slice for
-// every decoded sample.
 func sampleRangeBounds(bitsPerSample int) (min, max int64, err error) {
 	if bitsPerSample <= 0 || bitsPerSample > 33 {
 		return 0, 0, fmt.Errorf("unsupported FLAC subframe bit depth: %d", bitsPerSample)
@@ -208,12 +192,10 @@ func fixedPredictionChecked(samples []int64, index, order int) (int64, error) {
 	if index < order || order < 0 || order > 4 {
 		return 0, errors.New("invalid FLAC fixed predictor order")
 	}
-	// Samples are at most 32-bit and the largest fixed predictor coefficient
-	// is 6, so int64 provides checked headroom for all RFC-valid input.
 	return fixedPrediction(samples, index, order), nil
 }
 
-func decorrelate(samples [][]int64, assignment uint8) {
+func Decorrelate(samples [][]int64, assignment uint8) {
 	if len(samples) != 2 {
 		return
 	}

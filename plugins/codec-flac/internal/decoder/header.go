@@ -1,100 +1,102 @@
-package internal
+package decoder
 
 import (
 	"errors"
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 )
 
-func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
+func DecodeFrameHeader(r *bits.Reader, info streaminfo.StreamInfo) (flac.FrameHeader, error) {
 	sync, err := r.ReadBits64(14)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	if sync != 0x3ffe {
-		return frameHeader{}, errors.New("invalid FLAC frame sync")
+		return flac.FrameHeader{}, errors.New("invalid FLAC frame sync")
 	}
 	reserved, err := r.ReadBits64(1)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	if reserved != 0 {
-		return frameHeader{}, errors.New("invalid FLAC reserved frame header bit")
+		return flac.FrameHeader{}, errors.New("invalid FLAC reserved frame header bit")
 	}
 	blockingStrategy, err := r.ReadBits64(1)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 
 	blockSizeCode, err := r.ReadBits64(4)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	sampleRateCode, err := r.ReadBits64(4)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	channelAssignment, err := r.ReadBits64(4)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	bitDepthCode, err := r.ReadBits64(3)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	reserved, err = r.ReadBits64(1)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	if reserved != 0 {
-		return frameHeader{}, errors.New("invalid FLAC reserved frame header bit")
+		return flac.FrameHeader{}, errors.New("invalid FLAC reserved frame header bit")
 	}
 
-	number, err := readUTF8CodedNumber(r)
+	number, err := decodeUTF8CodedNumber(r)
 	if err != nil {
-		return frameHeader{}, fmt.Errorf("decode FLAC frame number: %w", err)
+		return flac.FrameHeader{}, fmt.Errorf("decode FLAC frame number: %w", err)
 	}
 	if blockingStrategy == 0 && number > 0x7fffffff {
-		return frameHeader{}, errors.New("FLAC fixed-blocking frame number exceeds 31 bits")
+		return flac.FrameHeader{}, errors.New("FLAC fixed-blocking frame number exceeds 31 bits")
 	}
 
 	blockSize, err := decodeBlockSize(r, uint8(blockSizeCode), info)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	sampleRate, err := decodeSampleRate(r, uint8(sampleRateCode), info)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	bitsPerSample, err := decodeBitsPerSample(uint8(bitDepthCode), info)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 	channels, err := decodeChannelCount(uint8(channelAssignment))
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 
 	headerCRC, err := r.ReadBits64(8)
 	if err != nil {
-		return frameHeader{}, err
+		return flac.FrameHeader{}, err
 	}
 
-	return frameHeader{
-		blockSize:         blockSize,
-		sampleRate:        sampleRate,
-		channels:          channels,
-		channelAssignment: uint8(channelAssignment),
-		bitsPerSample:     bitsPerSample,
-		blockingStrategy:  blockingStrategy != 0,
-		number:            number,
-		headerBytes:       r.BytePos(),
-		headerCRC:         byte(headerCRC),
+	return flac.FrameHeader{
+		BlockSize:         blockSize,
+		SampleRate:        sampleRate,
+		Channels:          channels,
+		ChannelAssignment: uint8(channelAssignment),
+		BitsPerSample:     bitsPerSample,
+		BlockingStrategy:  blockingStrategy != 0,
+		Number:            number,
+		HeaderBytes:       r.BytePos(),
+		HeaderCRC:         byte(headerCRC),
 	}, nil
 }
 
-func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
+func decodeUTF8CodedNumber(r *bits.Reader) (uint64, error) {
 	first, err := r.ReadByte()
 	if err != nil {
 		return 0, err
@@ -131,7 +133,7 @@ func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
 	return value, nil
 }
 
-func decodeBlockSize(r *bits.Reader, code uint8, info streamInfo) (int, error) {
+func decodeBlockSize(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (int, error) {
 	switch code {
 	case 0:
 		return 0, errors.New("reserved FLAC block size code")
@@ -152,7 +154,7 @@ func decodeBlockSize(r *bits.Reader, code uint8, info streamInfo) (int, error) {
 	}
 }
 
-func decodeSampleRate(r *bits.Reader, code uint8, info streamInfo) (int, error) {
+func decodeSampleRate(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (int, error) {
 	switch code {
 	case 0:
 		return info.SampleRate, nil
@@ -192,7 +194,7 @@ func decodeSampleRate(r *bits.Reader, code uint8, info streamInfo) (int, error) 
 	}
 }
 
-func decodeBitsPerSample(code uint8, info streamInfo) (int, error) {
+func decodeBitsPerSample(code uint8, info streaminfo.StreamInfo) (int, error) {
 	switch code {
 	case 0:
 		return info.BitsPerSample, nil

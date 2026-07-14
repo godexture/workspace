@@ -1,7 +1,7 @@
 package flac
 
 import (
-	"github.com/godexture/codec-flac/internal"
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/config"
 	"github.com/godexture/sdk/optional"
 )
@@ -17,12 +17,12 @@ type EncoderConfig struct {
 	MaxRicePartitionOrder     optional.Optional[int]
 	EnableWastedBits          optional.Optional[bool]
 	EnableStereoDecorrelation optional.Optional[bool]
-	BlockingStrategy          optional.Optional[internal.BlockingStrategy]
+	BlockingStrategy          optional.Optional[flac.BlockingStrategy]
 	StreamableSubset          optional.Optional[bool]
 }
 
 func (EncoderConfig) NodeConfiguration() {}
 
-func (c EncoderConfig) ApplyDefaults() internal.EncoderConfig {
-	return config.ApplyDefaults(c, internal.DefaultEncoderConfig)
+func (c EncoderConfig) ApplyDefaults() flac.EncoderConfig {
+	return config.ApplyDefaults(c, flac.DefaultEncoderConfig)
 }

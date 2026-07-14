@@ -1,4 +1,4 @@
-package internal
+package encoder
 
 import (
 	"errors"
@@ -24,9 +24,6 @@ type riceCoding struct {
 	costBits       uint64
 }
 
-// chooseRiceCoding retains the original helper's order-0 API. The encoder
-// uses chooseRiceCodingForBlock so partition legality includes the predictor
-// warm-up samples.
 func chooseRiceCoding(residual []int64) (riceCoding, bool) {
 	return chooseRiceCodingForBlock(residual, len(residual), 0, 15)
 }
@@ -62,26 +59,16 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 		}
 	}
 
-	// Deepest usable partition order. Partition orders nest (2^n | blockSize
-	// implies 2^(n-1) | blockSize and partitions only grow shallower), so the
-	// usable orders are exactly 0..deepest and the per-partition sums of one
-	// level are the pairwise sums of the level below.
 	deepest := 0
 	for deepest < maxPartitionOrder && blockSize%(1<<(deepest+1)) == 0 && blockSize>>(deepest+1) > predictorOrder {
 		deepest++
 	}
 
-	// No Rice parameter above the bit length of the largest folded value can
-	// win: beyond it every quotient is zero and the cost only grows.
 	kMax := int(foldedBitLength(maxFolded))
 	if kMax > int(riceMethods[1].maxParam) {
 		kMax = int(riceMethods[1].maxParam)
 	}
 
-	// Exact Rice cost for parameter k over a partition of n values is
-	// paramBits + n*(k+1) + sum(v>>k), so per-partition prefix sums of v>>k
-	// (plus the maximum for the escape width) are all we need. Compute them
-	// once at the deepest level and merge upward.
 	type partitionStats struct {
 		sums []uint64
 		max  uint64
@@ -143,9 +130,13 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 			}
 			if cost < best.costBits {
 				best = riceCoding{
-					method: method.id, paramBits: method.paramBits,
-					partitionOrder: partitionOrder, predictorOrder: predictorOrder,
-					blockSize: blockSize, partitions: chosen, costBits: cost,
+					method:         method.id,
+					paramBits:      method.paramBits,
+					partitionOrder: partitionOrder,
+					predictorOrder: predictorOrder,
+					blockSize:      blockSize,
+					partitions:     chosen,
+					costBits:       cost,
 				}
 			}
 		}
@@ -174,9 +165,6 @@ func bestRicePartition(sums []uint64, maxFolded uint64, count int, paramBits, ma
 	return best
 }
 
-// foldedBitLength returns the minimum signed width that holds every residual
-// whose folded (zigzag) value is at most maxFolded: a signed width w covers
-// folded values up to 2^w - 1.
 func foldedBitLength(maxFolded uint64) uint8 {
 	width := uint8(0)
 	for maxFolded > 0 {
@@ -186,7 +174,7 @@ func foldedBitLength(maxFolded uint64) uint8 {
 	return width
 }
 
-func writeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
+func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
 	if coding.method != 0 && coding.method != 1 {
 		return errors.New("invalid FLAC Rice coding method")
 	}
@@ -254,4 +242,8 @@ func foldResidual(value int64) uint64 {
 		return uint64(-value*2 - 1)
 	}
 	return uint64(value * 2)
+}
+
+func validFLACResidual(value int64) bool {
+	return value >= -2147483647 && value <= 2147483647
 }

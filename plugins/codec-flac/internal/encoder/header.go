@@ -1,9 +1,10 @@
-package internal
+package encoder
 
 import (
 	"errors"
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
@@ -20,37 +21,21 @@ type encodedSampleRate struct {
 	bits  uint8
 }
 
-func writeFrameHeader(w *bits.Writer, blockSize, sampleRate, channels, bitsPerSample int, frameNumber uint64) error {
-	return writeFrameHeaderWithStrategy(w, blockSize, sampleRate, channels, bitsPerSample, frameNumber, false)
-}
-
-func writeFrameHeaderWithStrategy(w *bits.Writer, blockSize, sampleRate, channels, bitsPerSample int, frameNumber uint64, variable bool) error {
-	channelAssignment, err := encodeChannelAssignment(channels)
+func EncodeFrameHeader(w *bits.Writer, header *flac.FrameHeader, streamableSubset bool) error {
+	blockSizeCode, err := encodeBlockSizeCode(header.BlockSize)
 	if err != nil {
 		return err
 	}
-	return writeFrameHeaderWithAssignment(w, blockSize, sampleRate, channelAssignment, bitsPerSample, frameNumber, variable)
-}
-
-func writeFrameHeaderWithAssignment(w *bits.Writer, blockSize, sampleRate int, channelAssignment uint8, bitsPerSample int, frameNumber uint64, variable bool) error {
-	return writeFrameHeaderWithAssignmentOptions(w, blockSize, sampleRate, channelAssignment, bitsPerSample, frameNumber, variable, false)
-}
-
-func writeFrameHeaderWithAssignmentOptions(w *bits.Writer, blockSize, sampleRate int, channelAssignment uint8, bitsPerSample int, frameNumber uint64, variable, streamableSubset bool) error {
-	blockSizeCode, err := encodeBlockSizeCode(blockSize)
+	sampleRateCode, err := encodeSampleRateCode(header.SampleRate)
 	if err != nil {
 		return err
 	}
-	sampleRateCode, err := encodeSampleRateCode(sampleRate)
+	bitDepthCode, err := encodeBitsPerSampleCode(header.BitsPerSample)
 	if err != nil {
 		return err
 	}
-	bitDepthCode, err := encodeBitsPerSampleCode(bitsPerSample)
-	if err != nil {
-		return err
-	}
-	if channelAssignment > 10 {
-		return fmt.Errorf("invalid FLAC channel assignment: %d", channelAssignment)
+	if header.ChannelAssignment > 10 {
+		return fmt.Errorf("invalid FLAC channel assignment: %d", header.ChannelAssignment)
 	}
 	if streamableSubset && (sampleRateCode.code == 0 || bitDepthCode == 0) {
 		return errors.New("FLAC streamable subset requires explicit frame sample-rate and bit-depth codes")
@@ -58,17 +43,17 @@ func writeFrameHeaderWithAssignmentOptions(w *bits.Writer, blockSize, sampleRate
 
 	w.Bits64(0x3ffe, 14) // sync
 	w.Bits64(0, 1)       // reserved
-	if variable {
-		w.Bits64(1, 1)
+	if header.BlockingStrategy {
+		w.Bits64(1, 1) // variable
 	} else {
-		w.Bits64(0, 1)
+		w.Bits64(0, 1) // fixed
 	}
 	w.Bits64(uint64(blockSizeCode.code), 4)
 	w.Bits64(uint64(sampleRateCode.code), 4)
-	w.Bits64(uint64(channelAssignment), 4)
+	w.Bits64(uint64(header.ChannelAssignment), 4)
 	w.Bits64(uint64(bitDepthCode), 3)
 	w.Bits64(0, 1) // reserved
-	if err := writeUTF8CodedNumber(w, frameNumber); err != nil {
+	if err := encodeUTF8CodedNumber(w, header.Number); err != nil {
 		return err
 	}
 	if blockSizeCode.bits > 0 {
@@ -154,8 +139,6 @@ func encodeSampleRateCode(sampleRate int) (encodedSampleRate, error) {
 		return encodedSampleRate{code: 14, extra: uint16(sampleRate / 10), bits: 16}, nil
 	}
 	if sampleRate >= 1 && sampleRate <= 1048575 {
-		// Code 0 means that STREAMINFO carries the rate. This is the only
-		// representation available for arbitrary native-FLAC rates.
 		return encodedSampleRate{code: 0}, nil
 	}
 	return encodedSampleRate{}, fmt.Errorf("invalid FLAC sample rate: %d", sampleRate)
@@ -189,7 +172,7 @@ func encodeChannelAssignment(channels int) (uint8, error) {
 	return uint8(channels - 1), nil
 }
 
-func writeUTF8CodedNumber(w *bits.Writer, value uint64) error {
+func encodeUTF8CodedNumber(w *bits.Writer, value uint64) error {
 	if value <= 0x7f {
 		w.Byte(byte(value))
 		return nil

@@ -1,15 +1,16 @@
-package internal
+package encoder
 
 import (
 	"errors"
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/engine"
 )
 
 type Encoder struct {
-	config EncoderConfig
+	config flac.EncoderConfig
 
 	pendingQueue []*media.Packet
 	flushed      bool
@@ -25,8 +26,8 @@ type Encoder struct {
 	sampleNumber  uint64
 }
 
-func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
-	err := cfg.validate()
+func NewEncoder(cfg flac.EncoderConfig) (*Encoder, error) {
+	err := cfg.Validate()
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +47,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		return errors.New("flac encoder expected *media.AudioFrame")
 	}
 
-	samples, sampleRate, bitsPerSample, err := audioFrameToSamples(af, e.config.BitsPerSample)
+	samples, sampleRate, bitsPerSample, err := ExtractSamplesFromAudioFrame(af, e.config.BitsPerSample)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func (e *Encoder) Flush() error {
 		return nil
 	}
 	if e.buffered > 0 {
-		block := cloneSampleBlock(e.buffer, 0, e.buffered)
+		block := CloneSampleBlock(e.buffer, 0, e.buffered)
 		if err := e.enqueueBlock(block, e.bufferPTS); err != nil {
 			return err
 		}
@@ -130,7 +131,7 @@ func (e *Encoder) appendSamples(samples [][]int64) {
 
 func (e *Encoder) emitFullBlocks() error {
 	for e.buffered >= e.config.BlockSize {
-		block := cloneSampleBlock(e.buffer, 0, e.config.BlockSize)
+		block := CloneSampleBlock(e.buffer, 0, e.config.BlockSize)
 		if err := e.enqueueBlock(block, e.bufferPTS); err != nil {
 			return err
 		}
@@ -142,18 +143,10 @@ func (e *Encoder) emitFullBlocks() error {
 
 func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 	number := e.frameNumber
-	if e.config.BlockingStrategy == VariableBlocking {
+	if e.config.BlockingStrategy == flac.VariableBlocking {
 		number = e.sampleNumber
 	}
-	data, err := encodeFrameWithOptions(block, e.sampleRate, e.bitsPerSample, number, frameOptions{
-		maxFixedOrder:             e.config.MaxFixedOrder,
-		maxLPCOrder:               e.config.MaxLPCOrder,
-		maxRicePartitionOrder:     e.config.MaxRicePartitionOrder,
-		enableWastedBits:          e.config.EnableWastedBits,
-		enableStereoDecorrelation: e.config.EnableStereoDecorrel,
-		streamableSubset:          e.config.StreamableSubset,
-		variableBlocking:          e.config.BlockingStrategy == VariableBlocking,
-	})
+	data, err := EncodeFrame(block, e.sampleRate, e.bitsPerSample, number, e.config)
 	if err != nil {
 		return err
 	}

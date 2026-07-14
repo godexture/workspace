@@ -1,35 +1,24 @@
-package internal
+package encoder
 
 import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
 
-func encodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, maxFixedOrder int) ([]byte, error) {
-	return encodeFrameWithOptions(samples, sampleRate, bitsPerSample, frameNumber, frameOptions{
-		maxFixedOrder: maxFixedOrder, maxLPCOrder: 32, maxRicePartitionOrder: 8,
-		enableWastedBits: true, enableStereoDecorrelation: true, streamableSubset: true,
-	})
-}
-
-type frameOptions struct {
-	maxFixedOrder, maxLPCOrder, maxRicePartitionOrder                               int
-	enableWastedBits, enableStereoDecorrelation, streamableSubset, variableBlocking bool
-}
-
-func encodeFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options frameOptions) ([]byte, error) {
+func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig) ([]byte, error) {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}
 	if sampleRate < 1 || sampleRate > 1048575 {
 		return nil, fmt.Errorf("invalid FLAC sample rate: %d", sampleRate)
 	}
-	if options.maxRicePartitionOrder < 0 || options.maxRicePartitionOrder > 15 || options.streamableSubset && options.maxRicePartitionOrder > 8 {
-		return nil, fmt.Errorf("invalid FLAC Rice partition order: %d", options.maxRicePartitionOrder)
+	if options.MaxRicePartitionOrder < 0 || options.MaxRicePartitionOrder > 15 || options.StreamableSubset && options.MaxRicePartitionOrder > 8 {
+		return nil, fmt.Errorf("invalid FLAC Rice partition order: %d", options.MaxRicePartitionOrder)
 	}
 	if len(samples) == 0 || len(samples) > 8 {
 		return nil, fmt.Errorf("unsupported FLAC channel count: %d", len(samples))
@@ -41,22 +30,19 @@ func encodeFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, fr
 	if blockSize > 65535 {
 		return nil, fmt.Errorf("FLAC frame block size exceeds 65535: %d", blockSize)
 	}
-	if options.streamableSubset {
+	if options.StreamableSubset {
 		if maxBlockSize := streamableMaxBlockSize(sampleRate); blockSize > maxBlockSize {
 			return nil, fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", blockSize, maxBlockSize, sampleRate)
 		}
-		// RFC 9639 Section 7: subset streams at <= 48 kHz MUST NOT use LPC
-		// orders above 12. maxLPCOrder is an upper bound, so cap rather than
-		// reject.
-		if sampleRate <= 48000 && options.maxLPCOrder > streamableMaxLPCOrder {
-			options.maxLPCOrder = streamableMaxLPCOrder
+		if sampleRate <= 48000 && options.MaxLPCOrder > streamableMaxLPCOrder {
+			options.MaxLPCOrder = streamableMaxLPCOrder
 		}
 	}
 	for ch := range samples {
 		if len(samples[ch]) != blockSize {
 			return nil, fmt.Errorf("FLAC channel %d has mismatched block size", ch)
 		}
-		if err := validateSampleRange(samples[ch], bitsPerSample); err != nil {
+		if err := flac.ValidateSampleRange(samples[ch], bitsPerSample); err != nil {
 			return nil, err
 		}
 	}
@@ -66,7 +52,17 @@ func encodeFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, fr
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFrameHeaderWithAssignmentOptions(w, blockSize, sampleRate, assignmentForChannels(assignment, len(samples)), bitsPerSample, frameNumber, options.variableBlocking, options.streamableSubset); err != nil {
+
+	header := &flac.FrameHeader{
+		BlockSize:         blockSize,
+		SampleRate:        sampleRate,
+		ChannelAssignment: assignmentForChannels(assignment, len(samples)),
+		BitsPerSample:     bitsPerSample,
+		Number:            frameNumber,
+		BlockingStrategy:  options.BlockingStrategy == flac.VariableBlocking,
+	}
+
+	if err := EncodeFrameHeader(w, header, options.StreamableSubset); err != nil {
 		return nil, err
 	}
 	for ch := range channels {
@@ -74,7 +70,7 @@ func encodeFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, fr
 		if assignment == 8 && ch == 1 || assignment == 9 && ch == 0 || assignment == 10 && ch == 1 {
 			channelBits++
 		}
-		if err := writeSubframeCandidate(w, channels[ch], channelBits, candidates[ch]); err != nil {
+		if err := EncodeSubframeCandidate(w, channels[ch], channelBits, candidates[ch]); err != nil {
 			return nil, fmt.Errorf("encode FLAC subframe %d: %w", ch, err)
 		}
 	}
@@ -92,8 +88,6 @@ func assignmentForChannels(assignment uint8, channels int) uint8 {
 	return uint8(channels - 1)
 }
 
-// streamableMaxLPCOrder is the largest LPC order the streamable subset
-// permits for sample rates at or below 48 kHz (RFC 9639 Section 7).
 const streamableMaxLPCOrder = 12
 
 func streamableMaxBlockSize(sampleRate int) int {
@@ -103,13 +97,8 @@ func streamableMaxBlockSize(sampleRate int) int {
 	return 16384
 }
 
-// chooseChannelAssignment picks the cheapest channel assignment and returns
-// the channels to encode together with their already-searched subframe
-// candidates, so the caller writes exactly what was costed instead of
-// repeating the search. For stereo, the four decorrelation modes reuse the
-// four unique channel searches (left, right, mid, side).
-func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options frameOptions) (uint8, [][]int64, []subframeCandidate, error) {
-	if !options.enableStereoDecorrelation || len(samples) != 2 {
+func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig) (uint8, [][]int64, []subframeCandidate, error) {
+	if !options.EnableStereoDecorrelation || len(samples) != 2 {
 		candidates := make([]subframeCandidate, len(samples))
 		for ch := range samples {
 			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options)
@@ -160,7 +149,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options frame
 	return chosen.assignment, chosen.channels, chosen.candidates, nil
 }
 
-func audioFrameToSamples(frame *media.AudioFrame, bitsPerSample int) ([][]int64, int, int, error) {
+func ExtractSamplesFromAudioFrame(frame *media.AudioFrame, bitsPerSample int) ([][]int64, int, int, error) {
 	if frame == nil {
 		return nil, 0, 0, fmt.Errorf("FLAC encoder received nil audio frame")
 	}
@@ -172,7 +161,7 @@ func audioFrameToSamples(frame *media.AudioFrame, bitsPerSample int) ([][]int64,
 		bitsPerSample = frame.BitsPerSample
 	}
 	if bitsPerSample <= 0 {
-		bitsPerSample = bitDepthFromSampleFormat(format)
+		bitsPerSample = flac.BitDepthFromSampleFormat(format)
 	}
 	if format == media.SampleFormatS16 && (bitsPerSample < 4 || bitsPerSample > 16) {
 		return nil, 0, 0, fmt.Errorf("S16 FLAC input requires 4..16 bits per sample, got %d", bitsPerSample)
@@ -223,24 +212,10 @@ func audioFrameToSamples(frame *media.AudioFrame, bitsPerSample int) ([][]int64,
 			samples[ch][i] = value
 		}
 	}
-	if err := validateSampleRange(flattenForValidation(samples), bitsPerSample); err != nil {
+	if err := flac.ValidateSampleRange(flattenForValidation(samples), bitsPerSample); err != nil {
 		return nil, 0, 0, err
 	}
 	return samples, frame.SampleRate, bitsPerSample, nil
-}
-
-func validateSampleRange(samples []int64, bitsPerSample int) error {
-	if bitsPerSample <= 0 || bitsPerSample > 32 {
-		return fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
-	}
-	min := -(int64(1) << uint(bitsPerSample-1))
-	max := (int64(1) << uint(bitsPerSample-1)) - 1
-	for _, sample := range samples {
-		if sample < min || sample > max {
-			return fmt.Errorf("FLAC sample %d outside %d-bit range", sample, bitsPerSample)
-		}
-	}
-	return nil
 }
 
 func flattenForValidation(samples [][]int64) []int64 {
@@ -251,7 +226,7 @@ func flattenForValidation(samples [][]int64) []int64 {
 	return out
 }
 
-func cloneSampleBlock(samples [][]int64, start, end int) [][]int64 {
+func CloneSampleBlock(samples [][]int64, start, end int) [][]int64 {
 	block := make([][]int64, len(samples))
 	for ch := range samples {
 		block[ch] = append([]int64(nil), samples[ch][start:end]...)
