@@ -57,17 +57,30 @@ func (d *Decoder) validateEnd() error {
 	return nil
 }
 
+// updateMD5 serializes the whole frame into a reused scratch buffer and
+// hashes it in a single Write call, rather than one Write per sample: the
+// hash.Hash interface has per-call overhead (buffering/block-boundary
+// bookkeeping) that a frame-sized batch amortizes to almost nothing.
 func (d *Decoder) updateMD5(decoded decodedFrame) {
 	if !d.md5Hash.active {
 		return
 	}
 	width := (decoded.header.bitsPerSample + 7) / 8
-	var sample [4]byte
+	needed := decoded.header.blockSize * decoded.header.channels * width
+	// PutUint32 always writes 4 bytes even when width < 4; pad the scratch
+	// buffer so the last sample's write can't run past its end (the pad
+	// bytes are overwritten by the next sample, or trimmed off by the final
+	// Write for the very last one).
+	if cap(d.md5Scratch) < needed+4 {
+		d.md5Scratch = make([]byte, needed+4)
+	}
+	buf := d.md5Scratch[:needed+4]
+	offset := 0
 	for i := 0; i < decoded.header.blockSize; i++ {
 		for ch := 0; ch < decoded.header.channels; ch++ {
-			value := decoded.samples[ch][i]
-			binary.LittleEndian.PutUint32(sample[:], uint32(value))
-			d.md5Hash.hash.Write(sample[:width])
+			binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(decoded.samples[ch][i]))
+			offset += width
 		}
 	}
+	d.md5Hash.hash.Write(buf[:needed])
 }

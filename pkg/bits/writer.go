@@ -52,11 +52,44 @@ func (w *Writer) BytesAppend(values []byte) {
 	w.position += int32(len(values) * 8)
 }
 
-// Bits64 writes width bits (width <= 64) MSB-first from value.
+// Bits64 writes width bits (width <= 64) MSB-first from value. It merges
+// into the in-progress last byte once (if the writer isn't byte-aligned),
+// appends any whole bytes directly, and appends one final partial byte —
+// replacing what used to be `width` separate per-bit calls, each with its
+// own division/modulo and append-growth check.
 func (w *Writer) Bits64(value uint64, width uint8) {
 	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
-	for i := int(width) - 1; i >= 0; i-- {
-		w.Bit(uint8((value >> uint(i)) & 1))
+	if width == 0 {
+		return
+	}
+	if width < 64 {
+		value &= (uint64(1) << width) - 1
+	}
+	remaining := uint(width)
+
+	if bitOffset := uint(w.position & 7); bitOffset != 0 {
+		byteIndex := int(w.position / 8)
+		assertf(byteIndex < len(w.buffer), "bits: Bits64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		free := 8 - bitOffset
+		take := free
+		if take > remaining {
+			take = remaining
+		}
+		chunk := uint8((value >> (remaining - take)) & ((1 << take) - 1))
+		w.buffer[byteIndex] |= chunk << (free - take)
+		remaining -= take
+		w.position += int32(take)
+	}
+
+	for remaining >= 8 {
+		remaining -= 8
+		w.buffer = append(w.buffer, uint8(value>>remaining))
+		w.position += 8
+	}
+
+	if remaining > 0 {
+		w.buffer = append(w.buffer, uint8(value&((1<<remaining)-1))<<(8-remaining))
+		w.position += int32(remaining)
 	}
 }
 
@@ -67,11 +100,33 @@ func (w *Writer) Signed64(value int64, width uint8) {
 }
 
 // Unary64 writes a unary-coded value: value zero bits followed by a one bit.
+// Rice-coded residuals (its main caller) are dominated by this: each sample
+// writes one unary quotient, so batching the zero run into whole-byte
+// appends instead of `value` separate per-bit calls matters even when the
+// typical run is short.
 func (w *Writer) Unary64(value uint64) {
-	for i := uint64(0); i < value; i++ {
-		w.Bit(0)
+	remaining := value
+	if bitOffset := uint(w.position & 7); bitOffset != 0 {
+		byteIndex := int(w.position / 8)
+		assertf(byteIndex < len(w.buffer), "bits: Unary64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		free := uint64(8 - bitOffset)
+		if remaining < free {
+			w.buffer[byteIndex] |= 1 << (free - remaining - 1)
+			w.position += int32(remaining) + 1
+			return
+		}
+		remaining -= free
+		w.position += int32(free)
 	}
-	w.Bit(1)
+
+	for remaining >= 8 {
+		w.buffer = append(w.buffer, 0)
+		remaining -= 8
+		w.position += 8
+	}
+
+	w.buffer = append(w.buffer, 1<<(7-uint(remaining)))
+	w.position += int32(remaining) + 1
 }
 
 // PadToByte writes zero bits until the next byte boundary.

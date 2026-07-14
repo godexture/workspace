@@ -29,11 +29,10 @@ type subframeCandidate struct {
 	valid      bool
 }
 
-func writeBestSubframe(w *bits.Writer, samples []int64, bitsPerSample int, options frameOptions) error {
+func writeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, best subframeCandidate) error {
 	if len(samples) == 0 {
 		return fmt.Errorf("FLAC subframe has no samples")
 	}
-	best := bestSubframe(samples, bitsPerSample, options)
 	if !best.valid {
 		return fmt.Errorf("no valid FLAC subframe coding")
 	}
@@ -74,29 +73,27 @@ func writeBestSubframe(w *bits.Writer, samples []int64, bitsPerSample int, optio
 }
 
 func bestSubframe(samples []int64, bitsPerSample int, options frameOptions) subframeCandidate {
-	best := subframeCandidate{costBits: math.MaxUint64}
-	maxWasted := 0
+	// Shifting out every shared trailing zero bit never costs more than
+	// keeping some: the residual magnitudes shrink while the header grows by
+	// one unary bit per wasted bit, so a single pass at the full count is
+	// sufficient.
+	wasted := 0
 	if options.enableWastedBits {
-		maxWasted = commonTrailingZeros(samples, bitsPerSample)
+		wasted = commonTrailingZeros(samples, bitsPerSample)
 	}
-	for wasted := 0; wasted <= maxWasted; wasted++ {
-		reduced := samples
-		if wasted > 0 {
-			reduced = make([]int64, len(samples))
-			for i, sample := range samples {
-				reduced[i] = sample >> wasted
-			}
-		}
-		candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options)
-		if candidate.valid {
-			candidate.wastedBits = wasted
-			candidate.costBits += uint64(wasted)
-			if candidate.costBits < best.costBits {
-				best = candidate
-			}
+	reduced := samples
+	if wasted > 0 {
+		reduced = make([]int64, len(samples))
+		for i, sample := range samples {
+			reduced[i] = sample >> wasted
 		}
 	}
-	return best
+	candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options)
+	if candidate.valid {
+		candidate.wastedBits = wasted
+		candidate.costBits += uint64(wasted)
+	}
+	return candidate
 }
 
 func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frameOptions) subframeCandidate {
@@ -132,29 +129,24 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frame
 	if maxLPC >= len(samples) {
 		maxLPC = len(samples) - 1
 	}
-	for order := 1; order <= maxLPC; order++ {
-		coefficients := estimateLPCCoefficients(samples, order)
-		if len(coefficients) != order {
+	for order, coefficients := range lpcCoefficientSets(samples, maxLPC) {
+		if coefficients == nil {
 			continue
 		}
-		for precision := 1; precision <= 15; precision++ {
-			for shift := 0; shift <= 31; shift++ {
-				quantized := quantizeLPC(coefficients, precision, shift)
-				if quantized == nil {
-					continue
-				}
-				residual := lpcResidual(samples, order, quantized, shift)
-				rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.maxRicePartitionOrder)
-				if !ok {
-					continue
-				}
-				candidate := subframeCandidate{kind: subframeKindLPC, order: order, residual: residual, rice: rice,
-					coeff: quantized, precision: precision, shift: shift,
-					costBits: uint64(8+order*bitsPerSample+4+5+order*precision) + rice.costBits, valid: true}
-				if candidate.costBits < best.costBits {
-					best = candidate
-				}
-			}
+		quantized, shift, ok := quantizeLPCCoefficients(coefficients, lpcPrecision)
+		if !ok {
+			continue
+		}
+		residual := lpcResidual(samples, order, quantized, shift)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.maxRicePartitionOrder)
+		if !ok {
+			continue
+		}
+		candidate := subframeCandidate{kind: subframeKindLPC, order: order, residual: residual, rice: rice,
+			coeff: quantized, precision: lpcPrecision, shift: shift,
+			costBits: uint64(8+order*bitsPerSample+4+5+order*lpcPrecision) + rice.costBits, valid: true}
+		if candidate.costBits < best.costBits {
+			best = candidate
 		}
 	}
 	return best
@@ -236,56 +228,106 @@ func fixedResidual(samples []int64, order int) []int64 {
 	return residual
 }
 
-func estimateLPCCoefficients(samples []int64, order int) []float64 {
-	if order <= 0 || len(samples) <= order {
+// lpcPrecision is the quantized coefficient precision in bits (including the
+// sign bit). The header stores precision-1 in four bits, so 15 is the largest
+// legal value.
+const lpcPrecision = 15
+
+// lpcCoefficientSets runs a single Levinson-Durbin recursion and returns the
+// predictor coefficients for every order in 1..maxOrder (indexed by order;
+// index 0 is unused). Orders past a numerically unstable step are nil.
+func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
+	if maxOrder >= len(samples) {
+		maxOrder = len(samples) - 1
+	}
+	if maxOrder <= 0 {
 		return nil
 	}
-	auto := make([]float64, order+1)
-	for lag := 0; lag <= order; lag++ {
-		for i := lag; i < len(samples); i++ {
-			auto[lag] += float64(samples[i]) * float64(samples[i-lag])
+	values := make([]float64, len(samples))
+	for i, sample := range samples {
+		values[i] = float64(sample)
+	}
+	auto := make([]float64, maxOrder+1)
+	for lag := 0; lag <= maxOrder; lag++ {
+		var sum float64
+		for i := lag; i < len(values); i++ {
+			sum += values[i] * values[i-lag]
 		}
+		auto[lag] = sum
 	}
 	if auto[0] == 0 {
 		return nil
 	}
-	coeff := make([]float64, order)
+	sets := make([][]float64, maxOrder+1)
+	coeff := make([]float64, maxOrder)
 	errorValue := auto[0]
-	for i := 0; i < order; i++ {
+	for i := 0; i < maxOrder; i++ {
 		reflection := auto[i+1]
 		for j := 0; j < i; j++ {
 			reflection -= coeff[j] * auto[i-j]
 		}
 		if errorValue <= 0 {
-			return nil
+			break
 		}
 		reflection /= errorValue
 		if reflection <= -0.999999 || reflection >= 0.999999 || math.IsNaN(reflection) {
-			return nil
+			break
 		}
-		old := append([]float64(nil), coeff...)
+		for j := 0; j < i/2; j++ {
+			front, back := coeff[j], coeff[i-1-j]
+			coeff[j] = front - reflection*back
+			coeff[i-1-j] = back - reflection*front
+		}
+		if i%2 == 1 {
+			coeff[i/2] -= reflection * coeff[i/2]
+		}
 		coeff[i] = reflection
-		for j := 0; j < i; j++ {
-			coeff[j] = old[j] - reflection*old[i-1-j]
-		}
 		errorValue *= 1 - reflection*reflection
+		sets[i+1] = append([]float64(nil), coeff[:i+1]...)
 	}
-	return coeff
+	return sets
 }
 
-func quantizeLPC(coefficients []float64, precision, shift int) []int64 {
+// quantizeLPCCoefficients picks the largest shift that keeps every scaled
+// coefficient within the precision, then quantizes with error feedback so
+// rounding errors do not accumulate across coefficients.
+func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, int, bool) {
+	var max_coeff float64
+	for _, coefficient := range coefficients {
+		if magnitude := math.Abs(coefficient); magnitude > max_coeff {
+			max_coeff = magnitude
+		}
+	}
+	if max_coeff <= 0 || math.IsInf(max_coeff, 0) || math.IsNaN(max_coeff) {
+		return nil, 0, false
+	}
+	_, exponent := math.Frexp(max_coeff)
+	shift := precision - 1 - exponent
+	// The prediction right shift is stored as a signed 5-bit number that MUST
+	// NOT be negative (RFC 9639 Section 9.2.6), so only 0..15 is encodable.
+	if shift > 15 {
+		shift = 15
+	}
+	if shift < 0 {
+		shift = 0
+	}
 	min := -(int64(1) << uint(precision-1))
 	max := (int64(1) << uint(precision-1)) - 1
-	result := make([]int64, len(coefficients))
+	quantized := make([]int64, len(coefficients))
 	scale := math.Ldexp(1, shift)
+	carry := 0.0
 	for i, coefficient := range coefficients {
-		value := int64(math.Round(coefficient * scale))
-		if value < min || value > max {
-			return nil
+		value := coefficient*scale + carry
+		rounded := math.Round(value)
+		if rounded > float64(max) {
+			rounded = float64(max)
+		} else if rounded < float64(min) {
+			rounded = float64(min)
 		}
-		result[i] = value
+		carry = value - rounded
+		quantized[i] = int64(rounded)
 	}
-	return result
+	return quantized, shift, true
 }
 
 func lpcResidual(samples []int64, order int, coefficients []int64, shift int) []int64 {

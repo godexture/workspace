@@ -222,6 +222,93 @@ func TestReadByte(t *testing.T) {
 	}
 }
 
+// TestBits64UnalignedSpansMatchBitByBit exercises the batched Bits64 fast
+// path (spans of 1-9 bytes, every starting bit offset) against a reference
+// bit-at-a-time decode, so the byte-batching arithmetic in reader.go cannot
+// silently drift from the original one-bit-per-call semantics.
+func TestBits64UnalignedSpansMatchBitByBit(t *testing.T) {
+	data := make([]byte, 16)
+	for i := range data {
+		data[i] = byte(0x9A + i*0x2F)
+	}
+	for offset := int32(0); offset < 8; offset++ {
+		for width := uint8(1); width <= 64; width++ {
+			if offset+int32(width) > int32(len(data))*8 {
+				continue
+			}
+			r := New(data)
+			r.Seek(offset)
+			got := r.Bits64(width)
+
+			ref := New(data)
+			ref.Seek(offset)
+			var want uint64
+			for i := uint8(0); i < width; i++ {
+				want = (want << 1) | uint64(ref.Bit())
+			}
+			if got != want {
+				t.Fatalf("Bits64(width=%d) at offset %d = %#x, want %#x", width, offset, got, want)
+			}
+			if r.Position() != ref.Position() {
+				t.Fatalf("Position() after Bits64(width=%d) at offset %d = %d, want %d", width, offset, r.Position(), ref.Position())
+			}
+			if r.Overrun() {
+				t.Fatalf("Overrun() = true for an in-bounds Bits64(width=%d) at offset %d", width, offset)
+			}
+		}
+	}
+}
+
+// TestUnary64FastScanMatchesBitByBit exercises the byte-skipping Unary64
+// fast path across zero runs that start at every bit offset and span
+// several bytes, so the LeadingZeros8-based scan cannot silently diverge
+// from the bit-at-a-time semantics it replaces.
+func TestUnary64FastScanMatchesBitByBit(t *testing.T) {
+	for zeros := 0; zeros <= 40; zeros++ {
+		for offset := 0; offset < 8; offset++ {
+			totalBits := offset + zeros + 1 + 8 // padding after the stop bit
+			data := make([]byte, (totalBits+7)/8)
+			stopBit := offset + zeros
+			data[stopBit/8] |= 1 << uint(7-stopBit%8)
+
+			r := New(data)
+			r.Seek(int32(offset))
+			if got := r.Unary64(); got != uint64(zeros) {
+				t.Fatalf("Unary64() with %d leading zero bits at offset %d = %d, want %d", zeros, offset, got, zeros)
+			}
+			if want := int32(stopBit + 1); r.Position() != want {
+				t.Fatalf("Position() after Unary64() with %d zeros at offset %d = %d, want %d", zeros, offset, r.Position(), want)
+			}
+			if r.Overrun() {
+				t.Fatalf("Overrun() = true for an in-bounds Unary64() with %d zeros at offset %d", zeros, offset)
+			}
+		}
+	}
+}
+
+// TestUnary64FastScanOverrunMatchesBitByBit checks the sticky-overrun exit
+// (no stop bit before the limit) for zero runs that end mid-byte, at the
+// start of the byte-scan, and after several fully-scanned bytes.
+func TestUnary64FastScanOverrunMatchesBitByBit(t *testing.T) {
+	for _, totalBits := range []int{1, 3, 7, 8, 9, 15, 16, 17, 23, 31} {
+		for offset := 0; offset < 8 && offset < totalBits; offset++ {
+			data := make([]byte, (totalBits+7)/8) // all zero bits, no stop bit
+			r := New(data)
+			r.Init(data, int32(offset), int32(totalBits))
+			want := uint64(totalBits - offset)
+			if got := r.Unary64(); got != want {
+				t.Fatalf("Unary64() overrun with limit=%d offset=%d = %d, want %d", totalBits, offset, got, want)
+			}
+			if !r.Overrun() {
+				t.Fatalf("Overrun() = false after exhausting limit=%d offset=%d, want true", totalBits, offset)
+			}
+			if r.Position() != int32(totalBits) {
+				t.Fatalf("Position() after overrun with limit=%d offset=%d = %d, want %d", totalBits, offset, r.Position(), totalBits)
+			}
+		}
+	}
+}
+
 func BenchmarkBits64(b *testing.B) {
 	data := make([]byte, 1024)
 	for i := range data {

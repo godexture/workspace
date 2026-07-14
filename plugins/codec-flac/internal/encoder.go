@@ -150,13 +150,13 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 		number = e.sampleNumber
 	}
 	data, err := encodeFLACFrameWithOptions(block, e.sampleRate, e.bitsPerSample, number, frameOptions{
-		maxFixedOrder:         e.config.MaxFixedOrder,
-		maxLPCOrder:           e.config.MaxLPCOrder,
-		maxRicePartitionOrder: e.config.MaxRicePartitionOrder,
-		enableWastedBits:      e.config.EnableWastedBits,
-		enableStereoDecorrel:  e.config.EnableStereoDecorrel,
-		streamableSubset:      e.config.StreamableSubset,
-		variableBlocking:      e.config.BlockingStrategy == VariableBlocking,
+		maxFixedOrder:             e.config.MaxFixedOrder,
+		maxLPCOrder:               e.config.MaxLPCOrder,
+		maxRicePartitionOrder:     e.config.MaxRicePartitionOrder,
+		enableWastedBits:          e.config.EnableWastedBits,
+		enableStereoDecorrelation: e.config.EnableStereoDecorrel,
+		streamableSubset:          e.config.StreamableSubset,
+		variableBlocking:          e.config.BlockingStrategy == VariableBlocking,
 	})
 	if err != nil {
 		return err
