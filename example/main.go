@@ -47,7 +47,7 @@ func main() {
 		Input:       inputFile,
 		Output:      outputFile,
 		TargetCodec: media.CodecLPCM,
-		MuxConfig:   wav.Config{},
+		MuxConfig:   wav.MuxerConfig{},
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)

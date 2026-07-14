@@ -9,8 +9,8 @@ import (
 	"github.com/godexture/sdk/hash"
 )
 
-func encodeFLACFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, maxFixedOrder int) ([]byte, error) {
-	return encodeFLACFrameWithOptions(samples, sampleRate, bitsPerSample, frameNumber, frameOptions{
+func encodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, maxFixedOrder int) ([]byte, error) {
+	return encodeFrameWithOptions(samples, sampleRate, bitsPerSample, frameNumber, frameOptions{
 		maxFixedOrder: maxFixedOrder, maxLPCOrder: 32, maxRicePartitionOrder: 8,
 		enableWastedBits: true, enableStereoDecorrelation: true, streamableSubset: true,
 	})
@@ -21,7 +21,7 @@ type frameOptions struct {
 	enableWastedBits, enableStereoDecorrelation, streamableSubset, variableBlocking bool
 }
 
-func encodeFLACFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options frameOptions) ([]byte, error) {
+func encodeFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options frameOptions) ([]byte, error) {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}

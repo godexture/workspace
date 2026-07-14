@@ -9,34 +9,46 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
+	"github.com/godexture/sdk/config"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/optional"
 )
 
-type Config = internal.Config
-type EncoderConfig = internal.EncoderConfig
-
-func DefaultConfig() Config {
-	return internal.DefaultConfig()
+func DefaultDecoderConfig() DecoderConfig {
+	return DecoderConfig{
+		CodecID:       optional.Some(media.CodecLPCM),
+		SampleRate:    optional.Some(48000),
+		Format:        optional.Some(media.SampleFormatS16),
+		ChannelLayout: optional.Some(media.LayoutStereo2_0),
+		ByteOrder:     optional.Some[binary.ByteOrder](binary.LittleEndian),
+	}
 }
 
-func NewDecoderEngine(config Config) engine.DecoderEngine {
-	return internal.NewDecoder(config)
+func DefaultEncoderConfig() EncoderConfig {
+	return EncoderConfig{
+		CodecID:   optional.Some(media.CodecLPCM),
+		ByteOrder: optional.Some[binary.ByteOrder](binary.LittleEndian),
+	}
 }
 
-func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
-	return internal.NewEncoder(config)
+func NewDecoderEngine(cfg DecoderConfig) engine.DecoderEngine {
+	return internal.NewDecoder(cfg.ApplyDefaults())
 }
 
-func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.ChannelLayout) Config {
-	cfg := internal.DefaultConfig()
+func NewEncoderEngine(cfg EncoderConfig) engine.EncoderEngine {
+	return internal.NewEncoder(cfg.ApplyDefaults())
+}
+
+func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.ChannelLayout) DecoderConfig {
+	cfg := DefaultDecoderConfig()
 	if sampleRate > 0 {
-		cfg.SampleRate = sampleRate
+		cfg.SampleRate = optional.Some(sampleRate)
 	}
 	if format != media.SampleFormatUnknown {
-		cfg.Format = format
+		cfg.Format = optional.Some(format)
 	}
 	if layout.ChannelCount() > 0 {
-		cfg.ChannelLayout = layout
+		cfg.ChannelLayout = optional.Some(layout)
 	}
 	return cfg
 }
@@ -57,7 +69,7 @@ func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
 
 func init() {
 	// --- Decoder ---
-	if err := godec.Register(Config{}, registry.DecoderManifest{
+	if err := godec.Register(DecoderConfig{}, registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-decoder",
@@ -77,64 +89,31 @@ func init() {
 			},
 		},
 		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			c := DefaultConfig()
+			c := DefaultDecoderConfig()
 			if s.MediaAttributes.Codec != "" {
-				c.CodecID = s.MediaAttributes.Codec
+				c.CodecID = optional.Some(s.MediaAttributes.Codec)
 			}
 			if s.MediaAttributes.Audio.SampleRate > 0 {
-				c.SampleRate = s.MediaAttributes.Audio.SampleRate
+				c.SampleRate = optional.Some(s.MediaAttributes.Audio.SampleRate)
 			}
 			if s.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
-				c.Format = s.MediaAttributes.Audio.Format
+				c.Format = optional.Some(s.MediaAttributes.Audio.Format)
 			}
 			if s.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
-				c.ChannelLayout = s.MediaAttributes.Audio.ChannelLayout
+				c.ChannelLayout = optional.Some(s.MediaAttributes.Audio.ChannelLayout)
 			}
 
 			if cfg != nil {
-				if pcmCfg, ok := cfg.(Config); ok {
-					if pcmCfg.CodecID != "" {
-						c.CodecID = pcmCfg.CodecID
-					}
-					if pcmCfg.SampleRate > 0 {
-						c.SampleRate = pcmCfg.SampleRate
-					}
-					if pcmCfg.Format != media.SampleFormatUnknown {
-						c.Format = pcmCfg.Format
-					}
-					if pcmCfg.ChannelLayout.ChannelCount() > 0 {
-						c.ChannelLayout = pcmCfg.ChannelLayout
-					}
-					if pcmCfg.ByteOrder != nil {
-						c.ByteOrder = pcmCfg.ByteOrder
-					}
-				} else if pcmCfgPtr, ok := cfg.(*Config); ok && pcmCfgPtr != nil {
-					if pcmCfgPtr.CodecID != "" {
-						c.CodecID = pcmCfgPtr.CodecID
-					}
-					if pcmCfgPtr.SampleRate > 0 {
-						c.SampleRate = pcmCfgPtr.SampleRate
-					}
-					if pcmCfgPtr.Format != media.SampleFormatUnknown {
-						c.Format = pcmCfgPtr.Format
-					}
-					if pcmCfgPtr.ChannelLayout.ChannelCount() > 0 {
-						c.ChannelLayout = pcmCfgPtr.ChannelLayout
-					}
-					if pcmCfgPtr.ByteOrder != nil {
-						c.ByteOrder = pcmCfgPtr.ByteOrder
-					}
+				var pcmCfg DecoderConfig
+				if pc, ok := cfg.(DecoderConfig); ok {
+					pcmCfg = pc
+				} else if pcPtr, ok := cfg.(*DecoderConfig); ok && pcPtr != nil {
+					pcmCfg = *pcPtr
 				}
+				// Merge pcmCfg onto c, and output resolved internal config
+				resolved := config.ApplyDefaults(pcmCfg, DefaultDecoderConfig())
+				return engine.WrapDecoder(NewDecoderEngine(resolved)), nil
 			}
-			// Set G.711 default sample rate & layout if not explicitly set
-			// if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
-			// 	if c.SampleRate == 48000 {
-			// 		c.SampleRate = 8000
-			// 	}
-			// 	if c.Layout == media.LayoutStereo2_0 {
-			// 		c.Layout = media.LayoutMono1
-			// 	}
-			// }
 			return engine.WrapDecoder(NewDecoderEngine(c)), nil
 		},
 	}); err != nil {
@@ -163,23 +142,19 @@ func init() {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
 		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			encCfg := EncoderConfig{CodecID: targetCodec, ByteOrder: binary.LittleEndian}
+			encCfg := EncoderConfig{
+				CodecID:   optional.Some(targetCodec),
+				ByteOrder: optional.Some[binary.ByteOrder](binary.LittleEndian),
+			}
 			if cfg != nil {
-				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
-					if pcmEncCfg.CodecID != "" {
-						encCfg.CodecID = pcmEncCfg.CodecID
-					}
-					if pcmEncCfg.ByteOrder != nil {
-						encCfg.ByteOrder = pcmEncCfg.ByteOrder
-					}
-				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
-					if pcmEncCfgPtr.CodecID != "" {
-						encCfg.CodecID = pcmEncCfgPtr.CodecID
-					}
-					if pcmEncCfgPtr.ByteOrder != nil {
-						encCfg.ByteOrder = pcmEncCfgPtr.ByteOrder
-					}
+				var pcmEncCfg EncoderConfig
+				if pc, ok := cfg.(EncoderConfig); ok {
+					pcmEncCfg = pc
+				} else if pcPtr, ok := cfg.(*EncoderConfig); ok && pcPtr != nil {
+					pcmEncCfg = *pcPtr
 				}
+				resolved := config.ApplyDefaults(pcmEncCfg, encCfg)
+				return engine.WrapEncoder(NewEncoderEngine(resolved)), nil
 			}
 			return engine.WrapEncoder(NewEncoderEngine(encCfg)), nil
 		},

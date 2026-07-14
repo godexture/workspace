@@ -12,13 +12,12 @@ import (
 )
 
 type DecoderConfig = domain.DecoderConfig
-type EncoderConfig = domain.EncoderConfig
 
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder()
 }
 
-func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
+func NewEncoderEngine(config domain.EncoderConfig) engine.EncoderEngine {
 	return internal.NewEncoder(config)
 }
 
@@ -35,72 +34,88 @@ func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
 	return c.Match(streamInfo)
 }
 
+type lpcmCapability struct{}
+
+func (lpcmCapability) MediaType() media.MediaType { return media.MediaAudio }
+
+func (c lpcmCapability) Match(streamInfo media.StreamInfo) bool {
+	return streamInfo.Type == media.MediaAudio &&
+		streamInfo.MediaAttributes.Codec == media.CodecLPCM
+}
+
+func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
+	return c.Match(streamInfo)
+}
+
 func init() {
-	// --- Decoder ---
-	if err := godec.Register(
-		domain.DecoderConfig{},
-		registry.DecoderManifest{
-			TransformManifest: registry.TransformManifest{
-				BaseManifest: registry.BaseManifest{
-					Name:        "mp3-decoder",
-					Description: "MP3 decoder",
-				},
-
-				Capabilities: []manifest.Capability{mp3Capability{}},
-
-				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
-					profile := media.Profile{
-						Type:            streamInfo.Type,
-						MediaAttributes: streamInfo.MediaAttributes,
-					}
-					profile.Codec = media.CodecLPCM
-					profile.Audio.Format = media.SampleFormatF32
-
-					if streamInfo.Audio.ChannelCount() == 1 {
-						profile.Audio.ChannelLayout = media.LayoutMono1
-					} else {
-						profile.Audio.ChannelLayout = media.LayoutStereo2_0
-					}
-
-					return profile
-				},
+	if err := godec.Register(DecoderConfig{}, registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{
+				Name:        "mp3-decoder",
+				Description: "MP3 decoder",
 			},
-
-			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
-				return engine.WrapDecoder(internal.NewDecoder()), nil
+			Capabilities: []manifest.Capability{
+				mp3Capability{},
+			},
+			TransformFunc: func(stream media.StreamInfo) media.Profile {
+				profile := media.Profile{
+					Type:            stream.Type,
+					MediaAttributes: stream.MediaAttributes,
+				}
+				profile.Codec = media.CodecLPCM
+				if profile.Audio.Format == media.SampleFormatUnknown {
+					profile.Audio.Format = media.SampleFormatF32
+				}
+				if stream.Audio.ChannelCount() == 1 {
+					profile.Audio.ChannelLayout = media.LayoutMono1
+				} else {
+					profile.Audio.ChannelLayout = media.LayoutStereo2_0
+				}
+				return profile
 			},
 		},
-	); err != nil {
+		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
+			dec := internal.NewDecoder()
+			return engine.WrapDecoder(dec), nil
+		},
+	}); err != nil {
 		panic(err)
 	}
 
-	// --- Encoder (stub) ---
-	if err := godec.Register(
-		domain.EncoderConfig{},
-		registry.EncoderManifest{
-			TransformManifest: registry.TransformManifest{
-				BaseManifest: registry.BaseManifest{
-					Name:        "mp3-encoder",
-					Description: "MP3 encoder (codec-mp3 plugin) [STUB: 未実装]",
-				},
-				Capabilities: []manifest.Capability{mp3Capability{}},
-				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
-					profile := media.Profile{Type: streamInfo.Type, MediaAttributes: streamInfo.MediaAttributes}
-					profile.Codec = media.CodecMP3
-					return profile
-				},
+	if err := godec.Register(EncoderConfig{}, registry.EncoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{
+				Name:        "mp3-encoder",
+				Description: "MP3 encoder (codec-mp3 plugin)",
 			},
-
-			Supports: func(codec media.CodecID) bool {
-				return codec == media.CodecMP3
+			Capabilities: []manifest.Capability{
+				lpcmCapability{},
 			},
-
-			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
-				encoderConfig := domain.EncoderConfig{}
-				return engine.WrapEncoder(internal.NewEncoder(encoderConfig)), nil
+			TransformFunc: func(stream media.StreamInfo) media.Profile {
+				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
+				profile.Codec = media.CodecMP3
+				return profile
 			},
 		},
-	); err != nil {
+		Supports: func(codec media.CodecID) bool {
+			return codec == media.CodecMP3
+		},
+		Factory: func(s media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
+			if cfg != nil {
+				var mp3Config EncoderConfig
+				if mc, ok := cfg.(EncoderConfig); ok {
+					mp3Config = mc
+				} else if mcPtr, ok := cfg.(*EncoderConfig); ok && mcPtr != nil {
+					mp3Config = *mcPtr
+				}
+				resolved := mp3Config.ApplyDefaults()
+				enc := internal.NewEncoder(resolved)
+				return engine.WrapEncoder(enc), nil
+			}
+			enc := internal.NewEncoder(domain.DefaultEncoderConfig)
+			return engine.WrapEncoder(enc), nil
+		},
+	}); err != nil {
 		panic(err)
 	}
 }

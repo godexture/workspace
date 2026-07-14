@@ -27,11 +27,11 @@ type Encoder struct {
 	isFlushed bool
 }
 
-func NewEncoder(config domain.EncoderConfig) *Encoder {
-	if config.Bitrate <= 0 {
-		config.Bitrate = 128
+func NewEncoder(cfg domain.EncoderConfig) *Encoder {
+	if cfg.Bitrate == 0 {
+		cfg.Bitrate = 128000
 	}
-	return &Encoder{config: config}
+	return &Encoder{config: cfg}
 }
 func (e *Encoder) SendFrame(audioFrame *media.Frame) error {
 	if audioFrame == nil || *audioFrame == nil {

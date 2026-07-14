@@ -35,8 +35,6 @@ type EncoderConfig struct {
 	StreamableSubset      bool
 }
 
-func (EncoderConfig) NodeConfiguration() {}
-
 var DefaultEncoderConfig = EncoderConfig{
 	BlockSize:             defaultEncoderBlockSize,
 	MaxFixedOrder:         defaultEncoderMaxFixedOrder,
@@ -45,24 +43,6 @@ var DefaultEncoderConfig = EncoderConfig{
 	EnableWastedBits:      true,
 	EnableStereoDecorrel:  true,
 	StreamableSubset:      true,
-}
-
-func (c *EncoderConfig) applyDefaults() {
-	if c.BlockSize <= 0 {
-		c.BlockSize = defaultEncoderBlockSize
-	}
-	// Zero is a meaningful explicit order (and is therefore not replaced by
-	// the default). Callers that want defaults should use
-	// DefaultEncoderConfig.
-	if c.MaxFixedOrder > defaultEncoderMaxFixedOrder {
-		c.MaxFixedOrder = defaultEncoderMaxFixedOrder
-	}
-	if c.MaxLPCOrder > 32 {
-		c.MaxLPCOrder = 32
-	}
-	if c.MaxRicePartitionOrder > 15 {
-		c.MaxRicePartitionOrder = 15
-	}
 }
 
 func (c EncoderConfig) validate() error {
@@ -96,16 +76,26 @@ func (c EncoderConfig) validate() error {
 	return nil
 }
 
-func MergeEncoderConfigForFactory(config EncoderConfig, stream media.StreamInfo) EncoderConfig {
-	config.applyDefaults()
-	if config.SampleRate <= 0 && stream.Audio.SampleRate > 0 {
-		config.SampleRate = stream.Audio.SampleRate
+func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) EncoderConfig {
+	if cfg.SampleRate == 0 && stream.Audio.SampleRate > 0 {
+		cfg.SampleRate = stream.Audio.SampleRate
 	}
-	if config.Channels <= 0 {
-		config.Channels = stream.Audio.ChannelCount()
+	if cfg.Channels == 0 {
+		cfg.Channels = stream.Audio.ChannelCount()
 	}
-	if config.BitsPerSample <= 0 {
-		config.BitsPerSample = bitDepthFromSampleFormat(stream.Audio.Format)
+	if cfg.BitsPerSample == 0 {
+		cfg.BitsPerSample = bitDepthFromSampleFormat(stream.Audio.Format)
 	}
-	return config
+
+	if cfg.MaxFixedOrder > defaultEncoderMaxFixedOrder {
+		cfg.MaxFixedOrder = defaultEncoderMaxFixedOrder
+	}
+	if cfg.MaxLPCOrder > 32 {
+		cfg.MaxLPCOrder = 32
+	}
+	if cfg.MaxRicePartitionOrder > 15 {
+		cfg.MaxRicePartitionOrder = 15
+	}
+
+	return cfg
 }

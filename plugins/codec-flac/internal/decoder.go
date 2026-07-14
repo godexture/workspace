@@ -159,7 +159,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, engine.ErrEAGAIN
 	}
 
-	decoded, err := decodeFLACFrame(d.buffer, d.info)
+	decoded, err := decodeFrame(d.buffer, d.info)
 	if err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			if d.flushed {

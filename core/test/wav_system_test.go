@@ -11,7 +11,7 @@ import (
 func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {
 
 	var buf bytes.Buffer
-	muxer := wavpkg.NewMuxerEngine(&buf)
+	muxer := wavpkg.NewMuxerEngine(&buf, wavpkg.MuxerConfig{})
 
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
@@ -63,7 +63,7 @@ func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	muxer2 := wavpkg.NewMuxerEngine(&out)
+	muxer2 := wavpkg.NewMuxerEngine(&out, wavpkg.MuxerConfig{})
 	if _, err := muxer2.AddStream(streams[0]); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}

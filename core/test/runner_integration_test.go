@@ -58,7 +58,7 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 
 			f := testutil.NewBuffer(nil)
 
-			muxEngine := wav.NewMuxerEngine(f)
+			muxEngine := wav.NewMuxerEngine(f, wav.MuxerConfig{})
 			if _, err := muxEngine.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}

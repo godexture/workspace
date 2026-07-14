@@ -10,8 +10,8 @@ import (
 )
 
 func TestDecoderEncoderRoundtrip(t *testing.T) {
-	dec := NewDecoder(DefaultConfig())
-	enc := NewEncoder(EncoderConfig{})
+	dec := NewDecoder(DefaultDecoderConfig)
+	enc := NewEncoder(DefaultEncoderConfig)
 
 	in := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD}
 	pkt := media.NewPacket(len(in), media.WithPts(42), media.WithDts(42), media.WithStreamIndex(0))
@@ -45,10 +45,10 @@ func TestDecoderEncoderRoundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := DefaultDecoderConfig
 	cfg.Format = media.SampleFormatS24
 	dec := NewDecoder(cfg)
-	enc := NewEncoder(EncoderConfig{})
+	enc := NewEncoder(DefaultEncoderConfig)
 
 	// 2 channels * 3 bytes/sample * 3 samples = 18 bytes
 	in := []byte{
@@ -108,10 +108,12 @@ func TestG711Roundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultDecoderConfig
 			cfg.CodecID = tt.codec
 			dec := NewDecoder(cfg)
-			enc := NewEncoder(EncoderConfig{CodecID: tt.codec})
+			cfgEnc := DefaultEncoderConfig
+			cfgEnc.CodecID = tt.codec
+			enc := NewEncoder(cfgEnc)
 
 			in := []byte{0x00, 0x55, 0xAA, 0xFF, 0x12, 0x34}
 			pkt := media.NewPacket(len(in), media.WithPts(100))
@@ -147,8 +149,8 @@ func TestG711Roundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoderNeedMoreData(t *testing.T) {
-	dec := NewDecoder(DefaultConfig())
-	enc := NewEncoder(EncoderConfig{})
+	dec := NewDecoder(DefaultDecoderConfig)
+	enc := NewEncoder(DefaultEncoderConfig)
 
 	if _, err := dec.ReceiveFrame(); err != engine.ErrEAGAIN {
 		t.Fatalf("ReceiveFrame() error = %v, want ErrEAGAIN", err)
@@ -176,7 +178,7 @@ func TestG711Endianness(t *testing.T) {
 	in := []byte{0x00, 0x55, 0xAA, 0xFF}
 
 	// Decode with Little Endian
-	cfgLE := DefaultConfig()
+	cfgLE := DefaultDecoderConfig
 	cfgLE.CodecID = media.CodecPCMU
 	cfgLE.ByteOrder = binary.LittleEndian
 	decLE := NewDecoder(cfgLE)
@@ -188,7 +190,7 @@ func TestG711Endianness(t *testing.T) {
 	dataLE := (*frameLE).(*media.AudioFrame).Planes()[0]
 
 	// Decode with Big Endian
-	cfgBE := DefaultConfig()
+	cfgBE := DefaultDecoderConfig
 	cfgBE.CodecID = media.CodecPCMU
 	cfgBE.ByteOrder = binary.BigEndian
 	decBE := NewDecoder(cfgBE)

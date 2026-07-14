@@ -11,80 +11,56 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-type Config struct {
-	CodecID media.CodecID
-	media.AudioAttributes
-	ByteOrder binary.ByteOrder
+type DecoderConfig struct {
+	CodecID       media.CodecID
+	SampleRate    int
+	Format        media.SampleFormat
+	ChannelLayout media.ChannelLayout
+	ByteOrder     binary.ByteOrder
 }
 
-func (Config) NodeConfiguration() {}
-
-func DefaultConfig() Config {
-	return Config{
-		CodecID: media.CodecLPCM,
-		AudioAttributes: media.AudioAttributes{
-			SampleRate:    48000,
-			Format:        media.SampleFormatS16,
-			ChannelLayout: media.LayoutStereo2_0,
-		},
-		ByteOrder: binary.LittleEndian,
-	}
+var DefaultDecoderConfig = DecoderConfig{
+	CodecID:       media.CodecLPCM,
+	SampleRate:    48000,
+	Format:        media.SampleFormatS16,
+	ChannelLayout: media.LayoutStereo2_0,
+	ByteOrder:     binary.LittleEndian,
 }
 
 func GetDecodedAttributes(codec media.CodecID, attrs media.AudioAttributes) media.AudioAttributes {
 	switch codec {
 	case media.CodecPCMU, media.CodecPCMA:
-		// p.Audio.SampleRate = 8000
 		attrs.Format = media.SampleFormatS16
-		// p.Audio.ChannelLayout = media.LayoutMono1
 	case media.CodecMSADPCM, media.CodecIMAADPCM:
 		attrs.Format = media.SampleFormatS16
 	}
 
 	return attrs
-
 }
 
 type Decoder struct {
-	config  Config
+	config  DecoderConfig
 	pending *media.Packet
 	flushed bool
 }
 
-func NewDecoder(config Config) *Decoder {
-	if config.CodecID == "" {
-		config.CodecID = media.CodecLPCM
+func NewDecoder(cfg DecoderConfig) *Decoder {
+	isG711 := cfg.CodecID == media.CodecPCMU || cfg.CodecID == media.CodecPCMA
+	isADPCM := cfg.CodecID == media.CodecMSADPCM || cfg.CodecID == media.CodecIMAADPCM
+
+	if cfg.SampleRate == 0 && isG711 {
+		cfg.SampleRate = 8000
 	}
-	if config.ByteOrder == nil {
-		config.ByteOrder = binary.LittleEndian
+	if cfg.Format == media.SampleFormatUnknown && (isG711 || isADPCM) {
+		cfg.Format = media.SampleFormatS16
+	}
+	if cfg.ChannelLayout.ChannelCount() == 0 && isG711 {
+		cfg.ChannelLayout = media.LayoutMono1
 	}
 
-	isG711 := config.CodecID == media.CodecPCMU || config.CodecID == media.CodecPCMA
-	isADPCM := config.CodecID == media.CodecMSADPCM || config.CodecID == media.CodecIMAADPCM
-
-	if config.SampleRate <= 0 {
-		if isG711 {
-			config.SampleRate = 8000
-		} else {
-			config.SampleRate = 48000
-		}
+	return &Decoder{
+		config: cfg,
 	}
-	if config.Format == media.SampleFormatUnknown {
-		if isG711 || isADPCM {
-			config.Format = media.SampleFormatS16
-		} else {
-			config.Format = media.SampleFormatS16
-		}
-	}
-	if config.ChannelLayout.ChannelCount() <= 0 {
-		if isG711 {
-			config.ChannelLayout = media.LayoutMono1
-		} else {
-			config.ChannelLayout = media.LayoutStereo2_0
-		}
-	}
-
-	return &Decoder{config: config}
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
