@@ -12,12 +12,6 @@ import (
 	engine "github.com/godexture/sdk/engine"
 )
 
-type Config struct {
-	ForceRF64 bool
-}
-
-func (Config) NodeConfiguration() {}
-
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
 }
@@ -26,20 +20,20 @@ func NewDemuxer(r io.ReadSeeker) (*internal.Demuxer, error) {
 	return internal.NewDemuxer(r)
 }
 
-func NewMuxer(w io.Writer) *internal.Muxer {
-	return internal.NewMuxer(w)
+func NewMuxer(w io.Writer, config MuxerConfig) *internal.Muxer {
+	return internal.NewMuxer(w, internal.MuxerConfig{ForceRF64: config.ForceRF64})
 }
 
 func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
 	return internal.NewDemuxer(r)
 }
 
-func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
-	return internal.NewMuxer(w)
+func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
+	return internal.NewMuxer(w, internal.MuxerConfig{ForceRF64: config.ForceRF64})
 }
 
 func init() {
-	if err := godec.Register(Config{}, registry.DemuxerManifest{
+	if err := godec.Register(DemuxerConfig{}, registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-demuxer",
 			Description: "WAV demuxer",
@@ -61,22 +55,23 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(Config{}, registry.MuxerManifest{
+	if err := godec.Register(MuxerConfig{}, registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-muxer",
 			Description: "WAV muxer",
 		},
 		Factory: func(w io.Writer, cfg registry.Configuration) (node.Muxer, error) {
-			forceRF64 := false
+			resolved := MuxerConfig{}
 			if cfg != nil {
-				if wavCfg, ok := cfg.(Config); ok {
-					forceRF64 = wavCfg.ForceRF64
-				} else if wavCfgPtr, ok := cfg.(*Config); ok && wavCfgPtr != nil {
-					forceRF64 = wavCfgPtr.ForceRF64
+				var wavCfg MuxerConfig
+				if c, ok := cfg.(MuxerConfig); ok {
+					wavCfg = c
+				} else if cPtr, ok := cfg.(*MuxerConfig); ok && cPtr != nil {
+					wavCfg = *cPtr
 				}
+				resolved.ForceRF64 = wavCfg.ForceRF64
 			}
-			mux := NewMuxer(w)
-			mux.ForceRF64 = forceRF64
+			mux := NewMuxer(w, resolved)
 			return engine.WrapMuxer(mux), nil
 		},
 	}); err != nil {

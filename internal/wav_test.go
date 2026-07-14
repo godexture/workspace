@@ -67,7 +67,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -144,7 +144,7 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -178,7 +178,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 	t.Helper()
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type:            media.MediaAudio,
 		MediaAttributes: attr,
@@ -304,7 +304,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -554,7 +554,7 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 
 func TestWAVMuxerNonSeekable(t *testing.T) {
 	var out bytes.Buffer
-	muxer := NewMuxer(&out)
+	muxer := NewMuxer(&out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -601,10 +601,9 @@ func TestWAVMuxerNonSeekable(t *testing.T) {
 	}
 }
 
-func TestWAVMuxerForceRF64(t *testing.T) {
+func TestWAVMuxerforceRF64(t *testing.T) {
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
-	muxer.ForceRF64 = true
+	muxer := NewMuxer(out, MuxerConfig{ForceRF64: true})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -758,12 +757,12 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 			var samplesPerBlock int
 			if tt.codec == media.CodecMSADPCM {
 				if tt.channels == 1 {
-					samplesPerBlock = (blockAlign - 7) * 2 + 2
+					samplesPerBlock = (blockAlign-7)*2 + 2
 				} else {
-					samplesPerBlock = (blockAlign - 14) * 1 + 2
+					samplesPerBlock = (blockAlign-14)*1 + 2
 				}
 			} else {
-				samplesPerBlock = (blockAlign - 4*tt.channels) * 2 / tt.channels + 1
+				samplesPerBlock = (blockAlign-4*tt.channels)*2/tt.channels + 1
 			}
 
 			// Seek to the start of the 5th block (block index 4)
@@ -820,7 +819,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 	meta.AddRaw("smpl", smplPayload)
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}

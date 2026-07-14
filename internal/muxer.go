@@ -21,7 +21,7 @@ type Muxer struct {
 	headerWritten bool
 
 	// Configuration Options
-	ForceRF64 bool
+	forceRF64 bool
 
 	// Seekable streaming mode
 	seekable   bool
@@ -30,8 +30,12 @@ type Muxer struct {
 	startPos   int64
 }
 
-func NewMuxer(w io.Writer) *Muxer {
-	return &Muxer{w: w}
+type MuxerConfig struct {
+	ForceRF64 bool
+}
+
+func NewMuxer(w io.Writer, config MuxerConfig) *Muxer {
+	return &Muxer{w: w, forceRF64: config.ForceRF64}
 }
 
 func (m *Muxer) AddStream(info media.StreamInfo) (int, error) {
@@ -75,7 +79,7 @@ func (m *Muxer) WriteHeader() error {
 			m.startPos = pos
 		}
 
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, 0, m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, 0, m.forceRF64)
 		if err != nil {
 			return err
 		}
@@ -87,7 +91,7 @@ func (m *Muxer) WriteHeader() error {
 	} else {
 		m.seekable = false
 		// For non-seekable streams, write header with unknown size immediately and do not buffer in memory
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), 0, m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), 0, m.forceRF64)
 		if err != nil {
 			return err
 		}
@@ -367,7 +371,7 @@ func (m *Muxer) WriteTrailer() error {
 
 	if m.seekable {
 		if seeker, ok := m.w.(io.Seeker); ok {
-			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, uint64(len(trailerBytes)), m.ForceRF64)
+			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, uint64(len(trailerBytes)), m.forceRF64)
 			if err != nil {
 				return err
 			}
