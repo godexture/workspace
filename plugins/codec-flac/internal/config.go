@@ -22,24 +22,28 @@ func DefaultDecoderConfig() DecoderConfig { return DecoderConfig{} }
 
 func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
 	config := DefaultDecoderConfig()
+	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
 		config.StreamInfo = append([]byte(nil), raw[0]...)
+		hasRawStreamInfo = true
 	}
-	if stream.Audio.SampleRate > 0 {
+	if !hasRawStreamInfo && stream.Audio.SampleRate > 0 {
 		config.SampleRate = stream.Audio.SampleRate
 	}
-	if channels := stream.Audio.ChannelCount(); channels > 0 {
+	if !hasRawStreamInfo {
+		if channels := stream.Audio.ChannelCount(); channels > 0 {
 		config.Channels = channels
-	}
-	if bitsPerSample := bitDepthFromSampleFormat(stream.Audio.Format); bitsPerSample > 0 {
-		config.BitsPerSample = bitsPerSample
+		}
+		if bitsPerSample := bitDepthFromSampleFormat(stream.Audio.Format); bitsPerSample > 0 {
+			config.BitsPerSample = bitsPerSample
+		}
 	}
 	return config
 }
 
 func streamInfoFromConfig(config DecoderConfig) streamInfo {
 	info := streamInfo{
-		MinBlockSize:  1,
+		MinBlockSize:  16,
 		MaxBlockSize:  65535,
 		SampleRate:    config.SampleRate,
 		Channels:      config.Channels,

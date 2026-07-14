@@ -8,6 +8,7 @@ import (
 )
 
 func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error) {
+	originalBitsPerSample := bitsPerSample
 	zero, err := r.ReadBits64(1)
 	if err != nil {
 		return nil, err
@@ -63,7 +64,14 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			return nil, err
 		}
 		for i := order; i < blockSize; i++ {
-			samples[i] = fixedPrediction(samples, i, order) + residual[i-order]
+			prediction, err := fixedPredictionChecked(samples, i, order)
+			if err != nil {
+				return nil, err
+			}
+			samples[i] = prediction + residual[i-order]
+			if err := validateSubframeSampleRange(samples[i:i+1], bitsPerSample); err != nil {
+				return nil, fmt.Errorf("invalid FLAC fixed prediction: %w", err)
+			}
 		}
 
 	case typeCode >= 32 && typeCode <= 63:
@@ -87,6 +95,9 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			return nil, err
 		}
 		shift := signExtend(shiftRaw, 5)
+		if shift < 0 {
+			return nil, errors.New("negative FLAC LPC shift is reserved")
+		}
 		coefficients := make([]int64, order)
 		for i := range coefficients {
 			coeff, err := r.ReadSigned64(uint8(precision))
@@ -104,12 +115,11 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			for j := 0; j < order; j++ {
 				sum += int64(coefficients[j]) * int64(samples[i-j-1])
 			}
-			if shift >= 0 {
-				sum >>= shift
-			} else {
-				sum <<= -shift
-			}
+			sum >>= shift
 			samples[i] = sum + residual[i-order]
+			if err := validateSubframeSampleRange(samples[i:i+1], bitsPerSample); err != nil {
+				return nil, fmt.Errorf("invalid FLAC LPC prediction: %w", err)
+			}
 		}
 
 	default:
@@ -121,7 +131,24 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 			samples[i] <<= wastedBits
 		}
 	}
+	if err := validateSubframeSampleRange(samples, originalBitsPerSample); err != nil {
+		return nil, err
+	}
 	return samples, nil
+}
+
+func validateSubframeSampleRange(samples []int64, bitsPerSample int) error {
+	if bitsPerSample <= 0 || bitsPerSample > 33 {
+		return fmt.Errorf("unsupported FLAC subframe bit depth: %d", bitsPerSample)
+	}
+	min := -(int64(1) << uint(bitsPerSample-1))
+	max := (int64(1) << uint(bitsPerSample-1)) - 1
+	for _, sample := range samples {
+		if sample < min || sample > max {
+			return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, bitsPerSample)
+		}
+	}
+	return nil
 }
 
 func readWarmupSamples(r *bits.Reader, samples []int64, order, bitsPerSample int) error {
@@ -153,6 +180,15 @@ func fixedPrediction(samples []int64, index, order int) int64 {
 	default:
 		return 0
 	}
+}
+
+func fixedPredictionChecked(samples []int64, index, order int) (int64, error) {
+	if index < order || order < 0 || order > 4 {
+		return 0, errors.New("invalid FLAC fixed predictor order")
+	}
+	// Samples are at most 32-bit and the largest fixed predictor coefficient
+	// is 6, so int64 provides checked headroom for all RFC-valid input.
+	return fixedPrediction(samples, index, order), nil
 }
 
 func decorrelate(samples [][]int64, assignment uint8) {

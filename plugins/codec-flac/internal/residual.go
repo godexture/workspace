@@ -2,6 +2,7 @@ package internal
 
 import (
 	"errors"
+	"io"
 
 	"github.com/godexture/sdk/bits"
 )
@@ -35,7 +36,7 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error
 	}
 	partitionOrder := int(partitionOrderRaw)
 	partitions := 1 << partitionOrder
-	if blockSize%partitions != 0 {
+	if blockSize <= predictorOrder || blockSize%partitions != 0 {
 		return nil, errors.New("FLAC residual partition order does not divide block size")
 	}
 
@@ -60,14 +61,31 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error
 			if err != nil {
 				return nil, err
 			}
+			if rawBits > 32 {
+				return nil, errors.New("invalid FLAC escaped residual width")
+			}
 			for i := 0; i < samplesInPartition; i++ {
-				residual = append(residual, r.Signed64(uint8(rawBits)))
+				value := r.Signed64(uint8(rawBits))
+				if r.Overrun() || !validFLACResidual(value) {
+					if r.Overrun() {
+						return nil, io.ErrUnexpectedEOF
+					}
+					return nil, errors.New("FLAC residual is outside encodable range")
+				}
+				residual = append(residual, value)
 			}
 			continue
 		}
 
 		for i := 0; i < samplesInPartition; i++ {
-			residual = append(residual, readRiceSigned(r, uint8(param)))
+			value := readRiceSigned(r, uint8(param))
+			if r.Overrun() {
+				return nil, io.ErrUnexpectedEOF
+			}
+			if !validFLACResidual(value) {
+				return nil, errors.New("FLAC residual is outside encodable range")
+			}
+			residual = append(residual, value)
 		}
 	}
 	if len(residual) != residualCount {
@@ -83,9 +101,21 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error
 func readRiceSigned(r *bits.Reader, param uint8) int64 {
 	quotient := r.Unary64()
 	remainder := r.Bits64(param)
+	if quotient > uint64(0xffffffff)>>param {
+		r.Seek(r.Position())
+		return 1 << 62
+	}
 	unsigned := (quotient << param) | remainder
 	if unsigned&1 == 0 {
 		return int64(unsigned >> 1)
 	}
 	return -int64((unsigned >> 1) + 1)
+}
+
+// FLAC residuals use the signed one's-complement range, which excludes the
+// two's-complement minimum. Keeping this check shared by the reader and
+// writer prevents invalid residuals from being folded into a valid-looking
+// Rice code.
+func validFLACResidual(value int64) bool {
+	return value >= -2147483647 && value <= 2147483647
 }
