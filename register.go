@@ -12,10 +12,13 @@ import (
 	engine "github.com/godexture/sdk/engine"
 )
 
-// Config はformat-mp3プラグインの設定型。キーとして使われる。
-type Config struct{}
+type DemuxerConfig struct{}
 
-func (Config) NodeConfiguration() {}
+func (DemuxerConfig) NodeConfiguration() {}
+
+type MuxerConfig struct{}
+
+func (MuxerConfig) NodeConfiguration() {}
 
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
@@ -30,7 +33,7 @@ func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
 }
 
 func init() {
-	if err := godec.Register(Config{}, registry.DemuxerManifest{
+	if err := godec.Register(DemuxerConfig{}, registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-demuxer",
 			Description: "MP3 demuxer (format-mp3 plugin)",
@@ -51,7 +54,7 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(Config{}, registry.MuxerManifest{
+	if err := godec.Register(MuxerConfig{}, registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-muxer",
 			Description: "MP3 muxer (format-mp3 plugin)",
