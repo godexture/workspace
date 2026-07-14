@@ -1,9 +1,10 @@
-package internal
+package encoder
 
 import (
 	"fmt"
 	"math"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
 )
 
@@ -29,7 +30,7 @@ type subframeCandidate struct {
 	valid      bool
 }
 
-func writeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, best subframeCandidate) error {
+func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, best subframeCandidate) error {
 	if len(samples) == 0 {
 		return fmt.Errorf("FLAC subframe has no samples")
 	}
@@ -43,7 +44,7 @@ func writeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, 
 			reduced[i] = sample >> best.wastedBits
 		}
 	}
-	writeSubframeHeader(w, subframeTypeCode(best.kind, best.order), best.wastedBits)
+	encodeSubframeHeader(w, subframeTypeCode(best.kind, best.order), best.wastedBits)
 	switch best.kind {
 	case subframeKindConstant:
 		w.Signed64(reduced[0], uint8(bitsPerSample-best.wastedBits))
@@ -55,7 +56,7 @@ func writeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, 
 		for i := 0; i < best.order; i++ {
 			w.Signed64(reduced[i], uint8(bitsPerSample-best.wastedBits))
 		}
-		if err := writeResidual(w, best.residual, best.rice); err != nil {
+		if err := EncodeResidual(w, best.residual, best.rice); err != nil {
 			return err
 		}
 	case subframeKindLPC:
@@ -67,18 +68,14 @@ func writeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, 
 		for _, coefficient := range best.coeff {
 			w.Signed64(coefficient, uint8(best.precision))
 		}
-		return writeResidual(w, best.residual, best.rice)
+		return EncodeResidual(w, best.residual, best.rice)
 	}
 	return nil
 }
 
-func bestSubframe(samples []int64, bitsPerSample int, options frameOptions) subframeCandidate {
-	// Shifting out every shared trailing zero bit never costs more than
-	// keeping some: the residual magnitudes shrink while the header grows by
-	// one unary bit per wasted bit, so a single pass at the full count is
-	// sufficient.
+func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig) subframeCandidate {
 	wasted := 0
-	if options.enableWastedBits {
+	if options.EnableWastedBits {
 		wasted = commonTrailingZeros(samples, bitsPerSample)
 	}
 	reduced := samples
@@ -96,13 +93,13 @@ func bestSubframe(samples []int64, bitsPerSample int, options frameOptions) subf
 	return candidate
 }
 
-func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frameOptions) subframeCandidate {
+func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.EncoderConfig) subframeCandidate {
 	best := subframeCandidate{kind: subframeKindVerbatim, costBits: uint64(8 + len(samples)*bitsPerSample), valid: true}
 	if isConstant(samples) {
 		best = subframeCandidate{kind: subframeKindConstant, costBits: uint64(8 + bitsPerSample), valid: true}
 	}
 
-	maxFixed := options.maxFixedOrder
+	maxFixed := options.MaxFixedOrder
 	if maxFixed > 4 {
 		maxFixed = 4
 	}
@@ -111,7 +108,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frame
 	}
 	for order := 0; order <= maxFixed; order++ {
 		residual := fixedResidual(samples, order)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.maxRicePartitionOrder)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
 		if !ok {
 			continue
 		}
@@ -122,7 +119,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frame
 		}
 	}
 
-	maxLPC := options.maxLPCOrder
+	maxLPC := options.MaxLPCOrder
 	if maxLPC > 32 {
 		maxLPC = 32
 	}
@@ -138,7 +135,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options frame
 			continue
 		}
 		residual := lpcResidual(samples, order, quantized, shift)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.maxRicePartitionOrder)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
 		if !ok {
 			continue
 		}
@@ -167,7 +164,7 @@ func subframeTypeCode(kind subframeKind, order int) uint8 {
 	}
 }
 
-func writeSubframeHeader(w *bits.Writer, typeCode uint8, wastedBits int) {
+func encodeSubframeHeader(w *bits.Writer, typeCode uint8, wastedBits int) {
 	w.Bits64(0, 1)
 	w.Bits64(uint64(typeCode), 6)
 	if wastedBits <= 0 {
@@ -228,14 +225,25 @@ func fixedResidual(samples []int64, order int) []int64 {
 	return residual
 }
 
-// lpcPrecision is the quantized coefficient precision in bits (including the
-// sign bit). The header stores precision-1 in four bits, so 15 is the largest
-// legal value.
+func fixedPrediction(samples []int64, index, order int) int64 {
+	switch order {
+	case 0:
+		return 0
+	case 1:
+		return samples[index-1]
+	case 2:
+		return 2*samples[index-1] - samples[index-2]
+	case 3:
+		return 3*samples[index-1] - 3*samples[index-2] + samples[index-3]
+	case 4:
+		return 4*samples[index-1] - 6*samples[index-2] + 4*samples[index-3] - samples[index-4]
+	default:
+		return 0
+	}
+}
+
 const lpcPrecision = 15
 
-// lpcCoefficientSets runs a single Levinson-Durbin recursion and returns the
-// predictor coefficients for every order in 1..maxOrder (indexed by order;
-// index 0 is unused). Orders past a numerically unstable step are nil.
 func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
@@ -288,9 +296,6 @@ func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
 	return sets
 }
 
-// quantizeLPCCoefficients picks the largest shift that keeps every scaled
-// coefficient within the precision, then quantizes with error feedback so
-// rounding errors do not accumulate across coefficients.
 func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, int, bool) {
 	var max_coeff float64
 	for _, coefficient := range coefficients {
@@ -303,8 +308,6 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 	}
 	_, exponent := math.Frexp(max_coeff)
 	shift := precision - 1 - exponent
-	// The prediction right shift is stored as a signed 5-bit number that MUST
-	// NOT be negative (RFC 9639 Section 9.2.6), so only 0..15 is encodable.
 	if shift > 15 {
 		shift = 15
 	}

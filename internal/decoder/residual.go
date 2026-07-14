@@ -1,4 +1,4 @@
-package internal
+package decoder
 
 import (
 	"errors"
@@ -7,13 +7,13 @@ import (
 	"github.com/godexture/sdk/bits"
 )
 
-// readResidual reads a FLAC residual coding block. Structural validity
+// DecodeResidual reads a FLAC residual coding block. Structural validity
 // checks here (reserved coding method, partition math, decoded size) are
 // FLAC-spec requirements and always return an error. The per-sample reads
 // inside each partition are the hot path, so they use the Fast tier (no
 // per-call error); a truncated stream in that inner loop surfaces later via
 // Reader.Overrun() rather than aborting this function early.
-func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error) {
+func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error) {
 	method, err := r.ReadBits64(2)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error
 		}
 
 		for i := 0; i < samplesInPartition; i++ {
-			value := readRiceSigned(r, uint8(param))
+			value := decodeRiceSigned(r, uint8(param))
 			if r.Overrun() {
 				return nil, io.ErrUnexpectedEOF
 			}
@@ -94,11 +94,11 @@ func readResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error
 	return residual, nil
 }
 
-// readRiceSigned decodes one Rice-coded residual sample. It is called per
+// decodeRiceSigned decodes one Rice-coded residual sample. It is called per
 // sample (potentially thousands of times per frame), so it uses the Fast
 // tier: a truncated stream here is detected in aggregate via Overrun()
 // rather than per call.
-func readRiceSigned(r *bits.Reader, param uint8) int64 {
+func decodeRiceSigned(r *bits.Reader, param uint8) int64 {
 	quotient := r.Unary64()
 	remainder := r.Bits64(param)
 	if quotient > uint64(0xffffffff)>>param {
@@ -112,10 +112,8 @@ func readRiceSigned(r *bits.Reader, param uint8) int64 {
 	return -int64((unsigned >> 1) + 1)
 }
 
-// FLAC residuals use the signed one's-complement range, which excludes the
-// two's-complement minimum. Keeping this check shared by the reader and
-// writer prevents invalid residuals from being folded into a valid-looking
-// Rice code.
+// validFLACResidual checks if the residual is within the signed one's-complement
+// range. FLAC residuals exclude the two's-complement minimum.
 func validFLACResidual(value int64) bool {
 	return value >= -2147483647 && value <= 2147483647
 }

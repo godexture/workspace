@@ -1,4 +1,4 @@
-package internal
+package flac
 
 import (
 	"fmt"
@@ -6,11 +6,17 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
+type DecoderConfig struct{}
+
+func (DecoderConfig) NodeConfiguration() {}
+
+var DefaultDecoderConfig = DecoderConfig{}
+
 const (
-	defaultEncoderBlockSize     = 4096
-	defaultEncoderMaxFixedOrder = 4
-	defaultEncoderMaxLPCOrder   = 32
-	defaultEncoderMaxRiceOrder  = 8
+	DefaultEncoderBlockSize     = 4096
+	DefaultEncoderMaxFixedOrder = 4
+	DefaultEncoderMaxLPCOrder   = 32
+	DefaultEncoderMaxRiceOrder  = 8
 )
 
 type BlockingStrategy uint8
@@ -25,32 +31,32 @@ type EncoderConfig struct {
 	Channels      int
 	BitsPerSample int
 
-	BlockSize             int
-	MaxFixedOrder         int
-	MaxLPCOrder           int
-	MaxRicePartitionOrder int
-	EnableWastedBits      bool
-	EnableStereoDecorrel  bool
-	BlockingStrategy      BlockingStrategy
-	StreamableSubset      bool
+	BlockSize                 int
+	MaxFixedOrder             int
+	MaxLPCOrder               int
+	MaxRicePartitionOrder     int
+	EnableWastedBits          bool
+	EnableStereoDecorrelation bool
+	BlockingStrategy          BlockingStrategy
+	StreamableSubset          bool
 }
 
 var DefaultEncoderConfig = EncoderConfig{
-	BlockSize:             defaultEncoderBlockSize,
-	MaxFixedOrder:         defaultEncoderMaxFixedOrder,
-	MaxLPCOrder:           defaultEncoderMaxLPCOrder,
-	MaxRicePartitionOrder: defaultEncoderMaxRiceOrder,
-	EnableWastedBits:      true,
-	EnableStereoDecorrel:  true,
-	StreamableSubset:      true,
+	BlockSize:                 DefaultEncoderBlockSize,
+	MaxFixedOrder:             DefaultEncoderMaxFixedOrder,
+	MaxLPCOrder:               DefaultEncoderMaxLPCOrder,
+	MaxRicePartitionOrder:     DefaultEncoderMaxRiceOrder,
+	EnableWastedBits:          true,
+	EnableStereoDecorrelation: true,
+	StreamableSubset:          true,
 }
 
-func (c EncoderConfig) validate() error {
+func (c EncoderConfig) Validate() error {
 	if c.BlockSize < 1 || c.BlockSize > 65535 {
 		return fmt.Errorf("FLAC encoder block size must be between 1 and 65535: %d", c.BlockSize)
 	}
-	if c.MaxFixedOrder < 0 || c.MaxFixedOrder > defaultEncoderMaxFixedOrder {
-		return fmt.Errorf("FLAC encoder fixed predictor order must be between 0 and %d: %d", defaultEncoderMaxFixedOrder, c.MaxFixedOrder)
+	if c.MaxFixedOrder < 0 || c.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
+		return fmt.Errorf("FLAC encoder fixed predictor order must be between 0 and %d: %d", DefaultEncoderMaxFixedOrder, c.MaxFixedOrder)
 	}
 	if c.SampleRate < 0 {
 		return fmt.Errorf("invalid FLAC encoder sample rate: %d", c.SampleRate)
@@ -84,11 +90,11 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 		cfg.Channels = stream.Audio.ChannelCount()
 	}
 	if cfg.BitsPerSample == 0 {
-		cfg.BitsPerSample = bitDepthFromSampleFormat(stream.Audio.Format)
+		cfg.BitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
 	}
 
-	if cfg.MaxFixedOrder > defaultEncoderMaxFixedOrder {
-		cfg.MaxFixedOrder = defaultEncoderMaxFixedOrder
+	if cfg.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
+		cfg.MaxFixedOrder = DefaultEncoderMaxFixedOrder
 	}
 	if cfg.MaxLPCOrder > 32 {
 		cfg.MaxLPCOrder = 32
@@ -98,4 +104,17 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 	}
 
 	return cfg
+}
+
+func BitDepthFromSampleFormat(format media.SampleFormat) int {
+	switch format.Packed() {
+	case media.SampleFormatU8:
+		return 8
+	case media.SampleFormatS16:
+		return 16
+	case media.SampleFormatS32:
+		return 32
+	default:
+		return 0
+	}
 }

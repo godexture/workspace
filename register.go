@@ -1,7 +1,9 @@
 package flac
 
 import (
-	"github.com/godexture/codec-flac/internal"
+	"github.com/godexture/codec-flac/internal/decoder"
+	"github.com/godexture/codec-flac/internal/encoder"
+	"github.com/godexture/codec-flac/internal/flac"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -10,15 +12,16 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-type DecoderConfig = internal.DecoderConfig
+type DecoderConfig = flac.DecoderConfig
 
 func NewDecoderEngine(stream media.StreamInfo, config DecoderConfig) engine.DecoderEngine {
-	return internal.NewDecoder(stream, config)
+	return decoder.NewDecoder(stream, config)
 }
 
 func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
-	return internal.NewEncoder(config.ApplyDefaults())
+	return encoder.NewEncoder(config.ApplyDefaults())
 }
+
 
 type flacCapability struct{}
 
@@ -48,7 +51,7 @@ func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
 
 func init() {
 	if err := godec.Register(
-		internal.DecoderConfig{},
+		flac.DecoderConfig{},
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -69,15 +72,15 @@ func init() {
 				},
 			},
 			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
-				decoderConfig, ok := config.(internal.DecoderConfig)
+				decoderConfig, ok := config.(flac.DecoderConfig)
 				if !ok {
-					if decoderConfigPtr, ptrOK := config.(*internal.DecoderConfig); ptrOK && decoderConfigPtr != nil {
+					if decoderConfigPtr, ptrOK := config.(*flac.DecoderConfig); ptrOK && decoderConfigPtr != nil {
 						decoderConfig = *decoderConfigPtr
 					} else {
-						decoderConfig = internal.DecoderConfig{}
+						decoderConfig = flac.DecoderConfig{}
 					}
 				}
-				return engine.WrapDecoder(internal.NewDecoder(stream, decoderConfig)), nil
+				return engine.WrapDecoder(decoder.NewDecoder(stream, decoderConfig)), nil
 			},
 		},
 	); err != nil {
@@ -107,25 +110,25 @@ func init() {
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
 				if cfg != nil {
-					var resolved internal.EncoderConfig
+					var resolved flac.EncoderConfig
 					if flacConfig, ok := cfg.(EncoderConfig); ok {
 						resolved = flacConfig.ApplyDefaults()
 					} else if flacConfigPtr, ok := cfg.(*EncoderConfig); ok && flacConfigPtr != nil {
 						resolved = flacConfigPtr.ApplyDefaults()
 					}
-					resolved = internal.MergeEncoderConfigForFactory(resolved, inStream)
-					encoder, err := internal.NewEncoder(resolved)
+					resolved = flac.MergeEncoderConfigForFactory(resolved, inStream)
+					enc, err := encoder.NewEncoder(resolved)
 					if err != nil {
 						return nil, err
 					}
-					return engine.WrapEncoder(encoder), nil
+					return engine.WrapEncoder(enc), nil
 				}
-				resolved := internal.MergeEncoderConfigForFactory(internal.DefaultEncoderConfig, inStream)
-				encoder, err := internal.NewEncoder(resolved)
+				resolved := flac.MergeEncoderConfigForFactory(flac.DefaultEncoderConfig, inStream)
+				enc, err := encoder.NewEncoder(resolved)
 				if err != nil {
 					return nil, err
 				}
-				return engine.WrapEncoder(encoder), nil
+				return engine.WrapEncoder(enc), nil
 			},
 		},
 	); err != nil {
