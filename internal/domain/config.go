@@ -9,3 +9,5 @@ type EncoderConfig struct {
 }
 
 func (EncoderConfig) NodeConfiguration() {}
+
+var DefaultEncoderConfig = EncoderConfig{Bitrate: 128000}
