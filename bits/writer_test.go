@@ -131,6 +131,83 @@ func TestWriterInitReuse(t *testing.T) {
 	}
 }
 
+// bitByBitWriter mirrors the pre-batching Bits64/Unary64 implementations
+// (single-bit Bit() calls only), used as a reference oracle below.
+type bitByBitWriter struct{ w *Writer }
+
+func (b bitByBitWriter) bits64(value uint64, width uint8) {
+	for i := int(width) - 1; i >= 0; i-- {
+		b.w.Bit(uint8((value >> uint(i)) & 1))
+	}
+}
+
+func (b bitByBitWriter) unary64(value uint64) {
+	for i := uint64(0); i < value; i++ {
+		b.w.Bit(0)
+	}
+	b.w.Bit(1)
+}
+
+// TestWriterBits64UnalignedMatchesBitByBit exercises the batched Bits64
+// fast path at every starting bit offset and width, checking its output is
+// byte-for-byte identical to the original per-bit implementation.
+func TestWriterBits64UnalignedMatchesBitByBit(t *testing.T) {
+	for offset := uint8(0); offset < 8; offset++ {
+		for width := uint8(1); width <= 64; width++ {
+			value := uint64(0x9E3779B97F4A7C15) >> (64 - width)
+
+			got := NewWriter()
+			for i := uint8(0); i < offset; i++ {
+				got.Bit(0)
+			}
+			got.Bits64(value, width)
+
+			want := NewWriter()
+			ref := bitByBitWriter{want}
+			for i := uint8(0); i < offset; i++ {
+				want.Bit(0)
+			}
+			ref.bits64(value, width)
+
+			if got.Position() != want.Position() {
+				t.Fatalf("offset=%d width=%d: Position() = %d, want %d", offset, width, got.Position(), want.Position())
+			}
+			if string(got.Bytes()) != string(want.Bytes()) {
+				t.Fatalf("offset=%d width=%d: Bytes() = %08b, want %08b", offset, width, got.Bytes(), want.Bytes())
+			}
+		}
+	}
+}
+
+// TestWriterUnary64UnalignedMatchesBitByBit exercises the batched Unary64
+// fast path across zero-run lengths and starting bit offsets, checking its
+// output is byte-for-byte identical to the original per-bit implementation.
+func TestWriterUnary64UnalignedMatchesBitByBit(t *testing.T) {
+	for offset := uint8(0); offset < 8; offset++ {
+		for value := uint64(0); value <= 40; value++ {
+			got := NewWriter()
+			for i := uint8(0); i < offset; i++ {
+				got.Bit(0)
+			}
+			got.Unary64(value)
+
+			want := NewWriter()
+			ref := bitByBitWriter{want}
+			for i := uint8(0); i < offset; i++ {
+				want.Bit(0)
+			}
+			ref.unary64(value)
+
+			if got.Position() != want.Position() {
+				t.Fatalf("offset=%d value=%d: Position() = %d, want %d", offset, value, got.Position(), want.Position())
+			}
+			if string(got.Bytes()) != string(want.Bytes()) {
+				t.Fatalf("offset=%d value=%d: Bytes() = %08b, want %08b", offset, value, got.Bytes(), want.Bytes())
+			}
+		}
+	}
+}
+
 func TestWriterBytePos(t *testing.T) {
 	w := NewWriter()
 	w.Bits64(0b101, 3)

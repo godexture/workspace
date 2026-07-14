@@ -1,6 +1,9 @@
 package bits
 
-import "io"
+import (
+	"io"
+	mathbits "math/bits"
+)
 
 // Reader reads bits from a byte buffer. It exposes two API tiers:
 //
@@ -116,9 +119,52 @@ func (r *Reader) Byte() uint8 {
 	return uint8(b)
 }
 
-// Bits64 reads width bits (width <= 64) MSB-first by calling Bit width times.
+// Bits64 reads width bits (width <= 64) MSB-first.
 func (r *Reader) Bits64(width uint8) uint64 {
 	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
+	if width == 0 {
+		return 0
+	}
+	start := r.position
+	end := start + int32(width)
+	if end > r.limit {
+		return r.bitsSlow(width)
+	}
+	firstByte := int(start >> 3)
+	lastByte := int((end - 1) >> 3)
+	if lastByte >= len(r.buffer) {
+		return r.bitsSlow(width)
+	}
+	r.position = end
+
+	bitOffset := uint(start & 7)
+	tailBits := uint(lastByte+1)*8 - uint(end)
+	span := r.buffer[firstByte : lastByte+1]
+	last := len(span) - 1
+	var value uint64
+	for i, b := range span {
+		if i == 0 && bitOffset != 0 {
+			b &= 0xFF >> bitOffset
+		}
+		bitsInByte := uint(8)
+		if i == 0 {
+			bitsInByte -= bitOffset
+		}
+		if i == last {
+			b >>= tailBits
+			bitsInByte -= tailBits
+		}
+		value = value<<bitsInByte | uint64(b)
+	}
+	return value
+}
+
+// bitsSlow is the cold-path fallback for Bits64: a read that runs past the
+// limit, or (defensively) past a buffer shorter than the declared limit. It
+// mirrors the historical bit-at-a-time behavior for position/overrun
+// bookkeeping; see the Bits64 doc comment for why its return value does not
+// need to match the old partial-bits-then-zero result exactly.
+func (r *Reader) bitsSlow(width uint8) uint64 {
 	var value uint64
 	for i := uint8(0); i < width; i++ {
 		value = (value << 1) | uint64(r.Bit())
@@ -128,8 +174,39 @@ func (r *Reader) Bits64(width uint8) uint64 {
 
 // Unary64 reads a unary-coded value: the number of 0 bits before the next 1
 // bit. It stops at the limit instead of looping forever on truncated data.
+//
+// The scan runs in three phases so the hot middle phase can inspect whole
+// bytes at a time via math/bits.LeadingZeros8 instead of calling Bit() per
+// bit: (1) consume up to 7 bits to reach a byte boundary, (2) fast-scan
+// whole bytes that are fully within both the limit and the physical buffer,
+// (3) finish the remaining (<8-bit) tail with the plain bit-at-a-time path,
+// which also supplies the sticky-overrun bookkeeping on truncated data.
 func (r *Reader) Unary64() uint64 {
 	var count uint64
+	for r.position&7 != 0 && r.position < r.limit {
+		if r.Bit() == 1 {
+			return count
+		}
+		count++
+	}
+
+	bufBits := int32(len(r.buffer)) * 8
+	fullByteLimit := r.limit
+	if bufBits < fullByteLimit {
+		fullByteLimit = bufBits
+	}
+	for r.position+8 <= fullByteLimit {
+		b := r.buffer[r.position/8]
+		if b != 0 {
+			zeros := int32(mathbits.LeadingZeros8(b))
+			count += uint64(zeros)
+			r.position += zeros + 1
+			return count
+		}
+		count += 8
+		r.position += 8
+	}
+
 	for r.position < r.limit {
 		if r.Bit() == 1 {
 			return count
