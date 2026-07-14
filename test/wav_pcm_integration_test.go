@@ -56,7 +56,7 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 
 			f := testutil.NewBuffer(nil)
 
-			muxer := wav.NewMuxerEngine(f)
+			muxer := wav.NewMuxerEngine(f, wav.MuxerConfig{})
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}

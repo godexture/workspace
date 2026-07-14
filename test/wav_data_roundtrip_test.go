@@ -50,7 +50,7 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 
 			f := testutil.NewBuffer(nil)
 
-			muxer := wavpkg.NewMuxerEngine(f)
+			muxer := wavpkg.NewMuxerEngine(f, wavpkg.MuxerConfig{})
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}
