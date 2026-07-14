@@ -64,7 +64,7 @@ func Parse(data []byte) (StreamInfo, error) {
 // Validate checks that a StreamInfo (whether parsed or synthesized) has
 // sane values.
 func Validate(info StreamInfo) error {
-	if info.MinBlockSize == 0 || info.MaxBlockSize == 0 || info.MinBlockSize > info.MaxBlockSize {
+	if info.MinBlockSize < 16 || info.MaxBlockSize < 16 || info.MinBlockSize > info.MaxBlockSize {
 		return errors.New("invalid FLAC block size in STREAMINFO")
 	}
 	if info.SampleRate <= 0 || info.SampleRate > 1048575 {

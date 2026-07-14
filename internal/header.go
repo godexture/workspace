@@ -31,8 +31,11 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, int6
 		}
 
 		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
-		if length < 0 {
+		if length < 0 || length > (1<<24)-1 {
 			return streaminfo.StreamInfo{}, nil, 0, errors.New("invalid FLAC metadata length")
+		}
+		if blockType > 6 {
+			return streaminfo.StreamInfo{}, nil, 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
 		}
 
 		block := make([]byte, length)
