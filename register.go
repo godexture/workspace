@@ -11,16 +11,13 @@ import (
 )
 
 type DecoderConfig = internal.DecoderConfig
-type EncoderConfig = internal.EncoderConfig
-
-var DefaultEncoderConfig = internal.DefaultEncoderConfig
 
 func NewDecoderEngine(stream media.StreamInfo, config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder(stream, config)
 }
 
-func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
-	return internal.NewEncoder(config)
+func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
+	return internal.NewEncoder(config.ApplyDefaults())
 }
 
 type flacCapability struct{}
@@ -88,7 +85,7 @@ func init() {
 	}
 
 	if err := godec.Register(
-		internal.DefaultEncoderConfig,
+		EncoderConfig{},
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -108,17 +105,27 @@ func init() {
 			Supports: func(codec media.CodecID) bool {
 				return codec == media.CodecFLAC
 			},
-			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
-				encoderConfig := internal.DefaultEncoderConfig
-				encoderConfig = internal.MergeEncoderConfigForFactory(encoderConfig, inStream)
-				if config != nil {
-					if flacConfig, ok := config.(internal.EncoderConfig); ok {
-						encoderConfig = internal.MergeEncoderConfigForFactory(flacConfig, inStream)
-					} else if flacConfigPtr, ok := config.(*internal.EncoderConfig); ok && flacConfigPtr != nil {
-						encoderConfig = internal.MergeEncoderConfigForFactory(*flacConfigPtr, inStream)
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
+				if cfg != nil {
+					var resolved internal.EncoderConfig
+					if flacConfig, ok := cfg.(EncoderConfig); ok {
+						resolved = flacConfig.ApplyDefaults()
+					} else if flacConfigPtr, ok := cfg.(*EncoderConfig); ok && flacConfigPtr != nil {
+						resolved = flacConfigPtr.ApplyDefaults()
 					}
+					resolved = internal.MergeEncoderConfigForFactory(resolved, inStream)
+					encoder, err := internal.NewEncoder(resolved)
+					if err != nil {
+						return nil, err
+					}
+					return engine.WrapEncoder(encoder), nil
 				}
-				return engine.WrapEncoder(internal.NewEncoder(encoderConfig)), nil
+				resolved := internal.MergeEncoderConfigForFactory(internal.DefaultEncoderConfig, inStream)
+				encoder, err := internal.NewEncoder(resolved)
+				if err != nil {
+					return nil, err
+				}
+				return engine.WrapEncoder(encoder), nil
 			},
 		},
 	); err != nil {

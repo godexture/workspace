@@ -24,8 +24,11 @@ func TestRoundtrip(t *testing.T) {
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
 				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.DecoderConfig{})
 			},
-			Encode: func() engine.EncoderEngine { return flacCodec.NewEncoderEngine(flacCodec.DefaultEncoderConfig) },
-			Mux:    func(buf *testutil.Buffer) engine.MuxerEngine { return flacFormat.NewMuxerEngine(buf) },
+			Encode: func() engine.EncoderEngine {
+				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
+				return encoder
+			},
+			Mux: func(buf *testutil.Buffer) engine.MuxerEngine { return flacFormat.NewMuxerEngine(buf) },
 		})
 	})
 }

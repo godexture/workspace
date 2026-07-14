@@ -12,7 +12,7 @@ import (
 	"github.com/godexture/sdk/hash"
 )
 
-func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
+func decodeFrame(data []byte, info streamInfo) (decodedFrame, error) {
 	reader := bits.New(data)
 	header, err := readFrameHeader(reader, info)
 	if err != nil {

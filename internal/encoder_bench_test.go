@@ -33,7 +33,7 @@ func clamp16(v int64) int64 {
 	return v
 }
 
-func BenchmarkEncodeFLACFrameDefaultConfig(b *testing.B) {
+func BenchmarkEncodeFrameDefaultConfig(b *testing.B) {
 	block := benchmarkBlock(defaultEncoderBlockSize)
 	options := frameOptions{
 		maxFixedOrder:             defaultEncoderMaxFixedOrder,
@@ -46,13 +46,13 @@ func BenchmarkEncodeFLACFrameDefaultConfig(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := encodeFLACFrameWithOptions(block, 44100, 16, uint64(i), options); err != nil {
+		if _, err := encodeFrameWithOptions(block, 44100, 16, uint64(i), options); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkDecodeFLACFrameDefaultConfig(b *testing.B) {
+func BenchmarkDecodeFrameDefaultConfig(b *testing.B) {
 	block := benchmarkBlock(defaultEncoderBlockSize)
 	options := frameOptions{
 		maxFixedOrder:             defaultEncoderMaxFixedOrder,
@@ -62,7 +62,7 @@ func BenchmarkDecodeFLACFrameDefaultConfig(b *testing.B) {
 		enableStereoDecorrelation: true,
 		streamableSubset:          true,
 	}
-	data, err := encodeFLACFrameWithOptions(block, 44100, 16, 0, options)
+	data, err := encodeFrameWithOptions(block, 44100, 16, 0, options)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func BenchmarkDecodeFLACFrameDefaultConfig(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := decodeFLACFrame(data, info); err != nil {
+		if _, err := decodeFrame(data, info); err != nil {
 			b.Fatal(err)
 		}
 	}

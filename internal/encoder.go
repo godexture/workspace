@@ -9,8 +9,7 @@ import (
 )
 
 type Encoder struct {
-	config    EncoderConfig
-	configErr error
+	config EncoderConfig
 
 	pendingQueue []*media.Packet
 	flushed      bool
@@ -26,15 +25,15 @@ type Encoder struct {
 	sampleNumber  uint64
 }
 
-func NewEncoder(config EncoderConfig) *Encoder {
-	config.applyDefaults()
-	return &Encoder{config: config, configErr: config.validate()}
+func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
+	err := cfg.validate()
+	if err != nil {
+		return nil, err
+	}
+	return &Encoder{config: cfg}, nil
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
-	if e.configErr != nil {
-		return e.configErr
-	}
 	if frame == nil || *frame == nil {
 		return errors.New("flac encoder received nil frame")
 	}
@@ -75,9 +74,6 @@ func (e *Encoder) ReceivePacket() (*media.Packet, error) {
 }
 
 func (e *Encoder) Flush() error {
-	if e.configErr != nil {
-		return e.configErr
-	}
 	if e.flushed {
 		return nil
 	}
@@ -149,7 +145,7 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 	if e.config.BlockingStrategy == VariableBlocking {
 		number = e.sampleNumber
 	}
-	data, err := encodeFLACFrameWithOptions(block, e.sampleRate, e.bitsPerSample, number, frameOptions{
+	data, err := encodeFrameWithOptions(block, e.sampleRate, e.bitsPerSample, number, frameOptions{
 		maxFixedOrder:             e.config.MaxFixedOrder,
 		maxLPCOrder:               e.config.MaxLPCOrder,
 		maxRicePartitionOrder:     e.config.MaxRicePartitionOrder,
