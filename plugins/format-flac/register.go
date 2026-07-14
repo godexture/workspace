@@ -28,6 +28,14 @@ func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
 	return internal.NewDemuxer(r)
 }
 
+func NewMuxer(w io.Writer) *internal.Muxer {
+	return internal.NewMuxer(w)
+}
+
+func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
+	return internal.NewMuxer(w)
+}
+
 func init() {
 	if err := godec.Register(Config{}, registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
@@ -46,6 +54,18 @@ func init() {
 				return nil, err
 			}
 			return engine.WrapDemuxer(demuxer), nil
+		},
+	}); err != nil {
+		panic(err)
+	}
+
+	if err := godec.Register(Config{}, registry.MuxerManifest{
+		BaseManifest: registry.BaseManifest{
+			Name:        "flac-muxer",
+			Description: "FLAC muxer",
+		},
+		Factory: func(w io.Writer, _ registry.Configuration) (node.Muxer, error) {
+			return engine.WrapMuxer(NewMuxerEngine(w)), nil
 		},
 	}); err != nil {
 		panic(err)

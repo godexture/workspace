@@ -33,6 +33,33 @@ func AudioAttributes(flacBytes []byte) (media.AudioAttributes, error) {
 	return stream.Audio, nil
 }
 
+func EncodeFLAC(pcm []float32, attrs media.AudioAttributes) ([]byte, error) {
+	buf := testutil.NewBuffer(nil)
+	muxer := flacFormat.NewMuxerEngine(buf)
+	stream := media.StreamInfo{
+		Type:            media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC, Audio: attrs},
+	}
+	if _, err := muxer.AddStream(stream); err != nil {
+		return nil, err
+	}
+
+	// Keep this integration test quick while still exercising the complete
+	// encoder path. The conformance and internal tests cover the higher-order
+	// predictor and partition-search combinations separately.
+	encoder := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{
+		BlockSize:             4096,
+		MaxFixedOrder:         0,
+		MaxLPCOrder:           0,
+		MaxRicePartitionOrder: 0,
+		StreamableSubset:      true,
+	})
+	if err := testutil.EncodeToMuxer(context.Background(), encoder, muxer, pcm, attrs); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func newDemuxerWithAudioStream(flacBytes []byte) (engine.DemuxerEngine, media.StreamInfo, error) {
 	demuxer, err := flacFormat.NewDemuxerEngine(bytes.NewReader(flacBytes))
 	if err != nil {
