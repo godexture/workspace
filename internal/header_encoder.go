@@ -21,6 +21,22 @@ type encodedSampleRate struct {
 }
 
 func writeFrameHeader(w *bits.Writer, blockSize, sampleRate, channels, bitsPerSample int, frameNumber uint64) error {
+	return writeFrameHeaderWithStrategy(w, blockSize, sampleRate, channels, bitsPerSample, frameNumber, false)
+}
+
+func writeFrameHeaderWithStrategy(w *bits.Writer, blockSize, sampleRate, channels, bitsPerSample int, frameNumber uint64, variable bool) error {
+	channelAssignment, err := encodeChannelAssignment(channels)
+	if err != nil {
+		return err
+	}
+	return writeFrameHeaderWithAssignment(w, blockSize, sampleRate, channelAssignment, bitsPerSample, frameNumber, variable)
+}
+
+func writeFrameHeaderWithAssignment(w *bits.Writer, blockSize, sampleRate int, channelAssignment uint8, bitsPerSample int, frameNumber uint64, variable bool) error {
+	return writeFrameHeaderWithAssignmentOptions(w, blockSize, sampleRate, channelAssignment, bitsPerSample, frameNumber, variable, false)
+}
+
+func writeFrameHeaderWithAssignmentOptions(w *bits.Writer, blockSize, sampleRate int, channelAssignment uint8, bitsPerSample int, frameNumber uint64, variable, streamableSubset bool) error {
 	blockSizeCode, err := encodeBlockSizeCode(blockSize)
 	if err != nil {
 		return err
@@ -33,14 +49,20 @@ func writeFrameHeader(w *bits.Writer, blockSize, sampleRate, channels, bitsPerSa
 	if err != nil {
 		return err
 	}
-	channelAssignment, err := encodeChannelAssignment(channels)
-	if err != nil {
-		return err
+	if channelAssignment > 10 {
+		return fmt.Errorf("invalid FLAC channel assignment: %d", channelAssignment)
+	}
+	if streamableSubset && (sampleRateCode.code == 0 || bitDepthCode == 0) {
+		return errors.New("FLAC streamable subset requires explicit frame sample-rate and bit-depth codes")
 	}
 
 	w.Bits64(0x3ffe, 14) // sync
 	w.Bits64(0, 1)       // reserved
-	w.Bits64(0, 1)       // fixed blocking strategy
+	if variable {
+		w.Bits64(1, 1)
+	} else {
+		w.Bits64(0, 1)
+	}
 	w.Bits64(uint64(blockSizeCode.code), 4)
 	w.Bits64(uint64(sampleRateCode.code), 4)
 	w.Bits64(uint64(channelAssignment), 4)
@@ -131,13 +153,26 @@ func encodeSampleRateCode(sampleRate int) (encodedSampleRate, error) {
 	if sampleRate > 0 && sampleRate%10 == 0 && sampleRate/10 <= 65535 {
 		return encodedSampleRate{code: 14, extra: uint16(sampleRate / 10), bits: 16}, nil
 	}
+	if sampleRate >= 1 && sampleRate <= 1048575 {
+		// Code 0 means that STREAMINFO carries the rate. This is the only
+		// representation available for arbitrary native-FLAC rates.
+		return encodedSampleRate{code: 0}, nil
+	}
 	return encodedSampleRate{}, fmt.Errorf("invalid FLAC sample rate: %d", sampleRate)
 }
 
 func encodeBitsPerSampleCode(bitsPerSample int) (uint8, error) {
 	switch bitsPerSample {
+	case 4, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31:
+		return 0, nil
+	case 8:
+		return 1, nil
+	case 12:
+		return 2, nil
 	case 16:
 		return 4, nil
+	case 20:
+		return 5, nil
 	case 24:
 		return 6, nil
 	case 32:

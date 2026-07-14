@@ -55,6 +55,9 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 	if err != nil {
 		return frameHeader{}, fmt.Errorf("decode FLAC frame number: %w", err)
 	}
+	if blockingStrategy == 0 && number > 0x7fffffff {
+		return frameHeader{}, errors.New("FLAC fixed-blocking frame number exceeds 31 bits")
+	}
 
 	blockSize, err := decodeBlockSize(r, uint8(blockSizeCode), info)
 	if err != nil {
@@ -91,8 +94,6 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 	}, nil
 }
 
-
-
 func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
 	first, err := r.ReadByte()
 	if err != nil {
@@ -122,6 +123,10 @@ func readUTF8CodedNumber(r *bits.Reader) (uint64, error) {
 			return 0, errors.New("invalid FLAC UTF-8 continuation byte")
 		}
 		value = (value << 6) | uint64(b&0x3f)
+	}
+	minimum := []uint64{0, 0, 0x80, 0x800, 0x10000, 0x200000, 0x4000000, 0x80000000}[length]
+	if value < minimum || value > 0xfffffffff {
+		return 0, errors.New("non-canonical or oversized FLAC UTF-8 coded number")
 	}
 	return value, nil
 }

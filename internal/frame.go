@@ -48,8 +48,21 @@ func decodeFLACFrame(data []byte, info streamInfo) (decodedFrame, error) {
 	}
 
 	decorrelate(samples, header.channelAssignment)
+	for ch := range samples {
+		if err := validateSampleRange(samples[ch], header.bitsPerSample); err != nil {
+			return decodedFrame{}, fmt.Errorf("decoded FLAC channel %d is out of range: %w", ch, err)
+		}
+	}
 
-	reader.SkipToByte()
+	if rem := reader.Position() % 8; rem != 0 {
+		padding, err := reader.ReadBits64(uint8(8 - rem))
+		if err != nil {
+			return decodedFrame{}, err
+		}
+		if padding != 0 {
+			return decodedFrame{}, errors.New("invalid non-zero FLAC frame padding")
+		}
+	}
 	footerStart := reader.BytePos()
 	footer, err := reader.ReadBits64(16)
 	if err != nil {

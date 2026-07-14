@@ -29,8 +29,9 @@ func (d *Decoder) validateFrame(header frameHeader) error {
 			return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.number, d.sampleCount)
 		}
 	} else if header.number != d.frameCount && header.number != d.sampleCount {
-		// Streams written before the blocking-strategy bit was introduced
-		// may use sample numbers even though this bit is zero.
+		// A number of pre-subset encoders used sample numbers with the fixed
+		// blocking bit clear. Accept that interoperable legacy form while still
+		// rejecting unrelated/non-monotonic numbers.
 		return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.number, d.frameCount, d.sampleCount)
 	}
 	if d.info.MaxBlockSize > 0 && header.blockSize > int(d.info.MaxBlockSize) {

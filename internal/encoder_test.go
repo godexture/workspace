@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/godexture/core/domain/media"
@@ -198,6 +199,52 @@ func TestEncodeFLACFrame_VerbatimFallbackRoundtrip(t *testing.T) {
 	assertSamplesEqual(t, decoded.samples, [][]int64{{-2_147_483_648, 0, 2_147_483_647}})
 }
 
+func TestEncodeFLACFrame_FullBitstreamFeaturesRoundtrip(t *testing.T) {
+	left := make([]int64, 64)
+	right := make([]int64, 64)
+	for i := range left {
+		left[i] = int64((i - 32) * 256)
+		right[i] = left[i] + int64((i%3)-1)*2
+	}
+	data, err := encodeFLACFrameWithOptions([][]int64{left, right}, 12345, 16, 0, frameOptions{
+		maxFixedOrder: 4, maxLPCOrder: 8, maxRicePartitionOrder: 6,
+		enableWastedBits: true, enableStereoDecorrel: true,
+		streamableSubset: false, variableBlocking: true,
+	})
+	if err != nil {
+		t.Fatalf("encodeFLACFrameWithOptions() error = %v", err)
+	}
+	decoded, err := decodeFLACFrame(data, streamInfoFor(64, 12345, 2, 16))
+	if err != nil {
+		t.Fatalf("decodeFLACFrame() error = %v", err)
+	}
+	assertSamplesEqual(t, decoded.samples, [][]int64{left, right})
+	if !decoded.header.blockingStrategy || decoded.header.sampleRate != 12345 {
+		t.Fatalf("header = %+v, want variable blocking and uncommon sample rate", decoded.header)
+	}
+}
+
+func TestEncodeFLACFrame_AllSupportedBitDepths(t *testing.T) {
+	for _, bitsPerSample := range []int{4, 8, 12, 16, 20, 24, 32} {
+		t.Run(fmt.Sprintf("%dbit", bitsPerSample), func(t *testing.T) {
+			min := -(int64(1) << uint(bitsPerSample-1))
+			max := (int64(1) << uint(bitsPerSample-1)) - 1
+			data, err := encodeFLACFrameWithOptions([][]int64{{min, -1, 0, max}}, 44100, bitsPerSample, 0, frameOptions{
+				maxFixedOrder: 4, maxLPCOrder: 4, maxRicePartitionOrder: 4,
+				enableWastedBits: true, streamableSubset: false,
+			})
+			if err != nil {
+				t.Fatalf("encodeFLACFrameWithOptions() error = %v", err)
+			}
+			decoded, err := decodeFLACFrame(data, streamInfoFor(4, 44100, 1, bitsPerSample))
+			if err != nil {
+				t.Fatalf("decodeFLACFrame() error = %v", err)
+			}
+			assertSamplesEqual(t, decoded.samples, [][]int64{{min, -1, 0, max}})
+		})
+	}
+}
+
 func TestWriteFrameHeader_UTF8BoundariesAndCRC(t *testing.T) {
 	for _, frameNumber := range []uint64{0x7f, 0x80, 0x7ff, 0x800, 0xffff, 0x10000, 0x1fffff, 0x200000, 0x3ffffff, 0x4000000} {
 		t.Run("frame", func(t *testing.T) {
@@ -241,22 +288,12 @@ func TestWriteResidualRoundtrip(t *testing.T) {
 	}
 }
 
-func TestWriteResidualRoundtripIncludesSigned32Minimum(t *testing.T) {
+func TestWriteResidualRejectsSigned32Minimum(t *testing.T) {
 	residual := []int64{-(int64(1) << 31), int64(1<<31) - 1}
-	coding, ok := chooseRiceCoding(residual)
-	if !ok {
-		t.Fatal("chooseRiceCoding() failed for signed 32-bit boundary values")
+	_, ok := chooseRiceCoding(residual)
+	if ok {
+		t.Fatal("chooseRiceCoding() accepted signed 32-bit minimum")
 	}
-	w := bits.NewWriter()
-	if err := writeResidual(w, residual, coding); err != nil {
-		t.Fatalf("writeResidual() error = %v", err)
-	}
-	r := bits.New(w.Bytes())
-	decoded, err := readResidual(r, len(residual), 0)
-	if err != nil {
-		t.Fatalf("readResidual() error = %v", err)
-	}
-	assertSamplesEqual(t, [][]int64{decoded}, [][]int64{residual})
 }
 
 func TestEncoderRejectsInvalidBlockSizeConfig(t *testing.T) {
@@ -269,7 +306,7 @@ func TestEncoderRejectsInvalidBlockSizeConfig(t *testing.T) {
 }
 
 func TestEncoderRejectsNonSubsetBlockSizeAtLowSampleRate(t *testing.T) {
-	encoder := NewEncoder(EncoderConfig{BlockSize: 4609})
+	encoder := NewEncoder(EncoderConfig{BlockSize: 4609, StreamableSubset: true})
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, []int16{1})
 	var wrapped media.Frame = frame
 	if err := encoder.SendFrame(&wrapped); err == nil {

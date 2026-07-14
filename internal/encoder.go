@@ -23,6 +23,7 @@ type Encoder struct {
 	channels      int
 	bitsPerSample int
 	frameNumber   uint64
+	sampleNumber  uint64
 }
 
 func NewEncoder(config EncoderConfig) *Encoder {
@@ -92,7 +93,7 @@ func (e *Encoder) Flush() error {
 }
 
 func (e *Encoder) configureStream(sampleRate, channels, bitsPerSample int) error {
-	if e.config.BlockSize > streamableMaxBlockSize(sampleRate) {
+	if e.config.StreamableSubset && e.config.BlockSize > streamableMaxBlockSize(sampleRate) {
 		return fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", e.config.BlockSize, streamableMaxBlockSize(sampleRate), sampleRate)
 	}
 	if e.config.SampleRate > 0 && sampleRate != e.config.SampleRate {
@@ -144,7 +145,19 @@ func (e *Encoder) emitFullBlocks() error {
 }
 
 func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
-	data, err := encodeFLACFrame(block, e.sampleRate, e.bitsPerSample, e.frameNumber, e.config.MaxFixedOrder)
+	number := e.frameNumber
+	if e.config.BlockingStrategy == VariableBlocking {
+		number = e.sampleNumber
+	}
+	data, err := encodeFLACFrameWithOptions(block, e.sampleRate, e.bitsPerSample, number, frameOptions{
+		maxFixedOrder:         e.config.MaxFixedOrder,
+		maxLPCOrder:           e.config.MaxLPCOrder,
+		maxRicePartitionOrder: e.config.MaxRicePartitionOrder,
+		enableWastedBits:      e.config.EnableWastedBits,
+		enableStereoDecorrel:  e.config.EnableStereoDecorrel,
+		streamableSubset:      e.config.StreamableSubset,
+		variableBlocking:      e.config.BlockingStrategy == VariableBlocking,
+	})
 	if err != nil {
 		return err
 	}
@@ -156,6 +169,7 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 	pkt.DTS = media.Dts(pts)
 	e.pendingQueue = append(e.pendingQueue, pkt)
 	e.frameNumber++
+	e.sampleNumber += uint64(len(block[0]))
 	return nil
 }
 

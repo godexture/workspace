@@ -166,6 +166,12 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 		var header [4]byte
 		copy(header[:], d.buffer[offset:offset+4])
 		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
+		if blockType > 6 {
+			return 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
+		}
+		if length < 0 || length > (1<<24)-1 {
+			return 0, errors.New("invalid FLAC metadata length")
+		}
 		offset += 4
 		if len(d.buffer)-offset < length {
 			return 0, io.ErrUnexpectedEOF
