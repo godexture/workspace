@@ -19,7 +19,10 @@ type EncoderConfig struct {
 	ByteOrder binary.ByteOrder
 }
 
-func (EncoderConfig) NodeConfiguration() {}
+var DefaultEncoderConfig = EncoderConfig{
+	CodecID:   media.CodecLPCM,
+	ByteOrder: binary.LittleEndian,
+}
 
 type Encoder struct {
 	config       EncoderConfig
@@ -32,15 +35,9 @@ type Encoder struct {
 	imaState *imaadpcm.EncodeState
 }
 
-func NewEncoder(config EncoderConfig) *Encoder {
-	if config.CodecID == "" {
-		config.CodecID = media.CodecLPCM
-	}
-	if config.ByteOrder == nil {
-		config.ByteOrder = binary.LittleEndian
-	}
+func NewEncoder(cfg EncoderConfig) *Encoder {
 	return &Encoder{
-		config:   config,
+		config:   cfg,
 		buf:      &buffer.BlockBuffer{},
 		imaState: &imaadpcm.EncodeState{},
 	}

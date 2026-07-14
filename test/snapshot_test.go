@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	wavFormat "github.com/godexture/format-wav"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/optional"
 	"github.com/godexture/sdk/testutil"
 )
 
@@ -38,16 +39,18 @@ func TestSnapshots(t *testing.T) {
 						targetFormat = media.SampleFormatS16
 					}
 					cfg := pcmCodec.NewConfigWithAudio(profile.Attrs.SampleRate, targetFormat, profile.Attrs.ChannelLayout)
-					cfg.CodecID = profile.Codec
+					cfg.CodecID = optional.Some(profile.Codec)
 					return pcmCodec.NewDecoderEngine(cfg)
 				},
 				Encode: func() engine.EncoderEngine {
 					return pcmCodec.NewEncoderEngine(pcmCodec.EncoderConfig{
-						CodecID:   profile.Codec,
-						ByteOrder: binary.LittleEndian,
+						CodecID:   optional.Some(profile.Codec),
+						ByteOrder: optional.Some[binary.ByteOrder](binary.LittleEndian),
 					})
 				},
-				Mux: func(buf *testutil.Buffer) engine.MuxerEngine { return wavFormat.NewMuxerEngine(buf) },
+				Mux: func(buf *testutil.Buffer) engine.MuxerEngine {
+					return wavFormat.NewMuxerEngine(buf, wavFormat.MuxerConfig{})
+				},
 			})
 		})
 	}
