@@ -14,7 +14,7 @@ import (
 )
 
 func TestEncoder_ReceivePacketEmptyActive(t *testing.T) {
-	encoder := NewEncoder(DefaultEncoderConfig())
+	encoder := NewEncoder(DefaultEncoderConfig)
 	pkt, err := encoder.ReceivePacket()
 	if !errors.Is(err, engine.ErrEAGAIN) || pkt != nil {
 		t.Fatalf("expected ErrEAGAIN and nil packet, got err=%v, packet=%v", err, pkt)
@@ -22,7 +22,7 @@ func TestEncoder_ReceivePacketEmptyActive(t *testing.T) {
 }
 
 func TestEncoder_ReceivePacketEmptyFlushed(t *testing.T) {
-	encoder := NewEncoder(DefaultEncoderConfig())
+	encoder := NewEncoder(DefaultEncoderConfig)
 	if err := encoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -34,7 +34,7 @@ func TestEncoder_ReceivePacketEmptyFlushed(t *testing.T) {
 }
 
 func TestEncoder_SendFrameAfterFlush(t *testing.T) {
-	encoder := NewEncoder(DefaultEncoderConfig())
+	encoder := NewEncoder(DefaultEncoderConfig)
 	if err := encoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -47,7 +47,7 @@ func TestEncoder_SendFrameAfterFlush(t *testing.T) {
 }
 
 func TestEncoder_SendNilFrame(t *testing.T) {
-	encoder := NewEncoder(DefaultEncoderConfig())
+	encoder := NewEncoder(DefaultEncoderConfig)
 	if err := encoder.SendFrame(nil); err == nil {
 		t.Fatal("expected error for nil frame")
 	}

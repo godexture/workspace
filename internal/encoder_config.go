@@ -37,16 +37,14 @@ type EncoderConfig struct {
 
 func (EncoderConfig) NodeConfiguration() {}
 
-func DefaultEncoderConfig() EncoderConfig {
-	return EncoderConfig{
-		BlockSize:             defaultEncoderBlockSize,
-		MaxFixedOrder:         defaultEncoderMaxFixedOrder,
-		MaxLPCOrder:           defaultEncoderMaxLPCOrder,
-		MaxRicePartitionOrder: defaultEncoderMaxRiceOrder,
-		EnableWastedBits:      true,
-		EnableStereoDecorrel:  true,
-		StreamableSubset:      true,
-	}
+var DefaultEncoderConfig = EncoderConfig{
+	BlockSize:             defaultEncoderBlockSize,
+	MaxFixedOrder:         defaultEncoderMaxFixedOrder,
+	MaxLPCOrder:           defaultEncoderMaxLPCOrder,
+	MaxRicePartitionOrder: defaultEncoderMaxRiceOrder,
+	EnableWastedBits:      true,
+	EnableStereoDecorrel:  true,
+	StreamableSubset:      true,
 }
 
 func (c *EncoderConfig) applyDefaults() {

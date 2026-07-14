@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
 )
 
 func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(media.StreamInfo{}, DecoderConfig{})
 	frame, err := decoder.ReceiveFrame()
 	if !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
 		t.Fatalf("expected ErrEAGAIN and nil frame, got err=%v, frame=%v", err, frame)
@@ -19,7 +21,7 @@ func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 }
 
 func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(media.StreamInfo{}, DecoderConfig{})
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -31,7 +33,7 @@ func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 }
 
 func TestDecoder_SendPacketAfterFlush(t *testing.T) {
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(media.StreamInfo{}, DecoderConfig{})
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -43,7 +45,7 @@ func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 }
 
 func TestDecoder_SendNilPacket(t *testing.T) {
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(media.StreamInfo{}, DecoderConfig{})
 	if err := decoder.SendPacket(nil); err == nil {
 		t.Fatal("expected error for nil packet")
 	}
@@ -51,21 +53,24 @@ func TestDecoder_SendNilPacket(t *testing.T) {
 
 func TestDecoder_DecodeRawFrameRFC9639AppendixDExample1(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
-	assertDecodeAppendixDExample1(t, data[42:], DecoderConfig{StreamInfo: data[8:42]})
+	stream := media.StreamInfo{}
+	stream.Metadata = *metadata.NewBundle()
+	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
+	assertDecodeAppendixDExample1(t, data[42:], stream, DecoderConfig{})
 }
 
 func TestDecoder_DecodeNativeStreamCompatibility(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
-	assertDecodeAppendixDExample1(t, data, DefaultDecoderConfig())
+	assertDecodeAppendixDExample1(t, data, media.StreamInfo{}, DecoderConfig{})
 }
 
-func assertDecodeAppendixDExample1(t *testing.T, data []byte, config DecoderConfig) {
+func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.StreamInfo, config DecoderConfig) {
 	t.Helper()
 	packet := media.NewPacket(len(data))
 	copy(packet.Data(), data)
 	packet.MediaType = media.MediaAudio
 
-	decoder := NewDecoder(config)
+	decoder := NewDecoder(stream, config)
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
 	}
@@ -107,7 +112,7 @@ func TestDecoder_PartialStreamNeedsMoreData(t *testing.T) {
 	copy(packet.Data(), data)
 	packet.MediaType = media.MediaAudio
 
-	decoder := NewDecoder(DefaultDecoderConfig())
+	decoder := NewDecoder(media.StreamInfo{}, DecoderConfig{})
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
 	}
