@@ -22,6 +22,7 @@ type Decoder struct {
 	frameCount  uint64
 	sampleCount uint64
 	md5Hash     hashState
+	md5Scratch  []byte
 }
 
 type streamInfo = streaminfo.StreamInfo

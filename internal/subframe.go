@@ -63,15 +63,20 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 		if err != nil {
 			return nil, err
 		}
+		min, max, err := sampleRangeBounds(bitsPerSample)
+		if err != nil {
+			return nil, err
+		}
 		for i := order; i < blockSize; i++ {
 			prediction, err := fixedPredictionChecked(samples, i, order)
 			if err != nil {
 				return nil, err
 			}
-			samples[i] = prediction + residual[i-order]
-			if err := validateSubframeSampleRange(samples[i:i+1], bitsPerSample); err != nil {
-				return nil, fmt.Errorf("invalid FLAC fixed prediction: %w", err)
+			value := prediction + residual[i-order]
+			if value < min || value > max {
+				return nil, fmt.Errorf("invalid FLAC fixed prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
 			}
+			samples[i] = value
 		}
 
 	case typeCode >= 32 && typeCode <= 63:
@@ -110,16 +115,21 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 		if err != nil {
 			return nil, err
 		}
+		min, max, err := sampleRangeBounds(bitsPerSample)
+		if err != nil {
+			return nil, err
+		}
 		for i := order; i < blockSize; i++ {
 			var sum int64
 			for j := 0; j < order; j++ {
 				sum += int64(coefficients[j]) * int64(samples[i-j-1])
 			}
 			sum >>= shift
-			samples[i] = sum + residual[i-order]
-			if err := validateSubframeSampleRange(samples[i:i+1], bitsPerSample); err != nil {
-				return nil, fmt.Errorf("invalid FLAC LPC prediction: %w", err)
+			value := sum + residual[i-order]
+			if value < min || value > max {
+				return nil, fmt.Errorf("invalid FLAC LPC prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
 			}
+			samples[i] = value
 		}
 
 	default:
@@ -138,17 +148,29 @@ func readSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error)
 }
 
 func validateSubframeSampleRange(samples []int64, bitsPerSample int) error {
-	if bitsPerSample <= 0 || bitsPerSample > 33 {
-		return fmt.Errorf("unsupported FLAC subframe bit depth: %d", bitsPerSample)
+	min, max, err := sampleRangeBounds(bitsPerSample)
+	if err != nil {
+		return err
 	}
-	min := -(int64(1) << uint(bitsPerSample-1))
-	max := (int64(1) << uint(bitsPerSample-1)) - 1
 	for _, sample := range samples {
 		if sample < min || sample > max {
 			return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, bitsPerSample)
 		}
 	}
 	return nil
+}
+
+// sampleRangeBounds hoists the bit-depth check and min/max computation out
+// of the per-sample prediction loops (fixed/LPC), which used to call
+// validateSubframeSampleRange on a freshly sliced single-element slice for
+// every decoded sample.
+func sampleRangeBounds(bitsPerSample int) (min, max int64, err error) {
+	if bitsPerSample <= 0 || bitsPerSample > 33 {
+		return 0, 0, fmt.Errorf("unsupported FLAC subframe bit depth: %d", bitsPerSample)
+	}
+	min = -(int64(1) << uint(bitsPerSample-1))
+	max = (int64(1) << uint(bitsPerSample-1)) - 1
+	return min, max, nil
 }
 
 func readWarmupSamples(r *bits.Reader, samples []int64, order, bitsPerSample int) error {

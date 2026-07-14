@@ -32,7 +32,7 @@ func NewDecoderConfigFromStreamInfo(stream media.StreamInfo) DecoderConfig {
 	}
 	if !hasRawStreamInfo {
 		if channels := stream.Audio.ChannelCount(); channels > 0 {
-		config.Channels = channels
+			config.Channels = channels
 		}
 		if bitsPerSample := bitDepthFromSampleFormat(stream.Audio.Format); bitsPerSample > 0 {
 			config.BitsPerSample = bitsPerSample

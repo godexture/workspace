@@ -12,13 +12,13 @@ import (
 func encodeFLACFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, maxFixedOrder int) ([]byte, error) {
 	return encodeFLACFrameWithOptions(samples, sampleRate, bitsPerSample, frameNumber, frameOptions{
 		maxFixedOrder: maxFixedOrder, maxLPCOrder: 32, maxRicePartitionOrder: 8,
-		enableWastedBits: true, enableStereoDecorrel: true, streamableSubset: true,
+		enableWastedBits: true, enableStereoDecorrelation: true, streamableSubset: true,
 	})
 }
 
 type frameOptions struct {
-	maxFixedOrder, maxLPCOrder, maxRicePartitionOrder                          int
-	enableWastedBits, enableStereoDecorrel, streamableSubset, variableBlocking bool
+	maxFixedOrder, maxLPCOrder, maxRicePartitionOrder                               int
+	enableWastedBits, enableStereoDecorrelation, streamableSubset, variableBlocking bool
 }
 
 func encodeFLACFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options frameOptions) ([]byte, error) {
@@ -45,6 +45,12 @@ func encodeFLACFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int
 		if maxBlockSize := streamableMaxBlockSize(sampleRate); blockSize > maxBlockSize {
 			return nil, fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", blockSize, maxBlockSize, sampleRate)
 		}
+		// RFC 9639 Section 7: subset streams at <= 48 kHz MUST NOT use LPC
+		// orders above 12. maxLPCOrder is an upper bound, so cap rather than
+		// reject.
+		if sampleRate <= 48000 && options.maxLPCOrder > streamableMaxLPCOrder {
+			options.maxLPCOrder = streamableMaxLPCOrder
+		}
 	}
 	for ch := range samples {
 		if len(samples[ch]) != blockSize {
@@ -56,12 +62,9 @@ func encodeFLACFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int
 	}
 
 	w := bits.NewWriter()
-	assignment, channels, err := chooseChannelAssignment(samples, bitsPerSample, options)
+	assignment, channels, candidates, err := chooseChannelAssignment(samples, bitsPerSample, options)
 	if err != nil {
 		return nil, err
-	}
-	if assignment != 0 {
-		channels = decorrelatedChannels(samples, assignment)
 	}
 	if err := writeFrameHeaderWithAssignmentOptions(w, blockSize, sampleRate, assignmentForChannels(assignment, len(samples)), bitsPerSample, frameNumber, options.variableBlocking, options.streamableSubset); err != nil {
 		return nil, err
@@ -71,7 +74,7 @@ func encodeFLACFrameWithOptions(samples [][]int64, sampleRate, bitsPerSample int
 		if assignment == 8 && ch == 1 || assignment == 9 && ch == 0 || assignment == 10 && ch == 1 {
 			channelBits++
 		}
-		if err := writeBestSubframe(w, channels[ch], channelBits, options); err != nil {
+		if err := writeSubframeCandidate(w, channels[ch], channelBits, candidates[ch]); err != nil {
 			return nil, fmt.Errorf("encode FLAC subframe %d: %w", ch, err)
 		}
 	}
@@ -89,6 +92,10 @@ func assignmentForChannels(assignment uint8, channels int) uint8 {
 	return uint8(channels - 1)
 }
 
+// streamableMaxLPCOrder is the largest LPC order the streamable subset
+// permits for sample rates at or below 48 kHz (RFC 9639 Section 7).
+const streamableMaxLPCOrder = 12
+
 func streamableMaxBlockSize(sampleRate int) int {
 	if sampleRate <= 48000 {
 		return 4608
@@ -96,56 +103,61 @@ func streamableMaxBlockSize(sampleRate int) int {
 	return 16384
 }
 
-func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options frameOptions) (uint8, [][]int64, error) {
-	candidates := []uint8{0}
-	if options.enableStereoDecorrel && len(samples) == 2 {
-		candidates = []uint8{0, 8, 9, 10}
+// chooseChannelAssignment picks the cheapest channel assignment and returns
+// the channels to encode together with their already-searched subframe
+// candidates, so the caller writes exactly what was costed instead of
+// repeating the search. For stereo, the four decorrelation modes reuse the
+// four unique channel searches (left, right, mid, side).
+func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options frameOptions) (uint8, [][]int64, []subframeCandidate, error) {
+	if !options.enableStereoDecorrelation || len(samples) != 2 {
+		candidates := make([]subframeCandidate, len(samples))
+		for ch := range samples {
+			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options)
+			if !candidates[ch].valid {
+				return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+			}
+		}
+		return 0, samples, candidates, nil
+	}
+
+	left, right := samples[0], samples[1]
+	mid := make([]int64, len(left))
+	side := make([]int64, len(left))
+	for i := range left {
+		mid[i] = (left[i] + right[i]) >> 1
+		side[i] = left[i] - right[i]
+	}
+	leftCandidate := bestSubframe(left, bitsPerSample, options)
+	rightCandidate := bestSubframe(right, bitsPerSample, options)
+	midCandidate := bestSubframe(mid, bitsPerSample, options)
+	sideCandidate := bestSubframe(side, bitsPerSample+1, options)
+
+	assignments := []struct {
+		assignment uint8
+		channels   [][]int64
+		candidates []subframeCandidate
+	}{
+		{0, [][]int64{left, right}, []subframeCandidate{leftCandidate, rightCandidate}},
+		{8, [][]int64{left, side}, []subframeCandidate{leftCandidate, sideCandidate}},
+		{9, [][]int64{side, right}, []subframeCandidate{sideCandidate, rightCandidate}},
+		{10, [][]int64{mid, side}, []subframeCandidate{midCandidate, sideCandidate}},
 	}
 	best := uint64(^uint64(0))
-	var bestAssignment uint8
-	var bestChannels [][]int64
-	for _, assignment := range candidates {
-		channels := samples
-		if assignment != 0 {
-			channels = decorrelatedChannels(samples, assignment)
+	bestIndex := -1
+	for i, option := range assignments {
+		if !option.candidates[0].valid || !option.candidates[1].valid {
+			continue
 		}
-		var cost uint64
-		for ch := range channels {
-			channelBits := bitsPerSample
-			if assignment == 8 && ch == 1 || assignment == 9 && ch == 0 || assignment == 10 && ch == 1 {
-				channelBits++
-			}
-			candidate := bestSubframe(channels[ch], channelBits, options)
-			if !candidate.valid {
-				cost = ^uint64(0)
-				break
-			}
-			cost += candidate.costBits
-		}
+		cost := option.candidates[0].costBits + option.candidates[1].costBits
 		if cost < best {
-			best, bestAssignment, bestChannels = cost, assignment, channels
+			best, bestIndex = cost, i
 		}
 	}
-	if bestChannels == nil {
-		return 0, nil, fmt.Errorf("no valid FLAC channel assignment")
+	if bestIndex < 0 {
+		return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 	}
-	return bestAssignment, bestChannels, nil
-}
-
-func decorrelatedChannels(samples [][]int64, assignment uint8) [][]int64 {
-	channels := [][]int64{append([]int64(nil), samples[0]...), append([]int64(nil), samples[1]...)}
-	for i := range channels[0] {
-		switch assignment {
-		case 8:
-			channels[1][i] = samples[0][i] - samples[1][i]
-		case 9:
-			channels[0][i] = samples[0][i] - samples[1][i]
-		case 10:
-			channels[0][i] = (samples[0][i] + samples[1][i]) >> 1
-			channels[1][i] = samples[0][i] - samples[1][i]
-		}
-	}
-	return channels
+	chosen := assignments[bestIndex]
+	return chosen.assignment, chosen.channels, chosen.candidates, nil
 }
 
 func audioFrameToSamples(frame *media.AudioFrame, bitsPerSample int) ([][]int64, int, int, error) {

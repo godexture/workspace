@@ -71,7 +71,7 @@ func readFrameHeader(r *bits.Reader, info streamInfo) (frameHeader, error) {
 	if err != nil {
 		return frameHeader{}, err
 	}
-	channels, err := decodeChannelCount(uint8(channelAssignment), info)
+	channels, err := decodeChannelCount(uint8(channelAssignment))
 	if err != nil {
 		return frameHeader{}, err
 	}
@@ -215,7 +215,7 @@ func decodeBitsPerSample(code uint8, info streamInfo) (int, error) {
 	}
 }
 
-func decodeChannelCount(channelAssignment uint8, info streamInfo) (int, error) {
+func decodeChannelCount(channelAssignment uint8) (int, error) {
 	switch {
 	case channelAssignment <= 7:
 		return int(channelAssignment) + 1, nil

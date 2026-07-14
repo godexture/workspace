@@ -208,7 +208,7 @@ func TestEncodeFLACFrame_FullBitstreamFeaturesRoundtrip(t *testing.T) {
 	}
 	data, err := encodeFLACFrameWithOptions([][]int64{left, right}, 12345, 16, 0, frameOptions{
 		maxFixedOrder: 4, maxLPCOrder: 8, maxRicePartitionOrder: 6,
-		enableWastedBits: true, enableStereoDecorrel: true,
+		enableWastedBits: true, enableStereoDecorrelation: true,
 		streamableSubset: false, variableBlocking: true,
 	})
 	if err != nil {

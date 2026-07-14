@@ -31,6 +31,15 @@ func chooseRiceCoding(residual []int64) (riceCoding, bool) {
 	return chooseRiceCodingForBlock(residual, len(residual), 0, 15)
 }
 
+var riceMethods = []struct {
+	id        uint8
+	paramBits uint8
+	maxParam  uint8
+}{
+	{0, 4, 14},
+	{1, 5, 30},
+}
+
 func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int) (riceCoding, bool) {
 	if blockSize <= predictorOrder || len(residual) != blockSize-predictorOrder {
 		return riceCoding{}, false
@@ -42,45 +51,95 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 		maxPartitionOrder = 15
 	}
 	folded := make([]uint64, len(residual))
+	var maxFolded uint64
 	for i, value := range residual {
 		if !validFLACResidual(value) {
 			return riceCoding{}, false
 		}
 		folded[i] = foldResidual(value)
+		if folded[i] > maxFolded {
+			maxFolded = folded[i]
+		}
+	}
+
+	// Deepest usable partition order. Partition orders nest (2^n | blockSize
+	// implies 2^(n-1) | blockSize and partitions only grow shallower), so the
+	// usable orders are exactly 0..deepest and the per-partition sums of one
+	// level are the pairwise sums of the level below.
+	deepest := 0
+	for deepest < maxPartitionOrder && blockSize%(1<<(deepest+1)) == 0 && blockSize>>(deepest+1) > predictorOrder {
+		deepest++
+	}
+
+	// No Rice parameter above the bit length of the largest folded value can
+	// win: beyond it every quotient is zero and the cost only grows.
+	kMax := int(foldedBitLength(maxFolded))
+	if kMax > int(riceMethods[1].maxParam) {
+		kMax = int(riceMethods[1].maxParam)
+	}
+
+	// Exact Rice cost for parameter k over a partition of n values is
+	// paramBits + n*(k+1) + sum(v>>k), so per-partition prefix sums of v>>k
+	// (plus the maximum for the escape width) are all we need. Compute them
+	// once at the deepest level and merge upward.
+	type partitionStats struct {
+		sums []uint64
+		max  uint64
+	}
+	levels := make([][]partitionStats, deepest+1)
+	deepestPartitions := 1 << deepest
+	partitionSamples := blockSize >> deepest
+	levels[deepest] = make([]partitionStats, deepestPartitions)
+	for partition := 0; partition < deepestPartitions; partition++ {
+		start := partition*partitionSamples - predictorOrder
+		if start < 0 {
+			start = 0
+		}
+		end := (partition+1)*partitionSamples - predictorOrder
+		stats := partitionStats{sums: make([]uint64, kMax+1)}
+		for _, value := range folded[start:end] {
+			for k := 0; k <= kMax && value>>uint(k) > 0; k++ {
+				stats.sums[k] += value >> uint(k)
+			}
+			if value > stats.max {
+				stats.max = value
+			}
+		}
+		levels[deepest][partition] = stats
+	}
+	for order := deepest - 1; order >= 0; order-- {
+		child := levels[order+1]
+		merged := make([]partitionStats, 1<<order)
+		for partition := range merged {
+			left, right := child[2*partition], child[2*partition+1]
+			sums := make([]uint64, kMax+1)
+			for k := range sums {
+				sums[k] = left.sums[k] + right.sums[k]
+			}
+			max := left.max
+			if right.max > max {
+				max = right.max
+			}
+			merged[partition] = partitionStats{sums: sums, max: max}
+		}
+		levels[order] = merged
 	}
 
 	best := riceCoding{costBits: math.MaxUint64}
-	for partitionOrder := 0; partitionOrder <= maxPartitionOrder; partitionOrder++ {
+	for partitionOrder := 0; partitionOrder <= deepest; partitionOrder++ {
 		partitions := 1 << partitionOrder
-		if blockSize%partitions != 0 {
-			continue
-		}
-		partitionSamples := blockSize / partitions
-		if partitionSamples <= predictorOrder {
-			continue
-		}
-
-		for _, method := range []struct {
-			id        uint8
-			paramBits uint8
-			maxParam  uint8
-		}{
-			{0, 4, 14},
-			{1, 5, 30},
-		} {
+		partitionSamples := blockSize >> partitionOrder
+		for _, method := range riceMethods {
 			chosen := make([]ricePartition, partitions)
 			cost := uint64(2 + 4)
-			index := 0
 			for partition := 0; partition < partitions; partition++ {
 				count := partitionSamples
 				if partition == 0 {
 					count -= predictorOrder
 				}
-				part := folded[index : index+count]
-				candidate := chooseRicePartition(part, method.paramBits, method.maxParam)
-				chosen[partition] = candidate
-				cost += candidate.costBits
-				index += count
+				stats := levels[partitionOrder][partition]
+				chosen[partition] = bestRicePartition(stats.sums, stats.max, count, method.paramBits, method.maxParam)
+				cost += chosen[partition].costBits
 			}
 			if cost < best.costBits {
 				best = riceCoding{
@@ -94,57 +153,37 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 	return best, best.costBits != math.MaxUint64
 }
 
-func chooseRicePartition(folded []uint64, paramBits, maxParam uint8) ricePartition {
+func bestRicePartition(sums []uint64, maxFolded uint64, count int, paramBits, maxParam uint8) ricePartition {
 	best := ricePartition{costBits: math.MaxUint64}
-	for param := uint8(0); param <= maxParam; param++ {
-		cost := uint64(paramBits)
-		for _, value := range folded {
-			cost += (value >> param) + 1 + uint64(param)
-			if cost >= best.costBits {
-				break
-			}
-		}
+	kEnd := int(maxParam)
+	if kEnd > len(sums)-1 {
+		kEnd = len(sums) - 1
+	}
+	for k := 0; k <= kEnd; k++ {
+		cost := uint64(paramBits) + uint64(count)*uint64(k+1) + sums[k]
 		if cost < best.costBits {
-			best = ricePartition{param: param, costBits: cost}
+			best = ricePartition{param: uint8(k), costBits: cost}
 		}
 	}
 
-	rawBits := minimumSignedWidth(folded)
-	escapeCost := uint64(paramBits + 5 + uint8(len(folded))*rawBits)
+	rawBits := foldedBitLength(maxFolded)
+	escapeCost := uint64(paramBits) + 5 + uint64(count)*uint64(rawBits)
 	if escapeCost < best.costBits {
 		best = ricePartition{escaped: true, rawBits: rawBits, costBits: escapeCost}
 	}
 	return best
 }
 
-func minimumSignedWidth(folded []uint64) uint8 {
-	var minValue, maxValue int64
-	if len(folded) == 0 {
-		return 0
+// foldedBitLength returns the minimum signed width that holds every residual
+// whose folded (zigzag) value is at most maxFolded: a signed width w covers
+// folded values up to 2^w - 1.
+func foldedBitLength(maxFolded uint64) uint8 {
+	width := uint8(0)
+	for maxFolded > 0 {
+		width++
+		maxFolded >>= 1
 	}
-	for i, value := range folded {
-		decoded := unfoldResidual(value)
-		if i == 0 || decoded < minValue {
-			minValue = decoded
-		}
-		if i == 0 || decoded > maxValue {
-			maxValue = decoded
-		}
-	}
-	for width := uint8(0); width <= 32; width++ {
-		if width == 0 {
-			if minValue == 0 && maxValue == 0 {
-				return 0
-			}
-			continue
-		}
-		min := -(int64(1) << (width - 1))
-		max := (int64(1) << (width - 1)) - 1
-		if minValue >= min && maxValue <= max {
-			return width
-		}
-	}
-	return 32
+	return width
 }
 
 func writeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
@@ -215,11 +254,4 @@ func foldResidual(value int64) uint64 {
 		return uint64(-value*2 - 1)
 	}
 	return uint64(value * 2)
-}
-
-func unfoldResidual(value uint64) int64 {
-	if value&1 == 0 {
-		return int64(value >> 1)
-	}
-	return -int64((value >> 1) + 1)
 }
