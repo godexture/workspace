@@ -52,8 +52,8 @@ func TestSnapshots(t *testing.T) {
 						ADPCM:     optional.Some(profile.ADPCM),
 					})
 				},
-				Mux: func(buf *testutil.Buffer) engine.MuxerEngine {
-					return wavFormat.NewMuxerEngine(buf, wavFormat.MuxerConfig{})
+				Mux: func(w io.Writer) engine.MuxerEngine {
+					return wavFormat.NewMuxerEngine(w, wavFormat.MuxerConfig{})
 				},
 			})
 		})
