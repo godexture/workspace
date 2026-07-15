@@ -8,6 +8,17 @@ import (
 )
 
 func Link[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA string, nodeB B, portB string) error {
+	return LinkWithBufferSize(nodeA, portA, nodeB, portB, 100)
+}
+
+// LinkWithBufferSize connects two nodes using a channel edge with the requested
+// capacity. A small capacity is useful for pipelines that must apply strict
+// backpressure to large packets or frames.
+func LinkWithBufferSize[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA string, nodeB B, portB string, bufferSize int) error {
+	if bufferSize < 0 {
+		return fmt.Errorf("invalid edge buffer size: %d", bufferSize)
+	}
+
 	outPort, okA := nodeA.OutputPorts()[portA]
 	if !okA {
 		return fmt.Errorf("output port '%s' not found on node A", portA)
@@ -18,7 +29,7 @@ func Link[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA strin
 		return fmt.Errorf("input port '%s' not found on node B", portB)
 	}
 
-	edge := NewChanEdge[T](100)
+	edge := NewChanEdge[T](bufferSize)
 
 	outPort.Connect(edge)
 	inPort.Connect(edge)
