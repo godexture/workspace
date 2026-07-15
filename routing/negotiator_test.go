@@ -216,13 +216,13 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	decRes := &mockDecoderResolver{
 		resolved: registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
-				TransformFunc: func(s media.StreamInfo) media.Profile {
+				TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 					if s.Codec == media.CodecMSADPCM {
 						p.Codec = media.CodecLPCM
 						p.Audio.Format = media.SampleFormatS16
 					}
-					return p
+					return p, nil
 				},
 			},
 			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
@@ -235,8 +235,10 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	encRes := &mockEncoderResolver{
 		resolved: registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
-				TransformFunc: func(s media.StreamInfo) media.Profile {
-					return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+				TransformFunc: func(s media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
+					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+					p.Codec = target
+					return p, nil
 				},
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, config registry.Configuration) (node.Encoder, error) {
@@ -279,4 +281,3 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 		t.Errorf("expected sample format %s, got %s", media.SampleFormatS16, outStream.Audio.Format)
 	}
 }
-
