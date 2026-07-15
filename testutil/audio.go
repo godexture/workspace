@@ -11,14 +11,13 @@ type Buffer = audio.Buffer
 var NewBuffer = audio.NewBuffer
 var ComparePCM = audio.ComparePCM
 
-var (
-	DownmixToMono   = audio.DownmixToMono
-	Resample16kTo8k = audio.Resample16kTo8k
-)
+var ResolveStreamInfo = audio.ResolveStreamInfo
 
 var (
-	EncodeToMuxer   = audio.EncodeToMuxer
-	DecodeToFloat32 = audio.DecodeToFloat32
+	EngineDemux  = audio.EngineDemux
+	EngineDecode = audio.EngineDecode
+	EngineEncode = audio.EngineEncode
+	EngineMux    = audio.EngineMux
 )
 
 var (
