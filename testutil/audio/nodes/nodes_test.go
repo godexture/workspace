@@ -164,8 +164,23 @@ func TestPacketCompareRejectsMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := runNodes(t.Context(), expected, actual, compare)
-	if err == nil || !strings.Contains(err.Error(), "packet 1 mismatch") {
+	if err == nil || !strings.Contains(err.Error(), "byte stream mismatch") {
 		t.Fatalf("expected packet mismatch, got %v", err)
+	}
+}
+
+func TestPacketCompareAcrossDifferentBoundaries(t *testing.T) {
+	expected := newPacketSource([]byte("abc"), []byte("defgh"), []byte("i"))
+	actual := newPacketSource([]byte("a"), []byte("bcdef"), []byte("ghi"))
+	compare := nodes.NewPacketCompare()
+	if err := link(expected, "out", compare, "expected"); err != nil {
+		t.Fatal(err)
+	}
+	if err := link(actual, "out", compare, "actual"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runNodes(t.Context(), expected, actual, compare); err != nil {
+		t.Fatal(err)
 	}
 }
 
