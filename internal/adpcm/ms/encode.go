@@ -3,10 +3,11 @@ package msadpcm
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/godexture/format-wav/params"
 )
 
-func BytesPerPCMBlock(channels int) int {
-	blockAlign := 256 * channels
+func BytesPerPCMBlock(channels int, blockAlign int) int {
 	var samplesPerBlock int
 	if channels == 1 {
 		samplesPerBlock = (blockAlign-7)*2 + 2
@@ -16,7 +17,7 @@ func BytesPerPCMBlock(channels int) int {
 	return samplesPerBlock * channels * 2
 }
 
-func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
+func Encode(linear []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for MS ADPCM: %d", channels)
 	}
@@ -26,12 +27,15 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 		return nil, nil
 	}
 
-	blockAlign := 256 * channels
+	blockAlign := int(params.BlockAlign)
 	var samplesPerBlock int
 	if channels == 1 {
 		samplesPerBlock = (blockAlign-7)*2 + 2
 	} else {
 		samplesPerBlock = (blockAlign-14)*1 + 2
+	}
+	if samplesPerBlock != int(params.SamplesPerBlock) {
+		return nil, fmt.Errorf("MS ADPCM samples per block mismatch: got %d, want %d", params.SamplesPerBlock, samplesPerBlock)
 	}
 
 	blockSize := samplesPerBlock * channels
@@ -58,9 +62,9 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 
 		block := out[outIdx : outIdx+blockAlign]
 		if channels == 1 {
-			encodeMono(block, samplesPerBlock, chunkSamples)
+			encodeMono(block, samplesPerBlock, chunkSamples, params.Coefficients)
 		} else {
-			encodeStereo(block, samplesPerBlock, chunkSamples)
+			encodeStereo(block, samplesPerBlock, chunkSamples, params.Coefficients)
 		}
 
 		outIdx += blockAlign
@@ -68,10 +72,10 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder) ([]byte, er
 	return out, nil
 }
 
-func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16) {
-	predictor := findBestPredictor(chunkSamples, samplesPerBlock, 1, 0)
-	coeff1 := coeffs[predictor][0]
-	coeff2 := coeffs[predictor][1]
+func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []params.Coefficient) {
+	predictor := findBestPredictor(chunkSamples, samplesPerBlock, 1, 0, coefficients)
+	coeff1 := int32(coefficients[predictor].Coeff1)
+	coeff2 := int32(coefficients[predictor].Coeff2)
 
 	sample2 := chunkSamples[0]
 	sample1 := chunkSamples[1]
@@ -107,11 +111,11 @@ func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16) {
 
 }
 
-func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16) {
-	predL := findBestPredictor(chunkSamples, samplesPerBlock, 2, 0)
-	predR := findBestPredictor(chunkSamples, samplesPerBlock, 2, 1)
-	coeff1L, coeff2L := coeffs[predL][0], coeffs[predL][1]
-	coeff1R, coeff2R := coeffs[predR][0], coeffs[predR][1]
+func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []params.Coefficient) {
+	predL := findBestPredictor(chunkSamples, samplesPerBlock, 2, 0, coefficients)
+	predR := findBestPredictor(chunkSamples, samplesPerBlock, 2, 1, coefficients)
+	coeff1L, coeff2L := int32(coefficients[predL].Coeff1), int32(coefficients[predL].Coeff2)
+	coeff1R, coeff2R := int32(coefficients[predR].Coeff1), int32(coefficients[predR].Coeff2)
 
 	sample2L := chunkSamples[0]
 	sample2R := chunkSamples[1]
@@ -195,7 +199,7 @@ func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, i
 	return nybble, restored, delta
 }
 
-func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offset int) int {
+func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offset int, coefficients []params.Coefficient) int {
 	bestPredictor := 0
 	var minError int64 = -1
 
@@ -206,9 +210,9 @@ func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offs
 		initialDelta = 16
 	}
 
-	for p := 0; p < 7; p++ {
-		coeff1 := coeffs[p][0]
-		coeff2 := coeffs[p][1]
+	for p, coefficient := range coefficients {
+		coeff1 := int32(coefficient.Coeff1)
+		coeff2 := int32(coefficient.Coeff2)
 
 		s1 := int32(sample1)
 		s2 := int32(sample2)
@@ -231,4 +235,3 @@ func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offs
 	}
 	return bestPredictor
 }
-

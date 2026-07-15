@@ -18,9 +18,6 @@ func TestRoundtrip(t *testing.T) {
 		t.Run(profile.Name, func(t *testing.T) {
 			t.Parallel()
 
-			if profile.Codec == media.CodecMSADPCM || profile.Codec == media.CodecIMAADPCM {
-				t.Skip("ADPCM block align is hardcoded in WAV muxer and cannot be correctly roundtripped")
-			}
 			wavPath := config.BuildTestdataPath(profile.Name)
 
 			testutil.RunRoundtripTests(t, testutil.RoundtripConfig{
@@ -28,7 +25,7 @@ func TestRoundtrip(t *testing.T) {
 				Opts:      profile.CompareOptions,
 				StreamInfo: &media.StreamInfo{
 					Type:            media.MediaAudio,
-					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, Audio: profile.Attrs},
+					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, CodecParameters: profile.CodecParameters, Audio: profile.Attrs},
 				},
 				Demux: wavFormat.NewDemuxerEngine,
 				Decode: func(_ media.StreamInfo) engine.DecoderEngine {
@@ -38,12 +35,16 @@ func TestRoundtrip(t *testing.T) {
 					}
 					cfg := pcmCodec.NewConfigWithAudio(profile.Attrs.SampleRate, targetFormat, profile.Attrs.ChannelLayout)
 					cfg.CodecID = optional.Some(profile.Codec)
+					if profile.ADPCM.BlockAlign != 0 {
+						cfg.ADPCM = optional.Some(profile.ADPCM)
+					}
 					return pcmCodec.NewDecoderEngine(cfg)
 				},
 				Encode: func() engine.EncoderEngine {
 					return pcmCodec.NewEncoderEngine(pcmCodec.EncoderConfig{
 						CodecID:   optional.Some(profile.Codec),
 						ByteOrder: optional.Some[binary.ByteOrder](binary.LittleEndian),
+						ADPCM:     optional.Some(profile.ADPCM),
 					})
 				},
 				Mux: func(buf *testutil.Buffer) engine.MuxerEngine {

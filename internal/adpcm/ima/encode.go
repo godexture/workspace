@@ -3,10 +3,11 @@ package imaadpcm
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/godexture/format-wav/params"
 )
 
-func BytesPerPCMBlock(channels int) int {
-	blockAlign := 256 * channels
+func BytesPerPCMBlock(channels int, blockAlign int) int {
 	samplesPerBlock := (blockAlign-4*channels)*2/channels + 1
 	return samplesPerBlock * channels * 2
 }
@@ -17,7 +18,7 @@ type EncodeState struct {
 	NotFirstBlock bool
 }
 
-func Encode(linear []byte, channels int, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
+func Encode(linear []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
 	if state == nil {
 		state = &EncodeState{}
 	}
@@ -30,12 +31,15 @@ func Encode(linear []byte, channels int, byteOrder binary.ByteOrder, state *Enco
 		return nil, nil
 	}
 
-	blockAlign := 256 * channels
+	blockAlign := int(params.BlockAlign)
 	var samplesPerBlock int
 	if channels == 1 {
 		samplesPerBlock = (blockAlign-4)*2 + 1
 	} else {
 		samplesPerBlock = (blockAlign-8)*1 + 1
+	}
+	if samplesPerBlock != int(params.SamplesPerBlock) {
+		return nil, fmt.Errorf("IMA ADPCM samples per block mismatch: got %d, want %d", params.SamplesPerBlock, samplesPerBlock)
 	}
 
 	blockSize := samplesPerBlock * channels

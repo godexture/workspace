@@ -10,6 +10,7 @@ import (
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
 	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/buffer"
 	"github.com/godexture/sdk/engine"
 )
@@ -17,6 +18,7 @@ import (
 type EncoderConfig struct {
 	CodecID   media.CodecID
 	ByteOrder binary.ByteOrder
+	ADPCM     params.ADPCM
 }
 
 var DefaultEncoderConfig = EncoderConfig{
@@ -33,6 +35,7 @@ type Encoder struct {
 	lastPts      media.Pts
 
 	imaState *imaadpcm.EncodeState
+	adpcm    params.ADPCM
 }
 
 func NewEncoder(cfg EncoderConfig) *Encoder {
@@ -65,6 +68,13 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 
 	e.lastChannels = af.Layout.ChannelCount()
 	e.lastPts = f.Pts()
+	if e.config.CodecID == media.CodecMSADPCM || e.config.CodecID == media.CodecIMAADPCM {
+		params, err := e.resolveADPCMParameters(e.lastChannels)
+		if err != nil {
+			return err
+		}
+		e.adpcm = params
+	}
 
 	var err error
 	switch e.config.CodecID {
@@ -73,27 +83,29 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	case media.CodecPCMA:
 		data = g711.EncodePCMA(data, e.config.ByteOrder)
 	case media.CodecMSADPCM:
-		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels)
+		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels, int(e.adpcm.BlockAlign))
 		e.buf.Append(data)
 		toEncode := e.buf.TakeBlocks(bytesPerBlock)
 		if toEncode == nil {
 			return nil
 		}
-		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder)
+		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.ByteOrder)
 		if err != nil {
 			return err
 		}
+		return e.enqueueADPCMPackets(data)
 	case media.CodecIMAADPCM:
-		bytesPerBlock := imaadpcm.BytesPerPCMBlock(e.lastChannels)
+		bytesPerBlock := imaadpcm.BytesPerPCMBlock(e.lastChannels, int(e.adpcm.BlockAlign))
 		e.buf.Append(data)
 		toEncode := e.buf.TakeBlocks(bytesPerBlock)
 		if toEncode == nil {
 			return nil
 		}
-		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.config.ByteOrder, e.imaState)
+		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.ByteOrder, e.imaState)
 		if err != nil {
 			return err
 		}
+		return e.enqueueADPCMPackets(data)
 	}
 
 	pkt := media.NewPacket(len(data))
@@ -128,25 +140,46 @@ func (e *Encoder) Flush() error {
 		var err error
 		switch e.config.CodecID {
 		case media.CodecMSADPCM:
-			data, err = msadpcm.Encode(remains, e.lastChannels, e.config.ByteOrder)
+			data, err = msadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.ByteOrder)
 		case media.CodecIMAADPCM:
-			data, err = imaadpcm.Encode(remains, e.lastChannels, e.config.ByteOrder, e.imaState)
+			data, err = imaadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.ByteOrder, e.imaState)
 		}
 		if err != nil {
 			return err
 		}
 
 		if len(data) > 0 {
-			pkt := media.NewPacket(len(data))
-			copy(pkt.Data(), data)
-			pkt.MediaType = media.MediaAudio
-			pkt.StreamIndex = 0
-			pkt.PTS = e.lastPts
-			pkt.DTS = media.Dts(e.lastPts)
-			e.pendingQueue = append(e.pendingQueue, pkt)
+			return e.enqueueADPCMPackets(data)
 		}
 	}
 	return nil
+}
+
+func (e *Encoder) enqueueADPCMPackets(data []byte) error {
+	blockAlign := int(e.adpcm.BlockAlign)
+	if blockAlign == 0 || len(data)%blockAlign != 0 {
+		return fmt.Errorf("invalid ADPCM encoded data size %d for block align %d", len(data), blockAlign)
+	}
+	for offset := 0; offset < len(data); offset += blockAlign {
+		pkt := media.NewPacket(blockAlign)
+		copy(pkt.Data(), data[offset:offset+blockAlign])
+		pkt.MediaType = media.MediaAudio
+		pkt.StreamIndex = 0
+		pkt.PTS = e.lastPts
+		pkt.DTS = media.Dts(e.lastPts)
+		e.pendingQueue = append(e.pendingQueue, pkt)
+	}
+	return nil
+}
+
+func (e *Encoder) resolveADPCMParameters(channels int) (params.ADPCM, error) {
+	if e.config.ADPCM.BlockAlign != 0 {
+		if err := e.config.ADPCM.Validate(e.config.CodecID, channels); err != nil {
+			return params.ADPCM{}, err
+		}
+		return e.config.ADPCM, nil
+	}
+	return params.Default(e.config.CodecID, channels)
 }
 
 func convertF32ToS16(f32Data []byte) []byte {
