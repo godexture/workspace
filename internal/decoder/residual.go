@@ -14,9 +14,17 @@ import (
 // per-call error); a truncated stream in that inner loop surfaces later via
 // Reader.Overrun() rather than aborting this function early.
 func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, error) {
+	residual := make([]int64, blockSize-predictorOrder)
+	if err := DecodeResidualInto(r, residual, blockSize, predictorOrder); err != nil {
+		return nil, err
+	}
+	return residual, nil
+}
+
+func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOrder int) error {
 	method, err := r.ReadBits64(2)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var paramBits uint8
 	var escape uint64
@@ -28,20 +36,23 @@ func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, err
 		paramBits = 5
 		escape = 31
 	default:
-		return nil, errors.New("reserved FLAC residual coding method")
+		return errors.New("reserved FLAC residual coding method")
 	}
 	partitionOrderRaw, err := r.ReadBits64(4)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	partitionOrder := int(partitionOrderRaw)
 	partitions := 1 << partitionOrder
 	if blockSize <= predictorOrder || blockSize%partitions != 0 {
-		return nil, errors.New("FLAC residual partition order does not divide block size")
+		return errors.New("FLAC residual partition order does not divide block size")
 	}
 
 	residualCount := blockSize - predictorOrder
-	residual := make([]int64, 0, residualCount)
+	if len(residual) != residualCount {
+		return errors.New("FLAC residual destination size mismatch")
+	}
+	index := 0
 	partitionSamples := blockSize / partitions
 	for partition := 0; partition < partitions; partition++ {
 		samplesInPartition := partitionSamples
@@ -49,30 +60,31 @@ func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, err
 			samplesInPartition -= predictorOrder
 		}
 		if samplesInPartition < 0 {
-			return nil, errors.New("FLAC residual partition smaller than predictor order")
+			return errors.New("FLAC residual partition smaller than predictor order")
 		}
 
 		param, err := r.ReadBits64(paramBits)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if param == escape {
 			rawBits, err := r.ReadBits64(5)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if rawBits > 32 {
-				return nil, errors.New("invalid FLAC escaped residual width")
+				return errors.New("invalid FLAC escaped residual width")
 			}
 			for i := 0; i < samplesInPartition; i++ {
 				value := r.Signed64(uint8(rawBits))
 				if r.Overrun() || !validFLACResidual(value) {
 					if r.Overrun() {
-						return nil, io.ErrUnexpectedEOF
+						return io.ErrUnexpectedEOF
 					}
-					return nil, errors.New("FLAC residual is outside encodable range")
+					return errors.New("FLAC residual is outside encodable range")
 				}
-				residual = append(residual, value)
+				residual[index] = value
+				index++
 			}
 			continue
 		}
@@ -80,18 +92,19 @@ func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, err
 		for i := 0; i < samplesInPartition; i++ {
 			value := decodeRiceSigned(r, uint8(param))
 			if r.Overrun() {
-				return nil, io.ErrUnexpectedEOF
+				return io.ErrUnexpectedEOF
 			}
 			if !validFLACResidual(value) {
-				return nil, errors.New("FLAC residual is outside encodable range")
+				return errors.New("FLAC residual is outside encodable range")
 			}
-			residual = append(residual, value)
+			residual[index] = value
+			index++
 		}
 	}
-	if len(residual) != residualCount {
-		return nil, errors.New("decoded FLAC residual size mismatch")
+	if index != residualCount {
+		return errors.New("decoded FLAC residual size mismatch")
 	}
-	return residual, nil
+	return nil
 }
 
 // decodeRiceSigned decodes one Rice-coded residual sample. It is called per

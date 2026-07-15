@@ -22,16 +22,18 @@ type hashState struct {
 type Decoder struct {
 	config flac.DecoderConfig
 
-	buffer      []byte
-	parsed      bool
-	info        streaminfo.StreamInfo
-	configErr   error
-	flushed     bool
-	terminalErr error
-	frameCount  uint64
-	sampleCount uint64
-	md5Hash     hashState
-	md5Scratch  []byte
+	buffer       []byte
+	bufferOffset int
+	workspace    decodeWorkspace
+	parsed       bool
+	info         streaminfo.StreamInfo
+	configErr    error
+	flushed      bool
+	terminalErr  error
+	frameCount   uint64
+	sampleCount  uint64
+	md5Hash      hashState
+	md5Scratch   []byte
 }
 
 func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
@@ -93,7 +95,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	d.buffer = append(d.buffer, pkt.Data()...)
+	d.appendInput(pkt.Data())
 	return nil
 }
 
@@ -101,7 +103,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	if d.configErr != nil {
 		return nil, d.configErr
 	}
-	if len(d.buffer) == 0 {
+	if len(d.input()) == 0 {
 		if d.flushed {
 			if d.terminalErr != nil {
 				return nil, d.terminalErr
@@ -122,12 +124,12 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 			}
 			return nil, err
 		}
-		d.buffer = d.buffer[consumed:]
+		d.consumeInput(consumed)
 		d.parsed = true
 		d.initMD5()
 	}
 
-	if len(d.buffer) == 0 {
+	if len(d.input()) == 0 {
 		if d.flushed {
 			d.terminalErr = d.validateEnd()
 			if d.terminalErr != nil {
@@ -138,7 +140,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, engine.ErrEAGAIN
 	}
 
-	decoded, err := DecodeFrame(d.buffer, d.info)
+	decoded, err := decodeFrame(d.input(), d.info, &d.workspace)
 	if err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			if d.flushed {
@@ -148,7 +150,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		}
 		return nil, err
 	}
-	d.buffer = d.buffer[decoded.Bytes:]
+	d.consumeInput(decoded.Bytes)
 	if err := d.validateFrame(decoded.Header); err != nil {
 		return nil, err
 	}
@@ -168,21 +170,22 @@ func (d *Decoder) Flush() error {
 }
 
 func (d *Decoder) parseStreamHeader() (int, error) {
-	if len(d.buffer) < 4 {
+	data := d.input()
+	if len(data) < 4 {
 		return 0, io.ErrUnexpectedEOF
 	}
-	if string(d.buffer[:4]) != streaminfo.Marker {
+	if string(data[:4]) != streaminfo.Marker {
 		return 0, errors.New("not a native FLAC stream")
 	}
 
 	offset := 4
 	seenStreamInfo := false
 	for {
-		if len(d.buffer)-offset < 4 {
+		if len(data)-offset < 4 {
 			return 0, io.ErrUnexpectedEOF
 		}
 		var header [4]byte
-		copy(header[:], d.buffer[offset:offset+4])
+		copy(header[:], data[offset:offset+4])
 		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
 		if blockType > 6 {
 			return 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
@@ -191,7 +194,7 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 			return 0, errors.New("invalid FLAC metadata length")
 		}
 		offset += 4
-		if len(d.buffer)-offset < length {
+		if len(data)-offset < length {
 			return 0, io.ErrUnexpectedEOF
 		}
 
@@ -202,7 +205,7 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 			if length != streaminfo.Length {
 				return 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
 			}
-			info, err := streaminfo.Parse(d.buffer[offset : offset+length])
+			info, err := streaminfo.Parse(data[offset : offset+length])
 			if err != nil {
 				return 0, err
 			}
@@ -222,6 +225,34 @@ func (d *Decoder) parseStreamHeader() (int, error) {
 		return 0, errors.New("missing FLAC STREAMINFO block")
 	}
 	return offset, nil
+}
+
+func (d *Decoder) input() []byte {
+	return d.buffer[d.bufferOffset:]
+}
+
+func (d *Decoder) appendInput(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	if d.bufferOffset == len(d.buffer) {
+		d.buffer = d.buffer[:0]
+		d.bufferOffset = 0
+	}
+	if cap(d.buffer)-len(d.buffer) < len(data) && d.bufferOffset > 0 {
+		unread := copy(d.buffer, d.buffer[d.bufferOffset:])
+		d.buffer = d.buffer[:unread]
+		d.bufferOffset = 0
+	}
+	d.buffer = append(d.buffer, data...)
+}
+
+func (d *Decoder) consumeInput(n int) {
+	d.bufferOffset += n
+	if d.bufferOffset == len(d.buffer) {
+		d.buffer = d.buffer[:0]
+		d.bufferOffset = 0
+	}
 }
 
 func (d *Decoder) initMD5() {
