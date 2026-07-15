@@ -1,7 +1,6 @@
 package test
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,11 +12,15 @@ import (
 	flacFormat "github.com/godexture/format-flac"
 	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
-	testAudio "github.com/godexture/sdk/testutil/audio"
 )
 
 func TestSnapshot(t *testing.T) {
-	walkRoundtripFiles(t, func(t *testing.T, path string) {
+	walTestFiles(t, func(t *testing.T, path string, group string) {
+		if strings.HasSuffix(group, "faulty") || strings.HasSuffix(group, "uncommon") {
+			t.Skip("skipping faulty and uncommon conformance vectors in snapshot test")
+			return
+		}
+
 		testutil.RunSnapshotTests(t, testutil.SnapshotConfig{
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
@@ -34,72 +37,23 @@ func TestSnapshot(t *testing.T) {
 	})
 }
 
-// TestFaultyConformanceVectors verifies the vectors whose structural defects
-// make rejection mandatory. The remaining faulty vectors are safety vectors:
-// accepting or rejecting them is implementation-defined, but decoding must not
-// panic.
-func TestFaultyConformanceVectors(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join(config.TestdataDir, "conformance", "faulty", "*.flac"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range paths {
-		path := path
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			_, err := decodeConformanceVector(path)
-			if faultyMustReject(filepath.Base(path)) && err == nil {
-				t.Fatal("faulty vector unexpectedly decoded successfully")
-			}
-		})
-	}
-}
-
-// TestUncommonConformanceVectors exercises valid native FLAC streams whose
-// frame properties change mid-stream. Files 10 and 11 deliberately omit a
-// native FLAC container and are outside the demuxer contract.
-func TestUncommonConformanceVectors(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join(config.TestdataDir, "conformance", "uncommon", "*.flac"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range paths {
-		path := path
-		if strings.HasPrefix(filepath.Base(path), "10 ") || strings.HasPrefix(filepath.Base(path), "11 ") {
-			continue
+func TestConformance(t *testing.T) {
+	walTestFiles(t, func(t *testing.T, path string, group string) {
+		if strings.HasSuffix(group, "uncommon") && uncommonNotSupported(filepath.Base(path)) {
+			t.Skip("skipping unsupported uncommon conformance vector")
+			return
 		}
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := decodeConformanceVector(path); err != nil {
-				t.Fatalf("uncommon vector failed to decode: %v", err)
+
+		_, err := decodeConformanceVector(t, path)
+
+		if strings.HasSuffix(group, "faulty") {
+			if faultyMustReject(filepath.Base(path)) && err == nil {
+				t.Errorf("expected conformance vector to be rejected: %s", filepath.Base(path))
 			}
-		})
-	}
-}
-
-func decodeConformanceVector(path string) ([]float32, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	demuxer, err := flacFormat.NewDemuxerEngine(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	streams, _, err := demuxer.Analyze()
-	if err != nil {
-		return nil, err
-	}
-	if len(streams) == 0 {
-		return nil, engine.ErrEOF
-	}
-
-	packets, err := testAudio.EngineDemux(flacFormat.NewDemuxerEngine)(data)
-	if err != nil {
-		return nil, err
-	}
-	return testAudio.EngineDecode(streams[0], func(stream media.StreamInfo) engine.DecoderEngine {
-		return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
-	})(packets)
+		} else if err != nil {
+			t.Errorf("failed to decode conformance vector: %s, error: %v", filepath.Base(path), err)
+		}
+	})
 }
 
 func faultyMustReject(fileName string) bool {
@@ -108,4 +62,31 @@ func faultyMustReject(fileName string) bool {
 		strings.HasPrefix(fileName, "07 ") ||
 		strings.HasPrefix(fileName, "08 ") ||
 		strings.HasPrefix(fileName, "11 ")
+}
+
+func uncommonNotSupported(fileName string) bool {
+	return strings.HasPrefix(fileName, "10 ") || strings.HasPrefix(fileName, "11 ")
+}
+
+func decodeConformanceVector(t *testing.T, path string) ([]float32, error) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := testutil.ResolveStreamInfo(t, path, flacFormat.NewDemuxerEngine, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	packets, err := testutil.EngineDemux(flacFormat.NewDemuxerEngine)(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return testutil.EngineDecode(stream, func(stream media.StreamInfo) engine.DecoderEngine {
+		return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
+	})(packets)
 }

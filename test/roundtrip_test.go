@@ -1,9 +1,6 @@
 package test
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,7 +14,12 @@ import (
 )
 
 func TestRoundtrip(t *testing.T) {
-	walkRoundtripFiles(t, func(t *testing.T, path string) {
+	walTestFiles(t, func(t *testing.T, path string, group string) {
+		if strings.HasSuffix(group, "faulty") || strings.HasSuffix(group, "uncommon") {
+			t.Skip("skipping faulty and uncommon conformance vectors in snapshot test")
+			return
+		}
+
 		testutil.RunRoundtripTests(t, testutil.RoundtripConfig{
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
@@ -33,31 +35,4 @@ func TestRoundtrip(t *testing.T) {
 			Mux: func(buf *testutil.Buffer) engine.MuxerEngine { return flacFormat.NewMuxerEngine(buf) },
 		})
 	})
-}
-
-func walkRoundtripFiles(t *testing.T, run func(t *testing.T, path string)) {
-	root := config.TestdataDir
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".flac" {
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(root, path)
-		testName := strings.ReplaceAll(relPath, string(os.PathSeparator), "/")
-		if strings.HasPrefix(testName, "conformance/faulty/") || strings.HasPrefix(testName, "conformance/uncommon/") {
-			return nil
-		}
-
-		t.Run(testName, func(t *testing.T) {
-			t.Parallel()
-			run(t, path)
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("failed to walk testdata: %v", err)
-	}
 }
