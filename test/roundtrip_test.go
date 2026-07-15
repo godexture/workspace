@@ -32,7 +32,7 @@ func TestRoundtrip(t *testing.T) {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux: func(buf *testutil.Buffer) engine.MuxerEngine { return flacFormat.NewMuxerEngine(buf) },
+			Mux: flacFormat.NewMuxerEngine,
 		})
 	})
 }
