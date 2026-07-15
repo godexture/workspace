@@ -1,13 +1,11 @@
-package audio
+package pcm
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
 )
 
 // CreateAudioFrame creates a new AudioFrame containing the given float32 PCM samples converted to the target format.
@@ -83,42 +81,4 @@ func signedPCMValue(value float32, bitsPerSample int) int64 {
 		return scale - 1
 	}
 	return int64(float64(value) * float64(scale))
-}
-
-// PCMGeneratorNode is a pipeline node that generates audio frames from a float32 slice.
-type PCMGeneratorNode struct {
-	out   *node.OutPort[media.Frame]
-	pcm   []float32
-	attrs media.AudioAttributes
-}
-
-func NewPCMGeneratorNode(pcm []float32, attrs media.AudioAttributes) *PCMGeneratorNode {
-	return &PCMGeneratorNode{
-		out:   node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
-		pcm:   pcm,
-		attrs: attrs,
-	}
-}
-
-func (n *PCMGeneratorNode) Start(ctx context.Context) error {
-	outEdge := n.out.Edge()
-	if outEdge == nil {
-		return fmt.Errorf("generator output not connected")
-	}
-	defer outEdge.Close()
-
-	frame, err := CreateAudioFrame(n.pcm, n.attrs)
-	if err != nil {
-		return err
-	}
-
-	if err := outEdge.Push(ctx, *frame); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (n *PCMGeneratorNode) OutputPorts() map[string]*node.OutPort[media.Frame] {
-	return map[string]*node.OutPort[media.Frame]{"out": n.out}
 }

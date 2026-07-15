@@ -1,7 +1,6 @@
 package test
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,7 +31,7 @@ func TestSnapshot(t *testing.T) {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux: func(buf *testutil.Buffer) engine.MuxerEngine { return flacFormat.NewMuxerEngine(buf) },
+			Mux: flacFormat.NewMuxerEngine,
 		})
 	})
 }
@@ -44,7 +43,7 @@ func TestConformance(t *testing.T) {
 			return
 		}
 
-		_, err := decodeConformanceVector(t, path)
+		err := decodeConformanceVector(t, path)
 
 		if strings.HasSuffix(group, "faulty") {
 			if faultyMustReject(filepath.Base(path)) && err == nil {
@@ -68,25 +67,14 @@ func uncommonNotSupported(fileName string) bool {
 	return strings.HasPrefix(fileName, "10 ") || strings.HasPrefix(fileName, "11 ")
 }
 
-func decodeConformanceVector(t *testing.T, path string) ([]float32, error) {
+func decodeConformanceVector(t *testing.T, path string) error {
 	t.Helper()
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	stream, err := testutil.ResolveStreamInfo(t, path, flacFormat.NewDemuxerEngine, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	packets, err := testutil.EngineDemux(flacFormat.NewDemuxerEngine)(data)
-	if err != nil {
-		return nil, err
-	}
-
-	return testutil.EngineDecode(stream, func(stream media.StreamInfo) engine.DecoderEngine {
-		return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
-	})(packets)
+	return testutil.RunDecode(t.Context(), testutil.DecodeConfig{
+		MediaPath: path,
+		Demux:     flacFormat.NewDemuxerEngine,
+		Decode: func(stream media.StreamInfo) engine.DecoderEngine {
+			return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
+		},
+	})
 }
