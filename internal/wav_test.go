@@ -11,6 +11,7 @@ import (
 	mp3codec "github.com/godexture/codec-mp3"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
 )
@@ -1162,5 +1163,58 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 				t.Errorf("payload mismatch: got %d bytes, want %d bytes", len(gotPayload), len(original))
 			}
 		})
+	}
+}
+
+func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
+	adpcm, err := params.Default(media.CodecMSADPCM, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.BlockAlign = 1024
+	adpcm.SamplesPerBlock, err = params.SamplesPerBlock(media.CodecMSADPCM, 2, adpcm.BlockAlign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.Coefficients[0] = params.Coefficient{Coeff1: 128, Coeff2: 64}
+
+	attr := media.MediaAttributes{
+		Codec: media.CodecMSADPCM,
+		CodecParameters: media.CodecParameters{
+			Schema: params.SchemaADPCM,
+			Data:   adpcm.MarshalBinary(),
+		},
+		Audio: media.AudioAttributes{
+			SampleRate:    8000,
+			ChannelLayout: media.LayoutStereo2_0,
+		},
+	}
+	payload := make([]byte, int(adpcm.BlockAlign)*2)
+	wavData := buildTestWAVWithAttr(t, payload, attr)
+
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams, _, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := params.Parse(media.CodecMSADPCM, 2, streams[0].CodecParameters.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streams[0].CodecParameters.Schema != params.SchemaADPCM || got.BlockAlign != adpcm.BlockAlign || got.SamplesPerBlock != adpcm.SamplesPerBlock || got.Coefficients[0] != adpcm.Coefficients[0] {
+		t.Fatalf("ADPCM parameters were not preserved: %#v", got)
+	}
+
+	for i := 0; i < 2; i++ {
+		pkt, _, err := demuxer.ReadPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkt.Data()) != int(adpcm.BlockAlign) {
+			t.Fatalf("packet %d size = %d, want %d", i, len(pkt.Data()), adpcm.BlockAlign)
+		}
 	}
 }

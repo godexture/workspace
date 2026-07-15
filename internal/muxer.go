@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-wav/params"
 )
 
 type Muxer struct {
@@ -148,27 +149,18 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		return nil, errors.New("wav muxer requires a valid sample rate")
 	}
 
+	var adpcmParams params.ADPCM
 	var blockAlign int
+	samplesPerBlock := 1
 	if attr.Codec == media.CodecMSADPCM || attr.Codec == media.CodecIMAADPCM {
-		blockAlign = 256 * channels
+		adpcmParams, err = adpcmParametersFromMediaAttributes(attr, channels)
+		if err != nil {
+			return nil, err
+		}
+		blockAlign = int(adpcmParams.BlockAlign)
+		samplesPerBlock = int(adpcmParams.SamplesPerBlock)
 	} else {
 		blockAlign = channels * int(bitsPerSample/8)
-	}
-
-	samplesPerBlock := 1
-	switch attr.Codec {
-	case media.CodecMSADPCM:
-		if channels == 1 {
-			samplesPerBlock = (blockAlign-7)*2 + 2
-		} else {
-			samplesPerBlock = (blockAlign-14)*1 + 2
-		}
-	case media.CodecIMAADPCM:
-		if channels == 1 {
-			samplesPerBlock = (blockAlign-4)*2 + 1
-		} else {
-			samplesPerBlock = (blockAlign-8)*1 + 1
-		}
 	}
 
 	var byteRate int
@@ -197,7 +189,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	if useExtensible {
 		fmtSize = 40
 	} else if attr.Codec == media.CodecMSADPCM {
-		fmtSize = 50
+		fmtSize = uint32(22 + len(adpcmParams.Coefficients)*4)
 	} else if attr.Codec == media.CodecIMAADPCM {
 		fmtSize = 20
 	}
@@ -283,12 +275,13 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
 		headerBuf.Write(wavSubFormatBase)
 	} else if attr.Codec == media.CodecMSADPCM {
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(32)) // cbSize
+		cbSize := 4 + len(adpcmParams.Coefficients)*4
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(cbSize))
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(samplesPerBlock))
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(7)) // numCoefficients
-		coeffs := [...]int16{256, 0, 512, -256, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232}
-		for _, c := range coeffs {
-			binary.Write(&headerBuf, binary.LittleEndian, c)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(len(adpcmParams.Coefficients)))
+		for _, c := range adpcmParams.Coefficients {
+			binary.Write(&headerBuf, binary.LittleEndian, c.Coeff1)
+			binary.Write(&headerBuf, binary.LittleEndian, c.Coeff2)
 		}
 	} else if attr.Codec == media.CodecIMAADPCM {
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(2)) // cbSize
@@ -325,6 +318,16 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	}
 
 	return headerBuf.Bytes(), nil
+}
+
+func adpcmParametersFromMediaAttributes(attr media.MediaAttributes, channels int) (params.ADPCM, error) {
+	if attr.Codec != media.CodecMSADPCM && attr.Codec != media.CodecIMAADPCM {
+		return params.ADPCM{}, fmt.Errorf("unsupported ADPCM codec: %s", attr.Codec)
+	}
+	if attr.CodecParameters.Schema == params.SchemaADPCM {
+		return params.Parse(attr.Codec, channels, attr.CodecParameters.Data)
+	}
+	return params.Default(attr.Codec, channels)
 }
 
 func (m *Muxer) WriteTrailer() error {
