@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -126,6 +127,102 @@ func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	assertSamplesEqual(t, decoded, [][]int64{{1, 2, 3}})
 	if pkt, err := enc.ReceivePacket(); !errors.Is(err, engine.ErrEOF) || pkt != nil {
 		t.Fatalf("ReceivePacket() after final packet = (%v, %v), want (nil, ErrEOF)", pkt, err)
+	}
+}
+
+func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
+	cfg := flac.DefaultEncoderConfig
+	cfg.BlockSize = 4
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+	chunks := []struct {
+		pts    media.Pts
+		values []int16
+	}{
+		{0, []int16{0}},
+		{1, []int16{1, 2, 3, 4, 5}},
+		{6, []int16{6, 7}},
+	}
+	for _, chunk := range chunks {
+		frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, chunk.pts, chunk.values)
+		var wrapped media.Frame = frame
+		if err := enc.SendFrame(&wrapped); err != nil {
+			t.Fatalf("SendFrame(%d) error = %v", chunk.pts, err)
+		}
+	}
+
+	for packetIndex, want := range []struct {
+		pts     media.Pts
+		samples []int64
+	}{{0, []int64{0, 1, 2, 3}}, {4, []int64{4, 5, 6, 7}}} {
+		packet, err := enc.ReceivePacket()
+		if err != nil {
+			t.Fatalf("ReceivePacket(%d) error = %v", packetIndex, err)
+		}
+		if packet.PTS != want.pts {
+			t.Errorf("packet %d PTS = %d, want %d", packetIndex, packet.PTS, want.pts)
+		}
+		decoded := decodePacketSamples(t, packet, streamInfoFor(4, 44100, 1, 16))
+		assertSamplesEqual(t, decoded, [][]int64{want.samples})
+		packet.Release()
+	}
+	if enc.pendingQueue != nil {
+		t.Fatalf("pending queue retained after drain: len=%d cap=%d", len(enc.pendingQueue), cap(enc.pendingQueue))
+	}
+}
+
+func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
+	cfg := flac.DefaultEncoderConfig
+	cfg.BlockSize = 4
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+	input := []int16{0, 1, 2, 3, 10, 11, 12, 13}
+	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+	firstPacket, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket(first) error = %v", err)
+	}
+	secondPacket, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket(second) error = %v", err)
+	}
+	combined := media.NewPacket(len(firstPacket.Data()) + len(secondPacket.Data()))
+	copy(combined.Data(), firstPacket.Data())
+	copy(combined.Data()[len(firstPacket.Data()):], secondPacket.Data())
+	firstPacket.Release()
+	secondPacket.Release()
+
+	dec := decoder.NewDecoder(media.StreamInfo{MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{
+		SampleRate: 44100, Format: media.SampleFormatS16, BitsPerSample: 16, ChannelLayout: media.LayoutMono1,
+	}}}, flac.DecoderConfig{})
+	if err := dec.SendPacket(combined); err != nil {
+		t.Fatalf("decoder SendPacket() error = %v", err)
+	}
+	combined.Release()
+	first, err := dec.ReceiveFrame()
+	if err != nil {
+		t.Fatalf("ReceiveFrame(first) error = %v", err)
+	}
+	firstAudio := (*first).(*media.AudioFrame)
+	firstPCM := append([]byte(nil), firstAudio.Planes()[0]...)
+	second, err := dec.ReceiveFrame()
+	if err != nil {
+		t.Fatalf("ReceiveFrame(second) error = %v", err)
+	}
+	if !bytes.Equal(firstAudio.Planes()[0], firstPCM) {
+		t.Fatal("first returned frame was mutated while decoding the second frame")
+	}
+	secondAudio := (*second).(*media.AudioFrame)
+	if bytes.Equal(firstAudio.Planes()[0], secondAudio.Planes()[0]) {
+		t.Fatal("test frames unexpectedly contain identical PCM")
 	}
 }
 

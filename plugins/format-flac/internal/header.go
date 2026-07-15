@@ -39,11 +39,6 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]
 			return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
 		}
 
-		block := make([]byte, length)
-		if _, err := io.ReadFull(r, block); err != nil {
-			return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
-		}
-
 		if blockType == streaminfo.MetadataTypeStreamInfo {
 			if seenStreamInfo {
 				return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("duplicate FLAC STREAMINFO block")
@@ -51,19 +46,25 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]
 			if length != streaminfo.Length {
 				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
 			}
+			block := make([]byte, length)
+			if _, err := io.ReadFull(r, block); err != nil {
+				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
+			}
 			info, err := streaminfo.Parse(block)
 			if err != nil {
 				return streaminfo.StreamInfo{}, nil, nil, 0, err
 			}
 			parsedInfo = info
-			streamInfoBlock = append([]byte(nil), block...)
+			streamInfoBlock = block
 			seenStreamInfo = true
 		} else if !seenStreamInfo {
 			return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("FLAC STREAMINFO must be the first metadata block")
 		} else {
-			extra := make([]byte, 4+len(block))
+			extra := make([]byte, 4+length)
 			copy(extra[:4], header[:])
-			copy(extra[4:], block)
+			if _, err := io.ReadFull(r, extra[4:]); err != nil {
+				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
+			}
 			extraBlocks = append(extraBlocks, extra)
 		}
 

@@ -1,16 +1,19 @@
 package encoder
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/core/domain/media"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
 
 func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig) ([]byte, error) {
+	var writer bits.Writer
+	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, &writer)
+}
+
+func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, w *bits.Writer) ([]byte, error) {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}
@@ -47,11 +50,12 @@ func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber u
 		}
 	}
 
-	w := bits.NewWriter()
+	w.Init()
 	assignment, channels, candidates, err := chooseChannelAssignment(samples, bitsPerSample, options)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseSubframeCandidates(candidates)
 
 	header := &flac.FrameHeader{
 		BlockSize:         blockSize,
@@ -103,6 +107,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		for ch := range samples {
 			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options)
 			if !candidates[ch].valid {
+				releaseSubframeCandidates(candidates)
 				return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 			}
 		}
@@ -143,93 +148,26 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		}
 	}
 	if bestIndex < 0 {
+		releaseSubframeCandidate(&leftCandidate)
+		releaseSubframeCandidate(&rightCandidate)
+		releaseSubframeCandidate(&midCandidate)
+		releaseSubframeCandidate(&sideCandidate)
 		return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 	}
 	chosen := assignments[bestIndex]
+	switch bestIndex {
+	case 0:
+		releaseSubframeCandidate(&midCandidate)
+		releaseSubframeCandidate(&sideCandidate)
+	case 1:
+		releaseSubframeCandidate(&rightCandidate)
+		releaseSubframeCandidate(&midCandidate)
+	case 2:
+		releaseSubframeCandidate(&leftCandidate)
+		releaseSubframeCandidate(&midCandidate)
+	case 3:
+		releaseSubframeCandidate(&leftCandidate)
+		releaseSubframeCandidate(&rightCandidate)
+	}
 	return chosen.assignment, chosen.channels, chosen.candidates, nil
-}
-
-func ExtractSamplesFromAudioFrame(frame *media.AudioFrame, bitsPerSample int) ([][]int64, int, int, error) {
-	if frame == nil {
-		return nil, 0, 0, fmt.Errorf("FLAC encoder received nil audio frame")
-	}
-	if frame.Format.IsPlanar() {
-		return nil, 0, 0, fmt.Errorf("FLAC encoder does not support planar input format: %s", frame.Format)
-	}
-	format := frame.Format.Packed()
-	if bitsPerSample <= 0 {
-		bitsPerSample = frame.BitsPerSample
-	}
-	if bitsPerSample <= 0 {
-		bitsPerSample = flac.BitDepthFromSampleFormat(format)
-	}
-	if format == media.SampleFormatS16 && (bitsPerSample < 4 || bitsPerSample > 16) {
-		return nil, 0, 0, fmt.Errorf("S16 FLAC input requires 4..16 bits per sample, got %d", bitsPerSample)
-	}
-	if format == media.SampleFormatS32 && (bitsPerSample < 17 || bitsPerSample > 32) {
-		return nil, 0, 0, fmt.Errorf("S32 FLAC input requires 17..32 bits per sample, got %d", bitsPerSample)
-	}
-	if format != media.SampleFormatS16 && format != media.SampleFormatS32 {
-		return nil, 0, 0, fmt.Errorf("unsupported FLAC input format: %s", frame.Format)
-	}
-
-	channels := frame.Layout.ChannelCount()
-	if channels < 1 || channels > 8 {
-		return nil, 0, 0, fmt.Errorf("unsupported FLAC channel count: %d", channels)
-	}
-	if frame.SampleRate <= 0 {
-		return nil, 0, 0, fmt.Errorf("invalid FLAC sample rate: %d", frame.SampleRate)
-	}
-	if frame.Samples <= 0 {
-		return nil, 0, 0, fmt.Errorf("invalid FLAC sample count: %d", frame.Samples)
-	}
-
-	planes := frame.Planes()
-	if len(planes) == 0 {
-		return nil, 0, 0, fmt.Errorf("FLAC input has no audio plane")
-	}
-	plane := planes[0]
-	bytesPerSample := format.BytesPerSample()
-	wantBytes := frame.Samples * channels * bytesPerSample
-	if len(plane) < wantBytes {
-		return nil, 0, 0, fmt.Errorf("FLAC input plane is too short: got %d, want %d", len(plane), wantBytes)
-	}
-
-	samples := make([][]int64, channels)
-	for ch := range samples {
-		samples[ch] = make([]int64, frame.Samples)
-	}
-	for i := 0; i < frame.Samples; i++ {
-		for ch := 0; ch < channels; ch++ {
-			offset := (i*channels + ch) * bytesPerSample
-			var value int64
-			switch format {
-			case media.SampleFormatS16:
-				value = int64(int16(binary.LittleEndian.Uint16(plane[offset : offset+2])))
-			case media.SampleFormatS32:
-				value = int64(int32(binary.LittleEndian.Uint32(plane[offset : offset+4])))
-			}
-			samples[ch][i] = value
-		}
-	}
-	if err := flac.ValidateSampleRange(flattenForValidation(samples), bitsPerSample); err != nil {
-		return nil, 0, 0, err
-	}
-	return samples, frame.SampleRate, bitsPerSample, nil
-}
-
-func flattenForValidation(samples [][]int64) []int64 {
-	var out []int64
-	for _, channel := range samples {
-		out = append(out, channel...)
-	}
-	return out
-}
-
-func CloneSampleBlock(samples [][]int64, start, end int) [][]int64 {
-	block := make([][]int64, len(samples))
-	for ch := range samples {
-		block[ch] = append([]int64(nil), samples[ch][start:end]...)
-	}
-	return block
 }

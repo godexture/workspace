@@ -13,8 +13,19 @@ import (
 	"github.com/godexture/sdk/hash"
 )
 
+type decodeWorkspace struct {
+	reader  bits.Reader
+	samples [][]int64
+}
+
 func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
-	reader := bits.New(data)
+	var workspace decodeWorkspace
+	return decodeFrame(data, info, &workspace)
+}
+
+func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorkspace) (*flac.Frame, error) {
+	reader := &workspace.reader
+	reader.Init(data, 0, int32(len(data))*8)
 	header, err := DecodeFrameHeader(reader, info)
 	if err != nil {
 		return nil, err
@@ -23,7 +34,7 @@ func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
 		return nil, errors.New("invalid FLAC frame header CRC-8")
 	}
 
-	samples := make([][]int64, header.Channels)
+	samples := workspace.sampleBuffers(header.Channels, header.BlockSize)
 	for ch := 0; ch < header.Channels; ch++ {
 		bitsPerSample := header.BitsPerSample
 		switch header.ChannelAssignment {
@@ -41,11 +52,9 @@ func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
 			}
 		}
 
-		channelSamples, err := DecodeSubframe(reader, header.BlockSize, bitsPerSample)
-		if err != nil {
+		if err := DecodeSubframe(reader, samples[ch], bitsPerSample); err != nil {
 			return nil, fmt.Errorf("decode FLAC subframe %d: %w", ch, err)
 		}
-		samples[ch] = channelSamples
 	}
 
 	Decorrelate(samples, header.ChannelAssignment)
@@ -83,6 +92,22 @@ func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
 		Samples: samples,
 		Bytes:   reader.BytePos(),
 	}, nil
+}
+
+func (w *decodeWorkspace) sampleBuffers(channels, blockSize int) [][]int64 {
+	if cap(w.samples) < channels {
+		w.samples = make([][]int64, channels)
+	} else {
+		w.samples = w.samples[:channels]
+	}
+	for ch := range w.samples {
+		if cap(w.samples[ch]) < blockSize {
+			w.samples[ch] = make([]int64, blockSize)
+		} else {
+			w.samples[ch] = w.samples[ch][:blockSize]
+		}
+	}
+	return w.samples
 }
 
 func buildAudioFrame(decoded *flac.Frame) (*media.AudioFrame, error) {

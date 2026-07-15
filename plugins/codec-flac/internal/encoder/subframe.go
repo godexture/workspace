@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
@@ -29,6 +30,8 @@ type subframeCandidate struct {
 	costBits   uint64
 	valid      bool
 }
+
+var residualBufferPool sync.Pool
 
 func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, best subframeCandidate) error {
 	if len(samples) == 0 {
@@ -110,12 +113,16 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 		residual := fixedResidual(samples, order)
 		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
 		if !ok {
+			releaseResidualBuffer(residual)
 			continue
 		}
 		candidate := subframeCandidate{kind: subframeKindFixed, order: order, residual: residual, rice: rice,
 			costBits: uint64(8+order*bitsPerSample) + rice.costBits, valid: true}
 		if candidate.costBits < best.costBits {
+			releaseSubframeCandidate(&best)
 			best = candidate
+		} else {
+			releaseSubframeCandidate(&candidate)
 		}
 	}
 
@@ -137,13 +144,17 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 		residual := lpcResidual(samples, order, quantized, shift)
 		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
 		if !ok {
+			releaseResidualBuffer(residual)
 			continue
 		}
 		candidate := subframeCandidate{kind: subframeKindLPC, order: order, residual: residual, rice: rice,
 			coeff: quantized, precision: lpcPrecision, shift: shift,
 			costBits: uint64(8+order*bitsPerSample+4+5+order*lpcPrecision) + rice.costBits, valid: true}
 		if candidate.costBits < best.costBits {
+			releaseSubframeCandidate(&best)
 			best = candidate
+		} else {
+			releaseSubframeCandidate(&candidate)
 		}
 	}
 	return best
@@ -218,9 +229,9 @@ func isConstant(samples []int64) bool {
 }
 
 func fixedResidual(samples []int64, order int) []int64 {
-	residual := make([]int64, 0, len(samples)-order)
+	residual := getResidualBuffer(len(samples) - order)
 	for i := order; i < len(samples); i++ {
-		residual = append(residual, samples[i]-fixedPrediction(samples, i, order))
+		residual[i-order] = samples[i] - fixedPrediction(samples, i, order)
 	}
 	return residual
 }
@@ -334,14 +345,41 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 }
 
 func lpcResidual(samples []int64, order int, coefficients []int64, shift int) []int64 {
-	result := make([]int64, 0, len(samples)-order)
+	result := getResidualBuffer(len(samples) - order)
 	for i := order; i < len(samples); i++ {
 		var sum int64
 		for j, coefficient := range coefficients {
 			sum += coefficient * samples[i-j-1]
 		}
 		prediction := sum >> uint(shift)
-		result = append(result, samples[i]-prediction)
+		result[i-order] = samples[i] - prediction
 	}
 	return result
+}
+
+func getResidualBuffer(length int) []int64 {
+	buffer, _ := residualBufferPool.Get().([]int64)
+	if cap(buffer) < length {
+		return make([]int64, length)
+	}
+	return buffer[:length]
+}
+
+func releaseSubframeCandidate(candidate *subframeCandidate) {
+	if candidate.residual != nil {
+		releaseResidualBuffer(candidate.residual)
+		candidate.residual = nil
+	}
+	releaseRiceCoding(&candidate.rice)
+}
+
+func releaseResidualBuffer(buffer []int64) {
+	clear(buffer)
+	residualBufferPool.Put(buffer[:0])
+}
+
+func releaseSubframeCandidates(candidates []subframeCandidate) {
+	for i := range candidates {
+		releaseSubframeCandidate(&candidates[i])
+	}
 }

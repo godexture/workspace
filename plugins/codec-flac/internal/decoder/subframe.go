@@ -7,43 +7,43 @@ import (
 	"github.com/godexture/sdk/bits"
 )
 
-func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, error) {
+func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
+	blockSize := len(samples)
 	originalBitsPerSample := bitsPerSample
 	zero, err := r.ReadBits64(1)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if zero != 0 {
-		return nil, errors.New("invalid FLAC subframe header")
+		return errors.New("invalid FLAC subframe header")
 	}
 	typeCode, err := r.ReadBits64(6)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	wastedFlag, err := r.ReadBits64(1)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	wastedBits := uint64(0)
 	if wastedFlag != 0 {
 		wastedBits, err = r.ReadUnary64()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		wastedBits++
 		if int(wastedBits) >= bitsPerSample {
-			return nil, errors.New("invalid FLAC wasted-bits count")
+			return errors.New("invalid FLAC wasted-bits count")
 		}
 		bitsPerSample -= int(wastedBits)
 	}
 
-	samples := make([]int64, blockSize)
 	switch {
 	case typeCode == 0:
 		value, err := r.ReadSigned64(uint8(bitsPerSample))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for i := range samples {
 			samples[i] = value
@@ -57,24 +57,23 @@ func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, erro
 	case typeCode >= 8 && typeCode <= 12:
 		order := int(typeCode - 8)
 		if err := readWarmupSamples(r, samples, order, bitsPerSample); err != nil {
-			return nil, err
+			return err
 		}
-		residual, err := DecodeResidual(r, blockSize, order)
-		if err != nil {
-			return nil, err
+		if err := DecodeResidualInto(r, samples[order:], blockSize, order); err != nil {
+			return err
 		}
 		min, max, err := sampleRangeBounds(bitsPerSample)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for i := order; i < blockSize; i++ {
 			prediction, err := fixedPredictionChecked(samples, i, order)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			value := prediction + residual[i-order]
+			value := prediction + samples[i]
 			if value < min || value > max {
-				return nil, fmt.Errorf("invalid FLAC fixed prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
+				return fmt.Errorf("invalid FLAC fixed prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
 			}
 			samples[i] = value
 		}
@@ -82,42 +81,41 @@ func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, erro
 	case typeCode >= 32 && typeCode <= 63:
 		order := int(typeCode - 31)
 		if order > blockSize {
-			return nil, errors.New("FLAC LPC order exceeds block size")
+			return errors.New("FLAC LPC order exceeds block size")
 		}
 		if err := readWarmupSamples(r, samples, order, bitsPerSample); err != nil {
-			return nil, err
+			return err
 		}
 		precisionRaw, err := r.ReadBits64(4)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if precisionRaw == 15 {
-			return nil, errors.New("invalid FLAC LPC coefficient precision")
+			return errors.New("invalid FLAC LPC coefficient precision")
 		}
 		precision := int(precisionRaw) + 1
 		shiftRaw, err := r.ReadBits64(5)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		shift := signExtend(shiftRaw, 5)
 		if shift < 0 {
-			return nil, errors.New("negative FLAC LPC shift is reserved")
+			return errors.New("negative FLAC LPC shift is reserved")
 		}
 		coefficients := make([]int64, order)
 		for i := range coefficients {
 			coeff, err := r.ReadSigned64(uint8(precision))
 			if err != nil {
-				return nil, err
+				return err
 			}
 			coefficients[i] = coeff
 		}
-		residual, err := DecodeResidual(r, blockSize, order)
-		if err != nil {
-			return nil, err
+		if err := DecodeResidualInto(r, samples[order:], blockSize, order); err != nil {
+			return err
 		}
 		min, max, err := sampleRangeBounds(bitsPerSample)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for i := order; i < blockSize; i++ {
 			var sum int64
@@ -125,15 +123,15 @@ func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, erro
 				sum += int64(coefficients[j]) * int64(samples[i-j-1])
 			}
 			sum >>= shift
-			value := sum + residual[i-order]
+			value := sum + samples[i]
 			if value < min || value > max {
-				return nil, fmt.Errorf("invalid FLAC LPC prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
+				return fmt.Errorf("invalid FLAC LPC prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
 			}
 			samples[i] = value
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported FLAC subframe type: %d", typeCode)
+		return fmt.Errorf("unsupported FLAC subframe type: %d", typeCode)
 	}
 
 	if wastedBits > 0 {
@@ -143,14 +141,14 @@ func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, erro
 	}
 	min, max, err := sampleRangeBounds(originalBitsPerSample)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, sample := range samples {
 		if sample < min || sample > max {
-			return nil, fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, originalBitsPerSample)
+			return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, originalBitsPerSample)
 		}
 	}
-	return samples, nil
+	return nil
 }
 
 func sampleRangeBounds(bitsPerSample int) (min, max int64, err error) {

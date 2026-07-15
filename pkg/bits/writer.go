@@ -40,14 +40,18 @@ func (w *Writer) Bit(value uint8) {
 
 // Byte writes one byte at the current byte-aligned position.
 func (w *Writer) Byte(value byte) {
-	assertf(w.position%8 == 0, "bits: Byte called on a non-byte-aligned writer (position=%d)", w.position)
+	if w.position%8 != 0 {
+		assertf(false, "bits: Byte called on a non-byte-aligned writer (position=%d)", w.position)
+	}
 	w.buffer = append(w.buffer, value)
 	w.position += 8
 }
 
 // BytesAppend writes bytes at the current byte-aligned position.
 func (w *Writer) BytesAppend(values []byte) {
-	assertf(w.position%8 == 0, "bits: BytesAppend called on a non-byte-aligned writer (position=%d)", w.position)
+	if w.position%8 != 0 {
+		assertf(false, "bits: BytesAppend called on a non-byte-aligned writer (position=%d)", w.position)
+	}
 	w.buffer = append(w.buffer, values...)
 	w.position += int32(len(values) * 8)
 }
@@ -58,7 +62,9 @@ func (w *Writer) BytesAppend(values []byte) {
 // replacing what used to be `width` separate per-bit calls, each with its
 // own division/modulo and append-growth check.
 func (w *Writer) Bits64(value uint64, width uint8) {
-	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
+	if width > 64 {
+		assertf(false, "bits: Bits64 width out of range: %d", width)
+	}
 	if width == 0 {
 		return
 	}
@@ -69,7 +75,9 @@ func (w *Writer) Bits64(value uint64, width uint8) {
 
 	if bitOffset := uint(w.position & 7); bitOffset != 0 {
 		byteIndex := int(w.position / 8)
-		assertf(byteIndex < len(w.buffer), "bits: Bits64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		if byteIndex >= len(w.buffer) {
+			assertf(false, "bits: Bits64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		}
 		free := 8 - bitOffset
 		take := free
 		if take > remaining {
@@ -95,7 +103,9 @@ func (w *Writer) Bits64(value uint64, width uint8) {
 
 // Signed64 writes width bits (width <= 64) as a two's-complement signed value.
 func (w *Writer) Signed64(value int64, width uint8) {
-	assertf(width <= 64, "bits: Signed64 width out of range: %d", width)
+	if width > 64 {
+		assertf(false, "bits: Signed64 width out of range: %d", width)
+	}
 	w.Bits64(uint64(value), width)
 }
 
@@ -108,7 +118,9 @@ func (w *Writer) Unary64(value uint64) {
 	remaining := value
 	if bitOffset := uint(w.position & 7); bitOffset != 0 {
 		byteIndex := int(w.position / 8)
-		assertf(byteIndex < len(w.buffer), "bits: Unary64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		if byteIndex >= len(w.buffer) {
+			assertf(false, "bits: Unary64 misaligned writer state (position=%d, len(buffer)=%d)", w.position, len(w.buffer))
+		}
 		free := uint64(8 - bitOffset)
 		if remaining < free {
 			w.buffer[byteIndex] |= 1 << (free - remaining - 1)

@@ -3,6 +3,7 @@ package encoder
 import (
 	"errors"
 	"math"
+	"sync"
 
 	"github.com/godexture/sdk/bits"
 )
@@ -24,6 +25,22 @@ type riceCoding struct {
 	costBits       uint64
 }
 
+type partitionStats struct {
+	max uint64
+}
+
+type riceWorkspace struct {
+	folded    []uint64
+	stats     []partitionStats
+	sums      []uint64
+	candidate []ricePartition
+	best      []ricePartition
+	levels    [16]int
+}
+
+var riceWorkspacePool = sync.Pool{New: func() any { return &riceWorkspace{} }}
+var ricePartitionPool sync.Pool
+
 func chooseRiceCoding(residual []int64) (riceCoding, bool) {
 	return chooseRiceCodingForBlock(residual, len(residual), 0, 15)
 }
@@ -38,6 +55,32 @@ var riceMethods = []struct {
 }
 
 func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int) (riceCoding, bool) {
+	workspace := riceWorkspacePool.Get().(*riceWorkspace)
+	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, workspace)
+	if ok {
+		partitions, _ := ricePartitionPool.Get().([]ricePartition)
+		if cap(partitions) < len(coding.partitions) {
+			partitions = make([]ricePartition, len(coding.partitions))
+		} else {
+			partitions = partitions[:len(coding.partitions)]
+		}
+		copy(partitions, coding.partitions)
+		coding.partitions = partitions
+	}
+	riceWorkspacePool.Put(workspace)
+	return coding, ok
+}
+
+func releaseRiceCoding(coding *riceCoding) {
+	if coding.partitions == nil {
+		return
+	}
+	clear(coding.partitions)
+	ricePartitionPool.Put(coding.partitions[:0])
+	coding.partitions = nil
+}
+
+func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, workspace *riceWorkspace) (riceCoding, bool) {
 	if blockSize <= predictorOrder || len(residual) != blockSize-predictorOrder {
 		return riceCoding{}, false
 	}
@@ -47,7 +90,8 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 	if maxPartitionOrder > 15 {
 		maxPartitionOrder = 15
 	}
-	folded := make([]uint64, len(residual))
+	workspace.folded = resize(workspace.folded, len(residual))
+	folded := workspace.folded
 	var maxFolded uint64
 	for i, value := range residual {
 		if !validFLACResidual(value) {
@@ -69,47 +113,54 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 		kMax = int(riceMethods[1].maxParam)
 	}
 
-	type partitionStats struct {
-		sums []uint64
-		max  uint64
+	totalStats := 0
+	for order := 0; order <= deepest; order++ {
+		workspace.levels[order] = totalStats
+		totalStats += 1 << order
 	}
-	levels := make([][]partitionStats, deepest+1)
+	workspace.stats = resize(workspace.stats, totalStats)
+	clear(workspace.stats)
+	stride := kMax + 1
+	workspace.sums = resize(workspace.sums, totalStats*stride)
+	clear(workspace.sums)
+	workspace.candidate = resize(workspace.candidate, 1<<deepest)
+	workspace.best = resize(workspace.best, 1<<deepest)
+	statsAt := func(order, partition int) (*partitionStats, []uint64) {
+		index := workspace.levels[order] + partition
+		return &workspace.stats[index], workspace.sums[index*stride : (index+1)*stride]
+	}
+
 	deepestPartitions := 1 << deepest
 	partitionSamples := blockSize >> deepest
-	levels[deepest] = make([]partitionStats, deepestPartitions)
 	for partition := 0; partition < deepestPartitions; partition++ {
 		start := partition*partitionSamples - predictorOrder
 		if start < 0 {
 			start = 0
 		}
 		end := (partition+1)*partitionSamples - predictorOrder
-		stats := partitionStats{sums: make([]uint64, kMax+1)}
+		stats, sums := statsAt(deepest, partition)
 		for _, value := range folded[start:end] {
 			for k := 0; k <= kMax && value>>uint(k) > 0; k++ {
-				stats.sums[k] += value >> uint(k)
+				sums[k] += value >> uint(k)
 			}
 			if value > stats.max {
 				stats.max = value
 			}
 		}
-		levels[deepest][partition] = stats
 	}
 	for order := deepest - 1; order >= 0; order-- {
-		child := levels[order+1]
-		merged := make([]partitionStats, 1<<order)
-		for partition := range merged {
-			left, right := child[2*partition], child[2*partition+1]
-			sums := make([]uint64, kMax+1)
-			for k := range sums {
-				sums[k] = left.sums[k] + right.sums[k]
+		for partition := 0; partition < 1<<order; partition++ {
+			left, leftSums := statsAt(order+1, 2*partition)
+			right, rightSums := statsAt(order+1, 2*partition+1)
+			merged, mergedSums := statsAt(order, partition)
+			for k := range mergedSums {
+				mergedSums[k] = leftSums[k] + rightSums[k]
 			}
-			max := left.max
-			if right.max > max {
-				max = right.max
+			merged.max = left.max
+			if right.max > merged.max {
+				merged.max = right.max
 			}
-			merged[partition] = partitionStats{sums: sums, max: max}
 		}
-		levels[order] = merged
 	}
 
 	best := riceCoding{costBits: math.MaxUint64}
@@ -117,31 +168,39 @@ func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPa
 		partitions := 1 << partitionOrder
 		partitionSamples := blockSize >> partitionOrder
 		for _, method := range riceMethods {
-			chosen := make([]ricePartition, partitions)
+			chosen := workspace.candidate[:partitions]
 			cost := uint64(2 + 4)
 			for partition := 0; partition < partitions; partition++ {
 				count := partitionSamples
 				if partition == 0 {
 					count -= predictorOrder
 				}
-				stats := levels[partitionOrder][partition]
-				chosen[partition] = bestRicePartition(stats.sums, stats.max, count, method.paramBits, method.maxParam)
+				stats, sums := statsAt(partitionOrder, partition)
+				chosen[partition] = bestRicePartition(sums, stats.max, count, method.paramBits, method.maxParam)
 				cost += chosen[partition].costBits
 			}
 			if cost < best.costBits {
+				copy(workspace.best, chosen)
 				best = riceCoding{
 					method:         method.id,
 					paramBits:      method.paramBits,
 					partitionOrder: partitionOrder,
 					predictorOrder: predictorOrder,
 					blockSize:      blockSize,
-					partitions:     chosen,
+					partitions:     workspace.best[:partitions],
 					costBits:       cost,
 				}
 			}
 		}
 	}
 	return best, best.costBits != math.MaxUint64
+}
+
+func resize[T any](buffer []T, length int) []T {
+	if cap(buffer) < length {
+		return make([]T, length)
+	}
+	return buffer[:length]
 }
 
 func bestRicePartition(sums []uint64, maxFolded uint64, count int, paramBits, maxParam uint8) ricePartition {

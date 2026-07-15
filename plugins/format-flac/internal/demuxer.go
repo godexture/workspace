@@ -16,9 +16,15 @@ type Demuxer struct {
 	streamInfo     media.StreamInfo
 	metadataBundle metadata.Bundle
 	audioOffset    int64
+	packetSize     int
 	parsed         bool
-	sent           bool
+	started        bool
 }
+
+const (
+	minFLACPacketSize = 64 << 10
+	maxFLACPacketSize = 1 << 20
+)
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
 	if r == nil {
@@ -66,6 +72,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 	d.metadataBundle = *globalMetadata
 	d.audioOffset = audioOffset
+	d.packetSize = flacPacketSize(info.MaxFrameSize)
 	d.parsed = true
 
 	return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
@@ -78,29 +85,51 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		}
 	}
 
-	if d.sent {
-		return nil, 0, io.EOF
+	if !d.started {
+		if _, err := d.r.Seek(d.audioOffset, io.SeekStart); err != nil {
+			return nil, 0, fmt.Errorf("seek FLAC audio frames: %w", err)
+		}
+		d.started = true
 	}
 
-	if _, err := d.r.Seek(d.audioOffset, io.SeekStart); err != nil {
-		return nil, 0, fmt.Errorf("seek FLAC audio frames: %w", err)
-	}
-
-	data, err := io.ReadAll(d.r)
-	if err != nil {
+	packet := media.NewPacket(d.packetSize)
+	n, err := io.ReadFull(d.r, packet.Data())
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		packet.Release()
 		return nil, 0, fmt.Errorf("read FLAC audio frames: %w", err)
 	}
-	if len(data) == 0 {
+	if n == 0 {
+		packet.Release()
 		return nil, 0, io.EOF
 	}
-
-	packet := media.NewPacket(len(data))
-	copy(packet.Data(), data)
+	if n < d.packetSize {
+		shortPacket := media.NewPacket(n)
+		copy(shortPacket.Data(), packet.Data()[:n])
+		packet.Release()
+		packet = shortPacket
+	}
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = 0
 	packet.DTS = 0
 
-	d.sent = true
 	return packet, 0, nil
+}
+
+func flacPacketSize(maxFrameSize uint32) int {
+	size := uint32(minFLACPacketSize)
+	if maxFrameSize > size {
+		size = maxFrameSize
+	}
+	if size >= maxFLACPacketSize {
+		return maxFLACPacketSize
+	}
+
+	size--
+	size |= size >> 1
+	size |= size >> 2
+	size |= size >> 4
+	size |= size >> 8
+	size |= size >> 16
+	return int(size + 1)
 }
