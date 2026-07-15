@@ -2,6 +2,7 @@ package audio
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -38,9 +39,9 @@ type RoundtripConfig struct {
 	Mux    func(*Buffer) engine.MuxerEngine
 }
 
-func resolveStreamInfo(t *testing.T, mediaPath string, demuxFactory func(io.ReadSeeker) (engine.DemuxerEngine, error), override *media.StreamInfo) media.StreamInfo {
+func ResolveStreamInfo(t *testing.T, mediaPath string, demuxFactory func(io.ReadSeeker) (engine.DemuxerEngine, error), override *media.StreamInfo) (media.StreamInfo, error) {
 	if override != nil {
-		return *override
+		return *override, nil
 	}
 	if demuxFactory == nil {
 		t.Fatalf("StreamInfo must be provided if Demux is nil")
@@ -51,16 +52,16 @@ func resolveStreamInfo(t *testing.T, mediaPath string, demuxFactory func(io.Read
 	}
 	demuxer, err := demuxFactory(bytes.NewReader(mediaBytes))
 	if err != nil {
-		t.Fatalf("failed to initialize demuxer for stream info: %v", err)
+		return media.StreamInfo{}, fmt.Errorf("failed to initialize demuxer for stream info: %v", err)
 	}
 	streams, _, err := demuxer.Analyze()
 	if err != nil {
-		t.Fatalf("failed to analyze stream info: %v", err)
+		return media.StreamInfo{}, fmt.Errorf("failed to analyze stream info: %v", err)
 	}
 	if len(streams) == 0 {
 		t.Fatalf("no streams found in media file")
 	}
-	return streams[0]
+	return streams[0], nil
 }
 
 // RunSnapshotTests runs applicable demux-decode and encode-mux snapshot tests.
@@ -84,7 +85,11 @@ func RunSnapshotTests(t *testing.T, cfg SnapshotConfig) {
 
 	var streamInfo media.StreamInfo
 	if cfg.Decode != nil || cfg.Encode != nil || cfg.Mux != nil {
-		streamInfo = resolveStreamInfo(t, cfg.MediaPath, cfg.Demux, cfg.StreamInfo)
+		var err error
+		streamInfo, err = ResolveStreamInfo(t, cfg.MediaPath, cfg.Demux, cfg.StreamInfo)
+		if err != nil {
+			t.Fatalf("failed to resolve stream info: %v", err)
+		}
 	}
 
 	var demux DemuxFunc
@@ -123,7 +128,11 @@ func RunRoundtripTests(t *testing.T, cfg RoundtripConfig) {
 
 	var streamInfo media.StreamInfo
 	if cfg.Decode != nil || cfg.Encode != nil || cfg.Mux != nil {
-		streamInfo = resolveStreamInfo(t, cfg.MediaPath, cfg.Demux, cfg.StreamInfo)
+		var err error
+		streamInfo, err = ResolveStreamInfo(t, cfg.MediaPath, cfg.Demux, cfg.StreamInfo)
+		if err != nil {
+			t.Fatalf("failed to resolve stream info: %v", err)
+		}
 	}
 
 	var demux DemuxFunc

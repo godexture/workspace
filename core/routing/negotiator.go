@@ -101,7 +101,10 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	// Prepare intermediate stream (uncompressed audio/video properties)
 	intermediateStream := inputStream
 	if decManifest.TransformFunc != nil {
-		decProfile := decManifest.Transform(intermediateStream)
+		decProfile, err := decManifest.Transform(intermediateStream, inputStream.Codec, spec.DecodeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("resolve decoder output stream: %w", err)
+		}
 		intermediateStream.Type = decProfile.Type
 		intermediateStream.MediaAttributes = decProfile.MediaAttributes
 	}
@@ -129,9 +132,13 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	// 5. Prepare output stream and add to muxer
 	outputStream := intermediateStream
 
-	// Apply encoder transform if present to update format, layout, codec, etc.
+	// Resolve the output profile with the same target codec and configuration
+	// used to construct the encoder.
 	if encManifest.TransformFunc != nil {
-		encProfile := encManifest.Transform(outputStream)
+		encProfile, err := encManifest.Transform(outputStream, spec.TargetCodec, spec.EncodeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("resolve encoder output stream: %w", err)
+		}
 		outputStream.Type = encProfile.Type
 		outputStream.MediaAttributes = encProfile.MediaAttributes
 	}

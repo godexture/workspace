@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/testutil"
 )
 
 type testProfile struct {
-	Name  string
-	Codec media.CodecID
-	Attrs media.AudioAttributes
+	Name            string
+	Codec           media.CodecID
+	Attrs           media.AudioAttributes
+	CodecParameters media.CodecParameters
+	ADPCM           params.ADPCM
 	testutil.CompareOptions
 }
 
@@ -22,12 +25,26 @@ func newProfile(name string, codec media.CodecID, opts testutil.CompareOptions, 
 		Format:        format,
 	}
 
-	return testProfile{
+	profile := testProfile{
 		Name:           name,
 		Codec:          codec,
 		Attrs:          attrs,
 		CompareOptions: opts,
 	}
+	if codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM {
+		adpcm, err := params.Default(codec, channelLayout.ChannelCount())
+		if err != nil {
+			panic(err)
+		}
+		adpcm.BlockAlign = 1024
+		adpcm.SamplesPerBlock, err = params.SamplesPerBlock(codec, channelLayout.ChannelCount(), adpcm.BlockAlign)
+		if err != nil {
+			panic(err)
+		}
+		profile.ADPCM = adpcm
+		profile.CodecParameters = media.CodecParameters{Schema: params.SchemaADPCM, Data: adpcm.MarshalBinary()}
+	}
+	return profile
 }
 
 var Profiles = []testProfile{

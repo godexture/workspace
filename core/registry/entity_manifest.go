@@ -25,8 +25,11 @@ func (m BaseManifest) ID() reflect.Type { return m.id }
 
 type TransformManifest struct {
 	BaseManifest
-	Capabilities  []manifest.Capability
-	TransformFunc func(p media.StreamInfo) media.Profile
+	Capabilities []manifest.Capability
+	// TransformFunc resolves the output profile for this transform. target is
+	// the desired codec (the input codec for decoders) and cfg is the node
+	// configuration that will be used to construct the transform.
+	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
 }
 
 type MuxerManifest struct {
@@ -56,8 +59,8 @@ type FilterManifest struct {
 	Factory FilterFactory
 }
 
-func (m TransformManifest) Transform(stream media.StreamInfo) media.Profile {
-	return m.TransformFunc(stream)
+func (m TransformManifest) Transform(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error) {
+	return m.TransformFunc(stream, target, cfg)
 }
 
 func (m TransformManifest) Accept(stream media.StreamInfo) bool {

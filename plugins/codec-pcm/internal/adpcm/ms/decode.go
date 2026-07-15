@@ -6,11 +6,15 @@ import (
 	"fmt"
 
 	"github.com/godexture/codec-pcm/internal/adpcm/bits"
+	"github.com/godexture/format-wav/params"
 )
 
-func Decode(block []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
+func Decode(block []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for MS ADPCM: %d", channels)
+	}
+	if len(block) != int(params.BlockAlign) {
+		return nil, fmt.Errorf("MS ADPCM block size mismatch: got %d, want %d", len(block), params.BlockAlign)
 	}
 
 	if channels == 1 {
@@ -18,20 +22,20 @@ func Decode(block []byte, channels int, byteOrder binary.ByteOrder) ([]byte, err
 			return nil, errors.New("MS ADPCM mono block too small")
 		}
 
-		return decodeMono(block, byteOrder)
+		return decodeMono(block, params.Coefficients, byteOrder)
 	} else {
 		if len(block) < 14 {
 			return nil, errors.New("MS ADPCM stereo block too small")
 		}
 
-		return decodeStereo(block, byteOrder)
+		return decodeStereo(block, params.Coefficients, byteOrder)
 	}
 }
 
-func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
+func decodeMono(block []byte, coefficients []params.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
 	predictor := int(block[0])
-	if predictor > 6 {
-		predictor = 0
+	if predictor >= len(coefficients) {
+		return nil, fmt.Errorf("MS ADPCM predictor index out of range: %d", predictor)
 	}
 
 	delta := int32(int16(binary.LittleEndian.Uint16(block[1:3])))
@@ -44,8 +48,8 @@ func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	bits.WriteS16(out, 0, int16(sample2), byteOrder)
 	bits.WriteS16(out, 2, int16(sample1), byteOrder)
 
-	coeff1 := coeffs[predictor][0]
-	coeff2 := coeffs[predictor][1]
+	coeff1 := int32(coefficients[predictor].Coeff1)
+	coeff2 := int32(coefficients[predictor].Coeff2)
 
 	outIdx := 4
 	for _, b := range block[7:] {
@@ -64,15 +68,12 @@ func decodeMono(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	return out, nil
 }
 
-func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
+func decodeStereo(block []byte, coefficients []params.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
 	predL := int(block[0])
 	predR := int(block[1])
 
-	if predL > 6 {
-		predL = 0
-	}
-	if predR > 6 {
-		predR = 0
+	if predL >= len(coefficients) || predR >= len(coefficients) {
+		return nil, fmt.Errorf("MS ADPCM predictor index out of range: %d, %d", predL, predR)
 	}
 
 	deltaL := int32(int16(binary.LittleEndian.Uint16(block[2:4])))
@@ -90,8 +91,8 @@ func decodeStereo(block []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	bits.WriteS16(out, 4, int16(sample1L), byteOrder)
 	bits.WriteS16(out, 6, int16(sample1R), byteOrder)
 
-	coeff1L, coeff2L := coeffs[predL][0], coeffs[predL][1]
-	coeff1R, coeff2R := coeffs[predR][0], coeffs[predR][1]
+	coeff1L, coeff2L := int32(coefficients[predL].Coeff1), int32(coefficients[predL].Coeff2)
+	coeff1R, coeff2R := int32(coefficients[predR].Coeff1), int32(coefficients[predR].Coeff2)
 
 	outIdx := 8
 	for _, b := range block[14:] {

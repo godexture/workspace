@@ -57,7 +57,7 @@ func init() {
 			Capabilities: []manifest.Capability{
 				mp3Capability{},
 			},
-			TransformFunc: func(stream media.StreamInfo) media.Profile {
+			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				profile := media.Profile{
 					Type:            stream.Type,
 					MediaAttributes: stream.MediaAttributes,
@@ -71,7 +71,7 @@ func init() {
 				} else {
 					profile.Audio.ChannelLayout = media.LayoutStereo2_0
 				}
-				return profile
+				return profile, nil
 			},
 		},
 		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
@@ -91,10 +91,10 @@ func init() {
 			Capabilities: []manifest.Capability{
 				lpcmCapability{},
 			},
-			TransformFunc: func(stream media.StreamInfo) media.Profile {
+			TransformFunc: func(stream media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Codec = media.CodecMP3
-				return profile
+				profile.Codec = target
+				return profile, nil
 			},
 		},
 		Supports: func(codec media.CodecID) bool {

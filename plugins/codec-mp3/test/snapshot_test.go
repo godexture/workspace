@@ -11,7 +11,6 @@ import (
 	mp3format "github.com/godexture/format-mp3"
 	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
-	"github.com/godexture/sdk/testutil/audio"
 )
 
 var compareOption = testutil.CompareOptions{MaxAbsDiff: 1e-6, MaxRMSE: 1e-6, MinSNR: 100.0}
@@ -24,7 +23,7 @@ func TestSnapshots(t *testing.T) {
 			dataPath := config.BuildTestdataPath(fileName)
 			snapshotPath := config.BuildSnapshotPath(fileName)
 
-			snapshot, err := audio.LoadSnapshot(snapshotPath)
+			snapshot, err := testutil.LoadSnapshot(snapshotPath)
 			if err != nil {
 				t.Fatalf("failed to load snapshot: %v", err)
 			}

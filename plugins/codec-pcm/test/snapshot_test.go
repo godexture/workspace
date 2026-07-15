@@ -28,7 +28,7 @@ func TestSnapshots(t *testing.T) {
 				Opts:      profile.CompareOptions,
 				StreamInfo: &media.StreamInfo{
 					Type:            media.MediaAudio,
-					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, Audio: profile.Attrs},
+					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, CodecParameters: profile.CodecParameters, Audio: profile.Attrs},
 				},
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
 					return wavFormat.NewDemuxerEngine(r)
@@ -40,12 +40,16 @@ func TestSnapshots(t *testing.T) {
 					}
 					cfg := pcmCodec.NewConfigWithAudio(profile.Attrs.SampleRate, targetFormat, profile.Attrs.ChannelLayout)
 					cfg.CodecID = optional.Some(profile.Codec)
+					if profile.ADPCM.BlockAlign != 0 {
+						cfg.ADPCM = optional.Some(profile.ADPCM)
+					}
 					return pcmCodec.NewDecoderEngine(cfg)
 				},
 				Encode: func() engine.EncoderEngine {
 					return pcmCodec.NewEncoderEngine(pcmCodec.EncoderConfig{
 						CodecID:   optional.Some(profile.Codec),
 						ByteOrder: optional.Some[binary.ByteOrder](binary.LittleEndian),
+						ADPCM:     optional.Some(profile.ADPCM),
 					})
 				},
 				Mux: func(buf *testutil.Buffer) engine.MuxerEngine {

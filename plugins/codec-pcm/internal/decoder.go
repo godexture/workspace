@@ -8,6 +8,7 @@ import (
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
 	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -17,6 +18,7 @@ type DecoderConfig struct {
 	Format        media.SampleFormat
 	ChannelLayout media.ChannelLayout
 	ByteOrder     binary.ByteOrder
+	ADPCM         params.ADPCM
 }
 
 var DefaultDecoderConfig = DecoderConfig{
@@ -94,12 +96,20 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	case media.CodecPCMA:
 		data = g711.DecodePCMA(data, d.config.ByteOrder)
 	case media.CodecMSADPCM:
-		data, err = msadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), d.config.ByteOrder)
+		params, resolveErr := d.resolveADPCMParameters()
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		data, err = msadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
 	case media.CodecIMAADPCM:
-		data, err = imaadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), d.config.ByteOrder)
+		params, resolveErr := d.resolveADPCMParameters()
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		data, err = imaadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +136,17 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 
 	var frame media.Frame = f
 	return &frame, nil
+}
+
+func (d *Decoder) resolveADPCMParameters() (params.ADPCM, error) {
+	channels := d.config.ChannelLayout.ChannelCount()
+	if d.config.ADPCM.BlockAlign != 0 {
+		if err := d.config.ADPCM.Validate(d.config.CodecID, channels); err != nil {
+			return params.ADPCM{}, err
+		}
+		return d.config.ADPCM, nil
+	}
+	return params.Default(d.config.CodecID, channels)
 }
 
 func (d *Decoder) Flush() error {

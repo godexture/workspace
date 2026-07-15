@@ -22,7 +22,6 @@ func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
 	return encoder.NewEncoder(config.ApplyDefaults())
 }
 
-
 type flacCapability struct{}
 
 type lpcmCapability struct{}
@@ -59,7 +58,7 @@ func init() {
 					Description: "FLAC decoder",
 				},
 				Capabilities: []manifest.Capability{flacCapability{}},
-				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
+				TransformFunc: func(streamInfo media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 					profile := media.Profile{
 						Type:            streamInfo.Type,
 						MediaAttributes: streamInfo.MediaAttributes,
@@ -68,7 +67,7 @@ func init() {
 					if profile.Audio.Format == media.SampleFormatUnknown {
 						profile.Audio.Format = media.SampleFormatS16
 					}
-					return profile
+					return profile, nil
 				},
 			},
 			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
@@ -96,13 +95,13 @@ func init() {
 					Description: "FLAC encoder",
 				},
 				Capabilities: []manifest.Capability{lpcmCapability{}},
-				TransformFunc: func(streamInfo media.StreamInfo) media.Profile {
+				TransformFunc: func(streamInfo media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
 					profile := media.Profile{
 						Type:            streamInfo.Type,
 						MediaAttributes: streamInfo.MediaAttributes,
 					}
-					profile.Codec = media.CodecFLAC
-					return profile
+					profile.Codec = target
+					return profile, nil
 				},
 			},
 			Supports: func(codec media.CodecID) bool {

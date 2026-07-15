@@ -6,9 +6,13 @@ import (
 	"fmt"
 
 	"github.com/godexture/codec-pcm/internal/adpcm/bits"
+	"github.com/godexture/format-wav/params"
 )
 
-func Decode(block []byte, channels int, byteOrder binary.ByteOrder) ([]byte, error) {
+func Decode(block []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {
+	if len(block) != int(params.BlockAlign) {
+		return nil, fmt.Errorf("IMA ADPCM block size mismatch: got %d, want %d", len(block), params.BlockAlign)
+	}
 	if channels != 1 && channels != 2 {
 		return nil, fmt.Errorf("unsupported channel count for IMA ADPCM: %d", channels)
 	}
