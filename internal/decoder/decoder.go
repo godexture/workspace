@@ -51,7 +51,11 @@ func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
 	}
 
 	if !hasRawStreamInfo && (stream.Audio.SampleRate > 0 || stream.Audio.ChannelCount() > 0 || stream.Audio.Format != media.SampleFormatUnknown) {
-		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), flac.BitDepthFromSampleFormat(stream.Audio.Format))
+		bitsPerSample := stream.Audio.BitsPerSample
+		if bitsPerSample == 0 {
+			bitsPerSample = flac.BitDepthFromSampleFormat(stream.Audio.Format)
+		}
+		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), bitsPerSample)
 		if err := streaminfo.Validate(decoder.info); err != nil {
 			decoder.configErr = err
 		} else {

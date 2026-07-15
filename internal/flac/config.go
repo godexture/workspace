@@ -90,7 +90,10 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 		cfg.Channels = stream.Audio.ChannelCount()
 	}
 	if cfg.BitsPerSample == 0 {
-		cfg.BitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
+		cfg.BitsPerSample = stream.Audio.BitsPerSample
+		if cfg.BitsPerSample == 0 {
+			cfg.BitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
+		}
 	}
 
 	if cfg.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
