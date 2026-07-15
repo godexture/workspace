@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -72,17 +71,22 @@ func (m *Muxer) WriteHeader() error {
 		return err
 	}
 
-	var header bytes.Buffer
-	header.WriteString(streaminfo.Marker)
-	writeMetadataBlockHeader(&header, len(extraBlocks) == 0, streaminfo.MetadataTypeStreamInfo, len(streamInfoBlock))
-	header.Write(streamInfoBlock)
-	for i, block := range extraBlocks {
-		writeMetadataBlockHeader(&header, i == len(extraBlocks)-1, block.blockType, len(block.payload))
-		header.Write(block.payload)
+	if err := writeAll(m.w, []byte(streaminfo.Marker)); err != nil {
+		return fmt.Errorf("write FLAC marker: %w", err)
 	}
-
-	if _, err := m.w.Write(header.Bytes()); err != nil {
-		return fmt.Errorf("write FLAC header: %w", err)
+	if err := writeMetadataBlockHeader(m.w, len(extraBlocks) == 0, streaminfo.MetadataTypeStreamInfo, len(streamInfoBlock)); err != nil {
+		return fmt.Errorf("write FLAC STREAMINFO header: %w", err)
+	}
+	if err := writeAll(m.w, streamInfoBlock); err != nil {
+		return fmt.Errorf("write FLAC STREAMINFO: %w", err)
+	}
+	for i, block := range extraBlocks {
+		if err := writeMetadataBlockHeader(m.w, i == len(extraBlocks)-1, block.blockType, len(block.payload)); err != nil {
+			return fmt.Errorf("write FLAC metadata header: %w", err)
+		}
+		if err := writeAll(m.w, block.payload); err != nil {
+			return fmt.Errorf("write FLAC metadata block: %w", err)
+		}
 	}
 	m.headerWritten = true
 	return nil
@@ -104,7 +108,7 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if err := m.WriteHeader(); err != nil {
 		return err
 	}
-	if _, err := m.w.Write(packet.Data()); err != nil {
+	if err := writeAll(m.w, packet.Data()); err != nil {
 		return fmt.Errorf("write FLAC frame: %w", err)
 	}
 	return nil
@@ -143,7 +147,7 @@ func metadataBlocks(meta metadata.Bundle) ([]metadataBlock, error) {
 		if length != len(raw)-4 {
 			return nil, fmt.Errorf("flac muxer metadata block length mismatch: header=%d payload=%d", length, len(raw)-4)
 		}
-		blocks = append(blocks, metadataBlock{blockType: blockType, payload: append([]byte(nil), raw[4:]...)})
+		blocks = append(blocks, metadataBlock{blockType: blockType, payload: raw[4:]})
 	}
 	return blocks, nil
 }
@@ -153,12 +157,26 @@ func metaRawBlocks(meta metadata.Bundle) [][]byte {
 	return raw
 }
 
-func writeMetadataBlockHeader(w io.Writer, last bool, blockType byte, length int) {
+func writeMetadataBlockHeader(w io.Writer, last bool, blockType byte, length int) error {
 	header := [4]byte{blockType, byte(length >> 16), byte(length >> 8), byte(length)}
 	if last {
 		header[0] |= 0x80
 	}
-	_, _ = w.Write(header[:])
+	return writeAll(w, header[:])
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }
 
 func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
