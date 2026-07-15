@@ -12,8 +12,9 @@ type VideoAttributes struct {
 }
 
 type AudioAttributes struct {
-	SampleRate    int
-	Format        SampleFormat
+	SampleRate int
+	Format     SampleFormat
+	BitsPerSample int
 	ChannelLayout ChannelLayout
 }
 
