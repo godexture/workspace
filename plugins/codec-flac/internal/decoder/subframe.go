@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
 )
 
@@ -142,8 +141,14 @@ func DecodeSubframe(r *bits.Reader, blockSize, bitsPerSample int) ([]int64, erro
 			samples[i] <<= wastedBits
 		}
 	}
-	if err := flac.ValidateSampleRange(samples, originalBitsPerSample); err != nil {
+	min, max, err := sampleRangeBounds(originalBitsPerSample)
+	if err != nil {
 		return nil, err
+	}
+	for _, sample := range samples {
+		if sample < min || sample > max {
+			return nil, fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, originalBitsPerSample)
+		}
 	}
 	return samples, nil
 }

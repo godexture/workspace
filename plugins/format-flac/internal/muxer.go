@@ -165,7 +165,7 @@ func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
 	attr := stream.MediaAttributes.Audio
 	sampleRate := attr.SampleRate
 	channels := attr.ChannelCount()
-	bitsPerSample := 0
+	bitsPerSample := attr.BitsPerSample
 
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
 		parsed, err := streaminfo.Parse(raw[0])
@@ -178,7 +178,9 @@ func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
 		if channels <= 0 {
 			channels = parsed.Channels
 		}
-		bitsPerSample = parsed.BitsPerSample
+		if bitsPerSample <= 0 {
+			bitsPerSample = parsed.BitsPerSample
+		}
 	}
 	if bitsPerSample == 0 {
 		switch attr.Format.Packed() {

@@ -13,8 +13,28 @@ import (
 // CreateAudioFrame creates a new AudioFrame containing the given float32 PCM samples converted to the target format.
 func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame, error) {
 	channels := attrs.ChannelLayout.ChannelCount()
+	if channels <= 0 {
+		return nil, fmt.Errorf("invalid channel count: %d", channels)
+	}
+	if len(pcm)%channels != 0 {
+		return nil, fmt.Errorf("PCM sample count %d is not divisible by %d channels", len(pcm), channels)
+	}
+
+	bitsPerSample := attrs.BitsPerSample
+	storageBits := attrs.Format.BytesPerSample() * 8
+	if bitsPerSample == 0 {
+		bitsPerSample = storageBits
+	}
+	if attrs.Format != media.SampleFormatF32 && (bitsPerSample <= 0 || bitsPerSample > storageBits) {
+		return nil, fmt.Errorf("invalid %d-bit precision for %s storage", bitsPerSample, attrs.Format)
+	}
+
 	samples := len(pcm) / channels
-	f := media.NewAudioFrame(attrs.Format, attrs.ChannelLayout, attrs.SampleRate, samples)
+	frameOpts := []media.AudioFrameOption(nil)
+	if bitsPerSample > 0 {
+		frameOpts = append(frameOpts, media.WithAudioBitsPerSample(bitsPerSample))
+	}
+	f := media.NewAudioFrame(attrs.Format, attrs.ChannelLayout, attrs.SampleRate, samples, frameOpts...)
 	plane := f.Planes()[0]
 
 	switch attrs.Format {
@@ -24,48 +44,18 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 		}
 	case media.SampleFormatU8:
 		for i, val := range pcm {
-			if val > 1.0 {
-				val = 1.0
-			} else if val < -1.0 {
-				val = -1.0
-			}
-			var u8 byte
-			if val < 0 {
-				u8 = byte(val*128 + 128)
-			} else {
-				u8 = byte(val*127 + 128)
-			}
-			plane[i] = u8
+			scale := int64(1) << uint(bitsPerSample-1)
+			value := signedPCMValue(val, bitsPerSample) + scale
+			plane[i] = byte(value)
 		}
 	case media.SampleFormatS16:
 		for i, val := range pcm {
-			if val > 1.0 {
-				val = 1.0
-			} else if val < -1.0 {
-				val = -1.0
-			}
-			var s16 int16
-			if val < 0 {
-				s16 = int16(val * 32768)
-			} else {
-				s16 = int16(val * 32767)
-			}
-			binary.LittleEndian.PutUint16(plane[i*2:(i+1)*2], uint16(s16))
+			value := signedPCMValue(val, bitsPerSample)
+			binary.LittleEndian.PutUint16(plane[i*2:(i+1)*2], uint16(int16(value)))
 		}
 	case media.SampleFormatS24:
 		for i, val := range pcm {
-			if val > 1.0 {
-				val = 1.0
-			} else if val < -1.0 {
-				val = -1.0
-			}
-			value := int32(val * 8388608.0)
-			if value > 8388607 {
-				value = 8388607
-			}
-			if value < -8388608 {
-				value = -8388608
-			}
+			value := int32(signedPCMValue(val, bitsPerSample))
 			offset := i * 3
 			plane[offset] = byte(value)
 			plane[offset+1] = byte(value >> 8)
@@ -73,18 +63,7 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 		}
 	case media.SampleFormatS32:
 		for i, val := range pcm {
-			if val > 1.0 {
-				val = 1.0
-			} else if val < -1.0 {
-				val = -1.0
-			}
-			value := int64(val * 2147483648.0)
-			if value > 2147483647 {
-				value = 2147483647
-			}
-			if value < -2147483648 {
-				value = -2147483648
-			}
+			value := signedPCMValue(val, bitsPerSample)
 			binary.LittleEndian.PutUint32(plane[i*4:(i+1)*4], uint32(int32(value)))
 		}
 	default:
@@ -93,6 +72,17 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 
 	var frame media.Frame = f
 	return &frame, nil
+}
+
+func signedPCMValue(value float32, bitsPerSample int) int64 {
+	scale := int64(1) << uint(bitsPerSample-1)
+	if value <= -1 {
+		return -scale
+	}
+	if value >= 1 {
+		return scale - 1
+	}
+	return int64(float64(value) * float64(scale))
 }
 
 // PCMGeneratorNode is a pipeline node that generates audio frames from a float32 slice.

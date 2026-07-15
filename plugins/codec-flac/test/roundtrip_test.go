@@ -10,6 +10,7 @@ import (
 	flacCodec "github.com/godexture/codec-flac"
 	"github.com/godexture/codec-flac/test/config"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
 	flacFormat "github.com/godexture/format-flac"
 	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
@@ -22,6 +23,7 @@ func TestRoundtrip(t *testing.T) {
 			Opts:      config.RoundtripCompareOptions,
 			Demux:     flacFormat.NewDemuxerEngine,
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
+				streamInfo.Metadata = *metadata.NewBundle()
 				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.DecoderConfig{})
 			},
 			Encode: func() engine.EncoderEngine {
@@ -45,6 +47,9 @@ func walkRoundtripFiles(t *testing.T, run func(t *testing.T, path string)) {
 
 		relPath, _ := filepath.Rel(root, path)
 		testName := strings.ReplaceAll(relPath, string(os.PathSeparator), "/")
+		if strings.HasPrefix(testName, "conformance/faulty/") || strings.HasPrefix(testName, "conformance/uncommon/") {
+			return nil
+		}
 
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()

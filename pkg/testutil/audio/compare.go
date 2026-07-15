@@ -24,8 +24,6 @@ func ComparePCM(actual, expected []float32, opts CompareOptions) error {
 		sumSqSignal  float64 = 0
 	)
 
-	fmt.Printf("Comparing PCM: actual length=%d, expected length=%d\n", len(actual), len(expected))
-
 	n := min(len(actual), len(expected))
 	for i := 0; i < n; i++ {
 		diff := float64(actual[i] - expected[i])
