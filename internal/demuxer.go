@@ -59,6 +59,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			Audio: media.AudioAttributes{
 				SampleRate:    info.SampleRate,
 				Format:        streaminfo.SampleFormat(info.BitsPerSample),
+				BitsPerSample: info.BitsPerSample,
 				ChannelLayout: streaminfo.ChannelLayout(info.Channels),
 			},
 		},
