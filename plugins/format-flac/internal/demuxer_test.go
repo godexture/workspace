@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -13,12 +14,14 @@ import (
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	vc "github.com/godexture/metadata-vorbiscomment"
+	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
 
 const appendixDExample1Hex = "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a"
 
 func TestProbe(t *testing.T) {
+	t.Parallel()
 	if got := Probe(bytes.NewReader(mustDecodeHex(t, appendixDExample1Hex))); got != manifest.ProbeExactSignature {
 		t.Fatalf("Probe() = %d, want %d", got, manifest.ProbeExactSignature)
 	}
@@ -52,6 +55,7 @@ func BenchmarkDemuxerReadPackets(b *testing.B) {
 }
 
 func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
+	t.Parallel()
 	data := mustDecodeHex(t, appendixDExample1Hex)
 	demuxer, err := NewDemuxer(bytes.NewReader(data))
 	if err != nil {
@@ -112,6 +116,7 @@ func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
 }
 
 func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
+	t.Parallel()
 	example := mustDecodeHex(t, appendixDExample1Hex)
 	info, err := streaminfo.Parse(example[8:42])
 	if err != nil {
@@ -157,6 +162,7 @@ func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
 }
 
 func TestDemuxerEmptyAudio(t *testing.T) {
+	t.Parallel()
 	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, nil)))
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
@@ -167,7 +173,44 @@ func TestDemuxerEmptyAudio(t *testing.T) {
 	}
 }
 
+func TestDemuxerSeekLandsOnContainingFrameAndResets(t *testing.T) {
+	t.Parallel()
+	info := streaminfo.StreamInfo{MinBlockSize: 16, MaxBlockSize: 16, SampleRate: 8000, Channels: 1, BitsPerSample: 16, TotalSamples: 48}
+	frames := append(seekTestFrame(t, info, 0), seekTestFrame(t, info, 1)...)
+	frames = append(frames, seekTestFrame(t, info, 2)...)
+	input := append([]byte(streaminfo.Marker), 0x80, 0, 0, streaminfo.Length)
+	input = append(input, streaminfo.Encode(info)...)
+	input = append(input, frames...)
+	demuxer, err := NewDemuxer(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := demuxer.Seek(2 * time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	pkt, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkt.PTS != 16 {
+		t.Fatalf("seek PTS = %d, want 16", pkt.PTS)
+	}
+	pkt.Release()
+	if err := demuxer.Seek(0); err != nil {
+		t.Fatal(err)
+	}
+	pkt, _, err = demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkt.Release()
+	if pkt.PTS != 0 {
+		t.Fatalf("reset PTS = %d, want 0", pkt.PTS)
+	}
+}
+
 func TestDemuxerReadErrorReturnsNoPartialPacket(t *testing.T) {
+	t.Parallel()
 	input := makeTestFLAC(t, 0, nil)
 	wantErr := errors.New("injected read failure")
 	reader := &failingReadSeeker{
@@ -186,6 +229,7 @@ func TestDemuxerReadErrorReturnsNoPartialPacket(t *testing.T) {
 }
 
 func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
+	t.Parallel()
 	large := make([]byte, 2*(64<<10)+17)
 	for i := range large {
 		large[i] = byte(i * 31)
@@ -237,6 +281,7 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 }
 
 func TestDemuxerDecodesVorbisCommentAndPicture(t *testing.T) {
+	t.Parallel()
 	commentBundle := metadata.NewBundle()
 	commentBundle.Set(metadata.KeyTitle("Song"))
 	commentBundle.PushBack(metadata.KeyArtist("First"))
@@ -319,6 +364,19 @@ func appendTestMetadataBlock(dst []byte, blockType byte, payload []byte) []byte 
 	length := len(payload)
 	dst = append(dst, blockType, byte(length>>16), byte(length>>8), byte(length))
 	return append(dst, payload...)
+}
+
+func seekTestFrame(t testing.TB, info streaminfo.StreamInfo, number uint64) []byte {
+	t.Helper()
+	w := bits.NewWriter()
+	header := &frame.Header{BlockSize: 16, SampleRate: info.SampleRate, Channels: 1, BitsPerSample: 16, Number: number}
+	if err := frame.EncodeHeader(w, header, false); err != nil {
+		t.Fatal(err)
+	}
+	data := append([]byte(nil), w.Bytes()...)
+	data = append(data, byte(number))
+	crc := hash.CRC16(data)
+	return append(data, byte(crc>>8), byte(crc))
 }
 
 type failingReadSeeker struct {

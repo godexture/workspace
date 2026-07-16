@@ -10,6 +10,7 @@ type CompareOptions = pcm.CompareOptions
 type DecodeConfig = audio.DecodeConfig
 type RoundtripConfig = audio.RoundtripConfig
 type SnapshotConfig = audio.SnapshotConfig
+type OutputTester = audio.OutputTester
 type Buffer = audio.Buffer
 
 var NewBuffer = audio.NewBuffer

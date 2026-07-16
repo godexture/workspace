@@ -9,6 +9,7 @@ import (
 )
 
 func TestParsePicture(t *testing.T) {
+	t.Parallel()
 	want := metadata.Thumbnail{
 		Data:          []byte{1, 2, 3},
 		MIMEType:      "image/png",
@@ -29,6 +30,7 @@ func TestParsePicture(t *testing.T) {
 }
 
 func TestParsePictureFillsImageProperties(t *testing.T) {
+	t.Parallel()
 	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLxLwAAAABJRU5ErkJggg==")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +45,7 @@ func TestParsePictureFillsImageProperties(t *testing.T) {
 }
 
 func TestParsePictureRejectsTruncatedPayload(t *testing.T) {
+	t.Parallel()
 	if _, err := ParsePicture([]byte{0, 0, 0}); err == nil {
 		t.Fatal("ParsePicture() error = nil")
 	}

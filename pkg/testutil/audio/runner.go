@@ -20,6 +20,7 @@ type DemuxerFactory = func(io.ReadSeeker) (engine.DemuxerEngine, error)
 type DecoderFactory = func(media.StreamInfo) engine.DecoderEngine
 type EncoderFactory = func() engine.EncoderEngine
 type MuxerFactory = func(io.Writer) engine.MuxerEngine
+type OutputTester = func(testing.TB, string)
 
 type DecodeConfig struct {
 	MediaPath  string
@@ -33,6 +34,7 @@ type SnapshotConfig struct {
 	Expected   []float32
 	Opts       pcm.CompareOptions
 	StreamInfo *media.StreamInfo // Optional override
+	Tester     OutputTester
 
 	Demux  DemuxerFactory
 	Decode DecoderFactory
@@ -44,6 +46,7 @@ type RoundtripConfig struct {
 	MediaPath  string
 	Opts       pcm.CompareOptions
 	StreamInfo *media.StreamInfo // Optional override
+	Tester     OutputTester
 
 	Demux  DemuxerFactory
 	Decode DecoderFactory
@@ -185,7 +188,7 @@ func RunSnapshotTests(t *testing.T, cfg SnapshotConfig) {
 	}
 	if cfg.Encode != nil && cfg.Mux != nil {
 		t.Run("EncodeMux", func(t *testing.T) {
-			if err := runSnapshotEncodeMux(t.Context(), t.TempDir(), cfg, stream); err != nil {
+			if err := runSnapshotEncodeMux(t.Context(), t, t.TempDir(), cfg, stream); err != nil {
 				t.Errorf("PCM comparison failed: %v", err)
 			}
 		})
@@ -217,7 +220,7 @@ func runSnapshotDemuxDecode(ctx context.Context, cfg SnapshotConfig, stream medi
 	return runNodes(ctx, demux.node, decoder, chunker, expected, compare)
 }
 
-func runSnapshotEncodeMux(ctx context.Context, tempDir string, cfg SnapshotConfig, stream media.StreamInfo) error {
+func runSnapshotEncodeMux(ctx context.Context, tester testing.TB, tempDir string, cfg SnapshotConfig, stream media.StreamInfo) error {
 	output, err := createIntermediateFile(tempDir, cfg.MediaPath)
 	if err != nil {
 		return err
@@ -245,6 +248,9 @@ func runSnapshotEncodeMux(ctx context.Context, tempDir string, cfg SnapshotConfi
 	}
 	if err := output.Close(); err != nil {
 		return err
+	}
+	if cfg.Tester != nil {
+		cfg.Tester(tester, outputPath)
 	}
 
 	expected := newPCMSource(cfg.MediaPath, cfg.Expected, floatPCMAttributes(stream.Audio))
@@ -283,7 +289,7 @@ func RunRoundtripTests(t *testing.T, cfg RoundtripConfig) {
 	}
 	if cfg.Demux != nil && cfg.Decode != nil && cfg.Encode != nil && cfg.Mux != nil {
 		t.Run("DemuxDecodeEncodeMux", func(t *testing.T) {
-			if err := runRoundtripFull(t.Context(), t.TempDir(), cfg, stream); err != nil {
+			if err := runRoundtripFull(t.Context(), t, t.TempDir(), cfg, stream); err != nil {
 				t.Errorf("full roundtrip failed: %v", err)
 			}
 		})
@@ -374,7 +380,7 @@ func runRoundtripDecodeEncode(ctx context.Context, cfg RoundtripConfig, stream m
 	return runNodes(ctx, source.node, decoder1, chunker1, tee, encoder, decoder2, chunker2, compare)
 }
 
-func runRoundtripFull(ctx context.Context, tempDir string, cfg RoundtripConfig, stream media.StreamInfo) error {
+func runRoundtripFull(ctx context.Context, tester testing.TB, tempDir string, cfg RoundtripConfig, stream media.StreamInfo) error {
 	output, err := createIntermediateFile(tempDir, cfg.MediaPath)
 	if err != nil {
 		return err
@@ -416,6 +422,9 @@ func runRoundtripFull(ctx context.Context, tempDir string, cfg RoundtripConfig, 
 	}
 	if closeErr != nil {
 		return closeErr
+	}
+	if cfg.Tester != nil {
+		cfg.Tester(tester, outputPath)
 	}
 
 	expectedDemux, err := openDemuxNode(cfg.MediaPath, cfg.Demux, cfg.StreamInfo)

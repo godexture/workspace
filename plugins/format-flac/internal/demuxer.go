@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/core/domain/metadata"
 	mediatime "github.com/godexture/core/domain/time"
 	"github.com/godexture/format-flac/frame"
+	"github.com/godexture/format-flac/seektable"
 	"github.com/godexture/format-flac/streaminfo"
 	vc "github.com/godexture/metadata-vorbiscomment"
 )
@@ -25,6 +26,13 @@ type Demuxer struct {
 	parsed         bool
 	started        bool
 	samplePos      uint64
+	seekPoints     []seektable.Point
+	pendingFrame   *pendingFrame
+}
+
+type pendingFrame struct {
+	data   []byte
+	header frame.Header
 }
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
@@ -39,7 +47,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
 	}
 
-	info, streamInfoBlock, extraBlocks, audioOffset, err := parseNativeFLACHeader(d.r)
+	info, streamInfoBlock, extraBlocks, seekPoints, audioOffset, err := parseNativeFLACHeader(d.r)
 	if err != nil {
 		return nil, metadata.Bundle{}, err
 	}
@@ -94,6 +102,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	d.metadataBundle = *globalMetadata
 	d.audioOffset = audioOffset
 	d.nativeInfo = info
+	d.seekPoints = seekPoints
 	d.parsed = true
 
 	return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
@@ -120,9 +129,17 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		}
 		d.scanner = scanner
 	}
-	data, header, err := d.scanner.Next()
-	if err != nil {
-		return nil, 0, err
+	var data []byte
+	var header frame.Header
+	if d.pendingFrame != nil {
+		data, header = d.pendingFrame.data, d.pendingFrame.header
+		d.pendingFrame = nil
+	} else {
+		var err error
+		data, header, err = d.scanner.Next()
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio

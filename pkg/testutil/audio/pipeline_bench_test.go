@@ -178,7 +178,7 @@ func benchmarkAudioPipeline(b *testing.B, totalBytes int, scenario string) {
 		case "codec":
 			err = runRoundtripDecodeEncode(context.Background(), roundtripConfig, stream)
 		case "full":
-			err = runRoundtripFull(context.Background(), dir, roundtripConfig, stream)
+			err = runRoundtripFull(context.Background(), nil, dir, roundtripConfig, stream)
 		default:
 			b.Fatalf("unknown benchmark scenario %q", scenario)
 		}

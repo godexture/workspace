@@ -5,67 +5,74 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/godexture/format-flac/seektable"
 	"github.com/godexture/format-flac/streaminfo"
 )
 
-func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]byte, int64, error) {
+func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]byte, []seektable.Point, int64, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return streaminfo.StreamInfo{}, nil, nil, 0, err
+		return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
 	}
 
 	var marker [4]byte
 	if _, err := io.ReadFull(r, marker[:]); err != nil {
-		return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC marker: %w", err)
+		return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("read FLAC marker: %w", err)
 	}
 	if string(marker[:]) != streaminfo.Marker {
-		return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("not a native FLAC stream")
+		return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("not a native FLAC stream")
 	}
 
 	seenStreamInfo := false
 	var parsedInfo streaminfo.StreamInfo
 	var streamInfoBlock []byte
 	var extraBlocks [][]byte
+	var seekPoints []seektable.Point
 	for {
 		var header [4]byte
 		if _, err := io.ReadFull(r, header[:]); err != nil {
-			return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata header: %w", err)
+			return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("read FLAC metadata header: %w", err)
 		}
 
 		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
 		if length < 0 || length > (1<<24)-1 {
-			return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("invalid FLAC metadata length")
+			return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("invalid FLAC metadata length")
 		}
 		if blockType > 6 {
-			return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
+			return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
 		}
 
 		if blockType == streaminfo.MetadataTypeStreamInfo {
 			if seenStreamInfo {
-				return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("duplicate FLAC STREAMINFO block")
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("duplicate FLAC STREAMINFO block")
 			}
 			if length != streaminfo.Length {
-				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
 			}
 			block := make([]byte, length)
 			if _, err := io.ReadFull(r, block); err != nil {
-				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
 			}
 			info, err := streaminfo.Parse(block)
 			if err != nil {
-				return streaminfo.StreamInfo{}, nil, nil, 0, err
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
 			}
 			parsedInfo = info
 			streamInfoBlock = block
 			seenStreamInfo = true
 		} else if !seenStreamInfo {
-			return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("FLAC STREAMINFO must be the first metadata block")
+			return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("FLAC STREAMINFO must be the first metadata block")
 		} else {
 			extra := make([]byte, 4+length)
 			copy(extra[:4], header[:])
 			if _, err := io.ReadFull(r, extra[4:]); err != nil {
-				return streaminfo.StreamInfo{}, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("read FLAC metadata block: %w", err)
 			}
 			extraBlocks = append(extraBlocks, extra)
+			if blockType == seektable.MetadataType {
+				if points, err := seektable.Parse(extra[4:]); err == nil {
+					seekPoints = append(seekPoints, points...)
+				}
+			}
 		}
 
 		if isLast {
@@ -74,12 +81,12 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]
 	}
 
 	if !seenStreamInfo {
-		return streaminfo.StreamInfo{}, nil, nil, 0, errors.New("missing FLAC STREAMINFO block")
+		return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("missing FLAC STREAMINFO block")
 	}
 
 	audioOffset, err := r.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return streaminfo.StreamInfo{}, nil, nil, 0, err
+		return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
 	}
-	return parsedInfo, streamInfoBlock, extraBlocks, audioOffset, nil
+	return parsedInfo, streamInfoBlock, extraBlocks, seekPoints, audioOffset, nil
 }
