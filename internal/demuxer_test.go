@@ -9,7 +9,9 @@ import (
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/hash"
 )
 
 const appendixDExample1Hex = "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a"
@@ -108,17 +110,27 @@ func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
 }
 
 func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
-	audio := make([]byte, minFLACPacketSize+123)
-	for i := range audio {
-		audio[i] = byte(i)
+	example := mustDecodeHex(t, appendixDExample1Hex)
+	info, err := streaminfo.Parse(example[8:42])
+	if err != nil {
+		t.Fatal(err)
 	}
-	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, audio)))
+	first := append([]byte(nil), example[42:]...)
+	second := append([]byte(nil), first...)
+	header, err := frame.ParseHeader(second, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second[4] = 1
+	second[header.HeaderBytes-1] = hash.CRC8(second[:header.HeaderBytes-1])
+	crc := hash.CRC16(second[:len(second)-2])
+	second[len(second)-2], second[len(second)-1] = byte(crc>>8), byte(crc)
+	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, append(first, second...))))
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
 
-	var got []byte
-	var packetSizes []int
+	var packets []*media.Packet
 	for {
 		packet, _, err := demuxer.ReadPacket()
 		if err == io.EOF {
@@ -127,34 +139,18 @@ func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadPacket() error = %v", err)
 		}
-		packetSizes = append(packetSizes, len(packet.Data()))
-		got = append(got, packet.Data()...)
-		packet.Release()
+		packets = append(packets, packet)
 	}
-
-	if !bytes.Equal(got, audio) {
-		t.Fatal("concatenated packet data does not match FLAC audio")
-	}
-	if len(packetSizes) != 2 || packetSizes[0] != minFLACPacketSize || packetSizes[1] != 123 {
-		t.Fatalf("packet sizes = %v, want [%d 123]", packetSizes, minFLACPacketSize)
-	}
-}
-
-func TestFLACPacketSize(t *testing.T) {
-	tests := []struct {
-		maxFrameSize uint32
-		want         int
-	}{
-		{0, minFLACPacketSize},
-		{1024, minFLACPacketSize},
-		{minFLACPacketSize + 1, 128 << 10},
-		{700 << 10, maxFLACPacketSize},
-		{2 << 20, maxFLACPacketSize},
-	}
-	for _, test := range tests {
-		if got := flacPacketSize(test.maxFrameSize); got != test.want {
-			t.Errorf("flacPacketSize(%d) = %d, want %d", test.maxFrameSize, got, test.want)
+	defer func() {
+		for _, packet := range packets {
+			packet.Release()
 		}
+	}()
+	if len(packets) != 2 || !bytes.Equal(packets[0].Data(), first) || !bytes.Equal(packets[1].Data(), second) {
+		t.Fatal("demuxer did not return one packet per FLAC frame")
+	}
+	if packets[0].PTS != 0 || packets[1].PTS != 1 || packets[0].DTS != 0 || packets[1].DTS != 1 {
+		t.Fatalf("packet timestamps = (%d, %d), (%d, %d)", packets[0].PTS, packets[0].DTS, packets[1].PTS, packets[1].DTS)
 	}
 }
 
@@ -170,12 +166,11 @@ func TestDemuxerEmptyAudio(t *testing.T) {
 }
 
 func TestDemuxerReadErrorReturnsNoPartialPacket(t *testing.T) {
-	audio := make([]byte, minFLACPacketSize)
-	input := makeTestFLAC(t, 0, audio)
+	input := makeTestFLAC(t, 0, nil)
 	wantErr := errors.New("injected read failure")
 	reader := &failingReadSeeker{
 		Reader:    bytes.NewReader(input),
-		failAfter: len(input) - len(audio) + 100,
+		failAfter: len(input),
 		err:       wantErr,
 	}
 	demuxer, err := NewDemuxer(reader)
@@ -189,7 +184,7 @@ func TestDemuxerReadErrorReturnsNoPartialPacket(t *testing.T) {
 }
 
 func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
-	large := make([]byte, 2*minFLACPacketSize+17)
+	large := make([]byte, 2*(64<<10)+17)
 	for i := range large {
 		large[i] = byte(i * 31)
 	}
