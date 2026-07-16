@@ -10,6 +10,7 @@ import (
 )
 
 func TestParseMapsCommentsAndKeepsUnmappedFields(t *testing.T) {
+	t.Parallel()
 	payload := testCommentPayload("encoder", []string{
 		"title=Song", "ARTIST=First", "ARTIST=Second", "DATE=2024-06-17",
 		"TRACKNUMBER=2/12", "TRACKTOTAL=99", "PERFORMER=Band", "DATE=not-a-date",
@@ -43,6 +44,7 @@ func TestParseMapsCommentsAndKeepsUnmappedFields(t *testing.T) {
 }
 
 func TestParseRejectsTruncatedPayload(t *testing.T) {
+	t.Parallel()
 	bundle := metadata.NewBundle()
 	if err := Parse([]byte{4, 0, 0, 0, 'x'}, bundle); err == nil {
 		t.Fatal("Parse() error = nil")
@@ -50,6 +52,7 @@ func TestParseRejectsTruncatedPayload(t *testing.T) {
 }
 
 func TestMarshalRoundtrip(t *testing.T) {
+	t.Parallel()
 	bundle := metadata.NewBundle()
 	bundle.Set(metadata.KeyTitle("Song"))
 	bundle.PushBack(metadata.KeyArtist("First"))
