@@ -16,7 +16,8 @@ import (
 	"github.com/godexture/sdk/testutil"
 )
 
-func TestProbercognizesWAVSignature(t *testing.T) {
+func TestProberCognizesWAVSignature(t *testing.T) {
+	t.Parallel()
 	data := buildTestWAV(t, []byte{0x01, 0x02, 0x03, 0x04})
 
 	if got := Probe(bytes.NewReader(data)); got != 100 {
@@ -25,6 +26,7 @@ func TestProbercognizesWAVSignature(t *testing.T) {
 }
 
 func TestWAVRoundTripMonoPCM16(t *testing.T) {
+	t.Parallel()
 	original := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 	wavData := buildTestWAV(t, original)
 
@@ -88,6 +90,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 }
 
 func TestWAVRoundTripPCM24(t *testing.T) {
+	t.Parallel()
 	// 24-bit PCM (3 bytes per sample). Let's do 2 channels. 3 samples each = 18 bytes.
 	original := []byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // sample 1 (L, R)
@@ -205,6 +208,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 }
 
 func TestRF64RoundTrip(t *testing.T) {
+	t.Parallel()
 	attr := media.MediaAttributes{
 		Codec: media.CodecLPCM,
 		Audio: media.AudioAttributes{
@@ -255,6 +259,7 @@ func TestRF64RoundTrip(t *testing.T) {
 }
 
 func TestReadPacketMemoryLimit(t *testing.T) {
+	t.Parallel()
 	// Setup a mock demuxer with extremely large dataSize
 	demuxer := &Demuxer{
 		r: bytes.NewReader(nil),
@@ -274,6 +279,7 @@ func TestReadPacketMemoryLimit(t *testing.T) {
 }
 
 func TestProbeRecognizesRF64Signature(t *testing.T) {
+	t.Parallel()
 	attr := media.MediaAttributes{
 		Codec: media.CodecLPCM,
 		Audio: media.AudioAttributes{
@@ -298,6 +304,7 @@ func TestProbeRecognizesRF64Signature(t *testing.T) {
 }
 
 func TestWAVRoundTripFloat32(t *testing.T) {
+	t.Parallel()
 	// 1 channel, Float32. This should trigger writeFact (since F32 is non-PCM).
 	original := []byte{
 		0x00, 0x00, 0x80, 0x3f, // 1.0f
@@ -375,6 +382,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 }
 
 func TestRF64Demuxer(t *testing.T) {
+	t.Parallel()
 	// Construct a minimal RF64 WAV file manually.
 	var buf bytes.Buffer
 	buf.WriteString("RF64")
@@ -437,6 +445,7 @@ func TestRF64Demuxer(t *testing.T) {
 }
 
 func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
+	t.Parallel()
 	// 5.1 layout has 6 channels. 24-bit PCM.
 	// 6 channels * 3 bytes/sample = 18 bytes per sample frame.
 	// Let's write 2 sample frames = 36 bytes.
@@ -511,6 +520,7 @@ func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
 }
 
 func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
+	t.Parallel()
 	// Let's create a custom layout: 1 channel but mapped to FrontRight (0x2)
 	// which is different from default LayoutMono1 (0x4).
 	customLayout := media.NewNativeLayout(media.FrontRight)
@@ -554,6 +564,7 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 }
 
 func TestWAVMuxerNonSeekable(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	muxer := NewMuxer(&out, MuxerConfig{})
 	stream := media.StreamInfo{
@@ -603,6 +614,7 @@ func TestWAVMuxerNonSeekable(t *testing.T) {
 }
 
 func TestWAVMuxerforceRF64(t *testing.T) {
+	t.Parallel()
 	out := testutil.NewBuffer(nil)
 	muxer := NewMuxer(out, MuxerConfig{ForceRF64: true})
 	stream := media.StreamInfo{
@@ -664,6 +676,7 @@ func TestWAVMuxerforceRF64(t *testing.T) {
 }
 
 func TestWAVDemuxerSeek(t *testing.T) {
+	t.Parallel()
 
 	// Create a WAV with 48000 Hz, 16-bit, Mono. 1 second of data.
 	// 48000 samples * 2 bytes = 96000 bytes
@@ -709,6 +722,7 @@ func TestWAVDemuxerSeek(t *testing.T) {
 }
 
 func TestWAVDemuxerSeekADPCM(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -722,6 +736,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			blockAlign := 256 * tt.channels
 			// Create a 10-block payload
 			original := make([]byte, blockAlign*10)
@@ -791,6 +806,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 }
 
 func TestWAVMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	originalAudio := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 
 	attr := media.MediaAttributes{
@@ -882,6 +898,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 }
 
 func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		audioFormat   uint16
@@ -936,6 +953,7 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			wavData := buildWAVWithFormatTag(t, tt.audioFormat, tt.bitsPerSample, tt.channels, tt.sampleRate, tt.blockAlign, tt.payload)
 
 			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
@@ -980,6 +998,7 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 }
 
 func TestWAVMP3PacketizationDecodes(t *testing.T) {
+	t.Parallel()
 	mp3Data, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
@@ -1046,6 +1065,7 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 }
 
 func TestWAVAnalyzeUnsupportedFormatTag(t *testing.T) {
+	t.Parallel()
 	wavData := buildWAVWithFormatTag(t, 0x1234, 8, 1, 8000, 1, []byte{0x00})
 	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
 	if err != nil {
@@ -1096,6 +1116,7 @@ func buildWAVWithFormatTag(t *testing.T, audioFormat uint16, bitsPerSample uint1
 }
 
 func TestWAVADPCMRoundTrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -1109,6 +1130,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			blockAlign := 256 * tt.channels
 			original := make([]byte, blockAlign*3)
 			for i := range original {
@@ -1167,6 +1189,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 }
 
 func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
+	t.Parallel()
 	adpcm, err := params.Default(media.CodecMSADPCM, 2)
 	if err != nil {
 		t.Fatal(err)
