@@ -53,7 +53,11 @@ func CRC8(data []byte) byte {
 // CRC16 computes the FLAC frame footer checksum (polynomial 0x8005, no
 // reflection, zero init).
 func CRC16(data []byte) uint16 {
-	var crc uint16
+	return CRC16Update(0, data)
+}
+
+// CRC16Update extends a FLAC frame CRC with data. The initial CRC is zero.
+func CRC16Update(crc uint16, data []byte) uint16 {
 	for _, value := range data {
 		crc = crc<<8 ^ crc16Table[byte(crc>>8)^value]
 	}
