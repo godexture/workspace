@@ -30,6 +30,9 @@ type Decoder struct {
 	terminalErr  error
 	frameCount   uint64
 	sampleCount  uint64
+	nextSample   uint64
+	positioned   bool
+	startSample  uint64
 	md5Hash      hashState
 	md5Scratch   []byte
 }
@@ -45,7 +48,6 @@ func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
 		} else {
 			decoder.info = info
 			decoder.parsed = true
-			decoder.initMD5()
 		}
 		hasRawStreamInfo = true
 	}
@@ -60,7 +62,6 @@ func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
 			decoder.configErr = err
 		} else {
 			decoder.parsed = true
-			decoder.initMD5()
 		}
 	}
 	return decoder
@@ -157,26 +158,35 @@ func (d *Decoder) initMD5() {
 }
 
 func (d *Decoder) validateFrame(header frame.Header) error {
-	if d.frameCount == 0 {
-		if header.Number != 0 {
-			return fmt.Errorf("invalid first FLAC frame number: %d", header.Number)
+	if !d.positioned {
+		d.positioned = true
+		d.startSample = frame.StartSample(header, d.info)
+		d.frameCount = header.Number
+		d.sampleCount = d.startSample
+		d.nextSample = header.Number
+		if d.startSample == 0 {
+			d.initMD5()
 		}
 	} else if header.BlockingStrategy {
 		if header.Number != d.sampleCount {
 			return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.Number, d.sampleCount)
 		}
-	} else if header.Number != d.frameCount && header.Number != d.sampleCount {
-		return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.sampleCount)
+	} else if header.Number != d.frameCount && header.Number != d.nextSample {
+		return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.nextSample)
 	}
 	if d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
 		return fmt.Errorf("FLAC frame block size %d exceeds STREAMINFO maximum %d", header.BlockSize, d.info.MaxBlockSize)
 	}
 	d.frameCount++
 	d.sampleCount += uint64(header.BlockSize)
+	d.nextSample = header.Number + uint64(header.BlockSize)
 	return nil
 }
 
 func (d *Decoder) validateEnd() error {
+	if d.positioned && d.startSample != 0 {
+		return nil
+	}
 	if d.info.TotalSamples > 0 && d.sampleCount != d.info.TotalSamples {
 		return fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
 	}

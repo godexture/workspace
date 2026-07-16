@@ -14,6 +14,7 @@ import (
 )
 
 func TestSnapshot(t *testing.T) {
+	t.Parallel()
 	walTestFiles(t, func(t *testing.T, path string, group string) {
 		if strings.HasSuffix(group, "faulty") || strings.HasSuffix(group, "uncommon") {
 			t.Skip("skipping faulty and uncommon conformance vectors in snapshot test")
@@ -31,12 +32,14 @@ func TestSnapshot(t *testing.T) {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux: flacFormat.NewMuxerEngine,
+			Mux:    flacFormat.NewMuxerEngine,
+			Tester: testFLAC,
 		})
 	})
 }
 
 func TestConformance(t *testing.T) {
+	t.Parallel()
 	walTestFiles(t, func(t *testing.T, path string, group string) {
 		if strings.HasSuffix(group, "uncommon") && uncommonNotSupported(filepath.Base(path)) {
 			t.Skip("skipping unsupported uncommon conformance vector")
