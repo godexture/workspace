@@ -23,6 +23,9 @@ type Scanner struct {
 	maxFrameSize int
 	buffer       []byte
 	eof          bool
+	scanPos      int
+	crc          uint16
+	crcPos       int
 }
 
 func NewScanner(r io.Reader, info streaminfo.StreamInfo) (*Scanner, error) {
@@ -33,7 +36,7 @@ func NewScanner(r io.Reader, info streaminfo.StreamInfo) (*Scanner, error) {
 	// STREAMINFO frame-size fields are advisory and are frequently absent or
 	// stale in real-world files. Keep the scanner bounded by the format limit.
 	maxFrameSize := defaultMaxFrameSize
-	return &Scanner{r: r, info: info, readSize: readSize, maxFrameSize: maxFrameSize}, nil
+	return &Scanner{r: r, info: info, readSize: readSize, maxFrameSize: maxFrameSize, scanPos: 2}, nil
 }
 
 func frameReadSize(maxFrameSize uint32) int {
@@ -65,6 +68,9 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 		if boundary, next, ok := s.findBoundary(current); ok {
 			data := append([]byte(nil), s.buffer[:boundary]...)
 			s.buffer = append(s.buffer[:0], s.buffer[boundary:]...)
+			s.scanPos = 2
+			s.crc = 0
+			s.crcPos = 0
 			current.FrameBytes = len(data)
 			_ = next
 			return data, current, nil
@@ -79,6 +85,9 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 			}
 			data := append([]byte(nil), s.buffer...)
 			s.buffer = nil
+			s.scanPos = 2
+			s.crc = 0
+			s.crcPos = 0
 			current.FrameBytes = len(data)
 			return data, current, nil
 		}
@@ -115,23 +124,32 @@ func (s *Scanner) ensureHeader() error {
 }
 
 func (s *Scanner) findBoundary(current Header) (int, Header, bool) {
-	for pos := 2; pos+2 <= len(s.buffer); pos++ {
+	for pos := s.scanPos; pos+2 <= len(s.buffer); pos++ {
 		if s.buffer[pos] != 0xff || s.buffer[pos+1]&0xfc != 0xf8 {
 			continue
 		}
 		next, err := ParseHeader(s.buffer[pos:], s.info)
 		if err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				s.scanPos = pos
+				return 0, Header{}, false
+			}
 			continue
 		}
 		if !continuous(current, next) || pos < 2 {
 			continue
 		}
 		footer := uint16(s.buffer[pos-2])<<8 | uint16(s.buffer[pos-1])
-		if hash.CRC16(s.buffer[:pos-2]) != footer {
+		if s.crcPos < pos-2 {
+			s.crc = hash.CRC16Update(s.crc, s.buffer[s.crcPos:pos-2])
+			s.crcPos = pos - 2
+		}
+		if s.crc != footer {
 			continue
 		}
 		return pos, next, true
 	}
+	s.scanPos = max(2, len(s.buffer)-1)
 	return 0, Header{}, false
 }
 
@@ -146,10 +164,25 @@ func continuous(current, next Header) bool {
 }
 
 func (s *Scanner) readMore() error {
-	buf := make([]byte, s.readSize)
-	n, err := s.r.Read(buf)
+	if cap(s.buffer)-len(s.buffer) < s.readSize {
+		grown := make([]byte, len(s.buffer), len(s.buffer)+s.readSize)
+		copy(grown, s.buffer)
+		s.buffer = grown
+	}
+	buffered := len(s.buffer)
+	s.buffer = s.buffer[:cap(s.buffer)]
+	n, err := s.r.Read(s.buffer[buffered:])
+	s.buffer = s.buffer[:buffered+n]
 	if n > 0 {
-		s.buffer = append(s.buffer, buf[:n]...)
+		returnRead := err
+		if returnRead == io.EOF {
+			s.eof = true
+			return nil
+		}
+		if returnRead != nil {
+			return fmt.Errorf("read FLAC audio frames: %w", returnRead)
+		}
+		return nil
 	}
 	if err == io.EOF {
 		s.eof = true

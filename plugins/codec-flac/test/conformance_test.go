@@ -57,6 +57,7 @@ func TestConformance(t *testing.T) {
 
 func faultyMustReject(fileName string) bool {
 	return strings.HasPrefix(fileName, "01 ") ||
+		strings.HasPrefix(fileName, "05 ") ||
 		strings.HasPrefix(fileName, "06 ") ||
 		strings.HasPrefix(fileName, "07 ") ||
 		strings.HasPrefix(fileName, "08 ") ||

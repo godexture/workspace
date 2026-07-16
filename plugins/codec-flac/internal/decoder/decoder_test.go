@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/godexture/codec-flac/internal/flac"
@@ -58,6 +59,51 @@ func TestDecoder_DecodeRawFrameRFC9639AppendixDExample1(t *testing.T) {
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
 	assertDecodeAppendixDExample1(t, data[42:], stream, flac.DecoderConfig{})
+}
+
+func TestDecoderValidatesStreamEndAfterPendingFrameIsConsumed(t *testing.T) {
+	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	stream := media.StreamInfo{}
+	stream.Metadata = *metadata.NewBundle()
+	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
+	decoder := NewDecoder(stream, flac.DecoderConfig{})
+
+	packet := media.NewPacketFromData(data[42:])
+	if err := decoder.SendPacket(packet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err != nil {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+	if err := decoder.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); !errors.Is(err, engine.ErrEOF) {
+		t.Fatalf("ReceiveFrame() after Flush = %v, want ErrEOF", err)
+	}
+}
+
+func TestDecoderReportsMD5MismatchAtStreamEnd(t *testing.T) {
+	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	raw := append([]byte(nil), data[8:42]...)
+	raw[len(raw)-1] ^= 1
+	stream := media.StreamInfo{}
+	stream.Metadata = *metadata.NewBundle()
+	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
+	decoder := NewDecoder(stream, flac.DecoderConfig{})
+
+	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err != nil {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+	if err := decoder.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err == nil || !strings.Contains(err.Error(), "MD5") {
+		t.Fatalf("ReceiveFrame() after Flush = %v, want MD5 mismatch", err)
+	}
 }
 
 func TestDecoder_RejectsNativeStreamPacket(t *testing.T) {

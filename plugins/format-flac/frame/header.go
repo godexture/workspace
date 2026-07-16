@@ -4,6 +4,7 @@ package frame
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
@@ -29,7 +30,10 @@ func ParseHeader(data []byte, info streaminfo.StreamInfo) (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
-	if header.HeaderBytes < 1 || header.HeaderBytes > len(data) || hash.CRC8(data[:header.HeaderBytes-1]) != header.HeaderCRC {
+	if header.HeaderBytes > len(data) {
+		return Header{}, io.ErrUnexpectedEOF
+	}
+	if header.HeaderBytes < 1 || hash.CRC8(data[:header.HeaderBytes-1]) != header.HeaderCRC {
 		return Header{}, errors.New("invalid FLAC frame header CRC-8")
 	}
 	return header, nil
@@ -197,7 +201,13 @@ func decodeBlockSize(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (in
 		return int(v) + 1, e
 	case 7:
 		v, e := r.ReadBits64(16)
-		return int(v) + 1, e
+		if e != nil {
+			return 0, e
+		}
+		if v == 0xffff {
+			return 0, errors.New("FLAC block size exceeds 65535")
+		}
+		return int(v) + 1, nil
 	case 8, 9, 10, 11, 12, 13, 14, 15:
 		return 256 << (code - 8), nil
 	default:
