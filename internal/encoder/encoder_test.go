@@ -273,6 +273,54 @@ func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 	assertSamplesEqual(t, decoded, [][]int64{{-2_147_483_648, -1, 0, 2_147_483_647}})
 }
 
+func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
+	cfg := flac.DefaultEncoderConfig
+	cfg.BlockSize = 4
+	cfg.BitsPerSample = 24
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+
+	input := []int32{-8_388_608, -1, 0, 8_388_607}
+	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 24, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+
+	pkt, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket() error = %v", err)
+	}
+	decoded := decodePacketSamples(t, pkt, streamInfoFor(4, 48000, 1, 24))
+	assertSamplesEqual(t, decoded, [][]int64{{-8_388_608, -1, 0, 8_388_607}})
+}
+
+func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
+	cfg := flac.DefaultEncoderConfig
+	cfg.BlockSize = 4
+	cfg.BitsPerSample = 20
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+
+	input := []int32{-524_288, -1, 0, 524_287}
+	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 20, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+
+	pkt, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket() error = %v", err)
+	}
+	decoded := decodePacketSamples(t, pkt, streamInfoFor(4, 48000, 1, 20))
+	assertSamplesEqual(t, decoded, [][]int64{{-524_288, -1, 0, 524_287}})
+}
+
 func TestEncoder_Rejects24BitOutOfRange(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
 	cfg.BlockSize = 1
@@ -495,6 +543,22 @@ func makeAudioFrameS16(t *testing.T, layout media.ChannelLayout, sampleRate int,
 	plane := frame.Planes()[0]
 	for i, value := range values {
 		binary.LittleEndian.PutUint16(plane[i*2:i*2+2], uint16(value))
+	}
+	return frame
+}
+
+func makeAudioFrameS24(t *testing.T, layout media.ChannelLayout, sampleRate int, pts media.Pts, bitsPerSample int, values []int32) *media.AudioFrame {
+	t.Helper()
+	channels := layout.ChannelCount()
+	if len(values)%channels != 0 {
+		t.Fatalf("values length %d is not divisible by channel count %d", len(values), channels)
+	}
+	frame := media.NewAudioFrame(media.SampleFormatS24, layout, sampleRate, len(values)/channels, media.WithAudioPts(pts), media.WithAudioBitsPerSample(bitsPerSample))
+	plane := frame.Planes()[0]
+	for i, value := range values {
+		plane[i*3] = byte(value)
+		plane[i*3+1] = byte(value >> 8)
+		plane[i*3+2] = byte(value >> 16)
 	}
 	return frame
 }

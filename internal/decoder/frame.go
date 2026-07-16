@@ -130,6 +130,10 @@ func buildAudioFrame(decoded *flac.Frame) (*media.AudioFrame, error) {
 			switch format {
 			case media.SampleFormatS16:
 				binary.LittleEndian.PutUint16(plane[offset:offset+2], uint16(int16(value)))
+			case media.SampleFormatS24:
+				plane[offset] = byte(value)
+				plane[offset+1] = byte(value >> 8)
+				plane[offset+2] = byte(value >> 16)
 			case media.SampleFormatS32:
 				binary.LittleEndian.PutUint32(plane[offset:offset+4], uint32(value))
 			default:

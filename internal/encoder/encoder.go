@@ -198,10 +198,13 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 	if format == media.SampleFormatS16 && (bitsPerSample < 4 || bitsPerSample > 16) {
 		return 0, 0, 0, fmt.Errorf("S16 FLAC input requires 4..16 bits per sample, got %d", bitsPerSample)
 	}
+	if format == media.SampleFormatS24 && (bitsPerSample < 17 || bitsPerSample > 24) {
+		return 0, 0, 0, fmt.Errorf("S24 FLAC input requires 17..24 bits per sample, got %d", bitsPerSample)
+	}
 	if format == media.SampleFormatS32 && (bitsPerSample < 17 || bitsPerSample > 32) {
 		return 0, 0, 0, fmt.Errorf("S32 FLAC input requires 17..32 bits per sample, got %d", bitsPerSample)
 	}
-	if format != media.SampleFormatS16 && format != media.SampleFormatS32 {
+	if format != media.SampleFormatS16 && format != media.SampleFormatS24 && format != media.SampleFormatS32 {
 		return 0, 0, 0, fmt.Errorf("unsupported FLAC input format: %s", frame.Format)
 	}
 	channels := frame.Layout.ChannelCount()
@@ -241,9 +244,16 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 		for ch := 0; ch < channels; ch++ {
 			offset := (sample*channels + ch) * bytesPerSample
 			var value int64
-			if format == media.SampleFormatS16 {
+			switch format {
+			case media.SampleFormatS16:
 				value = int64(int16(binary.LittleEndian.Uint16(plane[offset : offset+2])))
-			} else {
+			case media.SampleFormatS24:
+				raw := int32(uint32(plane[offset]) | uint32(plane[offset+1])<<8 | uint32(plane[offset+2])<<16)
+				if raw&0x800000 != 0 {
+					raw |= ^int32(0xffffff)
+				}
+				value = int64(raw)
+			default:
 				value = int64(int32(binary.LittleEndian.Uint32(plane[offset : offset+4])))
 			}
 			if value < minValue || value > maxValue {
