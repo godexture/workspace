@@ -1,1 +1,5 @@
-follow instructions described in the ./AGENTS.md file.
+## Instructions
+./AGENTS.md にある指示に従うこと。
+
+## Additional Rules
+- 実装は基本的に他のエージェントに行わせるので，プランを作成する際は，十分なコンテクストを持ち，セッションの内容を知らなくても実装できるほど明確なものである必要がある
