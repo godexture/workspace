@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	vc "github.com/godexture/metadata-vorbiscomment"
 )
 
 // Muxer writes a native FLAC stream. Packets are expected to contain complete
@@ -77,10 +78,31 @@ func (m *Muxer) WriteHeader() error {
 	if err != nil {
 		return err
 	}
-	extraBlocks, err := metadataBlocks(m.metadata)
+	rawBlocks, err := metadataBlocks(m.metadata)
 	if err != nil {
 		return err
 	}
+	hasRawVorbisComment := false
+	for _, block := range rawBlocks {
+		if block.blockType == streaminfo.MetadataTypeVorbisComment {
+			hasRawVorbisComment = true
+			break
+		}
+	}
+	extraBlocks := make([]metadataBlock, 0, len(rawBlocks)+1)
+	if !hasRawVorbisComment {
+		extraBlocks = append(extraBlocks, metadataBlock{
+			blockType: streaminfo.MetadataTypeVorbisComment,
+			payload:   vc.Marshal(m.metadata),
+		})
+	}
+	for _, thumbnail := range metadata.Get[metadata.KeyThumbnail](&m.metadata) {
+		extraBlocks = append(extraBlocks, metadataBlock{
+			blockType: streaminfo.MetadataTypePicture,
+			payload:   vc.MarshalPicture(thumbnail),
+		})
+	}
+	extraBlocks = append(extraBlocks, rawBlocks...)
 
 	m.info = info
 	m.extraBlocks = extraBlocks

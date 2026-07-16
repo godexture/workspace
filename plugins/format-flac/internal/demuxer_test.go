@@ -9,8 +9,10 @@ import (
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	vc "github.com/godexture/metadata-vorbiscomment"
 	"github.com/godexture/sdk/hash"
 )
 
@@ -234,6 +236,41 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 	}
 }
 
+func TestDemuxerDecodesVorbisCommentAndPicture(t *testing.T) {
+	commentBundle := metadata.NewBundle()
+	commentBundle.Set(metadata.KeyTitle("Song"))
+	commentBundle.PushBack(metadata.KeyArtist("First"))
+	commentBundle.PushBack(metadata.KeyArtist("Second"))
+	comments := vc.Marshal(*commentBundle)
+	picture := vc.MarshalPicture(metadata.Thumbnail{
+		Data:        []byte{1, 2, 3},
+		MIMEType:    "image/png",
+		PictureType: metadata.PictureTypeFrontCover,
+	})
+	input := makeTestFLACWithBlocks(t, nil, []metadataBlock{
+		{blockType: streaminfo.MetadataTypeVorbisComment, payload: comments},
+		{blockType: streaminfo.MetadataTypePicture, payload: picture},
+	})
+
+	demuxer, err := NewDemuxer(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bundle, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := metadata.Get[metadata.KeyTitle](&bundle); got != "Song" {
+		t.Fatalf("title = %q", got)
+	}
+	if got := metadata.Enumerate[metadata.KeyArtist](&bundle); len(got) != 2 || got[0] != "First" || got[1] != "Second" {
+		t.Fatalf("artists = %#v", got)
+	}
+	if got := metadata.Get[metadata.KeyThumbnail](&bundle); len(got) != 1 || !bytes.Equal(got[0].Data, []byte{1, 2, 3}) {
+		t.Fatalf("thumbnails = %#v", got)
+	}
+}
+
 func makeTestFLAC(t testing.TB, maxFrameSize uint32, audio []byte, extraPayloads ...[]byte) []byte {
 	t.Helper()
 	example := mustDecodeHex(t, appendixDExample1Hex)
@@ -254,6 +291,26 @@ func makeTestFLAC(t testing.TB, maxFrameSize uint32, audio []byte, extraPayloads
 			blockType |= 0x80
 		}
 		data = appendTestMetadataBlock(data, blockType, payload)
+	}
+	return append(data, audio...)
+}
+
+func makeTestFLACWithBlocks(t testing.TB, audio []byte, blocks []metadataBlock) []byte {
+	t.Helper()
+	example := mustDecodeHex(t, appendixDExample1Hex)
+	streamInfo := append([]byte(nil), example[8:42]...)
+	data := append([]byte(nil), []byte(streaminfo.Marker)...)
+	streamInfoType := byte(streaminfo.MetadataTypeStreamInfo)
+	if len(blocks) == 0 {
+		streamInfoType |= 0x80
+	}
+	data = appendTestMetadataBlock(data, streamInfoType, streamInfo)
+	for i, block := range blocks {
+		blockType := block.blockType
+		if i == len(blocks)-1 {
+			blockType |= 0x80
+		}
+		data = appendTestMetadataBlock(data, blockType, block.payload)
 	}
 	return append(data, audio...)
 }

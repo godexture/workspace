@@ -11,7 +11,9 @@ import (
 const (
 	Marker = "fLaC"
 
-	MetadataTypeStreamInfo = 0
+	MetadataTypeStreamInfo    = 0
+	MetadataTypeVorbisComment = 4
+	MetadataTypePicture       = 6
 	Length                 = 34
 
 	MetadataKey = "flac.streaminfo"
