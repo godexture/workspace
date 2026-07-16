@@ -11,14 +11,13 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-type DecoderConfig = domain.DecoderConfig
-
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder()
 }
 
-func NewEncoderEngine(config domain.EncoderConfig) engine.EncoderEngine {
-	return internal.NewEncoder(config)
+func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
+	resolved := engine.ResolveConfig[EncoderConfig, domain.EncoderConfig](config)
+	return internal.NewEncoder(resolved)
 }
 
 type mp3Capability struct{}
@@ -75,8 +74,7 @@ func init() {
 			},
 		},
 		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			dec := internal.NewDecoder()
-			return engine.WrapDecoder(dec), nil
+			return engine.WrapDecoder(internal.NewDecoder()), nil
 		},
 	}); err != nil {
 		panic(err)
@@ -101,19 +99,8 @@ func init() {
 			return codec == media.CodecMP3
 		},
 		Factory: func(s media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			if cfg != nil {
-				var mp3Config EncoderConfig
-				if mc, ok := cfg.(EncoderConfig); ok {
-					mp3Config = mc
-				} else if mcPtr, ok := cfg.(*EncoderConfig); ok && mcPtr != nil {
-					mp3Config = *mcPtr
-				}
-				resolved := mp3Config.ApplyDefaults()
-				enc := internal.NewEncoder(resolved)
-				return engine.WrapEncoder(enc), nil
-			}
-			enc := internal.NewEncoder(domain.DefaultEncoderConfig)
-			return engine.WrapEncoder(enc), nil
+			resolved := engine.ResolveConfig[EncoderConfig](cfg)
+			return engine.WrapEncoder(internal.NewEncoder(resolved)), nil
 		},
 	}); err != nil {
 		panic(err)

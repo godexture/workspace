@@ -10,10 +10,11 @@ import (
 
 func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig) ([]byte, error) {
 	var writer bits.Writer
-	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, false, &writer)
+	windows := newWindowSet(options.Apodizations)
+	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, false, &windows, &writer)
 }
 
-func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, samplesValidated bool, w *bits.Writer) ([]byte, error) {
+func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, samplesValidated bool, windows *windowSet, w *bits.Writer) ([]byte, error) {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}
@@ -22,6 +23,12 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 	}
 	if options.MaxRicePartitionOrder < 0 || options.MaxRicePartitionOrder > 15 || options.StreamableSubset && options.MaxRicePartitionOrder > 8 {
 		return nil, fmt.Errorf("invalid FLAC Rice partition order: %d", options.MaxRicePartitionOrder)
+	}
+	if options.LPCPrecision != 0 && (options.LPCPrecision < 4 || options.LPCPrecision > 15) {
+		return nil, fmt.Errorf("invalid FLAC LPC precision: %d", options.LPCPrecision)
+	}
+	if options.StereoMode > flac.StereoExhaustive {
+		return nil, fmt.Errorf("invalid FLAC stereo mode: %d", options.StereoMode)
 	}
 	if len(samples) == 0 || len(samples) > 8 {
 		return nil, fmt.Errorf("unsupported FLAC channel count: %d", len(samples))
@@ -53,7 +60,7 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 	}
 
 	w.Init()
-	assignment, channels, candidates, scratch, err := chooseChannelAssignment(samples, bitsPerSample, options)
+	assignment, channels, candidates, scratch, err := chooseChannelAssignment(samples, bitsPerSample, options, windows)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +111,12 @@ func streamableMaxBlockSize(sampleRate int) int {
 	return 16384
 }
 
-func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig) (uint8, [][]int64, []subframeCandidate, [][]int64, error) {
-	if !options.EnableStereoDecorrelation || len(samples) != 2 {
+func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) (uint8, [][]int64, []subframeCandidate, [][]int64, error) {
+	frameWindows := windows.forLength(len(samples[0]))
+	if options.StereoMode == flac.StereoIndependent || len(samples) != 2 {
 		candidates := make([]subframeCandidate, len(samples))
 		for ch := range samples {
-			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options)
+			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options, frameWindows)
 			if !candidates[ch].valid {
 				releaseSubframeCandidates(candidates)
 				return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
@@ -125,10 +133,25 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		mid[i] = (left[i] + right[i]) >> 1
 		side[i] = left[i] - right[i]
 	}
-	leftCandidate := bestSubframe(left, bitsPerSample, options)
-	rightCandidate := bestSubframe(right, bitsPerSample, options)
-	midCandidate := bestSubframe(mid, bitsPerSample, options)
-	sideCandidate := bestSubframe(side, bitsPerSample+1, options)
+	if options.StereoMode == flac.StereoAdaptive && len(left) >= 3 {
+		assignment := estimateStereoAssignment(left, right, mid, side)
+		channels := assignmentChannels(assignment, left, right, mid, side)
+		candidates := []subframeCandidate{
+			bestSubframe(channels[0], bitsPerSample+sideChannelOffset(assignment, 0), options, frameWindows),
+			bestSubframe(channels[1], bitsPerSample+sideChannelOffset(assignment, 1), options, frameWindows),
+		}
+		if candidates[0].valid && candidates[1].valid {
+			return assignment, channels, candidates, scratch, nil
+		}
+		releaseSubframeCandidates(candidates)
+		releaseResidualBuffers(scratch)
+		return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+	}
+
+	leftCandidate := bestSubframe(left, bitsPerSample, options, frameWindows)
+	rightCandidate := bestSubframe(right, bitsPerSample, options, frameWindows)
+	midCandidate := bestSubframe(mid, bitsPerSample, options, frameWindows)
+	sideCandidate := bestSubframe(side, bitsPerSample+1, options, frameWindows)
 
 	assignments := []struct {
 		assignment uint8
@@ -175,6 +198,55 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		releaseSubframeCandidate(&rightCandidate)
 	}
 	return chosen.assignment, chosen.channels, chosen.candidates, scratch, nil
+}
+
+func assignmentChannels(assignment uint8, left, right, mid, side []int64) [][]int64 {
+	switch assignment {
+	case 8:
+		return [][]int64{left, side}
+	case 9:
+		return [][]int64{side, right}
+	case 10:
+		return [][]int64{mid, side}
+	default:
+		return [][]int64{left, right}
+	}
+}
+
+func sideChannelOffset(assignment uint8, channel int) int {
+	if assignment == 8 && channel == 1 || assignment == 9 && channel == 0 || assignment == 10 && channel == 1 {
+		return 1
+	}
+	return 0
+}
+
+func estimateStereoAssignment(left, right, mid, side []int64) uint8 {
+	leftBits, rightBits := estimateChannelBits(left), estimateChannelBits(right)
+	midBits, sideBits := estimateChannelBits(mid), estimateChannelBits(side)
+	best, assignment := leftBits+rightBits, uint8(0)
+	for _, candidate := range []struct {
+		assignment uint8
+		cost       uint64
+	}{{8, leftBits + sideBits}, {9, sideBits + rightBits}, {10, midBits + sideBits}} {
+		if candidate.cost < best {
+			best, assignment = candidate.cost, candidate.assignment
+		}
+	}
+	return assignment
+}
+
+func estimateChannelBits(samples []int64) uint64 {
+	residual := fixedResidual(samples, 2)
+	defer releaseResidualBuffer(residual)
+	var sum, maximum uint64
+	for _, value := range residual {
+		folded := foldResidual(value)
+		sum += folded
+		if folded > maximum {
+			maximum = folded
+		}
+	}
+	return bestRicePartitionEstimate(sum, maximum, len(residual), 4, 14).costBits
 }
 
 func releaseResidualBuffers(buffers [][]int64) {

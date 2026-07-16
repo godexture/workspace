@@ -8,8 +8,6 @@ import (
 
 type DecoderConfig struct{}
 
-func (DecoderConfig) NodeConfiguration() {}
-
 var DefaultDecoderConfig = DecoderConfig{}
 
 const (
@@ -17,6 +15,7 @@ const (
 	DefaultEncoderMaxFixedOrder = 4
 	DefaultEncoderMaxLPCOrder   = 32
 	DefaultEncoderMaxRiceOrder  = 8
+	DefaultLPCPrecision         = 15
 )
 
 type BlockingStrategy uint8
@@ -26,30 +25,63 @@ const (
 	VariableBlocking
 )
 
+type StereoMode uint8
+
+const (
+	StereoIndependent StereoMode = iota
+	StereoAdaptive
+	StereoExhaustive
+)
+
 type EncoderConfig struct {
 	SampleRate    int
 	Channels      int
 	BitsPerSample int
 
-	BlockSize                 int
-	MaxFixedOrder             int
-	MaxLPCOrder               int
-	MaxRicePartitionOrder     int
-	EnableWastedBits          bool
-	EnableStereoDecorrelation bool
-	EnableExhaustiveSearch    bool
-	BlockingStrategy          BlockingStrategy
-	StreamableSubset          bool
+	BlockSize              int
+	MaxFixedOrder          int
+	MaxLPCOrder            int
+	MaxRicePartitionOrder  int
+	LPCPrecision           int
+	EnablePrecisionSearch  bool
+	EnableWastedBits       bool
+	StereoMode             StereoMode
+	EnableExhaustiveSearch bool
+	Apodizations           []Apodization
+	BlockingStrategy       BlockingStrategy
+	StreamableSubset       bool
 }
 
-var DefaultEncoderConfig = EncoderConfig{
-	BlockSize:                 DefaultEncoderBlockSize,
-	MaxFixedOrder:             DefaultEncoderMaxFixedOrder,
-	MaxLPCOrder:               DefaultEncoderMaxLPCOrder,
-	MaxRicePartitionOrder:     DefaultEncoderMaxRiceOrder,
-	EnableWastedBits:          true,
-	EnableStereoDecorrelation: true,
-	StreamableSubset:          true,
+var DefaultEncoderConfig = GetPreset(5)
+
+func GetPreset(level int) EncoderConfig {
+	blockSize, maxLPC, maxRice := 4096, 8, 4
+	mode := StereoExhaustive
+	apodizations := []Apodization{Tukey(0.5)}
+	switch level {
+	case 0, 1, 2:
+		blockSize, maxLPC, maxRice = 1152, 0, 3
+		mode = StereoMode(level)
+	case 3:
+		maxLPC, mode = 6, StereoIndependent
+	case 4:
+		mode = StereoAdaptive
+	case 5:
+		maxRice = 5
+	case 6:
+		maxRice, apodizations = 6, SubdivideTukey(2, 0.5)
+	case 7:
+		maxLPC, maxRice, apodizations = 12, 6, SubdivideTukey(2, 0.5)
+	case 8:
+		maxLPC, maxRice, apodizations = 12, 6, SubdivideTukey(3, 0.5)
+	}
+	return EncoderConfig{
+		BlockSize: blockSize, MaxFixedOrder: DefaultEncoderMaxFixedOrder, MaxLPCOrder: maxLPC,
+		MaxRicePartitionOrder: maxRice, LPCPrecision: DefaultLPCPrecision,
+		EnablePrecisionSearch: false, EnableWastedBits: true, StereoMode: mode,
+		EnableExhaustiveSearch: false, Apodizations: apodizations,
+		BlockingStrategy: FixedBlocking, StreamableSubset: true,
+	}
 }
 
 func (c EncoderConfig) Validate() error {
@@ -70,6 +102,20 @@ func (c EncoderConfig) Validate() error {
 	}
 	if c.MaxLPCOrder < 0 || c.MaxLPCOrder > 32 {
 		return fmt.Errorf("invalid FLAC LPC order: %d", c.MaxLPCOrder)
+	}
+	if c.LPCPrecision != 0 && (c.LPCPrecision < 4 || c.LPCPrecision > 15) {
+		return fmt.Errorf("FLAC LPC precision must be between 4 and 15: %d", c.LPCPrecision)
+	}
+	if c.StereoMode > StereoExhaustive {
+		return fmt.Errorf("invalid FLAC stereo mode: %d", c.StereoMode)
+	}
+	if len(c.Apodizations) > 32 {
+		return fmt.Errorf("FLAC encoder supports at most 32 apodization windows: %d", len(c.Apodizations))
+	}
+	for i, apodization := range c.Apodizations {
+		if apodization == nil {
+			return fmt.Errorf("FLAC apodization %d is nil", i)
+		}
 	}
 	if c.MaxRicePartitionOrder < 0 || c.MaxRicePartitionOrder > 15 {
 		return fmt.Errorf("invalid FLAC Rice partition order: %d", c.MaxRicePartitionOrder)
@@ -105,6 +151,9 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 	}
 	if cfg.MaxRicePartitionOrder > 15 {
 		cfg.MaxRicePartitionOrder = 15
+	}
+	if cfg.LPCPrecision > 15 {
+		cfg.LPCPrecision = 15
 	}
 
 	return cfg

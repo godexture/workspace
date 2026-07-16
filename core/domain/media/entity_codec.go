@@ -11,5 +11,5 @@ const (
 	CodecMSADPCM  CodecID = "adpcm_ms"
 	CodecIMAADPCM CodecID = "adpcm_ima"
 	CodecGSM      CodecID = "gsm"
-	CodecFLAC CodecID = "flac"
+	CodecFLAC     CodecID = "flac"
 )
