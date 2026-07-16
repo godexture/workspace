@@ -51,10 +51,8 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("no streams found in %s", e.Name())
 			}
 
-			a := streams[0].MediaAttributes.Audio
-			cfg := pcm.NewConfigWithAudio(a.SampleRate, a.Format, a.ChannelLayout)
-			decEngine := pcm.NewDecoderEngine(cfg)
-			encEngine := pcm.NewEncoderEngine(pcm.EncoderConfig{})
+			decEngine := pcm.NewDecoderEngine(streams[0], pcm.DecoderConfig{})
+			encEngine := pcm.NewEncoderEngine(streams[0], pcm.EncoderConfig{})
 
 			f := testutil.NewBuffer(nil)
 
