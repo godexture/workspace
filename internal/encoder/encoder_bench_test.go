@@ -87,7 +87,7 @@ func BenchmarkEncoderDefaultConfig(b *testing.B) {
 	b.SetBytes(int64(len(plane)))
 	b.ResetTimer()
 	for b.Loop() {
-		enc, err := NewEncoder(cfg)
+		enc, err := NewEncoder(media.StreamInfo{}, cfg)
 		if err != nil {
 			b.Fatal(err)
 		}

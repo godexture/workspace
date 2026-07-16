@@ -12,7 +12,8 @@ import (
 )
 
 type Encoder struct {
-	config flac.EncoderConfig
+	config  flac.EncoderConfig
+	windows windowSet
 
 	pendingQueue []*media.Packet
 	flushed      bool
@@ -31,12 +32,13 @@ type Encoder struct {
 	writer        bits.Writer
 }
 
-func NewEncoder(cfg flac.EncoderConfig) (*Encoder, error) {
+func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, error) {
+	cfg = flac.MergeEncoderConfigForFactory(cfg, stream)
 	err := cfg.Validate()
 	if err != nil {
 		return nil, err
 	}
-	return &Encoder{config: cfg}, nil
+	return &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations)}, nil
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -149,7 +151,7 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 	if e.config.BlockingStrategy == flac.VariableBlocking {
 		number = e.sampleNumber
 	}
-	_, err := encodeFrameWithWriter(block, e.sampleRate, e.bitsPerSample, number, e.config, true, &e.writer)
+	_, err := encodeFrameWithWriter(block, e.sampleRate, e.bitsPerSample, number, e.config, true, &e.windows, &e.writer)
 	if err != nil {
 		return err
 	}

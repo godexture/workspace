@@ -78,7 +78,7 @@ func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int,
 	return nil
 }
 
-func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig) subframeCandidate {
+func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig, windows [][]float64) subframeCandidate {
 	wasted := 0
 	if options.EnableWastedBits {
 		wasted = commonTrailingZeros(samples, bitsPerSample)
@@ -91,7 +91,7 @@ func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig
 			reduced[i] = sample >> wasted
 		}
 	}
-	candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options)
+	candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options, windows)
 	if candidate.valid {
 		candidate.wastedBits = wasted
 		candidate.costBits += uint64(wasted)
@@ -99,7 +99,7 @@ func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig
 	return candidate
 }
 
-func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.EncoderConfig) subframeCandidate {
+func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.EncoderConfig, windows [][]float64) subframeCandidate {
 	best := subframeCandidate{kind: subframeKindVerbatim, costBits: uint64(8 + len(samples)*bitsPerSample), valid: true}
 	if isConstant(samples) {
 		best = subframeCandidate{kind: subframeKindConstant, costBits: uint64(8 + bitsPerSample), valid: true}
@@ -136,28 +136,35 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 	if maxLPC >= len(samples) {
 		maxLPC = len(samples) - 1
 	}
-	for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.EnableExhaustiveSearch) {
-		if coefficients == nil {
-			continue
-		}
-		quantized, shift, ok := quantizeLPCCoefficients(coefficients, lpcPrecision)
-		if !ok {
-			continue
-		}
-		residual := lpcResidual(samples, order, quantized, shift)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
-		if !ok {
-			releaseResidualBuffer(residual)
-			continue
-		}
-		candidate := subframeCandidate{kind: subframeKindLPC, order: order, residual: residual, rice: rice,
-			coeff: quantized, precision: lpcPrecision, shift: shift,
-			costBits: uint64(8+order*bitsPerSample+4+5+order*lpcPrecision) + rice.costBits, valid: true}
-		if candidate.costBits < best.costBits {
-			releaseSubframeCandidate(&best)
-			best = candidate
-		} else {
-			releaseSubframeCandidate(&candidate)
+	if len(windows) == 0 {
+		windows = [][]float64{nil}
+	}
+	for _, window := range windows {
+		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.EnableExhaustiveSearch, window) {
+			if coefficients == nil {
+				continue
+			}
+			for _, precision := range lpcPrecisionCandidates(options) {
+				quantized, shift, ok := quantizeLPCCoefficients(coefficients, precision)
+				if !ok {
+					continue
+				}
+				residual := lpcResidual(samples, order, quantized, shift)
+				rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
+				if !ok {
+					releaseResidualBuffer(residual)
+					continue
+				}
+				candidate := subframeCandidate{kind: subframeKindLPC, order: order, residual: residual, rice: rice,
+					coeff: quantized, precision: precision, shift: shift,
+					costBits: uint64(8+order*bitsPerSample+4+5+order*precision) + rice.costBits, valid: true}
+				if candidate.costBits < best.costBits {
+					releaseSubframeCandidate(&best)
+					best = candidate
+				} else {
+					releaseSubframeCandidate(&candidate)
+				}
+			}
 		}
 	}
 	return best
@@ -243,19 +250,42 @@ func fixedPrediction(samples []int64, index, order int) int64 {
 	}
 }
 
-const lpcPrecision = 15
+func lpcPrecisionCandidates(options flac.EncoderConfig) []int {
+	precision := options.LPCPrecision
+	if precision == 0 {
+		precision = flac.DefaultLPCPrecision
+	}
+	if !options.EnablePrecisionSearch {
+		return []int{precision}
+	}
+	low := min(5, precision)
+	result := make([]int, 0, 16-low)
+	for value := low; value <= 15; value++ {
+		result = append(result, value)
+	}
+	return result
+}
 
-func lpcCoefficientSets(samples []int64, maxOrder int, exhaustive bool) [][]float64 {
+func lpcCoefficientSets(samples []int64, maxOrder, precision int, exhaustive bool, window []float64) [][]float64 {
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
 	}
 	if maxOrder <= 0 {
 		return nil
 	}
+	if precision == 0 {
+		precision = flac.DefaultLPCPrecision
+	}
+	if window != nil && len(window) != len(samples) {
+		return nil
+	}
 	// Levinson-Durbin recursion; see standard linear-prediction texts.
 	values := make([]float64, len(samples))
 	for i, sample := range samples {
 		values[i] = float64(sample)
+		if window != nil {
+			values[i] *= window[i]
+		}
 	}
 	auto := make([]float64, maxOrder+1)
 	for lag := 0; lag <= maxOrder; lag++ {
@@ -300,7 +330,7 @@ func lpcCoefficientSets(samples []int64, maxOrder int, exhaustive bool) [][]floa
 			continue
 		}
 		residualSamples := len(samples) - order
-		estimates[order] = float64(residualSamples)*math.Max(0, 0.5*math.Log2(errorValue/float64(residualSamples))) + float64(8+order*lpcPrecision+4+5)
+		estimates[order] = float64(residualSamples)*math.Max(0, 0.5*math.Log2(errorValue/float64(residualSamples))) + float64(8+order*precision+4+5)
 	}
 	if exhaustive {
 		return sets
@@ -319,15 +349,11 @@ func lpcCoefficientSets(samples []int64, maxOrder int, exhaustive bool) [][]floa
 	if best == 0 {
 		return sets
 	}
-	return lpcCoefficientSetsForOrders(samples, maxOrder, best, next)
+	return lpcCoefficientSetsForOrders(values, maxOrder, best, next)
 }
 
 // Levinson-Durbin coefficient snapshots are retained only for selected orders.
-func lpcCoefficientSetsForOrders(samples []int64, maxOrder, first, second int) [][]float64 {
-	values := make([]float64, len(samples))
-	for i, sample := range samples {
-		values[i] = float64(sample)
-	}
+func lpcCoefficientSetsForOrders(values []float64, maxOrder, first, second int) [][]float64 {
 	auto := make([]float64, maxOrder+1)
 	for lag := range auto {
 		for i := lag; i < len(values); i++ {
