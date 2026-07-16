@@ -9,6 +9,7 @@ import (
 )
 
 func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {
+	t.Parallel()
 
 	var buf bytes.Buffer
 	muxer := wavpkg.NewMuxerEngine(&buf, wavpkg.MuxerConfig{})

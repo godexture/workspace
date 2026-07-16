@@ -13,6 +13,7 @@ type testConfig struct{}
 func (testConfig) NodeConfiguration() {}
 
 func TestBundleRegisterRoutesByManifestType(t *testing.T) {
+	t.Parallel()
 	muxerReg := NewRegistry[MuxerManifest]()
 	demuxerReg := NewRegistry[DemuxerManifest]()
 	encoderReg := NewRegistry[EncoderManifest]()
@@ -67,6 +68,7 @@ func (unknownManifest) ID() reflect.Type {
 }
 
 func TestBundleRegisterRejectsUnknownManifest(t *testing.T) {
+	t.Parallel()
 	b := Bundle{}
 
 	if err := b.Register(testConfig{}, unknownManifest{}); err == nil {
