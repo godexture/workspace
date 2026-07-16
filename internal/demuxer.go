@@ -23,6 +23,7 @@ type Demuxer struct {
 	scanner        *frame.Scanner
 	parsed         bool
 	started        bool
+	samplePos      uint64
 }
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
@@ -107,11 +108,12 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	packet.StreamIndex = 0
 	pts := header.Number
 	if !header.BlockingStrategy {
-		pts *= uint64(header.BlockSize)
+		pts = d.samplePos
 	}
 	packet.PTS = media.Pts(pts)
 	packet.DTS = media.Dts(pts)
 	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(header.SampleRate)))
+	d.samplePos += uint64(header.BlockSize)
 
 	return packet, 0, nil
 }
