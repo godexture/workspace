@@ -426,6 +426,29 @@ func TestEncodeFrame_FullBitstreamFeaturesRoundtrip(t *testing.T) {
 	}
 }
 
+func TestEncodeFrame_SearchModesRoundtrip(t *testing.T) {
+	samples := make([]int64, 256)
+	for i := range samples {
+		samples[i] = int64((i*i*17)%65536) - 32768
+	}
+	for _, exhaustive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exhaustive=%t", exhaustive), func(t *testing.T) {
+			cfg := flac.DefaultEncoderConfig
+			cfg.StreamableSubset = false
+			cfg.EnableExhaustiveSearch = exhaustive
+			data, err := EncodeFrame([][]int64{samples}, 44100, 16, 0, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := decoder.DecodeFrame(data, streamInfoFor(len(samples), 44100, 1, 16))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertSamplesEqual(t, decoded.Samples, [][]int64{samples})
+		})
+	}
+}
+
 func TestEncodeFrame_AllSupportedBitDepths(t *testing.T) {
 	for _, bitsPerSample := range []int{4, 8, 12, 16, 20, 24, 32} {
 		t.Run(fmt.Sprintf("%dbit", bitsPerSample), func(t *testing.T) {

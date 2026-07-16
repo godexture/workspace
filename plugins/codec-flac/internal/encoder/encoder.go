@@ -149,12 +149,11 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts) error {
 	if e.config.BlockingStrategy == flac.VariableBlocking {
 		number = e.sampleNumber
 	}
-	data, err := encodeFrameWithWriter(block, e.sampleRate, e.bitsPerSample, number, e.config, &e.writer)
+	_, err := encodeFrameWithWriter(block, e.sampleRate, e.bitsPerSample, number, e.config, true, &e.writer)
 	if err != nil {
 		return err
 	}
-	pkt := media.NewPacket(len(data))
-	copy(pkt.Data(), data)
+	pkt := media.NewPacketFromData(e.writer.DetachBytes())
 	pkt.MediaType = media.MediaAudio
 	pkt.StreamIndex = 0
 	pkt.PTS = pts

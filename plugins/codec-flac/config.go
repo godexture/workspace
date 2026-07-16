@@ -17,6 +17,7 @@ type EncoderConfig struct {
 	MaxRicePartitionOrder     optional.Optional[int]
 	EnableWastedBits          optional.Optional[bool]
 	EnableStereoDecorrelation optional.Optional[bool]
+	EnableExhaustiveSearch    optional.Optional[bool]
 	BlockingStrategy          optional.Optional[flac.BlockingStrategy]
 	StreamableSubset          optional.Optional[bool]
 }

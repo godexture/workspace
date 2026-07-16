@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 	"math"
+	stdbits "math/bits"
 	"sync"
 
 	"github.com/godexture/codec-flac/internal/flac"
@@ -42,7 +43,8 @@ func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int,
 	}
 	reduced := samples
 	if best.wastedBits > 0 {
-		reduced = make([]int64, len(samples))
+		reduced = getResidualBuffer(len(samples))
+		defer releaseResidualBuffer(reduced)
 		for i, sample := range samples {
 			reduced[i] = sample >> best.wastedBits
 		}
@@ -83,7 +85,8 @@ func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig
 	}
 	reduced := samples
 	if wasted > 0 {
-		reduced = make([]int64, len(samples))
+		reduced = getResidualBuffer(len(samples))
+		defer releaseResidualBuffer(reduced)
 		for i, sample := range samples {
 			reduced[i] = sample >> wasted
 		}
@@ -111,7 +114,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 	}
 	for order := 0; order <= maxFixed; order++ {
 		residual := fixedResidual(samples, order)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
 		if !ok {
 			releaseResidualBuffer(residual)
 			continue
@@ -133,7 +136,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 	if maxLPC >= len(samples) {
 		maxLPC = len(samples) - 1
 	}
-	for order, coefficients := range lpcCoefficientSets(samples, maxLPC) {
+	for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.EnableExhaustiveSearch) {
 		if coefficients == nil {
 			continue
 		}
@@ -142,7 +145,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 			continue
 		}
 		residual := lpcResidual(samples, order, quantized, shift)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
 		if !ok {
 			releaseResidualBuffer(residual)
 			continue
@@ -195,27 +198,14 @@ func commonTrailingZeros(samples []int64, bitsPerSample int) int {
 		value := uint64(sample)
 		zeros := bitsPerSample - 1
 		if value != 0 {
-			zeros = minInt(zeros, trailingZeros(value))
+			zeros = min(zeros, stdbits.TrailingZeros64(value))
 		}
-		common = minInt(common, zeros)
+		common = min(common, zeros)
+		if common == 0 {
+			return 0
+		}
 	}
 	return common
-}
-
-func trailingZeros(value uint64) int {
-	n := 0
-	for value&1 == 0 {
-		n++
-		value >>= 1
-	}
-	return n
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func isConstant(samples []int64) bool {
@@ -255,13 +245,14 @@ func fixedPrediction(samples []int64, index, order int) int64 {
 
 const lpcPrecision = 15
 
-func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
+func lpcCoefficientSets(samples []int64, maxOrder int, exhaustive bool) [][]float64 {
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
 	}
 	if maxOrder <= 0 {
 		return nil
 	}
+	// Levinson-Durbin recursion; see standard linear-prediction texts.
 	values := make([]float64, len(samples))
 	for i, sample := range samples {
 		values[i] = float64(sample)
@@ -278,6 +269,7 @@ func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
 		return nil
 	}
 	sets := make([][]float64, maxOrder+1)
+	estimates := make([]float64, maxOrder+1)
 	coeff := make([]float64, maxOrder)
 	errorValue := auto[0]
 	for i := 0; i < maxOrder; i++ {
@@ -302,7 +294,71 @@ func lpcCoefficientSets(samples []int64, maxOrder int) [][]float64 {
 		}
 		coeff[i] = reflection
 		errorValue *= 1 - reflection*reflection
-		sets[i+1] = append([]float64(nil), coeff[:i+1]...)
+		order := i + 1
+		if exhaustive {
+			sets[order] = append([]float64(nil), coeff[:order]...)
+			continue
+		}
+		residualSamples := len(samples) - order
+		estimates[order] = float64(residualSamples)*math.Max(0, 0.5*math.Log2(errorValue/float64(residualSamples))) + float64(8+order*lpcPrecision+4+5)
+	}
+	if exhaustive {
+		return sets
+	}
+	best, next := 0, 0
+	for order := 1; order <= maxOrder; order++ {
+		if estimates[order] == 0 {
+			continue
+		}
+		if best == 0 || estimates[order] < estimates[best] {
+			next, best = best, order
+		} else if next == 0 || estimates[order] < estimates[next] {
+			next = order
+		}
+	}
+	if best == 0 {
+		return sets
+	}
+	return lpcCoefficientSetsForOrders(samples, maxOrder, best, next)
+}
+
+// Levinson-Durbin coefficient snapshots are retained only for selected orders.
+func lpcCoefficientSetsForOrders(samples []int64, maxOrder, first, second int) [][]float64 {
+	values := make([]float64, len(samples))
+	for i, sample := range samples {
+		values[i] = float64(sample)
+	}
+	auto := make([]float64, maxOrder+1)
+	for lag := range auto {
+		for i := lag; i < len(values); i++ {
+			auto[lag] += values[i] * values[i-lag]
+		}
+	}
+	sets := make([][]float64, maxOrder+1)
+	coeff := make([]float64, maxOrder)
+	errorValue := auto[0]
+	for i := 0; i < maxOrder && errorValue > 0; i++ {
+		reflection := auto[i+1]
+		for j := 0; j < i; j++ {
+			reflection -= coeff[j] * auto[i-j]
+		}
+		reflection /= errorValue
+		if reflection <= -0.999999 || reflection >= 0.999999 || math.IsNaN(reflection) {
+			break
+		}
+		for j := 0; j < i/2; j++ {
+			front, back := coeff[j], coeff[i-1-j]
+			coeff[j], coeff[i-1-j] = front-reflection*back, back-reflection*front
+		}
+		if i%2 == 1 {
+			coeff[i/2] -= reflection * coeff[i/2]
+		}
+		coeff[i] = reflection
+		errorValue *= 1 - reflection*reflection
+		order := i + 1
+		if order == first || order == second {
+			sets[order] = append([]float64(nil), coeff[:order]...)
+		}
 	}
 	return sets
 }

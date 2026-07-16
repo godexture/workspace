@@ -37,6 +37,7 @@ type EncoderConfig struct {
 	MaxRicePartitionOrder     int
 	EnableWastedBits          bool
 	EnableStereoDecorrelation bool
+	EnableExhaustiveSearch    bool
 	BlockingStrategy          BlockingStrategy
 	StreamableSubset          bool
 }
