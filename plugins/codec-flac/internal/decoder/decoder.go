@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
 )
@@ -20,24 +20,21 @@ type hashState struct {
 }
 
 type Decoder struct {
-	config flac.DecoderConfig
-
-	buffer       []byte
-	bufferOffset int
-	workspace    decodeWorkspace
-	parsed       bool
-	info         streaminfo.StreamInfo
-	configErr    error
-	flushed      bool
-	terminalErr  error
-	frameCount   uint64
-	sampleCount  uint64
-	md5Hash      hashState
-	md5Scratch   []byte
+	pending     *media.Packet
+	workspace   decodeWorkspace
+	parsed      bool
+	info        streaminfo.StreamInfo
+	configErr   error
+	flushed     bool
+	terminalErr error
+	frameCount  uint64
+	sampleCount uint64
+	md5Hash     hashState
+	md5Scratch  []byte
 }
 
-func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
-	decoder := &Decoder{config: config}
+func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
+	decoder := &Decoder{}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -95,7 +92,10 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	d.appendInput(pkt.Data())
+	if d.pending != nil {
+		return errors.New("flac decoder has an unconsumed packet")
+	}
+	d.pending = media.NewPacketFromData(append([]byte(nil), pkt.Data()...))
 	return nil
 }
 
@@ -103,7 +103,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	if d.configErr != nil {
 		return nil, d.configErr
 	}
-	if len(d.input()) == 0 {
+	if d.pending == nil {
 		if d.flushed {
 			if d.terminalErr != nil {
 				return nil, d.terminalErr
@@ -114,43 +114,18 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	}
 
 	if !d.parsed {
-		consumed, err := d.parseStreamHeader()
-		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				if d.flushed {
-					return nil, err
-				}
-				return nil, engine.ErrEAGAIN
-			}
-			return nil, err
-		}
-		d.consumeInput(consumed)
-		d.parsed = true
-		d.initMD5()
+		return nil, errors.New("flac decoder requires STREAMINFO metadata or audio attributes")
 	}
-
-	if len(d.input()) == 0 {
-		if d.flushed {
-			d.terminalErr = d.validateEnd()
-			if d.terminalErr != nil {
-				return nil, d.terminalErr
-			}
-			return nil, engine.ErrEOF
-		}
-		return nil, engine.ErrEAGAIN
-	}
-
-	decoded, err := decodeFrame(d.input(), d.info, &d.workspace)
+	pkt := d.pending
+	d.pending = nil
+	defer pkt.Release()
+	decoded, err := decodeFrame(pkt.Data(), d.info, &d.workspace)
 	if err != nil {
-		if errors.Is(err, io.ErrUnexpectedEOF) {
-			if d.flushed {
-				return nil, err
-			}
-			return nil, engine.ErrEAGAIN
-		}
 		return nil, err
 	}
-	d.consumeInput(decoded.Bytes)
+	if decoded.Bytes != len(pkt.Data()) {
+		return nil, fmt.Errorf("FLAC packet contains trailing data: decoded %d of %d bytes", decoded.Bytes, len(pkt.Data()))
+	}
 	if err := d.validateFrame(decoded.Header); err != nil {
 		return nil, err
 	}
@@ -169,92 +144,6 @@ func (d *Decoder) Flush() error {
 	return nil
 }
 
-func (d *Decoder) parseStreamHeader() (int, error) {
-	data := d.input()
-	if len(data) < 4 {
-		return 0, io.ErrUnexpectedEOF
-	}
-	if string(data[:4]) != streaminfo.Marker {
-		return 0, errors.New("not a native FLAC stream")
-	}
-
-	offset := 4
-	seenStreamInfo := false
-	for {
-		if len(data)-offset < 4 {
-			return 0, io.ErrUnexpectedEOF
-		}
-		var header [4]byte
-		copy(header[:], data[offset:offset+4])
-		isLast, blockType, length := streaminfo.ParseBlockHeader(header)
-		if blockType > 6 {
-			return 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
-		}
-		if length < 0 || length > (1<<24)-1 {
-			return 0, errors.New("invalid FLAC metadata length")
-		}
-		offset += 4
-		if len(data)-offset < length {
-			return 0, io.ErrUnexpectedEOF
-		}
-
-		if blockType == streaminfo.MetadataTypeStreamInfo {
-			if seenStreamInfo {
-				return 0, errors.New("duplicate FLAC STREAMINFO block")
-			}
-			if length != streaminfo.Length {
-				return 0, fmt.Errorf("invalid FLAC STREAMINFO length: %d", length)
-			}
-			info, err := streaminfo.Parse(data[offset : offset+length])
-			if err != nil {
-				return 0, err
-			}
-			d.info = info
-			seenStreamInfo = true
-		} else if !seenStreamInfo {
-			return 0, errors.New("FLAC STREAMINFO must be the first metadata block")
-		}
-
-		offset += length
-		if isLast {
-			break
-		}
-	}
-
-	if !seenStreamInfo {
-		return 0, errors.New("missing FLAC STREAMINFO block")
-	}
-	return offset, nil
-}
-
-func (d *Decoder) input() []byte {
-	return d.buffer[d.bufferOffset:]
-}
-
-func (d *Decoder) appendInput(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	if d.bufferOffset == len(d.buffer) {
-		d.buffer = d.buffer[:0]
-		d.bufferOffset = 0
-	}
-	if cap(d.buffer)-len(d.buffer) < len(data) && d.bufferOffset > 0 {
-		unread := copy(d.buffer, d.buffer[d.bufferOffset:])
-		d.buffer = d.buffer[:unread]
-		d.bufferOffset = 0
-	}
-	d.buffer = append(d.buffer, data...)
-}
-
-func (d *Decoder) consumeInput(n int) {
-	d.bufferOffset += n
-	if d.bufferOffset == len(d.buffer) {
-		d.buffer = d.buffer[:0]
-		d.bufferOffset = 0
-	}
-}
-
 func (d *Decoder) initMD5() {
 	if d.info.MD5 != [16]byte{} {
 		d.md5Hash.hash = md5.New()
@@ -262,7 +151,7 @@ func (d *Decoder) initMD5() {
 	}
 }
 
-func (d *Decoder) validateFrame(header flac.FrameHeader) error {
+func (d *Decoder) validateFrame(header frame.Header) error {
 	if d.frameCount == 0 {
 		if header.Number != 0 {
 			return fmt.Errorf("invalid first FLAC frame number: %d", header.Number)

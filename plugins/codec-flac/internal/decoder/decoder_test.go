@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
-	"io"
 	"testing"
 
 	"github.com/godexture/codec-flac/internal/flac"
@@ -61,9 +60,16 @@ func TestDecoder_DecodeRawFrameRFC9639AppendixDExample1(t *testing.T) {
 	assertDecodeAppendixDExample1(t, data[42:], stream, flac.DecoderConfig{})
 }
 
-func TestDecoder_DecodeNativeStreamCompatibility(t *testing.T) {
+func TestDecoder_RejectsNativeStreamPacket(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
-	assertDecodeAppendixDExample1(t, data, media.StreamInfo{}, flac.DecoderConfig{})
+	packet := media.NewPacketFromData(data)
+	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	if err := decoder.SendPacket(packet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err == nil {
+		t.Fatal("expected native stream packet rejection")
+	}
 }
 
 func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.StreamInfo, config flac.DecoderConfig) {
@@ -108,23 +114,7 @@ func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.Strea
 	}
 }
 
-func TestDecoder_PartialStreamNeedsMoreData(t *testing.T) {
-	data := []byte("fLaC")
-	packet := media.NewPacket(len(data))
-	copy(packet.Data(), data)
-	packet.MediaType = media.MediaAudio
-
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
-	if err := decoder.SendPacket(packet); err != nil {
-		t.Fatalf("SendPacket() error = %v", err)
-	}
-	frame, err := decoder.ReceiveFrame()
-	if !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
-		t.Fatalf("expected ErrEAGAIN and nil frame for partial stream, got err=%v, frame=%v", err, frame)
-	}
-}
-
-func TestDecoder_DecodesFrameSplitAcrossPackets(t *testing.T) {
+func TestDecoder_RejectsIncompleteFramePacket(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
@@ -132,46 +122,29 @@ func TestDecoder_DecodesFrameSplitAcrossPackets(t *testing.T) {
 	decoder := NewDecoder(stream, flac.DecoderConfig{})
 	frameData := data[42:]
 
-	for i, value := range frameData {
-		packet := media.NewPacket(1)
-		packet.Data()[0] = value
-		if err := decoder.SendPacket(packet); err != nil {
-			t.Fatalf("SendPacket(%d) error = %v", i, err)
-		}
-		packet.Release()
-		frame, err := decoder.ReceiveFrame()
-		if i < len(frameData)-1 {
-			if !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
-				t.Fatalf("ReceiveFrame(%d) = (%v, %v), want (nil, EAGAIN)", i, frame, err)
-			}
-			continue
-		}
-		if err != nil || frame == nil {
-			t.Fatalf("ReceiveFrame(final) = (%v, %v), want a frame", frame, err)
-		}
+	packet := media.NewPacketFromData(frameData[:len(frameData)-1])
+	if err := decoder.SendPacket(packet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err == nil {
+		t.Fatal("expected incomplete frame rejection")
 	}
 }
 
-func TestDecoder_FlushRejectsIncompleteFrame(t *testing.T) {
+func TestDecoder_RejectsPacketWithTrailingFrame(t *testing.T) {
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
 	decoder := NewDecoder(stream, flac.DecoderConfig{})
-	packet := media.NewPacket(len(data[42:]) - 1)
-	copy(packet.Data(), data[42:len(data)-1])
+	packet := media.NewPacket(len(data[42:]) * 2)
+	copy(packet.Data(), data[42:])
+	copy(packet.Data()[len(data[42:]):], data[42:])
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
 	}
-	packet.Release()
-	if frame, err := decoder.ReceiveFrame(); !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
-		t.Fatalf("ReceiveFrame() = (%v, %v), want (nil, EAGAIN)", frame, err)
-	}
-	if err := decoder.Flush(); err != nil {
-		t.Fatalf("Flush() error = %v", err)
-	}
-	if frame, err := decoder.ReceiveFrame(); !errors.Is(err, io.ErrUnexpectedEOF) || frame != nil {
-		t.Fatalf("ReceiveFrame() after flush = (%v, %v), want (nil, unexpected EOF)", frame, err)
+	if _, err := decoder.ReceiveFrame(); err == nil {
+		t.Fatal("expected trailing packet data rejection")
 	}
 }
 

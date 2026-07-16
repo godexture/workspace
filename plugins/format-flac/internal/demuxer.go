@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	mediatime "github.com/godexture/core/domain/time"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 )
 
@@ -16,15 +19,11 @@ type Demuxer struct {
 	streamInfo     media.StreamInfo
 	metadataBundle metadata.Bundle
 	audioOffset    int64
-	packetSize     int
+	nativeInfo     streaminfo.StreamInfo
+	scanner        *frame.Scanner
 	parsed         bool
 	started        bool
 }
-
-const (
-	minFLACPacketSize = 64 << 10
-	maxFLACPacketSize = 1 << 20
-)
 
 func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
 	if r == nil {
@@ -72,7 +71,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 	d.metadataBundle = *globalMetadata
 	d.audioOffset = audioOffset
-	d.packetSize = flacPacketSize(info.MaxFrameSize)
+	d.nativeInfo = info
 	d.parsed = true
 
 	return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
@@ -92,44 +91,27 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		d.started = true
 	}
 
-	packet := media.NewPacket(d.packetSize)
-	n, err := io.ReadFull(d.r, packet.Data())
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		packet.Release()
-		return nil, 0, fmt.Errorf("read FLAC audio frames: %w", err)
+	if d.scanner == nil {
+		scanner, err := frame.NewScanner(d.r, d.nativeInfo)
+		if err != nil {
+			return nil, 0, err
+		}
+		d.scanner = scanner
 	}
-	if n == 0 {
-		packet.Release()
-		return nil, 0, io.EOF
+	data, header, err := d.scanner.Next()
+	if err != nil {
+		return nil, 0, err
 	}
-	if n < d.packetSize {
-		shortPacket := media.NewPacket(n)
-		copy(shortPacket.Data(), packet.Data()[:n])
-		packet.Release()
-		packet = shortPacket
-	}
+	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
-	packet.PTS = 0
-	packet.DTS = 0
+	pts := header.Number
+	if !header.BlockingStrategy {
+		pts *= uint64(header.BlockSize)
+	}
+	packet.PTS = media.Pts(pts)
+	packet.DTS = media.Dts(pts)
+	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(header.SampleRate)))
 
 	return packet, 0, nil
-}
-
-func flacPacketSize(maxFrameSize uint32) int {
-	size := uint32(minFLACPacketSize)
-	if maxFrameSize > size {
-		size = maxFrameSize
-	}
-	if size >= maxFLACPacketSize {
-		return maxFLACPacketSize
-	}
-
-	size--
-	size |= size >> 1
-	size |= size >> 2
-	size |= size >> 4
-	size |= size >> 8
-	size |= size >> 16
-	return int(size + 1)
 }

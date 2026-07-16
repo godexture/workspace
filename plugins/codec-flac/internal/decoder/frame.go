@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
@@ -26,13 +27,11 @@ func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
 func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorkspace) (*flac.Frame, error) {
 	reader := &workspace.reader
 	reader.Init(data, 0, int32(len(data))*8)
-	header, err := DecodeFrameHeader(reader, info)
+	header, err := frame.ParseHeader(data, info)
 	if err != nil {
 		return nil, err
 	}
-	if header.HeaderBytes < 1 || header.HeaderBytes > len(data) || hash.CRC8(data[:header.HeaderBytes-1]) != header.HeaderCRC {
-		return nil, errors.New("invalid FLAC frame header CRC-8")
-	}
+	reader.Seek(int32(header.HeaderBytes * 8))
 
 	samples := workspace.sampleBuffers(header.Channels, header.BlockSize)
 	for ch := 0; ch < header.Channels; ch++ {

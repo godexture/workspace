@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/hash"
 )
 
 func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {
@@ -135,7 +136,7 @@ func testFrame(blockSize, number, length int) []byte {
 	}
 	header := []byte{0xff, 0xf8, blockSizeCode<<4 | 9, 0x18, byte(number)}
 	header = append(header, extra...)
-	header = append(header, 0)
+	header = append(header, hash.CRC8(header))
 	frame := make([]byte, length)
 	copy(frame, header)
 	return frame

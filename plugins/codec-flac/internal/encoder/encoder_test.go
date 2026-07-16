@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
@@ -194,25 +195,23 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReceivePacket(second) error = %v", err)
 	}
-	combined := media.NewPacket(len(firstPacket.Data()) + len(secondPacket.Data()))
-	copy(combined.Data(), firstPacket.Data())
-	copy(combined.Data()[len(firstPacket.Data()):], secondPacket.Data())
-	firstPacket.Release()
-	secondPacket.Release()
-
 	dec := decoder.NewDecoder(media.StreamInfo{MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{
 		SampleRate: 44100, Format: media.SampleFormatS16, BitsPerSample: 16, ChannelLayout: media.LayoutMono1,
 	}}}, flac.DecoderConfig{})
-	if err := dec.SendPacket(combined); err != nil {
-		t.Fatalf("decoder SendPacket() error = %v", err)
+	if err := dec.SendPacket(firstPacket); err != nil {
+		t.Fatalf("decoder SendPacket(first) error = %v", err)
 	}
-	combined.Release()
+	firstPacket.Release()
 	first, err := dec.ReceiveFrame()
 	if err != nil {
 		t.Fatalf("ReceiveFrame(first) error = %v", err)
 	}
 	firstAudio := (*first).(*media.AudioFrame)
 	firstPCM := append([]byte(nil), firstAudio.Planes()[0]...)
+	if err := dec.SendPacket(secondPacket); err != nil {
+		t.Fatalf("decoder SendPacket(second) error = %v", err)
+	}
+	secondPacket.Release()
 	second, err := dec.ReceiveFrame()
 	if err != nil {
 		t.Fatalf("ReceiveFrame(second) error = %v", err)
@@ -475,20 +474,19 @@ func TestWriteFrameHeader_UTF8BoundariesAndCRC(t *testing.T) {
 	for _, frameNumber := range []uint64{0x7f, 0x80, 0x7ff, 0x800, 0xffff, 0x10000, 0x1fffff, 0x200000, 0x3ffffff, 0x4000000} {
 		t.Run(fmt.Sprintf("frame-%x", frameNumber), func(t *testing.T) {
 			w := bits.NewWriter()
-			header := &flac.FrameHeader{
+			header := &frame.Header{
 				BlockSize: 4096, SampleRate: 44100, Channels: 2, ChannelAssignment: 1, BitsPerSample: 16, Number: frameNumber,
 			}
-			if err := EncodeFrameHeader(w, header, false); err != nil {
-				t.Fatalf("EncodeFrameHeader() error = %v", err)
+			if err := frame.EncodeHeader(w, header, false); err != nil {
+				t.Fatalf("EncodeHeader() error = %v", err)
 			}
 			data := w.Bytes()
 			if hash.CRC8(data[:len(data)-1]) != data[len(data)-1] {
 				t.Fatalf("invalid header CRC for frame number %#x", frameNumber)
 			}
-			r := bits.New(data)
-			decHeader, err := decoder.DecodeFrameHeader(r, streamInfoFor(4096, 44100, 2, 16))
+			decHeader, err := frame.ParseHeader(data, streamInfoFor(4096, 44100, 2, 16))
 			if err != nil {
-				t.Fatalf("DecodeFrameHeader() error = %v", err)
+				t.Fatalf("ParseHeader() error = %v", err)
 			}
 			if decHeader.Number != frameNumber {
 				t.Fatalf("frame number = %#x, want %#x", decHeader.Number, frameNumber)

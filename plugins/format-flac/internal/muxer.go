@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 )
 
@@ -126,14 +127,14 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if err := m.WriteHeader(); err != nil {
 		return err
 	}
-	frame, err := parseFrameHeader(packet.Data())
+	parsedFrame, err := frame.ParseHeader(packet.Data(), m.info)
 	if err != nil {
 		return fmt.Errorf("parse FLAC frame header: %w", err)
 	}
 	if !m.headerWritten {
 		info := m.info
-		if frame.fixed {
-			blockSize := streamInfoBlockSize(frame.blockSize)
+		if !parsedFrame.BlockingStrategy {
+			blockSize := streamInfoBlockSize(parsedFrame.BlockSize)
 			info.MinBlockSize = blockSize
 			info.MaxBlockSize = blockSize
 		}
@@ -144,7 +145,7 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if err := writeAll(m.w, packet.Data()); err != nil {
 		return fmt.Errorf("write FLAC frame: %w", err)
 	}
-	m.recordFrame(frame.blockSize, len(packet.Data()))
+	m.recordFrame(parsedFrame.BlockSize, len(packet.Data()))
 	return nil
 }
 
