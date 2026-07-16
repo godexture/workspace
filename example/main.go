@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/godexture/sdk/timer"
+
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/routing"
 
-	flacCodec "github.com/godexture/codec-flac"
 	flacFormat "github.com/godexture/format-flac"
-	"github.com/godexture/sdk/optional"
 
+	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-mp3"
 	_ "github.com/godexture/codec-pcm"
 	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-mp3"
+	_ "github.com/godexture/format-wav"
 )
 
 const targetCodec = media.CodecFLAC
@@ -51,10 +53,7 @@ func main() {
 		Input:       inputFile,
 		Output:      outputFile,
 		TargetCodec: targetCodec,
-		EncodeConfig: flacCodec.EncoderConfig{
-			EnableExhaustiveSearch: optional.Some(true),
-		},
-		MuxConfig: flacFormat.MuxerConfig{},
+		MuxConfig:   flacFormat.MuxerConfig{},
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)
@@ -75,11 +74,12 @@ func main() {
 	runner := godec.NewRunner()
 
 	fmt.Printf("Starting conversion from %s to %s (%s)\n", inputPath, outputPath, targetCodec)
+	timer := timer.New()
 
 	if err := runner.Run(context.Background(), nodes); err != nil {
 		fmt.Printf("Pipeline execution failed: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Successfully converted %s to %s (%s)\n", inputPath, outputPath, targetCodec)
+	fmt.Printf("Successfully converted %s to %s (%s) in %v\n", inputPath, outputPath, targetCodec, timer.Elapsed())
 }
