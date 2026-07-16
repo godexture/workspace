@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
@@ -67,7 +68,7 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 	defer releaseSubframeCandidates(candidates)
 	defer releaseResidualBuffers(scratch)
 
-	header := &flac.FrameHeader{
+	header := &frame.Header{
 		BlockSize:         blockSize,
 		SampleRate:        sampleRate,
 		ChannelAssignment: assignmentForChannels(assignment, len(samples)),
@@ -76,7 +77,7 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 		BlockingStrategy:  options.BlockingStrategy == flac.VariableBlocking,
 	}
 
-	if err := EncodeFrameHeader(w, header, options.StreamableSubset); err != nil {
+	if err := frame.EncodeHeader(w, header, options.StreamableSubset); err != nil {
 		return nil, err
 	}
 	for ch := range channels {

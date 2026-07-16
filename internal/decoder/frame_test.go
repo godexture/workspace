@@ -45,4 +45,3 @@ func TestDecodeFrame_TruncatedFooterDetected(t *testing.T) {
 		t.Fatalf("DecodeFrame() error = %v, want io.ErrUnexpectedEOF", err)
 	}
 }
-
