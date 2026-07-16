@@ -115,6 +115,8 @@ func BitDepthFromSampleFormat(format media.SampleFormat) int {
 		return 8
 	case media.SampleFormatS16:
 		return 16
+	case media.SampleFormatS24:
+		return 24
 	case media.SampleFormatS32:
 		return 32
 	default:

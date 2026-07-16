@@ -8,17 +8,17 @@ import (
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/routing"
+	flac "github.com/godexture/format-flac"
 
 	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-mp3"
 	_ "github.com/godexture/codec-pcm"
 	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-mp3"
-	wav "github.com/godexture/format-wav"
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	if len(os.Args) <= 2 {
 		fmt.Println("Usage: go run . <input> <output.wav>")
 		return
 	}
@@ -46,8 +46,8 @@ func main() {
 	spec := routing.ConversionSpec{
 		Input:       inputFile,
 		Output:      outputFile,
-		TargetCodec: media.CodecLPCM,
-		MuxConfig:   wav.MuxerConfig{},
+		TargetCodec: media.CodecFLAC,
+		MuxConfig:   flac.MuxerConfig{},
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)

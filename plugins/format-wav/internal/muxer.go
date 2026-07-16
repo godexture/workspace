@@ -267,8 +267,15 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)
 
 	if useExtensible {
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))            // cbSize
-		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)         // validBitsPerSample
+		// LPCM samples narrower than their container are left-justified by the
+		// pcm encoder, so the significant width goes out as validBitsPerSample.
+		validBits := bitsPerSample
+		if (attr.Codec == media.CodecLPCM || attr.Codec == "") &&
+			attr.Audio.BitsPerSample > 0 && attr.Audio.BitsPerSample < int(bitsPerSample) {
+			validBits = uint16(attr.Audio.BitsPerSample)
+		}
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))     // cbSize
+		binary.Write(&headerBuf, binary.LittleEndian, validBits)      // validBitsPerSample
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
 
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
