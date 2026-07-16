@@ -10,6 +10,7 @@ import (
 )
 
 func TestDecoder_EmptyPacket(t *testing.T) {
+	t.Parallel()
 	decoder := internal.NewDecoder()
 	packet := media.NewPacket(0)
 	err := decoder.SendPacket(packet)
@@ -24,6 +25,7 @@ func TestDecoder_EmptyPacket(t *testing.T) {
 }
 
 func TestEncoder_Stub(t *testing.T) {
+	t.Parallel()
 	encoder := internal.NewEncoder(domain.EncoderConfig{})
 	audioFrame := media.NewAudioFrame(media.SampleFormatS16, media.LayoutStereo2_0, 44100, 1024)
 	var f media.Frame = audioFrame

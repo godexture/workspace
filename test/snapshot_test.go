@@ -16,6 +16,7 @@ import (
 var compareOption = testutil.CompareOptions{MaxAbsDiff: 1e-6, MaxRMSE: 1e-6, MinSNR: 100.0}
 
 func TestSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, fileName := range config.EnumerateTestdataFiles() {
 		t.Run(fileName, func(t *testing.T) {
 			t.Parallel()

@@ -9,6 +9,7 @@ import (
 )
 
 func TestRoundtrip(t *testing.T) {
+	t.Parallel()
 	for _, fileName := range config.EnumerateTestdataFiles() {
 		t.Run(fileName, func(t *testing.T) {
 			t.Parallel()
