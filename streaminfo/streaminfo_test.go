@@ -3,6 +3,7 @@ package streaminfo
 import "testing"
 
 func TestEncodeParseRoundTrip(t *testing.T) {
+	t.Parallel()
 	want := StreamInfo{
 		MinBlockSize:  4096,
 		MaxBlockSize:  8192,
