@@ -219,3 +219,69 @@ func TestG711Endianness(t *testing.T) {
 		t.Errorf("BigEndian encode mismatch: got %x want %x", outPktBE.Data(), in)
 	}
 }
+
+func TestLeftJustifyPCM(t *testing.T) {
+	tests := []struct {
+		name          string
+		format        media.SampleFormat
+		bitsPerSample int
+		in            []byte
+		want          []byte
+	}{
+		{
+			name:          "S16 full width passthrough",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 16,
+			in:            []byte{0x34, 0x12},
+			want:          []byte{0x34, 0x12},
+		},
+		{
+			name:          "S16 unset bits passthrough",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 0,
+			in:            []byte{0x34, 0x12},
+			want:          []byte{0x34, 0x12},
+		},
+		{
+			// 12-bit -0x001 carried in S16 becomes full-scale -0x0010.
+			name:          "S16 12-bit shifts left 4",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 12,
+			in:            []byte{0xFF, 0x0F, 0x01, 0x00},
+			want:          []byte{0xF0, 0xFF, 0x10, 0x00},
+		},
+		{
+			// 20-bit -0x00001 carried in S24 becomes full-scale -0x00010.
+			name:          "S24 20-bit shifts left 4",
+			format:        media.SampleFormatS24,
+			bitsPerSample: 20,
+			in:            []byte{0xFF, 0xFF, 0x0F, 0x01, 0x00, 0x00},
+			want:          []byte{0xF0, 0xFF, 0xFF, 0x10, 0x00, 0x00},
+		},
+		{
+			// 24-bit -1 carried in S32 becomes full-scale -0x100.
+			name:          "S32 24-bit shifts left 8",
+			format:        media.SampleFormatS32,
+			bitsPerSample: 24,
+			in:            []byte{0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00},
+			want:          []byte{0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x00},
+		},
+		{
+			// 25-bit -1 carried in S32 becomes full-scale -0x80.
+			name:          "S32 25-bit shifts left 7",
+			format:        media.SampleFormatS32,
+			bitsPerSample: 25,
+			in:            []byte{0xFF, 0xFF, 0xFF, 0xFF},
+			want:          []byte{0x80, 0xFF, 0xFF, 0xFF},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := leftJustifyPCM(tt.in, tt.format, tt.bitsPerSample)
+			if !bytes.Equal(got, tt.want) {
+				t.Errorf("leftJustifyPCM() = %x, want %x", got, tt.want)
+			}
+		})
+	}
+}

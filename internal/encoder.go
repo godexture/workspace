@@ -57,7 +57,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		return errors.New("codec-pcm encoder expected *media.AudioFrame")
 	}
 
-	data := af.Planes()[0]
+	data := leftJustifyPCM(af.Planes()[0], af.Format, af.BitsPerSample)
 	if e.config.CodecID != media.CodecLPCM {
 		if af.Format == media.SampleFormatF32 {
 			data = convertF32ToS16(data)
@@ -180,6 +180,40 @@ func (e *Encoder) resolveADPCMParameters(channels int) (params.ADPCM, error) {
 		return e.config.ADPCM, nil
 	}
 	return params.Default(e.config.CodecID, channels)
+}
+
+// leftJustifyPCM shifts samples that occupy only the low BitsPerSample bits of
+// their container format (e.g. 24-bit FLAC output carried in S24/S32 frames)
+// up to full scale, which is what raw LPCM byte streams are expected to hold.
+func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) []byte {
+	containerBits := format.BytesPerSample() * 8
+	if bitsPerSample <= 0 || bitsPerSample >= containerBits {
+		return data
+	}
+	shift := uint(containerBits - bitsPerSample)
+	out := make([]byte, len(data))
+	switch format {
+	case media.SampleFormatS16:
+		for i := 0; i+2 <= len(data); i += 2 {
+			v := int16(binary.LittleEndian.Uint16(data[i:i+2])) << shift
+			binary.LittleEndian.PutUint16(out[i:i+2], uint16(v))
+		}
+	case media.SampleFormatS24:
+		for i := 0; i+3 <= len(data); i += 3 {
+			v := (uint32(data[i]) | uint32(data[i+1])<<8 | uint32(data[i+2])<<16) << shift
+			out[i] = byte(v)
+			out[i+1] = byte(v >> 8)
+			out[i+2] = byte(v >> 16)
+		}
+	case media.SampleFormatS32:
+		for i := 0; i+4 <= len(data); i += 4 {
+			v := int32(binary.LittleEndian.Uint32(data[i:i+4])) << shift
+			binary.LittleEndian.PutUint32(out[i:i+4], uint32(v))
+		}
+	default:
+		return data
+	}
+	return out
 }
 
 func convertF32ToS16(f32Data []byte) []byte {
