@@ -33,6 +33,26 @@ type StreamInfo struct {
 	MD5           [16]byte
 }
 
+// Encode serializes a STREAMINFO metadata block payload.
+func Encode(info StreamInfo) []byte {
+	data := make([]byte, Length)
+	binary.BigEndian.PutUint16(data[0:2], info.MinBlockSize)
+	binary.BigEndian.PutUint16(data[2:4], info.MaxBlockSize)
+	data[4] = byte(info.MinFrameSize >> 16)
+	data[5] = byte(info.MinFrameSize >> 8)
+	data[6] = byte(info.MinFrameSize)
+	data[7] = byte(info.MaxFrameSize >> 16)
+	data[8] = byte(info.MaxFrameSize >> 8)
+	data[9] = byte(info.MaxFrameSize)
+	data[10] = byte(info.SampleRate >> 12)
+	data[11] = byte(info.SampleRate >> 4)
+	data[12] = byte(info.SampleRate<<4) | byte((info.Channels-1)<<1) | byte((info.BitsPerSample-1)>>4)
+	data[13] = byte((info.BitsPerSample-1)<<4) | byte(info.TotalSamples>>32)
+	binary.BigEndian.PutUint32(data[14:18], uint32(info.TotalSamples))
+	copy(data[18:34], info.MD5[:])
+	return data
+}
+
 // ParseBlockHeader decodes a 4-byte FLAC metadata block header into its
 // last-block flag, block type, and payload length.
 func ParseBlockHeader(header [4]byte) (isLast bool, blockType byte, length int) {

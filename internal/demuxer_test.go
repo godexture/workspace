@@ -214,6 +214,9 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 	if err := muxer.WriteHeader(); err != nil {
 		t.Fatalf("WriteHeader() error = %v", err)
 	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
 
 	roundtrip, err := NewDemuxer(bytes.NewReader(output.Bytes()))
 	if err != nil {
