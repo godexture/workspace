@@ -6,6 +6,7 @@ import (
 )
 
 func TestEncoder_addURLFrame(t *testing.T) {
+	t.Parallel()
 	e := &encoder{opts: MarshalOptions{Version: Version3}}
 	e.addURLFrame("WOAR", "https://example.com")
 	if len(e.frames) != 1 {
@@ -24,6 +25,7 @@ func TestEncoder_addURLFrame(t *testing.T) {
 }
 
 func TestEncoder_addRawAttachedPictureFrame(t *testing.T) {
+	t.Parallel()
 	e := &encoder{opts: MarshalOptions{Version: Version3}}
 	
 	// Create a dummy APIC payload
@@ -40,6 +42,7 @@ func TestEncoder_addRawAttachedPictureFrame(t *testing.T) {
 }
 
 func TestEncoder_addRawAttachedPictureFrame_V2(t *testing.T) {
+	t.Parallel()
 	e := &encoder{opts: MarshalOptions{Version: Version2}}
 	
 	// Create a dummy APIC payload

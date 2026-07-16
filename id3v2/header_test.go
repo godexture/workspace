@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseHeader(t *testing.T) {
+	t.Parallel()
 	header, err := ParseHeader([]byte{'I', 'D', '3', 0x04, 0x00, 0x10, 0x00, 0x00, 0x00, 0x21})
 	if err != nil {
 		t.Fatalf("ParseHeader returned error: %v", err)
@@ -27,6 +28,7 @@ func TestParseHeader(t *testing.T) {
 }
 
 func TestParseHeaderRejectsInvalidSize(t *testing.T) {
+	t.Parallel()
 	_, err := ParseHeader([]byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00})
 	if !errors.Is(err, ErrInvalidHeader) {
 		t.Fatalf("ParseHeader error = %v, want ErrInvalidHeader", err)
@@ -34,6 +36,7 @@ func TestParseHeaderRejectsInvalidSize(t *testing.T) {
 }
 
 func TestSkip(t *testing.T) {
+	t.Parallel()
 	tag1 := append([]byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}, []byte("abc")...)
 	tag2 := append([]byte{'I', 'D', '3', 0x04, 0x00, 0x10, 0x00, 0x00, 0x00, 0x02}, []byte("de1234567890")...)
 	payload := append(append(tag1, tag2...), []byte{0xFF, 0xFB, 0x90, 0x00}...)

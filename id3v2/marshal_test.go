@@ -12,6 +12,7 @@ import (
 )
 
 func TestMarshal_RoundTrip_ImportantMetadata(t *testing.T) {
+	t.Parallel()
 	dateVal, _ := date.NewPartial("2024-06-17")
 
 	bundle := metadata.NewBundle()
@@ -55,6 +56,7 @@ func TestMarshal_RoundTrip_ImportantMetadata(t *testing.T) {
 }
 
 func TestMarshalV2_RoundTrip_KeyThumbnails(t *testing.T) {
+	t.Parallel()
 	picture := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
 	bundle := metadata.NewBundle()
 	bundle.Set(metadata.KeyThumbnail{{
@@ -96,9 +98,11 @@ func TestMarshalV2_RoundTrip_KeyThumbnails(t *testing.T) {
 }
 
 func TestMarshal_RoundTrip_Versions(t *testing.T) {
+	t.Parallel()
 	versions := []id3v2.Version{id3v2.Version2, id3v2.Version3, id3v2.Version4}
 	for _, v := range versions {
 		t.Run(fmt.Sprintf("Version%d", v), func(t *testing.T) {
+	t.Parallel()
 			dateVal, _ := date.NewPartial("2024-06-17")
 
 			bundle := metadata.NewBundle()
@@ -154,6 +158,7 @@ func TestMarshal_RoundTrip_Versions(t *testing.T) {
 }
 
 func TestMarshal_RoundTrip_EncodingWarning(t *testing.T) {
+	t.Parallel()
 	bundle := metadata.NewBundle()
 	bundle.Set(metadata.KeyTitle("Song"))
 
