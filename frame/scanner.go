@@ -56,6 +56,16 @@ func frameReadSize(maxFrameSize uint32) int {
 	return int(size + 1)
 }
 
+func (s *Scanner) extractFrame(boundary int, hdr Header) ([]byte, Header, error) {
+	data := append([]byte(nil), s.buffer[:boundary]...)
+	s.buffer = append(s.buffer[:0], s.buffer[boundary:]...)
+	s.scanPos = 2
+	s.crc = 0
+	s.crcPos = 0
+	hdr.FrameBytes = len(data)
+	return data, hdr, nil
+}
+
 func (s *Scanner) Next() ([]byte, Header, error) {
 	if err := s.ensureHeader(); err != nil {
 		return nil, Header{}, err
@@ -65,15 +75,8 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 		return nil, Header{}, fmt.Errorf("parse FLAC frame header: %w", err)
 	}
 	for {
-		if boundary, next, ok := s.findBoundary(current); ok {
-			data := append([]byte(nil), s.buffer[:boundary]...)
-			s.buffer = append(s.buffer[:0], s.buffer[boundary:]...)
-			s.scanPos = 2
-			s.crc = 0
-			s.crcPos = 0
-			current.FrameBytes = len(data)
-			_ = next
-			return data, current, nil
+		if boundary, ok := s.findBoundary(current); ok {
+			return s.extractFrame(boundary, current)
 		}
 		if s.eof {
 			if len(s.buffer) < 3 {
@@ -83,13 +86,7 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 			if hash.CRC16(s.buffer[:len(s.buffer)-2]) != footer {
 				return nil, Header{}, errors.New("invalid FLAC frame footer CRC-16")
 			}
-			data := append([]byte(nil), s.buffer...)
-			s.buffer = nil
-			s.scanPos = 2
-			s.crc = 0
-			s.crcPos = 0
-			current.FrameBytes = len(data)
-			return data, current, nil
+			return s.extractFrame(len(s.buffer), current)
 		}
 		if len(s.buffer) > s.maxFrameSize {
 			return nil, Header{}, fmt.Errorf("FLAC frame exceeds maximum size %d without a valid boundary", s.maxFrameSize)
@@ -123,7 +120,7 @@ func (s *Scanner) ensureHeader() error {
 	}
 }
 
-func (s *Scanner) findBoundary(current Header) (int, Header, bool) {
+func (s *Scanner) findBoundary(current Header) (int, bool) {
 	for pos := s.scanPos; pos+2 <= len(s.buffer); pos++ {
 		if s.buffer[pos] != 0xff || s.buffer[pos+1]&0xfc != 0xf8 {
 			continue
@@ -132,7 +129,7 @@ func (s *Scanner) findBoundary(current Header) (int, Header, bool) {
 		if err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) {
 				s.scanPos = pos
-				return 0, Header{}, false
+				return 0, false
 			}
 			continue
 		}
@@ -147,10 +144,10 @@ func (s *Scanner) findBoundary(current Header) (int, Header, bool) {
 		if s.crc != footer {
 			continue
 		}
-		return pos, next, true
+		return pos, true
 	}
 	s.scanPos = max(2, len(s.buffer)-1)
-	return 0, Header{}, false
+	return 0, false
 }
 
 func continuous(current, next Header) bool {
@@ -173,25 +170,14 @@ func (s *Scanner) readMore() error {
 	s.buffer = s.buffer[:cap(s.buffer)]
 	n, err := s.r.Read(s.buffer[buffered:])
 	s.buffer = s.buffer[:buffered+n]
-	if n > 0 {
-		returnRead := err
-		if returnRead == io.EOF {
-			s.eof = true
-			return nil
-		}
-		if returnRead != nil {
-			return fmt.Errorf("read FLAC audio frames: %w", returnRead)
-		}
-		return nil
-	}
-	if err == io.EOF {
+
+	switch {
+	case err == io.EOF:
 		s.eof = true
 		return nil
-	}
-	if err != nil {
+	case err != nil:
 		return fmt.Errorf("read FLAC audio frames: %w", err)
-	}
-	if n == 0 {
+	case n == 0:
 		return io.ErrNoProgress
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/hash"
 )
@@ -90,6 +91,44 @@ func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
 	}
 	if info.TotalSamples != 9216 {
 		t.Fatalf("TotalSamples = %d, want 9216", info.TotalSamples)
+	}
+}
+
+func TestMuxerRoundtripTypedMetadata(t *testing.T) {
+	var output bytes.Buffer
+	muxer := NewMuxer(&output)
+	addTestStream(t, muxer)
+	bundle := metadata.NewBundle()
+	bundle.Set(metadata.KeyTitle("Song"))
+	bundle.PushBack(metadata.KeyArtist("Artist"))
+	bundle.Set(metadata.KeyThumbnail([]metadata.Thumbnail{{
+		Data:        []byte{1, 2, 3},
+		MIMEType:    "image/png",
+		PictureType: metadata.PictureTypeFrontCover,
+	}}))
+	if err := muxer.SetMetadata(*bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatal(err)
+	}
+
+	demuxer, err := NewDemuxer(bytes.NewReader(output.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, got, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title := metadata.Get[metadata.KeyTitle](&got); title != "Song" {
+		t.Fatalf("title = %q", title)
+	}
+	if artists := metadata.Enumerate[metadata.KeyArtist](&got); len(artists) != 1 || artists[0] != "Artist" {
+		t.Fatalf("artists = %#v", artists)
+	}
+	if thumbnails := metadata.Get[metadata.KeyThumbnail](&got); len(thumbnails) != 1 || !bytes.Equal(thumbnails[0].Data, []byte{1, 2, 3}) {
+		t.Fatalf("thumbnails = %#v", thumbnails)
 	}
 }
 

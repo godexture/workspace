@@ -11,6 +11,7 @@ import (
 	mediatime "github.com/godexture/core/domain/time"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	vc "github.com/godexture/metadata-vorbiscomment"
 )
 
 type Demuxer struct {
@@ -48,7 +49,27 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 
 	globalMetadata := metadata.NewBundle()
 	for _, block := range extraBlocks {
-		globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
+		var header [4]byte
+		copy(header[:], block[:4])
+		_, blockType, _ := streaminfo.ParseBlockHeader(header)
+		payload := block[4:]
+
+		switch blockType {
+		case streaminfo.MetadataTypeVorbisComment:
+			if err := vc.Parse(payload, globalMetadata); err != nil {
+				globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
+			}
+		case streaminfo.MetadataTypePicture:
+			thumbnail, err := vc.ParsePicture(payload)
+			if err != nil {
+				globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
+				continue
+			}
+			thumbnails := metadata.Get[metadata.KeyThumbnail](globalMetadata)
+			globalMetadata.Set(metadata.KeyThumbnail(append(thumbnails, thumbnail)))
+		default:
+			globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
+		}
 	}
 	if info.TotalSamples > 0 && info.SampleRate > 0 {
 		seconds := float64(info.TotalSamples) / float64(info.SampleRate)
