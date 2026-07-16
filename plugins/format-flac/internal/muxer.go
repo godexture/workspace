@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,11 +15,22 @@ import (
 type Muxer struct {
 	w io.Writer
 
-	streamSet     bool
-	stream        media.StreamInfo
-	metadata      metadata.Bundle
-	headerWritten bool
-	closed        bool
+	streamSet      bool
+	stream         media.StreamInfo
+	metadata       metadata.Bundle
+	info           streaminfo.StreamInfo
+	extraBlocks    []metadataBlock
+	headerPrepared bool
+	headerWritten  bool
+	closed         bool
+
+	totalSamples     uint64
+	minBlockSize     uint16
+	maxBlockSize     uint16
+	minFrameSize     uint32
+	maxFrameSize     uint32
+	pendingBlockSize uint16
+	frameCount       uint64
 }
 
 func NewMuxer(w io.Writer) *Muxer {
@@ -52,7 +62,7 @@ func (m *Muxer) SetMetadata(meta metadata.Bundle) error {
 }
 
 func (m *Muxer) WriteHeader() error {
-	if m.headerWritten {
+	if m.headerPrepared {
 		return nil
 	}
 	if m.w == nil {
@@ -62,7 +72,7 @@ func (m *Muxer) WriteHeader() error {
 		return errors.New("flac muxer stream is not configured")
 	}
 
-	streamInfoBlock, err := buildStreamInfo(m.stream)
+	info, err := buildStreamInfo(m.stream)
 	if err != nil {
 		return err
 	}
@@ -71,17 +81,25 @@ func (m *Muxer) WriteHeader() error {
 		return err
 	}
 
+	m.info = info
+	m.extraBlocks = extraBlocks
+	m.headerPrepared = true
+	return nil
+}
+
+func (m *Muxer) writeHeader(info streaminfo.StreamInfo) error {
 	if err := writeAll(m.w, []byte(streaminfo.Marker)); err != nil {
 		return fmt.Errorf("write FLAC marker: %w", err)
 	}
-	if err := writeMetadataBlockHeader(m.w, len(extraBlocks) == 0, streaminfo.MetadataTypeStreamInfo, len(streamInfoBlock)); err != nil {
+	streamInfoBlock := streaminfo.Encode(info)
+	if err := writeMetadataBlockHeader(m.w, len(m.extraBlocks) == 0, streaminfo.MetadataTypeStreamInfo, len(streamInfoBlock)); err != nil {
 		return fmt.Errorf("write FLAC STREAMINFO header: %w", err)
 	}
 	if err := writeAll(m.w, streamInfoBlock); err != nil {
 		return fmt.Errorf("write FLAC STREAMINFO: %w", err)
 	}
-	for i, block := range extraBlocks {
-		if err := writeMetadataBlockHeader(m.w, i == len(extraBlocks)-1, block.blockType, len(block.payload)); err != nil {
+	for i, block := range m.extraBlocks {
+		if err := writeMetadataBlockHeader(m.w, i == len(m.extraBlocks)-1, block.blockType, len(block.payload)); err != nil {
 			return fmt.Errorf("write FLAC metadata header: %w", err)
 		}
 		if err := writeAll(m.w, block.payload); err != nil {
@@ -108,9 +126,25 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if err := m.WriteHeader(); err != nil {
 		return err
 	}
+	frame, err := parseFrameHeader(packet.Data())
+	if err != nil {
+		return fmt.Errorf("parse FLAC frame header: %w", err)
+	}
+	if !m.headerWritten {
+		info := m.info
+		if frame.fixed {
+			blockSize := streamInfoBlockSize(frame.blockSize)
+			info.MinBlockSize = blockSize
+			info.MaxBlockSize = blockSize
+		}
+		if err := m.writeHeader(info); err != nil {
+			return err
+		}
+	}
 	if err := writeAll(m.w, packet.Data()); err != nil {
 		return fmt.Errorf("write FLAC frame: %w", err)
 	}
+	m.recordFrame(frame.blockSize, len(packet.Data()))
 	return nil
 }
 
@@ -121,8 +155,28 @@ func (m *Muxer) WriteTrailer() error {
 	if !m.streamSet {
 		return errors.New("flac muxer stream is not configured")
 	}
+	if err := m.WriteHeader(); err != nil {
+		return err
+	}
 	if !m.headerWritten {
-		return errors.New("flac muxer header was never written")
+		if err := m.writeHeader(m.info); err != nil {
+			return err
+		}
+	}
+	if seeker, ok := m.w.(io.WriteSeeker); ok && m.frameCount > 0 {
+		end, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("seek FLAC output end: %w", err)
+		}
+		if _, err := seeker.Seek(8, io.SeekStart); err != nil {
+			return fmt.Errorf("seek FLAC STREAMINFO: %w", err)
+		}
+		if err := writeAll(seeker, streaminfo.Encode(m.finalStreamInfo())); err != nil {
+			return fmt.Errorf("rewrite FLAC STREAMINFO: %w", err)
+		}
+		if _, err := seeker.Seek(end, io.SeekStart); err != nil {
+			return fmt.Errorf("restore FLAC output position: %w", err)
+		}
 	}
 	m.closed = true
 	return nil
@@ -179,17 +233,63 @@ func writeAll(w io.Writer, data []byte) error {
 	return nil
 }
 
-func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
+func (m *Muxer) recordFrame(blockSize, frameSize int) {
+	blockSizeValue := streamInfoBlockSize(blockSize)
+	frameSizeValue := uint32(frameSize)
+	if m.frameCount == 0 {
+		m.minBlockSize = blockSizeValue
+		m.maxBlockSize = blockSizeValue
+		m.minFrameSize = frameSizeValue
+		m.maxFrameSize = frameSizeValue
+	} else {
+		if m.pendingBlockSize < m.minBlockSize {
+			m.minBlockSize = m.pendingBlockSize
+		}
+		if blockSizeValue > m.maxBlockSize {
+			m.maxBlockSize = blockSizeValue
+		}
+		if frameSizeValue < m.minFrameSize {
+			m.minFrameSize = frameSizeValue
+		}
+		if frameSizeValue > m.maxFrameSize {
+			m.maxFrameSize = frameSizeValue
+		}
+	}
+	m.pendingBlockSize = blockSizeValue
+	m.totalSamples += uint64(blockSize)
+	m.frameCount++
+}
+
+func (m *Muxer) finalStreamInfo() streaminfo.StreamInfo {
+	info := m.info
+	info.MinBlockSize = m.minBlockSize
+	info.MaxBlockSize = m.maxBlockSize
+	info.MinFrameSize = m.minFrameSize
+	info.MaxFrameSize = m.maxFrameSize
+	info.TotalSamples = m.totalSamples
+	return info
+}
+
+func streamInfoBlockSize(blockSize int) uint16 {
+	if blockSize < 16 {
+		return 16
+	}
+	return uint16(blockSize)
+}
+
+func buildStreamInfo(stream media.StreamInfo) (streaminfo.StreamInfo, error) {
 	attr := stream.MediaAttributes.Audio
 	sampleRate := attr.SampleRate
 	channels := attr.ChannelCount()
 	bitsPerSample := attr.BitsPerSample
 
+	var inherited streaminfo.StreamInfo
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
 		parsed, err := streaminfo.Parse(raw[0])
 		if err != nil {
-			return nil, fmt.Errorf("flac muxer invalid STREAMINFO metadata: %w", err)
+			return streaminfo.StreamInfo{}, fmt.Errorf("flac muxer invalid STREAMINFO metadata: %w", err)
 		}
+		inherited = parsed
 		if sampleRate <= 0 {
 			sampleRate = parsed.SampleRate
 		}
@@ -207,7 +307,7 @@ func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
 		case media.SampleFormatS32:
 			bitsPerSample = 32
 		default:
-			return nil, fmt.Errorf("flac muxer unsupported sample format: %s", attr.Format)
+			return streaminfo.StreamInfo{}, fmt.Errorf("flac muxer unsupported sample format: %s", attr.Format)
 		}
 	}
 
@@ -217,17 +317,11 @@ func buildStreamInfo(stream media.StreamInfo) ([]byte, error) {
 		SampleRate:    sampleRate,
 		Channels:      channels,
 		BitsPerSample: bitsPerSample,
+		TotalSamples:  inherited.TotalSamples,
+		MD5:           inherited.MD5,
 	}
 	if err := streaminfo.Validate(info); err != nil {
-		return nil, fmt.Errorf("flac muxer invalid stream attributes: %w", err)
+		return streaminfo.StreamInfo{}, fmt.Errorf("flac muxer invalid stream attributes: %w", err)
 	}
-
-	data := make([]byte, streaminfo.Length)
-	binary.BigEndian.PutUint16(data[0:2], info.MinBlockSize)
-	binary.BigEndian.PutUint16(data[2:4], info.MaxBlockSize)
-	data[10] = byte(info.SampleRate >> 12)
-	data[11] = byte(info.SampleRate >> 4)
-	data[12] = byte(info.SampleRate<<4) | byte((info.Channels-1)<<1) | byte((info.BitsPerSample-1)>>4)
-	data[13] = byte((info.BitsPerSample - 1) << 4)
-	return data, nil
+	return info, nil
 }
