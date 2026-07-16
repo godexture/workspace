@@ -25,6 +25,15 @@ func (w *Writer) BytePos() int { return int((w.position + 7) / 8) }
 // the final byte contains zero padding in the remaining least-significant bits.
 func (w *Writer) Bytes() []byte { return w.buffer }
 
+// DetachBytes transfers the written buffer to the caller and resets the writer.
+// The returned bytes must not be retained by the writer's caller after transfer.
+func (w *Writer) DetachBytes() []byte {
+	buffer := w.buffer
+	w.buffer = nil
+	w.position = 0
+	return buffer
+}
+
 // Bit writes a single bit. Any non-zero value is encoded as 1.
 func (w *Writer) Bit(value uint8) {
 	byteIndex := int(w.position / 8)
