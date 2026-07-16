@@ -1,38 +1,32 @@
 package optional
 
 type Optional[T any] struct {
-	value  T
-	exists bool
+	value *T
 }
 
 func Some[T any](value T) Optional[T] {
-	return Optional[T]{value: value, exists: true}
+	return Optional[T]{value: &value}
 }
 
 func None[T any]() Optional[T] {
-	return Optional[T]{value: zeroValue[T](), exists: false}
-}
-
-func zeroValue[T any]() T {
-	var zero T
-	return zero
+	return Optional[T]{value: nil}
 }
 
 func (o Optional[T]) Exists() bool {
-	return o.exists
+	return o.value != nil
 }
 
 func (o Optional[T]) ValueOr(value T) T {
-	if !o.exists {
+	if o.value == nil {
 		return value
 	}
-	return o.value
+	return *o.value
 }
 
 func (o Optional[T]) Unwrap() T {
-	if !o.exists {
+	if o.value == nil {
 		panic("attempted to unwrap None value")
 	}
 
-	return o.value
+	return *o.value
 }
