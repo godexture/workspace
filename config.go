@@ -1,17 +1,7 @@
 package mp3
 
-import (
-	"github.com/godexture/codec-mp3/internal/domain"
-	"github.com/godexture/sdk/config"
-	"github.com/godexture/sdk/optional"
-)
+//go:generate go run ../../tools/config-generator -source=internal/domain/config.go -type=EncoderConfig -resolved-type=domain.EncoderConfig -default=domain.DefaultEncoderConfig -import=domain=github.com/godexture/codec-mp3/internal/domain -output=config_encoder.go
+//go:generate go run ../../tools/config-generator -source=internal/domain/config.go -type=DecoderConfig -resolved-type=domain.DecoderConfig -import=domain=github.com/godexture/codec-mp3/internal/domain -output=config_decoder.go
 
-type EncoderConfig struct {
-	Bitrate optional.Optional[int]
-}
-
+func (DecoderConfig) NodeConfiguration() {}
 func (EncoderConfig) NodeConfiguration() {}
-
-func (c EncoderConfig) ApplyDefaults() domain.EncoderConfig {
-	return config.ApplyDefaults(c, domain.DefaultEncoderConfig)
-}
