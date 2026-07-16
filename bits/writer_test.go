@@ -3,6 +3,7 @@ package bits
 import "testing"
 
 func TestWriterBit(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	// Write 1011 0101 = 0xB5
 	for _, b := range []uint8{1, 0, 1, 1, 0, 1, 0, 1} {
@@ -18,6 +19,7 @@ func TestWriterBit(t *testing.T) {
 }
 
 func TestWriterBits64(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bits64(0b1011, 4)
 	w.Bits64(0b0101, 4)
@@ -28,6 +30,7 @@ func TestWriterBits64(t *testing.T) {
 }
 
 func TestWriterByteRequiresAlignment(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bit(1)
 	defer func() {
@@ -39,6 +42,7 @@ func TestWriterByteRequiresAlignment(t *testing.T) {
 }
 
 func TestWriterByteAndBytesAppend(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Byte(0xAA)
 	w.BytesAppend([]byte{0xBB, 0xCC})
@@ -55,6 +59,7 @@ func TestWriterByteAndBytesAppend(t *testing.T) {
 }
 
 func TestWriterUnary64(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Unary64(3) // 0001
 	w.PadToByte()
@@ -65,6 +70,7 @@ func TestWriterUnary64(t *testing.T) {
 }
 
 func TestWriterPadToByte(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bits64(0b101, 3)
 	w.PadToByte()
@@ -85,6 +91,7 @@ func TestWriterPadToByte(t *testing.T) {
 // TestWriterReaderRoundtrip verifies that values written by Writer are read
 // back identically by Reader across bit, signed, and unary encodings.
 func TestWriterReaderRoundtrip(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bit(1)
 	w.Bits64(0x2ab, 12)
@@ -115,6 +122,7 @@ func TestWriterReaderRoundtrip(t *testing.T) {
 }
 
 func TestWriterInitReuse(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bits64(0xFF, 8)
 	w.Init()
@@ -152,6 +160,7 @@ func (b bitByBitWriter) unary64(value uint64) {
 // fast path at every starting bit offset and width, checking its output is
 // byte-for-byte identical to the original per-bit implementation.
 func TestWriterBits64UnalignedMatchesBitByBit(t *testing.T) {
+	t.Parallel()
 	for offset := uint8(0); offset < 8; offset++ {
 		for width := uint8(1); width <= 64; width++ {
 			value := uint64(0x9E3779B97F4A7C15) >> (64 - width)
@@ -183,6 +192,7 @@ func TestWriterBits64UnalignedMatchesBitByBit(t *testing.T) {
 // fast path across zero-run lengths and starting bit offsets, checking its
 // output is byte-for-byte identical to the original per-bit implementation.
 func TestWriterUnary64UnalignedMatchesBitByBit(t *testing.T) {
+	t.Parallel()
 	for offset := uint8(0); offset < 8; offset++ {
 		for value := uint64(0); value <= 40; value++ {
 			got := NewWriter()
@@ -209,6 +219,7 @@ func TestWriterUnary64UnalignedMatchesBitByBit(t *testing.T) {
 }
 
 func TestWriterBytePos(t *testing.T) {
+	t.Parallel()
 	w := NewWriter()
 	w.Bits64(0b101, 3)
 	if got := w.BytePos(); got != 1 {

@@ -6,7 +6,9 @@ import (
 )
 
 func TestBlockBuffer(t *testing.T) {
+	t.Parallel()
 	t.Run("empty buffer", func(t *testing.T) {
+	t.Parallel()
 		buf := &BlockBuffer{}
 		res := buf.TakeBlocks(10)
 		if res != nil {
@@ -15,6 +17,7 @@ func TestBlockBuffer(t *testing.T) {
 	})
 
 	t.Run("not enough data", func(t *testing.T) {
+	t.Parallel()
 		buf := &BlockBuffer{}
 		buf.Append([]byte{1, 2, 3})
 		res := buf.TakeBlocks(5)
@@ -24,6 +27,7 @@ func TestBlockBuffer(t *testing.T) {
 	})
 
 	t.Run("exact block size", func(t *testing.T) {
+	t.Parallel()
 		buf := &BlockBuffer{}
 		buf.Append([]byte{1, 2, 3, 4, 5})
 		res := buf.TakeBlocks(5)
@@ -36,6 +40,7 @@ func TestBlockBuffer(t *testing.T) {
 	})
 
 	t.Run("more than block size", func(t *testing.T) {
+	t.Parallel()
 		buf := &BlockBuffer{}
 		buf.Append([]byte{1, 2, 3, 4, 5, 6, 7})
 		res := buf.TakeBlocks(5)
@@ -48,6 +53,7 @@ func TestBlockBuffer(t *testing.T) {
 	})
 
 	t.Run("take all", func(t *testing.T) {
+	t.Parallel()
 		buf := &BlockBuffer{}
 		buf.Append([]byte{1, 2, 3})
 		res := buf.TakeAll()
