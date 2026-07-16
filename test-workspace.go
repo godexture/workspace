@@ -96,15 +96,31 @@ func clearSlots(lines int) {
 }
 
 func drawSlots(slots []slotState) {
+	drawSlotsLimit(slots, visibleSlotCount(len(slots)))
+}
+
+func drawSlotsLimit(slots []slotState, limit int) {
 	width := terminalWidth()
-	for i, s := range slots {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > len(slots) {
+		limit = len(slots)
+	}
+	visibleSlots := slots[:limit]
+	for i, s := range visibleSlots {
+		workerID := i
+		last := i == len(visibleSlots)-1
 		// 行をクリアして行頭から描画
 		fmt.Print("\033[2K\r")
-		prefix := fmt.Sprintf("\033[36m[Worker %d]\033[0m ", i+1)
-		prefixWidth := len(fmt.Sprintf("[Worker %d] ", i+1))
+		prefix := fmt.Sprintf("\033[36m[Worker %d]\033[0m ", workerID+1)
+		prefixWidth := len(fmt.Sprintf("[Worker %d] ", workerID+1))
 
 		if s.status == "IDLE" {
-			fmt.Printf("%s(Idle)\n", prefix)
+			fmt.Printf("%s(Idle)", prefix)
+			if !last {
+				fmt.Print("\n")
+			}
 			continue
 		}
 
@@ -127,22 +143,53 @@ func drawSlots(slots []slotState) {
 				info = fmt.Sprintf("\033[31mFAIL\033[0m    %s", m)
 			}
 		}
-		fmt.Printf("%s%s\n", prefix, info)
+		fmt.Printf("%s%s", prefix, info)
+		if !last {
+			fmt.Print("\n")
+		}
 	}
 }
 
+func visibleSlotCount(total int) int {
+	available := terminalHeight() - 2
+	if available < 1 {
+		available = 1
+	}
+	if available > total {
+		return total
+	}
+	return available
+}
+
+func dashboardWorkerCount(total int) int {
+	available := terminalHeight() - 3
+	if available < 1 {
+		available = 1
+	}
+	if available > total {
+		return total
+	}
+	return available
+}
+
 func drawProgressLogs(entries []progressEntry) {
+	drawProgressLogsLimit(entries, len(entries))
+}
+
+func drawProgressLogsLimit(entries []progressEntry, limit int) {
 	width := terminalWidth()
-	for _, entry := range entries {
+	start := 0
+	if limit < len(entries) {
+		start = len(entries) - limit
+	}
+	for _, entry := range entries[start:] {
 		fmt.Print("\033[2K\r")
 		status := entry.status
-		color := "\033[33m"
+		color := "\033[90m"
 		if status == "PASS" {
 			color = "\033[32m"
 		} else if status == "REJECT" {
 			color = "\033[31m"
-		} else if status == "SKIP" {
-			color = "\033[90m"
 		}
 		label := entry.module
 		if entry.test != "" {
@@ -151,6 +198,30 @@ func drawProgressLogs(entries []progressEntry) {
 		label = truncate(label, width-len("["+status+"] "))
 		fmt.Printf("%s[%s]\033[0m %s\n", color, status, label)
 	}
+}
+
+func updateProgress(entries []progressEntry, module, test, status string) []progressEntry {
+	const maxEntries = 12
+	for i := range entries {
+		if entries[i].module == module && entries[i].test == test {
+			entries[i].status = status
+			return entries
+		}
+	}
+	entries = append(entries, progressEntry{module: module, test: test, status: status})
+	if len(entries) > maxEntries {
+		entries = entries[len(entries)-maxEntries:]
+	}
+	return entries
+}
+
+func hasProgressModule(entries []progressEntry, module, status string) bool {
+	for _, entry := range entries {
+		if entry.module == module && entry.status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func terminalWidth() int {
@@ -172,6 +243,25 @@ func terminalWidth() int {
 	return 80
 }
 
+func terminalHeight() int {
+	if lines, err := strconv.Atoi(strings.TrimSpace(os.Getenv("LINES"))); err == nil && lines > 0 {
+		return lines
+	}
+	if runtime.GOOS == "windows" {
+		if output, err := exec.Command("cmd", "/c", "mode", "con").Output(); err == nil {
+			for _, line := range strings.Split(string(output), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && strings.EqualFold(strings.TrimSuffix(fields[0], ":"), "Lines") {
+					if lines, err := strconv.Atoi(fields[1]); err == nil && lines > 0 {
+						return lines
+					}
+				}
+			}
+		}
+	}
+	return 24
+}
+
 func truncate(value string, width int) string {
 	if width < 4 {
 		return value[:0]
@@ -180,26 +270,6 @@ func truncate(value string, width int) string {
 		return value
 	}
 	return value[:width-3] + "..."
-}
-
-func updateProgress(entries []progressEntry, module, test, status string) []progressEntry {
-	const maxEntries = 12
-	for i := range entries {
-		if entries[i].module == module && entries[i].test == test {
-			entries[i].status = status
-			return entries
-		}
-	}
-	entries = append(entries, progressEntry{module: module, test: test, status: status})
-	if len(entries) > maxEntries {
-		entries = entries[len(entries)-maxEntries:]
-	}
-	return entries
-}
-
-func drawUI(entries []progressEntry, slots []slotState) {
-	drawProgressLogs(entries)
-	drawSlots(slots)
 }
 
 func main() {
@@ -213,7 +283,7 @@ func main() {
 	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	flags.StringVar(&goCommand, "go", "go", "go command to run")
-	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent jobs (package × top-level Test); 0 means runtime.NumCPU()")
+	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent jobs (package × top-level Test); 0 means runtime.NumCPU()*2")
 	flags.BoolVar(&showOutput, "show-output", false, "print go test output for successful modules too")
 	if err := flags.Parse(scriptArgs); err != nil {
 		fatal(err)
@@ -250,14 +320,14 @@ func main() {
 	}
 
 	if parallel <= 0 || parallel > len(jobs) {
-		parallel = runtime.NumCPU()
+		parallel = runtime.NumCPU() * 2
+		if parallel < 1 {
+			parallel = 1
+		}
 		if parallel > len(jobs) {
 			parallel = len(jobs)
 		}
 	}
-
-	fmt.Printf("go.work: %s\n", goWork)
-	fmt.Printf("modules: %d, jobs: %d, parallel: %d, go test args: %s\n", len(modules), len(jobs), parallel, strings.Join(testArgs, " "))
 
 	uiChan := make(chan uiEvent)
 	resultsChan := runTests(goCommand, goWork, jobs, passthroughFlags, pkgPattern, parallel, uiChan)
@@ -269,15 +339,6 @@ func main() {
 	for i := range slots {
 		slots[i].status = "IDLE"
 	}
-	var progressEntries []progressEntry
-
-	for i := 0; i < parallel+len(progressEntries); i++ {
-		fmt.Println()
-	}
-	clearSlots(parallel + len(progressEntries))
-	drawUI(progressEntries, slots)
-	drawnLines := parallel + len(progressEntries)
-
 	failed := 0
 	completed := 0
 	total := len(jobs)
@@ -287,14 +348,34 @@ func main() {
 	for _, j := range jobs {
 		moduleTotals[j.module]++
 	}
+	var progressEntries []progressEntry
+	var resultHistory []string
+	fmt.Print("\033[?1049h\033[?25l")
+	leaveDashboard := func() {
+		fmt.Print("\033[?25h\033[?1049l")
+	}
+	render := func() {
+		fmt.Print("\033[H")
+		fmt.Print("\033[2K\r")
+		fmt.Printf("go.work: %s\n", goWork)
+		fmt.Print("\033[2K\r")
+		fmt.Printf("modules: %d, jobs: %d, parallel: %d, go test args: %s\n", len(modules), len(jobs), parallel, strings.Join(testArgs, " "))
+		workerLimit := dashboardWorkerCount(len(slots))
+		availableLogs := terminalHeight() - 2 - workerLimit
+		if availableLogs < 0 {
+			availableLogs = 0
+		}
+		drawProgressLogsLimit(progressEntries, availableLogs)
+		drawSlotsLimit(slots, workerLimit)
+		fmt.Print("\033[J")
+	}
+	render()
 
 	for {
 		select {
 		case <-interruptChan:
-			clearSlots(drawnLines)
-			drawUI(progressEntries, slots)
-			fmt.Println()
-			fmt.Print("\033[?25h")
+			render()
+			leaveDashboard()
 			os.Exit(130)
 		case ev, ok := <-uiChan:
 			if !ok {
@@ -302,16 +383,14 @@ func main() {
 				break
 			}
 			slots[ev.WorkerID] = slotState{module: ev.Module, test: ev.Test, status: ev.Status}
-			clearSlots(drawnLines)
 			if ev.TestStatus == "REJECT" {
 				progressModule := ev.ProgressModule
 				if progressModule == "" {
 					progressModule = ev.Module
 				}
-				progressEntries = updateProgress(progressEntries, progressModule, ev.Test, ev.TestStatus)
+				progressEntries = updateProgress(progressEntries, progressModule, ev.Test, "REJECT")
 			}
-			drawUI(progressEntries, slots)
-			drawnLines = parallel + len(progressEntries)
+			render()
 		case res, ok := <-resultsChan:
 			if !ok {
 				resultsChan = nil
@@ -326,37 +405,41 @@ func main() {
 			moduleCompleted[res.jobModule]++
 			if res.err != nil {
 				moduleFailed[res.jobModule] = true
+				if !hasProgressModule(progressEntries, res.module, "REJECT") {
+					progressEntries = updateProgress(progressEntries, res.module, res.testName, "REJECT")
+				}
 			}
 			if moduleCompleted[res.jobModule] == moduleTotals[res.jobModule] && !moduleFailed[res.jobModule] {
 				progressEntries = updateProgress(progressEntries, res.jobModule, "", "PASS")
 			}
-			clearSlots(drawnLines)
 			needsOutput := res.err != nil || (res.output != "" && showOutput)
 			if needsOutput {
 				label := res.module
 				if res.testName != "" {
 					label += " :: " + res.testName
 				}
-				fmt.Printf("[%d/%d] [%s] %s (%s)\n", completed, total, status, label, res.duration.Round(time.Millisecond))
+				resultHistory = append(resultHistory, fmt.Sprintf("[%d/%d] [%s] %s (%s)", completed, total, status, label, res.duration.Round(time.Millisecond)))
 				if res.err != nil {
-					fmt.Printf("dir: %s\nerror: %v\n", res.dir, res.err)
+					resultHistory = append(resultHistory, fmt.Sprintf("dir: %s", res.dir), fmt.Sprintf("error: %v", res.err))
 				}
 				if res.output != "" {
-					fmt.Print(strings.TrimRight(res.output, "\r\n"))
-					fmt.Println()
+					resultHistory = append(resultHistory, strings.TrimRight(res.output, "\r\n"))
 				}
 			}
-			drawUI(progressEntries, slots)
-			drawnLines = parallel + len(progressEntries)
+			if len(resultHistory) > 100 {
+				resultHistory = resultHistory[len(resultHistory)-100:]
+			}
+			render()
 		}
 		if uiChan == nil && resultsChan == nil {
 			break
 		}
 	}
-	clearSlots(drawnLines)
-	drawUI(progressEntries, slots)
-	fmt.Println()
-	fmt.Print("\033[?25h")
+	render()
+	leaveDashboard()
+	for _, line := range resultHistory {
+		fmt.Println(line)
+	}
 
 	if failed > 0 {
 		os.Exit(1)

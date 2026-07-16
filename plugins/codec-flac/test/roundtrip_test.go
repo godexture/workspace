@@ -1,6 +1,7 @@
 package test
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 )
 
 func TestRoundtrip(t *testing.T) {
+	t.Parallel()
 	walTestFiles(t, func(t *testing.T, path string, group string) {
 		if strings.HasSuffix(group, "faulty") || strings.HasSuffix(group, "uncommon") {
 			t.Skip("skipping faulty and uncommon conformance vectors in snapshot test")
@@ -32,7 +34,17 @@ func TestRoundtrip(t *testing.T) {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux: flacFormat.NewMuxerEngine,
+			Mux:    flacFormat.NewMuxerEngine,
+			Tester: testFLAC,
 		})
 	})
+}
+
+func testFLAC(t testing.TB, path string) {
+	t.Helper()
+
+	output, err := exec.CommandContext(t.Context(), "flac", "-t", path).CombinedOutput()
+	if err != nil {
+		t.Errorf("flac -t %s: %v\n%s", path, err, output)
+	}
 }

@@ -5,6 +5,7 @@ import (
 )
 
 func TestTrimString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected string
@@ -25,6 +26,7 @@ func TestTrimString(t *testing.T) {
 }
 
 func TestLatin1ToUTF8(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    []byte
 		expected string

@@ -9,6 +9,7 @@ import (
 )
 
 func TestDecodeFrame_TruncatedDataReturnsError(t *testing.T) {
+	t.Parallel()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	info, err := streaminfo.Parse(data[8:42])
 	if err != nil {
@@ -29,6 +30,7 @@ func TestDecodeFrame_TruncatedDataReturnsError(t *testing.T) {
 }
 
 func TestDecodeFrame_TruncatedFooterDetected(t *testing.T) {
+	t.Parallel()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	info, err := streaminfo.Parse(data[8:42])
 	if err != nil {

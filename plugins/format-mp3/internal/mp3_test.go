@@ -16,6 +16,7 @@ import (
 )
 
 func TestProbe_ValidMP3(t *testing.T) {
+	t.Parallel()
 	// 0xFF 0xFB = MPEG1 Layer3 の有効な同期ワード
 	mp3Data := []byte{0xFF, 0xFB, 0x90, 0x00}
 	score := internal.Probe(bytes.NewReader(mp3Data))
@@ -25,6 +26,7 @@ func TestProbe_ValidMP3(t *testing.T) {
 }
 
 func TestProbe_ID3Header(t *testing.T) {
+	t.Parallel()
 	id3Data := []byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	score := internal.Probe(bytes.NewReader(id3Data))
 	if score < manifest.ProbeSharedMetadata {
@@ -33,6 +35,7 @@ func TestProbe_ID3Header(t *testing.T) {
 }
 
 func TestProbe_NotMP3(t *testing.T) {
+	t.Parallel()
 	otherData := []byte{'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00}
 	score := internal.Probe(bytes.NewReader(otherData))
 	if score != manifest.ProbeMismatch {
@@ -41,6 +44,7 @@ func TestProbe_NotMP3(t *testing.T) {
 }
 
 func TestSkipID3v2(t *testing.T) {
+	t.Parallel()
 	tag := append([]byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}, []byte("abc")...)
 	mp3Frame := []byte{0xFF, 0xFB, 0x90, 0x00}
 	br := bufio.NewReader(bytes.NewReader(append(tag, mp3Frame...)))
@@ -63,6 +67,7 @@ func TestSkipID3v2(t *testing.T) {
 }
 
 func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
@@ -93,6 +98,7 @@ func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
 }
 
 func TestMuxer_WritesID3Metadata(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
@@ -145,6 +151,7 @@ func TestMuxer_WritesID3Metadata(t *testing.T) {
 }
 
 func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
@@ -195,6 +202,7 @@ func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
 }
 
 func TestDemuxerSeek_CBR(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
@@ -244,6 +252,7 @@ func (tr *trackingReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func TestDemuxerSeek_Xing(t *testing.T) {
+	t.Parallel()
 	// Frame size = 417 bytes.
 	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
 	frame1 := make([]byte, 417)
@@ -294,6 +303,7 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 }
 
 func TestDemuxerSeek_VBRI(t *testing.T) {
+	t.Parallel()
 	// Frame size = 417 bytes.
 	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
 	frame1 := make([]byte, 417)

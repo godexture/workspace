@@ -7,6 +7,7 @@ import (
 )
 
 func TestCreateAudioFramePreservesIntegerPCMGrid(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		format        media.SampleFormat
@@ -20,6 +21,7 @@ func TestCreateAudioFramePreservesIntegerPCMGrid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			scale := float32(uint64(1) << uint(tt.bitsPerSample-1))
 			pcm := []float32{-1, -123 / scale, 0, 123 / scale, 1 - 1/scale}
 			frame, err := CreateAudioFrame(pcm, media.AudioAttributes{
@@ -49,6 +51,7 @@ func TestCreateAudioFramePreservesIntegerPCMGrid(t *testing.T) {
 }
 
 func TestCreateAudioFrameRejectsPrecisionWiderThanStorage(t *testing.T) {
+	t.Parallel()
 	_, err := CreateAudioFrame([]float32{0}, media.AudioAttributes{
 		SampleRate:    48000,
 		Format:        media.SampleFormatS16,

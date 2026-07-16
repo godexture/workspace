@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseHeaderRejectsBlockSize65536(t *testing.T) {
+	t.Parallel()
 	data := []byte{0xff, 0xf8, 0x79, 0x08, 0x00, 0xff, 0xff}
 	data = append(data, hash.CRC8(data))
 

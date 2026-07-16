@@ -10,6 +10,7 @@ import (
 )
 
 func TestDecoderEncoderRoundtrip(t *testing.T) {
+	t.Parallel()
 	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
 	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
@@ -45,6 +46,7 @@ func TestDecoderEncoderRoundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultDecoderConfig
 	cfg.format = media.SampleFormatS24
 	dec := NewDecoder(media.StreamInfo{}, cfg)
@@ -98,6 +100,7 @@ func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
 }
 
 func TestG711Roundtrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		codec media.CodecID
@@ -108,6 +111,7 @@ func TestG711Roundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			cfg := DefaultDecoderConfig
 			cfg.codecID = tt.codec
 			dec := NewDecoder(media.StreamInfo{}, cfg)
@@ -149,6 +153,7 @@ func TestG711Roundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoderNeedMoreData(t *testing.T) {
+	t.Parallel()
 	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
 	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
@@ -175,6 +180,7 @@ func TestDecoderEncoderNeedMoreData(t *testing.T) {
 }
 
 func TestG711Endianness(t *testing.T) {
+	t.Parallel()
 	in := []byte{0x00, 0x55, 0xAA, 0xFF}
 
 	// Decode with Little Endian
@@ -221,6 +227,7 @@ func TestG711Endianness(t *testing.T) {
 }
 
 func TestLeftJustifyPCM(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		format        media.SampleFormat
@@ -278,6 +285,7 @@ func TestLeftJustifyPCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			got := leftJustifyPCM(tt.in, tt.format, tt.bitsPerSample)
 			if !bytes.Equal(got, tt.want) {
 				t.Errorf("leftJustifyPCM() = %x, want %x", got, tt.want)

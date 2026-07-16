@@ -6,6 +6,7 @@ import (
 )
 
 func TestBitsBasic(t *testing.T) {
+	t.Parallel()
 	// 0xB5 = 1011 0101
 	r := New([]byte{0xB5})
 	if got := r.Bit(); got != 1 {
@@ -26,6 +27,7 @@ func TestBitsBasic(t *testing.T) {
 }
 
 func TestUnary64(t *testing.T) {
+	t.Parallel()
 	// 0001 0000 -> three zero bits then a 1
 	r := New([]byte{0b00010000})
 	if got := r.Unary64(); got != 3 {
@@ -34,6 +36,7 @@ func TestUnary64(t *testing.T) {
 }
 
 func TestUnary64StopsAtLimitWithoutHanging(t *testing.T) {
+	t.Parallel()
 	// All-zero data with no stop bit: Unary64 must terminate, not loop forever.
 	r := New([]byte{0x00, 0x00})
 	got := r.Unary64()
@@ -46,6 +49,7 @@ func TestUnary64StopsAtLimitWithoutHanging(t *testing.T) {
 }
 
 func TestSigned32(t *testing.T) {
+	t.Parallel()
 	// 4-bit two's complement -1 = 1111
 	r := New([]byte{0b1111_0000})
 	if got := r.Signed32(4); got != -1 {
@@ -57,6 +61,7 @@ func TestSigned32(t *testing.T) {
 }
 
 func TestSigned64(t *testing.T) {
+	t.Parallel()
 	// 4-bit two's complement -1 = 1111
 	r := New([]byte{0b1111_0000})
 	if got := r.Signed64(4); got != -1 {
@@ -68,6 +73,7 @@ func TestSigned64(t *testing.T) {
 }
 
 func TestByteAtOutOfRange(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0x42})
 	if got := r.ByteAt(0); got != 0x42 {
 		t.Fatalf("ByteAt(0) = %#x, want 0x42", got)
@@ -81,6 +87,7 @@ func TestByteAtOutOfRange(t *testing.T) {
 }
 
 func TestByteAndSkipToByte(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xAA, 0xBB})
 	if got := r.Byte(); got != 0xAA {
 		t.Fatalf("Byte() = %#x, want 0xAA", got)
@@ -94,6 +101,7 @@ func TestByteAndSkipToByte(t *testing.T) {
 }
 
 func TestOverrunIsSticky(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xFF})
 	r.Bits64(8) // consumes all 8 bits, exactly at limit
 	if r.Overrun() {
@@ -111,6 +119,7 @@ func TestOverrunIsSticky(t *testing.T) {
 }
 
 func TestBits32MatchesGetBitsSemantics(t *testing.T) {
+	t.Parallel()
 	data := []byte{0b10110100, 0b11001010, 0b01010101}
 	r := &Reader{}
 	r.Init(data, 0, int32(len(data))*8)
@@ -124,6 +133,7 @@ func TestBits32MatchesGetBitsSemantics(t *testing.T) {
 }
 
 func TestBits32ZeroFillPastLimit(t *testing.T) {
+	t.Parallel()
 	data := []byte{0xFF}
 	r := &Reader{}
 	r.Init(data, 0, int32(len(data))*8)
@@ -140,6 +150,7 @@ func TestBits32ZeroFillPastLimit(t *testing.T) {
 }
 
 func TestSeek(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xFF, 0xFF})
 	r.Seek(8)
 	if r.Position() != 8 {
@@ -155,6 +166,7 @@ func TestSeek(t *testing.T) {
 }
 
 func TestRemainingAndUnread(t *testing.T) {
+	t.Parallel()
 	data := []byte{0x01, 0x02, 0x03}
 	r := New(data)
 	if got := r.Remaining(); got != 24 {
@@ -170,6 +182,7 @@ func TestRemainingAndUnread(t *testing.T) {
 }
 
 func TestBytePos(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xFF, 0xFF})
 	r.Bits64(3)
 	if got := r.BytePos(); got != 1 {
@@ -178,6 +191,7 @@ func TestBytePos(t *testing.T) {
 }
 
 func TestCheckedTierReturnsErrorOnOverrun(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xFF})
 	if _, err := r.ReadBits64(8); err != nil {
 		t.Fatalf("ReadBits64(8) within limit returned error: %v", err)
@@ -197,6 +211,7 @@ func TestCheckedTierReturnsErrorOnOverrun(t *testing.T) {
 }
 
 func TestReadByteRequiresAlignmentAssertion(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0xFF, 0xFF})
 	r.Bits64(3)
 	defer func() {
@@ -208,6 +223,7 @@ func TestReadByteRequiresAlignmentAssertion(t *testing.T) {
 }
 
 func TestReadByte(t *testing.T) {
+	t.Parallel()
 	r := New([]byte{0x11, 0x22})
 	b, err := r.ReadByte()
 	if err != nil || b != 0x11 {
@@ -227,6 +243,7 @@ func TestReadByte(t *testing.T) {
 // bit-at-a-time decode, so the byte-batching arithmetic in reader.go cannot
 // silently drift from the original one-bit-per-call semantics.
 func TestBits64UnalignedSpansMatchBitByBit(t *testing.T) {
+	t.Parallel()
 	data := make([]byte, 16)
 	for i := range data {
 		data[i] = byte(0x9A + i*0x2F)
@@ -264,6 +281,7 @@ func TestBits64UnalignedSpansMatchBitByBit(t *testing.T) {
 // several bytes, so the LeadingZeros8-based scan cannot silently diverge
 // from the bit-at-a-time semantics it replaces.
 func TestUnary64FastScanMatchesBitByBit(t *testing.T) {
+	t.Parallel()
 	for zeros := 0; zeros <= 40; zeros++ {
 		for offset := 0; offset < 8; offset++ {
 			totalBits := offset + zeros + 1 + 8 // padding after the stop bit
@@ -290,6 +308,7 @@ func TestUnary64FastScanMatchesBitByBit(t *testing.T) {
 // (no stop bit before the limit) for zero runs that end mid-byte, at the
 // start of the byte-scan, and after several fully-scanned bytes.
 func TestUnary64FastScanOverrunMatchesBitByBit(t *testing.T) {
+	t.Parallel()
 	for _, totalBits := range []int{1, 3, 7, 8, 9, 15, 16, 17, 23, 31} {
 		for offset := 0; offset < 8 && offset < totalBits; offset++ {
 			data := make([]byte, (totalBits+7)/8) // all zero bits, no stop bit

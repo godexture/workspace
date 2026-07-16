@@ -6,6 +6,7 @@ import (
 )
 
 func TestDecodePICFrame(t *testing.T) {
+	t.Parallel()
 	payload := []byte{
 		0x00,             // encoding (Latin1)
 		'P', 'N', 'G',    // image format
@@ -29,6 +30,7 @@ func TestDecodePICFrame(t *testing.T) {
 }
 
 func TestPicFormatToMIME(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		format string
 		mime   string
@@ -49,6 +51,7 @@ func TestPicFormatToMIME(t *testing.T) {
 }
 
 func TestMimeToFormat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		mime   string
 		format string

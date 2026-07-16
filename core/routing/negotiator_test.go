@@ -98,6 +98,7 @@ type dummyConfig struct{}
 func (dummyConfig) NodeConfiguration() {}
 
 func TestNegotiator_CustomResolvers(t *testing.T) {
+	t.Parallel()
 	// 1. Set up mock nodes
 	streamIn := media.StreamInfo{
 		Type: media.MediaAudio,
@@ -188,6 +189,7 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 }
 
 func TestNegotiator_AppliesTransforms(t *testing.T) {
+	t.Parallel()
 	// 1. Input stream starts with Unknown format and MSADPCM codec
 	streamIn := media.StreamInfo{
 		Type: media.MediaAudio,

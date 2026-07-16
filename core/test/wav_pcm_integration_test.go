@@ -16,6 +16,7 @@ import (
 )
 
 func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
+	t.Parallel()
 	_, thisFile, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(thisFile), "assets")
 
@@ -30,6 +31,7 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
+	t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			input, err := os.ReadFile(path)
 			if err != nil {

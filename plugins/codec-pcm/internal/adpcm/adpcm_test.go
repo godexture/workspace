@@ -13,6 +13,7 @@ import (
 )
 
 func TestADPCMRoundtrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -26,6 +27,7 @@ func TestADPCMRoundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+	t.Parallel()
 			sampleRate := 8000
 			numSamples := sampleRate
 			pcm := make([]byte, numSamples*tt.channels*2)
@@ -91,6 +93,7 @@ func TestADPCMRoundtrip(t *testing.T) {
 }
 
 func TestMSADPCMDecodeUsesConfiguredCoefficients(t *testing.T) {
+	t.Parallel()
 	adpcm, err := params.Default(media.CodecMSADPCM, 1)
 	if err != nil {
 		t.Fatal(err)

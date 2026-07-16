@@ -39,6 +39,7 @@ func referenceCRC16(data []byte) uint16 {
 }
 
 func TestCRC8MatchesBitSerialReference(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewSource(1))
 	for trial := 0; trial < 2000; trial++ {
 		data := make([]byte, rng.Intn(64))
@@ -50,6 +51,7 @@ func TestCRC8MatchesBitSerialReference(t *testing.T) {
 }
 
 func TestCRC16MatchesBitSerialReference(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewSource(2))
 	for trial := 0; trial < 2000; trial++ {
 		data := make([]byte, rng.Intn(64))
@@ -61,6 +63,7 @@ func TestCRC16MatchesBitSerialReference(t *testing.T) {
 }
 
 func TestCRC8SingleBytesExhaustive(t *testing.T) {
+	t.Parallel()
 	for i := 0; i <= 255; i++ {
 		data := []byte{byte(i)}
 		if got, want := CRC8(data), referenceCRC8(data); got != want {
@@ -70,6 +73,7 @@ func TestCRC8SingleBytesExhaustive(t *testing.T) {
 }
 
 func TestCRC16SingleBytesExhaustive(t *testing.T) {
+	t.Parallel()
 	for i := 0; i <= 255; i++ {
 		data := []byte{byte(i)}
 		if got, want := CRC16(data), referenceCRC16(data); got != want {

@@ -93,6 +93,7 @@ func (n *chunkFrameSource) Start(ctx context.Context) error {
 }
 
 func TestFrameCompareAcrossDifferentBoundaries(t *testing.T) {
+	t.Parallel()
 	attrs := media.AudioAttributes{SampleRate: 48000, Format: media.SampleFormatF32, BitsPerSample: 32, ChannelLayout: media.LayoutMono1}
 	pcmData := make([]float32, 17)
 	for i := range pcmData {
@@ -113,6 +114,7 @@ func TestFrameCompareAcrossDifferentBoundaries(t *testing.T) {
 }
 
 func TestAudioChunkNodeCombinesAndSplitsWithoutChangingPCM(t *testing.T) {
+	t.Parallel()
 	attrs := media.AudioAttributes{SampleRate: 48000, Format: media.SampleFormatS16, BitsPerSample: 16, ChannelLayout: media.LayoutMono1}
 	pcmData := make([]float32, 17)
 	for i := range pcmData {
@@ -137,6 +139,7 @@ func TestAudioChunkNodeCombinesAndSplitsWithoutChangingPCM(t *testing.T) {
 }
 
 func TestFrameComparePreservesRoundtripLengthRule(t *testing.T) {
+	t.Parallel()
 	attrs := media.AudioAttributes{SampleRate: 48000, Format: media.SampleFormatF32, BitsPerSample: 32, ChannelLayout: media.LayoutMono1}
 	expected := newChunkFrameSource([]float32{0, 0, 0}, []int{3}, attrs)
 	actual := newChunkFrameSource([]float32{0, 0}, []int{2}, attrs)
@@ -154,6 +157,7 @@ func TestFrameComparePreservesRoundtripLengthRule(t *testing.T) {
 }
 
 func TestPacketCompareRejectsMismatch(t *testing.T) {
+	t.Parallel()
 	expected := newPacketSource([]byte("first"), []byte("expected"))
 	actual := newPacketSource([]byte("first"), []byte("actual"))
 	compare := nodes.NewPacketCompare()
@@ -170,6 +174,7 @@ func TestPacketCompareRejectsMismatch(t *testing.T) {
 }
 
 func TestPacketCompareAcrossDifferentBoundaries(t *testing.T) {
+	t.Parallel()
 	expected := newPacketSource([]byte("abc"), []byte("defgh"), []byte("i"))
 	actual := newPacketSource([]byte("a"), []byte("bcdef"), []byte("ghi"))
 	compare := nodes.NewPacketCompare()
@@ -185,6 +190,7 @@ func TestPacketCompareAcrossDifferentBoundaries(t *testing.T) {
 }
 
 func TestFFmpegPCMSourceHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
 	source := nodes.NewFFmpegPCMSource("missing-input.wav", media.AudioAttributes{
 		SampleRate: 48000, Format: media.SampleFormatF32, BitsPerSample: 32, ChannelLayout: media.LayoutMono1,
 	})
@@ -261,6 +267,7 @@ func (d *signalingDecoder) Flush() error {
 }
 
 func TestRunDecodeStreamsBeforeDemuxEOF(t *testing.T) {
+	t.Parallel()
 	path := t.TempDir() + string(os.PathSeparator) + "input.bin"
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)

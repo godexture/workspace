@@ -16,6 +16,7 @@ import (
 )
 
 func TestSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, profile := range config.Profiles {
 		t.Run(profile.Name, func(t *testing.T) {
 			t.Parallel()

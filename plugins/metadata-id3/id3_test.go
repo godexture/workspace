@@ -11,6 +11,7 @@ import (
 )
 
 func TestParse_ImportantFrames(t *testing.T) {
+	t.Parallel()
 	titleFrame := append([]byte("TIT2"), []byte{0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x03, 'T', 'i', 't', 'l', 'e'}...)
 	artistFrame := append([]byte("TPE1"), []byte{0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x03, 'A', 'r', 't', 'i', 's', 't'}...)
 	albumFrame := append([]byte("TALB"), []byte{0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x03, 'A', 'l', 'b', 'u', 'm'}...)
@@ -65,6 +66,7 @@ func TestParse_ImportantFrames(t *testing.T) {
 }
 
 func TestParse_LegacyDateFrames_WithTime(t *testing.T) {
+	t.Parallel()
 	tyerFrame := append([]byte("TYER"), []byte{0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x03, '2', '0', '2', '4'}...)
 	tdatFrame := append([]byte("TDAT"), []byte{0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x03, '1', '7', '0', '6'}...)
 	timeFrame := append([]byte("TIME"), []byte{0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x03, '1', '2', '3', '4'}...)
@@ -95,10 +97,12 @@ func TestParse_LegacyDateFrames_WithTime(t *testing.T) {
 }
 
 func TestParse_WOAR_WOAS_FallbackToWebsite(t *testing.T) {
+	t.Parallel()
 	woarFrame := append([]byte("WOAR"), []byte{0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 'h', 't', 't', 'p', 's', ':', '/', '/', 'a', 'r', 't', 'i', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e'}...)
 	woasFrame := append([]byte("WOAS"), []byte{0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 'h', 't', 't', 'p', 's', ':', '/', '/', 'a', 'l', 'b', 'u', 'm', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e'}...)
 
 	t.Run("WOAR", func(t *testing.T) {
+	t.Parallel()
 		tagHeader := makeTagHeader(0x03, len(woarFrame))
 		bundle, err := Parse(append(tagHeader, woarFrame...))
 		if err != nil {
@@ -108,6 +112,7 @@ func TestParse_WOAR_WOAS_FallbackToWebsite(t *testing.T) {
 	})
 
 	t.Run("WOAS", func(t *testing.T) {
+	t.Parallel()
 		tagHeader := makeTagHeader(0x03, len(woasFrame))
 		bundle, err := Parse(append(tagHeader, woasFrame...))
 		if err != nil {
@@ -118,6 +123,7 @@ func TestParse_WOAR_WOAS_FallbackToWebsite(t *testing.T) {
 }
 
 func TestParse_ID3v1Fallback(t *testing.T) {
+	t.Parallel()
 	audio := []byte{0xFF, 0xFB, 0x90, 0x00}
 	tag := make([]byte, id3v1.TagSize)
 	copy(tag[:3], []byte("TAG"))

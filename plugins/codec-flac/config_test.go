@@ -7,6 +7,7 @@ import (
 )
 
 func TestPresetConfig(t *testing.T) {
+	t.Parallel()
 	for level := 0; level <= 8; level++ {
 		config := PresetConfig(level).ApplyDefaults()
 		if err := config.Validate(); err != nil {
@@ -22,6 +23,7 @@ func TestPresetConfig(t *testing.T) {
 }
 
 func TestPresetConfigClampsWithWarning(t *testing.T) {
+	t.Parallel()
 	var output bytes.Buffer
 	previous := log.Writer()
 	log.SetOutput(&output)
@@ -38,6 +40,7 @@ func TestPresetConfigClampsWithWarning(t *testing.T) {
 }
 
 func TestWithPreset(t *testing.T) {
+	t.Parallel()
 	config := NewEncoderConfig(WithPreset(8), WithBlockSize(2048)).ApplyDefaults()
 	if config.BlockSize != 2048 {
 		t.Fatalf("BlockSize = %d, want 2048", config.BlockSize)
@@ -48,6 +51,7 @@ func TestWithPreset(t *testing.T) {
 }
 
 func TestWithPresetReplacesPreviousOptions(t *testing.T) {
+	t.Parallel()
 	config := NewEncoderConfig(WithBlockSize(2048), WithPreset(8)).ApplyDefaults()
 	if config.BlockSize != 4096 {
 		t.Fatalf("BlockSize = %d, want 4096", config.BlockSize)

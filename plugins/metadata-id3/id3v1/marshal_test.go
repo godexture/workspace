@@ -9,6 +9,7 @@ import (
 )
 
 func TestMarshal(t *testing.T) {
+	t.Parallel()
 	bundle := metadata.NewBundle()
 
 	// 完全に空の場合
