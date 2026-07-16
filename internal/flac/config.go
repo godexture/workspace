@@ -85,8 +85,8 @@ func GetPreset(level int) EncoderConfig {
 }
 
 func (c EncoderConfig) Validate() error {
-	if c.BlockSize < 1 || c.BlockSize > 65535 {
-		return fmt.Errorf("FLAC encoder block size must be between 1 and 65535: %d", c.BlockSize)
+	if c.BlockSize < 16 || c.BlockSize > 65535 {
+		return fmt.Errorf("FLAC encoder block size must be between 16 and 65535: %d", c.BlockSize)
 	}
 	if c.MaxFixedOrder < 0 || c.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
 		return fmt.Errorf("FLAC encoder fixed predictor order must be between 0 and %d: %d", DefaultEncoderMaxFixedOrder, c.MaxFixedOrder)

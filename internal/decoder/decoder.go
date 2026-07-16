@@ -20,17 +20,18 @@ type hashState struct {
 }
 
 type Decoder struct {
-	pending     *media.Packet
-	workspace   decodeWorkspace
-	parsed      bool
-	info        streaminfo.StreamInfo
-	configErr   error
-	flushed     bool
-	terminalErr error
-	frameCount  uint64
-	sampleCount uint64
-	md5Hash     hashState
-	md5Scratch  []byte
+	pending      *media.Packet
+	workspace    decodeWorkspace
+	parsed       bool
+	info         streaminfo.StreamInfo
+	configErr    error
+	flushed      bool
+	endValidated bool
+	terminalErr  error
+	frameCount   uint64
+	sampleCount  uint64
+	md5Hash      hashState
+	md5Scratch   []byte
 }
 
 func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
@@ -105,6 +106,10 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	}
 	if d.pending == nil {
 		if d.flushed {
+			if !d.endValidated {
+				d.terminalErr = d.validateEnd()
+				d.endValidated = true
+			}
 			if d.terminalErr != nil {
 				return nil, d.terminalErr
 			}

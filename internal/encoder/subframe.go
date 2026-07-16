@@ -325,8 +325,8 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, exhaustive boo
 		coeff[i] = reflection
 		errorValue *= 1 - reflection*reflection
 		order := i + 1
+		sets[order] = append([]float64(nil), coeff[:order]...)
 		if exhaustive {
-			sets[order] = append([]float64(nil), coeff[:order]...)
 			continue
 		}
 		residualSamples := len(samples) - order
@@ -349,41 +349,9 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, exhaustive boo
 	if best == 0 {
 		return sets
 	}
-	return lpcCoefficientSetsForOrders(values, maxOrder, best, next)
-}
-
-// Levinson-Durbin coefficient snapshots are retained only for selected orders.
-func lpcCoefficientSetsForOrders(values []float64, maxOrder, first, second int) [][]float64 {
-	auto := make([]float64, maxOrder+1)
-	for lag := range auto {
-		for i := lag; i < len(values); i++ {
-			auto[lag] += values[i] * values[i-lag]
-		}
-	}
-	sets := make([][]float64, maxOrder+1)
-	coeff := make([]float64, maxOrder)
-	errorValue := auto[0]
-	for i := 0; i < maxOrder && errorValue > 0; i++ {
-		reflection := auto[i+1]
-		for j := 0; j < i; j++ {
-			reflection -= coeff[j] * auto[i-j]
-		}
-		reflection /= errorValue
-		if reflection <= -0.999999 || reflection >= 0.999999 || math.IsNaN(reflection) {
-			break
-		}
-		for j := 0; j < i/2; j++ {
-			front, back := coeff[j], coeff[i-1-j]
-			coeff[j], coeff[i-1-j] = front-reflection*back, back-reflection*front
-		}
-		if i%2 == 1 {
-			coeff[i/2] -= reflection * coeff[i/2]
-		}
-		coeff[i] = reflection
-		errorValue *= 1 - reflection*reflection
-		order := i + 1
-		if order == first || order == second {
-			sets[order] = append([]float64(nil), coeff[:order]...)
+	for order := range sets {
+		if order != best && order != next {
+			sets[order] = nil
 		}
 	}
 	return sets

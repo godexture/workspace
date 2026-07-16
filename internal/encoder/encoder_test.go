@@ -74,7 +74,7 @@ func TestEncoder_SendNilFrame(t *testing.T) {
 
 func TestEncoder_S16StereoRoundtrip(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
 		t.Fatalf("NewEncoder(media.StreamInfo{}, ) error = %v", err)
@@ -85,6 +85,9 @@ func TestEncoder_S16StereoRoundtrip(t *testing.T) {
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
 	}
 
 	pkt, err := enc.ReceivePacket()
@@ -102,7 +105,7 @@ func TestEncoder_S16StereoRoundtrip(t *testing.T) {
 
 func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
 		t.Fatalf("NewEncoder(media.StreamInfo{}, ) error = %v", err)
@@ -133,7 +136,7 @@ func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 
 func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
 		t.Fatalf("NewEncoder(media.StreamInfo{}, ) error = %v", err)
@@ -154,10 +157,13 @@ func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
 		}
 	}
 
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
 	for packetIndex, want := range []struct {
 		pts     media.Pts
 		samples []int64
-	}{{0, []int64{0, 1, 2, 3}}, {4, []int64{4, 5, 6, 7}}} {
+	}{{0, []int64{0, 1, 2, 3, 4, 5, 6, 7}}} {
 		packet, err := enc.ReceivePacket()
 		if err != nil {
 			t.Fatalf("ReceivePacket(%d) error = %v", packetIndex, err)
@@ -176,12 +182,15 @@ func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
 
 func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
 		t.Fatalf("NewEncoder(media.StreamInfo{}, ) error = %v", err)
 	}
-	input := []int16{0, 1, 2, 3, 10, 11, 12, 13}
+	input := make([]int16, 32)
+	for i := range input {
+		input[i] = int16(i)
+	}
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, input)
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err != nil {
@@ -227,7 +236,7 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 
 func TestEncoder_S32As24BitRoundtrip(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	cfg.BitsPerSample = 24
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
@@ -240,6 +249,9 @@ func TestEncoder_S32As24BitRoundtrip(t *testing.T) {
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
 	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
 
 	pkt, err := enc.ReceivePacket()
 	if err != nil {
@@ -251,7 +263,7 @@ func TestEncoder_S32As24BitRoundtrip(t *testing.T) {
 
 func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	cfg.BitsPerSample = 32
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
@@ -262,6 +274,9 @@ func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
 	}
 
 	pkt, err := enc.ReceivePacket()
@@ -274,7 +289,7 @@ func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 
 func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	cfg.BitsPerSample = 24
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
@@ -287,6 +302,9 @@ func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
 	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
 
 	pkt, err := enc.ReceivePacket()
 	if err != nil {
@@ -298,7 +316,7 @@ func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
 
 func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 4
+	cfg.BlockSize = 16
 	cfg.BitsPerSample = 20
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
@@ -311,6 +329,9 @@ func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
 	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
 
 	pkt, err := enc.ReceivePacket()
 	if err != nil {
@@ -322,7 +343,7 @@ func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
 
 func TestEncoder_Rejects24BitOutOfRange(t *testing.T) {
 	cfg := flac.DefaultEncoderConfig
-	cfg.BlockSize = 1
+	cfg.BlockSize = 16
 	cfg.BitsPerSample = 24
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
@@ -524,10 +545,11 @@ func TestWriteResidualRejectsSigned32Minimum(t *testing.T) {
 }
 
 func TestEncoderRejectsInvalidBlockSizeConfig(t *testing.T) {
-	cfg := flac.EncoderConfig{BlockSize: 65536}
-	_, err := NewEncoder(media.StreamInfo{}, cfg)
-	if err == nil {
-		t.Fatal("expected invalid block size configuration error")
+	for _, blockSize := range []int{15, 65536} {
+		cfg := flac.EncoderConfig{BlockSize: blockSize}
+		if _, err := NewEncoder(media.StreamInfo{}, cfg); err == nil {
+			t.Fatalf("expected block size %d to be rejected", blockSize)
+		}
 	}
 }
 

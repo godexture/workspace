@@ -254,8 +254,13 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 					raw |= ^int32(0xffffff)
 				}
 				value = int64(raw)
-			default:
+			case media.SampleFormatS32:
 				value = int64(int32(binary.LittleEndian.Uint32(plane[offset : offset+4])))
+			default:
+				for channel := range e.buffer {
+					e.buffer[channel] = e.buffer[channel][:writeStart]
+				}
+				return fmt.Errorf("unsupported FLAC input format: %s", format)
 			}
 			if value < minValue || value > maxValue {
 				for channel := range e.buffer {
