@@ -38,12 +38,48 @@ type Encoder struct {
 	adpcm    params.ADPCM
 }
 
-func NewEncoder(cfg EncoderConfig) *Encoder {
+func adpcmParametersFromStream(stream media.StreamInfo, target media.CodecID) (params.ADPCM, bool, error) {
+	if stream.CodecParameters.Schema == params.SchemaADPCM {
+		adpcm, err := params.Parse(target, stream.Audio.ChannelLayout.ChannelCount(), stream.CodecParameters.Data)
+		if err == nil {
+			return adpcm, true, nil
+		}
+		return params.ADPCM{}, false, err
+	}
+	return params.ADPCM{}, false, nil
+}
+
+func NewEncoder(stream media.StreamInfo, target media.CodecID, cfg EncoderConfig) (*Encoder, error) {
+	if cfg.CodecID == media.CodecLPCM && target != media.CodecLPCM {
+		cfg.CodecID = target
+	} else if cfg.CodecID != target && cfg.CodecID != media.CodecLPCM {
+		cfg.CodecID = target
+	}
+
+	if stream.Codec == target {
+		if adpcm, ok, _ := adpcmParametersFromStream(stream, target); ok {
+			if cfg.ADPCM.BlockAlign == 0 {
+				cfg.ADPCM = adpcm
+			}
+		}
+	}
+
+	if (target == media.CodecMSADPCM || target == media.CodecIMAADPCM) && cfg.ADPCM.BlockAlign == 0 {
+		channels := stream.Audio.ChannelLayout.ChannelCount()
+		if channels == 0 {
+			channels = 1
+		}
+
+		p, _ := params.Default(target, channels)
+		cfg.ADPCM = p
+	}
+
 	return &Encoder{
 		config:   cfg,
 		buf:      &buffer.BlockBuffer{},
+		adpcm:    cfg.ADPCM,
 		imaState: &imaadpcm.EncodeState{},
-	}
+	}, nil
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
