@@ -25,9 +25,18 @@ func WithDts(dts Dts) PacketOption {
 func NewPacket(size int, opts ...PacketOption) *Packet {
 	b := pool.Get(size)
 	(*b) = (*b)[:size]
+	return newPacket(b, opts...)
+}
 
+// NewPacketFromData transfers ownership of data to the returned packet.
+// The caller must not modify or retain data after this call.
+func NewPacketFromData(data []byte, opts ...PacketOption) *Packet {
+	return newPacket(&data, opts...)
+}
+
+func newPacket(data *[]byte, opts ...PacketOption) *Packet {
 	pkt := &Packet{
-		data: b,
+		data: data,
 	}
 	pkt.refCount.Store(1)
 
