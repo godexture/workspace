@@ -88,6 +88,9 @@ func SampleFormat(bitsPerSample int) media.SampleFormat {
 	if bitsPerSample <= 16 {
 		return media.SampleFormatS16
 	}
+	if bitsPerSample <= 24 {
+		return media.SampleFormatS24
+	}
 	return media.SampleFormatS32
 }
 
