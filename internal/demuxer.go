@@ -143,8 +143,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		return nil, 0, fmt.Errorf("mp3 read packet: %w", err)
 	}
 
-	packet := media.NewPacket(len(data))
-	copy(packet.Data(), data)
+	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.presentationTimestamp)
