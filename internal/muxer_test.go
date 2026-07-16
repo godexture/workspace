@@ -13,6 +13,7 @@ import (
 )
 
 func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {
+	t.Parallel()
 	file, err := os.CreateTemp(t.TempDir(), "stream-*.flac")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +44,7 @@ func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {
 }
 
 func TestMuxerKeepsInitialStreamInfoForNonSeekableOutput(t *testing.T) {
+	t.Parallel()
 	var output nonSeekBuffer
 	muxer := NewMuxer(&output)
 	addTestStream(t, muxer)
@@ -70,6 +72,7 @@ func TestMuxerKeepsInitialStreamInfoForNonSeekableOutput(t *testing.T) {
 }
 
 func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
+	t.Parallel()
 	file, err := os.CreateTemp(t.TempDir(), "stream-*.flac")
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +98,7 @@ func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
 }
 
 func TestMuxerRoundtripTypedMetadata(t *testing.T) {
+	t.Parallel()
 	var output bytes.Buffer
 	muxer := NewMuxer(&output)
 	addTestStream(t, muxer)
