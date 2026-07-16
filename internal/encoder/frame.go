@@ -10,10 +10,10 @@ import (
 
 func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig) ([]byte, error) {
 	var writer bits.Writer
-	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, &writer)
+	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, false, &writer)
 }
 
-func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, w *bits.Writer) ([]byte, error) {
+func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, samplesValidated bool, w *bits.Writer) ([]byte, error) {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}
@@ -45,17 +45,20 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 		if len(samples[ch]) != blockSize {
 			return nil, fmt.Errorf("FLAC channel %d has mismatched block size", ch)
 		}
-		if err := flac.ValidateSampleRange(samples[ch], bitsPerSample); err != nil {
-			return nil, err
+		if !samplesValidated {
+			if err := flac.ValidateSampleRange(samples[ch], bitsPerSample); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	w.Init()
-	assignment, channels, candidates, err := chooseChannelAssignment(samples, bitsPerSample, options)
+	assignment, channels, candidates, scratch, err := chooseChannelAssignment(samples, bitsPerSample, options)
 	if err != nil {
 		return nil, err
 	}
 	defer releaseSubframeCandidates(candidates)
+	defer releaseResidualBuffers(scratch)
 
 	header := &flac.FrameHeader{
 		BlockSize:         blockSize,
@@ -79,10 +82,10 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 		}
 	}
 	w.PadToByte()
-	frame := append([]byte(nil), w.Bytes()...)
-	crc := hash.CRC16(frame)
-	frame = append(frame, byte(crc>>8), byte(crc))
-	return frame, nil
+	crc := hash.CRC16(w.Bytes())
+	w.Byte(byte(crc >> 8))
+	w.Byte(byte(crc))
+	return w.Bytes(), nil
 }
 
 func assignmentForChannels(assignment uint8, channels int) uint8 {
@@ -101,22 +104,23 @@ func streamableMaxBlockSize(sampleRate int) int {
 	return 16384
 }
 
-func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig) (uint8, [][]int64, []subframeCandidate, error) {
+func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig) (uint8, [][]int64, []subframeCandidate, [][]int64, error) {
 	if !options.EnableStereoDecorrelation || len(samples) != 2 {
 		candidates := make([]subframeCandidate, len(samples))
 		for ch := range samples {
 			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options)
 			if !candidates[ch].valid {
 				releaseSubframeCandidates(candidates)
-				return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+				return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 			}
 		}
-		return 0, samples, candidates, nil
+		return 0, samples, candidates, nil, nil
 	}
 
 	left, right := samples[0], samples[1]
-	mid := make([]int64, len(left))
-	side := make([]int64, len(left))
+	mid := getResidualBuffer(len(left))
+	side := getResidualBuffer(len(left))
+	scratch := [][]int64{mid, side}
 	for i := range left {
 		mid[i] = (left[i] + right[i]) >> 1
 		side[i] = left[i] - right[i]
@@ -152,7 +156,8 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		releaseSubframeCandidate(&rightCandidate)
 		releaseSubframeCandidate(&midCandidate)
 		releaseSubframeCandidate(&sideCandidate)
-		return 0, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+		releaseResidualBuffers(scratch)
+		return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 	}
 	chosen := assignments[bestIndex]
 	switch bestIndex {
@@ -169,5 +174,11 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 		releaseSubframeCandidate(&leftCandidate)
 		releaseSubframeCandidate(&rightCandidate)
 	}
-	return chosen.assignment, chosen.channels, chosen.candidates, nil
+	return chosen.assignment, chosen.channels, chosen.candidates, scratch, nil
+}
+
+func releaseResidualBuffers(buffers [][]int64) {
+	for _, buffer := range buffers {
+		releaseResidualBuffer(buffer)
+	}
 }
