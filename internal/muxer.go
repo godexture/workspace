@@ -143,6 +143,15 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if packet == nil {
 		return errors.New("flac muxer received nil packet")
 	}
+	if packet.Kind == media.PacketKindStreamEnd {
+		if err := m.WriteHeader(); err != nil {
+			return err
+		}
+		return m.applyPacketParameters(packet.CodecParameters)
+	}
+	if packet.Kind != media.PacketKindData {
+		return fmt.Errorf("flac muxer unsupported packet kind: %d", packet.Kind)
+	}
 	if m.closed {
 		return errors.New("flac muxer is already closed")
 	}
@@ -171,6 +180,19 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	return nil
 }
 
+func (m *Muxer) applyPacketParameters(parameters []media.CodecParameters) error {
+	for _, param := range parameters {
+		if !media.IsCodecParameters[streaminfo.PCMMD5Parameters](param) {
+			continue
+		}
+		if len(param.Data) != len(m.info.MD5) {
+			return fmt.Errorf("flac muxer PCM MD5 codec parameter has invalid length: %d", len(param.Data))
+		}
+		copy(m.info.MD5[:], param.Data)
+	}
+	return nil
+}
+
 func (m *Muxer) WriteTrailer() error {
 	if m.closed {
 		return nil
@@ -186,7 +208,7 @@ func (m *Muxer) WriteTrailer() error {
 			return err
 		}
 	}
-	if seeker, ok := m.w.(io.WriteSeeker); ok && m.frameCount > 0 {
+	if seeker, ok := m.w.(io.WriteSeeker); ok {
 		end, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return fmt.Errorf("seek FLAC output end: %w", err)
@@ -285,6 +307,9 @@ func (m *Muxer) recordFrame(blockSize, frameSize int) {
 
 func (m *Muxer) finalStreamInfo() streaminfo.StreamInfo {
 	info := m.info
+	if m.frameCount == 0 {
+		return info
+	}
 	info.MinBlockSize = m.minBlockSize
 	info.MaxBlockSize = m.maxBlockSize
 	info.MinFrameSize = m.minFrameSize

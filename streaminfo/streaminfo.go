@@ -14,7 +14,7 @@ const (
 	MetadataTypeStreamInfo    = 0
 	MetadataTypeVorbisComment = 4
 	MetadataTypePicture       = 6
-	Length                 = 34
+	Length                    = 34
 
 	MetadataKey = "flac.streaminfo"
 	// MetadataBlockKey stores opaque FLAC metadata blocks. Each value contains
@@ -22,6 +22,9 @@ const (
 	MetadataBlockKey = "flac.metadata.block"
 	MaxChannels      = 8
 )
+
+// PCMMD5Parameters identifies a 16-byte source PCM MD5 payload.
+type PCMMD5Parameters struct{}
 
 type StreamInfo struct {
 	MinBlockSize  uint16

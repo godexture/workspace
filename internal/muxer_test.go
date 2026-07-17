@@ -43,6 +43,59 @@ func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {
 	}
 }
 
+func TestMuxerAppliesPCMMD5EndEvent(t *testing.T) {
+	t.Parallel()
+	file, err := os.CreateTemp(t.TempDir(), "stream-*.flac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	muxer := NewMuxer(file)
+	addTestStream(t, muxer)
+	writeTestFrame(t, muxer, testFrame(4096, 0, 100))
+	want := [16]byte{1, 2, 3, 4}
+	event := media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
+		media.NewCodecParameters[streaminfo.PCMMD5Parameters](want[:]),
+	})
+	defer event.Release()
+	if err := muxer.WritePacket(0, event); err != nil {
+		t.Fatalf("WritePacket(end event) error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+	if got := readTestStreamInfo(t, file).MD5; got != want {
+		t.Fatalf("MD5 = %x, want %x", got, want)
+	}
+}
+
+func TestMuxerWritesEmptyStreamPCMMD5(t *testing.T) {
+	t.Parallel()
+	file, err := os.CreateTemp(t.TempDir(), "stream-*.flac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	muxer := NewMuxer(file)
+	addTestStream(t, muxer)
+	want := [16]byte{5, 6, 7, 8}
+	event := media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
+		media.NewCodecParameters[streaminfo.PCMMD5Parameters](want[:]),
+	})
+	defer event.Release()
+	if err := muxer.WritePacket(0, event); err != nil {
+		t.Fatalf("WritePacket(end event) error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+	if got := readTestStreamInfo(t, file).MD5; got != want {
+		t.Fatalf("MD5 = %x, want %x", got, want)
+	}
+}
+
 func TestMuxerKeepsInitialStreamInfoForNonSeekableOutput(t *testing.T) {
 	t.Parallel()
 	var output nonSeekBuffer
