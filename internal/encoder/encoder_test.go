@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -40,9 +41,10 @@ func TestEncoder_ReceivePacketEmptyFlushed(t *testing.T) {
 		t.Fatalf("Flush() error = %v", err)
 	}
 
+	assertMD5EndPacket(t, receivePacket(t, enc), md5.Sum(nil))
 	pkt, err := enc.ReceivePacket()
 	if !errors.Is(err, engine.ErrEOF) || pkt != nil {
-		t.Fatalf("expected ErrEOF and nil packet, got err=%v, packet=%v", err, pkt)
+		t.Fatalf("expected ErrEOF after end packet, got err=%v, packet=%v", err, pkt)
 	}
 }
 
@@ -135,8 +137,9 @@ func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	}
 	decoded := decodePacketSamples(t, pkt, streamInfoFor(3, 44100, 1, 16))
 	assertSamplesEqual(t, decoded, [][]int64{{1, 2, 3}})
+	assertMD5EndPacket(t, receivePacket(t, enc), md5.Sum(frame.Planes()[0]))
 	if pkt, err := enc.ReceivePacket(); !errors.Is(err, engine.ErrEOF) || pkt != nil {
-		t.Fatalf("ReceivePacket() after final packet = (%v, %v), want (nil, ErrEOF)", pkt, err)
+		t.Fatalf("ReceivePacket() after end packet = (%v, %v), want (nil, ErrEOF)", pkt, err)
 	}
 }
 
@@ -182,8 +185,37 @@ func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
 		assertSamplesEqual(t, decoded, [][]int64{want.samples})
 		packet.Release()
 	}
+	end := receivePacket(t, enc)
+	if end.Kind != media.PacketKindStreamEnd {
+		t.Fatalf("final packet kind = %d, want stream end", end.Kind)
+	}
+	end.Release()
 	if enc.pendingQueue != nil {
 		t.Fatalf("pending queue retained after drain: len=%d cap=%d", len(enc.pendingQueue), cap(enc.pendingQueue))
+	}
+}
+
+func receivePacket(t *testing.T, enc *Encoder) *media.Packet {
+	t.Helper()
+	pkt, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket() error = %v", err)
+	}
+	return pkt
+}
+
+func assertMD5EndPacket(t *testing.T, pkt *media.Packet, want [16]byte) {
+	t.Helper()
+	defer pkt.Release()
+	if pkt.Kind != media.PacketKindStreamEnd {
+		t.Fatalf("packet kind = %d, want stream end", pkt.Kind)
+	}
+	if len(pkt.CodecParameters) != 1 {
+		t.Fatalf("packet codec parameters = %#v, want one", pkt.CodecParameters)
+	}
+	param := pkt.CodecParameters[0]
+	if !media.IsCodecParameters[streaminfo.PCMMD5Parameters](param) || !bytes.Equal(param.Data, want[:]) {
+		t.Fatalf("packet MD5 parameter = %#v, want %x", param, want)
 	}
 }
 
