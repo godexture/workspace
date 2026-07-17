@@ -111,7 +111,7 @@ func TestG711Roundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			cfg := DefaultDecoderConfig
 			cfg.codecID = tt.codec
 			dec := NewDecoder(media.StreamInfo{}, cfg)
@@ -285,7 +285,7 @@ func TestLeftJustifyPCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			got := leftJustifyPCM(tt.in, tt.format, tt.bitsPerSample)
 			if !bytes.Equal(got, tt.want) {
 				t.Errorf("leftJustifyPCM() = %x, want %x", got, tt.want)

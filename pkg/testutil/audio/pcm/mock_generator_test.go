@@ -21,7 +21,7 @@ func TestCreateAudioFramePreservesIntegerPCMGrid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			scale := float32(uint64(1) << uint(tt.bitsPerSample-1))
 			pcm := []float32{-1, -123 / scale, 0, 123 / scale, 1 - 1/scale}
 			frame, err := CreateAudioFrame(pcm, media.AudioAttributes{

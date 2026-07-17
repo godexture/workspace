@@ -45,7 +45,7 @@ func TestEncodeDecodeText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			encByte, payload := encodeText(tt.input, tt.encoding, tt.version)
 			decoded := decodeEncodedText(encByte, payload)
 			if decoded != tt.input {
