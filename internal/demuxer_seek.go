@@ -33,6 +33,7 @@ func (d *Demuxer) seekToStart() error {
 	d.scanner = nil
 	d.pendingFrame = nil
 	d.samplePos = 0
+	d.expectedNumber = 0
 	d.started = true
 	return nil
 }
@@ -79,6 +80,11 @@ func (d *Demuxer) queueTargetFrame(target uint64, data []byte, header frame.Head
 	d.scanner = scanner
 	d.pendingFrame = &pendingFrame{data: data, header: header}
 	d.samplePos = samplePos
+	if header.BlockingStrategy {
+		d.expectedNumber = header.Number + uint64(header.BlockSize)
+	} else {
+		d.expectedNumber = header.Number + 1
+	}
 	d.started = true
 	return nil
 }
@@ -87,7 +93,15 @@ func (d *Demuxer) locateAt(offset int64) ([]byte, frame.Header, *frame.Scanner, 
 	if _, err := d.r.Seek(offset, io.SeekStart); err != nil {
 		return nil, frame.Header{}, nil, fmt.Errorf("seek FLAC audio frames: %w", err)
 	}
-	data, header, scanner, err := frame.LocateFrame(d.r, d.nativeInfo)
+	reader := io.Reader(d.r)
+	if !d.strict {
+		reader = io.LimitReader(d.r, d.audioEnd-offset)
+	}
+	scanner, err := frame.NewScanner(reader, d.nativeInfo, frame.Options{Strict: d.strict, Sync: true})
+	if err != nil {
+		return nil, frame.Header{}, nil, fmt.Errorf("flac seek: locate frame: %w", err)
+	}
+	data, header, err := scanner.Next()
 	if err != nil {
 		return nil, frame.Header{}, nil, fmt.Errorf("flac seek: locate frame: %w", err)
 	}

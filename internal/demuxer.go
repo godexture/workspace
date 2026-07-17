@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
@@ -12,20 +13,25 @@ import (
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/seektable"
 	"github.com/godexture/format-flac/streaminfo"
+	id3 "github.com/godexture/metadata-id3"
+	"github.com/godexture/metadata-id3/id3v1"
 	vc "github.com/godexture/metadata-vorbiscomment"
 )
 
 type Demuxer struct {
-	r io.ReadSeeker
+	r      io.ReadSeeker
+	strict bool
 
 	streamInfo     media.StreamInfo
 	metadataBundle metadata.Bundle
 	audioOffset    int64
+	audioEnd       int64
 	nativeInfo     streaminfo.StreamInfo
 	scanner        *frame.Scanner
 	parsed         bool
 	started        bool
 	samplePos      uint64
+	expectedNumber uint64
 	seekPoints     []seektable.Point
 	pendingFrame   *pendingFrame
 }
@@ -35,11 +41,11 @@ type pendingFrame struct {
 	header frame.Header
 }
 
-func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
+func NewDemuxer(r io.ReadSeeker, config DemuxerConfig) (*Demuxer, error) {
 	if r == nil {
 		return nil, errors.New("flac demuxer requires a non-nil ReadSeeker")
 	}
-	return &Demuxer{r: r}, nil
+	return &Demuxer{r: r, strict: config.Strict}, nil
 }
 
 func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
@@ -47,8 +53,26 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
 	}
 
-	info, streamInfoBlock, extraBlocks, seekPoints, audioOffset, err := parseNativeFLACHeader(d.r)
-	if err != nil {
+	info, streamInfoBlock, extraBlocks, seekPoints, audioOffset, err := parseNativeFLACHeader(d.r, d.strict)
+	markerless := false
+	if err != nil && !d.strict && strings.Contains(err.Error(), "not a native FLAC stream") {
+		if _, seekErr := d.r.Seek(0, io.SeekStart); seekErr != nil {
+			return nil, metadata.Bundle{}, seekErr
+		}
+		scanner, scanErr := frame.NewScanner(io.LimitReader(d.r, 1<<20), streaminfo.StreamInfo{}, frame.Options{Sync: true})
+		if scanErr != nil {
+			return nil, metadata.Bundle{}, scanErr
+		}
+		_, header, scanErr := scanner.Next()
+		if scanErr != nil {
+			return nil, metadata.Bundle{}, errors.New("not a native FLAC stream")
+		}
+		info = synthesizedStreamInfo(header)
+		streamInfoBlock = streaminfo.Encode(info)
+		audioOffset = scanner.FrameOffset()
+		markerless = true
+	}
+	if err != nil && !markerless {
 		return nil, metadata.Bundle{}, err
 	}
 
@@ -56,6 +80,11 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	streamMetadata.AddRaw(streaminfo.MetadataKey, streamInfoBlock)
 
 	globalMetadata := metadata.NewBundle()
+	if !d.strict {
+		if id3Metadata, id3Err := id3.ParseReader(d.r); id3Err == nil {
+			globalMetadata.Merge(id3Metadata)
+		}
+	}
 	for _, block := range extraBlocks {
 		var header [4]byte
 		copy(header[:], block[:4])
@@ -100,8 +129,24 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 	d.metadataBundle = *globalMetadata
 	d.audioOffset = audioOffset
+	d.audioEnd, err = d.fileSize()
+	if err != nil {
+		return nil, metadata.Bundle{}, err
+	}
+	if !d.strict && d.audioEnd >= id3v1.TagSize {
+		if _, seekErr := d.r.Seek(-int64(id3v1.TagSize), io.SeekEnd); seekErr == nil {
+			var tail [id3v1.TagSize]byte
+			if _, readErr := io.ReadFull(d.r, tail[:]); readErr == nil && id3v1.HasTag(tail[:]) {
+				d.audioEnd -= id3v1.TagSize
+			}
+		}
+	}
+	if markerless {
+		d.seekPoints = nil
+	} else {
+		d.seekPoints = seekPoints
+	}
 	d.nativeInfo = info
-	d.seekPoints = seekPoints
 	d.parsed = true
 
 	return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
@@ -122,7 +167,11 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	}
 
 	if d.scanner == nil {
-		scanner, err := frame.NewScanner(d.r, d.nativeInfo)
+		reader := io.Reader(d.r)
+		if !d.strict {
+			reader = io.LimitReader(d.r, d.audioEnd-currentOffset(d.r))
+		}
+		scanner, err := frame.NewScanner(reader, d.nativeInfo, frame.Options{Strict: d.strict})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -143,14 +192,34 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
-	pts := header.Number
-	if !header.BlockingStrategy {
-		pts = d.samplePos
+	if d.expectedNumber != header.Number {
+		d.samplePos = frame.StartSample(header, d.nativeInfo)
+	}
+	pts := d.samplePos
+	if header.BlockingStrategy {
+		pts = header.Number
 	}
 	packet.PTS = media.Pts(pts)
 	packet.DTS = media.Dts(pts)
 	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(header.SampleRate)))
 	d.samplePos += uint64(header.BlockSize)
+	if header.BlockingStrategy {
+		d.expectedNumber = header.Number + uint64(header.BlockSize)
+	} else {
+		d.expectedNumber = header.Number + 1
+	}
 
 	return packet, 0, nil
+}
+
+func currentOffset(r io.ReadSeeker) int64 { offset, _ := r.Seek(0, io.SeekCurrent); return offset }
+
+func synthesizedStreamInfo(header frame.Header) streaminfo.StreamInfo {
+	info := streaminfo.StreamInfo{SampleRate: header.SampleRate, Channels: header.Channels, BitsPerSample: header.BitsPerSample}
+	if header.BlockingStrategy {
+		info.MinBlockSize, info.MaxBlockSize = 16, 65535
+	} else {
+		info.MinBlockSize, info.MaxBlockSize = uint16(header.BlockSize), uint16(header.BlockSize)
+	}
+	return info
 }

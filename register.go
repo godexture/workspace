@@ -12,32 +12,24 @@ import (
 	engine "github.com/godexture/sdk/engine"
 )
 
-type DemuxerConfig struct{}
-
-func (DemuxerConfig) NodeConfiguration() {}
-
-type MuxerConfig struct{}
-
-func (MuxerConfig) NodeConfiguration() {}
-
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
 }
 
-func NewDemuxer(r io.ReadSeeker) (*internal.Demuxer, error) {
-	return internal.NewDemuxer(r)
+func NewDemuxer(r io.ReadSeeker, cfg DemuxerConfig) (*internal.Demuxer, error) {
+	return internal.NewDemuxer(r, cfg.ApplyDefaults())
 }
 
-func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r)
+func NewDemuxerEngine(r io.ReadSeeker, cfg DemuxerConfig) (engine.DemuxerEngine, error) {
+	return internal.NewDemuxer(r, cfg.ApplyDefaults())
 }
 
-func NewMuxer(w io.Writer) *internal.Muxer {
-	return internal.NewMuxer(w)
+func NewMuxer(w io.Writer, config MuxerConfig) *internal.Muxer {
+	return internal.NewMuxer(w, config.ApplyDefaults())
 }
 
-func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
-	return internal.NewMuxer(w)
+func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
+	return internal.NewMuxer(w, config.ApplyDefaults())
 }
 
 func init() {
@@ -47,13 +39,14 @@ func init() {
 			Description: "FLAC demuxer",
 		},
 		Probe: Probe,
-		Factory: func(r io.Reader, _ registry.Configuration) (node.Demuxer, error) {
+		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
 			rs, ok := r.(io.ReadSeeker)
 			if !ok {
 				return nil, fmt.Errorf("format-flac demuxer requires io.ReadSeeker")
 			}
 
-			demuxer, err := NewDemuxerEngine(rs)
+			cfg := engine.ResolveConfig[DemuxerConfig](config)
+			demuxer, err := internal.NewDemuxer(rs, cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -68,8 +61,9 @@ func init() {
 			Name:        "flac-muxer",
 			Description: "FLAC muxer",
 		},
-		Factory: func(w io.Writer, _ registry.Configuration) (node.Muxer, error) {
-			return engine.WrapMuxer(NewMuxerEngine(w)), nil
+		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
+			resolved := engine.ResolveConfig[MuxerConfig](config)
+			return engine.WrapMuxer(internal.NewMuxer(w, resolved)), nil
 		},
 	}); err != nil {
 		panic(err)

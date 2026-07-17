@@ -37,7 +37,7 @@ func BenchmarkDemuxerReadPackets(b *testing.B) {
 	b.SetBytes(int64(len(audio)))
 	b.ResetTimer()
 	for b.Loop() {
-		demuxer, err := NewDemuxer(bytes.NewReader(input))
+		demuxer, err := NewDemuxer(bytes.NewReader(input), DemuxerConfig{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -57,7 +57,7 @@ func BenchmarkDemuxerReadPackets(b *testing.B) {
 func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
 	t.Parallel()
 	data := mustDecodeHex(t, appendixDExample1Hex)
-	demuxer, err := NewDemuxer(bytes.NewReader(data))
+	demuxer, err := NewDemuxer(bytes.NewReader(data), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -133,7 +133,7 @@ func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
 	second[header.HeaderBytes-1] = hash.CRC8(second[:header.HeaderBytes-1])
 	crc := hash.CRC16(second[:len(second)-2])
 	second[len(second)-2], second[len(second)-1] = byte(crc>>8), byte(crc)
-	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, append(first, second...))))
+	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, append(first, second...))), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestDemuxerReadPacketStreamsAudioInChunks(t *testing.T) {
 
 func TestDemuxerEmptyAudio(t *testing.T) {
 	t.Parallel()
-	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, nil)))
+	demuxer, err := NewDemuxer(bytes.NewReader(makeTestFLAC(t, 0, nil)), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -182,7 +182,7 @@ func TestDemuxerSeekLandsOnContainingFrameAndResets(t *testing.T) {
 	input := append([]byte(streaminfo.Marker), 0x80, 0, 0, streaminfo.Length)
 	input = append(input, streaminfo.Encode(info)...)
 	input = append(input, frames...)
-	demuxer, err := NewDemuxer(bytes.NewReader(input))
+	demuxer, err := NewDemuxer(bytes.NewReader(input), DemuxerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestDemuxerReadErrorReturnsNoPartialPacket(t *testing.T) {
 		failAfter: len(input),
 		err:       wantErr,
 	}
-	demuxer, err := NewDemuxer(reader)
+	demuxer, err := NewDemuxer(reader, DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -236,7 +236,7 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 		large[i] = byte(i * 31)
 	}
 	input := makeTestFLAC(t, 0, nil, large, []byte("second block"))
-	demuxer, err := NewDemuxer(bytes.NewReader(input))
+	demuxer, err := NewDemuxer(bytes.NewReader(input), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -246,7 +246,7 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	muxer := NewMuxer(&output)
+	muxer := NewMuxer(&output, MuxerConfig{})
 	if _, err := muxer.AddStream(streams[0]); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -260,7 +260,7 @@ func TestLargeMetadataRoundtripPreservesOpaqueBlocks(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	roundtrip, err := NewDemuxer(bytes.NewReader(output.Bytes()))
+	roundtrip, err := NewDemuxer(bytes.NewReader(output.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer(roundtrip) error = %v", err)
 	}
@@ -298,7 +298,7 @@ func TestDemuxerDecodesVorbisCommentAndPicture(t *testing.T) {
 		{blockType: streaminfo.MetadataTypePicture, payload: picture},
 	})
 
-	demuxer, err := NewDemuxer(bytes.NewReader(input))
+	demuxer, err := NewDemuxer(bytes.NewReader(input), DemuxerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
