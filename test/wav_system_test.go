@@ -45,7 +45,7 @@ func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {
 
 	original := buf.Bytes()
 
-	demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(original))
+	demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(original), wavpkg.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxerEngine() error = %v", err)
 	}

@@ -33,14 +33,14 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			input, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demuxEngine, err := wav.NewDemuxerEngine(bytes.NewReader(input))
+			demuxEngine, err := wav.NewDemuxerEngine(bytes.NewReader(input), wav.DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}
