@@ -42,7 +42,7 @@ func newProfile(name string, codec media.CodecID, opts testutil.CompareOptions, 
 			panic(err)
 		}
 		profile.ADPCM = adpcm
-		profile.CodecParameters = media.CodecParameters{Schema: params.SchemaADPCM, Data: adpcm.MarshalBinary()}
+		profile.CodecParameters = media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary())
 	}
 	return profile
 }

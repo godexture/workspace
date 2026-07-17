@@ -59,7 +59,7 @@ func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) *Decoder {
 	if stream.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
 		cfg.channelLayout = stream.MediaAttributes.Audio.ChannelLayout
 	}
-	if stream.CodecParameters.Schema == params.SchemaADPCM {
+	if media.IsCodecParameters[params.ADPCM](stream.CodecParameters) {
 		if adpcm, err := params.Parse(stream.Codec, stream.Audio.ChannelLayout.ChannelCount(), stream.CodecParameters.Data); err == nil {
 			cfg.adpcm = adpcm
 		}

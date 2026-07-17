@@ -91,7 +91,7 @@ func init() {
 
 					adpcm := resolved.ADPCM
 					if adpcm.BlockAlign == 0 {
-						if in.Codec == target && in.CodecParameters.Schema == params.SchemaADPCM {
+						if in.Codec == target && media.IsCodecParameters[params.ADPCM](in.CodecParameters) {
 							if p, err := params.Parse(target, in.Audio.ChannelLayout.ChannelCount(), in.CodecParameters.Data); err == nil {
 								adpcm = p
 							}
@@ -104,7 +104,7 @@ func init() {
 					if err := adpcm.Validate(target, channels); err != nil {
 						return media.Profile{}, err
 					}
-					profile.CodecParameters = media.CodecParameters{Schema: params.SchemaADPCM, Data: adpcm.MarshalBinary()}
+					profile.CodecParameters = media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary())
 				} else {
 					profile.CodecParameters = media.CodecParameters{}
 				}
