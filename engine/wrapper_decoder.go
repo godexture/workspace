@@ -29,28 +29,29 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 		return fmt.Errorf("decoder ports not connected")
 	}
 
-	return runCodecLoop(ctx, in, out,
-		func(pkt *media.Packet) error {
-			if pkt.Kind == media.PacketKindStreamEnd {
-				return nil
-			}
-			if pkt.Kind != media.PacketKindData {
-				return fmt.Errorf("unsupported packet kind: %d", pkt.Kind)
-			}
-			return n.engine.SendPacket(pkt)
-		},
-		func() (media.Frame, error) {
-			f, err := n.engine.ReceiveFrame()
-			if err != nil {
-				return nil, err
-			}
-			if f == nil || *f == nil {
-				return nil, fmt.Errorf("decoder returned nil frame")
-			}
-			return *f, nil
-		},
-		n.engine.Flush,
-	)
+	send := func(pkt *media.Packet) error {
+		if pkt.Kind == media.PacketKindStreamEnd {
+			return nil
+		}
+		if pkt.Kind != media.PacketKindData {
+			return fmt.Errorf("unsupported packet kind: %d", pkt.Kind)
+		}
+		return n.engine.SendPacket(pkt)
+	}
+	receive := func() (media.Frame, error) {
+		f, err := n.engine.ReceiveFrame()
+		if err != nil {
+			return nil, err
+		}
+		if f == nil || *f == nil {
+			return nil, fmt.Errorf("decoder returned nil frame")
+		}
+		return *f, nil
+	}
+	if notifier, ok := n.engine.(outputNotifier); ok {
+		return runAsyncCodecLoop(ctx, in, out, send, receive, n.engine.Flush, notifier)
+	}
+	return runCodecLoop(ctx, in, out, send, receive, n.engine.Flush)
 }
 
 func (n *DecoderAdapter) InputPorts() map[string]*node.InPort[*media.Packet] {
