@@ -5,7 +5,7 @@ package main
 import (
 	"log"
 
-	"github.com/godexture/tools/table_generator"
+	generator "github.com/godexture/tools/table-generator"
 )
 
 func buildCRC8Table() [256]byte {
@@ -88,7 +88,7 @@ func main() {
 	crc16Table := buildCRC16Table()
 	slice8 := buildCRC16Slice8(crc16Table)
 
-	tables := []table_generator.Table{
+	tables := []generator.Table{
 		{
 			Name:   "crc8Table",
 			Type:   "[256]byte",
@@ -109,7 +109,7 @@ func main() {
 		},
 	}
 
-	if err := table_generator.Generate("tables.go", "hash", tables); err != nil {
+	if err := generator.Generate("tables.go", "hash", tables); err != nil {
 		log.Fatalf("generate error: %v", err)
 	}
 }
