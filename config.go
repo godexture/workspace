@@ -16,6 +16,8 @@ const (
 	StereoIndependent = flac.StereoIndependent
 	StereoAdaptive    = flac.StereoAdaptive
 	StereoExhaustive  = flac.StereoExhaustive
+	BlockSplitEstimated = flac.BlockSplitEstimated
+	BlockSplitExact     = flac.BlockSplitExact
 )
 
 func normalizeCompressionLevel(level int) int {

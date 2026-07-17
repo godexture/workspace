@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/godexture/codec-flac/internal/decoder"
@@ -140,6 +141,123 @@ func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	assertMD5EndPacket(t, receivePacket(t, enc), md5.Sum(frame.Planes()[0]))
 	if pkt, err := enc.ReceivePacket(); !errors.Is(err, engine.ErrEOF) || pkt != nil {
 		t.Fatalf("ReceivePacket() after end packet = (%v, %v), want (nil, ErrEOF)", pkt, err)
+	}
+}
+
+func TestChooseBlockSplit_SelectsSignalBoundaries(t *testing.T) {
+	t.Parallel()
+	block := make([]int64, 4096)
+	for i := range block {
+		frequency := 0.02
+		if i >= len(block)/2 {
+			frequency = 0.31
+		}
+		block[i] = int64(math.Round(12000 * math.Sin(float64(i)*frequency)))
+	}
+	for _, mode := range []flac.BlockSplitMode{flac.BlockSplitEstimated, flac.BlockSplitExact} {
+		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			cfg := flac.DefaultEncoderConfig
+			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
+			windows := newWindowSet(cfg.Apodizations)
+			spans, err := chooseBlockSplit([][]int64{block}, 16, cfg, &windows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer releaseBlockSpans(spans)
+			if len(spans) < 2 {
+				t.Fatalf("selected %d span, want adaptive split", len(spans))
+			}
+			offset := 0
+			for _, span := range spans {
+				if span.offset != offset || span.length < 1024 {
+					t.Fatalf("invalid span: %+v", span)
+				}
+				offset += span.length
+			}
+			if offset != len(block) {
+				t.Fatalf("span total = %d, want %d", offset, len(block))
+			}
+		})
+	}
+}
+
+func TestChooseBlockSplit_KeepsUniformSignalWhole(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []flac.BlockSplitMode{flac.BlockSplitEstimated, flac.BlockSplitExact} {
+		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			cfg := flac.DefaultEncoderConfig
+			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
+			windows := newWindowSet(cfg.Apodizations)
+			spans, err := chooseBlockSplit([][]int64{make([]int64, 4096)}, 16, cfg, &windows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer releaseBlockSpans(spans)
+			if len(spans) != 1 || spans[0].length != 4096 {
+				t.Fatalf("spans = %+v, want one full block", spans)
+			}
+		})
+	}
+}
+
+func TestEncoder_AdaptiveBlocksPreserveNumbersPTSAndSamples(t *testing.T) {
+	t.Parallel()
+	input := make([]int16, 4096)
+	for i := range input {
+		frequency := 0.02
+		if i >= len(input)/2 {
+			frequency = 0.31
+		}
+		input[i] = int16(math.Round(12000 * math.Sin(float64(i)*frequency)))
+	}
+	for _, mode := range []flac.BlockSplitMode{flac.BlockSplitEstimated, flac.BlockSplitExact} {
+		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			cfg := flac.DefaultEncoderConfig
+			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
+			enc, err := NewEncoder(media.StreamInfo{}, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputFrame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 17, input)
+			var wrapped media.Frame = inputFrame
+			if err := enc.SendFrame(&wrapped); err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.Flush(); err != nil {
+				t.Fatal(err)
+			}
+
+			var actual []int64
+			var number uint64
+			for frames := 0; ; frames++ {
+				packet := receivePacket(t, enc)
+				if packet.Kind == media.PacketKindStreamEnd {
+					packet.Release()
+					if frames < 2 {
+						t.Fatalf("encoded %d frame, want adaptive splitting", frames)
+					}
+					break
+				}
+				decoded, err := decoder.DecodeFrame(packet.Data(), streamInfoFor(4096, 44100, 1, 16))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !decoded.Header.BlockingStrategy || decoded.Header.Number != number || packet.PTS != media.Pts(17+number) {
+					t.Fatalf("header/PTS = %+v/%d, want sample %d", decoded.Header, packet.PTS, number)
+				}
+				number += uint64(decoded.Header.BlockSize)
+				actual = append(actual, decoded.Samples[0]...)
+				packet.Release()
+			}
+			if number != uint64(len(input)) {
+				t.Fatalf("sample total = %d, want %d", number, len(input))
+			}
+			want := make([]int64, len(input))
+			for i := range input {
+				want[i] = int64(input[i])
+			}
+			assertSamplesEqual(t, [][]int64{actual}, [][]int64{want})
+		})
 	}
 }
 
@@ -480,7 +598,7 @@ func TestEncodeFrame_FullBitstreamFeaturesRoundtrip(t *testing.T) {
 	cfg := flac.EncoderConfig{
 		MaxFixedOrder: 4, MaxLPCOrder: 8, MaxRicePartitionOrder: 6,
 		EnableWastedBits: true, StereoMode: flac.StereoExhaustive,
-		StreamableSubset: false, BlockingStrategy: flac.VariableBlocking,
+		StreamableSubset: false, BlockSplitDepth: 1,
 	}
 	data, err := EncodeFrame([][]int64{left, right}, 12345, 16, 0, cfg)
 	if err != nil {

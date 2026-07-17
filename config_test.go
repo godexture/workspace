@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"log"
 	"testing"
+
+	"github.com/godexture/sdk/optional"
 )
 
 func TestPresetConfig(t *testing.T) {
@@ -17,8 +19,32 @@ func TestPresetConfig(t *testing.T) {
 	if got := PresetConfig(0).ApplyDefaults(); got.BlockSize != 1152 || got.StereoMode != 0 {
 		t.Fatalf("level 0 = %#v", got)
 	}
-	if got := PresetConfig(8).ApplyDefaults(); got.MaxLPCOrder != 12 || len(got.Apodizations) != 6 {
+	if got := PresetConfig(7).ApplyDefaults(); got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitEstimated {
+		t.Fatalf("level 7 = %#v", got)
+	}
+	if got := PresetConfig(8).ApplyDefaults(); got.MaxLPCOrder != 12 || len(got.Apodizations) != 6 || got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitExact {
 		t.Fatalf("level 8 = %#v", got)
+	}
+}
+
+func TestBlockSplitConfigValidation(t *testing.T) {
+	t.Parallel()
+	for _, config := range []struct {
+		name string
+		edit func(*EncoderConfig)
+	}{
+		{"negative depth", func(c *EncoderConfig) { c.BlockSplitDepth = optional.Some(-1) }},
+		{"small leaf", func(c *EncoderConfig) { c.BlockSplitDepth = optional.Some(9) }},
+		{"uneven split", func(c *EncoderConfig) { c.BlockSize, c.BlockSplitDepth = optional.Some(4095), optional.Some(2) }},
+		{"invalid mode", func(c *EncoderConfig) { c.BlockSplitMode = optional.Some(BlockSplitMode(2)) }},
+	} {
+		t.Run(config.name, func(t *testing.T) {
+			cfg := NewEncoderConfig()
+			config.edit(&cfg)
+			if err := cfg.ApplyDefaults().Validate(); err == nil {
+				t.Fatal("Validate() succeeded")
+			}
+		})
 	}
 }
 
