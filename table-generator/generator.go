@@ -1,4 +1,4 @@
-package table_generator
+package generator
 
 import (
 	"bytes"
