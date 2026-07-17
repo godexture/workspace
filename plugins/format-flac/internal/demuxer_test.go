@@ -69,6 +69,7 @@ func TestDemuxerAnalyzeAndReadPacket(t *testing.T) {
 	if meta.AllRaw() != nil {
 		t.Fatalf("expected no global raw metadata, got %v", meta.AllRaw())
 	}
+	metadata.AssertBundleValue(t, &meta, metadata.KeyDuration(22675))
 	if len(streams) != 1 {
 		t.Fatalf("Analyze() returned %d streams, want 1", len(streams))
 	}
