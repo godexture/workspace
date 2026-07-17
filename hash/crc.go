@@ -24,8 +24,6 @@ type crc16Slice8Tables struct {
 	stateLo   [256]uint16
 }
 
-
-
 // CRC16Update extends a FLAC frame CRC with data. The initial CRC is zero.
 func CRC16Update(crc uint16, data []byte) uint16 {
 	for len(data) >= 8 {

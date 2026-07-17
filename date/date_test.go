@@ -302,7 +302,7 @@ func TestNewPartial(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			got, err := NewPartial(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("NewPartial(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
@@ -352,7 +352,7 @@ func TestPartial_ToISOString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			p, _ := NewPartial(tt.input)
 			if got := p.ToISOString(); got != tt.expected {
 				t.Errorf("Partial.ToISOString() = %q, want %q", got, tt.expected)
