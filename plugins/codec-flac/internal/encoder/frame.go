@@ -16,76 +16,61 @@ func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber u
 }
 
 func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, samplesValidated bool, windows *windowSet, w *bits.Writer) ([]byte, error) {
-	if bitsPerSample < 4 || bitsPerSample > 32 {
-		return nil, fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
+	if err := validateFrame(samples, sampleRate, bitsPerSample, options, samplesValidated); err != nil {
+		return nil, err
 	}
-	if sampleRate < 1 || sampleRate > 1048575 {
-		return nil, fmt.Errorf("invalid FLAC sample rate: %d", sampleRate)
+	analysis, err := analyzeFrame(samples, bitsPerSample, options, windows)
+	if err != nil {
+		return nil, err
 	}
-	if options.MaxRicePartitionOrder < 0 || options.MaxRicePartitionOrder > 15 || options.StreamableSubset && options.MaxRicePartitionOrder > 8 {
-		return nil, fmt.Errorf("invalid FLAC Rice partition order: %d", options.MaxRicePartitionOrder)
-	}
-	if options.LPCPrecision != 0 && (options.LPCPrecision < 4 || options.LPCPrecision > 15) {
-		return nil, fmt.Errorf("invalid FLAC LPC precision: %d", options.LPCPrecision)
-	}
-	if options.StereoMode > flac.StereoExhaustive {
-		return nil, fmt.Errorf("invalid FLAC stereo mode: %d", options.StereoMode)
-	}
-	if len(samples) == 0 || len(samples) > 8 {
-		return nil, fmt.Errorf("unsupported FLAC channel count: %d", len(samples))
-	}
-	blockSize := len(samples[0])
-	if blockSize == 0 {
-		return nil, fmt.Errorf("FLAC frame has no samples")
-	}
-	if blockSize > 65535 {
-		return nil, fmt.Errorf("FLAC frame block size exceeds 65535: %d", blockSize)
-	}
-	if options.StreamableSubset {
-		if maxBlockSize := streamableMaxBlockSize(sampleRate); blockSize > maxBlockSize {
-			return nil, fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", blockSize, maxBlockSize, sampleRate)
-		}
-		if sampleRate <= 48000 && options.MaxLPCOrder > streamableMaxLPCOrder {
-			options.MaxLPCOrder = streamableMaxLPCOrder
-		}
-	}
-	for ch := range samples {
-		if len(samples[ch]) != blockSize {
-			return nil, fmt.Errorf("FLAC channel %d has mismatched block size", ch)
-		}
-		if !samplesValidated {
-			if err := flac.ValidateSampleRange(samples[ch], bitsPerSample); err != nil {
-				return nil, err
-			}
-		}
-	}
+	defer analysis.release()
+	return writeAnalyzedFrame(w, analysis, len(samples[0]), sampleRate, bitsPerSample, frameNumber, options.BlockSplitDepth > 0, options.StreamableSubset)
+}
 
-	w.Init()
+type frameAnalysis struct {
+	assignment uint8
+	channels   [][]int64
+	candidates []subframeCandidate
+	scratch    [][]int64
+	costBits   uint64
+}
+
+const frameOverheadBits = 80
+
+func (a *frameAnalysis) release() {
+	if a == nil {
+		return
+	}
+	releaseSubframeCandidates(a.candidates)
+	releaseResidualBuffers(a.scratch)
+	a.channels, a.candidates, a.scratch = nil, nil, nil
+}
+
+func analyzeFrame(samples [][]int64, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) (*frameAnalysis, error) {
 	assignment, channels, candidates, scratch, err := chooseChannelAssignment(samples, bitsPerSample, options, windows)
 	if err != nil {
 		return nil, err
 	}
-	defer releaseSubframeCandidates(candidates)
-	defer releaseResidualBuffers(scratch)
-
-	header := &frame.Header{
-		BlockSize:         blockSize,
-		SampleRate:        sampleRate,
-		ChannelAssignment: assignmentForChannels(assignment, len(samples)),
-		BitsPerSample:     bitsPerSample,
-		Number:            frameNumber,
-		BlockingStrategy:  options.BlockingStrategy == flac.VariableBlocking,
+	analysis := &frameAnalysis{assignment: assignment, channels: channels, candidates: candidates, scratch: scratch, costBits: frameOverheadBits}
+	for _, candidate := range candidates {
+		analysis.costBits += candidate.costBits
 	}
+	return analysis, nil
+}
 
-	if err := frame.EncodeHeader(w, header, options.StreamableSubset); err != nil {
+func writeAnalyzedFrame(w *bits.Writer, analysis *frameAnalysis, blockSize, sampleRate, bitsPerSample int, number uint64, variable, streamableSubset bool) ([]byte, error) {
+	w.Init()
+	header := &frame.Header{
+		BlockSize: blockSize, SampleRate: sampleRate,
+		ChannelAssignment: assignmentForChannels(analysis.assignment, len(analysis.channels)),
+		BitsPerSample: bitsPerSample, Number: number, BlockingStrategy: variable,
+	}
+	if err := frame.EncodeHeader(w, header, streamableSubset); err != nil {
 		return nil, err
 	}
-	for ch := range channels {
-		channelBits := bitsPerSample
-		if assignment == 8 && ch == 1 || assignment == 9 && ch == 0 || assignment == 10 && ch == 1 {
-			channelBits++
-		}
-		if err := EncodeSubframeCandidate(w, channels[ch], channelBits, candidates[ch]); err != nil {
+	for ch := range analysis.channels {
+		channelBits := bitsPerSample + sideChannelOffset(analysis.assignment, ch)
+		if err := EncodeSubframeCandidate(w, analysis.channels[ch], channelBits, analysis.candidates[ch]); err != nil {
 			return nil, fmt.Errorf("encode FLAC subframe %d: %w", ch, err)
 		}
 	}
@@ -94,6 +79,54 @@ func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, fra
 	w.Byte(byte(crc >> 8))
 	w.Byte(byte(crc))
 	return w.Bytes(), nil
+}
+
+func validateFrame(samples [][]int64, sampleRate, bitsPerSample int, options flac.EncoderConfig, samplesValidated bool) error {
+	if bitsPerSample < 4 || bitsPerSample > 32 {
+		return fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
+	}
+	if sampleRate < 1 || sampleRate > 1048575 {
+		return fmt.Errorf("invalid FLAC sample rate: %d", sampleRate)
+	}
+	if options.MaxRicePartitionOrder < 0 || options.MaxRicePartitionOrder > 15 || options.StreamableSubset && options.MaxRicePartitionOrder > 8 {
+		return fmt.Errorf("invalid FLAC Rice partition order: %d", options.MaxRicePartitionOrder)
+	}
+	if options.LPCPrecision != 0 && (options.LPCPrecision < 4 || options.LPCPrecision > 15) {
+		return fmt.Errorf("invalid FLAC LPC precision: %d", options.LPCPrecision)
+	}
+	if options.StereoMode > flac.StereoExhaustive {
+		return fmt.Errorf("invalid FLAC stereo mode: %d", options.StereoMode)
+	}
+	if len(samples) == 0 || len(samples) > 8 {
+		return fmt.Errorf("unsupported FLAC channel count: %d", len(samples))
+	}
+	blockSize := len(samples[0])
+	if blockSize == 0 {
+		return fmt.Errorf("FLAC frame has no samples")
+	}
+	if blockSize > 65535 {
+		return fmt.Errorf("FLAC frame block size exceeds 65535: %d", blockSize)
+	}
+	if options.StreamableSubset {
+		if maxBlockSize := streamableMaxBlockSize(sampleRate); blockSize > maxBlockSize {
+			return fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", blockSize, maxBlockSize, sampleRate)
+		}
+		if sampleRate <= 48000 && options.MaxLPCOrder > streamableMaxLPCOrder {
+			options.MaxLPCOrder = streamableMaxLPCOrder
+		}
+	}
+	for ch := range samples {
+		if len(samples[ch]) != blockSize {
+			return fmt.Errorf("FLAC channel %d has mismatched block size", ch)
+		}
+		if !samplesValidated {
+			if err := flac.ValidateSampleRange(samples[ch], bitsPerSample); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func assignmentForChannels(assignment uint8, channels int) uint8 {

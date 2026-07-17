@@ -21,7 +21,8 @@ type EncoderConfig struct {
 	StereoMode             optional.Optional[StereoMode]
 	EnableExhaustiveSearch optional.Optional[bool]
 	Apodizations           optional.Optional[[]Apodization]
-	BlockingStrategy       optional.Optional[BlockingStrategy]
+	BlockSplitDepth        optional.Optional[int]
+	BlockSplitMode         optional.Optional[BlockSplitMode]
 	StreamableSubset       optional.Optional[bool]
 }
 
@@ -113,9 +114,15 @@ func WithApodizations(v []Apodization) EncoderConfigOption {
 	}
 }
 
-func WithBlockingStrategy(v BlockingStrategy) EncoderConfigOption {
+func WithBlockSplitDepth(v int) EncoderConfigOption {
 	return func(c *EncoderConfig) {
-		c.BlockingStrategy = optional.Some(v)
+		c.BlockSplitDepth = optional.Some(v)
+	}
+}
+
+func WithBlockSplitMode(v BlockSplitMode) EncoderConfigOption {
+	return func(c *EncoderConfig) {
+		c.BlockSplitMode = optional.Some(v)
 	}
 }
 
@@ -140,7 +147,8 @@ func (c EncoderConfig) ApplyDefaults() flac.EncoderConfig {
 	config.StereoMode = c.StereoMode.ValueOr(config.StereoMode)
 	config.EnableExhaustiveSearch = c.EnableExhaustiveSearch.ValueOr(config.EnableExhaustiveSearch)
 	config.Apodizations = c.Apodizations.ValueOr(config.Apodizations)
-	config.BlockingStrategy = c.BlockingStrategy.ValueOr(config.BlockingStrategy)
+	config.BlockSplitDepth = c.BlockSplitDepth.ValueOr(config.BlockSplitDepth)
+	config.BlockSplitMode = c.BlockSplitMode.ValueOr(config.BlockSplitMode)
 	config.StreamableSubset = c.StreamableSubset.ValueOr(config.StreamableSubset)
 	return config
 }
@@ -161,7 +169,8 @@ func PresetConfig(level int) EncoderConfig {
 		StereoMode:             optional.Some(preset.StereoMode),
 		EnableExhaustiveSearch: optional.Some(preset.EnableExhaustiveSearch),
 		Apodizations:           optional.Some(preset.Apodizations),
-		BlockingStrategy:       optional.Some(preset.BlockingStrategy),
+		BlockSplitDepth:        optional.Some(preset.BlockSplitDepth),
+		BlockSplitMode:         optional.Some(preset.BlockSplitMode),
 		StreamableSubset:       optional.Some(preset.StreamableSubset),
 	}
 }

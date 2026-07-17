@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/pprof"
 
 	"github.com/godexture/sdk/timer"
 
@@ -31,6 +32,17 @@ func main() {
 
 	inputPath := os.Args[1]
 	outputPath := os.Args[2]
+
+	if profilePath := os.Getenv("GODEC_CPUPROFILE"); profilePath != "" {
+		profileFile, err := os.Create(profilePath)
+		if err != nil {
+			fmt.Printf("Failed to create profile: %v\n", err)
+			return
+		}
+		defer profileFile.Close()
+		pprof.StartCPUProfile(profileFile)
+		defer pprof.StopCPUProfile()
+	}
 
 	inputFile, err := os.Open(inputPath)
 	if err != nil {

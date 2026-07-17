@@ -20,11 +20,11 @@ const (
 	DefaultLPCPrecision         = 15
 )
 
-type BlockingStrategy uint8
+type BlockSplitMode uint8
 
 const (
-	FixedBlocking BlockingStrategy = iota
-	VariableBlocking
+	BlockSplitEstimated BlockSplitMode = iota
+	BlockSplitExact
 )
 
 type StereoMode uint8
@@ -50,7 +50,8 @@ type EncoderConfig struct {
 	StereoMode             StereoMode
 	EnableExhaustiveSearch bool
 	Apodizations           []Apodization
-	BlockingStrategy       BlockingStrategy
+	BlockSplitDepth        int
+	BlockSplitMode         BlockSplitMode
 	StreamableSubset       bool
 }
 
@@ -77,13 +78,19 @@ func GetPreset(level int) EncoderConfig {
 	case 8:
 		maxLPC, maxRice, apodizations = 12, 6, SubdivideTukey(3, 0.5)
 	}
-	return EncoderConfig{
+	config := EncoderConfig{
 		BlockSize: blockSize, MaxFixedOrder: DefaultEncoderMaxFixedOrder, MaxLPCOrder: maxLPC,
 		MaxRicePartitionOrder: maxRice, LPCPrecision: DefaultLPCPrecision,
 		EnablePrecisionSearch: false, EnableWastedBits: true, StereoMode: mode,
 		EnableExhaustiveSearch: false, Apodizations: apodizations,
-		BlockingStrategy: FixedBlocking, StreamableSubset: true,
+		StreamableSubset: true,
 	}
+	if level == 7 {
+		config.BlockSplitDepth, config.BlockSplitMode = 2, BlockSplitEstimated
+	} else if level == 8 {
+		config.BlockSplitDepth, config.BlockSplitMode = 2, BlockSplitExact
+	}
+	return config
 }
 
 func (c EncoderConfig) Validate() error {
@@ -125,8 +132,23 @@ func (c EncoderConfig) Validate() error {
 	if c.StreamableSubset && c.MaxRicePartitionOrder > 8 {
 		return fmt.Errorf("streamable-subset FLAC Rice partition order must be <= 8: %d", c.MaxRicePartitionOrder)
 	}
-	if c.BlockingStrategy != FixedBlocking && c.BlockingStrategy != VariableBlocking {
-		return fmt.Errorf("invalid FLAC blocking strategy: %d", c.BlockingStrategy)
+	if c.BlockSplitDepth < 0 {
+		return fmt.Errorf("FLAC block split depth must be non-negative: %d", c.BlockSplitDepth)
+	}
+	if c.BlockSplitMode > BlockSplitExact {
+		return fmt.Errorf("invalid FLAC block split mode: %d", c.BlockSplitMode)
+	}
+	if c.BlockSplitDepth > 0 {
+		if c.BlockSplitDepth > 15 {
+			return fmt.Errorf("FLAC block split depth exceeds supported range: %d", c.BlockSplitDepth)
+		}
+		parts := 1 << c.BlockSplitDepth
+		if c.BlockSize%parts != 0 {
+			return fmt.Errorf("FLAC block size %d must be divisible by %d at split depth %d", c.BlockSize, parts, c.BlockSplitDepth)
+		}
+		if c.BlockSize>>c.BlockSplitDepth < 16 {
+			return fmt.Errorf("FLAC block split depth %d makes blocks smaller than 16 samples", c.BlockSplitDepth)
+		}
 	}
 	return nil
 }
