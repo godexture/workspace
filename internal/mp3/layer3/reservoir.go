@@ -7,31 +7,26 @@ import (
 
 func restoreReservoir(decoder *Decoder, bitReader *bits.Reader, workspace *Workspace, mainDataOffset int) error {
 	unread := bitReader.Unread()
-	availableReservoirBytes := min(decoder.bitReservoirBytes, mainDataOffset)
+	reservoirBytes := decoder.reservoir.Len()
+	decoder.reservoir.Append(unread)
 
-	reservoirStartIndex := decoder.bitReservoirBytes - mainDataOffset
-	if reservoirStartIndex < 0 {
-		reservoirStartIndex = 0
+	start := reservoirBytes - mainDataOffset
+	if start < 0 {
+		start = 0
 	}
-	copy(workspace.mainData[:], decoder.reservoirBuffer[reservoirStartIndex:reservoirStartIndex+availableReservoirBytes])
+	data := decoder.reservoir.Data()
+	workspace.bitReader.Init(data, int32(start*8), int32(len(data)*8))
 
-	copy(workspace.mainData[availableReservoirBytes:], unread)
-
-	workspace.bitReader.Init(workspace.mainData[:], 0, int32((availableReservoirBytes+len(unread))*8))
-
-	if decoder.bitReservoirBytes < mainDataOffset {
+	if reservoirBytes < mainDataOffset {
 		return domain.ErrInsufficientReservoir
 	}
 	return nil
 }
 
 func saveReservoir(decoder *Decoder, workspace *Workspace) {
-	unread := workspace.bitReader.Unread()
-	if len(unread) > maxBitReservoirBytes {
-		unread = unread[len(unread)-maxBitReservoirBytes:]
+	unreadBytes := len(workspace.bitReader.Unread())
+	if unreadBytes > maxBitReservoirBytes {
+		unreadBytes = maxBitReservoirBytes
 	}
-	if len(unread) > 0 {
-		copy(decoder.reservoirBuffer[:len(unread)], unread)
-	}
-	decoder.bitReservoirBytes = len(unread)
+	decoder.reservoir.Discard(decoder.reservoir.Len() - unreadBytes)
 }
