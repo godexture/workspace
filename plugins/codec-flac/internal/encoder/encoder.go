@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
 )
@@ -30,6 +31,7 @@ type Encoder struct {
 	frameNumber   uint64
 	sampleNumber  uint64
 	writer        bits.Writer
+	md5           *flac.PCMMD5
 }
 
 func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, error) {
@@ -38,7 +40,7 @@ func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations)}, nil
+	return &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations), md5: flac.NewPCMMD5()}, nil
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -98,7 +100,15 @@ func (e *Encoder) Flush() error {
 		e.dropBuffered(e.buffered)
 	}
 	e.flushed = true
+	sum := e.MD5()
+	e.pendingQueue = append(e.pendingQueue, media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
+		media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
+	}))
 	return nil
+}
+
+func (e *Encoder) MD5() [16]byte {
+	return e.md5.Sum()
 }
 
 func (e *Encoder) configureStream(sampleRate, channels, bitsPerSample int) error {
@@ -271,6 +281,10 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 			e.buffer[ch][writeStart+sample] = value
 		}
 	}
+	for ch := range e.buffer {
+		e.blockView[ch] = e.buffer[ch][writeStart : writeStart+frame.Samples]
+	}
+	e.md5.Write(e.blockView, e.bitsPerSample)
 	e.buffered += frame.Samples
 	return nil
 }

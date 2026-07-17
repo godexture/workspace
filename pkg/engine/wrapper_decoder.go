@@ -30,7 +30,15 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 	}
 
 	return runCodecLoop(ctx, in, out,
-		n.engine.SendPacket,
+		func(pkt *media.Packet) error {
+			if pkt.Kind == media.PacketKindStreamEnd {
+				return nil
+			}
+			if pkt.Kind != media.PacketKindData {
+				return fmt.Errorf("unsupported packet kind: %d", pkt.Kind)
+			}
+			return n.engine.SendPacket(pkt)
+		},
 		func() (media.Frame, error) {
 			f, err := n.engine.ReceiveFrame()
 			if err != nil {

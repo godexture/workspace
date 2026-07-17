@@ -72,6 +72,12 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	if packet == nil {
 		return errors.New("mp3 muxer received nil packet")
 	}
+	if packet.Kind == media.PacketKindStreamEnd {
+		return nil
+	}
+	if packet.Kind != media.PacketKindData {
+		return fmt.Errorf("mp3 muxer unsupported packet kind: %d", packet.Kind)
+	}
 	if err := m.WriteHeader(); err != nil {
 		return err
 	}

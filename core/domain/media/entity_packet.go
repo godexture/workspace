@@ -4,12 +4,21 @@ import (
 	"github.com/godexture/core/domain/time"
 )
 
+type PacketKind uint8
+
+const (
+	PacketKindData PacketKind = iota
+	PacketKindStreamEnd
+)
+
 type Packet struct {
 	ResourceBase
 	data *[]byte
 
-	MediaType   MediaType
-	StreamIndex int
+	MediaType       MediaType
+	StreamIndex     int
+	Kind            PacketKind
+	CodecParameters []CodecParameters
 
 	PTS      Pts
 	DTS      Dts

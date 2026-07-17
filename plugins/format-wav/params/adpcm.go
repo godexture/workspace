@@ -10,9 +10,6 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-// SchemaADPCM identifies the binary representation produced by ADPCM.MarshalBinary.
-const SchemaADPCM = "github.com/godexture/format-wav/adpcm"
-
 // Coefficient is one Microsoft ADPCM predictor coefficient pair.
 type Coefficient struct {
 	Coeff1 int16

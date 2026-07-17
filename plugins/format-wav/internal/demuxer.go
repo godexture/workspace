@@ -85,10 +85,7 @@ func (d *Demuxer) codecParameters(codec media.CodecID) media.CodecParameters {
 	if (codec != media.CodecMSADPCM && codec != media.CodecIMAADPCM) || d.header.adpcm == nil {
 		return media.CodecParameters{}
 	}
-	return media.CodecParameters{
-		Schema: params.SchemaADPCM,
-		Data:   d.header.adpcm.MarshalBinary(),
-	}
+	return media.NewCodecParameters[params.ADPCM](d.header.adpcm.MarshalBinary())
 }
 
 func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {

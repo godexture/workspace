@@ -117,6 +117,12 @@ func (m *Muxer) WritePacket(streamIndex int, pkt *media.Packet) error {
 	if pkt == nil {
 		return errors.New("wav muxer received nil packet")
 	}
+	if pkt.Kind == media.PacketKindStreamEnd {
+		return nil
+	}
+	if pkt.Kind != media.PacketKindData {
+		return fmt.Errorf("wav muxer unsupported packet kind: %d", pkt.Kind)
+	}
 
 	if !m.headerWritten {
 		if err := m.WriteHeader(); err != nil {
@@ -274,8 +280,8 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 			attr.Audio.BitsPerSample > 0 && attr.Audio.BitsPerSample < int(bitsPerSample) {
 			validBits = uint16(attr.Audio.BitsPerSample)
 		}
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))     // cbSize
-		binary.Write(&headerBuf, binary.LittleEndian, validBits)      // validBitsPerSample
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))            // cbSize
+		binary.Write(&headerBuf, binary.LittleEndian, validBits)             // validBitsPerSample
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
 
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
@@ -331,7 +337,7 @@ func adpcmParametersFromMediaAttributes(attr media.MediaAttributes, channels int
 	if attr.Codec != media.CodecMSADPCM && attr.Codec != media.CodecIMAADPCM {
 		return params.ADPCM{}, fmt.Errorf("unsupported ADPCM codec: %s", attr.Codec)
 	}
-	if attr.CodecParameters.Schema == params.SchemaADPCM {
+	if media.IsCodecParameters[params.ADPCM](attr.CodecParameters) {
 		return params.Parse(attr.Codec, channels, attr.CodecParameters.Data)
 	}
 	return params.Default(attr.Codec, channels)

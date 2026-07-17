@@ -39,7 +39,7 @@ type Encoder struct {
 }
 
 func adpcmParametersFromStream(stream media.StreamInfo, target media.CodecID) (params.ADPCM, bool, error) {
-	if stream.CodecParameters.Schema == params.SchemaADPCM {
+	if media.IsCodecParameters[params.ADPCM](stream.CodecParameters) {
 		adpcm, err := params.Parse(target, stream.Audio.ChannelLayout.ChannelCount(), stream.CodecParameters.Data)
 		if err == nil {
 			return adpcm, true, nil

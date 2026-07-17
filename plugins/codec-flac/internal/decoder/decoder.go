@@ -1,11 +1,8 @@
 package decoder
 
 import (
-	"crypto/md5"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
@@ -13,11 +10,6 @@ import (
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
 )
-
-type hashState struct {
-	hash   hash.Hash
-	active bool
-}
 
 type Decoder struct {
 	pending      *media.Packet
@@ -33,8 +25,7 @@ type Decoder struct {
 	nextSample   uint64
 	positioned   bool
 	startSample  uint64
-	md5Hash      hashState
-	md5Scratch   []byte
+	md5          *flac.PCMMD5
 }
 
 func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
@@ -152,8 +143,7 @@ func (d *Decoder) Flush() error {
 
 func (d *Decoder) initMD5() {
 	if d.info.MD5 != [16]byte{} {
-		d.md5Hash.hash = md5.New()
-		d.md5Hash.active = true
+		d.md5 = flac.NewPCMMD5()
 	}
 }
 
@@ -190,11 +180,10 @@ func (d *Decoder) validateEnd() error {
 	if d.info.TotalSamples > 0 && d.sampleCount != d.info.TotalSamples {
 		return fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
 	}
-	if !d.md5Hash.active {
+	if d.md5 == nil {
 		return nil
 	}
-	var got [16]byte
-	copy(got[:], d.md5Hash.hash.Sum(nil))
+	got := d.md5.Sum()
 	if got != d.info.MD5 {
 		return fmt.Errorf("FLAC PCM MD5 mismatch: got %x, want %x", got, d.info.MD5)
 	}
@@ -202,21 +191,8 @@ func (d *Decoder) validateEnd() error {
 }
 
 func (d *Decoder) updateMD5(decoded *flac.Frame) {
-	if !d.md5Hash.active {
+	if d.md5 == nil {
 		return
 	}
-	width := (decoded.Header.BitsPerSample + 7) / 8
-	needed := decoded.Header.BlockSize * decoded.Header.Channels * width
-	if cap(d.md5Scratch) < needed+4 {
-		d.md5Scratch = make([]byte, needed+4)
-	}
-	buf := d.md5Scratch[:needed+4]
-	offset := 0
-	for i := 0; i < decoded.Header.BlockSize; i++ {
-		for ch := 0; ch < decoded.Header.Channels; ch++ {
-			binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(decoded.Samples[ch][i]))
-			offset += width
-		}
-	}
-	d.md5Hash.hash.Write(buf[:needed])
+	d.md5.Write(decoded.Samples, decoded.Header.BitsPerSample)
 }

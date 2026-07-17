@@ -736,7 +736,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			blockAlign := 256 * tt.channels
 			// Create a 10-block payload
 			original := make([]byte, blockAlign*10)
@@ -953,7 +953,7 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			wavData := buildWAVWithFormatTag(t, tt.audioFormat, tt.bitsPerSample, tt.channels, tt.sampleRate, tt.blockAlign, tt.payload)
 
 			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
@@ -1130,7 +1130,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			blockAlign := 256 * tt.channels
 			original := make([]byte, blockAlign*3)
 			for i := range original {
@@ -1202,11 +1202,8 @@ func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
 	adpcm.Coefficients[0] = params.Coefficient{Coeff1: 128, Coeff2: 64}
 
 	attr := media.MediaAttributes{
-		Codec: media.CodecMSADPCM,
-		CodecParameters: media.CodecParameters{
-			Schema: params.SchemaADPCM,
-			Data:   adpcm.MarshalBinary(),
-		},
+		Codec:           media.CodecMSADPCM,
+		CodecParameters: media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary()),
 		Audio: media.AudioAttributes{
 			SampleRate:    8000,
 			ChannelLayout: media.LayoutStereo2_0,
@@ -1227,7 +1224,7 @@ func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if streams[0].CodecParameters.Schema != params.SchemaADPCM || got.BlockAlign != adpcm.BlockAlign || got.SamplesPerBlock != adpcm.SamplesPerBlock || got.Coefficients[0] != adpcm.Coefficients[0] {
+	if !media.IsCodecParameters[params.ADPCM](streams[0].CodecParameters) || got.BlockAlign != adpcm.BlockAlign || got.SamplesPerBlock != adpcm.SamplesPerBlock || got.Coefficients[0] != adpcm.Coefficients[0] {
 		t.Fatalf("ADPCM parameters were not preserved: %#v", got)
 	}
 
