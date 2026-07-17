@@ -217,6 +217,12 @@ func (r *Reader) Unary64() uint64 {
 	return count
 }
 
+// Rice64 reads a unary quotient followed by param remainder bits.
+func (r *Reader) Rice64(param uint8) uint64 {
+	q := r.Unary64()
+	return q<<param | r.Bits64(param)
+}
+
 // Signed32 reads width bits (width in [1, 32]) and sign-extends the result.
 func (r *Reader) Signed32(width uint8) int32 {
 	assertf(width <= 32, "bits: Signed32 width out of range: %d", width)
