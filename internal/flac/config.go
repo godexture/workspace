@@ -35,24 +35,49 @@ const (
 	StereoExhaustive
 )
 
+// OrderSearchMode controls how predictor orders are selected. Estimated mode
+// only narrows candidates; emitted frames and their final costs stay exact.
+type OrderSearchMode uint8
+
+const (
+	OrderSearchEstimated OrderSearchMode = iota
+	OrderSearchExhaustive
+)
+
+// RiceCostMode controls Rice parameter selection. Estimated mode only selects
+// parameters approximately; the selected coding is always costed exactly.
+type RiceCostMode uint8
+
+const (
+	RiceCostEstimated RiceCostMode = iota
+	RiceCostExact
+)
+
 type EncoderConfig struct {
+	// Stream parameters.
 	SampleRate    int
 	Channels      int
 	BitsPerSample int
 
-	BlockSize              int
-	MaxFixedOrder          int
-	MaxLPCOrder            int
-	MaxRicePartitionOrder  int
-	LPCPrecision           int
-	EnablePrecisionSearch  bool
-	EnableWastedBits       bool
-	StereoMode             StereoMode
-	EnableExhaustiveSearch bool
-	Apodizations           []Apodization
-	BlockSplitDepth        int
-	BlockSplitMode         BlockSplitMode
-	StreamableSubset       bool
+	// Compression parameters.
+	BlockSize             int
+	MaxFixedOrder         int
+	MaxLPCOrder           int
+	MaxRicePartitionOrder int
+	LPCPrecision          int
+	EnablePrecisionSearch bool
+	EnableWastedBits      bool
+	StereoMode            StereoMode
+	FixedOrderSearch      OrderSearchMode
+	LPCOrderSearch        OrderSearchMode
+	RiceCost              RiceCostMode
+	Apodizations          []Apodization
+	BlockSplitDepth       int
+	BlockSplitMode        BlockSplitMode
+	StreamableSubset      bool
+
+	// Execution parameters. Workers does not affect encoded bytes.
+	Workers int
 }
 
 var DefaultEncoderConfig = GetPreset(5)
@@ -82,7 +107,7 @@ func GetPreset(level int) EncoderConfig {
 		BlockSize: blockSize, MaxFixedOrder: DefaultEncoderMaxFixedOrder, MaxLPCOrder: maxLPC,
 		MaxRicePartitionOrder: maxRice, LPCPrecision: DefaultLPCPrecision,
 		EnablePrecisionSearch: false, EnableWastedBits: true, StereoMode: mode,
-		EnableExhaustiveSearch: false, Apodizations: apodizations,
+		FixedOrderSearch: OrderSearchEstimated, LPCOrderSearch: OrderSearchEstimated, RiceCost: RiceCostEstimated, Apodizations: apodizations,
 		StreamableSubset: true,
 	}
 	if level == 7 {
@@ -117,6 +142,15 @@ func (c EncoderConfig) Validate() error {
 	}
 	if c.StereoMode > StereoExhaustive {
 		return fmt.Errorf("invalid FLAC stereo mode: %d", c.StereoMode)
+	}
+	if c.FixedOrderSearch > OrderSearchExhaustive || c.LPCOrderSearch > OrderSearchExhaustive {
+		return fmt.Errorf("invalid FLAC encoder order search mode")
+	}
+	if c.RiceCost > RiceCostExact {
+		return fmt.Errorf("invalid FLAC encoder Rice cost mode")
+	}
+	if c.Workers < 0 {
+		return fmt.Errorf("FLAC encoder workers must be non-negative: %d", c.Workers)
 	}
 	if len(c.Apodizations) > 32 {
 		return fmt.Errorf("FLAC encoder supports at most 32 apodization windows: %d", len(c.Apodizations))

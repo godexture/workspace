@@ -119,8 +119,9 @@ func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
 		}
 		for i := order; i < blockSize; i++ {
 			var sum int64
-			for j := 0; j < order; j++ {
-				sum += int64(coefficients[j]) * int64(samples[i-j-1])
+			history := samples[i-order : i]
+			for j, coefficient := range coefficients {
+				sum += coefficient * history[order-1-j]
 			}
 			sum >>= shift
 			value := sum + samples[i]
