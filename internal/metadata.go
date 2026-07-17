@@ -36,7 +36,6 @@ func mapWavInfoTag(meta *metadata.Bundle, tag string, value string) {
 	}
 }
 
-
 func buildChunk(id string, payload []byte) []byte {
 	size := len(payload)
 	pad := size % 2
