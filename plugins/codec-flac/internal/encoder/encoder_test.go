@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 
 	"github.com/godexture/codec-flac/internal/decoder"
@@ -341,6 +342,11 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	t.Parallel()
 	cfg := flac.DefaultEncoderConfig
 	cfg.BlockSize = 16
+	// This test asserts decoder-side buffer-reuse safety and relies on
+	// ReceivePacket returning already-encoded packets synchronously without
+	// calling Flush first; that only holds for the sequential (Workers<=1)
+	// path, so pin it explicitly rather than retry-looping on ErrEAGAIN.
+	cfg.Workers = 1
 	enc, err := NewEncoder(media.StreamInfo{}, cfg)
 	if err != nil {
 		t.Fatalf("NewEncoder(media.StreamInfo{}, ) error = %v", err)
@@ -625,7 +631,9 @@ func TestEncodeFrame_SearchModesRoundtrip(t *testing.T) {
 			t.Parallel()
 			cfg := flac.DefaultEncoderConfig
 			cfg.StreamableSubset = false
-			cfg.EnableExhaustiveSearch = exhaustive
+			if exhaustive {
+				cfg.FixedOrderSearch, cfg.LPCOrderSearch, cfg.RiceCost = flac.OrderSearchExhaustive, flac.OrderSearchExhaustive, flac.RiceCostExact
+			}
 			data, err := EncodeFrame([][]int64{samples}, 44100, 16, 0, cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -742,6 +750,77 @@ func TestEncoderRejectsNonSubsetBlockSizeAtLowSampleRate(t *testing.T) {
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err == nil {
 		t.Fatal("expected streamable-subset block size error")
+	}
+}
+
+// TestEncoder_WorkersDoesNotChangeOutput is the determinism guarantee for
+// the parallel encode path (see internal/flac/config.go's Workers doc
+// comment): the same config and input must produce byte-identical packets
+// regardless of how many workers process the blocks concurrently.
+func TestEncoder_WorkersDoesNotChangeOutput(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewSource(42))
+	input := make([]int16, 4096*6+777) // several full blocks plus a partial tail
+	for i := range input {
+		input[i] = int16(rng.Intn(65536) - 32768)
+	}
+
+	for _, mode := range []flac.BlockSplitMode{flac.BlockSplitEstimated, flac.BlockSplitExact} {
+		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+			t.Parallel()
+			base := flac.DefaultEncoderConfig
+			base.BlockSize = 1024
+			base.BlockSplitDepth, base.BlockSplitMode = 2, mode
+
+			sequential := base
+			sequential.Workers = 1
+			parallel := base
+			parallel.Workers = 8
+
+			wantPackets := encodeAllPackets(t, sequential, input)
+			gotPackets := encodeAllPackets(t, parallel, input)
+
+			if len(gotPackets) != len(wantPackets) {
+				t.Fatalf("packet count = %d, want %d", len(gotPackets), len(wantPackets))
+			}
+			for i := range wantPackets {
+				if !bytes.Equal(gotPackets[i], wantPackets[i]) {
+					t.Fatalf("packet %d differs between Workers=1 and Workers=8", i)
+				}
+			}
+		})
+	}
+}
+
+// encodeAllPackets runs cfg over input to completion and returns each
+// packet's raw bytes in emission order (the StreamEnd event packet, which
+// carries no frame Data, contributes an empty slice so packet counts and
+// positions stay directly comparable across runs).
+func encodeAllPackets(t *testing.T, cfg flac.EncoderConfig, input []int16) [][]byte {
+	t.Helper()
+	enc, err := NewEncoder(media.StreamInfo{}, cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	var packets [][]byte
+	for {
+		pkt, err := enc.ReceivePacket()
+		if errors.Is(err, engine.ErrEOF) {
+			return packets
+		}
+		if err != nil {
+			t.Fatalf("ReceivePacket() error = %v", err)
+		}
+		packets = append(packets, append([]byte(nil), pkt.Data()...))
+		pkt.Release()
 	}
 }
 

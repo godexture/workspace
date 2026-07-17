@@ -6,6 +6,7 @@ import (
 	stdbits "math/bits"
 	"sync"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/sdk/bits"
 )
 
@@ -44,7 +45,7 @@ var riceWorkspacePool = sync.Pool{New: func() any { return &riceWorkspace{} }}
 var ricePartitionPool sync.Pool
 
 func chooseRiceCoding(residual []int64) (riceCoding, bool) {
-	return chooseRiceCodingForBlock(residual, len(residual), 0, 15, false)
+	return chooseRiceCodingForBlock(residual, len(residual), 0, 15, flac.RiceCostEstimated)
 }
 
 var riceMethods = []struct {
@@ -56,9 +57,9 @@ var riceMethods = []struct {
 	{1, 5, 30},
 }
 
-func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, exhaustive bool) (riceCoding, bool) {
+func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode flac.RiceCostMode) (riceCoding, bool) {
 	workspace := riceWorkspacePool.Get().(*riceWorkspace)
-	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, exhaustive, workspace)
+	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, mode, workspace)
 	if ok {
 		partitions, _ := ricePartitionPool.Get().([]ricePartition)
 		if cap(partitions) < len(coding.partitions) {
@@ -82,7 +83,8 @@ func releaseRiceCoding(coding *riceCoding) {
 	coding.partitions = nil
 }
 
-func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, exhaustive bool, workspace *riceWorkspace) (riceCoding, bool) {
+func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode flac.RiceCostMode, workspace *riceWorkspace) (riceCoding, bool) {
+	exhaustive := mode == flac.RiceCostExact
 	if blockSize <= predictorOrder || len(residual) != blockSize-predictorOrder {
 		return riceCoding{}, false
 	}
@@ -183,6 +185,9 @@ func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, 
 		partitions := 1 << partitionOrder
 		partitionSamples := blockSize >> partitionOrder
 		for _, method := range riceMethods {
+			if method.id == 1 && kMax <= 14 {
+				continue
+			}
 			chosen := workspace.candidate[:partitions]
 			cost := uint64(2 + 4)
 			for partition := 0; partition < partitions; partition++ {
@@ -212,7 +217,45 @@ func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, 
 			}
 		}
 	}
+	if !exhaustive && best.costBits != math.MaxUint64 {
+		best.costBits = exactRiceCodingCost(folded, blockSize, predictorOrder, best.partitionOrder, best.paramBits, best.partitions)
+	}
 	return best, best.costBits != math.MaxUint64
+}
+
+// exactRiceCodingCost recomputes the true bit cost of the winning partitioning
+// chosen via bestRicePartitionEstimate's sum>>k approximation, in a single
+// O(len(folded)) pass. It is called once per chooseRiceCodingWithWorkspace
+// call (after the search loop, not inside it), so downstream comparisons
+// (subframe kind, channel assignment, block split) see the same costBits
+// that EncodeResidual will actually emit, while the search itself still uses
+// the cheap approximation to pick k and the partition order.
+func exactRiceCodingCost(folded []uint64, blockSize, predictorOrder, partitionOrder int, paramBits uint8, partitions []ricePartition) uint64 {
+	count := 1 << partitionOrder
+	partitionSamples := blockSize >> partitionOrder
+	cost := uint64(2 + 4)
+	index := 0
+	for partition := 0; partition < count; partition++ {
+		samples := partitionSamples
+		if partition == 0 {
+			samples -= predictorOrder
+		}
+		part := &partitions[partition]
+		var partCost uint64
+		if part.escaped {
+			partCost = uint64(paramBits) + 5 + uint64(samples)*uint64(part.rawBits)
+		} else {
+			var sum uint64
+			for _, value := range folded[index : index+samples] {
+				sum += value >> part.param
+			}
+			partCost = uint64(paramBits) + uint64(samples)*uint64(part.param+1) + sum
+		}
+		part.costBits = partCost
+		cost += partCost
+		index += samples
+	}
+	return cost
 }
 
 func resize[T any](buffer []T, length int) []T {
@@ -245,7 +288,9 @@ func bestRicePartition(sums []uint64, maxFolded uint64, count int, paramBits, ma
 
 func bestRicePartitionEstimate(sum, maxFolded uint64, count int, paramBits, maxParam uint8) ricePartition {
 	best := ricePartition{costBits: math.MaxUint64}
-	for k := 0; k <= int(maxParam); k++ {
+	k0 := stdbits.Len64(sum / uint64(max(1, count)))
+	start, end := max(0, k0-2), min(int(maxParam), k0+2)
+	for k := start; k <= end; k++ {
 		cost := uint64(paramBits) + uint64(count)*uint64(k+1) + (sum >> uint(k))
 		if cost < best.costBits {
 			best = ricePartition{param: uint8(k), costBits: cost}

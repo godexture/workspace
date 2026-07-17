@@ -196,14 +196,14 @@ func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, p
 		case "fail":
 			if event.Test != "" {
 				packageHasFailedTests[event.Package] = true
-				fmt.Printf("[FAIL] %s: %s (%.2fms)\n", event.Package, event.Test, event.Elapsed*1000)
+				fmt.Printf("[FAIL] %s: %s (%.4fs)\n", event.Package, event.Test, event.Elapsed)
 				if out := testOutput[event.Package][event.Test]; out != "" {
 					fmt.Println(strings.TrimRight(out, "\r\n"))
 					fmt.Println()
 				}
 			} else {
 				if !packageHasFailedTests[event.Package] {
-					fmt.Printf("[FAIL] %s (%.2fms)\n", event.Package, event.Elapsed*1000)
+					fmt.Printf("[FAIL] %s (%.4fs)\n", event.Package, event.Elapsed)
 					if out := packageOutput[event.Package]; out != "" {
 						fmt.Println(strings.TrimRight(out, "\r\n"))
 						fmt.Println()
@@ -212,7 +212,7 @@ func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, p
 			}
 		case "pass":
 			if event.Test == "" {
-				fmt.Printf("[PASS] %s (%.2fms)\n", event.Package, event.Elapsed*1000)
+				fmt.Printf("[PASS] %s (%.4fs)\n", event.Package, event.Elapsed)
 			}
 		}
 	}

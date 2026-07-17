@@ -112,20 +112,37 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 	if maxFixed >= len(samples) {
 		maxFixed = len(samples) - 1
 	}
-	for order := 0; order <= maxFixed; order++ {
-		residual := fixedResidual(samples, order)
-		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
+	if options.FixedOrderSearch == flac.OrderSearchExhaustive {
+		for order := 0; order <= maxFixed; order++ {
+			residual := fixedResidual(samples, order)
+			rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.RiceCost)
+			if !ok {
+				releaseResidualBuffer(residual)
+				continue
+			}
+			candidate := subframeCandidate{kind: subframeKindFixed, order: order, residual: residual, rice: rice,
+				costBits: uint64(8+order*bitsPerSample) + rice.costBits, valid: true}
+			if candidate.costBits < best.costBits {
+				releaseSubframeCandidate(&best)
+				best = candidate
+			} else {
+				releaseSubframeCandidate(&candidate)
+			}
+		}
+	} else {
+		order, residual := bestFixedOrder(samples, maxFixed)
+		rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.RiceCost)
 		if !ok {
 			releaseResidualBuffer(residual)
-			continue
-		}
-		candidate := subframeCandidate{kind: subframeKindFixed, order: order, residual: residual, rice: rice,
-			costBits: uint64(8+order*bitsPerSample) + rice.costBits, valid: true}
-		if candidate.costBits < best.costBits {
-			releaseSubframeCandidate(&best)
-			best = candidate
 		} else {
-			releaseSubframeCandidate(&candidate)
+			candidate := subframeCandidate{kind: subframeKindFixed, order: order, residual: residual, rice: rice,
+				costBits: uint64(8+order*bitsPerSample) + rice.costBits, valid: true}
+			if candidate.costBits < best.costBits {
+				releaseSubframeCandidate(&best)
+				best = candidate
+			} else {
+				releaseSubframeCandidate(&candidate)
+			}
 		}
 	}
 
@@ -140,7 +157,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 		windows = [][]float64{nil}
 	}
 	for _, window := range windows {
-		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.EnableExhaustiveSearch, window) {
+		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.LPCOrderSearch, window) {
 			if coefficients == nil {
 				continue
 			}
@@ -150,7 +167,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 					continue
 				}
 				residual := lpcResidual(samples, order, quantized, shift)
-				rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.EnableExhaustiveSearch)
+				rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.RiceCost)
 				if !ok {
 					releaseResidualBuffer(residual)
 					continue
@@ -266,7 +283,33 @@ func lpcPrecisionCandidates(options flac.EncoderConfig) []int {
 	return result
 }
 
-func lpcCoefficientSets(samples []int64, maxOrder, precision int, exhaustive bool, window []float64) [][]float64 {
+// bestFixedOrder picks the fixed predictor order with the smallest folded
+// residual sum (a monotonic proxy for Rice-coded bit cost) and returns its
+// already-computed residual, so the caller never recomputes it.
+func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
+	bestOrder := 0
+	var bestResidual []int64
+	bestSum := ^uint64(0)
+	for order := 0; order <= maxOrder; order++ {
+		residual := fixedResidual(samples, order)
+		var sum uint64
+		for _, v := range residual {
+			sum += foldResidual(v)
+		}
+		if sum < bestSum {
+			if bestResidual != nil {
+				releaseResidualBuffer(bestResidual)
+			}
+			bestOrder, bestResidual, bestSum = order, residual, sum
+		} else {
+			releaseResidualBuffer(residual)
+		}
+	}
+	return bestOrder, bestResidual
+}
+
+func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.OrderSearchMode, window []float64) [][]float64 {
+	exhaustive := mode == flac.OrderSearchExhaustive
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
 	}
@@ -395,11 +438,13 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 }
 
 func lpcResidual(samples []int64, order int, coefficients []int64, shift int) []int64 {
+	coefficients = coefficients[:order:order]
 	result := getResidualBuffer(len(samples) - order)
 	for i := order; i < len(samples); i++ {
 		var sum int64
+		history := samples[i-order : i]
 		for j, coefficient := range coefficients {
-			sum += coefficient * samples[i-j-1]
+			sum += coefficient * history[order-1-j]
 		}
 		prediction := sum >> uint(shift)
 		result[i-order] = samples[i] - prediction

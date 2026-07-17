@@ -2,7 +2,6 @@ package flac
 
 import (
 	"crypto/md5"
-	"encoding/binary"
 	"hash"
 )
 
@@ -37,12 +36,58 @@ func PackPCMMD5(scratch []byte, samples [][]int64, bitsPerSample int) []byte {
 		scratch = make([]byte, needed+4)
 	}
 	data := scratch[:needed+4]
+	switch width {
+	case 1:
+		packPCMMD5Width1(data, samples)
+	case 2:
+		packPCMMD5Width2(data, samples)
+	case 3:
+		packPCMMD5Width3(data, samples)
+	default:
+		packPCMMD5Width4(data, samples)
+	}
+	return data[:needed]
+}
+
+func packPCMMD5Width1(data []byte, samples [][]int64) {
 	offset := 0
 	for sample := range samples[0] {
 		for channel := range samples {
-			binary.LittleEndian.PutUint32(data[offset:offset+4], uint32(samples[channel][sample]))
-			offset += width
+			data[offset] = byte(samples[channel][sample])
+			offset++
 		}
 	}
-	return data[:needed]
+}
+
+func packPCMMD5Width2(data []byte, samples [][]int64) {
+	offset := 0
+	for sample := range samples[0] {
+		for channel := range samples {
+			value := uint32(samples[channel][sample])
+			data[offset], data[offset+1] = byte(value), byte(value>>8)
+			offset += 2
+		}
+	}
+}
+
+func packPCMMD5Width3(data []byte, samples [][]int64) {
+	offset := 0
+	for sample := range samples[0] {
+		for channel := range samples {
+			value := uint32(samples[channel][sample])
+			data[offset], data[offset+1], data[offset+2] = byte(value), byte(value>>8), byte(value>>16)
+			offset += 3
+		}
+	}
+}
+
+func packPCMMD5Width4(data []byte, samples [][]int64) {
+	offset := 0
+	for sample := range samples[0] {
+		for channel := range samples {
+			value := uint32(samples[channel][sample])
+			data[offset], data[offset+1], data[offset+2], data[offset+3] = byte(value), byte(value>>8), byte(value>>16), byte(value>>24)
+			offset += 4
+		}
+	}
 }

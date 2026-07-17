@@ -8,22 +8,25 @@ import (
 )
 
 type EncoderConfig struct {
-	SampleRate             optional.Optional[int]
-	Channels               optional.Optional[int]
-	BitsPerSample          optional.Optional[int]
-	BlockSize              optional.Optional[int]
-	MaxFixedOrder          optional.Optional[int]
-	MaxLPCOrder            optional.Optional[int]
-	MaxRicePartitionOrder  optional.Optional[int]
-	LPCPrecision           optional.Optional[int]
-	EnablePrecisionSearch  optional.Optional[bool]
-	EnableWastedBits       optional.Optional[bool]
-	StereoMode             optional.Optional[StereoMode]
-	EnableExhaustiveSearch optional.Optional[bool]
-	Apodizations           optional.Optional[[]Apodization]
-	BlockSplitDepth        optional.Optional[int]
-	BlockSplitMode         optional.Optional[BlockSplitMode]
-	StreamableSubset       optional.Optional[bool]
+	SampleRate            optional.Optional[int]
+	Channels              optional.Optional[int]
+	BitsPerSample         optional.Optional[int]
+	BlockSize             optional.Optional[int]
+	MaxFixedOrder         optional.Optional[int]
+	MaxLPCOrder           optional.Optional[int]
+	MaxRicePartitionOrder optional.Optional[int]
+	LPCPrecision          optional.Optional[int]
+	EnablePrecisionSearch optional.Optional[bool]
+	EnableWastedBits      optional.Optional[bool]
+	StereoMode            optional.Optional[StereoMode]
+	FixedOrderSearch      optional.Optional[OrderSearchMode]
+	LPCOrderSearch        optional.Optional[OrderSearchMode]
+	RiceCost              optional.Optional[RiceCostMode]
+	Apodizations          optional.Optional[[]Apodization]
+	BlockSplitDepth       optional.Optional[int]
+	BlockSplitMode        optional.Optional[BlockSplitMode]
+	StreamableSubset      optional.Optional[bool]
+	Workers               optional.Optional[int]
 }
 
 type EncoderConfigOption func(*EncoderConfig)
@@ -102,9 +105,21 @@ func WithStereoMode(v StereoMode) EncoderConfigOption {
 	}
 }
 
-func WithEnableExhaustiveSearch(v bool) EncoderConfigOption {
+func WithFixedOrderSearch(v OrderSearchMode) EncoderConfigOption {
 	return func(c *EncoderConfig) {
-		c.EnableExhaustiveSearch = optional.Some(v)
+		c.FixedOrderSearch = optional.Some(v)
+	}
+}
+
+func WithLPCOrderSearch(v OrderSearchMode) EncoderConfigOption {
+	return func(c *EncoderConfig) {
+		c.LPCOrderSearch = optional.Some(v)
+	}
+}
+
+func WithRiceCost(v RiceCostMode) EncoderConfigOption {
+	return func(c *EncoderConfig) {
+		c.RiceCost = optional.Some(v)
 	}
 }
 
@@ -132,6 +147,12 @@ func WithStreamableSubset(v bool) EncoderConfigOption {
 	}
 }
 
+func WithWorkers(v int) EncoderConfigOption {
+	return func(c *EncoderConfig) {
+		c.Workers = optional.Some(v)
+	}
+}
+
 func (c EncoderConfig) ApplyDefaults() flac.EncoderConfig {
 	config := flac.GetPreset(5)
 	config.SampleRate = c.SampleRate.ValueOr(config.SampleRate)
@@ -145,33 +166,39 @@ func (c EncoderConfig) ApplyDefaults() flac.EncoderConfig {
 	config.EnablePrecisionSearch = c.EnablePrecisionSearch.ValueOr(config.EnablePrecisionSearch)
 	config.EnableWastedBits = c.EnableWastedBits.ValueOr(config.EnableWastedBits)
 	config.StereoMode = c.StereoMode.ValueOr(config.StereoMode)
-	config.EnableExhaustiveSearch = c.EnableExhaustiveSearch.ValueOr(config.EnableExhaustiveSearch)
+	config.FixedOrderSearch = c.FixedOrderSearch.ValueOr(config.FixedOrderSearch)
+	config.LPCOrderSearch = c.LPCOrderSearch.ValueOr(config.LPCOrderSearch)
+	config.RiceCost = c.RiceCost.ValueOr(config.RiceCost)
 	config.Apodizations = c.Apodizations.ValueOr(config.Apodizations)
 	config.BlockSplitDepth = c.BlockSplitDepth.ValueOr(config.BlockSplitDepth)
 	config.BlockSplitMode = c.BlockSplitMode.ValueOr(config.BlockSplitMode)
 	config.StreamableSubset = c.StreamableSubset.ValueOr(config.StreamableSubset)
+	config.Workers = c.Workers.ValueOr(config.Workers)
 	return config
 }
 
 func PresetConfig(level int) EncoderConfig {
 	preset := flac.GetPreset(normalizeCompressionLevel(level))
 	return EncoderConfig{
-		SampleRate:             optional.Some(preset.SampleRate),
-		Channels:               optional.Some(preset.Channels),
-		BitsPerSample:          optional.Some(preset.BitsPerSample),
-		BlockSize:              optional.Some(preset.BlockSize),
-		MaxFixedOrder:          optional.Some(preset.MaxFixedOrder),
-		MaxLPCOrder:            optional.Some(preset.MaxLPCOrder),
-		MaxRicePartitionOrder:  optional.Some(preset.MaxRicePartitionOrder),
-		LPCPrecision:           optional.Some(preset.LPCPrecision),
-		EnablePrecisionSearch:  optional.Some(preset.EnablePrecisionSearch),
-		EnableWastedBits:       optional.Some(preset.EnableWastedBits),
-		StereoMode:             optional.Some(preset.StereoMode),
-		EnableExhaustiveSearch: optional.Some(preset.EnableExhaustiveSearch),
-		Apodizations:           optional.Some(preset.Apodizations),
-		BlockSplitDepth:        optional.Some(preset.BlockSplitDepth),
-		BlockSplitMode:         optional.Some(preset.BlockSplitMode),
-		StreamableSubset:       optional.Some(preset.StreamableSubset),
+		SampleRate:            optional.Some(preset.SampleRate),
+		Channels:              optional.Some(preset.Channels),
+		BitsPerSample:         optional.Some(preset.BitsPerSample),
+		BlockSize:             optional.Some(preset.BlockSize),
+		MaxFixedOrder:         optional.Some(preset.MaxFixedOrder),
+		MaxLPCOrder:           optional.Some(preset.MaxLPCOrder),
+		MaxRicePartitionOrder: optional.Some(preset.MaxRicePartitionOrder),
+		LPCPrecision:          optional.Some(preset.LPCPrecision),
+		EnablePrecisionSearch: optional.Some(preset.EnablePrecisionSearch),
+		EnableWastedBits:      optional.Some(preset.EnableWastedBits),
+		StereoMode:            optional.Some(preset.StereoMode),
+		FixedOrderSearch:      optional.Some(preset.FixedOrderSearch),
+		LPCOrderSearch:        optional.Some(preset.LPCOrderSearch),
+		RiceCost:              optional.Some(preset.RiceCost),
+		Apodizations:          optional.Some(preset.Apodizations),
+		BlockSplitDepth:       optional.Some(preset.BlockSplitDepth),
+		BlockSplitMode:        optional.Some(preset.BlockSplitMode),
+		StreamableSubset:      optional.Some(preset.StreamableSubset),
+		Workers:               optional.Some(preset.Workers),
 	}
 }
 

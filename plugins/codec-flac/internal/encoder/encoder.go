@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
@@ -13,10 +14,9 @@ import (
 )
 
 type Encoder struct {
-	config  flac.EncoderConfig
-	windows windowSet
+	config flac.EncoderConfig
 
-	pendingQueue []*media.Packet
+	pendingQueue []*pendingEntry
 	flushed      bool
 
 	buffer        [][]int64
@@ -30,17 +30,41 @@ type Encoder struct {
 	bitsPerSample int
 	frameNumber   uint64
 	sampleNumber  uint64
-	writer        bits.Writer
 	md5           *flac.PCMMD5
+
+	// Sequential path (workers <= 1): reused across the whole stream, no
+	// goroutines or channels involved. This is the pre-parallel code path,
+	// kept byte-for-byte so Workers=1 stays free of any parallel overhead.
+	windows windowSet
+	writer  bits.Writer
+
+	// Parallel path (workers > 1): full (and, when flushing, the trailing
+	// partial) blocks are dispatched to a fixed worker pool over jobs. Each
+	// worker owns its own bits.Writer/windowSet so there is no contention.
+	// Workers never changes the encoded bytes (see encoder_test.go's
+	// Workers=1-vs-N equivalence test) — only how the work is scheduled.
+	workers int
+	jobs    chan frameJob
 }
 
 func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, error) {
 	cfg = flac.MergeEncoderConfigForFactory(cfg, stream)
-	err := cfg.Validate()
-	if err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations), md5: flac.NewPCMMD5()}, nil
+	workers := cfg.Workers
+	if workers == 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	e := &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations), md5: flac.NewPCMMD5(), workers: workers}
+	fmt.Printf("FLAC encoder: %d workers\n", workers)
+	if workers > 1 {
+		e.jobs = make(chan frameJob, 2*workers)
+		for i := 0; i < workers; i++ {
+			go e.runWorker()
+		}
+	}
+	return e, nil
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -73,20 +97,59 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	return e.emitFullBlocks()
 }
 
+// ReceivePacket drains pendingQueue in submission order. Entries produced by
+// the parallel path may still be in flight (entry.done != nil), in which
+// case this blocks on that specific entry until a worker finishes it.
+//
+// It deliberately never returns ErrEAGAIN just because the head isn't ready
+// yet: callers may wire this encoder into a pipeline with fan-out (e.g. a
+// tee feeding both this encoder and a comparison against its own output),
+// where upstream progress depends on the encoder actually producing a
+// packet rather than the caller pulling more input first. Any policy that
+// withholds a dispatched-but-pending packet in favor of "let more work
+// queue up" can deadlock such a graph — see the regression that motivated
+// this comment. This does mean input chunked smaller than BlockSize (one
+// job dispatched per full block) gets pipelined roughly one job deep rather
+// than Workers deep; blocks dispatched together (e.g. a decoder frame
+// larger than BlockSize) still encode in parallel within a single
+// emitFullBlocks call.
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
-	if len(e.pendingQueue) == 0 {
-		if e.flushed {
-			return nil, engine.ErrEOF
+	for len(e.pendingQueue) > 0 {
+		head := e.pendingQueue[0]
+		if head.done != nil {
+			<-head.done
+			head.done = nil
 		}
-		return nil, engine.ErrEAGAIN
+		if head.err != nil {
+			e.popPendingEntry()
+			return nil, head.err
+		}
+		if len(head.packets) == 0 {
+			e.popPendingEntry()
+			continue
+		}
+		pkt := head.packets[0]
+		head.packets[0] = nil
+		head.packets = head.packets[1:]
+		if len(head.packets) == 0 {
+			e.popPendingEntry()
+		}
+		return pkt, nil
 	}
-	pkt := e.pendingQueue[0]
-	e.pendingQueue[0] = nil
+	if e.flushed {
+		return nil, engine.ErrEOF
+	}
+	return nil, engine.ErrEAGAIN
+}
+
+// popPendingEntry removes the drained head entry, resetting pendingQueue to
+// nil (not just an empty slice) once it empties out, matching the
+// pre-parallel contract callers rely on.
+func (e *Encoder) popPendingEntry() {
 	e.pendingQueue = e.pendingQueue[1:]
 	if len(e.pendingQueue) == 0 {
 		e.pendingQueue = nil
 	}
-	return pkt, nil
 }
 
 func (e *Encoder) Flush() error {
@@ -94,16 +157,24 @@ func (e *Encoder) Flush() error {
 		return nil
 	}
 	if e.buffered > 0 {
-		if err := e.enqueueBlock(e.currentBlock(e.buffered), e.bufferPTS, nil); err != nil {
+		block := e.currentBlock(e.buffered)
+		if e.workers > 1 {
+			e.dispatchPartialBlock(block, e.bufferPTS)
+		} else if err := e.enqueueBlockSync(block, e.bufferPTS, nil); err != nil {
 			return err
 		}
 		e.dropBuffered(e.buffered)
 	}
 	e.flushed = true
+	if e.jobs != nil {
+		close(e.jobs)
+	}
 	sum := e.MD5()
-	e.pendingQueue = append(e.pendingQueue, media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
-		media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
-	}))
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{
+		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
+			media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
+		}),
+	}})
 	return nil
 }
 
@@ -156,8 +227,13 @@ func (e *Encoder) emitFullBlocks() error {
 }
 
 func (e *Encoder) enqueueFullBlock(block [][]int64) error {
+	if e.workers > 1 {
+		e.dispatchFullBlock(block)
+		e.bufferPTS += media.Pts(len(block[0]))
+		return nil
+	}
 	if e.config.BlockSplitDepth == 0 {
-		if err := e.enqueueBlock(block, e.bufferPTS, nil); err != nil {
+		if err := e.enqueueBlockSync(block, e.bufferPTS, nil); err != nil {
 			return err
 		}
 		e.bufferPTS += media.Pts(len(block[0]))
@@ -169,7 +245,7 @@ func (e *Encoder) enqueueFullBlock(block [][]int64) error {
 	}
 	defer releaseBlockSpans(spans)
 	for _, span := range spans {
-		if err := e.enqueueBlock(blockSlice(block, span.offset, span.length), e.bufferPTS, span.analysis); err != nil {
+		if err := e.enqueueBlockSync(blockSlice(block, span.offset, span.length), e.bufferPTS, span.analysis); err != nil {
 			return err
 		}
 		e.bufferPTS += media.Pts(span.length)
@@ -177,7 +253,10 @@ func (e *Encoder) enqueueFullBlock(block [][]int64) error {
 	return nil
 }
 
-func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts, analysis *frameAnalysis) error {
+// enqueueBlockSync is the sequential (workers <= 1) code path: it encodes
+// directly using the Encoder's own writer/windows and appends an
+// already-complete pendingEntry, matching the pre-parallel behavior exactly.
+func (e *Encoder) enqueueBlockSync(block [][]int64, pts media.Pts, analysis *frameAnalysis) error {
 	number := e.frameNumber
 	if e.config.BlockSplitDepth > 0 {
 		number = e.sampleNumber
@@ -191,15 +270,20 @@ func (e *Encoder) enqueueBlock(block [][]int64, pts media.Pts, analysis *frameAn
 	if err != nil {
 		return err
 	}
-	pkt := media.NewPacketFromData(e.writer.DetachBytes())
+	pkt := newFramePacket(e.writer.DetachBytes(), pts)
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{pkt}})
+	e.frameNumber++
+	e.sampleNumber += uint64(len(block[0]))
+	return nil
+}
+
+func newFramePacket(data []byte, pts media.Pts) *media.Packet {
+	pkt := media.NewPacketFromData(data)
 	pkt.MediaType = media.MediaAudio
 	pkt.StreamIndex = 0
 	pkt.PTS = pts
 	pkt.DTS = media.Dts(pts)
-	e.pendingQueue = append(e.pendingQueue, pkt)
-	e.frameNumber++
-	e.sampleNumber += uint64(len(block[0]))
-	return nil
+	return pkt
 }
 
 func (e *Encoder) dropBuffered(n int) {
@@ -268,7 +352,6 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 	e.ensureBufferSpace(frame.Samples)
 	format := frame.Format.Packed()
-	bytesPerSample := format.BytesPerSample()
 	channels := len(e.buffer)
 	plane := frame.Planes()[0]
 	minValue := -(int64(1) << uint(e.bitsPerSample-1))
@@ -277,41 +360,76 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 	for ch := range e.buffer {
 		e.buffer[ch] = e.buffer[ch][:writeStart+frame.Samples]
 	}
-	for sample := 0; sample < frame.Samples; sample++ {
-		for ch := 0; ch < channels; ch++ {
-			offset := (sample*channels + ch) * bytesPerSample
-			var value int64
-			switch format {
-			case media.SampleFormatS16:
-				value = int64(int16(binary.LittleEndian.Uint16(plane[offset : offset+2])))
-			case media.SampleFormatS24:
-				raw := int32(uint32(plane[offset]) | uint32(plane[offset+1])<<8 | uint32(plane[offset+2])<<16)
-				if raw&0x800000 != 0 {
-					raw |= ^int32(0xffffff)
-				}
-				value = int64(raw)
-			case media.SampleFormatS32:
-				value = int64(int32(binary.LittleEndian.Uint32(plane[offset : offset+4])))
-			default:
-				for channel := range e.buffer {
-					e.buffer[channel] = e.buffer[channel][:writeStart]
-				}
-				return fmt.Errorf("unsupported FLAC input format: %s", format)
-			}
-			if value < minValue || value > maxValue {
-				for channel := range e.buffer {
-					e.buffer[channel] = e.buffer[channel][:writeStart]
-				}
-				return fmt.Errorf("FLAC sample %d outside %d-bit range", value, e.bitsPerSample)
-			}
-			e.buffer[ch][writeStart+sample] = value
-		}
+
+	var err error
+	switch format {
+	case media.SampleFormatS16:
+		err = deinterleaveS16(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
+	case media.SampleFormatS24:
+		err = deinterleaveS24(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
+	case media.SampleFormatS32:
+		err = deinterleaveS32(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
+	default:
+		err = fmt.Errorf("unsupported FLAC input format: %s", format)
 	}
+	if err != nil {
+		for channel := range e.buffer {
+			e.buffer[channel] = e.buffer[channel][:writeStart]
+		}
+		return err
+	}
+
 	for ch := range e.buffer {
 		e.blockView[ch] = e.buffer[ch][writeStart : writeStart+frame.Samples]
 	}
 	e.md5.Write(e.blockView, e.bitsPerSample)
 	e.buffered += frame.Samples
+	return nil
+}
+
+func deinterleaveS16(buffer [][]int64, plane []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
+	for sample := 0; sample < samples; sample++ {
+		for ch := 0; ch < channels; ch++ {
+			offset := (sample*channels + ch) * 2
+			value := int64(int16(binary.LittleEndian.Uint16(plane[offset : offset+2])))
+			if value < minValue || value > maxValue {
+				return fmt.Errorf("FLAC sample %d outside %d-bit range", value, bitsPerSample)
+			}
+			buffer[ch][writeStart+sample] = value
+		}
+	}
+	return nil
+}
+
+func deinterleaveS24(buffer [][]int64, plane []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
+	for sample := 0; sample < samples; sample++ {
+		for ch := 0; ch < channels; ch++ {
+			offset := (sample*channels + ch) * 3
+			raw := int32(uint32(plane[offset]) | uint32(plane[offset+1])<<8 | uint32(plane[offset+2])<<16)
+			if raw&0x800000 != 0 {
+				raw |= ^int32(0xffffff)
+			}
+			value := int64(raw)
+			if value < minValue || value > maxValue {
+				return fmt.Errorf("FLAC sample %d outside %d-bit range", value, bitsPerSample)
+			}
+			buffer[ch][writeStart+sample] = value
+		}
+	}
+	return nil
+}
+
+func deinterleaveS32(buffer [][]int64, plane []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
+	for sample := 0; sample < samples; sample++ {
+		for ch := 0; ch < channels; ch++ {
+			offset := (sample*channels + ch) * 4
+			value := int64(int32(binary.LittleEndian.Uint32(plane[offset : offset+4])))
+			if value < minValue || value > maxValue {
+				return fmt.Errorf("FLAC sample %d outside %d-bit range", value, bitsPerSample)
+			}
+			buffer[ch][writeStart+sample] = value
+		}
+	}
 	return nil
 }
 

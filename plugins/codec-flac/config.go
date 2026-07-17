@@ -13,12 +13,19 @@ func (DecoderConfig) NodeConfiguration() {}
 func (EncoderConfig) NodeConfiguration() {}
 
 const (
-	StereoIndependent = flac.StereoIndependent
-	StereoAdaptive    = flac.StereoAdaptive
-	StereoExhaustive  = flac.StereoExhaustive
-	BlockSplitEstimated = flac.BlockSplitEstimated
-	BlockSplitExact     = flac.BlockSplitExact
+	StereoIndependent     = flac.StereoIndependent
+	StereoAdaptive        = flac.StereoAdaptive
+	StereoExhaustive      = flac.StereoExhaustive
+	BlockSplitEstimated   = flac.BlockSplitEstimated
+	BlockSplitExact       = flac.BlockSplitExact
+	OrderSearchEstimated  = flac.OrderSearchEstimated
+	OrderSearchExhaustive = flac.OrderSearchExhaustive
+	RiceCostEstimated     = flac.RiceCostEstimated
+	RiceCostExact         = flac.RiceCostExact
 )
+
+type OrderSearchMode = flac.OrderSearchMode
+type RiceCostMode = flac.RiceCostMode
 
 func normalizeCompressionLevel(level int) int {
 	if level < 0 {

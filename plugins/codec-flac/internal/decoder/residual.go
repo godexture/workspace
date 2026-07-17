@@ -112,13 +112,12 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 // tier: a truncated stream here is detected in aggregate via Overrun()
 // rather than per call.
 func decodeRiceSigned(r *bits.Reader, param uint8) int64 {
-	quotient := r.Unary64()
-	remainder := r.Bits64(param)
+	unsigned := r.Rice64(param)
+	quotient := unsigned >> param
 	if quotient > uint64(0xffffffff)>>param {
 		r.Seek(r.Position())
 		return 1 << 62
 	}
-	unsigned := (quotient << param) | remainder
 	if unsigned&1 == 0 {
 		return int64(unsigned >> 1)
 	}
