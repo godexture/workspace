@@ -13,4 +13,3 @@ var RoundtripCompareOptions = testutil.CompareOptions{
 	MaxRMSE:    2e-5,
 	MinSNR:     80.0,
 }
-
