@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/format-mp3/header"
 	"github.com/godexture/sdk/bits"
+	"github.com/godexture/sdk/buffer"
 )
 
 const (
@@ -15,21 +16,33 @@ const (
 	SubBandCount             = layer3.SubBandCount
 	SamplesPerSubBandLayer3  = layer3.SamplesPerSubBand
 	SamplesPerSubBandLayer12 = layer12.SamplesPerSubBand
+	synthWindowGranules      = 1
+	synthHistoryLength       = QMFHistoryBlocks * MaxChannels * SubBandCount
+	synthBufferLength        = synthHistoryLength + synthWindowGranules*SamplesPerSubBandLayer3*MaxChannels*SubBandCount
 )
 
 type Decoder struct {
-	QuadratureMirrorFilterState [QMFHistoryBlocks * MaxChannels * SubBandCount]float32
-	FreeFormatBytes             int
-	Header                      Header
-	layer3Dec                   layer3.Decoder
-	layer3Work                  layer3.Workspace
-	synthesisWorkspace          [2112]float32
+	FreeFormatBytes   int
+	Header            Header
+	layer3Dec         layer3.Decoder
+	layer3Work        layer3.Workspace
+	synthesis         buffer.Ring[float32]
+	synthesisOdd      [synthHistoryLength / 2]float32
+	synthesisChannels int
 }
 
 // Init initializes the decoder.
 func (d *Decoder) Init() {
-	*d = Decoder{}
+	layer3Dec := d.layer3Dec
+	synthesis := d.synthesis
+	*d = Decoder{layer3Dec: layer3Dec, synthesis: synthesis}
 	d.layer3Dec.Init()
+	if d.synthesis.Cap() < synthBufferLength {
+		d.synthesis = buffer.NewRing[float32](synthBufferLength)
+	} else {
+		d.synthesis.Reset()
+	}
+	clear(d.synthesis.Grow(synthHistoryLength))
 }
 
 // DecodeFrame decodes one MP3 frame to float32 samples.
@@ -109,14 +122,14 @@ func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, domain
 
 func (d *Decoder) decodeLayer3(frameInfo domain.FrameInfo, bitStreamFrame *bits.Reader, pcmSamples []float32, h Header) error {
 	synthesize := func(granule []float32, pcmOffset int) {
-		SynthesizeGranule(d.QuadratureMirrorFilterState[:], granule, SamplesPerSubBandLayer3, frameInfo.Channels, pcmSamples[pcmOffset:], d.synthesisWorkspace[:])
+		d.synthesizeGranule(granule, SamplesPerSubBandLayer3, frameInfo.Channels, pcmSamples[pcmOffset:])
 	}
 	return layer3.Decode(&d.layer3Dec, &d.layer3Work, bitStreamFrame, frameInfo.Channels, h, synthesize)
 }
 
 func (d *Decoder) decodeLayer12(frameInfo domain.FrameInfo, bitStreamFrame *bits.Reader, pcmSamples []float32, h Header) error {
 	synthesize := func(granule []float32, pcmOffset int) {
-		SynthesizeGranule(d.QuadratureMirrorFilterState[:], granule, SamplesPerSubBandLayer12, frameInfo.Channels, pcmSamples[pcmOffset:], d.synthesisWorkspace[:])
+		d.synthesizeGranule(granule, SamplesPerSubBandLayer12, frameInfo.Channels, pcmSamples[pcmOffset:])
 	}
 	return layer12.Decode(bitStreamFrame, frameInfo.Channels, frameInfo.MpegLayer, h, synthesize)
 }

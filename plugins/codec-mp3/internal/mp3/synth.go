@@ -273,23 +273,28 @@ func dctType2(granule []float32, bandCount int) {
 	}
 }
 
-// SynthesizeGranule is the Go native implementation of subBand synthesis filtering.
-func SynthesizeGranule(quadratureMirrorFilterState []float32, granule []float32, bandCount int, channelCount int, pcmSamples []float32, synthesisWorkspace []float32) {
+func (d *Decoder) synthesizeGranule(granule []float32, bandCount int, channelCount int, pcmSamples []float32) {
 	for i := 0; i < channelCount; i++ {
 		dctType2(granule[layer3.SamplesPerGranule*i:], bandCount)
 	}
 
-	copy(synthesisWorkspace[:15*64], quadratureMirrorFilterState[:15*64])
+	d.synthesis.Grow(bandCount * 64)
+	window := d.synthesis.Data()
+	switch {
+	case channelCount == 1 && d.synthesisChannels != 1:
+		for i := 1; i < synthHistoryLength; i += 2 {
+			d.synthesisOdd[i/2] = window[i]
+		}
+	case channelCount == 2 && d.synthesisChannels == 1:
+		for i := 1; i < synthHistoryLength; i += 2 {
+			window[i] = d.synthesisOdd[i/2]
+		}
+	}
 
 	for i := 0; i < bandCount; i += 2 {
-		synthesizeFloat(granule[i:], pcmSamples[32*channelCount*i:], channelCount, synthesisWorkspace[i*64:])
+		synthesizeFloat(granule[i:], pcmSamples[32*channelCount*i:], channelCount, window[i*64:])
 	}
 
-	if channelCount == 1 {
-		for i := 0; i < 15*64; i += 2 {
-			quadratureMirrorFilterState[i] = synthesisWorkspace[bandCount*64+i]
-		}
-	} else {
-		copy(quadratureMirrorFilterState[:15*64], synthesisWorkspace[bandCount*64:bandCount*64+15*64])
-	}
+	d.synthesis.Discard(bandCount * 64)
+	d.synthesisChannels = channelCount
 }

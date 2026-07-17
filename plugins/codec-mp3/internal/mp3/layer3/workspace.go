@@ -3,6 +3,7 @@ package layer3
 import (
 	"github.com/godexture/format-mp3/header"
 	"github.com/godexture/sdk/bits"
+	"github.com/godexture/sdk/buffer"
 )
 
 const (
@@ -15,7 +16,9 @@ const (
 	maxChannels          = header.MaxChannels
 	maxGranuleBufferSize = SamplesPerGranule * maxChannels
 	maxBitReservoirBytes = 511
+	maxMainDataBytes     = 2304
 	maxScaleFactorBands  = 39
+	reservoirCapacity    = 2 * (maxBitReservoirBytes + maxMainDataBytes)
 )
 
 // GranuleInfo matches the layout of granule information.
@@ -39,18 +42,22 @@ type GranuleInfo struct {
 }
 
 type Decoder struct {
-	mdctOverlap       [maxChannels][(SamplesPerSubBand / 2) * SubBandCount]float32
-	bitReservoirBytes int
-	reservoirBuffer   [maxBitReservoirBytes]byte
+	mdctOverlap [maxChannels][(SamplesPerSubBand / 2) * SubBandCount]float32
+	reservoir   buffer.Ring[byte]
 }
 
 func (d *Decoder) Init() {
-	*d = Decoder{}
+	reservoir := d.reservoir
+	*d = Decoder{reservoir: reservoir}
+	if d.reservoir.Cap() < reservoirCapacity {
+		d.reservoir = buffer.NewRing[byte](reservoirCapacity)
+	} else {
+		d.reservoir.Reset()
+	}
 }
 
 type Workspace struct {
 	bitReader                bits.Reader
-	mainData                 [maxBitReservoirBytes + 2304]byte // 2304 is MaxFreeFormatFrameSize
 	granuleInfo              [4]GranuleInfo
 	granule                  [maxGranuleBufferSize]float32
 	scaleFactors             [maxScaleFactorBands]float32

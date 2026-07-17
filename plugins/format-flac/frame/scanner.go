@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/buffer"
 	"github.com/godexture/sdk/hash"
 )
 
@@ -21,7 +22,7 @@ type Scanner struct {
 	info         streaminfo.StreamInfo
 	readSize     int
 	maxFrameSize int
-	buffer       []byte
+	buffer       buffer.Ring[byte]
 	eof          bool
 	scanPos      int
 	crc          uint16
@@ -45,7 +46,16 @@ func NewScanner(r io.Reader, info streaminfo.StreamInfo, options Options) (*Scan
 	// STREAMINFO frame-size fields are advisory and are frequently absent or
 	// stale in real-world files. Keep the scanner bounded by the format limit.
 	maxFrameSize := defaultMaxFrameSize
-	return &Scanner{r: r, info: info, readSize: readSize, maxFrameSize: maxFrameSize, scanPos: 2, options: options, resyncPos: -1}, nil
+	return &Scanner{
+		r:            r,
+		info:         info,
+		readSize:     readSize,
+		maxFrameSize: maxFrameSize,
+		buffer:       buffer.NewRing[byte](readSize),
+		scanPos:      2,
+		options:      options,
+		resyncPos:    -1,
+	}, nil
 }
 
 func frameReadSize(maxFrameSize uint32) int {
@@ -66,8 +76,8 @@ func frameReadSize(maxFrameSize uint32) int {
 }
 
 func (s *Scanner) extractFrame(boundary int, hdr Header) ([]byte, Header, error) {
-	data := append([]byte(nil), s.buffer[:boundary]...)
-	s.buffer = append(s.buffer[:0], s.buffer[boundary:]...)
+	data := append([]byte(nil), s.buffer.Data()[:boundary]...)
+	s.buffer.Discard(boundary)
 	s.offset += int64(boundary)
 	s.scanPos = 2
 	s.crc = 0
@@ -90,11 +100,12 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 			return s.extractFrame(boundary, current)
 		}
 		if s.eof {
-			if len(s.buffer) < 3 {
+			data := s.buffer.Data()
+			if len(data) < 3 {
 				return nil, Header{}, io.ErrUnexpectedEOF
 			}
-			footer := uint16(s.buffer[len(s.buffer)-2])<<8 | uint16(s.buffer[len(s.buffer)-1])
-			if hash.CRC16(s.buffer[:len(s.buffer)-2]) != footer {
+			footer := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
+			if hash.CRC16(data[:len(data)-2]) != footer {
 				if s.options.Strict {
 					return nil, Header{}, errors.New("invalid FLAC frame footer CRC-16")
 				}
@@ -104,9 +115,9 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 				}
 				return nil, Header{}, io.EOF
 			}
-			return s.extractFrame(len(s.buffer), current)
+			return s.extractFrame(len(data), current)
 		}
-		if len(s.buffer) > s.maxFrameSize {
+		if s.buffer.Len() > s.maxFrameSize {
 			if s.options.Strict {
 				return nil, Header{}, fmt.Errorf("FLAC frame exceeds maximum size %d without a valid boundary", s.maxFrameSize)
 			}
@@ -125,7 +136,7 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 
 func (s *Scanner) currentHeader() (Header, error) {
 	for {
-		header, err := ParseHeader(s.buffer, s.info)
+		header, err := ParseHeader(s.buffer.Data(), s.info)
 		if err == nil {
 			s.frameOffset = s.offset
 			return header, nil
@@ -157,17 +168,18 @@ func (s *Scanner) currentHeader() (Header, error) {
 func (s *Scanner) FrameOffset() int64 { return s.frameOffset }
 
 func (s *Scanner) findNextHeader(start int) bool {
-	for pos := start; pos+1 < len(s.buffer); pos++ {
-		if s.buffer[pos] != 0xff || s.buffer[pos+1]&0xfc != 0xf8 {
+	data := s.buffer.Data()
+	for pos := start; pos+1 < len(data); pos++ {
+		if data[pos] != 0xff || data[pos+1]&0xfc != 0xf8 {
 			continue
 		}
-		if _, err := ParseHeader(s.buffer[pos:], s.info); err == nil {
+		if _, err := ParseHeader(data[pos:], s.info); err == nil {
 			s.discard(pos)
 			return true
 		}
 	}
-	if len(s.buffer) > 1 {
-		s.discard(len(s.buffer) - 1)
+	if len(data) > 1 {
+		s.discard(len(data) - 1)
 	}
 	return false
 }
@@ -176,30 +188,30 @@ func (s *Scanner) discard(n int) {
 	if n <= 0 {
 		return
 	}
-	copy(s.buffer, s.buffer[n:])
-	s.buffer = s.buffer[:len(s.buffer)-n]
+	s.buffer.Discard(n)
 	s.offset += int64(n)
 	s.scanPos, s.crc, s.crcPos, s.resyncPos = 2, 0, 0, -1
 }
 
 func (s *Scanner) ensureHeader() error {
-	for len(s.buffer) == 0 && !s.eof {
+	for s.buffer.Len() == 0 && !s.eof {
 		if err := s.readMore(); err != nil {
 			return err
 		}
 	}
-	if len(s.buffer) == 0 {
+	if s.buffer.Len() == 0 {
 		return io.EOF
 	}
 	return nil
 }
 
 func (s *Scanner) findBoundary(current Header) (int, bool) {
-	for pos := s.scanPos; pos+2 <= len(s.buffer); pos++ {
-		if s.buffer[pos] != 0xff || s.buffer[pos+1]&0xfc != 0xf8 {
+	data := s.buffer.Data()
+	for pos := s.scanPos; pos+2 <= len(data); pos++ {
+		if data[pos] != 0xff || data[pos+1]&0xfc != 0xf8 {
 			continue
 		}
-		next, err := ParseHeader(s.buffer[pos:], s.info)
+		next, err := ParseHeader(data[pos:], s.info)
 		if err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) {
 				s.scanPos = pos
@@ -210,9 +222,9 @@ func (s *Scanner) findBoundary(current Header) (int, bool) {
 		if !continuous(current, next) || pos < 2 {
 			continue
 		}
-		footer := uint16(s.buffer[pos-2])<<8 | uint16(s.buffer[pos-1])
+		footer := uint16(data[pos-2])<<8 | uint16(data[pos-1])
 		if s.crcPos < pos-2 {
-			s.crc = hash.CRC16Update(s.crc, s.buffer[s.crcPos:pos-2])
+			s.crc = hash.CRC16Update(s.crc, data[s.crcPos:pos-2])
 			s.crcPos = pos - 2
 		}
 		if s.crc != footer {
@@ -223,7 +235,7 @@ func (s *Scanner) findBoundary(current Header) (int, bool) {
 		}
 		return pos, true
 	}
-	s.scanPos = max(2, len(s.buffer)-1)
+	s.scanPos = max(2, len(data)-1)
 	return 0, false
 }
 
@@ -238,15 +250,13 @@ func continuous(current, next Header) bool {
 }
 
 func (s *Scanner) readMore() error {
-	if cap(s.buffer)-len(s.buffer) < s.readSize {
-		grown := make([]byte, len(s.buffer), len(s.buffer)+s.readSize)
-		copy(grown, s.buffer)
-		s.buffer = grown
+	buffered := s.buffer.Len()
+	growSize := s.readSize
+	if available := s.buffer.Cap() - buffered; available > 0 && available < growSize {
+		growSize = available
 	}
-	buffered := len(s.buffer)
-	s.buffer = s.buffer[:cap(s.buffer)]
-	n, err := s.r.Read(s.buffer[buffered:])
-	s.buffer = s.buffer[:buffered+n]
+	n, err := s.r.Read(s.buffer.Grow(growSize))
+	s.buffer.Truncate(buffered + n)
 
 	switch {
 	case err == io.EOF:
