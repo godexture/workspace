@@ -34,6 +34,13 @@ func NewPacketFromData(data []byte, opts ...PacketOption) *Packet {
 	return newPacket(&data, opts...)
 }
 
+func NewPacketEvent(kind PacketKind, streamIndex int, parameters []CodecParameters) *Packet {
+	pkt := NewPacketFromData(nil, WithStreamIndex(streamIndex))
+	pkt.Kind = kind
+	pkt.CodecParameters = parameters
+	return pkt
+}
+
 func newPacket(data *[]byte, opts ...PacketOption) *Packet {
 	pkt := &Packet{
 		data: data,

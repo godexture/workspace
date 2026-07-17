@@ -1,5 +1,7 @@
 package media
 
+import "reflect"
+
 type MediaAttributes struct {
 	Codec           CodecID
 	CodecParameters CodecParameters
@@ -29,8 +31,16 @@ func (a AudioAttributes) ChannelCount() int {
 // deliberately generic so codec and container plugins can evolve without
 // adding codec-specific fields to core media types.
 type CodecParameters struct {
-	Schema string
+	Schema reflect.Type
 	Data   []byte
+}
+
+func NewCodecParameters[T any](data []byte) CodecParameters {
+	return CodecParameters{Schema: reflect.TypeFor[T](), Data: data}
+}
+
+func IsCodecParameters[T any](p CodecParameters) bool {
+	return p.Schema == reflect.TypeFor[T]()
 }
 
 // Clone returns an independent copy of the parameter payload.
