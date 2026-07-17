@@ -102,7 +102,7 @@ func TestParse_WOAR_WOAS_FallbackToWebsite(t *testing.T) {
 	woasFrame := append([]byte("WOAS"), []byte{0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 'h', 't', 't', 'p', 's', ':', '/', '/', 'a', 'l', 'b', 'u', 'm', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e'}...)
 
 	t.Run("WOAR", func(t *testing.T) {
-	t.Parallel()
+		t.Parallel()
 		tagHeader := makeTagHeader(0x03, len(woarFrame))
 		bundle, err := Parse(append(tagHeader, woarFrame...))
 		if err != nil {
@@ -112,7 +112,7 @@ func TestParse_WOAR_WOAS_FallbackToWebsite(t *testing.T) {
 	})
 
 	t.Run("WOAS", func(t *testing.T) {
-	t.Parallel()
+		t.Parallel()
 		tagHeader := makeTagHeader(0x03, len(woasFrame))
 		bundle, err := Parse(append(tagHeader, woasFrame...))
 		if err != nil {

@@ -102,7 +102,7 @@ func TestMarshal_RoundTrip_Versions(t *testing.T) {
 	versions := []id3v2.Version{id3v2.Version2, id3v2.Version3, id3v2.Version4}
 	for _, v := range versions {
 		t.Run(fmt.Sprintf("Version%d", v), func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			dateVal, _ := date.NewPartial("2024-06-17")
 
 			bundle := metadata.NewBundle()
