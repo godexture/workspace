@@ -9,7 +9,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,37 +28,6 @@ type workFile struct {
 	} `json:"Use"`
 }
 
-type result struct {
-	module    string
-	jobModule string
-	pkg       string
-	testName  string
-	dir       string
-	output    string
-	duration  time.Duration
-	err       error
-}
-
-type job struct {
-	module      string
-	moduleDir   string
-	pkg         string
-	pkgDir      string
-	pkgLabel    string
-	testName    string
-	wholeModule bool
-}
-
-type listPackage struct {
-	ImportPath   string   `json:"ImportPath"`
-	Dir          string   `json:"Dir"`
-	TestGoFiles  []string `json:"TestGoFiles"`
-	XTestGoFiles []string `json:"XTestGoFiles"`
-	Error        *struct {
-		Err string `json:"Err"`
-	} `json:"Error"`
-}
-
 type testEvent struct {
 	Action  string `json:"Action"`
 	Package string `json:"Package"`
@@ -74,6 +42,14 @@ type uiEvent struct {
 	Status         string
 	TestStatus     string
 	ProgressModule string
+	PackageDone    bool
+	Output         string
+}
+
+type result struct {
+	output   string
+	duration time.Duration
+	err      error
 }
 
 type slotState struct {
@@ -88,72 +64,62 @@ type progressEntry struct {
 	status string
 }
 
-func clearSlots(lines int) {
-	if lines > 0 {
-		// カーソルを lines 行上に戻す
-		fmt.Printf("\033[%dA", lines)
-	}
+type termSize struct {
+	mu     sync.Mutex
+	width  int
+	height int
 }
 
-func drawSlots(slots []slotState) {
-	drawSlotsLimit(slots, visibleSlotCount(len(slots)))
+func (size *termSize) get() (int, int) {
+	size.mu.Lock()
+	defer size.mu.Unlock()
+	return size.width, size.height
 }
 
-func drawSlotsLimit(slots []slotState, limit int) {
-	width := terminalWidth()
-	if limit < 1 {
-		limit = 1
+func (size *termSize) set(width, height int) {
+	size.mu.Lock()
+	defer size.mu.Unlock()
+	size.width = width
+	size.height = height
+}
+
+func runningTests(slots []slotState) []slotState {
+	running := make([]slotState, 0, len(slots))
+	for _, slot := range slots {
+		if slot.status == "RUNNING" {
+			running = append(running, slot)
+		}
 	}
-	if limit > len(slots) {
-		limit = len(slots)
+	return running
+}
+
+func drawRunningTests(tests []slotState, limit, width int) {
+	if limit <= 0 {
+		return
 	}
-	visibleSlots := slots[:limit]
-	for i, s := range visibleSlots {
-		workerID := i
-		last := i == len(visibleSlots)-1
-		// 行をクリアして行頭から描画
+	if limit > len(tests) {
+		limit = len(tests)
+	}
+	for i, s := range tests[:limit] {
+		last := i == limit-1
 		fmt.Print("\033[2K\r")
-		prefix := fmt.Sprintf("\033[36m[Worker %d]\033[0m ", workerID+1)
-		prefixWidth := len(fmt.Sprintf("[Worker %d] ", workerID+1))
-
-		if s.status == "IDLE" {
-			fmt.Printf("%s(Idle)", prefix)
-			if !last {
-				fmt.Print("\n")
-			}
-			continue
+		m := s.module
+		t := s.test
+		if t == "" {
+			t = "..."
 		}
-
-		var info string
-		if s.status == "RUNNING" {
-			m := s.module
-			t := s.test
-			if t == "" {
-				t = "..."
-			}
-			combined := fmt.Sprintf("%s : %s", m, t)
-			combined = truncate(combined, width-prefixWidth-len("RUNNING "))
-			info = fmt.Sprintf("RUNNING %s", combined)
-		} else {
-			m := s.module
-			m = truncate(m, width-prefixWidth-len("PASS    "))
-			if s.status == "PASS" {
-				info = fmt.Sprintf("\033[32mPASS\033[0m    %s", m)
-			} else {
-				info = fmt.Sprintf("\033[31mFAIL\033[0m    %s", m)
-			}
-		}
-		fmt.Printf("%s%s", prefix, info)
+		combined := truncate(fmt.Sprintf("%s : %s", m, t), width-len("[RUNNING] "))
+		fmt.Printf("\033[36m[RUNNING]\033[0m %s", combined)
 		if !last {
 			fmt.Print("\n")
 		}
 	}
 }
 
-func visibleSlotCount(total int) int {
-	available := terminalHeight() - 2
-	if available < 1 {
-		available = 1
+func dashboardWorkerCount(total, height int) int {
+	available := height - 3
+	if available < 0 {
+		available = 0
 	}
 	if available > total {
 		return total
@@ -161,23 +127,7 @@ func visibleSlotCount(total int) int {
 	return available
 }
 
-func dashboardWorkerCount(total int) int {
-	available := terminalHeight() - 3
-	if available < 1 {
-		available = 1
-	}
-	if available > total {
-		return total
-	}
-	return available
-}
-
-func drawProgressLogs(entries []progressEntry) {
-	drawProgressLogsLimit(entries, len(entries))
-}
-
-func drawProgressLogsLimit(entries []progressEntry, limit int) {
-	width := terminalWidth()
+func drawProgressLogsLimit(entries []progressEntry, limit, width int) {
 	start := 0
 	if limit < len(entries) {
 		start = len(entries) - limit
@@ -215,20 +165,13 @@ func updateProgress(entries []progressEntry, module, test, status string) []prog
 	return entries
 }
 
-func hasProgressModule(entries []progressEntry, module, status string) bool {
-	for _, entry := range entries {
-		if entry.module == module && entry.status == status {
-			return true
-		}
-	}
-	return false
-}
-
 func terminalWidth() int {
-	if columns, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && columns > 0 {
-		return columns
-	}
 	if runtime.GOOS == "windows" {
+		if output, err := exec.Command("powershell", "-NoProfile", "-Command", "$Host.UI.RawUI.WindowSize.Width").Output(); err == nil {
+			if columns, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && columns > 0 {
+				return columns
+			}
+		}
 		if output, err := exec.Command("cmd", "/c", "mode", "con").Output(); err == nil {
 			for _, line := range strings.Split(string(output), "\n") {
 				fields := strings.Fields(line)
@@ -240,6 +183,9 @@ func terminalWidth() int {
 			}
 		}
 	}
+	if columns, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && columns > 0 {
+		return columns
+	}
 	return 80
 }
 
@@ -248,6 +194,11 @@ func terminalHeight() int {
 		return lines
 	}
 	if runtime.GOOS == "windows" {
+		if output, err := exec.Command("powershell", "-NoProfile", "-Command", "$Host.UI.RawUI.WindowSize.Height").Output(); err == nil {
+			if lines, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && lines > 0 {
+				return lines
+			}
+		}
 		if output, err := exec.Command("cmd", "/c", "mode", "con").Output(); err == nil {
 			for _, line := range strings.Split(string(output), "\n") {
 				fields := strings.Fields(line)
@@ -283,7 +234,7 @@ func main() {
 	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	flags.StringVar(&goCommand, "go", "go", "go command to run")
-	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent jobs (package × top-level Test); 0 means runtime.NumCPU()*2")
+	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent tests in each test binary; 0 uses Go's default")
 	flags.BoolVar(&showOutput, "show-output", false, "print go test output for successful modules too")
 	if err := flags.Parse(scriptArgs); err != nil {
 		fatal(err)
@@ -307,66 +258,63 @@ func main() {
 	if len(modules) == 0 {
 		fatal(fmt.Errorf("no modules found in %s", goWork))
 	}
+	pkgPattern = workspacePackagePatterns(modules, pkgPattern)
 
-	var jobs []job
-	if hasTestSelectionFlag(passthroughFlags) {
-		fmt.Fprintln(os.Stderr, "-run/-bench/-fuzz/-list が指定されたため per-test 分割を無効化し module 丸ごと実行にフォールバックします")
-		jobs = wholeModuleJobs(modules)
-	} else {
-		jobs = discoverJobs(goCommand, goWork, modules, pkgPattern)
-	}
-	if len(jobs) == 0 {
-		fatal(errors.New("no test jobs found"))
-	}
-
-	if parallel <= 0 || parallel > len(jobs) {
-		parallel = runtime.NumCPU() * 2
-		if parallel < 1 {
-			parallel = 1
+	size := termSize{width: terminalWidth(), height: terminalHeight()}
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			size.set(terminalWidth(), terminalHeight())
 		}
-		if parallel > len(jobs) {
-			parallel = len(jobs)
-		}
-	}
+	}()
 
-	uiChan := make(chan uiEvent)
-	resultsChan := runTests(goCommand, goWork, jobs, passthroughFlags, pkgPattern, parallel, uiChan)
+	uiChan := make(chan uiEvent, 1024)
+	resultsChan := runTests(goCommand, goWork, passthroughFlags, pkgPattern, parallel, runtime.NumCPU(), uiChan)
 	interruptChan := make(chan os.Signal, 1)
 	signal.Notify(interruptChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(interruptChan)
 
-	slots := make([]slotState, parallel)
+	slotCount := runtime.NumCPU()
+	if slotCount < 1 {
+		slotCount = 1
+	}
+	slots := make([]slotState, slotCount)
 	for i := range slots {
 		slots[i].status = "IDLE"
 	}
 	failed := 0
 	completed := 0
-	total := len(jobs)
-	moduleTotals := make(map[string]int)
-	moduleCompleted := make(map[string]int)
-	moduleFailed := make(map[string]bool)
-	for _, j := range jobs {
-		moduleTotals[j.module]++
-	}
+	total := 0
 	var progressEntries []progressEntry
 	var resultHistory []string
+	failureOutputShown := false
+	dirty := false
+	renderTicker := time.NewTicker(100 * time.Millisecond)
+	defer renderTicker.Stop()
 	fmt.Print("\033[?1049h\033[?25l")
 	leaveDashboard := func() {
 		fmt.Print("\033[?25h\033[?1049l")
 	}
 	render := func() {
+		width, height := size.get()
 		fmt.Print("\033[H")
 		fmt.Print("\033[2K\r")
 		fmt.Printf("go.work: %s\n", goWork)
 		fmt.Print("\033[2K\r")
-		fmt.Printf("modules: %d, jobs: %d, parallel: %d, go test args: %s\n", len(modules), len(jobs), parallel, strings.Join(testArgs, " "))
-		workerLimit := dashboardWorkerCount(len(slots))
-		availableLogs := terminalHeight() - 2 - workerLimit
-		if availableLogs < 0 {
-			availableLogs = 0
+		running := runningTests(slots)
+		fmt.Printf("modules: %d, packages: %d/%d, running: %d, go test args: %s\n", len(modules), completed, total, len(running), strings.Join(testArgs, " "))
+		runningLimit := dashboardWorkerCount(len(running), height)
+		availableLogs := height - 2 - runningLimit
+		if availableLogs < 1 && len(progressEntries) > 0 {
+			availableLogs = 1
+			runningLimit = height - 3
+			if runningLimit < 0 {
+				runningLimit = 0
+			}
 		}
-		drawProgressLogsLimit(progressEntries, availableLogs)
-		drawSlotsLimit(slots, workerLimit)
+		drawProgressLogsLimit(progressEntries, availableLogs, width)
+		drawRunningTests(running, runningLimit, width)
 		fmt.Print("\033[J")
 	}
 	render()
@@ -382,7 +330,29 @@ func main() {
 				uiChan = nil
 				break
 			}
-			slots[ev.WorkerID] = slotState{module: ev.Module, test: ev.Test, status: ev.Status}
+			if ev.WorkerID >= 0 {
+				for len(slots) <= ev.WorkerID {
+					slots = append(slots, slotState{status: "IDLE"})
+				}
+				slots[ev.WorkerID] = slotState{module: ev.Module, test: ev.Test, status: ev.Status}
+			}
+			if ev.Status == "RUNNING" && ev.Test == "" && !ev.PackageDone {
+				total++
+			}
+			if ev.PackageDone {
+				completed++
+				status := "PASS"
+				if ev.Status == "FAIL" {
+					status = "REJECT"
+					failed++
+					resultHistory = append(resultHistory, fmt.Sprintf("[%s] %s", status, ev.Module))
+					if ev.Output != "" {
+						failureOutputShown = true
+						resultHistory = append(resultHistory, strings.TrimRight(ev.Output, "\r\n"))
+					}
+				}
+				progressEntries = updateProgress(progressEntries, ev.Module, "", status)
+			}
 			if ev.TestStatus == "REJECT" {
 				progressModule := ev.ProgressModule
 				if progressModule == "" {
@@ -390,46 +360,38 @@ func main() {
 				}
 				progressEntries = updateProgress(progressEntries, progressModule, ev.Test, "REJECT")
 			}
-			render()
+			dirty = true
 		case res, ok := <-resultsChan:
 			if !ok {
 				resultsChan = nil
 				break
 			}
-			completed++
-			status := "\033[32mPASS\033[0m"
-			if res.err != nil {
-				status = "\033[31mFAIL\033[0m"
+			if res.err != nil && total == 0 {
 				failed++
 			}
-			moduleCompleted[res.jobModule]++
+			status := "PASS"
 			if res.err != nil {
-				moduleFailed[res.jobModule] = true
-				if !hasProgressModule(progressEntries, res.module, "REJECT") {
-					progressEntries = updateProgress(progressEntries, res.module, res.testName, "REJECT")
-				}
-			}
-			if moduleCompleted[res.jobModule] == moduleTotals[res.jobModule] && !moduleFailed[res.jobModule] {
-				progressEntries = updateProgress(progressEntries, res.jobModule, "", "PASS")
+				status = "FAIL"
 			}
 			needsOutput := res.err != nil || (res.output != "" && showOutput)
 			if needsOutput {
-				label := res.module
-				if res.testName != "" {
-					label += " :: " + res.testName
-				}
-				resultHistory = append(resultHistory, fmt.Sprintf("[%d/%d] [%s] %s (%s)", completed, total, status, label, res.duration.Round(time.Millisecond)))
+				resultHistory = append(resultHistory, fmt.Sprintf("[go test] [%s] (%s)", status, res.duration.Round(time.Millisecond)))
 				if res.err != nil {
-					resultHistory = append(resultHistory, fmt.Sprintf("dir: %s", res.dir), fmt.Sprintf("error: %v", res.err))
+					resultHistory = append(resultHistory, fmt.Sprintf("error: %v", res.err))
 				}
-				if res.output != "" {
+				if res.output != "" && (res.err == nil || !failureOutputShown) {
 					resultHistory = append(resultHistory, strings.TrimRight(res.output, "\r\n"))
 				}
 			}
 			if len(resultHistory) > 100 {
 				resultHistory = resultHistory[len(resultHistory)-100:]
 			}
-			render()
+			dirty = true
+		case <-renderTicker.C:
+			if dirty {
+				render()
+				dirty = false
+			}
 		}
 		if uiChan == nil && resultsChan == nil {
 			break
@@ -522,279 +484,137 @@ func workspaceModules(goCommand, goWork string) (map[string]string, error) {
 	return modules, nil
 }
 
-func runTests(goCommand, goWork string, jobs []job, passthroughFlags, pkgPattern []string, parallel int, uiChan chan<- uiEvent) <-chan result {
-	jobChan := make(chan job, len(jobs))
-	for _, j := range jobs {
-		jobChan <- j
-	}
-	close(jobChan)
-
-	results := make(chan result, len(jobs))
-
-	var wg sync.WaitGroup
-	for i := 0; i < parallel; i++ {
-		wg.Add(1)
-		workerID := i
-		go func() {
-			defer wg.Done()
-			for j := range jobChan {
-				results <- runJob(goCommand, goWork, j, passthroughFlags, pkgPattern, workerID, uiChan)
-			}
-		}()
-	}
-
+func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, parallel, slotCount int, uiChan chan<- uiEvent) <-chan result {
+	results := make(chan result, 1)
 	go func() {
-		wg.Wait()
-		close(results)
-		close(uiChan)
-	}()
+		defer close(results)
+		defer close(uiChan)
+		start := time.Now()
+		args := append([]string{"test", "-json"}, passthroughFlags...)
+		if parallel > 0 && !hasFlag(args, "parallel") {
+			args = append(args, "-parallel", strconv.Itoa(parallel))
+		}
+		if !hasFlag(args, "p") {
+			args = append(args, "-p", strconv.Itoa(slotCount))
+		}
+		args = appendPackageArgs(args, pkgPattern)
 
+		cmd := exec.Command(goCommand, args...)
+		cmd.Dir = filepath.Dir(goWork)
+		cmd.Env = goEnv(goWork)
+		var output bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			results <- result{output: output.String(), duration: time.Since(start), err: err}
+			return
+		}
+		if err := cmd.Start(); err != nil {
+			results <- result{output: output.String(), duration: time.Since(start), err: err}
+			return
+		}
+
+		active := make(map[string]int)
+		packageOutput := make(map[string]string)
+		free := make([]int, slotCount)
+		for i := range free {
+			free[i] = i
+		}
+		nextWorkerID := slotCount
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var event testEvent
+			if json.Unmarshal(scanner.Bytes(), &event) != nil {
+				output.Write(scanner.Bytes())
+				output.WriteByte('\n')
+				continue
+			}
+			if event.Package == "" {
+				continue
+			}
+			workerID, ok := active[event.Package]
+			switch event.Action {
+			case "start":
+				if !ok {
+					if len(free) > 0 {
+						workerID = free[0]
+						free = free[1:]
+					} else {
+						workerID = nextWorkerID
+						nextWorkerID++
+					}
+					active[event.Package] = workerID
+				}
+				uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "RUNNING"}
+			case "run":
+				if ok {
+					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "RUN"}
+				}
+			case "fail":
+				if event.Test != "" && ok {
+					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "REJECT"}
+				}
+				if event.Test == "" && ok {
+					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "FAIL", PackageDone: true, Output: packageOutput[event.Package]}
+					delete(active, event.Package)
+					free = append(free, workerID)
+				}
+			case "pass", "skip":
+				if event.Test == "" && ok {
+					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "PASS", PackageDone: true}
+					delete(active, event.Package)
+					free = append(free, workerID)
+				} else if event.Test != "" && ok && event.Action == "skip" {
+					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "SKIP"}
+				}
+			}
+			if event.Output != "" {
+				output.WriteString(event.Output)
+				packageOutput[event.Package] += event.Output
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			output.WriteString(scanErr.Error())
+		}
+		err = cmd.Wait()
+		output.WriteString(stderr.String())
+		results <- result{output: output.String(), duration: time.Since(start), err: err}
+	}()
 	return results
 }
 
-func runJob(goCommand, goWork string, j job, passthroughFlags, pkgPattern []string, workerID int, uiChan chan<- uiEvent) result {
-	start := time.Now()
-	args := append([]string{"test", "-json"}, passthroughFlags...)
-	if j.testName != "" {
-		args = append(args, "-run", "^"+j.testName+"$")
-	}
-	var packages []string
-	if j.wholeModule || j.pkg == "" {
-		packages = pkgPattern
-	} else {
-		packages = []string{j.pkg}
-	}
-	args = appendPackageArgs(args, packages)
-	cmd := exec.Command(goCommand, args...)
-	cmd.Dir = j.moduleDir
-	cmd.Env = goEnv(goWork)
-
-	var output bytes.Buffer
-	cmd.Stderr = &output
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return result{module: j.pkgLabel, jobModule: j.module, pkg: j.pkg, testName: j.testName, dir: resultDir(j), duration: time.Since(start), err: err}
-	}
-
-	if err := cmd.Start(); err != nil {
-		return result{module: j.pkgLabel, jobModule: j.module, pkg: j.pkg, testName: j.testName, dir: resultDir(j), duration: time.Since(start), err: err}
-	}
-
-	uiChan <- uiEvent{WorkerID: workerID, Module: j.pkgLabel, Status: "RUNNING"}
-
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		var te testEvent
-		if err := json.Unmarshal(line, &te); err == nil {
-			if te.Test != "" {
-				testStatus := ""
-				displayTest := te.Test
-				progressModule := j.pkgLabel
-				switch te.Action {
-				case "run":
-					testStatus = "RUN"
-				case "pass":
-					testStatus = "PASS"
-					displayTest = ""
-					progressModule = j.module
-				case "fail":
-					testStatus = "REJECT"
-				case "skip":
-					testStatus = "SKIP"
-					displayTest = ""
-					progressModule = j.module
-				}
-				if testStatus == "RUN" || testStatus == "REJECT" {
-					uiChan <- uiEvent{WorkerID: workerID, Module: j.pkgLabel, Test: displayTest, Status: "RUNNING", TestStatus: testStatus, ProgressModule: progressModule}
-				}
-			}
-			if te.Output != "" {
-				output.WriteString(te.Output)
-			}
-		} else {
-			output.Write(line)
-			output.WriteByte('\n')
+func hasFlag(args []string, name string) bool {
+	for _, arg := range args {
+		if strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-") == name {
+			return true
 		}
 	}
-
-	err = cmd.Wait()
-	status := "PASS"
-	if err != nil {
-		status = "FAIL"
-	}
-	uiChan <- uiEvent{WorkerID: workerID, Module: j.pkgLabel, Status: status}
-
-	return result{
-		module:    j.pkgLabel,
-		jobModule: j.module,
-		pkg:       j.pkg,
-		testName:  j.testName,
-		dir:       resultDir(j),
-		output:    output.String(),
-		duration:  time.Since(start),
-		err:       err,
-	}
-}
-
-func resultDir(j job) string {
-	if j.pkgDir != "" {
-		return j.pkgDir
-	}
-	return j.moduleDir
+	return false
 }
 
 func goEnv(goWork string) []string { return append(os.Environ(), "GOWORK="+goWork) }
 
-func wholeModuleJobs(modules map[string]string) []job {
-	names := make([]string, 0, len(modules))
-	for name := range modules {
-		names = append(names, name)
+func workspacePackagePatterns(modules map[string]string, patterns []string) []string {
+	if len(patterns) != 1 || patterns[0] != "./..." {
+		return patterns
 	}
-	sort.Strings(names)
-	jobs := make([]job, 0, len(names))
-	for _, name := range names {
-		jobs = append(jobs, job{module: name, moduleDir: modules[name], pkgLabel: name, wholeModule: true})
+	modulesByPath := make([]string, 0, len(modules))
+	for module := range modules {
+		modulesByPath = append(modulesByPath, module)
 	}
-	return jobs
+	sort.Strings(modulesByPath)
+	patterns = make([]string, 0, len(modulesByPath))
+	for _, module := range modulesByPath {
+		patterns = append(patterns, "./"+module+"/...")
+	}
+	return patterns
 }
 
-func discoverModulePackages(goCommand, goWork, dir string, pkgPattern []string) ([]listPackage, error) {
-	cmd := exec.Command(goCommand, append([]string{"list", "-json"}, pkgPattern...)...)
-	cmd.Dir, cmd.Env = dir, goEnv(goWork)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	err := cmd.Run()
-	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
-	var packages []listPackage
-	for {
-		var p listPackage
-		decodeErr := decoder.Decode(&p)
-		if decodeErr == io.EOF {
-			break
-		}
-		if decodeErr != nil {
-			if len(packages) == 0 {
-				return nil, errOr(decodeErr, err)
-			}
-			break
-		}
-		packages = append(packages, p)
-	}
-	if len(packages) == 0 && err != nil {
-		return nil, err
-	}
-	return packages, nil
-}
-
-func errOr(first, second error) error {
-	if second != nil {
-		return second
-	}
-	return first
-}
-
-func discoverPackageTests(goCommand, goWork, moduleDir, pkgImportPath string) ([]string, error) {
-	cmd := exec.Command(goCommand, "test", "-list", "^Test", pkgImportPath)
-	cmd.Dir, cmd.Env = moduleDir, goEnv(goWork)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "? ") {
-			continue
-		}
-		if strings.HasPrefix(line, "Test") {
-			names = append(names, line)
-		}
-	}
-	return names, nil
-}
-
-func discoverForModule(goCommand, goWork, module, dir string, pkgPattern []string) []job {
-	packages, err := discoverModulePackages(goCommand, goWork, dir, pkgPattern)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: test discovery failed for %s: %v; falling back to whole module\n", module, err)
-		return []job{{module: module, moduleDir: dir, pkgLabel: module, wholeModule: true}}
-	}
-	jobs := make([]job, 0)
-	for _, p := range packages {
-		if len(p.TestGoFiles) == 0 && len(p.XTestGoFiles) == 0 {
-			continue
-		}
-		label := module
-		if p.Dir != "" {
-			if rel, relErr := filepath.Rel(dir, p.Dir); relErr == nil && rel != "." {
-				label = filepath.ToSlash(filepath.Join(module, rel))
-			}
-		}
-		base := job{module: module, moduleDir: dir, pkg: p.ImportPath, pkgDir: p.Dir, pkgLabel: label}
-		if p.Error != nil {
-			jobs = append(jobs, base)
-			continue
-		}
-		names, testErr := discoverPackageTests(goCommand, goWork, dir, p.ImportPath)
-		if testErr != nil || len(names) == 0 {
-			jobs = append(jobs, base)
-			continue
-		}
-		for _, name := range names {
-			j := base
-			j.testName = name
-			jobs = append(jobs, j)
-		}
-	}
-	return jobs
-}
-
-func discoverJobs(goCommand, goWork string, modules map[string]string, pkgPattern []string) []job {
-	type discovered struct {
-		module string
-		jobs   []job
-	}
-	jobsChan := make(chan discovered, len(modules))
-	moduleChan := make(chan string)
-	workers := runtime.NumCPU()
-	if workers > len(modules) {
-		workers = len(modules)
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for module := range moduleChan {
-				jobsChan <- discovered{module, discoverForModule(goCommand, goWork, module, modules[module], pkgPattern)}
-			}
-		}()
-	}
-	go func() {
-		for module := range modules {
-			moduleChan <- module
-		}
-		close(moduleChan)
-		wg.Wait()
-		close(jobsChan)
-	}()
-	var discoveredJobs []job
-	for d := range jobsChan {
-		discoveredJobs = append(discoveredJobs, d.jobs...)
-	}
-	sort.SliceStable(discoveredJobs, func(i, j int) bool {
-		if discoveredJobs[i].module != discoveredJobs[j].module {
-			return discoveredJobs[i].module < discoveredJobs[j].module
-		}
-		if discoveredJobs[i].pkgLabel != discoveredJobs[j].pkgLabel {
-			return discoveredJobs[i].pkgLabel < discoveredJobs[j].pkgLabel
-		}
-		return discoveredJobs[i].testName < discoveredJobs[j].testName
-	})
-	return discoveredJobs
-}
+/*
+	The package and test discovery helpers were intentionally removed. The go
+	command now owns package expansion, build ordering, and concurrency.
+*/
 
 func findUpward(name, start string) (string, error) {
 	dir, err := filepath.Abs(start)
@@ -896,22 +716,6 @@ func appendPackageArgs(args, packages []string) []string {
 	result = append(result, packages...)
 	result = append(result, args[separator:]...)
 	return result
-}
-
-func hasTestSelectionFlag(args []string) bool {
-	for i, arg := range args {
-		if arg == "-args" {
-			break
-		}
-		name := strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-")
-		if name == "run" || name == "bench" || name == "fuzz" || name == "list" {
-			return true
-		}
-		if flagNeedsValue(arg) && !strings.Contains(arg, "=") && i+1 < len(args) {
-			i++
-		}
-	}
-	return false
 }
 
 func flagNeedsValue(flag string) bool {

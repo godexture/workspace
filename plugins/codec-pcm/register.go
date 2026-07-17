@@ -58,7 +58,7 @@ func init() {
 			},
 		},
 		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			resolved := engine.ResolveConfig[DecoderConfig, internal.DecoderConfig](cfg)
+			resolved := engine.ResolveConfig[DecoderConfig](cfg)
 			return engine.WrapDecoder(internal.NewDecoder(s, resolved)), nil
 		},
 	}); err != nil {

@@ -2,7 +2,6 @@ package mp3
 
 import (
 	"github.com/godexture/codec-mp3/internal"
-	"github.com/godexture/codec-mp3/internal/domain"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -16,7 +15,7 @@ func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 }
 
 func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
-	resolved := engine.ResolveConfig[EncoderConfig, domain.EncoderConfig](config)
+	resolved := engine.ResolveConfig[EncoderConfig](config)
 	return internal.NewEncoder(resolved)
 }
 

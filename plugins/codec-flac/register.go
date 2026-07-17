@@ -3,7 +3,6 @@ package flac
 import (
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/codec-flac/internal/encoder"
-	"github.com/godexture/codec-flac/internal/flac"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -13,14 +12,15 @@ import (
 )
 
 func NewDecoderEngine(stream media.StreamInfo, config DecoderConfig) engine.DecoderEngine {
-	resolved := engine.ResolveConfig[DecoderConfig, flac.DecoderConfig](config)
+	resolved := engine.ResolveConfig[DecoderConfig](config)
 	return decoder.NewDecoder(stream, resolved)
 }
 
 func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
-	resolved := engine.ResolveConfig[EncoderConfig, flac.EncoderConfig](config)
+	resolved := engine.ResolveConfig[EncoderConfig](config)
 	return encoder.NewEncoder(media.StreamInfo{}, resolved)
 }
+
 type flacCapability struct{}
 
 type lpcmCapability struct{}
@@ -70,7 +70,7 @@ func init() {
 				},
 			},
 			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
-				resolved := engine.ResolveConfig[DecoderConfig, flac.DecoderConfig](config)
+				resolved := engine.ResolveConfig[DecoderConfig](config)
 				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved)), nil
 			},
 		},
@@ -100,7 +100,7 @@ func init() {
 				return codec == media.CodecFLAC
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-				resolved := engine.ResolveConfig[EncoderConfig, flac.EncoderConfig](cfg)
+				resolved := engine.ResolveConfig[EncoderConfig](cfg)
 				enc, err := encoder.NewEncoder(inStream, resolved)
 				if err != nil {
 					return nil, err
