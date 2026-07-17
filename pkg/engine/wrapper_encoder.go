@@ -29,13 +29,13 @@ func (n *EncoderAdapter) Start(ctx context.Context) error {
 		return fmt.Errorf("encoder ports not connected")
 	}
 
-	return runCodecLoop(ctx, in, out,
-		func(f media.Frame) error {
-			return n.engine.SendFrame(&f)
-		},
-		n.engine.ReceivePacket,
-		n.engine.Flush,
-	)
+	send := func(f media.Frame) error {
+		return n.engine.SendFrame(&f)
+	}
+	if notifier, ok := n.engine.(outputNotifier); ok {
+		return runAsyncCodecLoop(ctx, in, out, send, n.engine.ReceivePacket, n.engine.Flush, notifier)
+	}
+	return runCodecLoop(ctx, in, out, send, n.engine.ReceivePacket, n.engine.Flush)
 }
 
 func (n *EncoderAdapter) InputPorts() map[string]*node.InPort[media.Frame] {

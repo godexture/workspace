@@ -1,6 +1,7 @@
 package bits
 
 import (
+	"encoding/binary"
 	"io"
 	mathbits "math/bits"
 )
@@ -176,9 +177,9 @@ func (r *Reader) bitsSlow(width uint8) uint64 {
 // bit. It stops at the limit instead of looping forever on truncated data.
 //
 // The scan runs in three phases so the hot middle phase can inspect whole
-// bytes at a time via math/bits.LeadingZeros8 instead of calling Bit() per
+// bytes at a time via math/bits.LeadingZeros instead of calling Bit() per
 // bit: (1) consume up to 7 bits to reach a byte boundary, (2) fast-scan
-// whole bytes that are fully within both the limit and the physical buffer,
+// whole words then bytes that are fully within both the limit and the physical buffer,
 // (3) finish the remaining (<8-bit) tail with the plain bit-at-a-time path,
 // which also supplies the sticky-overrun bookkeeping on truncated data.
 func (r *Reader) Unary64() uint64 {
@@ -194,6 +195,17 @@ func (r *Reader) Unary64() uint64 {
 	fullByteLimit := r.limit
 	if bufBits < fullByteLimit {
 		fullByteLimit = bufBits
+	}
+	for r.position+64 <= fullByteLimit {
+		word := binary.BigEndian.Uint64(r.buffer[r.position/8:])
+		if word != 0 {
+			zeros := int32(mathbits.LeadingZeros64(word))
+			count += uint64(zeros)
+			r.position += zeros + 1
+			return count
+		}
+		count += 64
+		r.position += 64
 	}
 	for r.position+8 <= fullByteLimit {
 		b := r.buffer[r.position/8]
@@ -220,7 +232,7 @@ func (r *Reader) Unary64() uint64 {
 // Rice64 reads a unary quotient followed by param remainder bits.
 func (r *Reader) Rice64(param uint8) uint64 {
 	q := r.Unary64()
-	return q<<param | r.Bits64(param)
+	return q<<param | uint64(r.Bits32(param))
 }
 
 // Signed32 reads width bits (width in [1, 32]) and sign-extends the result.

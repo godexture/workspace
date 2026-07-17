@@ -25,16 +25,6 @@ import (
 const targetCodec = media.CodecFLAC
 
 func main() {
-	f, err := os.Create("cpu.pprof")
-	if err != nil {
-		panic(err)
-	}
-
-	if err := pprof.StartCPUProfile(f); err != nil {
-		panic(err)
-	}
-	defer pprof.StopCPUProfile()
-
 	if len(os.Args) <= 2 {
 		fmt.Println("Usage: go run . <input> <output.wav>")
 		return
@@ -50,7 +40,10 @@ func main() {
 			return
 		}
 		defer profileFile.Close()
-		pprof.StartCPUProfile(profileFile)
+		if err := pprof.StartCPUProfile(profileFile); err != nil {
+			fmt.Printf("Failed to start CPU profile: %v\n", err)
+			return
+		}
 		defer pprof.StopCPUProfile()
 	}
 

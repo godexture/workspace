@@ -283,29 +283,35 @@ func lpcPrecisionCandidates(options flac.EncoderConfig) []int {
 	return result
 }
 
-// bestFixedOrder picks the fixed predictor order with the smallest folded
-// residual sum (a monotonic proxy for Rice-coded bit cost) and returns its
-// already-computed residual, so the caller never recomputes it.
 func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
-	bestOrder := 0
-	var bestResidual []int64
-	bestSum := ^uint64(0)
-	for order := 0; order <= maxOrder; order++ {
-		residual := fixedResidual(samples, order)
-		var sum uint64
-		for _, v := range residual {
-			sum += foldResidual(v)
+	if maxOrder <= 0 {
+		return 0, fixedResidual(samples, 0)
+	}
+	var sums [5]uint64
+	stride := max(1, (len(samples)-maxOrder)/512)
+	for i := maxOrder; i < len(samples); i += stride {
+		value := samples[i]
+		sums[0] += foldResidual(value)
+		if maxOrder >= 1 {
+			sums[1] += foldResidual(value - samples[i-1])
 		}
-		if sum < bestSum {
-			if bestResidual != nil {
-				releaseResidualBuffer(bestResidual)
-			}
-			bestOrder, bestResidual, bestSum = order, residual, sum
-		} else {
-			releaseResidualBuffer(residual)
+		if maxOrder >= 2 {
+			sums[2] += foldResidual(value - 2*samples[i-1] + samples[i-2])
+		}
+		if maxOrder >= 3 {
+			sums[3] += foldResidual(value - 3*samples[i-1] + 3*samples[i-2] - samples[i-3])
+		}
+		if maxOrder >= 4 {
+			sums[4] += foldResidual(value - 4*samples[i-1] + 6*samples[i-2] - 4*samples[i-3] + samples[i-4])
 		}
 	}
-	return bestOrder, bestResidual
+	bestOrder := 0
+	for order := 1; order <= maxOrder; order++ {
+		if sums[order] < sums[bestOrder] {
+			bestOrder = order
+		}
+	}
+	return bestOrder, fixedResidual(samples, bestOrder)
 }
 
 func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.OrderSearchMode, window []float64) [][]float64 {
@@ -378,22 +384,20 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.Orde
 	if exhaustive {
 		return sets
 	}
-	best, next := 0, 0
+	best := 0
 	for order := 1; order <= maxOrder; order++ {
 		if estimates[order] == 0 {
 			continue
 		}
 		if best == 0 || estimates[order] < estimates[best] {
-			next, best = best, order
-		} else if next == 0 || estimates[order] < estimates[next] {
-			next = order
+			best = order
 		}
 	}
 	if best == 0 {
 		return sets
 	}
 	for order := range sets {
-		if order != best && order != next {
+		if order != best {
 			sets[order] = nil
 		}
 	}

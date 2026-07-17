@@ -19,6 +19,10 @@ func (m *PCMMD5) Write(samples [][]int64, bitsPerSample int) {
 	m.hash.Write(m.scratch)
 }
 
+func (m *PCMMD5) WritePacked(samples []byte) {
+	m.hash.Write(samples)
+}
+
 func (m *PCMMD5) Sum() [16]byte {
 	var sum [16]byte
 	copy(sum[:], m.hash.Sum(nil))

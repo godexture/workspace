@@ -63,7 +63,7 @@ func writeAnalyzedFrame(w *bits.Writer, analysis *frameAnalysis, blockSize, samp
 	header := &frame.Header{
 		BlockSize: blockSize, SampleRate: sampleRate,
 		ChannelAssignment: assignmentForChannels(analysis.assignment, len(analysis.channels)),
-		BitsPerSample: bitsPerSample, Number: number, BlockingStrategy: variable,
+		BitsPerSample:     bitsPerSample, Number: number, BlockingStrategy: variable,
 	}
 	if err := frame.EncodeHeader(w, header, streamableSubset); err != nil {
 		return nil, err
