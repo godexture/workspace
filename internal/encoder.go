@@ -30,7 +30,7 @@ type Encoder struct {
 	config       EncoderConfig
 	pendingQueue []*media.Packet
 	flushed      bool
-	buf          *buffer.BlockBuffer
+	buf          buffer.Ring[byte]
 	lastChannels int
 	lastPts      media.Pts
 
@@ -76,7 +76,6 @@ func NewEncoder(stream media.StreamInfo, target media.CodecID, cfg EncoderConfig
 
 	return &Encoder{
 		config:   cfg,
-		buf:      &buffer.BlockBuffer{},
 		adpcm:    cfg.ADPCM,
 		imaState: &imaadpcm.EncodeState{},
 	}, nil
@@ -121,7 +120,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	case media.CodecMSADPCM:
 		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels, int(e.adpcm.BlockAlign))
 		e.buf.Append(data)
-		toEncode := e.buf.TakeBlocks(bytesPerBlock)
+		toEncode := e.takeBlocks(bytesPerBlock)
 		if toEncode == nil {
 			return nil
 		}
@@ -133,7 +132,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	case media.CodecIMAADPCM:
 		bytesPerBlock := imaadpcm.BytesPerPCMBlock(e.lastChannels, int(e.adpcm.BlockAlign))
 		e.buf.Append(data)
-		toEncode := e.buf.TakeBlocks(bytesPerBlock)
+		toEncode := e.takeBlocks(bytesPerBlock)
 		if toEncode == nil {
 			return nil
 		}
@@ -189,6 +188,14 @@ func (e *Encoder) Flush() error {
 		}
 	}
 	return nil
+}
+
+func (e *Encoder) takeBlocks(bytesPerBlock int) []byte {
+	if bytesPerBlock <= 0 {
+		return nil
+	}
+	n := e.buf.Len() / bytesPerBlock * bytesPerBlock
+	return e.buf.Take(n)
 }
 
 func (e *Encoder) enqueueADPCMPackets(data []byte) error {
