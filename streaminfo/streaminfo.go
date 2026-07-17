@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/godexture/core/domain/media"
 )
@@ -36,6 +38,24 @@ type StreamInfo struct {
 	BitsPerSample int
 	TotalSamples  uint64
 	MD5           [16]byte
+}
+
+// Duration returns the stream duration derived from TotalSamples.
+// It returns 0 when the duration is unknown (TotalSamples or SampleRate is
+// unset) or does not fit in time.Duration.
+func (s StreamInfo) Duration() time.Duration {
+	if s.TotalSamples == 0 || s.SampleRate <= 0 {
+		return 0
+	}
+
+	rate := uint64(s.SampleRate)
+	seconds := s.TotalSamples / rate
+	if seconds >= uint64(math.MaxInt64/time.Second) {
+		return 0
+	}
+
+	remainder := s.TotalSamples % rate
+	return time.Duration(seconds)*time.Second + time.Duration(remainder*uint64(time.Second)/rate)
 }
 
 // Encode serializes a STREAMINFO metadata block payload.

@@ -79,9 +79,8 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
 		}
 	}
-	if info.TotalSamples > 0 && info.SampleRate > 0 {
-		seconds := float64(info.TotalSamples) / float64(info.SampleRate)
-		_ = seconds // reserved for a future duration key without adding precision loss here
+	if duration := info.Duration(); duration > 0 {
+		globalMetadata.Set(metadata.KeyDuration(duration))
 	}
 
 	d.streamInfo = media.StreamInfo{
