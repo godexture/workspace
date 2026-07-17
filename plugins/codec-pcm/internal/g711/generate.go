@@ -5,7 +5,7 @@ package main
 import (
 	"log"
 
-	"github.com/godexture/tools/table_generator"
+	generator "github.com/godexture/tools/table-generator"
 )
 
 const (
@@ -116,7 +116,7 @@ func main() {
 		linearToALawTable[i] = LinearToALaw(int16(i))
 	}
 
-	tables := []table_generator.Table{
+	tables := []generator.Table{
 		{
 			Name: "uLawToLinearTable",
 			Type: "[256]uint16",
@@ -139,7 +139,7 @@ func main() {
 		},
 	}
 
-	if err := table_generator.Generate("tables.go", "g711", tables); err != nil {
+	if err := generator.Generate("tables.go", "g711", tables); err != nil {
 		log.Fatalf("generate failed: %v", err)
 	}
 }
