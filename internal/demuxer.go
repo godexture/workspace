@@ -30,7 +30,7 @@ type Demuxer struct {
 	duration         time.Duration
 }
 
-func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
+func NewDemuxer(r io.ReadSeeker, _ DemuxerConfig) (*Demuxer, error) {
 	if r == nil {
 		return nil, errors.New("mp3 demuxer requires a non-nil ReadSeeker")
 	}
