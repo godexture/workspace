@@ -13,8 +13,7 @@ import (
 )
 
 type Decoder struct {
-	pending      *media.Packet
-	workspace    decodeWorkspace
+	pendingQueue []*pendingEntry
 	parsed       bool
 	info         streaminfo.StreamInfo
 	strict       bool
@@ -87,10 +86,13 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	if d.pending != nil {
-		return errors.New("flac decoder has an unconsumed packet")
+	entry := &pendingEntry{done: make(chan struct{})}
+	d.pendingQueue = append(d.pendingQueue, entry)
+	decoderJobs() <- frameJob{
+		data:  append([]byte(nil), pkt.Data()...),
+		info:  d.info,
+		entry: entry,
 	}
-	d.pending = media.NewPacketFromData(append([]byte(nil), pkt.Data()...))
 	return nil
 }
 
@@ -98,7 +100,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	if d.configErr != nil {
 		return nil, d.configErr
 	}
-	if d.pending == nil {
+	if len(d.pendingQueue) == 0 {
 		if d.flushed {
 			if !d.endValidated {
 				d.terminalErr = d.validateEnd()
@@ -115,26 +117,27 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	if !d.parsed {
 		return nil, errors.New("flac decoder requires STREAMINFO metadata or audio attributes")
 	}
-	pkt := d.pending
-	d.pending = nil
-	defer pkt.Release()
-	decoded, err := decodeFrame(pkt.Data(), d.info, &d.workspace)
-	if err != nil {
+	entry := d.pendingQueue[0]
+	<-entry.done
+	d.pendingQueue[0] = nil
+	d.pendingQueue = d.pendingQueue[1:]
+	if len(d.pendingQueue) == 0 {
+		d.pendingQueue = nil
+	}
+	if entry.err != nil {
+		return nil, entry.err
+	}
+	if err := d.validateFrame(entry.header); err != nil {
 		return nil, err
 	}
-	if decoded.Bytes != len(pkt.Data()) {
-		return nil, fmt.Errorf("FLAC packet contains trailing data: decoded %d of %d bytes", decoded.Bytes, len(pkt.Data()))
+	if d.md5 != nil {
+		pcm := entry.md5
+		if pcm == nil {
+			pcm = entry.audio.Planes()[0]
+		}
+		d.md5.WritePacked(pcm)
 	}
-	if err := d.validateFrame(decoded.Header); err != nil {
-		return nil, err
-	}
-	d.updateMD5(decoded)
-
-	audioFrame, err := buildAudioFrame(decoded)
-	if err != nil {
-		return nil, err
-	}
-	var frame media.Frame = audioFrame
+	var frame media.Frame = entry.audio
 	return &frame, nil
 }
 
@@ -211,11 +214,4 @@ func (d *Decoder) validateEnd() error {
 		log.Printf("WARNING: %v", err)
 	}
 	return nil
-}
-
-func (d *Decoder) updateMD5(decoded *flac.Frame) {
-	if d.md5 == nil {
-		return
-	}
-	d.md5.Write(decoded.Samples, decoded.Header.BitsPerSample)
 }

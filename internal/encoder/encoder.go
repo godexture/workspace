@@ -382,7 +382,11 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 	for ch := range e.buffer {
 		e.blockView[ch] = e.buffer[ch][writeStart : writeStart+frame.Samples]
 	}
-	e.md5.Write(e.blockView, e.bitsPerSample)
+	if format.BytesPerSample() == (e.bitsPerSample+7)/8 {
+		e.md5.WritePacked(plane[:frame.Samples*channels*format.BytesPerSample()])
+	} else {
+		e.md5.Write(e.blockView, e.bitsPerSample)
+	}
 	e.buffered += frame.Samples
 	return nil
 }

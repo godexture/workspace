@@ -5,6 +5,12 @@ import (
 	"github.com/godexture/sdk/bits"
 )
 
+var outputReady = func() <-chan struct{} {
+	ready := make(chan struct{})
+	close(ready)
+	return ready
+}()
+
 // pendingEntry is one slot in Encoder.pendingQueue, in submission order.
 // done is nil for entries produced synchronously (workers <= 1); for
 // parallel entries it is closed once a worker has filled in packets/err.
@@ -28,6 +34,16 @@ type frameJob struct {
 	sampleBase  uint64
 	split       bool
 	entry       *pendingEntry
+}
+
+func (e *Encoder) OutputReady() <-chan struct{} {
+	if len(e.pendingQueue) == 0 {
+		return nil
+	}
+	if e.pendingQueue[0].done == nil {
+		return outputReady
+	}
+	return e.pendingQueue[0].done
 }
 
 // dispatchFullBlock hands a config.BlockSize-length block to the worker
