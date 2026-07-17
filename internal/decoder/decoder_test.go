@@ -74,7 +74,7 @@ func TestDecoderValidatesStreamEndAfterPendingFrameIsConsumed(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, flac.DecoderConfig{Strict: true})
 
 	packet := media.NewPacketFromData(data[42:])
 	if err := decoder.SendPacket(packet); err != nil {
@@ -99,7 +99,7 @@ func TestDecoderReportsMD5MismatchAtStreamEnd(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, flac.DecoderConfig{Strict: true})
 
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatal(err)

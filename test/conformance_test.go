@@ -1,6 +1,7 @@
 package test
 
 import (
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +25,9 @@ func TestSnapshot(t *testing.T) {
 		testutil.RunSnapshotTests(t, testutil.SnapshotConfig{
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
-			Demux:     flacFormat.NewDemuxerEngine,
+			Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
+				return flacFormat.NewDemuxerEngine(r, flacFormat.DemuxerConfig{})
+			},
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
 				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.DecoderConfig{})
 			},
@@ -32,7 +35,9 @@ func TestSnapshot(t *testing.T) {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux:    flacFormat.NewMuxerEngine,
+			Mux: func(w io.Writer) engine.MuxerEngine {
+				return flacFormat.NewMuxerEngine(w, flacFormat.MuxerConfig{})
+			},
 			Tester: testFLAC,
 		})
 	})
@@ -59,11 +64,7 @@ func TestConformance(t *testing.T) {
 }
 
 func faultyMustReject(fileName string) bool {
-	return strings.HasPrefix(fileName, "01 ") ||
-		strings.HasPrefix(fileName, "05 ") ||
-		strings.HasPrefix(fileName, "06 ") ||
-		strings.HasPrefix(fileName, "07 ") ||
-		strings.HasPrefix(fileName, "08 ") ||
+	return strings.HasPrefix(fileName, "08 ") ||
 		strings.HasPrefix(fileName, "11 ")
 }
 
@@ -76,7 +77,9 @@ func decodeConformanceVector(t *testing.T, path string) error {
 
 	return testutil.RunDecode(t.Context(), testutil.DecodeConfig{
 		MediaPath: path,
-		Demux:     flacFormat.NewDemuxerEngine,
+		Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
+			return flacFormat.NewDemuxerEngine(r, flacFormat.DemuxerConfig{})
+		},
 		Decode: func(stream media.StreamInfo) engine.DecoderEngine {
 			return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
 		},

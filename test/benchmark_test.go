@@ -1,6 +1,7 @@
 package test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,9 @@ func BenchmarkDecodeConformance(b *testing.B) {
 			}
 			cfg := testutil.DecodeConfig{
 				MediaPath: benchmark.path,
-				Demux:     flacFormat.NewDemuxerEngine,
+				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
+					return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig(flacFormat.WithStrict(true)))
+				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
 					return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
 				},

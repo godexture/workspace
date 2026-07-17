@@ -3,6 +3,7 @@ package decoder
 import (
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
@@ -16,6 +17,7 @@ type Decoder struct {
 	workspace    decodeWorkspace
 	parsed       bool
 	info         streaminfo.StreamInfo
+	strict       bool
 	configErr    error
 	flushed      bool
 	endValidated bool
@@ -28,8 +30,8 @@ type Decoder struct {
 	md5          *flac.PCMMD5
 }
 
-func NewDecoder(stream media.StreamInfo, _ flac.DecoderConfig) *Decoder {
-	decoder := &Decoder{}
+func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
+	decoder := &Decoder{strict: config.Strict}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -159,12 +161,18 @@ func (d *Decoder) validateFrame(header frame.Header) error {
 		}
 	} else if header.BlockingStrategy {
 		if header.Number != d.sampleCount {
-			return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.Number, d.sampleCount)
+			if d.strict {
+				return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.Number, d.sampleCount)
+			}
+			d.reposition(header)
 		}
 	} else if header.Number != d.frameCount && header.Number != d.nextSample {
-		return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.nextSample)
+		if d.strict {
+			return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.nextSample)
+		}
+		d.reposition(header)
 	}
-	if d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
+	if d.strict && d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
 		return fmt.Errorf("FLAC frame block size %d exceeds STREAMINFO maximum %d", header.BlockSize, d.info.MaxBlockSize)
 	}
 	d.frameCount++
@@ -173,19 +181,34 @@ func (d *Decoder) validateFrame(header frame.Header) error {
 	return nil
 }
 
+func (d *Decoder) reposition(header frame.Header) {
+	d.frameCount = header.Number
+	d.sampleCount = frame.StartSample(header, d.info)
+	d.nextSample = header.Number
+	d.md5 = nil
+}
+
 func (d *Decoder) validateEnd() error {
 	if d.positioned && d.startSample != 0 {
 		return nil
 	}
 	if d.info.TotalSamples > 0 && d.sampleCount != d.info.TotalSamples {
-		return fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
+		err := fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
+		if d.strict {
+			return err
+		}
+		log.Printf("WARNING: %v", err)
 	}
 	if d.md5 == nil {
 		return nil
 	}
 	got := d.md5.Sum()
 	if got != d.info.MD5 {
-		return fmt.Errorf("FLAC PCM MD5 mismatch: got %x, want %x", got, d.info.MD5)
+		err := fmt.Errorf("FLAC PCM MD5 mismatch: got %x, want %x", got, d.info.MD5)
+		if d.strict {
+			return err
+		}
+		log.Printf("WARNING: %v", err)
 	}
 	return nil
 }
