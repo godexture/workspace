@@ -4,22 +4,17 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
-	"time"
 )
 
 type workFile struct {
@@ -29,198 +24,11 @@ type workFile struct {
 }
 
 type testEvent struct {
-	Action  string `json:"Action"`
-	Package string `json:"Package"`
-	Test    string `json:"Test"`
-	Output  string `json:"Output"`
-}
-
-type uiEvent struct {
-	WorkerID       int
-	Module         string
-	Test           string
-	Status         string
-	TestStatus     string
-	ProgressModule string
-	PackageDone    bool
-	Output         string
-}
-
-type result struct {
-	output   string
-	duration time.Duration
-	err      error
-}
-
-type slotState struct {
-	module string
-	test   string
-	status string
-}
-
-type progressEntry struct {
-	module string
-	test   string
-	status string
-}
-
-type termSize struct {
-	mu     sync.Mutex
-	width  int
-	height int
-}
-
-func (size *termSize) get() (int, int) {
-	size.mu.Lock()
-	defer size.mu.Unlock()
-	return size.width, size.height
-}
-
-func (size *termSize) set(width, height int) {
-	size.mu.Lock()
-	defer size.mu.Unlock()
-	size.width = width
-	size.height = height
-}
-
-func runningTests(slots []slotState) []slotState {
-	running := make([]slotState, 0, len(slots))
-	for _, slot := range slots {
-		if slot.status == "RUNNING" {
-			running = append(running, slot)
-		}
-	}
-	return running
-}
-
-func drawRunningTests(tests []slotState, limit, width int) {
-	if limit <= 0 {
-		return
-	}
-	if limit > len(tests) {
-		limit = len(tests)
-	}
-	for i, s := range tests[:limit] {
-		last := i == limit-1
-		fmt.Print("\033[2K\r")
-		m := s.module
-		t := s.test
-		if t == "" {
-			t = "..."
-		}
-		combined := truncate(fmt.Sprintf("%s : %s", m, t), width-len("[RUNNING] "))
-		fmt.Printf("\033[36m[RUNNING]\033[0m %s", combined)
-		if !last {
-			fmt.Print("\n")
-		}
-	}
-}
-
-func dashboardWorkerCount(total, height int) int {
-	available := height - 3
-	if available < 0 {
-		available = 0
-	}
-	if available > total {
-		return total
-	}
-	return available
-}
-
-func drawProgressLogsLimit(entries []progressEntry, limit, width int) {
-	start := 0
-	if limit < len(entries) {
-		start = len(entries) - limit
-	}
-	for _, entry := range entries[start:] {
-		fmt.Print("\033[2K\r")
-		status := entry.status
-		color := "\033[90m"
-		if status == "PASS" {
-			color = "\033[32m"
-		} else if status == "REJECT" {
-			color = "\033[31m"
-		}
-		label := entry.module
-		if entry.test != "" {
-			label += " :: " + entry.test
-		}
-		label = truncate(label, width-len("["+status+"] "))
-		fmt.Printf("%s[%s]\033[0m %s\n", color, status, label)
-	}
-}
-
-func updateProgress(entries []progressEntry, module, test, status string) []progressEntry {
-	const maxEntries = 12
-	for i := range entries {
-		if entries[i].module == module && entries[i].test == test {
-			entries[i].status = status
-			return entries
-		}
-	}
-	entries = append(entries, progressEntry{module: module, test: test, status: status})
-	if len(entries) > maxEntries {
-		entries = entries[len(entries)-maxEntries:]
-	}
-	return entries
-}
-
-func terminalWidth() int {
-	if runtime.GOOS == "windows" {
-		if output, err := exec.Command("powershell", "-NoProfile", "-Command", "$Host.UI.RawUI.WindowSize.Width").Output(); err == nil {
-			if columns, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && columns > 0 {
-				return columns
-			}
-		}
-		if output, err := exec.Command("cmd", "/c", "mode", "con").Output(); err == nil {
-			for _, line := range strings.Split(string(output), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && strings.EqualFold(strings.TrimSuffix(fields[0], ":"), "Columns") {
-					if columns, err := strconv.Atoi(fields[1]); err == nil && columns > 0 {
-						return columns
-					}
-				}
-			}
-		}
-	}
-	if columns, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && columns > 0 {
-		return columns
-	}
-	return 80
-}
-
-func terminalHeight() int {
-	if lines, err := strconv.Atoi(strings.TrimSpace(os.Getenv("LINES"))); err == nil && lines > 0 {
-		return lines
-	}
-	if runtime.GOOS == "windows" {
-		if output, err := exec.Command("powershell", "-NoProfile", "-Command", "$Host.UI.RawUI.WindowSize.Height").Output(); err == nil {
-			if lines, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil && lines > 0 {
-				return lines
-			}
-		}
-		if output, err := exec.Command("cmd", "/c", "mode", "con").Output(); err == nil {
-			for _, line := range strings.Split(string(output), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && strings.EqualFold(strings.TrimSuffix(fields[0], ":"), "Lines") {
-					if lines, err := strconv.Atoi(fields[1]); err == nil && lines > 0 {
-						return lines
-					}
-				}
-			}
-		}
-	}
-	return 24
-}
-
-func truncate(value string, width int) string {
-	if width < 4 {
-		return value[:0]
-	}
-	if len(value) <= width {
-		return value
-	}
-	return value[:width-3] + "..."
+	Action  string  `json:"Action"`
+	Package string  `json:"Package"`
+	Test    string  `json:"Test"`
+	Output  string  `json:"Output"`
+	Elapsed float64 `json:"Elapsed"`
 }
 
 func main() {
@@ -229,22 +37,17 @@ func main() {
 	var workPath string
 	var goCommand string
 	var parallel int
-	var showOutput bool
 
 	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	flags.StringVar(&goCommand, "go", "go", "go command to run")
 	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent tests in each test binary; 0 uses Go's default")
-	flags.BoolVar(&showOutput, "show-output", false, "print go test output for successful modules too")
 	if err := flags.Parse(scriptArgs); err != nil {
 		fatal(err)
 	}
 
 	testArgs = ensurePackagePattern(testArgs)
 	passthroughFlags, pkgPattern := splitPackagePattern(testArgs)
-	if hasVerboseFlag(testArgs) {
-		showOutput = true
-	}
 
 	goWork, err := resolveGoWork(goCommand, workPath)
 	if err != nil {
@@ -260,150 +63,8 @@ func main() {
 	}
 	pkgPattern = workspacePackagePatterns(modules, pkgPattern)
 
-	size := termSize{width: terminalWidth(), height: terminalHeight()}
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			size.set(terminalWidth(), terminalHeight())
-		}
-	}()
-
-	uiChan := make(chan uiEvent, 1024)
-	resultsChan := runTests(goCommand, goWork, passthroughFlags, pkgPattern, parallel, runtime.NumCPU(), uiChan)
-	interruptChan := make(chan os.Signal, 1)
-	signal.Notify(interruptChan, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(interruptChan)
-
-	slotCount := runtime.NumCPU()
-	if slotCount < 1 {
-		slotCount = 1
-	}
-	slots := make([]slotState, slotCount)
-	for i := range slots {
-		slots[i].status = "IDLE"
-	}
-	failed := 0
-	completed := 0
-	total := 0
-	var progressEntries []progressEntry
-	var resultHistory []string
-	failureOutputShown := false
-	dirty := false
-	renderTicker := time.NewTicker(100 * time.Millisecond)
-	defer renderTicker.Stop()
-	fmt.Print("\033[?1049h\033[?25l")
-	leaveDashboard := func() {
-		fmt.Print("\033[?25h\033[?1049l")
-	}
-	render := func() {
-		width, height := size.get()
-		fmt.Print("\033[H")
-		fmt.Print("\033[2K\r")
-		fmt.Printf("go.work: %s\n", goWork)
-		fmt.Print("\033[2K\r")
-		running := runningTests(slots)
-		fmt.Printf("modules: %d, packages: %d/%d, running: %d, go test args: %s\n", len(modules), completed, total, len(running), strings.Join(testArgs, " "))
-		runningLimit := dashboardWorkerCount(len(running), height)
-		availableLogs := height - 2 - runningLimit
-		if availableLogs < 1 && len(progressEntries) > 0 {
-			availableLogs = 1
-			runningLimit = height - 3
-			if runningLimit < 0 {
-				runningLimit = 0
-			}
-		}
-		drawProgressLogsLimit(progressEntries, availableLogs, width)
-		drawRunningTests(running, runningLimit, width)
-		fmt.Print("\033[J")
-	}
-	render()
-
-	for {
-		select {
-		case <-interruptChan:
-			render()
-			leaveDashboard()
-			os.Exit(130)
-		case ev, ok := <-uiChan:
-			if !ok {
-				uiChan = nil
-				break
-			}
-			if ev.WorkerID >= 0 {
-				for len(slots) <= ev.WorkerID {
-					slots = append(slots, slotState{status: "IDLE"})
-				}
-				slots[ev.WorkerID] = slotState{module: ev.Module, test: ev.Test, status: ev.Status}
-			}
-			if ev.Status == "RUNNING" && ev.Test == "" && !ev.PackageDone {
-				total++
-			}
-			if ev.PackageDone {
-				completed++
-				status := "PASS"
-				if ev.Status == "FAIL" {
-					status = "REJECT"
-					failed++
-					resultHistory = append(resultHistory, fmt.Sprintf("[%s] %s", status, ev.Module))
-					if ev.Output != "" {
-						failureOutputShown = true
-						resultHistory = append(resultHistory, strings.TrimRight(ev.Output, "\r\n"))
-					}
-				}
-				progressEntries = updateProgress(progressEntries, ev.Module, "", status)
-			}
-			if ev.TestStatus == "REJECT" {
-				progressModule := ev.ProgressModule
-				if progressModule == "" {
-					progressModule = ev.Module
-				}
-				progressEntries = updateProgress(progressEntries, progressModule, ev.Test, "REJECT")
-			}
-			dirty = true
-		case res, ok := <-resultsChan:
-			if !ok {
-				resultsChan = nil
-				break
-			}
-			if res.err != nil && total == 0 {
-				failed++
-			}
-			status := "PASS"
-			if res.err != nil {
-				status = "FAIL"
-			}
-			needsOutput := res.err != nil || (res.output != "" && showOutput)
-			if needsOutput {
-				resultHistory = append(resultHistory, fmt.Sprintf("[go test] [%s] (%s)", status, res.duration.Round(time.Millisecond)))
-				if res.err != nil {
-					resultHistory = append(resultHistory, fmt.Sprintf("error: %v", res.err))
-				}
-				if res.output != "" && (res.err == nil || !failureOutputShown) {
-					resultHistory = append(resultHistory, strings.TrimRight(res.output, "\r\n"))
-				}
-			}
-			if len(resultHistory) > 100 {
-				resultHistory = resultHistory[len(resultHistory)-100:]
-			}
-			dirty = true
-		case <-renderTicker.C:
-			if dirty {
-				render()
-				dirty = false
-			}
-		}
-		if uiChan == nil && resultsChan == nil {
-			break
-		}
-	}
-	render()
-	leaveDashboard()
-	for _, line := range resultHistory {
-		fmt.Println(line)
-	}
-
-	if failed > 0 {
+	err = runTests(goCommand, goWork, passthroughFlags, pkgPattern, parallel)
+	if err != nil {
 		os.Exit(1)
 	}
 }
@@ -484,104 +145,83 @@ func workspaceModules(goCommand, goWork string) (map[string]string, error) {
 	return modules, nil
 }
 
-func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, parallel, slotCount int, uiChan chan<- uiEvent) <-chan result {
-	results := make(chan result, 1)
-	go func() {
-		defer close(results)
-		defer close(uiChan)
-		start := time.Now()
-		args := append([]string{"test", "-json"}, passthroughFlags...)
-		if parallel > 0 && !hasFlag(args, "parallel") {
-			args = append(args, "-parallel", strconv.Itoa(parallel))
-		}
-		if !hasFlag(args, "p") {
-			args = append(args, "-p", strconv.Itoa(slotCount))
-		}
-		args = appendPackageArgs(args, pkgPattern)
+func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, parallel int) error {
+	args := append([]string{"test", "-json"}, passthroughFlags...)
+	if parallel > 0 && !hasFlag(args, "parallel") {
+		args = append(args, "-parallel", strconv.Itoa(parallel))
+	}
+	args = appendPackageArgs(args, pkgPattern)
 
-		cmd := exec.Command(goCommand, args...)
-		cmd.Dir = filepath.Dir(goWork)
-		cmd.Env = goEnv(goWork)
-		var output bytes.Buffer
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			results <- result{output: output.String(), duration: time.Since(start), err: err}
-			return
+	cmd := exec.Command(goCommand, args...)
+	cmd.Dir = filepath.Dir(goWork)
+	cmd.Env = goEnv(goWork)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	packageOutput := make(map[string]string)
+	testOutput := make(map[string]map[string]string)
+	packageHasFailedTests := make(map[string]bool)
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var event testEvent
+		if json.Unmarshal(line, &event) != nil {
+			fmt.Println(string(line))
+			continue
 		}
-		if err := cmd.Start(); err != nil {
-			results <- result{output: output.String(), duration: time.Since(start), err: err}
-			return
+		if event.Package == "" {
+			continue
 		}
 
-		active := make(map[string]int)
-		packageOutput := make(map[string]string)
-		free := make([]int, slotCount)
-		for i := range free {
-			free[i] = i
+		if event.Output != "" {
+			packageOutput[event.Package] += event.Output
+			if event.Test != "" {
+				if testOutput[event.Package] == nil {
+					testOutput[event.Package] = make(map[string]string)
+				}
+				testOutput[event.Package][event.Test] += event.Output
+			}
 		}
-		nextWorkerID := slotCount
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			var event testEvent
-			if json.Unmarshal(scanner.Bytes(), &event) != nil {
-				output.Write(scanner.Bytes())
-				output.WriteByte('\n')
-				continue
-			}
-			if event.Package == "" {
-				continue
-			}
-			workerID, ok := active[event.Package]
-			switch event.Action {
-			case "start":
-				if !ok {
-					if len(free) > 0 {
-						workerID = free[0]
-						free = free[1:]
-					} else {
-						workerID = nextWorkerID
-						nextWorkerID++
+
+		switch event.Action {
+		case "fail":
+			if event.Test != "" {
+				packageHasFailedTests[event.Package] = true
+				fmt.Printf("[FAIL] %s: %s (%.2fms)\n", event.Package, event.Test, event.Elapsed*1000)
+				if out := testOutput[event.Package][event.Test]; out != "" {
+					fmt.Println(strings.TrimRight(out, "\r\n"))
+					fmt.Println()
+				}
+			} else {
+				if !packageHasFailedTests[event.Package] {
+					fmt.Printf("[FAIL] %s (%.2fms)\n", event.Package, event.Elapsed*1000)
+					if out := packageOutput[event.Package]; out != "" {
+						fmt.Println(strings.TrimRight(out, "\r\n"))
+						fmt.Println()
 					}
-					active[event.Package] = workerID
-				}
-				uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "RUNNING"}
-			case "run":
-				if ok {
-					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "RUN"}
-				}
-			case "fail":
-				if event.Test != "" && ok {
-					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "REJECT"}
-				}
-				if event.Test == "" && ok {
-					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "FAIL", PackageDone: true, Output: packageOutput[event.Package]}
-					delete(active, event.Package)
-					free = append(free, workerID)
-				}
-			case "pass", "skip":
-				if event.Test == "" && ok {
-					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Status: "PASS", PackageDone: true}
-					delete(active, event.Package)
-					free = append(free, workerID)
-				} else if event.Test != "" && ok && event.Action == "skip" {
-					uiChan <- uiEvent{WorkerID: workerID, Module: event.Package, Test: event.Test, Status: "RUNNING", TestStatus: "SKIP"}
 				}
 			}
-			if event.Output != "" {
-				output.WriteString(event.Output)
-				packageOutput[event.Package] += event.Output
+		case "pass":
+			if event.Test == "" {
+				fmt.Printf("[PASS] %s (%.2fms)\n", event.Package, event.Elapsed*1000)
 			}
 		}
-		if scanErr := scanner.Err(); scanErr != nil {
-			output.WriteString(scanErr.Error())
-		}
-		err = cmd.Wait()
-		output.WriteString(stderr.String())
-		results <- result{output: output.String(), duration: time.Since(start), err: err}
-	}()
-	return results
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "scanner error: %v\n", err)
+	}
+
+	return cmd.Wait()
 }
 
 func hasFlag(args []string, name string) bool {
@@ -611,11 +251,6 @@ func workspacePackagePatterns(modules map[string]string, patterns []string) []st
 	return patterns
 }
 
-/*
-	The package and test discovery helpers were intentionally removed. The go
-	command now owns package expansion, build ordering, and concurrency.
-*/
-
 func findUpward(name, start string) (string, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
@@ -641,15 +276,6 @@ func mustGetwd() string {
 		fatal(err)
 	}
 	return wd
-}
-
-func hasVerboseFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "-v" || strings.HasPrefix(arg, "-v=") {
-			return true
-		}
-	}
-	return false
 }
 
 func ensurePackagePattern(args []string) []string {
@@ -731,6 +357,7 @@ func flagNeedsValue(flag string) bool {
 		return false
 	}
 }
+
 func fatal(err error) {
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
 	os.Exit(1)

@@ -23,6 +23,6 @@
 - ベンチマークやコマンドの実行時間は、PC の電源供給状態に大きく依存するので、参考程度にとどめ、過去との比較は避ける
 
 ## Tools
-- 全モジュールのテスト: `.\test-workspace.exe` (at the workspace root)
+- 全モジュールのテスト: `.\test-workspace.exe --plain` (at the workspace root)
     - 実行に時間がかかり、メモリも大きく消費するので，むやみに回さない。
     

@@ -31,14 +31,14 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			input, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demuxer, err := wav.NewDemuxerEngine(bytes.NewReader(input))
+			demuxer, err := wav.NewDemuxerEngine(bytes.NewReader(input), wav.DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}

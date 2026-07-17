@@ -35,7 +35,7 @@ type Muxer struct {
 	frameCount       uint64
 }
 
-func NewMuxer(w io.Writer) *Muxer {
+func NewMuxer(w io.Writer, _ MuxerConfig) *Muxer {
 	return &Muxer{w: w}
 }
 

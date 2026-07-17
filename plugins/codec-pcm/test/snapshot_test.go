@@ -31,7 +31,7 @@ func TestSnapshots(t *testing.T) {
 					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, CodecParameters: profile.CodecParameters, Audio: profile.Attrs},
 				},
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-					return wavFormat.NewDemuxerEngine(r)
+					return wavFormat.NewDemuxerEngine(r, wavFormat.DemuxerConfig{})
 				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
 					return pcmCodec.NewDecoderEngine(stream, pcmCodec.DecoderConfig{})

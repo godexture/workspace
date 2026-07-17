@@ -30,7 +30,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	original := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 	wavData := buildTestWAV(t, original)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -108,7 +108,7 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 	}
 	wavData := buildTestWAVWithAttr(t, original, attr)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRF64RoundTrip(t *testing.T) {
 	}
 
 	// Parse it back using Demuxer
-	demuxer, err := NewDemuxer(bytes.NewReader(headerBytes))
+	demuxer, err := NewDemuxer(bytes.NewReader(headerBytes), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -349,7 +349,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 	}
 
 	// Now demux it and verify
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -412,7 +412,7 @@ func TestRF64Demuxer(t *testing.T) {
 	binary.Write(&buf, binary.LittleEndian, uint32(0xFFFFFFFF))
 	buf.Write(make([]byte, 100))
 
-	demuxer, err := NewDemuxer(bytes.NewReader(buf.Bytes()))
+	demuxer, err := NewDemuxer(bytes.NewReader(buf.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -476,7 +476,7 @@ func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
 		t.Errorf("expected format tag to be 0xFFFE (WAVEFORMATEXTENSIBLE), got 0x%x", formatTag)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -544,7 +544,7 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 		t.Errorf("expected format tag to be 0xFFFE (WAVEFORMATEXTENSIBLE), got 0x%x", formatTag)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -695,7 +695,7 @@ func TestWAVDemuxerSeek(t *testing.T) {
 	}
 	wavData := buildTestWAVWithAttr(t, payload, attr)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -755,7 +755,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 
 			wavData := buildTestWAVWithAttr(t, original, attr)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -855,7 +855,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(out.Bytes()))
+	demuxer, err := NewDemuxer(bytes.NewReader(out.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -956,7 +956,7 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 			t.Parallel()
 			wavData := buildWAVWithFormatTag(t, tt.audioFormat, tt.bitsPerSample, tt.channels, tt.sampleRate, tt.blockAlign, tt.payload)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -1005,7 +1005,7 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 	}
 
 	wavData := buildWAVWithFormatTag(t, wavAudioMP3, 0, 2, 44100, 1, mp3Data)
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -1067,7 +1067,7 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 func TestWAVAnalyzeUnsupportedFormatTag(t *testing.T) {
 	t.Parallel()
 	wavData := buildWAVWithFormatTag(t, 0x1234, 8, 1, 8000, 1, []byte{0x00})
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -1148,7 +1148,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 
 			wavData := buildTestWAVWithAttr(t, original, attr)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -1212,7 +1212,7 @@ func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
 	payload := make([]byte, int(adpcm.BlockAlign)*2)
 	wavData := buildTestWAVWithAttr(t, payload, attr)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,9 +4,11 @@ package flac
 
 import (
 	flac "github.com/godexture/codec-flac/internal/flac"
+	optional "github.com/godexture/sdk/optional"
 )
 
 type DecoderConfig struct {
+	Strict optional.Optional[bool]
 }
 
 type DecoderConfigOption func(*DecoderConfig)
@@ -19,7 +21,14 @@ func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
 	return config
 }
 
+func WithStrict(v bool) DecoderConfigOption {
+	return func(c *DecoderConfig) {
+		c.Strict = optional.Some(v)
+	}
+}
+
 func (c DecoderConfig) ApplyDefaults() flac.DecoderConfig {
 	config := flac.DecoderConfig{}
+	config.Strict = c.Strict.ValueOr(config.Strict)
 	return config
 }

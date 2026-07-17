@@ -6,7 +6,9 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-type DecoderConfig struct{}
+type DecoderConfig struct {
+	Strict bool
+}
 
 var DefaultDecoderConfig = DecoderConfig{}
 

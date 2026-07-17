@@ -16,20 +16,20 @@ func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
 }
 
-func NewDemuxer(r io.ReadSeeker) (*internal.Demuxer, error) {
-	return internal.NewDemuxer(r)
+func NewDemuxer(r io.ReadSeeker, config DemuxerConfig) (*internal.Demuxer, error) {
+	return internal.NewDemuxer(r, config.ApplyDefaults())
 }
 
 func NewMuxer(w io.Writer, config MuxerConfig) *internal.Muxer {
-	return internal.NewMuxer(w, internal.MuxerConfig{ForceRF64: config.ForceRF64})
+	return internal.NewMuxer(w, config.ApplyDefaults())
 }
 
-func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r)
+func NewDemuxerEngine(r io.ReadSeeker, config DemuxerConfig) (engine.DemuxerEngine, error) {
+	return internal.NewDemuxer(r, config.ApplyDefaults())
 }
 
 func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
-	return internal.NewMuxer(w, internal.MuxerConfig{ForceRF64: config.ForceRF64})
+	return internal.NewMuxer(w, config.ApplyDefaults())
 }
 
 func init() {
@@ -39,13 +39,14 @@ func init() {
 			Description: "WAV demuxer",
 		},
 		Probe: Probe,
-		Factory: func(r io.Reader, _ registry.Configuration) (node.Demuxer, error) {
+		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
 			rs, ok := r.(io.ReadSeeker)
 			if !ok {
 				return nil, fmt.Errorf("format-wav demuxer requires io.ReadSeeker")
 			}
 
-			dmx, err := NewDemuxerEngine(rs)
+			resolved := engine.ResolveConfig[DemuxerConfig](config)
+			dmx, err := internal.NewDemuxer(rs, resolved)
 			if err != nil {
 				return nil, err
 			}
@@ -61,17 +62,8 @@ func init() {
 			Description: "WAV muxer",
 		},
 		Factory: func(w io.Writer, cfg registry.Configuration) (node.Muxer, error) {
-			resolved := MuxerConfig{}
-			if cfg != nil {
-				var wavCfg MuxerConfig
-				if c, ok := cfg.(MuxerConfig); ok {
-					wavCfg = c
-				} else if cPtr, ok := cfg.(*MuxerConfig); ok && cPtr != nil {
-					wavCfg = *cPtr
-				}
-				resolved.ForceRF64 = wavCfg.ForceRF64
-			}
-			mux := NewMuxer(w, resolved)
+			resolved := engine.ResolveConfig[MuxerConfig](cfg)
+			mux := internal.NewMuxer(w, resolved)
 			return engine.WrapMuxer(mux), nil
 		},
 	}); err != nil {

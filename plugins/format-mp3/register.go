@@ -12,24 +12,16 @@ import (
 	engine "github.com/godexture/sdk/engine"
 )
 
-type DemuxerConfig struct{}
-
-func (DemuxerConfig) NodeConfiguration() {}
-
-type MuxerConfig struct{}
-
-func (MuxerConfig) NodeConfiguration() {}
-
 func Probe(r io.Reader) manifest.ProbeScore {
 	return internal.Probe(r)
 }
 
-func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r)
+func NewDemuxerEngine(r io.ReadSeeker, config DemuxerConfig) (engine.DemuxerEngine, error) {
+	return internal.NewDemuxer(r, config.ApplyDefaults())
 }
 
-func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
-	return internal.NewMuxer(w)
+func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
+	return internal.NewMuxer(w, config.ApplyDefaults())
 }
 
 func init() {
@@ -39,12 +31,13 @@ func init() {
 			Description: "MP3 demuxer (format-mp3 plugin)",
 		},
 		Probe: Probe,
-		Factory: func(r io.Reader, _ registry.Configuration) (node.Demuxer, error) {
+		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
 			rs, ok := r.(io.ReadSeeker)
 			if !ok {
 				return nil, fmt.Errorf("format-mp3 demuxer requires io.ReadSeeker")
 			}
-			demuxer, err := NewDemuxerEngine(rs)
+			resolved := engine.ResolveConfig[DemuxerConfig](config)
+			demuxer, err := internal.NewDemuxer(rs, resolved)
 			if err != nil {
 				return nil, err
 			}
@@ -59,8 +52,9 @@ func init() {
 			Name:        "mp3-muxer",
 			Description: "MP3 muxer (format-mp3 plugin)",
 		},
-		Factory: func(w io.Writer, _ registry.Configuration) (node.Muxer, error) {
-			return engine.WrapMuxer(NewMuxerEngine(w)), nil
+		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
+			resolved := engine.ResolveConfig[MuxerConfig](config)
+			return engine.WrapMuxer(internal.NewMuxer(w, resolved)), nil
 		},
 	}); err != nil {
 		panic(err)

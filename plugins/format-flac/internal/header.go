@@ -7,13 +7,34 @@ import (
 
 	"github.com/godexture/format-flac/seektable"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/metadata-id3/id3v2"
 )
 
-func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]byte, []seektable.Point, int64, error) {
+func parseNativeFLACHeader(r io.ReadSeeker, strict bool) (streaminfo.StreamInfo, []byte, [][]byte, []seektable.Point, int64, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
 	}
 
+	if !strict {
+		for {
+			position, err := r.Seek(0, io.SeekCurrent)
+			if err != nil {
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
+			}
+			var id3Header [id3v2.HeaderSize]byte
+			if _, err := io.ReadFull(r, id3Header[:]); err != nil {
+				break
+			}
+			header, err := id3v2.ParseHeader(id3Header[:])
+			if err != nil {
+				_, _ = r.Seek(position, io.SeekStart)
+				break
+			}
+			if _, err := r.Seek(position+int64(header.TotalSize()), io.SeekStart); err != nil {
+				return streaminfo.StreamInfo{}, nil, nil, nil, 0, err
+			}
+		}
+	}
 	var marker [4]byte
 	if _, err := io.ReadFull(r, marker[:]); err != nil {
 		return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("read FLAC marker: %w", err)
@@ -37,12 +58,12 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]
 		if length < 0 || length > (1<<24)-1 {
 			return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("invalid FLAC metadata length")
 		}
-		if blockType > 6 {
+		if strict && blockType > 6 {
 			return streaminfo.StreamInfo{}, nil, nil, nil, 0, fmt.Errorf("reserved FLAC metadata block type: %d", blockType)
 		}
 
 		if blockType == streaminfo.MetadataTypeStreamInfo {
-			if seenStreamInfo {
+			if strict && seenStreamInfo {
 				return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("duplicate FLAC STREAMINFO block")
 			}
 			if length != streaminfo.Length {
@@ -59,7 +80,7 @@ func parseNativeFLACHeader(r io.ReadSeeker) (streaminfo.StreamInfo, []byte, [][]
 			parsedInfo = info
 			streamInfoBlock = block
 			seenStreamInfo = true
-		} else if !seenStreamInfo {
+		} else if strict && !seenStreamInfo {
 			return streaminfo.StreamInfo{}, nil, nil, nil, 0, errors.New("FLAC STREAMINFO must be the first metadata block")
 		} else {
 			extra := make([]byte, 4+length)

@@ -22,7 +22,7 @@ type Muxer struct {
 	headerDone bool
 }
 
-func NewMuxer(w io.Writer) *Muxer {
+func NewMuxer(w io.Writer, _ MuxerConfig) *Muxer {
 	return &Muxer{w: w}
 }
 func (m *Muxer) AddStream(streamInfo media.StreamInfo) (int, error) {

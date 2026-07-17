@@ -30,14 +30,14 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
-	t.Parallel()
+			t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			orig, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig))
+			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig), wavpkg.DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}

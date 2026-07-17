@@ -3,6 +3,7 @@
 package test
 
 import (
+	"io"
 	"testing"
 
 	mp3codec "github.com/godexture/codec-mp3"
@@ -33,7 +34,9 @@ func TestSnapshots(t *testing.T) {
 				MediaPath: dataPath,
 				Expected:  snapshot,
 				Opts:      compareOption,
-				Demux:     mp3format.NewDemuxerEngine,
+				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
+					return mp3format.NewDemuxerEngine(r, mp3format.DemuxerConfig{})
+				},
 				Decode: func(_ media.StreamInfo) engine.DecoderEngine {
 					return mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
 				},

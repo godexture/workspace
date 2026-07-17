@@ -1,6 +1,7 @@
 package test
 
 import (
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
@@ -25,16 +26,20 @@ func TestRoundtrip(t *testing.T) {
 		testutil.RunRoundtripTests(t, testutil.RoundtripConfig{
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
-			Demux:     flacFormat.NewDemuxerEngine,
+			Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
+				return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig(flacFormat.WithStrict(true)))
+			},
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
 				streamInfo.Metadata = *metadata.NewBundle()
-				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.DecoderConfig{})
+				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.NewDecoderConfig(flacCodec.WithStrict(true)))
 			},
 			Encode: func() engine.EncoderEngine {
 				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
 				return encoder
 			},
-			Mux:    flacFormat.NewMuxerEngine,
+			Mux: func(w io.Writer) engine.MuxerEngine {
+				return flacFormat.NewMuxerEngine(w, flacFormat.MuxerConfig{})
+			},
 			Tester: testFLAC,
 		})
 	})

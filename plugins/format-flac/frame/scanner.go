@@ -26,9 +26,18 @@ type Scanner struct {
 	scanPos      int
 	crc          uint16
 	crcPos       int
+	options      Options
+	resyncPos    int
+	offset       int64
+	frameOffset  int64
 }
 
-func NewScanner(r io.Reader, info streaminfo.StreamInfo) (*Scanner, error) {
+type Options struct {
+	Strict bool
+	Sync   bool
+}
+
+func NewScanner(r io.Reader, info streaminfo.StreamInfo, options Options) (*Scanner, error) {
 	if r == nil {
 		return nil, errors.New("FLAC frame scanner requires a non-nil reader")
 	}
@@ -36,7 +45,7 @@ func NewScanner(r io.Reader, info streaminfo.StreamInfo) (*Scanner, error) {
 	// STREAMINFO frame-size fields are advisory and are frequently absent or
 	// stale in real-world files. Keep the scanner bounded by the format limit.
 	maxFrameSize := defaultMaxFrameSize
-	return &Scanner{r: r, info: info, readSize: readSize, maxFrameSize: maxFrameSize, scanPos: 2}, nil
+	return &Scanner{r: r, info: info, readSize: readSize, maxFrameSize: maxFrameSize, scanPos: 2, options: options, resyncPos: -1}, nil
 }
 
 func frameReadSize(maxFrameSize uint32) int {
@@ -59,9 +68,11 @@ func frameReadSize(maxFrameSize uint32) int {
 func (s *Scanner) extractFrame(boundary int, hdr Header) ([]byte, Header, error) {
 	data := append([]byte(nil), s.buffer[:boundary]...)
 	s.buffer = append(s.buffer[:0], s.buffer[boundary:]...)
+	s.offset += int64(boundary)
 	s.scanPos = 2
 	s.crc = 0
 	s.crcPos = 0
+	s.resyncPos = -1
 	hdr.FrameBytes = len(data)
 	return data, hdr, nil
 }
@@ -70,9 +81,9 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 	if err := s.ensureHeader(); err != nil {
 		return nil, Header{}, err
 	}
-	current, err := ParseHeader(s.buffer, s.info)
+	current, err := s.currentHeader()
 	if err != nil {
-		return nil, Header{}, fmt.Errorf("parse FLAC frame header: %w", err)
+		return nil, Header{}, err
 	}
 	for {
 		if boundary, ok := s.findBoundary(current); ok {
@@ -84,17 +95,91 @@ func (s *Scanner) Next() ([]byte, Header, error) {
 			}
 			footer := uint16(s.buffer[len(s.buffer)-2])<<8 | uint16(s.buffer[len(s.buffer)-1])
 			if hash.CRC16(s.buffer[:len(s.buffer)-2]) != footer {
-				return nil, Header{}, errors.New("invalid FLAC frame footer CRC-16")
+				if s.options.Strict {
+					return nil, Header{}, errors.New("invalid FLAC frame footer CRC-16")
+				}
+				if s.resyncPos > 0 {
+					s.discard(s.resyncPos)
+					return s.Next()
+				}
+				return nil, Header{}, io.EOF
 			}
 			return s.extractFrame(len(s.buffer), current)
 		}
 		if len(s.buffer) > s.maxFrameSize {
-			return nil, Header{}, fmt.Errorf("FLAC frame exceeds maximum size %d without a valid boundary", s.maxFrameSize)
+			if s.options.Strict {
+				return nil, Header{}, fmt.Errorf("FLAC frame exceeds maximum size %d without a valid boundary", s.maxFrameSize)
+			}
+			if s.resyncPos > 0 {
+				s.discard(s.resyncPos)
+			} else {
+				s.discard(1)
+			}
+			return s.Next()
 		}
 		if err := s.readMore(); err != nil {
 			return nil, Header{}, err
 		}
 	}
+}
+
+func (s *Scanner) currentHeader() (Header, error) {
+	for {
+		header, err := ParseHeader(s.buffer, s.info)
+		if err == nil {
+			s.frameOffset = s.offset
+			return header, nil
+		}
+		if s.options.Strict && !s.options.Sync {
+			return Header{}, fmt.Errorf("parse FLAC frame header: %w", err)
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) && !s.eof {
+			if err := s.readMore(); err != nil {
+				return Header{}, err
+			}
+			continue
+		}
+		if !s.options.Sync && s.options.Strict {
+			return Header{}, fmt.Errorf("parse FLAC frame header: %w", err)
+		}
+		if !s.findNextHeader(1) {
+			if s.eof {
+				return Header{}, io.EOF
+			}
+			if err := s.readMore(); err != nil {
+				return Header{}, err
+			}
+			continue
+		}
+	}
+}
+
+func (s *Scanner) FrameOffset() int64 { return s.frameOffset }
+
+func (s *Scanner) findNextHeader(start int) bool {
+	for pos := start; pos+1 < len(s.buffer); pos++ {
+		if s.buffer[pos] != 0xff || s.buffer[pos+1]&0xfc != 0xf8 {
+			continue
+		}
+		if _, err := ParseHeader(s.buffer[pos:], s.info); err == nil {
+			s.discard(pos)
+			return true
+		}
+	}
+	if len(s.buffer) > 1 {
+		s.discard(len(s.buffer) - 1)
+	}
+	return false
+}
+
+func (s *Scanner) discard(n int) {
+	if n <= 0 {
+		return
+	}
+	copy(s.buffer, s.buffer[n:])
+	s.buffer = s.buffer[:len(s.buffer)-n]
+	s.offset += int64(n)
+	s.scanPos, s.crc, s.crcPos, s.resyncPos = 2, 0, 0, -1
 }
 
 func (s *Scanner) ensureHeader() error {
@@ -106,18 +191,7 @@ func (s *Scanner) ensureHeader() error {
 	if len(s.buffer) == 0 {
 		return io.EOF
 	}
-	for {
-		_, err := ParseHeader(s.buffer, s.info)
-		if !errors.Is(err, io.ErrUnexpectedEOF) {
-			return err
-		}
-		if s.eof {
-			return err
-		}
-		if err := s.readMore(); err != nil {
-			return err
-		}
-	}
+	return nil
 }
 
 func (s *Scanner) findBoundary(current Header) (int, bool) {
@@ -142,6 +216,9 @@ func (s *Scanner) findBoundary(current Header) (int, bool) {
 			s.crcPos = pos - 2
 		}
 		if s.crc != footer {
+			if !s.options.Strict && s.resyncPos < 0 {
+				s.resyncPos = pos
+			}
 			continue
 		}
 		return pos, true

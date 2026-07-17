@@ -30,7 +30,7 @@ type Demuxer struct {
 	mp3FreeFormatBytes int
 }
 
-func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
+func NewDemuxer(r io.ReadSeeker, _ DemuxerConfig) (*Demuxer, error) {
 	if r == nil {
 		return nil, errors.New("wav demuxer requires a readable stream")
 	}

@@ -20,7 +20,7 @@ func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {
 	}
 	defer file.Close()
 
-	muxer := NewMuxer(file)
+	muxer := NewMuxer(file, MuxerConfig{})
 	addTestStream(t, muxer)
 	writeTestFrame(t, muxer, testFrame(4096, 0, 100))
 	writeTestFrame(t, muxer, testFrame(4096, 1, 120))
@@ -51,7 +51,7 @@ func TestMuxerAppliesPCMMD5EndEvent(t *testing.T) {
 	}
 	defer file.Close()
 
-	muxer := NewMuxer(file)
+	muxer := NewMuxer(file, MuxerConfig{})
 	addTestStream(t, muxer)
 	writeTestFrame(t, muxer, testFrame(4096, 0, 100))
 	want := [16]byte{1, 2, 3, 4}
@@ -78,7 +78,7 @@ func TestMuxerWritesEmptyStreamPCMMD5(t *testing.T) {
 	}
 	defer file.Close()
 
-	muxer := NewMuxer(file)
+	muxer := NewMuxer(file, MuxerConfig{})
 	addTestStream(t, muxer)
 	want := [16]byte{5, 6, 7, 8}
 	event := media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
@@ -99,7 +99,7 @@ func TestMuxerWritesEmptyStreamPCMMD5(t *testing.T) {
 func TestMuxerKeepsInitialStreamInfoForNonSeekableOutput(t *testing.T) {
 	t.Parallel()
 	var output nonSeekBuffer
-	muxer := NewMuxer(&output)
+	muxer := NewMuxer(&output, MuxerConfig{})
 	addTestStream(t, muxer)
 	if err := muxer.WriteHeader(); err != nil {
 		t.Fatalf("WriteHeader() error = %v", err)
@@ -132,7 +132,7 @@ func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
 	}
 	defer file.Close()
 
-	muxer := NewMuxer(file)
+	muxer := NewMuxer(file, MuxerConfig{})
 	addTestStream(t, muxer)
 	writeTestFrame(t, muxer, testFrame(4096, 0, 100))
 	writeTestFrame(t, muxer, testFrame(4096, 1, 120))
@@ -153,7 +153,7 @@ func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
 func TestMuxerRoundtripTypedMetadata(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
-	muxer := NewMuxer(&output)
+	muxer := NewMuxer(&output, MuxerConfig{})
 	addTestStream(t, muxer)
 	bundle := metadata.NewBundle()
 	bundle.Set(metadata.KeyTitle("Song"))
@@ -170,7 +170,7 @@ func TestMuxerRoundtripTypedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(output.Bytes()))
+	demuxer, err := NewDemuxer(bytes.NewReader(output.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
