@@ -98,10 +98,18 @@ func (w *Writer) Bits64(value uint64, width uint8) {
 		w.position += int32(take)
 	}
 
-	for remaining >= 8 {
-		remaining -= 8
-		w.buffer = append(w.buffer, uint8(value>>remaining))
-		w.position += 8
+	if remaining >= 8 {
+		// remaining <= 64 here, so at most 8 whole bytes: build them on the
+		// stack and append once, instead of one append call per byte.
+		var wholeBytes [8]byte
+		n := 0
+		for remaining >= 8 {
+			remaining -= 8
+			wholeBytes[n] = uint8(value >> remaining)
+			n++
+		}
+		w.buffer = append(w.buffer, wholeBytes[:n]...)
+		w.position += int32(n) * 8
 	}
 
 	if remaining > 0 {
@@ -148,6 +156,28 @@ func (w *Writer) Unary64(value uint64) {
 
 	w.buffer = append(w.buffer, 1<<(7-uint(remaining)))
 	w.position += int32(remaining) + 1
+}
+
+// UnaryBits64 writes a unary-prefixed bit-field: value>>width zero bits,
+// then a one bit, then the low width bits of value. It is equivalent to
+// Unary64(value>>width) followed by Bits64(value, width) — the pattern each
+// Rice-coded residual sample uses — but folds both into a single Bits64 call
+// when the combined field fits in 64 bits (the common case once the Rice
+// parameter is well chosen), instead of two separate alignment/append
+// passes per sample.
+func (w *Writer) UnaryBits64(value uint64, width uint8) {
+	quotient := value >> width
+	total := uint64(width) + 1 + quotient
+	if total <= 64 {
+		remainder := value
+		if width < 64 {
+			remainder &= (uint64(1) << width) - 1
+		}
+		w.Bits64((uint64(1)<<width)|remainder, uint8(total))
+		return
+	}
+	w.Unary64(quotient)
+	w.Bits64(value, width)
 }
 
 // PadToByte writes zero bits until the next byte boundary.
