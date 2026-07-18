@@ -199,7 +199,7 @@ func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, i
 	return nybble, restored, delta
 }
 
-func findBestPredictor(chunkSamples []int16, samplesPerBlock int, step int, offset int, coefficients []params.Coefficient) int {
+func findBestPredictorScalar(chunkSamples []int16, samplesPerBlock int, step int, offset int, coefficients []params.Coefficient) int {
 	bestPredictor := 0
 	var minError int64 = -1
 

@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/buffer"
+	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -237,10 +238,7 @@ func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) [
 	out := make([]byte, len(data))
 	switch format {
 	case media.SampleFormatS16:
-		for i := 0; i+2 <= len(data); i += 2 {
-			v := int16(binary.LittleEndian.Uint16(data[i:i+2])) << shift
-			binary.LittleEndian.PutUint16(out[i:i+2], uint16(v))
-		}
+		leftJustifyS16(out, data, shift)
 	case media.SampleFormatS24:
 		for i := 0; i+3 <= len(data); i += 3 {
 			v := (uint32(data[i]) | uint32(data[i+1])<<8 | uint32(data[i+2])<<16) << shift
@@ -249,10 +247,7 @@ func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) [
 			out[i+2] = byte(v >> 16)
 		}
 	case media.SampleFormatS32:
-		for i := 0; i+4 <= len(data); i += 4 {
-			v := int32(binary.LittleEndian.Uint32(data[i:i+4])) << shift
-			binary.LittleEndian.PutUint32(out[i:i+4], uint32(v))
-		}
+		leftJustifyS32(out, data, shift)
 	default:
 		return data
 	}
@@ -262,6 +257,12 @@ func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) [
 func convertF32ToS16(f32Data []byte) []byte {
 	samples := len(f32Data) / 4
 	s16Data := make([]byte, samples*2)
+	source := dsp.AsSamples[float32](f32Data)
+	destination := dsp.AsSamples[int16](s16Data)
+	if source != nil && destination != nil {
+		dsp.ConvertF32ToS16(destination, source)
+		return s16Data
+	}
 	for i := 0; i < samples; i++ {
 		fBits := binary.LittleEndian.Uint32(f32Data[i*4 : i*4+4])
 		fVal := math.Float32frombits(fBits)
