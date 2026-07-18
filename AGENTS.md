@@ -25,6 +25,6 @@
     - 巻き戻しやすいように小まめに commit するとよい (ただし最終的には git reset --soft で HEAD をもとに戻すこと)
 
 ## Tools
-- 全モジュールのテスト: `.\test-runner.exe` (at the workspace root)
+- 全モジュールのテスト: `.\test-runner.exe --simd` (at the workspace root)
     - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
     

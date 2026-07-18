@@ -2,6 +2,14 @@
 
 package decoder
 
-func restoreLPC(samples, coefficients []int64, order, shift int, min, max int64, bitsPerSample int) error {
-	return restoreLPCScalar(samples, coefficients, order, shift, min, max, bitsPerSample)
+func restoreLPC(samples, coefficients []int64, order, shift, bitsPerSample int, strict bool) error {
+	if strict {
+		min, max, err := sampleRangeBounds(bitsPerSample)
+		if err != nil {
+			return err
+		}
+		return restoreLPCScalar(samples, coefficients, order, shift, min, max, bitsPerSample)
+	}
+	restoreLPCScalarUnchecked(samples, coefficients, order, shift)
+	return nil
 }
