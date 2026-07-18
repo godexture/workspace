@@ -1,7 +1,6 @@
 package decoder
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -121,24 +120,15 @@ func buildAudioFrame(decoded *flac.Frame) (*media.AudioFrame, error) {
 	)
 	plane := frame.Planes()[0]
 
-	bytesPerSample := format.BytesPerSample()
-	for sampleIndex := 0; sampleIndex < decoded.Header.BlockSize; sampleIndex++ {
-		for channel := 0; channel < decoded.Header.Channels; channel++ {
-			offset := (sampleIndex*decoded.Header.Channels + channel) * bytesPerSample
-			value := decoded.Samples[channel][sampleIndex]
-			switch format {
-			case media.SampleFormatS16:
-				binary.LittleEndian.PutUint16(plane[offset:offset+2], uint16(int16(value)))
-			case media.SampleFormatS24:
-				plane[offset] = byte(value)
-				plane[offset+1] = byte(value >> 8)
-				plane[offset+2] = byte(value >> 16)
-			case media.SampleFormatS32:
-				binary.LittleEndian.PutUint32(plane[offset:offset+4], uint32(value))
-			default:
-				return nil, fmt.Errorf("unsupported FLAC output format: %s", format)
-			}
-		}
+	switch format {
+	case media.SampleFormatS16:
+		interleaveS16(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
+	case media.SampleFormatS24:
+		interleaveS24(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
+	case media.SampleFormatS32:
+		interleaveS32(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
+	default:
+		return nil, fmt.Errorf("unsupported FLAC output format: %s", format)
 	}
 	return frame, nil
 }

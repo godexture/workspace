@@ -68,8 +68,8 @@ func lpcResidualSIMD(samples []int64, order int, coefficients []int64, shift int
 	for i, coefficient := range coefficients {
 		coefficientVectors[i] = archsimd.BroadcastInt64x4(coefficient).AsInt32x8()
 	}
-	topBit := archsimd.BroadcastUint64x4(uint64(1) << 63)
-	bias := archsimd.BroadcastInt64x4(int64((uint64(1) << 63) >> uint(shift)))
+	shiftAmount := uint64(shift)
+	topBit, bias := int64x4ShiftRightConstants(shiftAmount)
 
 	i := order
 	for ; i+4 <= len(samples); i += 4 {
@@ -78,8 +78,7 @@ func lpcResidualSIMD(samples []int64, order int, coefficients []int64, shift int
 			values := archsimd.LoadInt64x4Slice(samples[i-1-j:])
 			sum = sum.Add(values.AsInt32x8().MulEvenWiden(coefficientVectors[j]))
 		}
-		prediction := sum.AsUint64x4().Xor(topBit).ShiftAllRight(uint64(shift)).
-			AsInt64x4().Sub(bias)
+		prediction := shiftRightInt64x4(sum, shiftAmount, topBit, bias)
 		archsimd.LoadInt64x4Slice(samples[i:]).Sub(prediction).StoreSlice(result[i-order:])
 	}
 	for ; i < len(samples); i++ {

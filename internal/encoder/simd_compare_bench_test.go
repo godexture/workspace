@@ -3,6 +3,7 @@
 package encoder
 
 import (
+	"encoding/binary"
 	"strconv"
 	"testing"
 
@@ -68,6 +69,132 @@ func BenchmarkResidualCompare(b *testing.B) {
 			}
 		})
 	})
+}
+
+func BenchmarkRiceStatsCompare(b *testing.B) {
+	for _, length := range []int{16, 32, 64, 128, 256, 512, 1024, 4096} {
+		values := make([]uint64, length)
+		residual := make([]int64, length)
+		folded := make([]uint64, length)
+		for i := range values {
+			residual[i] = int64((i*7919)%65536 - 32768)
+			values[i] = foldResidual(residual[i])
+		}
+		b.Run("sum-max-"+strconv.Itoa(length), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				for b.Loop() {
+					sumMaxUint64Scalar(values)
+				}
+			})
+			b.Run("simd", func(b *testing.B) {
+				for b.Loop() {
+					sumMaxUint64SIMD(values)
+				}
+			})
+		})
+		b.Run("fold-"+strconv.Itoa(length), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				for b.Loop() {
+					foldResidualBatchScalar(residual, folded)
+				}
+			})
+			b.Run("simd", func(b *testing.B) {
+				for b.Loop() {
+					foldResidualBatchSIMD(residual, folded)
+				}
+			})
+		})
+		b.Run("fold-sum-max-"+strconv.Itoa(length), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				for b.Loop() {
+					foldSumMaxScalar(residual)
+				}
+			})
+			b.Run("simd", func(b *testing.B) {
+				for b.Loop() {
+					foldSumMaxSIMD(residual)
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkMidSideCompare(b *testing.B) {
+	for _, length := range []int{16, 64, 256, 4096} {
+		block := benchmarkBlock(length)
+		left, right := block[0], block[1]
+		mid := make([]int64, len(left))
+		side := make([]int64, len(left))
+		b.Run(strconv.Itoa(length), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				for b.Loop() {
+					computeMidSideScalar(left, right, mid, side)
+				}
+			})
+			b.Run("simd", func(b *testing.B) {
+				for b.Loop() {
+					computeMidSideSIMD(left, right, mid, side)
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkWindowSamplesCompare(b *testing.B) {
+	for _, length := range []int{4, 16, 64, 256, 4096} {
+		samples := benchmarkBlock(length)[0]
+		window := make([]float64, len(samples))
+		values := make([]float64, len(samples))
+		for i := range window {
+			window[i] = float64((i%17)+1) / 17
+		}
+		b.Run(strconv.Itoa(length), func(b *testing.B) {
+			for _, currentWindow := range [][]float64{nil, window} {
+				name := "nil"
+				if currentWindow != nil {
+					name = "window"
+				}
+				b.Run(name, func(b *testing.B) {
+					b.Run("scalar", func(b *testing.B) {
+						for b.Loop() {
+							windowSamplesScalar(samples, currentWindow, values)
+						}
+					})
+					b.Run("simd", func(b *testing.B) {
+						for b.Loop() {
+							windowSamplesSIMD(samples, currentWindow, values)
+						}
+					})
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkDeinterleaveS32Compare(b *testing.B) {
+	for _, samples := range []int{4, 16, 64, 256, 4096} {
+		plane := make([]byte, samples*2*4)
+		for i := 0; i < samples*2; i++ {
+			binary.LittleEndian.PutUint32(plane[i*4:], uint32(int32((i*7919)%65536-32768)))
+		}
+		buffer := [][]int64{make([]int64, samples), make([]int64, samples)}
+		b.Run(strconv.Itoa(samples), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				for b.Loop() {
+					if err := deinterleaveS32Scalar(buffer, plane, 0, samples, 2, -1<<31, 1<<31-1, 32); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("simd", func(b *testing.B) {
+				for b.Loop() {
+					if err := deinterleaveS32StereoSIMD(buffer, plane, 0, samples, -1<<31, 1<<31-1, 32); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
 }
 
 func BenchmarkEncodeFrameSIMDCompare(b *testing.B) {
