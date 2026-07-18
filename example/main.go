@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/pprof"
 
+	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/timer"
 
 	godec "github.com/godexture/core"
@@ -25,6 +27,9 @@ import (
 const targetCodec = media.CodecFLAC
 
 func main() {
+	fmt.Printf("Environment: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("SIMD Support: AVX2=%v, AVX2+FMA=%v\n", dsp.HasAVX2, dsp.HasAVX2FMA)
+
 	if len(os.Args) <= 2 {
 		fmt.Println("Usage: go run . <input> <output.wav>")
 		return

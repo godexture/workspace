@@ -169,10 +169,7 @@ func (s *Scanner) FrameOffset() int64 { return s.frameOffset }
 
 func (s *Scanner) findNextHeader(start int) bool {
 	data := s.buffer.Data()
-	for pos := start; pos+1 < len(data); pos++ {
-		if data[pos] != 0xff || data[pos+1]&0xfc != 0xf8 {
-			continue
-		}
+	for pos := nextSyncPrefix(data, start); pos >= 0; pos = nextSyncPrefix(data, pos+1) {
 		if _, err := ParseHeader(data[pos:], s.info); err == nil {
 			s.discard(pos)
 			return true
@@ -207,10 +204,7 @@ func (s *Scanner) ensureHeader() error {
 
 func (s *Scanner) findBoundary(current Header) (int, bool) {
 	data := s.buffer.Data()
-	for pos := s.scanPos; pos+2 <= len(data); pos++ {
-		if data[pos] != 0xff || data[pos+1]&0xfc != 0xf8 {
-			continue
-		}
+	for pos := nextSyncPrefix(data, s.scanPos); pos >= 0; pos = nextSyncPrefix(data, pos+1) {
 		next, err := ParseHeader(data[pos:], s.info)
 		if err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) {
