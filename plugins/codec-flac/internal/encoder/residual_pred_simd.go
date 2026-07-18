@@ -59,7 +59,7 @@ func fixedResidualSIMD(samples []int64, order int) []int64 {
 		residual.StoreSlice(result[i-order:])
 	}
 	for ; i < len(samples); i++ {
-		result[i-order] = samples[i] - fixedPrediction(samples, i, order)
+		result[i-order] = samples[i] - fixedPredictionAt(base, i, order)
 	}
 	return result
 }

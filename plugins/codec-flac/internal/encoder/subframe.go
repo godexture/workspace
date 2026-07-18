@@ -242,23 +242,6 @@ func isConstant(samples []int64) bool {
 	return true
 }
 
-func fixedPrediction(samples []int64, index, order int) int64 {
-	switch order {
-	case 0:
-		return 0
-	case 1:
-		return samples[index-1]
-	case 2:
-		return 2*samples[index-1] - samples[index-2]
-	case 3:
-		return 3*samples[index-1] - 3*samples[index-2] + samples[index-3]
-	case 4:
-		return 4*samples[index-1] - 6*samples[index-2] + 4*samples[index-3] - samples[index-4]
-	default:
-		return 0
-	}
-}
-
 func lpcPrecisionCandidates(options flac.EncoderConfig) []int {
 	precision := options.LPCPrecision
 	if precision == 0 {
