@@ -2,33 +2,6 @@ package mp3
 
 import "github.com/godexture/codec-mp3/internal/mp3/layer3"
 
-// ConvertF32ToS16 converts float32 PCM samples to int16 PCM samples.
-func ConvertF32ToS16(f32 []float32, s16 []int16) {
-	if len(f32) == 0 || len(s16) == 0 {
-		return
-	}
-	n := len(f32)
-	if len(s16) < n {
-		n = len(s16)
-	}
-	for i := 0; i < n; i++ {
-		sample := f32[i] * 32768.0
-		if sample >= 32766.5 {
-			s16[i] = 32767
-		} else if sample <= -32767.5 {
-			s16[i] = -32768
-		} else {
-			var s int16
-			if sample >= 0 {
-				s = int16(sample + 0.5)
-			} else {
-				s = int16(sample - 0.5)
-			}
-			s16[i] = s
-		}
-	}
-}
-
 func synthesizePair(samples []float32, channelCount int, zBuffer []float32) {
 	accumulator := (zBuffer[14*64] - zBuffer[0]) * 29
 	accumulator += (zBuffer[1*64] + zBuffer[13*64]) * 213
@@ -106,82 +79,8 @@ func synthesizeFloat(granule []float32, samples []float32, channelCount int, wor
 		workspace[zLineOffset+4*(i-16)+2] = left[18*(1+i)]
 		workspace[zLineOffset+4*(i-16)+3] = right[18*(1+i)]
 
-		load := func(k int) (float32, float32, int, int) {
-			w0 := synthesizeWindowTable[windowIndex]
-			windowIndex++
-			w1 := synthesizeWindowTable[windowIndex]
-			windowIndex++
-			vZeroIndex := zLineOffset + 4*i - k*64
-			vYIndex := zLineOffset + 4*i - (15-k)*64
-			return w0, w1, vZeroIndex, vYIndex
-		}
-
-		var a, b [4]float32
-
-		// S0(0)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(0)
-			for j := 0; j < 4; j++ {
-				b[j] = workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] = workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(1)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(1)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(2)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(2)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(3)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(3)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(4)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(4)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(5)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(5)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(6)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(6)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(7)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(7)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
+		a, b := synthWindow(workspace, zLineOffset, i, synthesizeWindowTable[windowIndex:windowIndex+16])
+		windowIndex += 16
 
 		if channelCount == 2 {
 			samples[(15-i)*2+1] = a[1] / 32768.0
