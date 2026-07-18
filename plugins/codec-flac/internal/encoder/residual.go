@@ -343,8 +343,7 @@ func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
 					return errors.New("FLAC residual is outside encodable range")
 				}
 				folded := foldResidual(value)
-				w.Unary64(folded >> part.param)
-				w.Bits64(folded, part.param)
+				w.UnaryBits64(folded, part.param)
 			}
 		} else {
 			w.Bits64(uint64(maxParam+1), coding.paramBits)

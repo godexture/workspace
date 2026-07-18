@@ -218,6 +218,88 @@ func TestWriterUnary64UnalignedMatchesBitByBit(t *testing.T) {
 	}
 }
 
+func (b bitByBitWriter) unaryBits64(value uint64, width uint8) {
+	b.unary64(value >> width)
+	b.bits64(value, width)
+}
+
+// TestWriterUnaryBits64MatchesUnaryThenBits64 checks that UnaryBits64
+// produces byte-for-byte identical output to separate Unary64+Bits64 calls,
+// covering both the fused fast path (combined width <= 64) and the fallback
+// path (combined width > 64).
+func TestWriterUnaryBits64MatchesUnaryThenBits64(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		value uint64
+		width uint8
+	}{
+		{0, 0},
+		{1, 0},
+		{5, 0},
+		{0, 5},
+		{0b101011, 2},              // quotient 10, remainder 0b11: typical Rice case
+		{100, 0},                   // quotient 100, width 0: total 101 > 64, forces fallback
+		{(53 << 10) | 0x2ab, 10},   // quotient 53, width 10: total 64, boundary fast path
+		{(54 << 10) | 0x2ab, 10},   // quotient 54, width 10: total 65, boundary fallback
+		{0xFFFFFFFFFFFFFFFF, 64},   // width 64: quotient forced to 0, forces fallback
+		{0x2ab, 12},
+	}
+	for _, c := range cases {
+		got := NewWriter()
+		got.UnaryBits64(c.value, c.width)
+
+		want := NewWriter()
+		want.Unary64(c.value >> c.width)
+		want.Bits64(c.value, c.width)
+
+		if got.Position() != want.Position() {
+			t.Fatalf("value=%d width=%d: Position() = %d, want %d", c.value, c.width, got.Position(), want.Position())
+		}
+		if string(got.Bytes()) != string(want.Bytes()) {
+			t.Fatalf("value=%d width=%d: Bytes() = %08b, want %08b", c.value, c.width, got.Bytes(), want.Bytes())
+		}
+	}
+}
+
+// TestWriterUnaryBits64UnalignedMatchesBitByBit exercises UnaryBits64 across
+// starting bit offsets, remainder widths, and quotients (including the
+// combined-width-over-64 fallback), checking its output against the
+// original per-bit implementation.
+func TestWriterUnaryBits64UnalignedMatchesBitByBit(t *testing.T) {
+	t.Parallel()
+	for offset := uint8(0); offset < 8; offset++ {
+		for width := uint8(0); width <= 20; width++ {
+			for _, quotient := range []uint64{0, 1, 7, 40, 63} {
+				remainder := uint64(0x9E3779B9)
+				if width < 64 {
+					remainder &= (uint64(1) << width) - 1
+				}
+				value := (quotient << width) | remainder
+
+				got := NewWriter()
+				for i := uint8(0); i < offset; i++ {
+					got.Bit(0)
+				}
+				got.UnaryBits64(value, width)
+
+				want := NewWriter()
+				ref := bitByBitWriter{want}
+				for i := uint8(0); i < offset; i++ {
+					want.Bit(0)
+				}
+				ref.unaryBits64(value, width)
+
+				if got.Position() != want.Position() {
+					t.Fatalf("offset=%d width=%d quotient=%d: Position() = %d, want %d", offset, width, quotient, got.Position(), want.Position())
+				}
+				if string(got.Bytes()) != string(want.Bytes()) {
+					t.Fatalf("offset=%d width=%d quotient=%d: Bytes() = %08b, want %08b", offset, width, quotient, got.Bytes(), want.Bytes())
+				}
+			}
+		}
+	}
+}
+
 func TestWriterBytePos(t *testing.T) {
 	t.Parallel()
 	w := NewWriter()
