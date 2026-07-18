@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"runtime/pprof"
 
 	"github.com/godexture/sdk/dsp"
@@ -27,6 +28,8 @@ import (
 const targetCodec = media.CodecFLAC
 
 func main() {
+	debug.SetGCPercent(200)
+
 	fmt.Printf("Environment: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("SIMD Support: AVX2=%v, AVX2+FMA=%v\n", dsp.HasAVX2, dsp.HasAVX2FMA)
 
@@ -101,5 +104,5 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Successfully converted %s to %s (%s) in %v\n", inputPath, outputPath, targetCodec, timer.Elapsed())
+	defer fmt.Printf("Successfully converted %s to %s (%s) in %v\n", inputPath, outputPath, targetCodec, timer.Elapsed())
 }
