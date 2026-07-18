@@ -28,6 +28,9 @@ func (n *FilterAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("filter ports not connected")
 	}
+	if closer, ok := n.engine.(engineCloser); ok {
+		defer closer.Close()
+	}
 
 	return runCodecLoop(ctx, in, out,
 		func(f media.Frame) error {

@@ -156,5 +156,18 @@ func BenchmarkEncoderDefaultConfig(b *testing.B) {
 			}
 			packet.Release()
 		}
+		if err := enc.Flush(); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			packet, err := enc.ReceivePacket()
+			if err == engine.ErrEOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			packet.Release()
+		}
 	}
 }

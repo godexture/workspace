@@ -11,6 +11,17 @@ type outputNotifier interface {
 	OutputReady() <-chan struct{}
 }
 
+// engineCloser is an optional interface an engine may implement to release
+// resources it owns (e.g. background worker goroutines) on teardown.
+// Flush() is not a reliable place for this: runCodecLoop/runAsyncCodecLoop
+// only call it on the graceful io.EOF exit path — every other return (a
+// Pull/Push/send/receive error, or ctx cancellation propagated by errgroup
+// from a sibling node's failure) skips it. Adapters invoke Close() via
+// defer in Start so it runs on every exit path.
+type engineCloser interface {
+	Close() error
+}
+
 func runCodecLoop[I any, O any](
 	ctx context.Context,
 	in node.Edge[I],

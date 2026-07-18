@@ -792,6 +792,88 @@ func TestEncoder_WorkersDoesNotChangeOutput(t *testing.T) {
 	}
 }
 
+// TestEncoder_CloseReleasesWorkersWithoutFlush covers the goroutine-leak fix:
+// Close() must terminate the worker pool (by closing e.jobs) even when
+// Flush() is never called, which is exactly what happens when a pipeline
+// aborts via error or context cancellation before reaching end-of-stream.
+func TestEncoder_CloseReleasesWorkersWithoutFlush(t *testing.T) {
+	t.Parallel()
+	cfg := flac.DefaultEncoderConfig
+	cfg.Workers = 4
+	enc, err := NewEncoder(media.StreamInfo{}, cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder() error = %v", err)
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	select {
+	case _, ok := <-enc.jobs:
+		if ok {
+			t.Fatal("jobs channel received a value instead of reporting closed")
+		}
+	default:
+		t.Fatal("jobs channel is not closed")
+	}
+}
+
+// TestEncoder_CloseAndFlushIdempotent covers both call orders between Close
+// and Flush: whichever runs first must not cause the other to double-close
+// e.jobs (which would panic).
+func TestEncoder_CloseAndFlushIdempotent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("FlushThenClose", func(t *testing.T) {
+		t.Parallel()
+		cfg := flac.DefaultEncoderConfig
+		cfg.Workers = 4
+		enc, err := NewEncoder(media.StreamInfo{}, cfg)
+		if err != nil {
+			t.Fatalf("NewEncoder() error = %v", err)
+		}
+		if err := enc.Flush(); err != nil {
+			t.Fatalf("Flush() error = %v", err)
+		}
+		if err := enc.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	t.Run("CloseThenFlush", func(t *testing.T) {
+		t.Parallel()
+		cfg := flac.DefaultEncoderConfig
+		cfg.Workers = 4
+		enc, err := NewEncoder(media.StreamInfo{}, cfg)
+		if err != nil {
+			t.Fatalf("NewEncoder() error = %v", err)
+		}
+		if err := enc.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if err := enc.Flush(); err != nil {
+			t.Fatalf("Flush() error = %v", err)
+		}
+	})
+
+	t.Run("CloseTwice", func(t *testing.T) {
+		t.Parallel()
+		cfg := flac.DefaultEncoderConfig
+		cfg.Workers = 4
+		enc, err := NewEncoder(media.StreamInfo{}, cfg)
+		if err != nil {
+			t.Fatalf("NewEncoder() error = %v", err)
+		}
+		if err := enc.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if err := enc.Close(); err != nil {
+			t.Fatalf("second Close() error = %v", err)
+		}
+	})
+}
+
 // encodeAllPackets runs cfg over input to completion and returns each
 // packet's raw bytes in emission order (the StreamEnd event packet, which
 // carries no frame Data, contributes an empty slice so packet counts and
