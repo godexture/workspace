@@ -166,7 +166,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 				if !ok {
 					continue
 				}
-				residual := lpcResidual(samples, order, quantized, shift)
+				residual := lpcResidual(samples, order, quantized, shift, bitsPerSample)
 				rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.RiceCost)
 				if !ok {
 					releaseResidualBuffer(residual)
@@ -240,14 +240,6 @@ func isConstant(samples []int64) bool {
 		}
 	}
 	return true
-}
-
-func fixedResidual(samples []int64, order int) []int64 {
-	residual := getResidualBuffer(len(samples) - order)
-	for i := order; i < len(samples); i++ {
-		residual[i-order] = samples[i] - fixedPrediction(samples, i, order)
-	}
-	return residual
 }
 
 func fixedPrediction(samples []int64, index, order int) int64 {
@@ -337,13 +329,7 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.Orde
 		}
 	}
 	auto := make([]float64, maxOrder+1)
-	for lag := 0; lag <= maxOrder; lag++ {
-		var sum float64
-		for i := lag; i < len(values); i++ {
-			sum += values[i] * values[i-lag]
-		}
-		auto[lag] = sum
-	}
+	autocorrelate(values, auto)
 	if auto[0] == 0 {
 		return nil
 	}
@@ -439,21 +425,6 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 		quantized[i] = int64(rounded)
 	}
 	return quantized, shift, true
-}
-
-func lpcResidual(samples []int64, order int, coefficients []int64, shift int) []int64 {
-	coefficients = coefficients[:order:order]
-	result := getResidualBuffer(len(samples) - order)
-	for i := order; i < len(samples); i++ {
-		var sum int64
-		history := samples[i-order : i]
-		for j, coefficient := range coefficients {
-			sum += coefficient * history[order-1-j]
-		}
-		prediction := sum >> uint(shift)
-		result[i-order] = samples[i] - prediction
-	}
-	return result
 }
 
 func getResidualBuffer(length int) []int64 {
