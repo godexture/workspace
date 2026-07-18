@@ -62,7 +62,7 @@ func BenchmarkRestoreLPCValidation(b *testing.B) {
 
 func BenchmarkRestoreLPCPaired(b *testing.B) {
 	const length = 4096
-	for _, order := range []int{8, 12, 16, 20, 24, 28, 29, 30, 31, 32} {
+	for _, order := range []int{8, 9, 10, 11, 12, 16, 20, 24, 28, 29, 30, 31, 32} {
 		coefficients := make([]int64, order)
 		for i := range coefficients {
 			coefficients[i] = int64(i%5 - 2)

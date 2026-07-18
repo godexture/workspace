@@ -30,26 +30,28 @@ func fixedResidualSIMD(samples []int64, order int) []int64 {
 		return result
 	}
 
+	base := unsafe.Pointer(unsafe.SliceData(samples))
 	i := order
+	// i >= order and i+4 <= len(samples) keep every order-relative load in samples.
 	for ; i+4 <= len(samples); i += 4 {
-		current := archsimd.LoadInt64x4Slice(samples[i:])
-		s1 := archsimd.LoadInt64x4Slice(samples[i-1:])
+		current := loadInt64x4At(base, i)
+		s1 := loadInt64x4At(base, i-1)
 		var residual archsimd.Int64x4
 		switch order {
 		case 1:
 			residual = current.Sub(s1)
 		case 2:
-			s2 := archsimd.LoadInt64x4Slice(samples[i-2:])
+			s2 := loadInt64x4At(base, i-2)
 			residual = current.Sub(s1.ShiftAllLeft(1)).Add(s2)
 		case 3:
-			s2 := archsimd.LoadInt64x4Slice(samples[i-2:])
-			s3 := archsimd.LoadInt64x4Slice(samples[i-3:])
+			s2 := loadInt64x4At(base, i-2)
+			s3 := loadInt64x4At(base, i-3)
 			residual = current.Sub(s1.ShiftAllLeft(1)).Sub(s1).
 				Add(s2.ShiftAllLeft(1)).Add(s2).Sub(s3)
 		case 4:
-			s2 := archsimd.LoadInt64x4Slice(samples[i-2:])
-			s3 := archsimd.LoadInt64x4Slice(samples[i-3:])
-			s4 := archsimd.LoadInt64x4Slice(samples[i-4:])
+			s2 := loadInt64x4At(base, i-2)
+			s3 := loadInt64x4At(base, i-3)
+			s4 := loadInt64x4At(base, i-4)
 			residual = current.Sub(s1.ShiftAllLeft(2)).
 				Add(s2.ShiftAllLeft(2)).Add(s2.ShiftAllLeft(1)).
 				Sub(s3.ShiftAllLeft(2)).Add(s4)
@@ -109,11 +111,11 @@ func lpcResidualSIMD(samples []int64, order int, coefficients []int64, shift int
 	for ; i+4 <= len(samples); i += 4 {
 		var sum archsimd.Int64x4
 		for j := range coefficients {
-			values := archsimd.LoadInt64x4Slice(samples[i-1-j:])
+			values := loadInt64x4At(base, i-1-j)
 			sum = sum.Add(values.AsInt32x8().MulEvenWiden(coefficientVectors[j]))
 		}
 		prediction := shiftRightInt64x4(sum, shiftAmount, topBit, bias)
-		archsimd.LoadInt64x4Slice(samples[i:]).Sub(prediction).StoreSlice(result[i-order:])
+		loadInt64x4At(base, i).Sub(prediction).StoreSlice(result[i-order:])
 	}
 	for ; i < len(samples); i++ {
 		var sum int64

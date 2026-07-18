@@ -16,7 +16,7 @@ func BenchmarkAutocorrelateCompare(b *testing.B) {
 	for i := range values {
 		values[i] = float64((i*7919)%65536 - 32768)
 	}
-	for _, order := range []int{8, 16, 32} {
+	for _, order := range []int{1, 2, 3, 4, 6, 8, 12, 16, 32} {
 		b.Run("order"+strconv.Itoa(order), func(b *testing.B) {
 			auto := make([]float64, order+1)
 			b.Run("scalar", func(b *testing.B) {
@@ -198,26 +198,31 @@ func BenchmarkDeinterleaveS32Compare(b *testing.B) {
 }
 
 func BenchmarkEncodeFrameSIMDCompare(b *testing.B) {
-	block := benchmarkBlock(flac.DefaultEncoderConfig.BlockSize)
 	hasAVX2, hasAVX2FMA := dsp.HasAVX2, dsp.HasAVX2FMA
 	b.Cleanup(func() {
 		dsp.HasAVX2 = hasAVX2
 		dsp.HasAVX2FMA = hasAVX2FMA
 	})
-	run := func(b *testing.B, avx2, fma bool) {
+	run := func(b *testing.B, avx2, fma bool, block [][]int64, config flac.EncoderConfig) {
 		dsp.HasAVX2 = avx2
 		dsp.HasAVX2FMA = fma
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if _, err := EncodeFrame(block, 44100, 16, uint64(i), flac.DefaultEncoderConfig); err != nil {
+			if _, err := EncodeFrame(block, 44100, 16, uint64(i), config); err != nil {
 				b.Fatal(err)
 			}
 		}
 	}
-	b.Run("scalar", func(b *testing.B) {
-		run(b, false, false)
-	})
-	b.Run("simd", func(b *testing.B) {
-		run(b, hasAVX2, hasAVX2FMA)
-	})
+	for _, preset := range []int{3, 5, 7} {
+		config := flac.GetPreset(preset)
+		block := benchmarkBlock(config.BlockSize)
+		b.Run("preset"+strconv.Itoa(preset), func(b *testing.B) {
+			b.Run("scalar", func(b *testing.B) {
+				run(b, false, false, block, config)
+			})
+			b.Run("simd", func(b *testing.B) {
+				run(b, hasAVX2, hasAVX2FMA, block, config)
+			})
+		})
+	}
 }
