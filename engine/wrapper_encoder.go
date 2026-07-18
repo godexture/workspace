@@ -28,6 +28,9 @@ func (n *EncoderAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("encoder ports not connected")
 	}
+	if closer, ok := n.engine.(engineCloser); ok {
+		defer closer.Close()
+	}
 
 	send := func(f media.Frame) error {
 		return n.engine.SendFrame(&f)

@@ -28,6 +28,9 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("decoder ports not connected")
 	}
+	if closer, ok := n.engine.(engineCloser); ok {
+		defer closer.Close()
+	}
 
 	send := func(pkt *media.Packet) error {
 		if pkt.Kind == media.PacketKindStreamEnd {
