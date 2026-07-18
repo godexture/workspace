@@ -42,8 +42,9 @@ type Encoder struct {
 	// worker owns its own bits.Writer/windowSet so there is no contention.
 	// Workers never changes the encoded bytes (see encoder_test.go's
 	// Workers=1-vs-N equivalence test) — only how the work is scheduled.
-	workers int
-	jobs    chan frameJob
+	workers    int
+	jobs       chan frameJob
+	jobsClosed bool
 }
 
 func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, error) {
@@ -56,7 +57,6 @@ func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, erro
 		workers = runtime.GOMAXPROCS(0)
 	}
 	e := &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations), md5: flac.NewPCMMD5(), workers: workers}
-	fmt.Printf("FLAC encoder: %d workers\n", workers)
 	if workers > 1 {
 		e.jobs = make(chan frameJob, 2*workers)
 		for i := 0; i < workers; i++ {
@@ -165,9 +165,7 @@ func (e *Encoder) Flush() error {
 		e.dropBuffered(e.buffered)
 	}
 	e.flushed = true
-	if e.jobs != nil {
-		close(e.jobs)
-	}
+	e.closeJobs()
 	sum := e.MD5()
 	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
@@ -175,6 +173,24 @@ func (e *Encoder) Flush() error {
 		}),
 	}})
 	return nil
+}
+
+// Close releases the worker pool without emitting a final packet or MD5
+// summary. It exists so the pipeline wrapper (pkg/engine) can guarantee
+// worker goroutines are released on error/cancellation exits, which never
+// reach Flush's io.EOF-only call site. Safe whether or not Flush ran first,
+// and safe to call more than once.
+func (e *Encoder) Close() error {
+	e.closeJobs()
+	return nil
+}
+
+func (e *Encoder) closeJobs() {
+	if e.jobs == nil || e.jobsClosed {
+		return
+	}
+	close(e.jobs)
+	e.jobsClosed = true
 }
 
 func (e *Encoder) MD5() [16]byte {
