@@ -4,6 +4,7 @@ package encoder
 
 import (
 	"simd/archsimd"
+	"unsafe"
 
 	"github.com/godexture/sdk/dsp"
 )
@@ -61,6 +62,12 @@ func fixedResidualSIMD(samples []int64, order int) []int64 {
 	return result
 }
 
+// loadInt64x4At loads 4 consecutive int64s starting at samples[index] without
+// a bounds check. The caller must guarantee index >= 0 and index+4 <= len(samples).
+func loadInt64x4At(base unsafe.Pointer, index int) archsimd.Int64x4 {
+	return archsimd.LoadInt64x4((*[4]int64)(unsafe.Add(base, uintptr(index)*8)))
+}
+
 func lpcResidualSIMD(samples []int64, order int, coefficients []int64, shift int) []int64 {
 	coefficients = coefficients[:order:order]
 	result := getResidualBuffer(len(samples) - order)
@@ -70,8 +77,35 @@ func lpcResidualSIMD(samples []int64, order int, coefficients []int64, shift int
 	}
 	shiftAmount := uint64(shift)
 	topBit, bias := int64x4ShiftRightConstants(shiftAmount)
+	base := unsafe.Pointer(unsafe.SliceData(samples))
 
 	i := order
+	// Process 8 samples per iteration with 2 independent accumulators per
+	// output group: this breaks the multiply-add dependency chain so the
+	// CPU can keep more FMA/mul ports busy, and unsafe loads skip the
+	// per-access bounds check that the dynamic coefficient-index offsets
+	// would otherwise force.
+	for ; i+8 <= len(samples); i += 8 {
+		var sumA0, sumA1, sumB0, sumB1 archsimd.Int64x4
+		j := 0
+		for ; j+2 <= order; j += 2 {
+			c0, c1 := coefficientVectors[j], coefficientVectors[j+1]
+			sumA0 = sumA0.Add(loadInt64x4At(base, i-1-j).AsInt32x8().MulEvenWiden(c0))
+			sumA1 = sumA1.Add(loadInt64x4At(base, i-2-j).AsInt32x8().MulEvenWiden(c1))
+			sumB0 = sumB0.Add(loadInt64x4At(base, i+3-j).AsInt32x8().MulEvenWiden(c0))
+			sumB1 = sumB1.Add(loadInt64x4At(base, i+2-j).AsInt32x8().MulEvenWiden(c1))
+		}
+		if j < order {
+			c := coefficientVectors[j]
+			sumA0 = sumA0.Add(loadInt64x4At(base, i-1-j).AsInt32x8().MulEvenWiden(c))
+			sumB0 = sumB0.Add(loadInt64x4At(base, i+3-j).AsInt32x8().MulEvenWiden(c))
+		}
+		predictionA := shiftRightInt64x4(sumA0.Add(sumA1), shiftAmount, topBit, bias)
+		predictionB := shiftRightInt64x4(sumB0.Add(sumB1), shiftAmount, topBit, bias)
+		loadInt64x4At(base, i).Sub(predictionA).StoreSlice(result[i-order:])
+		loadInt64x4At(base, i+4).Sub(predictionB).StoreSlice(result[i-order+4:])
+	}
+
 	for ; i+4 <= len(samples); i += 4 {
 		var sum archsimd.Int64x4
 		for j := range coefficients {
