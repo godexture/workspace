@@ -8,6 +8,10 @@ import (
 )
 
 func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
+	return decodeSubframe(r, samples, bitsPerSample, true)
+}
+
+func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict bool) error {
 	blockSize := len(samples)
 	originalBitsPerSample := bitsPerSample
 	zero, err := r.ReadBits64(1)
@@ -62,20 +66,12 @@ func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
 		if err := DecodeResidualInto(r, samples[order:], blockSize, order); err != nil {
 			return err
 		}
-		min, max, err := sampleRangeBounds(bitsPerSample)
-		if err != nil {
-			return err
-		}
-		for i := order; i < blockSize; i++ {
-			prediction, err := fixedPredictionChecked(samples, i, order)
-			if err != nil {
+		if strict {
+			if err := restoreFixedChecked(samples, order, bitsPerSample); err != nil {
 				return err
 			}
-			value := prediction + samples[i]
-			if value < min || value > max {
-				return fmt.Errorf("invalid FLAC fixed prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
-			}
-			samples[i] = value
+		} else {
+			restoreFixedUnchecked(samples, order)
 		}
 
 	case typeCode >= 32 && typeCode <= 63:
@@ -113,11 +109,7 @@ func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
 		if err := DecodeResidualInto(r, samples[order:], blockSize, order); err != nil {
 			return err
 		}
-		min, max, err := sampleRangeBounds(bitsPerSample)
-		if err != nil {
-			return err
-		}
-		if err := restoreLPC(samples, coefficients, order, shift, min, max, bitsPerSample); err != nil {
+		if err := restoreLPC(samples, coefficients, order, shift, bitsPerSample, strict); err != nil {
 			return err
 		}
 
@@ -130,13 +122,15 @@ func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
 			samples[i] <<= wastedBits
 		}
 	}
-	min, max, err := sampleRangeBounds(originalBitsPerSample)
-	if err != nil {
-		return err
-	}
-	for _, sample := range samples {
-		if sample < min || sample > max {
-			return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, originalBitsPerSample)
+	if strict {
+		min, max, err := sampleRangeBounds(originalBitsPerSample)
+		if err != nil {
+			return err
+		}
+		for _, sample := range samples {
+			if sample < min || sample > max {
+				return fmt.Errorf("FLAC subframe sample %d outside %d-bit range", sample, originalBitsPerSample)
+			}
 		}
 	}
 	return nil
@@ -170,23 +164,73 @@ func fixedPrediction(samples []int64, index, order int) int64 {
 	case 0:
 		return 0
 	case 1:
-		return samples[index-1]
+		return fixedPredictionOrder1(samples, index)
 	case 2:
-		return 2*samples[index-1] - samples[index-2]
+		return fixedPredictionOrder2(samples, index)
 	case 3:
-		return 3*samples[index-1] - 3*samples[index-2] + samples[index-3]
+		return fixedPredictionOrder3(samples, index)
 	case 4:
-		return 4*samples[index-1] - 6*samples[index-2] + 4*samples[index-3] - samples[index-4]
+		return fixedPredictionOrder4(samples, index)
 	default:
 		return 0
 	}
 }
 
-func fixedPredictionChecked(samples []int64, index, order int) (int64, error) {
-	if index < order || order < 0 || order > 4 {
-		return 0, errors.New("invalid FLAC fixed predictor order")
+func fixedPredictionOrder1(samples []int64, index int) int64 {
+	return samples[index-1]
+}
+
+func fixedPredictionOrder2(samples []int64, index int) int64 {
+	return 2*samples[index-1] - samples[index-2]
+}
+
+func fixedPredictionOrder3(samples []int64, index int) int64 {
+	return 3*samples[index-1] - 3*samples[index-2] + samples[index-3]
+}
+
+func fixedPredictionOrder4(samples []int64, index int) int64 {
+	return 4*samples[index-1] - 6*samples[index-2] + 4*samples[index-3] - samples[index-4]
+}
+
+func restoreFixedChecked(samples []int64, order, bitsPerSample int) error {
+	if order < 0 || order > 4 || order > len(samples) {
+		return errors.New("invalid FLAC fixed predictor order")
 	}
-	return fixedPrediction(samples, index, order), nil
+	min, max, err := sampleRangeBounds(bitsPerSample)
+	if err != nil {
+		return err
+	}
+	for i := order; i < len(samples); i++ {
+		value := samples[i] + fixedPrediction(samples, i, order)
+		if value < min || value > max {
+			return fmt.Errorf("invalid FLAC fixed prediction: FLAC subframe sample %d outside %d-bit range", value, bitsPerSample)
+		}
+		samples[i] = value
+	}
+	return nil
+}
+
+func restoreFixedUnchecked(samples []int64, order int) {
+	switch order {
+	case 0:
+		return
+	case 1:
+		for i := 1; i < len(samples); i++ {
+			samples[i] += fixedPredictionOrder1(samples, i)
+		}
+	case 2:
+		for i := 2; i < len(samples); i++ {
+			samples[i] += fixedPredictionOrder2(samples, i)
+		}
+	case 3:
+		for i := 3; i < len(samples); i++ {
+			samples[i] += fixedPredictionOrder3(samples, i)
+		}
+	case 4:
+		for i := 4; i < len(samples); i++ {
+			samples[i] += fixedPredictionOrder4(samples, i)
+		}
+	}
 }
 
 func Decorrelate(samples [][]int64, assignment uint8) {

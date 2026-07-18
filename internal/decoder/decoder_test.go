@@ -115,6 +115,56 @@ func TestDecoderReportsMD5MismatchAtStreamEnd(t *testing.T) {
 	}
 }
 
+func TestDecoderSkipsMD5ValidationWhenNonStrict(t *testing.T) {
+	t.Parallel()
+	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	raw := append([]byte(nil), data[8:42]...)
+	raw[len(raw)-1] ^= 1
+	stream := media.StreamInfo{}
+	stream.Metadata = *metadata.NewBundle()
+	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
+	decoder := NewDecoder(stream, flac.DecoderConfig{})
+
+	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); err != nil {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+	if err := decoder.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReceiveFrame(); !errors.Is(err, engine.ErrEOF) {
+		t.Fatalf("ReceiveFrame() after Flush = %v, want ErrEOF", err)
+	}
+}
+
+func TestDecoderFrameCRCValidationMode(t *testing.T) {
+	t.Parallel()
+	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
+	stream := media.StreamInfo{}
+	stream.Metadata = *metadata.NewBundle()
+	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
+	frameData := append([]byte(nil), data[42:]...)
+	frameData[len(frameData)-1] ^= 1
+
+	nonStrict := NewDecoder(stream, flac.DecoderConfig{})
+	if err := nonStrict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nonStrict.ReceiveFrame(); err != nil {
+		t.Fatalf("non-strict ReceiveFrame() error = %v", err)
+	}
+
+	strict := NewDecoder(stream, flac.DecoderConfig{Strict: true})
+	if err := strict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := strict.ReceiveFrame(); err == nil || !strings.Contains(err.Error(), "CRC-16") {
+		t.Fatalf("strict ReceiveFrame() error = %v, want CRC-16 error", err)
+	}
+}
+
 func TestDecoderAcceptsContiguousRunStartingAtNonzeroFrame(t *testing.T) {
 	t.Parallel()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")

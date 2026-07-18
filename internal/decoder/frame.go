@@ -20,10 +20,10 @@ type decodeWorkspace struct {
 
 func DecodeFrame(data []byte, info streaminfo.StreamInfo) (*flac.Frame, error) {
 	var workspace decodeWorkspace
-	return decodeFrame(data, info, &workspace)
+	return decodeFrame(data, info, true, &workspace)
 }
 
-func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorkspace) (*flac.Frame, error) {
+func decodeFrame(data []byte, info streaminfo.StreamInfo, strict bool, workspace *decodeWorkspace) (*flac.Frame, error) {
 	reader := &workspace.reader
 	reader.Init(data, 0, int32(len(data))*8)
 	header, err := frame.ParseHeader(data, info)
@@ -50,15 +50,17 @@ func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorks
 			}
 		}
 
-		if err := DecodeSubframe(reader, samples[ch], bitsPerSample); err != nil {
+		if err := decodeSubframe(reader, samples[ch], bitsPerSample, strict); err != nil {
 			return nil, fmt.Errorf("decode FLAC subframe %d: %w", ch, err)
 		}
 	}
 
 	Decorrelate(samples, header.ChannelAssignment)
-	for ch := range samples {
-		if err := flac.ValidateSampleRange(samples[ch], header.BitsPerSample); err != nil {
-			return nil, fmt.Errorf("decoded FLAC channel %d is out of range: %w", ch, err)
+	if strict {
+		for ch := range samples {
+			if err := flac.ValidateSampleRange(samples[ch], header.BitsPerSample); err != nil {
+				return nil, fmt.Errorf("decoded FLAC channel %d is out of range: %w", ch, err)
+			}
 		}
 	}
 
@@ -67,7 +69,7 @@ func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorks
 		if err != nil {
 			return nil, err
 		}
-		if padding != 0 {
+		if strict && padding != 0 {
 			return nil, errors.New("invalid non-zero FLAC frame padding")
 		}
 	}
@@ -76,7 +78,7 @@ func decodeFrame(data []byte, info streaminfo.StreamInfo, workspace *decodeWorks
 	if err != nil {
 		return nil, err
 	}
-	if footerStart > len(data) || hash.CRC16(data[:footerStart]) != uint16(footer) {
+	if strict && (footerStart > len(data) || hash.CRC16(data[:footerStart]) != uint16(footer)) {
 		return nil, errors.New("invalid FLAC frame footer CRC-16")
 	}
 

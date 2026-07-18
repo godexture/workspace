@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -67,6 +68,54 @@ func BenchmarkDecodeFrameDefaultConfig(b *testing.B) {
 		if _, err := decoder.DecodeFrame(data, info); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkDecoderValidationMode(b *testing.B) {
+	block := benchmarkBlock(flac.DefaultEncoderConfig.BlockSize)
+	data, err := EncodeFrame(block, 44100, 16, 0, flac.DefaultEncoderConfig)
+	if err != nil {
+		b.Fatal(err)
+	}
+	stream := media.StreamInfo{MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{
+		SampleRate: 44100, Format: media.SampleFormatS16, BitsPerSample: 16, ChannelLayout: media.LayoutStereo2_0,
+	}}}
+	packet := media.NewPacketFromData(data)
+
+	decode := func(strict bool) {
+		dec := decoder.NewDecoder(stream, flac.DecoderConfig{Strict: strict})
+		if err := dec.SendPacket(packet); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := dec.ReceiveFrame(); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	var strictDuration, nonStrictDuration time.Duration
+	var iterations int64
+	b.ReportAllocs()
+	for b.Loop() {
+		if iterations&1 == 0 {
+			start := time.Now()
+			decode(true)
+			strictDuration += time.Since(start)
+			start = time.Now()
+			decode(false)
+			nonStrictDuration += time.Since(start)
+		} else {
+			start := time.Now()
+			decode(false)
+			nonStrictDuration += time.Since(start)
+			start = time.Now()
+			decode(true)
+			strictDuration += time.Since(start)
+		}
+		iterations++
+	}
+	if iterations > 0 {
+		b.ReportMetric(float64(strictDuration.Nanoseconds())/float64(iterations), "strict-ns/op")
+		b.ReportMetric(float64(nonStrictDuration.Nanoseconds())/float64(iterations), "non-strict-ns/op")
 	}
 }
 

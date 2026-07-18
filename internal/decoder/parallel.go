@@ -26,9 +26,10 @@ type pendingEntry struct {
 }
 
 type frameJob struct {
-	data  []byte
-	info  streaminfo.StreamInfo
-	entry *pendingEntry
+	data   []byte
+	info   streaminfo.StreamInfo
+	strict bool
+	entry  *pendingEntry
 }
 
 var sharedDecoderPool struct {
@@ -50,14 +51,14 @@ func decoderJobs() chan frameJob {
 func runDecoderWorker(jobs <-chan frameJob) {
 	var workspace decodeWorkspace
 	for job := range jobs {
-		decoded, err := decodeFrame(job.data, job.info, &workspace)
+		decoded, err := decodeFrame(job.data, job.info, job.strict, &workspace)
 		if err == nil && decoded.Bytes != len(job.data) {
 			err = fmt.Errorf("FLAC packet contains trailing data: decoded %d of %d bytes", decoded.Bytes, len(job.data))
 		}
 		if err == nil {
 			job.entry.header = decoded.Header
 			job.entry.audio, err = buildAudioFrame(decoded)
-			if err == nil && job.entry.audio.Format.BytesPerSample() != (decoded.Header.BitsPerSample+7)/8 {
+			if err == nil && job.strict && job.entry.audio.Format.BytesPerSample() != (decoded.Header.BitsPerSample+7)/8 {
 				job.entry.md5 = flac.PackPCMMD5(nil, decoded.Samples, decoded.Header.BitsPerSample)
 			}
 		}

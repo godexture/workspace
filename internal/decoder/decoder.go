@@ -89,9 +89,10 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	entry := &pendingEntry{done: make(chan struct{})}
 	d.pendingQueue = append(d.pendingQueue, entry)
 	decoderJobs() <- frameJob{
-		data:  append([]byte(nil), pkt.Data()...),
-		info:  d.info,
-		entry: entry,
+		data:   append([]byte(nil), pkt.Data()...),
+		info:   d.info,
+		strict: d.strict,
+		entry:  entry,
 	}
 	return nil
 }
@@ -147,7 +148,7 @@ func (d *Decoder) Flush() error {
 }
 
 func (d *Decoder) initMD5() {
-	if d.info.MD5 != [16]byte{} {
+	if d.strict && d.info.MD5 != [16]byte{} {
 		d.md5 = flac.NewPCMMD5()
 	}
 }
