@@ -163,10 +163,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 	mid := getResidualBuffer(len(left))
 	side := getResidualBuffer(len(left))
 	scratch := [][]int64{mid, side}
-	for i := range left {
-		mid[i] = (left[i] + right[i]) >> 1
-		side[i] = left[i] - right[i]
-	}
+	computeMidSide(left, right, mid, side)
 	if options.StereoMode == flac.StereoAdaptive && len(left) >= 3 {
 		assignment := estimateStereoAssignment(left, right, mid, side)
 		channels := assignmentChannels(assignment, left, right, mid, side)
@@ -272,14 +269,7 @@ func estimateStereoAssignment(left, right, mid, side []int64) uint8 {
 func estimateChannelBits(samples []int64) uint64 {
 	residual := fixedResidual(samples, 2)
 	defer releaseResidualBuffer(residual)
-	var sum, maximum uint64
-	for _, value := range residual {
-		folded := foldResidual(value)
-		sum += folded
-		if folded > maximum {
-			maximum = folded
-		}
-	}
+	sum, maximum := foldSumMax(residual)
 	return bestRicePartitionEstimate(sum, maximum, len(residual), 4, 14).costBits
 }
 

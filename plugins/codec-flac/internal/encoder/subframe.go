@@ -157,7 +157,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 		windows = [][]float64{nil}
 	}
 	for _, window := range windows {
-		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.LPCOrderSearch, window) {
+		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.LPCOrderSearch, window, bitsPerSample) {
 			if coefficients == nil {
 				continue
 			}
@@ -306,7 +306,7 @@ func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
 	return bestOrder, fixedResidual(samples, bestOrder)
 }
 
-func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.OrderSearchMode, window []float64) [][]float64 {
+func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.OrderSearchMode, window []float64, bitsPerSample int) [][]float64 {
 	exhaustive := mode == flac.OrderSearchExhaustive
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
@@ -322,12 +322,7 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.Orde
 	}
 	// Levinson-Durbin recursion; see standard linear-prediction texts.
 	values := make([]float64, len(samples))
-	for i, sample := range samples {
-		values[i] = float64(sample)
-		if window != nil {
-			values[i] *= window[i]
-		}
-	}
+	windowSamples(samples, window, values, bitsPerSample)
 	auto := make([]float64, maxOrder+1)
 	autocorrelate(values, auto)
 	if auto[0] == 0 {

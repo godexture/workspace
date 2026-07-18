@@ -96,15 +96,9 @@ func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, 
 	}
 	workspace.folded = resize(workspace.folded, len(residual))
 	folded := workspace.folded
-	var maxFolded uint64
-	for i, value := range residual {
-		if !validFLACResidual(value) {
-			return riceCoding{}, false
-		}
-		folded[i] = foldResidual(value)
-		if folded[i] > maxFolded {
-			maxFolded = folded[i]
-		}
+	maxFolded, ok := foldResidualBatch(residual, folded)
+	if !ok {
+		return riceCoding{}, false
 	}
 
 	deepest := 0
@@ -149,17 +143,20 @@ func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, 
 		}
 		end := (partition+1)*partitionSamples - predictorOrder
 		stats, sums := statsAt(deepest, partition)
-		for _, value := range folded[start:end] {
-			// Rice (1979); RFC 9639 §9.2.7.  The sum is the fast estimate.
-			stats.sum += value
-			if exhaustive {
+		values := folded[start:end]
+		if exhaustive {
+			for _, value := range values {
+				// Rice (1979); RFC 9639 §9.2.7.  The sum is the fast estimate.
+				stats.sum += value
 				for k := 0; k <= kMax && value>>uint(k) > 0; k++ {
 					sums[k] += value >> uint(k)
 				}
+				if value > stats.max {
+					stats.max = value
+				}
 			}
-			if value > stats.max {
-				stats.max = value
-			}
+		} else {
+			stats.sum, stats.max = sumMaxUint64(values)
 		}
 	}
 	for order := deepest - 1; order >= 0; order-- {
@@ -368,10 +365,7 @@ func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
 }
 
 func foldResidual(value int64) uint64 {
-	if value < 0 {
-		return uint64(-value*2 - 1)
-	}
-	return uint64(value * 2)
+	return uint64((value << 1) ^ (value >> 63))
 }
 
 func validFLACResidual(value int64) bool {
