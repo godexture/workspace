@@ -1,6 +1,17 @@
 package decoder
 
-import "fmt"
+import (
+	"fmt"
+	"unsafe"
+)
+
+func loadScalarInt64At(base unsafe.Pointer, index int) int64 {
+	return *(*int64)(unsafe.Add(base, uintptr(index)*8))
+}
+
+func storeScalarInt64At(base unsafe.Pointer, index int, value int64) {
+	*(*int64)(unsafe.Add(base, uintptr(index)*8)) = value
+}
 
 func restoreLPCScalarUnchecked(samples, coefficients []int64, order, shift int) {
 	coefficients = coefficients[:order:order]
@@ -11,9 +22,11 @@ func restoreLPCScalarUnchecked(samples, coefficients []int64, order, shift int) 
 		}
 		return
 	}
+	base := unsafe.Pointer(unsafe.SliceData(samples))
+	// i >= order keeps the current sample and every coefficient-relative history index in range.
 	for i := order; i < len(samples); i++ {
-		history := samples[i-order : i : i]
-		samples[i] += lpcPredictionScalar(history, coefficients) >> shift
+		value := loadScalarInt64At(base, i) + (lpcPredictionScalarAt(base, i, coefficients) >> shift)
+		storeScalarInt64At(base, i, value)
 	}
 }
 
@@ -30,22 +43,22 @@ func restoreLPCScalar(samples, coefficients []int64, order, shift int, min, max 
 		}
 		return nil
 	}
+	base := unsafe.Pointer(unsafe.SliceData(samples))
+	// i >= order keeps the current sample and every coefficient-relative history index in range.
 	for i := order; i < len(samples); i++ {
-		history := samples[i-order : i : i]
-		value := samples[i] + (lpcPredictionScalar(history, coefficients) >> shift)
+		value := loadScalarInt64At(base, i) + (lpcPredictionScalarAt(base, i, coefficients) >> shift)
 		if value < min || value > max {
 			return lpcRangeError(value, bitsPerSample)
 		}
-		samples[i] = value
+		storeScalarInt64At(base, i, value)
 	}
 	return nil
 }
 
-func lpcPredictionScalar(history, coefficients []int64) int64 {
-	order := len(coefficients)
+func lpcPredictionScalarAt(base unsafe.Pointer, index int, coefficients []int64) int64 {
 	var sum int64
 	for j, coefficient := range coefficients {
-		sum += coefficient * history[order-1-j]
+		sum += coefficient * loadScalarInt64At(base, index-1-j)
 	}
 	return sum
 }
