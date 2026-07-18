@@ -17,7 +17,11 @@ func fixedResidual(samples []int64, order int) []int64 {
 }
 
 func lpcResidual(samples []int64, order int, coefficients []int64, shift, bitsPerSample int) []int64 {
-	if dsp.HasAVX2 && bitsPerSample <= 32 && order > 0 && order <= 32 && len(samples)-order >= 4 {
+	// Below order 20, lpcResidualSIMD's per-call setup (building the
+	// coefficientVectors table) dominates and it loses to scalar by 2-6x;
+	// scalar stays competitive or better up to roughly order 18-20 depending
+	// on system load, but SIMD reliably wins from order 20 on.
+	if dsp.HasAVX2 && bitsPerSample <= 32 && order >= 20 && order <= 32 && len(samples)-order >= 4 {
 		return lpcResidualSIMD(samples, order, coefficients, shift)
 	}
 	return lpcResidualScalar(samples, order, coefficients, shift)
