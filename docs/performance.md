@@ -68,3 +68,26 @@ Unary prefix 改善後の profile では `decodeRiceSigned` が累積 34.29%、f
 | --- | ---: | ---: | ---: |
 | median | 115,301.5 ns/op | 104,862 ns/op | 8.64% |
 | mean | 117,667.4 ns/op | 106,427.8 ns/op | 9.19% |
+
+## Fused Rice quotient and remainder read
+
+Branchless sign decode 後も residual 復号は profile の 52.27% を占め、`Rice64`
+は累積 26.50%だった。従来は `Unary64` で quotient を読み、その直後に
+`Bits32` で同じ位置から remainder を読み直していた。典型的な短い符号が
+8-byte window 内に収まる場合は、1回のloadと `LeadingZeros64` で両方を読む。
+長い符号、buffer末尾、切詰め入力は従来の分割経路へフォールバックする。
+
+`BenchmarkRice64Paired` は4096個のRice値ごとに統合経路と分割経路を交互実行した。
+
+| metric | fused | split reference | improvement |
+| --- | ---: | ---: | ---: |
+| median, 100 samples | 21,030.5 ns | 41,229.5 ns | 49.19% |
+| mean, 100 samples | 21,292.9 ns | 41,875.6 ns | 47.72% |
+
+`BenchmarkDecodeFrameDefaultConfig` の変更前後バイナリを 50 ペア、各 200 ms、
+ペアごとに順序を反転して実行した。全 50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 103,167.5 ns/op | 85,320.5 ns/op | 17.15% |
+| mean | 104,517 ns/op | 85,981.1 ns/op | 17.62% |

@@ -256,6 +256,23 @@ func (r *Reader) Unary64() uint64 {
 
 // Rice64 reads a unary quotient followed by param remainder bits.
 func (r *Reader) Rice64(param uint8) uint64 {
+	start := r.position
+	byteIndex := int(start >> 3)
+	bitOffset := uint(start & 7)
+	if param <= 32 && byteIndex >= 0 && byteIndex+8 <= len(r.buffer) {
+		word := binary.BigEndian.Uint64(r.buffer[byteIndex:]) << bitOffset
+		zeros := mathbits.LeadingZeros64(word)
+		consumed := zeros + 1 + int(param)
+		if consumed <= 64-int(bitOffset) && start+int32(consumed) <= r.limit {
+			r.position = start + int32(consumed)
+			remainder := (word << uint(zeros+1)) >> (64 - param)
+			return uint64(zeros)<<param | remainder
+		}
+	}
+	return r.rice64Split(param)
+}
+
+func (r *Reader) rice64Split(param uint8) uint64 {
 	q := r.Unary64()
 	return q<<param | uint64(r.Bits32(param))
 }
