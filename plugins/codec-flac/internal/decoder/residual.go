@@ -118,10 +118,7 @@ func decodeRiceSigned(r *bits.Reader, param uint8) int64 {
 		r.Seek(r.Position())
 		return 1 << 62
 	}
-	if unsigned&1 == 0 {
-		return int64(unsigned >> 1)
-	}
-	return -int64((unsigned >> 1) + 1)
+	return int64(unsigned>>1) ^ -int64(unsigned&1)
 }
 
 // validFLACResidual checks if the residual is within the signed one's-complement

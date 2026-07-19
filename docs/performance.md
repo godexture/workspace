@@ -54,3 +54,17 @@ Rice 符号は通常短く、開始位置も非 byte-aligned なので、先頭 
 | --- | ---: | ---: | ---: |
 | median | 126,724.5 ns/op | 112,105 ns/op | 11.25% |
 | mean | 127,931.2 ns/op | 113,208.6 ns/op | 11.37% |
+
+## Branchless Rice sign decode
+
+Unary prefix 改善後の profile では `decodeRiceSigned` が累積 34.29%、flat 7.36%
+を占めていた。範囲検証は維持したまま、偶数/奇数の分岐による Rice 符号の
+正負展開を ZigZag の XOR 式へ置き換えた。
+
+`BenchmarkDecodeFrameDefaultConfig` の変更前後バイナリを 50 ペア、各 200 ms、
+ペアごとに順序を反転して実行した。49/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 115,301.5 ns/op | 104,862 ns/op | 8.64% |
+| mean | 117,667.4 ns/op | 106,427.8 ns/op | 9.19% |
