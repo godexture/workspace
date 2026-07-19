@@ -65,7 +65,7 @@ func decodeFrame(data []byte, info streaminfo.StreamInfo, strict bool, workspace
 	}
 
 	if rem := reader.Position() % 8; rem != 0 {
-		padding, err := reader.ReadBits64(uint8(8 - rem))
+		padding, err := reader.ReadBits32(uint8(8 - rem))
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +74,7 @@ func decodeFrame(data []byte, info streaminfo.StreamInfo, strict bool, workspace
 		}
 	}
 	footerStart := reader.BytePos()
-	footer, err := reader.ReadBits64(16)
+	footer, err := reader.ReadBits32(16)
 	if err != nil {
 		return nil, err
 	}

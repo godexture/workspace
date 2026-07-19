@@ -22,12 +22,12 @@ func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, err
 }
 
 func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOrder int) error {
-	method, err := r.ReadBits64(2)
+	method, err := r.ReadBits32(2)
 	if err != nil {
 		return err
 	}
 	var paramBits uint8
-	var escape uint64
+	var escape uint32
 	switch method {
 	case 0:
 		paramBits = 4
@@ -38,7 +38,7 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 	default:
 		return errors.New("reserved FLAC residual coding method")
 	}
-	partitionOrderRaw, err := r.ReadBits64(4)
+	partitionOrderRaw, err := r.ReadBits32(4)
 	if err != nil {
 		return err
 	}
@@ -63,12 +63,12 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 			return errors.New("FLAC residual partition smaller than predictor order")
 		}
 
-		param, err := r.ReadBits64(paramBits)
+		param, err := r.ReadBits32(paramBits)
 		if err != nil {
 			return err
 		}
 		if param == escape {
-			rawBits, err := r.ReadBits64(5)
+			rawBits, err := r.ReadBits32(5)
 			if err != nil {
 				return err
 			}

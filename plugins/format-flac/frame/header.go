@@ -40,41 +40,41 @@ func ParseHeader(data []byte, info streaminfo.StreamInfo) (Header, error) {
 }
 
 func decodeHeader(r *bits.Reader, info streaminfo.StreamInfo) (Header, error) {
-	sync, err := r.ReadBits64(14)
+	sync, err := r.ReadBits32(14)
 	if err != nil {
 		return Header{}, err
 	}
 	if sync != 0x3ffe {
 		return Header{}, errors.New("invalid FLAC frame sync")
 	}
-	reserved, err := r.ReadBits64(1)
+	reserved, err := r.ReadBits32(1)
 	if err != nil {
 		return Header{}, err
 	}
 	if reserved != 0 {
 		return Header{}, errors.New("invalid FLAC reserved frame header bit")
 	}
-	blocking, err := r.ReadBits64(1)
+	blocking, err := r.ReadBits32(1)
 	if err != nil {
 		return Header{}, err
 	}
-	blockCode, err := r.ReadBits64(4)
+	blockCode, err := r.ReadBits32(4)
 	if err != nil {
 		return Header{}, err
 	}
-	rateCode, err := r.ReadBits64(4)
+	rateCode, err := r.ReadBits32(4)
 	if err != nil {
 		return Header{}, err
 	}
-	assignment, err := r.ReadBits64(4)
+	assignment, err := r.ReadBits32(4)
 	if err != nil {
 		return Header{}, err
 	}
-	depthCode, err := r.ReadBits64(3)
+	depthCode, err := r.ReadBits32(3)
 	if err != nil {
 		return Header{}, err
 	}
-	reserved, err = r.ReadBits64(1)
+	reserved, err = r.ReadBits32(1)
 	if err != nil {
 		return Header{}, err
 	}
@@ -104,7 +104,7 @@ func decodeHeader(r *bits.Reader, info streaminfo.StreamInfo) (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
-	crc, err := r.ReadBits64(8)
+	crc, err := r.ReadBits32(8)
 	if err != nil {
 		return Header{}, err
 	}
@@ -197,10 +197,10 @@ func decodeBlockSize(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (in
 	case 2, 3, 4, 5:
 		return 576 << (code - 2), nil
 	case 6:
-		v, e := r.ReadBits64(8)
+		v, e := r.ReadBits32(8)
 		return int(v) + 1, e
 	case 7:
-		v, e := r.ReadBits64(16)
+		v, e := r.ReadBits32(16)
 		if e != nil {
 			return 0, e
 		}
@@ -241,13 +241,13 @@ func decodeSampleRate(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (i
 	case 11:
 		return 96000, nil
 	case 12:
-		v, e := r.ReadBits64(8)
+		v, e := r.ReadBits32(8)
 		return int(v) * 1000, e
 	case 13:
-		v, e := r.ReadBits64(16)
+		v, e := r.ReadBits32(16)
 		return int(v), e
 	case 14:
-		v, e := r.ReadBits64(16)
+		v, e := r.ReadBits32(16)
 		return int(v) * 10, e
 	default:
 		return 0, errors.New("reserved FLAC sample rate code")

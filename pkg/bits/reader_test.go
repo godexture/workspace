@@ -202,6 +202,9 @@ func TestCheckedTierReturnsErrorOnOverrun(t *testing.T) {
 	if _, err := r.ReadBits64(1); err != io.ErrUnexpectedEOF {
 		t.Fatalf("ReadBits64(1) past limit = %v, want io.ErrUnexpectedEOF", err)
 	}
+	if _, err := r.ReadBits32(1); err != io.ErrUnexpectedEOF {
+		t.Fatalf("ReadBits32(1) past limit = %v, want io.ErrUnexpectedEOF", err)
+	}
 	if _, err := r.ReadSigned32(1); err != io.ErrUnexpectedEOF {
 		t.Fatalf("ReadSigned32(1) past limit = %v, want io.ErrUnexpectedEOF", err)
 	}

@@ -122,10 +122,14 @@ func (r *Reader) Byte() uint8 {
 
 // Bits64 reads width bits (width <= 64) MSB-first.
 func (r *Reader) Bits64(width uint8) uint64 {
-	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
-	if width == 0 {
-		return 0
+	if width <= 32 {
+		return uint64(r.Bits32(width))
 	}
+	return r.bits64Wide(width)
+}
+
+func (r *Reader) bits64Wide(width uint8) uint64 {
+	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
 	start := r.position
 	end := start + int32(width)
 	if end > r.limit {
@@ -238,17 +242,19 @@ func (r *Reader) Rice64(param uint8) uint64 {
 // Signed32 reads width bits (width in [1, 32]) and sign-extends the result.
 func (r *Reader) Signed32(width uint8) int32 {
 	assertf(width <= 32, "bits: Signed32 width out of range: %d", width)
-	value := r.Bits64(width)
-	if value&(uint64(1)<<(width-1)) != 0 {
-		value |= ^uint64(0) << width
+	value := r.Bits32(width)
+	if value&(uint32(1)<<(width-1)) != 0 {
+		value |= ^uint32(0) << width
 	}
 	return int32(value)
 }
 
 // Signed64 reads width bits (width in [1, 64]) and sign-extends the result.
 func (r *Reader) Signed64(width uint8) int64 {
-	assertf(width <= 64, "bits: Signed64 width out of range: %d", width)
-	value := r.Bits64(width)
+	if width <= 32 {
+		return int64(r.Signed32(width))
+	}
+	value := r.bits64Wide(width)
 	if width < 64 && value&(uint64(1)<<(width-1)) != 0 {
 		value |= ^uint64(0) << width
 	}
@@ -319,6 +325,15 @@ func (r *Reader) ReadByte() (byte, error) {
 // ReadBits64 is the Checked-tier wrapper around Bits64.
 func (r *Reader) ReadBits64(width uint8) (uint64, error) {
 	v := r.Bits64(width)
+	if r.Overrun() {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return v, nil
+}
+
+// ReadBits32 is the Checked-tier wrapper around Bits32.
+func (r *Reader) ReadBits32(width uint8) (uint32, error) {
+	v := r.Bits32(width)
 	if r.Overrun() {
 		return 0, io.ErrUnexpectedEOF
 	}
