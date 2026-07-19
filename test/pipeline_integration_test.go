@@ -17,7 +17,7 @@ import (
 	"github.com/godexture/sdk/testutil"
 )
 
-func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
+func TestPipeline_WavPcmRoundtrip(t *testing.T) {
 	t.Parallel()
 	_, thisFile, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(thisFile), "assets")
@@ -84,10 +84,12 @@ func TestRunnerPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("link enc->mux: %v", err)
 			}
 
-			nodes := []node.Node{demuxNode, decNode, encNode, muxNode}
-			runner := pipeline.NewRunner()
-			if err := runner.Run(context.Background(), nodes); err != nil {
-				t.Fatalf("runner.Run: %v", err)
+			conversion, err := pipeline.New(demuxNode, decNode, encNode, muxNode)
+			if err != nil {
+				t.Fatalf("pipeline.New: %v", err)
+			}
+			if err := conversion.Run(context.Background()); err != nil {
+				t.Fatalf("pipeline.Run: %v", err)
 			}
 
 			remuxed := f.Bytes()

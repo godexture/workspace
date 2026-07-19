@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/godexture/core/registry"
 )
@@ -22,15 +21,13 @@ func (r *DefaultMuxerResolver) ResolveMuxer(config registry.Configuration) (regi
 		return registry.MuxerManifest{}, fmt.Errorf("muxer profile not specified")
 	}
 
-	t := reflect.TypeOf(config)
-
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	manifest, err := r.registry.Get(t)
+	key, err := r.registry.Key(config)
 	if err != nil {
-		return manifest, fmt.Errorf("muxer not found for type: %s): %w", t.String(), err)
+		return registry.MuxerManifest{}, fmt.Errorf("invalid muxer configuration: %w", err)
+	}
+	manifest, err := r.registry.Get(key)
+	if err != nil {
+		return manifest, fmt.Errorf("muxer not found for configuration %T: %w", config, err)
 	}
 
 	return manifest, nil

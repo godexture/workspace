@@ -7,4 +7,5 @@ type Bundle struct {
 	NewDemuxerResolver func(*registry.DemuxerRegistry) DemuxerResolver
 	NewEncoderResolver func(*registry.EncoderRegistry) EncoderResolver
 	NewDecoderResolver func(*registry.DecoderRegistry) DecoderResolver
+	NewFilterResolver  func(*registry.FilterRegistry) FilterResolver
 }

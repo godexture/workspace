@@ -1,5 +1,5 @@
 package pipeline
 
-import "fmt"
+import "errors"
 
-var ErrInvalidPipeline = fmt.Errorf("invalid pipeline")
+var ErrInvalidPipeline = errors.New("invalid pipeline")

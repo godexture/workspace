@@ -40,5 +40,6 @@ func (f *Provider) NewNegotiator(opts ...NegotiatorOption) *routing.Negotiator {
 		config.Resolver.NewDemuxerResolver(config.Registry.Demuxers),
 		config.Resolver.NewEncoderResolver(config.Registry.Encoders),
 		config.Resolver.NewDecoderResolver(config.Registry.Decoders),
+		config.Resolver.NewFilterResolver(config.Registry.Filters),
 	)
 }

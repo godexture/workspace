@@ -27,7 +27,7 @@ func (r *DefaultEncoderResolver) ResolveEncoder(codec media.CodecID, opts ...Opt
 
 	for manifest := range r.registry.Enumerate() {
 		if manifest.Supports(codec) {
-			priority := options.PriorityOverrides[manifest.ID()]
+			priority := options.priority(manifest.ID())
 			if priority > maxPriority {
 				maxPriority = priority
 				bestManifest = manifest

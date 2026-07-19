@@ -22,3 +22,7 @@ type EncoderResolver interface {
 type DecoderResolver interface {
 	ResolveDecoder(stream media.StreamInfo, opts ...Option) (registry.DecoderManifest, error)
 }
+
+type FilterResolver interface {
+	ResolveFilter(config registry.Configuration) (registry.FilterManifest, error)
+}

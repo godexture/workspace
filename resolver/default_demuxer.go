@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/godexture/core/domain/manifest"
@@ -32,21 +33,25 @@ func (r *DefaultDemuxerResolver) ResolveDemuxer(stream io.ReadSeeker, opts ...Op
 			continue
 		}
 
-		stream.Seek(0, io.SeekStart)
+		if _, err := stream.Seek(0, io.SeekStart); err != nil {
+			return bestManifest, fmt.Errorf("seek input before probing %s: %w", manifest.Name, err)
+		}
 		score := manifest.Probe(stream)
+		priority := options.priority(manifest.ID())
 
 		if score > maxScore {
 			maxScore = score
+			maxPriority = priority
 			bestManifest = manifest
-		} else if score == maxScore && maxScore > 0 {
-			priority := options.PriorityOverrides[manifest.ID()]
-			if priority > maxPriority {
-				maxPriority = priority
-				bestManifest = manifest
-			}
+		} else if score == maxScore && maxScore > 0 && priority > maxPriority {
+			maxPriority = priority
+			bestManifest = manifest
 		}
 	}
 
+	if _, err := stream.Seek(0, io.SeekStart); err != nil {
+		return bestManifest, fmt.Errorf("rewind input after probing: %w", err)
+	}
 	if maxScore == 0 {
 		return bestManifest, errors.New("unsupported format")
 	}
