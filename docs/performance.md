@@ -118,3 +118,34 @@ decoder wrapper、audio frame生成を含む完全な復号パイプラインを
 | --- | ---: | ---: | ---: |
 | median | 1,299,904 ns/op | 1,100,537 ns/op | 15.72% |
 | mean | 1,326,232 ns/op | 1,144,895.6 ns/op | 13.73% |
+
+## Reused LPC analysis workspace
+
+FLAC frame encode の allocation profile では `lpcCoefficientSets` が割当量の
+63.23%、割当回数の 50.23% を占めていた。LPC 解析用のベクトルと次数別係数を
+channel candidate ごとに作り直さず、各 encoder worker が所有する `windowSet`
+内で再利用する。worker 間では共有しないため同期は不要である。
+
+`BenchmarkEncodeFrameDefaultConfig` の変更前後バイナリを 50 ペア、各 200 ms、
+ペアごとに順序を反転して実行した。47/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 263,487 ns/op | 250,176.5 ns/op | 5.14% |
+| mean | 266,417.9 ns/op | 252,458.5 ns/op | 5.12% |
+| median bytes/op | 210,392.5 | 107,251 | 49.02% |
+| allocations/op | 102 | 57 | 44.12% |
+
+worker と作業領域を複数フレームで再利用する `BenchmarkEncoderDefaultConfig` も
+30 ペア、各 200 ms、順序を反転して実行した。25/30 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 919,378 ns/op | 865,378.5 ns/op | 4.97% |
+| mean | 928,980.7 ns/op | 882,718.5 ns/op | 4.91% |
+| median bytes/op | 1,748,614.5 | 1,320,161.5 | 24.50% |
+| allocations/op | 534 | 364 | 31.84% |
+
+変更後の allocation profile では `lpcCoefficientSets` 固有の割当は消え、
+フレーム単体の総量は約 107.6 KiB/op、57 allocs/op になった。通常、SIMD、
+race detector の encoder 対象テストを通過した。
