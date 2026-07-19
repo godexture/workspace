@@ -1,6 +1,6 @@
 package flac
 
-//go:generate go run ../../tools/config-generator -target EncoderConfig -target DecoderConfig
+//go:generate config-generator -target EncoderConfig -target DecoderConfig
 
 import (
 	"github.com/godexture/codec-flac/internal/config"

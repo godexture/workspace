@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/godexture/tools/internal/workspace"
 )
@@ -47,6 +48,55 @@ func main() {
 	}
 	pkgPattern = workspace.WorkspacePackagePatterns(modules, pkgPattern)
 
+	tmpDir, err := os.MkdirTemp("", "godexture-gen-*")
+	if err != nil {
+		fatal(fmt.Errorf("failed to create temp dir: %w", err))
+	}
+	defer os.RemoveAll(tmpDir)
+
+	var buildWg sync.WaitGroup
+	buildErrs := make(chan error, 2)
+
+	buildWg.Add(1)
+	go func() {
+		defer buildWg.Done()
+		log.Printf("building config-generator...")
+		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "config-generator.exe"), "github.com/godexture/tools/config-generator")
+		buildConfigCmd.Stdout = os.Stdout
+		buildConfigCmd.Stderr = os.Stderr
+		if err := buildConfigCmd.Run(); err != nil {
+			buildErrs <- fmt.Errorf("failed to build config-generator: %w", err)
+			return
+		}
+		log.Printf("built config-generator to %s", tmpDir)
+	}()
+
+	buildWg.Add(1)
+	go func() {
+		defer buildWg.Done()
+		log.Printf("pre-warming build cache for table-generator...")
+		buildTableCmd := exec.Command(goCommand, "build", "github.com/godexture/tools/table-generator")
+		buildTableCmd.Stdout = os.Stdout
+		buildTableCmd.Stderr = os.Stderr
+		if err := buildTableCmd.Run(); err != nil {
+			buildErrs <- fmt.Errorf("failed to build table-generator: %w", err)
+			return
+		}
+		log.Printf("pre-warmed build cache for table-generator")
+	}()
+
+	buildWg.Wait()
+	close(buildErrs)
+	for err := range buildErrs {
+		fatal(err)
+	}
+
+	originalPath := os.Getenv("PATH")
+	newPath := tmpDir + string(os.PathListSeparator) + originalPath
+	if err := os.Setenv("PATH", newPath); err != nil {
+		fatal(fmt.Errorf("failed to set PATH: %w", err))
+	}
+
 	err = runGenerate(goCommand, goWork, passthroughFlags, pkgPattern, test)
 	if err != nil {
 		os.Exit(1)
@@ -66,6 +116,10 @@ func runGenerate(goCommand, goWork string, passthroughFlags, pkgPattern []string
 	}
 
 	dec := json.NewDecoder(strings.NewReader(string(output)))
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1000)
+
 	for {
 		var pkg struct {
 			Dir          string
@@ -86,24 +140,47 @@ func runGenerate(goCommand, goWork string, passthroughFlags, pkgPattern []string
 		regularFiles = append(regularFiles, pkg.CgoFiles...)
 
 		if len(regularFiles) > 0 {
-			if err := runGenerateFiles(goCommand, goWork, pkg.Dir, passthroughFlags, regularFiles); err != nil {
-				return err
-			}
+			wg.Add(1)
+			go func(dir string, files []string) {
+				defer wg.Done()
+				if err := runGenerateFiles(goCommand, goWork, dir, passthroughFlags, files); err != nil {
+					errCh <- err
+				}
+			}(pkg.Dir, regularFiles)
 		}
 
 		if test {
 			if len(pkg.TestGoFiles) > 0 {
-				if err := runGenerateFiles(goCommand, goWork, pkg.Dir, passthroughFlags, pkg.TestGoFiles); err != nil {
-					return err
-				}
+				wg.Add(1)
+				go func(dir string, files []string) {
+					defer wg.Done()
+					if err := runGenerateFiles(goCommand, goWork, dir, passthroughFlags, files); err != nil {
+						errCh <- err
+					}
+				}(pkg.Dir, pkg.TestGoFiles)
 			}
 
 			if len(pkg.XTestGoFiles) > 0 {
-				if err := runGenerateFiles(goCommand, goWork, pkg.Dir, passthroughFlags, pkg.XTestGoFiles); err != nil {
-					return err
-				}
+				wg.Add(1)
+				go func(dir string, files []string) {
+					defer wg.Done()
+					if err := runGenerateFiles(goCommand, goWork, dir, passthroughFlags, files); err != nil {
+						errCh <- err
+					}
+				}(pkg.Dir, pkg.XTestGoFiles)
 			}
 		}
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("generate failed with %d errors, first error: %w", len(errs), errs[0])
 	}
 
 	return nil
