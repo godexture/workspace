@@ -4,17 +4,14 @@ package flac
 
 import (
 	internal "github.com/godexture/format-flac/internal"
-	optional "github.com/godexture/sdk/optional"
 )
 
-type DemuxerConfig struct {
-	Strict optional.Optional[bool]
-}
+type DemuxerConfig internal.DemuxerConfig
 
 type DemuxerConfigOption func(*DemuxerConfig)
 
 func NewDemuxerConfig(options ...DemuxerConfigOption) DemuxerConfig {
-	var config DemuxerConfig
+	config := DemuxerConfig(internal.DemuxerConfig{})
 	for _, option := range options {
 		option(&config)
 	}
@@ -23,12 +20,14 @@ func NewDemuxerConfig(options ...DemuxerConfigOption) DemuxerConfig {
 
 func WithStrict(v bool) DemuxerConfigOption {
 	return func(c *DemuxerConfig) {
-		c.Strict = optional.Some(v)
+		c.Strict = v
 	}
 }
 
-func (c DemuxerConfig) ApplyDefaults() internal.DemuxerConfig {
-	config := internal.DemuxerConfig{}
-	config.Strict = c.Strict.ValueOr(config.Strict)
-	return config
+func (c DemuxerConfig) ResolveDefault() internal.DemuxerConfig {
+	return internal.DemuxerConfig{}
+}
+
+func (c DemuxerConfig) Resolve() internal.DemuxerConfig {
+	return internal.DemuxerConfig(c)
 }

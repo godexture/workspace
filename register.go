@@ -5,31 +5,33 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-flac/internal"
 	engine "github.com/godexture/sdk/engine"
 )
 
-func Probe(r io.Reader) manifest.ProbeScore {
-	return internal.Probe(r)
-}
+var (
+	Probe = internal.Probe
 
-func NewDemuxer(r io.ReadSeeker, cfg DemuxerConfig) (*internal.Demuxer, error) {
-	return internal.NewDemuxer(r, cfg.ApplyDefaults())
-}
+	NewDemuxer = internal.NewDemuxer
+	NewMuxer   = internal.NewMuxer
+)
 
 func NewDemuxerEngine(r io.ReadSeeker, cfg DemuxerConfig) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r, cfg.ApplyDefaults())
+	resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](cfg)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewDemuxer(r, resolved)
 }
 
-func NewMuxer(w io.Writer, config MuxerConfig) *internal.Muxer {
-	return internal.NewMuxer(w, config.ApplyDefaults())
-}
-
-func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
-	return internal.NewMuxer(w, config.ApplyDefaults())
+func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error) {
+	resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewMuxer(w, resolved), nil
 }
 
 func init() {
@@ -45,8 +47,11 @@ func init() {
 				return nil, fmt.Errorf("format-flac demuxer requires io.ReadSeeker")
 			}
 
-			cfg := engine.ResolveConfig[DemuxerConfig](config)
-			demuxer, err := internal.NewDemuxer(rs, cfg)
+			resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](config)
+			if err != nil {
+				return nil, err
+			}
+			demuxer, err := internal.NewDemuxer(rs, resolved)
 			if err != nil {
 				return nil, err
 			}
@@ -56,13 +61,16 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(MuxerConfig{}, registry.MuxerManifest{
+	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "flac-muxer",
 			Description: "FLAC muxer",
 		},
 		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
-			resolved := engine.ResolveConfig[MuxerConfig](config)
+			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
+			if err != nil {
+				return nil, err
+			}
 			return engine.WrapMuxer(internal.NewMuxer(w, resolved)), nil
 		},
 	}); err != nil {
