@@ -8,209 +8,424 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
+type stringSlice []string
+
+func (i *stringSlice) String() string { return strings.Join(*i, ",") }
+func (i *stringSlice) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
+type Target struct {
+	Type         string
+	Source       string
+	ResolvedType string
+	Default      string
+	Preset       string
+	ExtraImports map[string]string
+
+	StructType  *ast.StructType
+	PackageName string
+	ImportPath  string
+}
+
 func main() {
-	typeName := flag.String("type", "", "struct type to generate options for")
-	sourcePath := flag.String("source", "", "source file containing the struct type")
-	extraImport := flag.String("import", "", "additional import in name=path form")
-	configName := flag.String("config-name", "", "generated config type name")
-	optionName := flag.String("option-name", "", "generated option type name")
-	resolvedType := flag.String("resolved-type", "", "resolved config type")
-	defaultExpr := flag.String("default", "", "resolved config default expression")
-	presetFunc := flag.String("preset", "", "preset factory function")
-	presetNormalizer := flag.String("preset-normalizer", "", "function to normalize the preset level")
-	output := flag.String("output", "config_options.go", "generated file name")
+	var targetsFlag stringSlice
+	flag.Var(&targetsFlag, "target", "target configurations (e.g., EncoderConfig,default=...)")
+	outputFlag := flag.String("output", "", "generated file name (default: {GOFILE}_options.go)")
 
 	flag.Parse()
 
-	if *typeName == "" {
-		fatal("-type is required")
+	if len(targetsFlag) == 0 {
+		fatal("at least one -target is required")
 	}
 
-	if *optionName == "" {
-		*optionName = fmt.Sprintf("%sOption", *typeName)
+	output := *outputFlag
+	if output == "" {
+		gofile := os.Getenv("GOFILE")
+		if gofile != "" {
+			output = strings.TrimSuffix(gofile, ".go") + "_options.go"
+		} else {
+			output = "config_options.go"
+		}
 	}
-	if *resolvedType != "" && *defaultExpr == "" {
-		*defaultExpr = fmt.Sprintf("%s{}", *resolvedType)
+
+	targets := make([]*Target, 0, len(targetsFlag))
+	for _, s := range targetsFlag {
+		targets = append(targets, parseTarget(s))
 	}
 
 	fileSet := token.NewFileSet()
+
+	// Parse current package to get the output package name
 	packages, err := parser.ParseDir(fileSet, ".", func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != *output
+		return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != output
 	}, parser.ParseComments)
 	if err != nil {
 		fatal("parse package: %v", err)
 	}
 	if len(packages) != 1 {
-		fatal("expected one package, found %d", len(packages))
+		fatal("expected one package in current directory, found %d", len(packages))
 	}
-	if *sourcePath != "" {
-		source, err := parser.ParseFile(fileSet, *sourcePath, nil, parser.ParseComments)
-		if err != nil {
-			fatal("parse source: %v", err)
+	var outputPackageName string
+	for name := range packages {
+		outputPackageName = name
+	}
+
+	// Walk all go files
+	var allFiles []*ast.File
+	filePaths := make(map[*ast.File]string)
+	filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
 		}
-		for _, declaration := range source.Decls {
-			gen, ok := declaration.(*ast.GenDecl)
+		f, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+		if err == nil {
+			allFiles = append(allFiles, f)
+			filePaths[f] = path
+		}
+		return nil
+	})
+
+	for _, t := range targets {
+		findTargetInfo(t, allFiles, filePaths, outputPackageName)
+	}
+
+	generate(output, outputPackageName, targets)
+}
+
+func parseTarget(s string) *Target {
+	parts := strings.Split(s, ",")
+	t := &Target{Type: parts[0], ExtraImports: make(map[string]string)}
+	for _, part := range parts[1:] {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 {
+			switch kv[0] {
+			case "default":
+				t.Default = kv[1]
+			case "preset":
+				t.Preset = kv[1]
+			case "source":
+				t.Source = kv[1]
+			case "resolved-type":
+				t.ResolvedType = kv[1]
+			case "import":
+				ikv := strings.SplitN(kv[1], "=", 2)
+				if len(ikv) == 2 {
+					t.ExtraImports[ikv[0]] = ikv[1]
+				}
+			}
+		}
+	}
+	return t
+}
+
+func findTargetInfo(t *Target, allFiles []*ast.File, filePaths map[*ast.File]string, outputPackageName string) {
+	for _, f := range allFiles {
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.TYPE {
 				continue
 			}
 			for _, spec := range gen.Specs {
 				typeSpec, ok := spec.(*ast.TypeSpec)
-				if !ok || typeSpec.Name.Name != *typeName {
+				if !ok || typeSpec.Name.Name != t.Type {
 					continue
 				}
 				structType, ok := typeSpec.Type.(*ast.StructType)
 				if !ok {
-					fatal("%s is not a struct", *typeName)
+					continue // Might be a type alias in a generated file, keep searching
 				}
-				for _, pkg := range packages {
-					generate(*output, pkg.Name, *typeName, *optionName, *configName, *resolvedType, *defaultExpr, *presetFunc, *presetNormalizer, *extraImport, true, structType, source)
-					return
-				}
-			}
-		}
-		fatal("type %s not found in %s", *typeName, *sourcePath)
-	}
 
-	for _, pkg := range packages {
-		for _, file := range pkg.Files {
-			for _, declaration := range file.Decls {
-				gen, ok := declaration.(*ast.GenDecl)
-				if !ok || gen.Tok != token.TYPE {
-					continue
-				}
-				for _, spec := range gen.Specs {
-					typeSpec, ok := spec.(*ast.TypeSpec)
-					if !ok || typeSpec.Name.Name != *typeName {
-						continue
+				t.StructType = structType
+				t.Source = filePaths[f]
+				t.PackageName = f.Name.Name
+				t.ImportPath = getImportPath(filepath.Dir(t.Source))
+
+				if t.PackageName != outputPackageName {
+					if t.ResolvedType == "" {
+						t.ResolvedType = t.PackageName + "." + t.Type
 					}
-					structType, ok := typeSpec.Type.(*ast.StructType)
-					if !ok {
-						fatal("%s is not a struct", *typeName)
+					t.ExtraImports[t.PackageName] = t.ImportPath
+				} else {
+					if t.ResolvedType == "" {
+						t.ResolvedType = t.Type
 					}
-					generate(*output, pkg.Name, *typeName, *optionName, *configName, *resolvedType, *defaultExpr, *presetFunc, *presetNormalizer, *extraImport, false, structType, file)
-					return
 				}
+
+				autoDetectDefaultAndPreset(t, allFiles, t.PackageName)
+				return
 			}
 		}
 	}
-	fatal("type %s not found", *typeName)
+	fatal("type %s not found in auto-discovery", t.Type)
 }
 
-func generate(output, packageName, typeName, optionName, configName, resolvedType, defaultExpr, presetFunc, presetNormalizer, extraImport string, emitConfig bool, structType *ast.StructType, source *ast.File) {
-	if configName == "" {
-		configName = typeName
+func getImportPath(dir string) string {
+	cmd := exec.Command("go", "list", "-f", "{{.ImportPath}}", "./"+dir)
+	out, err := cmd.Output()
+	if err != nil {
+		fatal("go list failed for %s: %v", dir, err)
 	}
-	imports := importNames(source)
-	if extraImport != "" {
-		name, path, ok := strings.Cut(extraImport, "=")
-		if !ok || name == "" || path == "" {
-			fatal("-import must be name=path")
+	return strings.TrimSpace(string(out))
+}
+
+func autoDetectDefaultAndPreset(t *Target, allFiles []*ast.File, pkgName string) {
+	for _, f := range allFiles {
+		if f.Name.Name != pkgName {
+			continue
 		}
-		imports[name] = path
-	}
-	usedImports := map[string]string{}
-	var body bytes.Buffer
-
-	isAlias := resolvedType != "" && configName != resolvedType
-
-	if isAlias {
-		fmt.Fprintf(&body, "type %s %s\n\n", configName, resolvedType)
-	} else if resolvedType == "" && (emitConfig || configName != typeName) {
-		fmt.Fprintf(&body, "type %s struct {\n", configName)
-		for _, field := range structType.Fields.List {
-			if len(field.Names) != 1 {
-				fatal("%s has an unnamed or multi-name field", typeName)
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.GenDecl:
+				if d.Tok == token.VAR || d.Tok == token.CONST {
+					for _, spec := range d.Specs {
+						vs, ok := spec.(*ast.ValueSpec)
+						if ok {
+							for _, name := range vs.Names {
+								if name.Name == "Default"+t.Type && t.Default == "" {
+									if pkgName == f.Name.Name {
+										t.Default = pkgName + "." + name.Name
+									} else {
+										t.Default = name.Name
+									}
+								}
+							}
+						}
+					}
+				}
+			case *ast.FuncDecl:
+				if d.Name.Name == "Default"+t.Type && t.Default == "" {
+					t.Default = pkgName + "." + d.Name.Name + "()"
+				}
+				if d.Name.Name == "GetPreset" && t.Preset == "" {
+					if d.Type.Results != nil && len(d.Type.Results.List) > 0 {
+						retType := d.Type.Results.List[0].Type
+						if ident, ok := retType.(*ast.Ident); ok && ident.Name == t.Type {
+							t.Preset = pkgName + "." + d.Name.Name
+						}
+					}
+				}
 			}
+		}
+	}
+}
 
+type FieldInfo struct {
+	Name    string
+	TypeStr string
+	Targets []*Target
+}
+
+func generate(output, packageName string, targets []*Target) {
+	absOutput, _ := filepath.Abs(output)
+	if absOutput == "" {
+		absOutput = output
+	}
+	log.Printf("generating %s...", absOutput)
+	defer log.Printf("generated %s", absOutput)
+	var body bytes.Buffer
+	usedImports := make(map[string]string)
+
+	// Collect imports from all targets
+	for _, t := range targets {
+		for name, path := range t.ExtraImports {
+			usedImports[name] = path
+		}
+		// Also parse their source files to get imports that might be used by field types
+		fileSet := token.NewFileSet()
+		f, err := parser.ParseFile(fileSet, t.Source, nil, parser.ParseComments)
+		if err == nil {
+			for _, imp := range f.Imports {
+				path := strings.Trim(imp.Path.Value, "\"")
+				name := filepath.Base(path)
+				if imp.Name != nil {
+					name = imp.Name.Name
+				}
+				usedImports[name] = path
+			}
+		}
+	}
+
+	fieldsMap := make(map[string]*FieldInfo)
+	var fieldOrder []string
+
+	for _, t := range targets {
+		for _, field := range t.StructType.Fields.List {
+			if len(field.Names) != 1 {
+				fatal("%s has an unnamed or multi-name field", t.Type)
+			}
 			fieldName := field.Names[0].Name
 			if !ast.IsExported(fieldName) {
 				continue
 			}
 
-			collectImports(field.Type, imports, usedImports)
-			var value bytes.Buffer
-			if err := format.Node(&value, token.NewFileSet(), field.Type); err != nil {
-				fatal("format %s: %v", fieldName, err)
+			var typeBuf bytes.Buffer
+			format.Node(&typeBuf, token.NewFileSet(), field.Type)
+			typeStr := typeBuf.String()
+
+			if info, ok := fieldsMap[fieldName]; ok {
+				if info.TypeStr != typeStr {
+					fatal("field %s has mismatched types across targets: %s vs %s", fieldName, info.TypeStr, typeStr)
+				}
+				info.Targets = append(info.Targets, t)
+			} else {
+				fieldsMap[fieldName] = &FieldInfo{
+					Name:    fieldName,
+					TypeStr: typeStr,
+					Targets: []*Target{t},
+				}
+				fieldOrder = append(fieldOrder, fieldName)
 			}
-			fmt.Fprintf(&body, "%s %s\n", fieldName, value.String())
 		}
-		body.WriteString("}\n\n")
 	}
 
-	initExpr := configName + "{}"
-	if defaultExpr != "" {
-		initExpr = defaultExpr
-	}
-
-	constructorName := "New" + configName
-
-	fmt.Fprintf(&body, "type %s func(*%s)\n\n", optionName, configName)
-	fmt.Fprintf(&body, "func %s(options ...%s) %s {", constructorName, optionName, configName)
-	fmt.Fprintf(&body, "config := %s(%s)\n", configName, initExpr)
-	fmt.Fprintf(&body, "for _, option := range options { option(&config) }\n")
-	body.WriteString("return config\n")
-	fmt.Fprintf(&body, "}\n")
-
-	for _, field := range structType.Fields.List {
-		if len(field.Names) != 1 {
-			fatal("%s has an unnamed or multi-name field", typeName)
+	// Generate target boilerplate
+	for _, t := range targets {
+		configName := t.Type
+		if t.ResolvedType != "" && configName != t.ResolvedType && !strings.Contains(t.ResolvedType, ".") {
+			// It's in the same package but an alias
+			fmt.Fprintf(&body, "type %s %s\n\n", configName, t.ResolvedType)
+		} else if t.PackageName == packageName && t.ResolvedType == t.Type {
+			// Struct definition in same package
+			fmt.Fprintf(&body, "type %s struct {\n", configName)
+			for _, field := range t.StructType.Fields.List {
+				if len(field.Names) != 1 || !ast.IsExported(field.Names[0].Name) {
+					continue
+				}
+				var value bytes.Buffer
+				format.Node(&value, token.NewFileSet(), field.Type)
+				fmt.Fprintf(&body, "%s %s\n", field.Names[0].Name, value.String())
+			}
+			body.WriteString("}\n\n")
+		} else if t.ResolvedType != "" && strings.Contains(t.ResolvedType, ".") {
+			fmt.Fprintf(&body, "type %s %s\n\n", configName, t.ResolvedType)
 		}
 
-		fieldName := field.Names[0].Name
-		if !ast.IsExported(fieldName) {
-			continue
+		optName := configName + "Option"
+		fmt.Fprintf(&body, "type %s interface {\n\tapply%s(*%s)\n}\n\n", optName, configName, configName)
+
+		fmt.Fprintf(&body, "type %sFunc func(*%s)\n", strings.ToLower(optName[:1])+optName[1:], configName)
+		fmt.Fprintf(&body, "func (f %sFunc) apply%s(c *%s) {\n\tf(c)\n}\n\n", strings.ToLower(optName[:1])+optName[1:], configName, configName)
+
+		initExpr := configName + "{}"
+		if t.Default != "" {
+			initExpr = t.Default
 		}
 
-		collectImports(field.Type, imports, usedImports)
-		var value bytes.Buffer
-		if err := format.Node(&value, token.NewFileSet(), field.Type); err != nil {
-			fatal("format %s: %v", fieldName, err)
+		constructorName := "New" + configName
+		fmt.Fprintf(&body, "func %s(options ...%s) %s {\n", constructorName, optName, configName)
+		fmt.Fprintf(&body, "\tconfig := %s(%s)\n", configName, initExpr)
+		fmt.Fprintf(&body, "\tfor _, option := range options {\n\t\toption.apply%s(&config)\n\t}\n", configName)
+		fmt.Fprintf(&body, "\treturn config\n}\n\n")
+
+		fmt.Fprintf(&body, "func (c %s) ResolveDefault() %s {\n\treturn %s(%s)\n}\n\n", configName, t.ResolvedType, t.ResolvedType, initExpr)
+		fmt.Fprintf(&body, "func (c %s) Resolve() %s {\n\treturn %s(c)\n}\n\n", configName, t.ResolvedType, t.ResolvedType)
+	}
+
+	// Generate field options
+	for _, fieldName := range fieldOrder {
+		info := fieldsMap[fieldName]
+
+		if len(info.Targets) == 1 {
+			t := info.Targets[0]
+			optName := t.Type + "Option"
+			funcOptName := strings.ToLower(optName[:1]) + optName[1:] + "Func"
+
+			fmt.Fprintf(&body, "func With%s(v %s) %s {\n", fieldName, info.TypeStr, optName)
+			fmt.Fprintf(&body, "\treturn %s(func(c *%s) {\n", funcOptName, t.Type)
+			fmt.Fprintf(&body, "\t\tc.%s = v\n", fieldName)
+			fmt.Fprintf(&body, "\t})\n}\n\n")
+		} else {
+			sharedOptIface := fieldName + "Option"
+			fmt.Fprintf(&body, "type %s interface {\n", sharedOptIface)
+			for _, t := range info.Targets {
+				fmt.Fprintf(&body, "\t%sOption\n", t.Type)
+			}
+			fmt.Fprintf(&body, "}\n\n")
+
+			structName := strings.ToLower(fieldName[:1]) + fieldName[1:] + "Opt"
+			fmt.Fprintf(&body, "type %s struct { v %s }\n", structName, info.TypeStr)
+
+			for _, t := range info.Targets {
+				fmt.Fprintf(&body, "func (o %s) apply%s(c *%s) {\n", structName, t.Type, t.Type)
+				fmt.Fprintf(&body, "\tc.%s = o.v\n", fieldName)
+				fmt.Fprintf(&body, "}\n")
+			}
+			fmt.Fprintf(&body, "\n")
+
+			fmt.Fprintf(&body, "func With%s(v %s) %s {\n", fieldName, info.TypeStr, sharedOptIface)
+			fmt.Fprintf(&body, "\treturn %s{v}\n", structName)
+			fmt.Fprintf(&body, "}\n\n")
 		}
-		fmt.Fprintf(&body, "\nfunc With%s(v %s) %s {\n", fieldName, value.String(), optionName)
-		fmt.Fprintf(&body, "return func(c *%s) {\n", configName)
-		fmt.Fprintf(&body, "c.%s = v\n", fieldName)
-		body.WriteString("}\n}\n")
 	}
-	if (resolvedType == "") && (defaultExpr != "") {
-		fatal("-resolved-type must be specified when using -default")
-	}
-	collectTextImports(resolvedType+" "+defaultExpr+" "+presetFunc+" "+presetNormalizer, imports, usedImports)
 
-	if presetFunc != "" {
-		level := "level"
-		if presetNormalizer != "" {
-			level = presetNormalizer + "(level)"
+	// Handle Presets
+	var presetTargets []*Target
+	for _, t := range targets {
+		if t.Preset != "" {
+			presetTargets = append(presetTargets, t)
 		}
-
-		fmt.Fprintf(&body, "\nfunc WithPreset(level int) %s {\n", optionName)
-		fmt.Fprintf(&body, "return func(c *%s) {\n", configName)
-		fmt.Fprintf(&body, "*c = %s(%s(%s))\n", configName, presetFunc, level)
-		fmt.Fprintf(&body, "}\n")
-		body.WriteString("}\n")
 	}
 
-	fmt.Fprintf(&body, "\n func (c %s) ResolveDefault() %s {\nreturn %s\n}\n", configName, resolvedType, initExpr)
-	fmt.Fprintf(&body, "\nfunc (c %s) Resolve() %s {\nreturn %s(c)\n}\n", configName, resolvedType, resolvedType)
+	if len(presetTargets) > 0 {
+		if len(presetTargets) == 1 {
+			t := presetTargets[0]
+			optName := t.Type + "Option"
+			funcOptName := strings.ToLower(optName[:1]) + optName[1:] + "Func"
+
+			fmt.Fprintf(&body, "func WithPreset(level int) %s {\n", optName)
+			fmt.Fprintf(&body, "\treturn %s(func(c *%s) {\n", funcOptName, t.Type)
+			fmt.Fprintf(&body, "\t\t*c = %s(%s(level))\n", t.Type, t.Preset)
+			fmt.Fprintf(&body, "\t})\n}\n\n")
+		} else {
+			fmt.Fprintf(&body, "type PresetOption interface {\n")
+			for _, t := range presetTargets {
+				fmt.Fprintf(&body, "\t%sOption\n", t.Type)
+			}
+			fmt.Fprintf(&body, "}\n\n")
+
+			fmt.Fprintf(&body, "type presetOpt int\n")
+			for _, t := range presetTargets {
+				fmt.Fprintf(&body, "func (o presetOpt) apply%s(c *%s) {\n", t.Type, t.Type)
+				fmt.Fprintf(&body, "\t*c = %s(%s(int(o)))\n", t.Type, t.Preset)
+				fmt.Fprintf(&body, "}\n")
+			}
+			fmt.Fprintf(&body, "\nfunc WithPreset(level int) PresetOption {\n")
+			fmt.Fprintf(&body, "\treturn presetOpt(level)\n")
+			fmt.Fprintf(&body, "}\n\n")
+		}
+	}
 
 	var sourceCode bytes.Buffer
 	sourceCode.WriteString("// Code generated by config-generator. DO NOT EDIT.\n\n")
 	fmt.Fprintf(&sourceCode, "package %s\n", packageName)
-	if len(usedImports) > 0 {
-		names := make([]string, 0, len(usedImports))
-		for name := range usedImports {
+
+	// filter imports used in the generated file
+	finalImports := make(map[string]string)
+	for name, path := range usedImports {
+		if strings.Contains(body.String(), name+".") {
+			finalImports[name] = path
+		}
+	}
+
+	if len(finalImports) > 0 {
+		names := make([]string, 0, len(finalImports))
+		for name := range finalImports {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		sourceCode.WriteString("\nimport (\n")
 		for _, name := range names {
-			fmt.Fprintf(&sourceCode, "%s %s\n", name, strconv.Quote(usedImports[name]))
+			fmt.Fprintf(&sourceCode, "\t%s \"%s\"\n", name, finalImports[name])
 		}
 		sourceCode.WriteString(")\n")
 	}
@@ -219,49 +434,12 @@ func generate(output, packageName, typeName, optionName, configName, resolvedTyp
 
 	formatted, err := format.Source(sourceCode.Bytes())
 	if err != nil {
+		fmt.Println(sourceCode.String())
 		fatal("format generated source: %v", err)
 	}
-	if err := os.WriteFile(output, formatted, 0o644); err != nil {
+	if err := os.WriteFile(output, formatted, 0644); err != nil {
 		fatal("write %s: %v", output, err)
 	}
-}
-
-func collectTextImports(text string, imports map[string]string, used map[string]string) {
-	for name, path := range imports {
-		if strings.Contains(text, name+".") {
-			used[name] = path
-		}
-	}
-}
-
-func importNames(file *ast.File) map[string]string {
-	imports := map[string]string{}
-	for _, spec := range file.Imports {
-		path, _ := strconv.Unquote(spec.Path.Value)
-		name := filepath.Base(path)
-		if spec.Name != nil {
-			name = spec.Name.Name
-		}
-		imports[name] = path
-	}
-	return imports
-}
-
-func collectImports(expr ast.Expr, imports map[string]string, used map[string]string) {
-	ast.Inspect(expr, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		identifier, ok := selector.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if path, ok := imports[identifier.Name]; ok {
-			used[identifier.Name] = path
-		}
-		return true
-	})
 }
 
 func fatal(format string, args ...any) {
