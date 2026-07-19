@@ -78,7 +78,7 @@ func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int,
 	return nil
 }
 
-func bestSubframe(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64) subframeCandidate {
+func bestSubframe(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64, lpc *lpcWorkspace) subframeCandidate {
 	wasted := 0
 	if options.EnableWastedBits {
 		wasted = commonTrailingZeros(samples, bitsPerSample)
@@ -91,7 +91,7 @@ func bestSubframe(samples []int64, bitsPerSample int, options config.EncoderConf
 			reduced[i] = sample >> wasted
 		}
 	}
-	candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options, windows)
+	candidate := bestSubframeWithoutWasted(reduced, bitsPerSample-wasted, options, windows, lpc)
 	if candidate.valid {
 		candidate.wastedBits = wasted
 		candidate.costBits += uint64(wasted)
@@ -99,7 +99,7 @@ func bestSubframe(samples []int64, bitsPerSample int, options config.EncoderConf
 	return candidate
 }
 
-func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64) subframeCandidate {
+func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64, lpc *lpcWorkspace) subframeCandidate {
 	best := subframeCandidate{kind: subframeKindVerbatim, costBits: uint64(8 + len(samples)*bitsPerSample), valid: true}
 	if isConstant(samples) {
 		best = subframeCandidate{kind: subframeKindConstant, costBits: uint64(8 + bitsPerSample), valid: true}
@@ -157,7 +157,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options confi
 		windows = [][]float64{nil}
 	}
 	for _, window := range windows {
-		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.LPCOrderSearch, window, bitsPerSample) {
+		for order, coefficients := range lpcCoefficientSets(samples, maxLPC, options.LPCPrecision, options.LPCOrderSearch, window, bitsPerSample, lpc) {
 			if coefficients == nil {
 				continue
 			}
@@ -289,7 +289,16 @@ func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
 	return bestOrder, fixedResidual(samples, bestOrder)
 }
 
-func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.OrderSearchMode, window []float64, bitsPerSample int) [][]float64 {
+type lpcWorkspace struct {
+	values          []float64
+	auto            []float64
+	sets            [][]float64
+	setCoefficients []float64
+	estimates       []float64
+	coeff           []float64
+}
+
+func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.OrderSearchMode, window []float64, bitsPerSample int, workspace *lpcWorkspace) [][]float64 {
 	exhaustive := mode == config.OrderSearchExhaustive
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
@@ -304,16 +313,24 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.Or
 		return nil
 	}
 	// Levinson-Durbin recursion; see standard linear-prediction texts.
-	values := make([]float64, len(samples))
+	workspace.values = resize(workspace.values, len(samples))
+	values := workspace.values
 	windowSamples(samples, window, values, bitsPerSample)
-	auto := make([]float64, maxOrder+1)
+	workspace.auto = resize(workspace.auto, maxOrder+1)
+	auto := workspace.auto
 	autocorrelate(values, auto)
 	if auto[0] == 0 {
 		return nil
 	}
-	sets := make([][]float64, maxOrder+1)
-	estimates := make([]float64, maxOrder+1)
-	coeff := make([]float64, maxOrder)
+	workspace.sets = resize(workspace.sets, maxOrder+1)
+	clear(workspace.sets)
+	sets := workspace.sets
+	workspace.setCoefficients = resize(workspace.setCoefficients, maxOrder*(maxOrder+1)/2)
+	workspace.estimates = resize(workspace.estimates, maxOrder+1)
+	clear(workspace.estimates)
+	estimates := workspace.estimates
+	workspace.coeff = resize(workspace.coeff, maxOrder)
+	coeff := workspace.coeff
 	errorValue := auto[0]
 	for i := 0; i < maxOrder; i++ {
 		reflection := auto[i+1]
@@ -338,7 +355,9 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.Or
 		coeff[i] = reflection
 		errorValue *= 1 - reflection*reflection
 		order := i + 1
-		sets[order] = append([]float64(nil), coeff[:order]...)
+		offset := order * (order - 1) / 2
+		sets[order] = workspace.setCoefficients[offset : offset+order]
+		copy(sets[order], coeff[:order])
 		if exhaustive {
 			continue
 		}

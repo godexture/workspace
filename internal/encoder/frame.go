@@ -151,7 +151,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 	if options.StereoMode == config.StereoIndependent || len(samples) != 2 {
 		candidates := make([]subframeCandidate, len(samples))
 		for ch := range samples {
-			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options, frameWindows)
+			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options, frameWindows, &windows.lpc)
 			if !candidates[ch].valid {
 				releaseSubframeCandidates(candidates)
 				return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
@@ -169,8 +169,8 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 		assignment := estimateStereoAssignment(left, right, mid, side)
 		channels := assignmentChannels(assignment, left, right, mid, side)
 		candidates := []subframeCandidate{
-			bestSubframe(channels[0], bitsPerSample+sideChannelOffset(assignment, 0), options, frameWindows),
-			bestSubframe(channels[1], bitsPerSample+sideChannelOffset(assignment, 1), options, frameWindows),
+			bestSubframe(channels[0], bitsPerSample+sideChannelOffset(assignment, 0), options, frameWindows, &windows.lpc),
+			bestSubframe(channels[1], bitsPerSample+sideChannelOffset(assignment, 1), options, frameWindows, &windows.lpc),
 		}
 		if candidates[0].valid && candidates[1].valid {
 			return assignment, channels, candidates, scratch, nil
@@ -180,10 +180,10 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 		return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
 	}
 
-	leftCandidate := bestSubframe(left, bitsPerSample, options, frameWindows)
-	rightCandidate := bestSubframe(right, bitsPerSample, options, frameWindows)
-	midCandidate := bestSubframe(mid, bitsPerSample, options, frameWindows)
-	sideCandidate := bestSubframe(side, bitsPerSample+1, options, frameWindows)
+	leftCandidate := bestSubframe(left, bitsPerSample, options, frameWindows, &windows.lpc)
+	rightCandidate := bestSubframe(right, bitsPerSample, options, frameWindows, &windows.lpc)
+	midCandidate := bestSubframe(mid, bitsPerSample, options, frameWindows, &windows.lpc)
+	sideCandidate := bestSubframe(side, bitsPerSample+1, options, frameWindows, &windows.lpc)
 
 	assignments := []struct {
 		assignment uint8
