@@ -91,3 +91,18 @@ Branchless sign decode 後も residual 復号は profile の 52.27% を占め、
 | --- | ---: | ---: | ---: |
 | median | 103,167.5 ns/op | 85,320.5 ns/op | 17.15% |
 | mean | 104,517 ns/op | 85,981.1 ns/op | 17.62% |
+
+## Inline Rice range validation
+
+`decodeRiceSigned` と `Rice64` はともにインライン不可で、サンプルごとに二段の
+呼び出しになっていた。符号なしRice値の有効範囲が `0..0xfffffffe` と等価で
+あることを利用し、range check とZigZag展開を残差ループへ集約して中間関数と
+sentinelを削除した。
+
+`BenchmarkDecodeFrameDefaultConfig` の変更前後バイナリを 50 ペア、各 200 ms、
+順序を反転して実行した。実装コードは減少し、36/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 84,772.5 ns/op | 84,035 ns/op | 1.04% |
+| mean | 85,386.5 ns/op | 84,536.7 ns/op | 0.96% |
