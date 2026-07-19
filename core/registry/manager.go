@@ -3,28 +3,34 @@ package registry
 import (
 	"fmt"
 	"iter"
-	"reflect"
+	"slices"
 
+	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/internal/xsync"
 )
 
 type Manifest interface {
-	ID() reflect.Type
+	ID() PluginKey
 }
 
 type Registry[V Manifest] struct {
-	items *xsync.Map[reflect.Type, V]
+	role  manifest.NodeType
+	items *xsync.Map[PluginKey, V]
 }
 
 func NewRegistry[V Manifest]() *Registry[V] {
 	return &Registry[V]{
-		items: xsync.NewMap[reflect.Type, V](),
+		role:  manifestRole[V](),
+		items: xsync.NewMap[PluginKey, V](),
 	}
 }
 
 func (r *Registry[V]) Register(config Configuration, manifest V) error {
-	var err error
-	manifest, err = assignManifestID(manifest, reflect.TypeOf(config))
+	key, err := pluginKey(r.role, config)
+	if err != nil {
+		return fmt.Errorf("derive plugin key: %w", err)
+	}
+	manifest, err = assignManifestID(manifest, key)
 	if err != nil {
 		return err
 	}
@@ -39,39 +45,41 @@ func (r *Registry[V]) Register(config Configuration, manifest V) error {
 		}
 	}
 
-	r.items.Store(manifest.ID(), manifest)
+	if _, loaded := r.items.LoadOrStore(key, manifest); loaded {
+		return fmt.Errorf("plugin already registered: %s", key)
+	}
 
 	return nil
 }
 
-func assignManifestID[V Manifest](manifest V, id reflect.Type) (V, error) {
+func assignManifestID[V Manifest](manifest V, key PluginKey) (V, error) {
 	switch m := any(manifest).(type) {
 	case BaseManifest:
-		m.id = id
+		m.key = key
 		return any(m).(V), nil
 
 	case TransformManifest:
-		m.BaseManifest.id = id
+		m.BaseManifest.key = key
 		return any(m).(V), nil
 
 	case MuxerManifest:
-		m.BaseManifest.id = id
+		m.BaseManifest.key = key
 		return any(m).(V), nil
 
 	case DemuxerManifest:
-		m.BaseManifest.id = id
+		m.BaseManifest.key = key
 		return any(m).(V), nil
 
 	case EncoderManifest:
-		m.TransformManifest.BaseManifest.id = id
+		m.TransformManifest.BaseManifest.key = key
 		return any(m).(V), nil
 
 	case DecoderManifest:
-		m.TransformManifest.BaseManifest.id = id
+		m.TransformManifest.BaseManifest.key = key
 		return any(m).(V), nil
 
 	case FilterManifest:
-		m.TransformManifest.BaseManifest.id = id
+		m.TransformManifest.BaseManifest.key = key
 		return any(m).(V), nil
 
 	default:
@@ -79,14 +87,58 @@ func assignManifestID[V Manifest](manifest V, id reflect.Type) (V, error) {
 	}
 }
 
-func (r *Registry[V]) Get(id reflect.Type) (V, error) {
-	item, exists := r.items.Load(id)
+func manifestRole[V Manifest]() manifest.NodeType {
+	var value V
+	switch any(value).(type) {
+	case MuxerManifest:
+		return manifest.RoleMuxer
+	case DemuxerManifest:
+		return manifest.RoleDemuxer
+	case EncoderManifest:
+		return manifest.RoleEncoder
+	case DecoderManifest:
+		return manifest.RoleDecoder
+	case FilterManifest:
+		return manifest.RoleFilter
+	default:
+		panic(fmt.Sprintf("unsupported registry manifest type: %T", value))
+	}
+}
+
+func (r *Registry[V]) Key(config Configuration) (PluginKey, error) {
+	return pluginKey(r.role, config)
+}
+
+func (r *Registry[V]) Get(key PluginKey) (V, error) {
+	item, exists := r.items.Load(key)
 	if !exists {
-		return item, fmt.Errorf("plugin not found: %s", id)
+		return item, fmt.Errorf("plugin not found: %s", key)
 	}
 	return item, nil
 }
 
 func (r *Registry[V]) Enumerate() iter.Seq[V] {
-	return xsync.EnumerateMapValues[V](r.items)
+	snapshot := r.items.Clone()
+	keys := make([]PluginKey, 0, len(snapshot))
+	for key := range snapshot {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b PluginKey) int {
+		switch {
+		case a.String() < b.String():
+			return -1
+		case a.String() > b.String():
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	return func(yield func(V) bool) {
+		for _, key := range keys {
+			if !yield(snapshot[key]) {
+				return
+			}
+		}
+	}
 }

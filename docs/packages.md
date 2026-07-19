@@ -32,7 +32,7 @@ import "github.com/godexture/core/node"
 
 | 型 | メソッド | 説明 |
 |---|---------|------|
-| `Lifecycle` | `Start(ctx context.Context) error` | ノードのライフサイクル |
+| `Lifecycle` | `Start(ctx context.Context) error`, `Close() error` | 実行と idempotent な resource 解放 |
 | `Node` | `Lifecycle` | 全ノードの基底インターフェース |
 | `InputNode[T]` | `InputPorts() map[string]*InPort[T]` | 入力ポートを持つノード |
 | `OutputNode[T]` | `OutputPorts() map[string]*OutPort[T]` | 出力ポートを持つノード |
@@ -68,7 +68,7 @@ import "github.com/godexture/core/pipeline"
 
 パイプラインの組み立てと実行を担当します。
 
-#### 関数
+#### 接続
 
 ```go
 // 2つのノードのポートを Edge で接続する
@@ -78,42 +78,34 @@ func Link[T any, A node.OutputNode[T], B node.InputNode[T]](
     nodeB B, portB string,
 ) error
 
-// パイプラインランナーを生成する
-func NewRunner() *Runner
-func NewPipeline(ctx context.Context, resolver ResolverBundle) *Runner // 将来拡張用
+func LinkWithBufferSize[T any, A node.OutputNode[T], B node.InputNode[T]](
+    nodeA A, portA string,
+    nodeB B, portB string,
+    bufferSize int,
+) error
+
+// 接続済み Node の ownership を持つ Pipeline を作る
+func New(nodes ...node.Node) (*Pipeline, error)
+
+func NewBuilder() *Builder
 ```
 
 #### 型
 
 | 型 | 説明 |
 |---|------|
-| `Runner` | ノードの並行実行を管理する |
-| `Runner.Run(ctx, []node.Node) error` | 全ノードを errgroup で並行実行。全終了 or 最初のエラーで戻る |
+| `Pipeline` | Node の実行・キャンセル・逆順 Close を所有する single-use lifecycle |
+| `Pipeline.Run(ctx) error` | 全 Node を並行実行し、全終了後に必ず Close |
+| `Pipeline.Close() error` | Run 前は解放、Run 中は cancel と終了待ち、Run 後は idempotent |
+| `Geometry` | Build 前の Node と Edge 定義を所有する |
+| `Geometry.Close() error` | Build されず破棄された Node を逆順で Close |
+| `Builder.Build(*Geometry) (*Pipeline, error)` | 検証・接続後に ownership を Pipeline へ移す |
 | `ChanEdge[T]` | チャネルベースの Edge 実装 (バッファサイズ: 100) |
-| `ResolverBundle` | ContainerResolver / CodecResolver / PortResolver をまとめた構造体 |
-
-#### インターフェース (Resolver)
-
-```go
-type ContainerResolver interface {
-    ResolveDemuxer(r io.ReadSeeker) (registry.DemuxerFactory, error)
-    ResolveMuxer(uri string) (registry.MuxerFactory, error)
-}
-
-type CodecResolver interface {
-    ResolveDecoder(info media.StreamInfo) (registry.DecoderFactory, error)
-    ResolveEncoder(profile media.Profile) (registry.EncoderFactory, error)
-}
-
-type PortResolver interface {
-    ResolvePort(string) (string, error)
-}
-```
 
 #### エラー
 
 ```go
-var ErrInvalidPipeline = fmt.Errorf("invalid pipeline")
+var ErrInvalidPipeline = errors.New("invalid pipeline")
 ```
 
 ---
@@ -134,15 +126,17 @@ type Registry[V Manifest] struct { ... }
 
 func NewRegistry[V Manifest]() *Registry[V]
 
-// マニフェストを登録する。config の reflect.Type が ID として使われる
+// role と named config 型から PluginKey を生成して登録する
 func (r *Registry[V]) Register(config Configuration, manifest V) error
 
-// ID で検索する
-func (r *Registry[V]) Get(id reflect.Type) (V, error)
+func (r *Registry[V]) Key(config Configuration) (PluginKey, error)
+func (r *Registry[V]) Get(key PluginKey) (V, error)
 
-// 全エントリを走査する (iter.Seq[V])
+// PluginKey 順で決定的に走査する
 func (r *Registry[V]) Enumerate() iter.Seq[V]
 ```
+
+`PluginKey` は `(manifest role, config の named reflect.Type)` からのみ生成されます。フィールドは非公開で、plugin は ID を指定・上書きできません。pointer と value は同一視され、nil、typed nil、builtin、匿名型、重複 key は拒否されます。
 
 #### Bundle (全レジストリをまとめた構造体)
 
@@ -160,8 +154,8 @@ type Bundle struct {
 
 | 型 | フィールド | 説明 |
 |---|-----------|------|
-| `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は `reflect.Type` を返す |
-| `TransformManifest` | `BaseManifest`, `Capabilities []manifest.Capability`, `TransformFunc func(StreamInfo) Profile` | 変換ノード共通 |
+| `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は registry-assigned `PluginKey` |
+| `TransformManifest` | `BaseManifest`, `Capabilities`, `Resources`, `TransformFunc` | 変換ノード共通 |
 | `DemuxerManifest` | `BaseManifest`, `Probe manifest.Prober`, `Factory DemuxerFactory` | デマックスプラグイン |
 | `MuxerManifest` | `BaseManifest`, `Factory MuxerFactory` | マックスプラグイン |
 | `DecoderManifest` | `TransformManifest`, `Factory DecoderFactory` | デコーダプラグイン |
@@ -171,22 +165,28 @@ type Bundle struct {
 #### ファクトリ関数型
 
 ```go
-type NodeFactory    func(config Configuration) (node.Node, error)
 type DemuxerFactory func(r io.Reader, config Configuration) (node.Demuxer, error)
 type MuxerFactory   func(w io.Writer, config Configuration) (node.Muxer, error)
-type EncoderFactory func(config Configuration) (node.Encoder, error)
-type DecoderFactory func(config Configuration) (node.Decoder, error)
-type FilterFactory  func(config Configuration) (node.Filter, error)
+
+type TransformFactoryOptions struct {
+    Config    Configuration
+    Resources ResourceBudget
+}
+
+type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)
+type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error)
+type FilterFactory  func(media.StreamInfo, TransformFactoryOptions) (node.Filter, error)
 ```
+
+`ResourceRequest{Parallelism: true}` は transform が並列予算を利用できることを宣言します。`ResourceBudget.Parallelism` は negotiation 後に各 instance へ割り当てられます。
 
 #### インターフェース
 
 ```go
-// プラグイン設定マーカー
-type Configuration interface { NodeConfigaration() }
+type Configuration interface{}
 
 // マニフェスト共通
-type Manifest interface { ID() reflect.Type }
+type Manifest interface { ID() PluginKey }
 
 // オプション機能
 type Defaulter interface { ApplyDefaults() }
@@ -209,7 +209,8 @@ import "github.com/godexture/core/resolver"
 | `DefaultDecoderResolver` | `ResolveDecoder(media.StreamInfo, ...Option) (DecoderManifest, error)` | Capability.Accept() + Priority で選択 |
 | `DefaultEncoderResolver` | `ResolveEncoder(media.CodecID, ...Option) (EncoderManifest, error)` | Supports() + Priority で選択 |
 | `DefaultMuxerResolver` | `ResolveMuxer(registry.Configuration) (MuxerManifest, error)` | 設定の型をキーに検索 |
-| `Bundle` | — | 上記4つをまとめた構造体 |
+| `DefaultFilterResolver` | `ResolveFilter(registry.Configuration) (FilterManifest, error)` | 設定の型をキーに検索 |
+| `Bundle` | — | 上記 Resolver factory をまとめた構造体 |
 
 #### 優先度オプション
 
@@ -236,37 +237,27 @@ func ResolveDefaultAudioPort[T any](ports map[string]node.OutPort[T]) (*node.Out
 import "github.com/godexture/core/routing"
 ```
 
-変換パスを BFS (幅優先探索) で自動探索します。
+入力、明示 filter 列、target codec、resource budget から Geometry を negotiation します。
 
 ```go
-type Candidate interface {
-    ID() string
-    Accept(p media.Profile) bool
-    Transform(p media.Profile) media.Profile
+type FilterSpec struct {
+    Config registry.Configuration
 }
 
-type Router struct { ... }
+type ConversionSpec struct {
+    Input, Output ...
+    DecodeConfig registry.Configuration
+    Filters      []FilterSpec
+    TargetCodec  media.CodecID
+    EncodeConfig registry.Configuration
+    MuxConfig    registry.Configuration
+    Resources    registry.ResourceBudget
+}
 
-// plugins を候補として Router を初期化
-func NewRouter(plugins iter.Seq[Candidate]) *Router
-
-// src から target に到達できる変換ノード列を返す
-// 直接受け入れ可能なら nil, nil を返す
-func (r *Router) FindPath(src media.Profile, target Candidate) ([]Candidate, error)
-
-// iter.Seq[T] を iter.Seq[Candidate] に変換するユーティリティ
-func AsCandidates[T Candidate](seq iter.Seq[T]) iter.Seq[Candidate]
-
-var ErrNoPathFound = errors.New("routing: no valid conversion path found")
-
-type Negotiator struct { ... }
-
-// registry.Bundle を使って Negotiator を初期化
-func NewNegotiator(reg *registry.Bundle) *Negotiator
-
-// 入力データとターゲットコーデックなどから Geometry（パイプライン構造）を自動決定する
 func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpec) (*pipeline.Geometry, error)
 ```
+
+Decoder、全 Filter、Encoder の manifest と profile 遷移を先に解決し、その topology に含まれる並列対応 transform へ予算を公平に割り当ててから Node を構築します。失敗時は構築済み Node を Close します。
 
 ---
 

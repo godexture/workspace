@@ -39,6 +39,14 @@ func WithDecoderResolver(res resolver.DecoderResolver) ResolverOption {
 	}
 }
 
+func WithFilterResolver(res resolver.FilterResolver) ResolverOption {
+	return func(b *resolver.Bundle) {
+		b.NewFilterResolver = func(*registry.FilterRegistry) resolver.FilterResolver {
+			return res
+		}
+	}
+}
+
 func (f *Provider) NewResolver(opts ...ResolverOption) resolver.Bundle {
 	bundle := f.defaultResolver
 

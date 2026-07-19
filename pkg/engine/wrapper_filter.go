@@ -9,16 +9,18 @@ import (
 )
 
 type FilterAdapter struct {
-	engine FilterEngine
-	in     *node.InPort[media.Frame]
-	out    *node.OutPort[media.Frame]
+	engine    FilterEngine
+	lifecycle engineLifecycle
+	in        *node.InPort[media.Frame]
+	out       *node.OutPort[media.Frame]
 }
 
 func WrapFilter(engine FilterEngine) node.Filter {
 	return &FilterAdapter{
-		engine: engine,
-		in:     node.NewInPort[media.Frame]("in", nil),
-		out:    node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		in:        node.NewInPort[media.Frame]("in", nil),
+		out:       node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
 	}
 }
 
@@ -28,10 +30,6 @@ func (n *FilterAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("filter ports not connected")
 	}
-	if closer, ok := n.engine.(engineCloser); ok {
-		defer closer.Close()
-	}
-
 	return runCodecLoop(ctx, in, out,
 		func(f media.Frame) error {
 			return n.engine.SendFrame(&f)
@@ -48,6 +46,10 @@ func (n *FilterAdapter) Start(ctx context.Context) error {
 		},
 		n.engine.Flush,
 	)
+}
+
+func (n *FilterAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 func (n *FilterAdapter) Process(ctx context.Context) error {

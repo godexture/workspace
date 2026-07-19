@@ -12,20 +12,28 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) (engine.DecoderEngine, error) {
+func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig, options ...EngineOption) (engine.DecoderEngine, error) {
 	resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](cfg)
 	if err != nil {
 		return nil, err
 	}
-	return decoder.NewDecoder(stream, resolved), nil
+	execution, err := resolveEngineOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return decoder.NewDecoder(stream, resolved, execution.parallelism), nil
 }
 
-func NewEncoderEngine(cfg EncoderConfig) (engine.EncoderEngine, error) {
+func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.EncoderEngine, error) {
 	resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](cfg)
 	if err != nil {
 		return nil, err
 	}
-	return encoder.NewEncoder(media.StreamInfo{}, resolved), nil
+	execution, err := resolveEngineOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return encoder.NewEncoder(media.StreamInfo{}, resolved, execution.parallelism), nil
 }
 
 type flacCapability struct{}
@@ -64,6 +72,9 @@ func init() {
 					Description: "FLAC decoder",
 				},
 				Capabilities: []manifest.Capability{flacCapability{}},
+				Resources: registry.ResourceRequest{
+					Parallelism: true,
+				},
 				TransformFunc: func(streamInfo media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 					profile := media.Profile{
 						Type:            streamInfo.Type,
@@ -76,12 +87,12 @@ func init() {
 					return profile, nil
 				},
 			},
-			Factory: func(stream media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-				resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](cfg)
+			Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
+				resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](options.Config)
 				if err != nil {
 					return nil, err
 				}
-				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved)), nil
+				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved, options.Resources.Parallelism)), nil
 			},
 		},
 	); err != nil {
@@ -97,6 +108,9 @@ func init() {
 					Description: "FLAC encoder",
 				},
 				Capabilities: []manifest.Capability{lpcmCapability{}},
+				Resources: registry.ResourceRequest{
+					Parallelism: true,
+				},
 				TransformFunc: func(streamInfo media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
 					profile := media.Profile{
 						Type:            streamInfo.Type,
@@ -109,12 +123,12 @@ func init() {
 			Supports: func(codec media.CodecID) bool {
 				return codec == media.CodecFLAC
 			},
-			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-				resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](cfg)
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
+				resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](options.Config)
 				if err != nil {
 					return nil, err
 				}
-				enc := encoder.NewEncoder(inStream, resolved)
+				enc := encoder.NewEncoder(inStream, resolved, options.Resources.Parallelism)
 				return engine.WrapEncoder(enc), nil
 			},
 		},

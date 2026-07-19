@@ -63,8 +63,8 @@ func init() {
 				return p, nil
 			},
 		},
-		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
+		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
+			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](options.Config)
 			if err != nil {
 				return nil, err
 			}
@@ -126,8 +126,8 @@ func init() {
 		Supports: func(codec media.CodecID) bool {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
-		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
+			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](options.Config)
 			if err != nil {
 				return nil, err
 			}

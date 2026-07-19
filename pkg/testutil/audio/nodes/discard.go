@@ -19,6 +19,8 @@ func (n *frameDiscardNode) Start(ctx context.Context) error {
 	return PullUntilEOF(ctx, n.in, func(media.Frame) error { return nil })
 }
 
+func (n *frameDiscardNode) Close() error { return nil }
+
 func (n *frameDiscardNode) InputPorts() map[string]*node.InPort[media.Frame] {
 	return map[string]*node.InPort[media.Frame]{"in": n.in}
 }

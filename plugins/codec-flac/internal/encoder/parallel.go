@@ -51,6 +51,7 @@ func (e *Encoder) OutputReady() <-chan struct{} {
 // the intended backpressure: SendFrame simply stops accepting more input
 // until a worker frees up.
 func (e *Encoder) dispatchFullBlock(block [][]int64) {
+	e.startWorkers()
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
 	job := frameJob{
@@ -69,6 +70,7 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 // dispatchPartialBlock is Flush's counterpart to dispatchFullBlock: it never
 // splits, matching enqueueBlockSync(..., nil) in the sequential path.
 func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
+	e.startWorkers()
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
 	job := frameJob{
@@ -82,6 +84,20 @@ func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
 	e.jobs <- job
+}
+
+func (e *Encoder) startWorkers() {
+	if e.jobs != nil || e.jobsClosed {
+		return
+	}
+	e.jobs = make(chan frameJob, 2*e.workers)
+	e.workerWG.Add(e.workers)
+	for range e.workers {
+		go func() {
+			defer e.workerWG.Done()
+			e.runWorker()
+		}()
+	}
 }
 
 func copyBlock(block [][]int64) [][]int64 {
@@ -134,6 +150,7 @@ func (e *Encoder) encodeJob(job frameJob, writer *bits.Writer, windows *windowSe
 				_, err = encodeFrameWithWriter(spanBlock, e.sampleRate, e.bitsPerSample, sampleNumber, e.config, true, windows, writer)
 			}
 			if err != nil {
+				releasePackets(packets)
 				return nil, err
 			}
 			packets = append(packets, newFramePacket(writer.DetachBytes(), pts))
@@ -151,4 +168,12 @@ func (e *Encoder) encodeJob(job frameJob, writer *bits.Writer, windows *windowSe
 		return nil, err
 	}
 	return []*media.Packet{newFramePacket(writer.DetachBytes(), job.pts)}, nil
+}
+
+func releasePackets(packets []*media.Packet) {
+	for _, packet := range packets {
+		if packet != nil {
+			packet.Release()
+		}
+	}
 }

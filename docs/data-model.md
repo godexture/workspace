@@ -83,7 +83,7 @@ for _, s := range streams {
 ## `Profile` — メディアプロファイル
 
 プラグイン選択・変換パス探索時に使う「入力/出力フォーマットの仕様書」です。  
-`routing.Candidate` の `Accept()` / `Transform()` で利用されます。
+`registry.TransformManifest.Transform()` が Node 構築前に出力 profile を解決するために利用します。
 
 ```go
 type Profile struct {

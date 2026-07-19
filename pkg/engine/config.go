@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/godexture/core/registry"
 )
@@ -24,11 +23,12 @@ func ResolveConfig[T any, C Wrapper[T]](cfg registry.Configuration) (T, error) {
 
 	if cfg != nil {
 		if v, ok := cfg.(C); ok {
-			log.Printf("ResolveConfig: cfg is of type %T, resolved type %T", v, resolved)
 			resolved = v.Resolve()
 		} else if p, ok := any(cfg).(*C); ok && p != nil {
-			log.Printf("ResolveConfig: cfg is of type %T, resolved type %T", *p, resolved)
 			resolved = (*p).Resolve()
+		} else {
+			var wrapper C
+			return resolved, fmt.Errorf("unexpected configuration type %T; want %T or *%T", cfg, wrapper, wrapper)
 		}
 	} else {
 		var wrapper C

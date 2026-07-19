@@ -27,7 +27,7 @@ func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ..
 
 	for manifest := range r.registry.Enumerate() {
 		if manifest.Accept(stream) {
-			priority := options.PriorityOverrides[manifest.ID()]
+			priority := options.priority(manifest.ID())
 			if priority > maxPriority {
 				maxPriority = priority
 				bestManifest = manifest

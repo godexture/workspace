@@ -22,5 +22,3 @@ const (
 	RiceCostEstimated     = config.RiceCostEstimated
 	RiceCostExact         = config.RiceCostExact
 )
-
-

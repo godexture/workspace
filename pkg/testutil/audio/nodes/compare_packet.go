@@ -66,6 +66,8 @@ func (n *packetCompareNode) Start(ctx context.Context) error {
 	}
 }
 
+func (n *packetCompareNode) Close() error { return nil }
+
 func (c *packetCursor) fill(ctx context.Context) error {
 	for len(c.data) == 0 && !c.eof {
 		c.release()

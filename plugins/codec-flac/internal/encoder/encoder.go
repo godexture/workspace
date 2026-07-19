@@ -3,7 +3,7 @@ package encoder
 import (
 	"errors"
 	"fmt"
-	"runtime"
+	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -32,36 +32,34 @@ type Encoder struct {
 	sampleNumber  uint64
 	md5           *flac.PCMMD5
 
-	// Sequential path (workers <= 1): reused across the whole stream, no
+	// Sequential path (parallelism <= 1): reused across the whole stream, no
 	// goroutines or channels involved. This is the pre-parallel code path,
-	// kept byte-for-byte so Workers=1 stays free of any parallel overhead.
+	// kept byte-for-byte so parallelism 1 stays free of parallel overhead.
 	windows windowSet
 	writer  bits.Writer
 
 	// Parallel path (workers > 1): full (and, when flushing, the trailing
 	// partial) blocks are dispatched to a fixed worker pool over jobs. Each
 	// worker owns its own bits.Writer/windowSet so there is no contention.
-	// Workers never changes the encoded bytes (see encoder_test.go's
-	// Workers=1-vs-N equivalence test) — only how the work is scheduled.
+	// Parallelism never changes the encoded bytes; only scheduling changes.
 	workers    int
 	jobs       chan frameJob
 	jobsClosed bool
+	closed     bool
+	workerWG   sync.WaitGroup
 }
 
-func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig) *Encoder {
+func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, parallelism int) *Encoder {
 	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
-	workers := cfg.Workers
-	if workers == 0 {
-		workers = runtime.GOMAXPROCS(0)
+	if parallelism < 1 {
+		parallelism = 1
 	}
-	e := &Encoder{config: cfg, windows: newWindowSet(cfg.Apodizations), md5: flac.NewPCMMD5(), workers: workers}
-	if workers > 1 {
-		e.jobs = make(chan frameJob, 2*workers)
-		for i := 0; i < workers; i++ {
-			go e.runWorker()
-		}
+	return &Encoder{
+		config:  cfg,
+		windows: newWindowSet(cfg.Apodizations),
+		md5:     flac.NewPCMMD5(),
+		workers: parallelism,
 	}
-	return e
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -69,6 +67,9 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		return errors.New("flac encoder received nil frame")
 	}
 	if e.flushed {
+		return engine.ErrEOF
+	}
+	if e.jobsClosed {
 		return engine.ErrEOF
 	}
 
@@ -107,7 +108,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 // queue up" can deadlock such a graph — see the regression that motivated
 // this comment. This does mean input chunked smaller than BlockSize (one
 // job dispatched per full block) gets pipelined roughly one job deep rather
-// than Workers deep; blocks dispatched together (e.g. a decoder frame
+// than the configured parallelism; blocks dispatched together (e.g. a decoder frame
 // larger than BlockSize) still encode in parallel within a single
 // emitFullBlocks call.
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
@@ -179,16 +180,31 @@ func (e *Encoder) Flush() error {
 // reach Flush's io.EOF-only call site. Safe whether or not Flush ran first,
 // and safe to call more than once.
 func (e *Encoder) Close() error {
+	if e.closed {
+		return nil
+	}
+	e.closed = true
+	e.flushed = true
 	e.closeJobs()
+	for _, entry := range e.pendingQueue {
+		if entry != nil {
+			releasePackets(entry.packets)
+			entry.packets = nil
+		}
+	}
+	e.pendingQueue = nil
 	return nil
 }
 
 func (e *Encoder) closeJobs() {
-	if e.jobs == nil || e.jobsClosed {
+	if e.jobsClosed {
 		return
 	}
-	close(e.jobs)
 	e.jobsClosed = true
+	if e.jobs != nil {
+		close(e.jobs)
+		e.workerWG.Wait()
+	}
 }
 
 func (e *Encoder) MD5() [16]byte {

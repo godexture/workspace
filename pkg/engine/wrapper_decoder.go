@@ -9,16 +9,18 @@ import (
 )
 
 type DecoderAdapter struct {
-	engine DecoderEngine
-	in     *node.InPort[*media.Packet]
-	out    *node.OutPort[media.Frame]
+	engine    DecoderEngine
+	lifecycle engineLifecycle
+	in        *node.InPort[*media.Packet]
+	out       *node.OutPort[media.Frame]
 }
 
 func WrapDecoder(engine DecoderEngine) node.Decoder {
 	return &DecoderAdapter{
-		engine: engine,
-		in:     node.NewInPort[*media.Packet]("in", nil),
-		out:    node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		in:        node.NewInPort[*media.Packet]("in", nil),
+		out:       node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
 	}
 }
 
@@ -28,10 +30,6 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("decoder ports not connected")
 	}
-	if closer, ok := n.engine.(engineCloser); ok {
-		defer closer.Close()
-	}
-
 	send := func(pkt *media.Packet) error {
 		if pkt.Kind == media.PacketKindStreamEnd {
 			return nil
@@ -55,6 +53,10 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 		return runAsyncCodecLoop(ctx, in, out, send, receive, n.engine.Flush, notifier)
 	}
 	return runCodecLoop(ctx, in, out, send, receive, n.engine.Flush)
+}
+
+func (n *DecoderAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 func (n *DecoderAdapter) InputPorts() map[string]*node.InPort[*media.Packet] {

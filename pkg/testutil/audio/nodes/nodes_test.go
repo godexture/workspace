@@ -20,7 +20,11 @@ import (
 )
 
 func runNodes(ctx context.Context, ns ...node.Node) error {
-	return pipeline.NewRunner().Run(ctx, ns)
+	pipeline, err := pipeline.New(ns...)
+	if err != nil {
+		return err
+	}
+	return pipeline.Run(ctx)
 }
 
 func link[T any, A node.OutputNode[T], B node.InputNode[T]](from A, fromPort string, to B, toPort string) error {
@@ -59,6 +63,8 @@ func (n *packetSource) Start(ctx context.Context) error {
 	return nil
 }
 
+func (n *packetSource) Close() error { return nil }
+
 func newChunkFrameSource(pcmData []float32, chunks []int, attrs media.AudioAttributes) *chunkFrameSource {
 	return &chunkFrameSource{
 		out:    node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
@@ -91,6 +97,8 @@ func (n *chunkFrameSource) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (n *chunkFrameSource) Close() error { return nil }
 
 func TestFrameCompareAcrossDifferentBoundaries(t *testing.T) {
 	t.Parallel()

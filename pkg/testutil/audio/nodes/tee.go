@@ -39,6 +39,8 @@ func (n *frameTeeNode) Start(ctx context.Context) error {
 	})
 }
 
+func (n *frameTeeNode) Close() error { return nil }
+
 func (n *frameTeeNode) InputPorts() map[string]*node.InPort[media.Frame] {
 	return map[string]*node.InPort[media.Frame]{"in": n.in}
 }

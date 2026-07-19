@@ -87,19 +87,17 @@ func main() {
 
 	// 2. Build Pipeline
 	builder := godec.NewBuilder()
-	nodes, err := builder.Build(geometry)
+	conversion, err := builder.Build(geometry)
 	if err != nil {
 		fmt.Printf("Failed to build pipeline: %v\n", err)
 		return
 	}
-
-	// 3. Run Pipeline
-	runner := godec.NewRunner()
+	defer conversion.Close()
 
 	fmt.Printf("Starting conversion from %s to %s (%s)\n", inputPath, outputPath, targetCodec)
 	timer := timer.New()
 
-	if err := runner.Run(context.Background(), nodes); err != nil {
+	if err := conversion.Run(context.Background()); err != nil {
 		fmt.Printf("Pipeline execution failed: %v\n", err)
 		return
 	}

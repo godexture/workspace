@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/godexture/core/domain/media"
@@ -57,29 +58,50 @@ func NewBuilder() *Builder {
 	return &Builder{}
 }
 
-func (b *Builder) Build(geo *Geometry) ([]node.Node, error) {
-	nodeMap := make(map[string]node.Node)
-	var nodeList []node.Node
+func (b *Builder) Build(geo *Geometry) (*Pipeline, error) {
+	if geo == nil {
+		return nil, fmt.Errorf("%w: geometry is nil", ErrInvalidPipeline)
+	}
+	nodeDefs, edges, err := geo.take()
+	if err != nil {
+		return nil, err
+	}
 
-	for _, n := range geo.Nodes {
+	nodeMap := make(map[string]node.Node)
+	nodeList := make([]node.Node, 0, len(nodeDefs))
+
+	for _, n := range nodeDefs {
 		nodeMap[n.ID] = n.Node
 		nodeList = append(nodeList, n.Node)
 	}
 
-	for _, e := range geo.Edges {
+	for _, e := range edges {
 		fromNode, ok := nodeMap[e.FromNode]
 		if !ok {
-			return nil, fmt.Errorf("node not found: %s", e.FromNode)
+			return nil, errors.Join(
+				fmt.Errorf("%w: node not found: %s", ErrInvalidPipeline, e.FromNode),
+				closeNodes(nodeList),
+			)
 		}
 		toNode, ok := nodeMap[e.ToNode]
 		if !ok {
-			return nil, fmt.Errorf("node not found: %s", e.ToNode)
+			return nil, errors.Join(
+				fmt.Errorf("%w: node not found: %s", ErrInvalidPipeline, e.ToNode),
+				closeNodes(nodeList),
+			)
 		}
 
 		if err := LinkAny(fromNode, e.FromPort, toNode, e.ToPort); err != nil {
-			return nil, fmt.Errorf("failed to link %s:%s to %s:%s: %w", e.FromNode, e.FromPort, e.ToNode, e.ToPort, err)
+			return nil, errors.Join(
+				fmt.Errorf("%w: link %s:%s to %s:%s: %w", ErrInvalidPipeline, e.FromNode, e.FromPort, e.ToNode, e.ToPort, err),
+				closeNodes(nodeList),
+			)
 		}
 	}
 
-	return nodeList, nil
+	pipeline, err := New(nodeList...)
+	if err != nil {
+		return nil, errors.Join(err, closeNodes(nodeList))
+	}
+	return pipeline, nil
 }

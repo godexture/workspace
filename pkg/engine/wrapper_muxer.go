@@ -11,15 +11,21 @@ import (
 )
 
 type MuxerAdapter struct {
-	engine MuxerEngine
-	in     *node.InPort[*media.Packet]
+	engine    MuxerEngine
+	lifecycle engineLifecycle
+	in        *node.InPort[*media.Packet]
 }
 
 func WrapMuxer(engine MuxerEngine) node.Muxer {
 	return &MuxerAdapter{
-		engine: engine,
-		in:     node.NewInPort[*media.Packet]("in", nil),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		in:        node.NewInPort[*media.Packet]("in", nil),
 	}
+}
+
+func (n *MuxerAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 func (n *MuxerAdapter) Start(ctx context.Context) error {

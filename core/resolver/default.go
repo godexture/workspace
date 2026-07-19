@@ -15,4 +15,7 @@ var Default = Bundle{
 	NewDecoderResolver: func(reg *registry.DecoderRegistry) DecoderResolver {
 		return NewDefaultDecoderResolver(reg)
 	},
+	NewFilterResolver: func(reg *registry.FilterRegistry) FilterResolver {
+		return NewDefaultFilterResolver(reg)
+	},
 }
