@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/format-flac/frame"
@@ -18,7 +18,7 @@ import (
 
 func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig)
 	frame, err := decoder.ReceiveFrame()
 	if !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
 		t.Fatalf("expected ErrEAGAIN and nil frame, got err=%v, frame=%v", err, frame)
@@ -27,7 +27,7 @@ func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 
 func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig)
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -40,7 +40,7 @@ func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 
 func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig)
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 
 func TestDecoder_SendNilPacket(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig)
 	if err := decoder.SendPacket(nil); err == nil {
 		t.Fatal("expected error for nil packet")
 	}
@@ -65,7 +65,7 @@ func TestDecoder_DecodeRawFrameRFC9639AppendixDExample1(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	assertDecodeAppendixDExample1(t, data[42:], stream, flac.DecoderConfig{})
+	assertDecodeAppendixDExample1(t, data[42:], stream, config.DefaultDecoderConfig)
 }
 
 func TestDecoderValidatesStreamEndAfterPendingFrameIsConsumed(t *testing.T) {
@@ -74,7 +74,7 @@ func TestDecoderValidatesStreamEndAfterPendingFrameIsConsumed(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, flac.DecoderConfig{Strict: true})
+	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true})
 
 	packet := media.NewPacketFromData(data[42:])
 	if err := decoder.SendPacket(packet); err != nil {
@@ -99,7 +99,7 @@ func TestDecoderReportsMD5MismatchAtStreamEnd(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
-	decoder := NewDecoder(stream, flac.DecoderConfig{Strict: true})
+	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true})
 
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestDecoderSkipsMD5ValidationWhenNonStrict(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig)
 
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestDecoderFrameCRCValidationMode(t *testing.T) {
 	frameData := append([]byte(nil), data[42:]...)
 	frameData[len(frameData)-1] ^= 1
 
-	nonStrict := NewDecoder(stream, flac.DecoderConfig{})
+	nonStrict := NewDecoder(stream, config.DefaultDecoderConfig)
 	if err := nonStrict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestDecoderFrameCRCValidationMode(t *testing.T) {
 		t.Fatalf("non-strict ReceiveFrame() error = %v", err)
 	}
 
-	strict := NewDecoder(stream, flac.DecoderConfig{Strict: true})
+	strict := NewDecoder(stream, config.DecoderConfig{Strict: true})
 	if err := strict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestDecoderAcceptsContiguousRunStartingAtNonzeroFrame(t *testing.T) {
 	crc := hash.CRC16(packetData[:len(packetData)-2])
 	packetData[len(packetData)-2], packetData[len(packetData)-1] = byte(crc>>8), byte(crc)
 
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig)
 	if err := decoder.SendPacket(media.NewPacketFromData(packetData)); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestDecoder_RejectsNativeStreamPacket(t *testing.T) {
 	t.Parallel()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	packet := media.NewPacketFromData(data)
-	decoder := NewDecoder(media.StreamInfo{}, flac.DecoderConfig{})
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig)
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestDecoder_RejectsNativeStreamPacket(t *testing.T) {
 	}
 }
 
-func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.StreamInfo, config flac.DecoderConfig) {
+func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.StreamInfo, config config.DecoderConfig) {
 	t.Helper()
 	packet := media.NewPacket(len(data))
 	copy(packet.Data(), data)
@@ -266,7 +266,7 @@ func TestDecoder_RejectsIncompleteFramePacket(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig)
 	frameData := data[42:]
 
 	packet := media.NewPacketFromData(frameData[:len(frameData)-1])
@@ -284,7 +284,7 @@ func TestDecoder_RejectsPacketWithTrailingFrame(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, flac.DecoderConfig{})
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig)
 	packet := media.NewPacket(len(data[42:]) * 2)
 	copy(packet.Data(), data[42:])
 	copy(packet.Data()[len(data[42:]):], data[42:])

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/frame"
@@ -29,8 +30,8 @@ type Decoder struct {
 	md5          *flac.PCMMD5
 }
 
-func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
-	decoder := &Decoder{strict: config.Strict}
+func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig) *Decoder {
+	decoder := &Decoder{strict: cfg.Strict}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -47,7 +48,7 @@ func NewDecoder(stream media.StreamInfo, config flac.DecoderConfig) *Decoder {
 	if !hasRawStreamInfo && (stream.Audio.SampleRate > 0 || stream.Audio.ChannelCount() > 0 || stream.Audio.Format != media.SampleFormatUnknown) {
 		bitsPerSample := stream.Audio.BitsPerSample
 		if bitsPerSample == 0 {
-			bitsPerSample = flac.BitDepthFromSampleFormat(stream.Audio.Format)
+			bitsPerSample = config.BitDepthFromSampleFormat(stream.Audio.Format)
 		}
 		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), bitsPerSample)
 		if err := streaminfo.Validate(decoder.info); err != nil {

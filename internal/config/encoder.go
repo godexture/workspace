@@ -1,16 +1,11 @@
-package flac
+package config
 
 import (
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 )
-
-type DecoderConfig struct {
-	Strict bool
-}
-
-var DefaultDecoderConfig = DecoderConfig{}
 
 const (
 	DefaultEncoderBlockSize     = 4096
@@ -71,7 +66,7 @@ type EncoderConfig struct {
 	FixedOrderSearch      OrderSearchMode
 	LPCOrderSearch        OrderSearchMode
 	RiceCost              RiceCostMode
-	Apodizations          []Apodization
+	Apodizations          []flac.Apodization
 	BlockSplitDepth       int
 	BlockSplitMode        BlockSplitMode
 	StreamableSubset      bool
@@ -85,7 +80,7 @@ var DefaultEncoderConfig = GetPreset(5)
 func GetPreset(level int) EncoderConfig {
 	blockSize, maxLPC, maxRice := 4096, 8, 4
 	mode := StereoExhaustive
-	apodizations := []Apodization{Tukey(0.5)}
+	apodizations := []flac.Apodization{flac.Tukey(0.5)}
 	switch level {
 	case 0, 1, 2:
 		blockSize, maxLPC, maxRice = 1152, 0, 3
@@ -97,12 +92,13 @@ func GetPreset(level int) EncoderConfig {
 	case 5:
 		maxRice = 5
 	case 6:
-		maxRice, apodizations = 6, SubdivideTukey(2, 0.5)
+		maxRice, apodizations = 6, flac.SubdivideTukey(2, 0.5)
 	case 7:
-		maxLPC, maxRice, apodizations = 12, 6, SubdivideTukey(2, 0.5)
+		maxLPC, maxRice, apodizations = 12, 6, flac.SubdivideTukey(2, 0.5)
 	case 8:
-		maxLPC, maxRice, apodizations = 12, 6, SubdivideTukey(3, 0.5)
+		maxLPC, maxRice, apodizations = 12, 6, flac.SubdivideTukey(3, 0.5)
 	}
+
 	config := EncoderConfig{
 		BlockSize: blockSize, MaxFixedOrder: DefaultEncoderMaxFixedOrder, MaxLPCOrder: maxLPC,
 		MaxRicePartitionOrder: maxRice, LPCPrecision: DefaultLPCPrecision,
@@ -110,11 +106,14 @@ func GetPreset(level int) EncoderConfig {
 		FixedOrderSearch: OrderSearchEstimated, LPCOrderSearch: OrderSearchEstimated, RiceCost: RiceCostEstimated, Apodizations: apodizations,
 		StreamableSubset: true,
 	}
-	if level == 7 {
+
+	switch level {
+	case 7:
 		config.BlockSplitDepth, config.BlockSplitMode = 2, BlockSplitEstimated
-	} else if level == 8 {
+	case 8:
 		config.BlockSplitDepth, config.BlockSplitMode = 2, BlockSplitExact
 	}
+
 	return config
 }
 

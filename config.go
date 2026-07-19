@@ -1,31 +1,30 @@
 package flac
 
-//go:generate go run ../../tools/config-generator -source=internal/flac/config.go -type=EncoderConfig -resolved-type=flac.EncoderConfig -default=flac.GetPreset(5) -preset=flac.GetPreset -preset-normalizer=normalizeCompressionLevel -import=flac=github.com/godexture/codec-flac/internal/flac -output=config_encoder.go
-//go:generate go run ../../tools/config-generator -source=internal/flac/config.go -type=DecoderConfig -resolved-type=flac.DecoderConfig -import=flac=github.com/godexture/codec-flac/internal/flac -output=config_decoder.go
+//go:generate go run ../../tools/config-generator -source=internal/config/encoder.go -type=EncoderConfig -resolved-type=config.EncoderConfig -default=config.DefaultEncoderConfig -preset=config.GetPreset -preset-normalizer=normalizeCompressionLevel -import=config=github.com/godexture/codec-flac/internal/config -output=config_encoder.go
+//go:generate go run ../../tools/config-generator -source=internal/config/decoder.go -type=DecoderConfig -resolved-type=config.DecoderConfig -default=config.DefaultDecoderConfig -import=config=github.com/godexture/codec-flac/internal/config -output=config_decoder.go
 
 import (
 	"log"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/codec-flac/internal/config"
 )
 
-func (DecoderConfig) NodeConfiguration() {}
-func (EncoderConfig) NodeConfiguration() {}
+type StereoMode = config.StereoMode
+type BlockSplitMode = config.BlockSplitMode
+type OrderSearchMode = config.OrderSearchMode
+type RiceCostMode = config.RiceCostMode
 
 const (
-	StereoIndependent     = flac.StereoIndependent
-	StereoAdaptive        = flac.StereoAdaptive
-	StereoExhaustive      = flac.StereoExhaustive
-	BlockSplitEstimated   = flac.BlockSplitEstimated
-	BlockSplitExact       = flac.BlockSplitExact
-	OrderSearchEstimated  = flac.OrderSearchEstimated
-	OrderSearchExhaustive = flac.OrderSearchExhaustive
-	RiceCostEstimated     = flac.RiceCostEstimated
-	RiceCostExact         = flac.RiceCostExact
+	StereoIndependent     = config.StereoIndependent
+	StereoAdaptive        = config.StereoAdaptive
+	StereoExhaustive      = config.StereoExhaustive
+	BlockSplitEstimated   = config.BlockSplitEstimated
+	BlockSplitExact       = config.BlockSplitExact
+	OrderSearchEstimated  = config.OrderSearchEstimated
+	OrderSearchExhaustive = config.OrderSearchExhaustive
+	RiceCostEstimated     = config.RiceCostEstimated
+	RiceCostExact         = config.RiceCostExact
 )
-
-type OrderSearchMode = flac.OrderSearchMode
-type RiceCostMode = flac.RiceCostMode
 
 func normalizeCompressionLevel(level int) int {
 	if level < 0 {

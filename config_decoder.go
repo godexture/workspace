@@ -3,18 +3,15 @@
 package flac
 
 import (
-	flac "github.com/godexture/codec-flac/internal/flac"
-	optional "github.com/godexture/sdk/optional"
+	config "github.com/godexture/codec-flac/internal/config"
 )
 
-type DecoderConfig struct {
-	Strict optional.Optional[bool]
-}
+type DecoderConfig config.DecoderConfig
 
 type DecoderConfigOption func(*DecoderConfig)
 
 func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
-	var config DecoderConfig
+	config := DecoderConfig(config.DefaultDecoderConfig)
 	for _, option := range options {
 		option(&config)
 	}
@@ -23,12 +20,14 @@ func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
 
 func WithStrict(v bool) DecoderConfigOption {
 	return func(c *DecoderConfig) {
-		c.Strict = optional.Some(v)
+		c.Strict = v
 	}
 }
 
-func (c DecoderConfig) ApplyDefaults() flac.DecoderConfig {
-	config := flac.DecoderConfig{}
-	config.Strict = c.Strict.ValueOr(config.Strict)
-	return config
+func (c DecoderConfig) ResolveDefault() config.DecoderConfig {
+	return config.DefaultDecoderConfig
+}
+
+func (c DecoderConfig) Resolve() config.DecoderConfig {
+	return config.DecoderConfig(c)
 }
