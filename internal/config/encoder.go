@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
@@ -78,6 +79,14 @@ type EncoderConfig struct {
 var DefaultEncoderConfig = GetPreset(5)
 
 func GetPreset(level int) EncoderConfig {
+	if level < 0 {
+		log.Printf("WARNING: FLAC compression level %d is outside 0..8; using 0", level)
+		level = 0
+	} else if level > 8 {
+		log.Printf("WARNING: FLAC compression level %d is outside 0..8; using 8", level)
+		level = 8
+	}
+
 	blockSize, maxLPC, maxRice := 4096, 8, 4
 	mode := StereoExhaustive
 	apodizations := []flac.Apodization{flac.Tukey(0.5)}

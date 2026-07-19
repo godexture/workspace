@@ -2,7 +2,6 @@ package decoder
 
 import (
 	"fmt"
-	"runtime"
 	"sync"
 
 	"github.com/godexture/codec-flac/internal/flac"
@@ -37,9 +36,8 @@ var sharedDecoderPool struct {
 	jobs chan frameJob
 }
 
-func decoderJobs() chan frameJob {
+func decoderJobs(workers int) chan frameJob {
 	sharedDecoderPool.once.Do(func() {
-		workers := runtime.GOMAXPROCS(0)
 		sharedDecoderPool.jobs = make(chan frameJob, 2*workers)
 		for range workers {
 			go runDecoderWorker(sharedDecoderPool.jobs)
