@@ -50,3 +50,5 @@ func (n *slicePCMSourceNode) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (n *slicePCMSourceNode) Close() error { return nil }

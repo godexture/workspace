@@ -9,16 +9,15 @@ import (
 	"github.com/godexture/core/pipeline"
 )
 
-// fakeEncoderEngine is a minimal EncoderEngine used to verify that
-// EncoderAdapter.Start invokes Close() (via the optional engineCloser
-// interface) on every exit path, not just the graceful io.EOF path that
-// Flush() alone covers.
+// fakeEncoderEngine verifies that adapter Close owns engine teardown and is
+// idempotent independently from Start's exit path.
 type fakeEncoderEngine struct {
-	sendErr  error
-	flushErr error
-	flushed  bool
-	closed   bool
-	ready    chan struct{}
+	sendErr    error
+	flushErr   error
+	flushed    bool
+	closed     bool
+	closeCount int
+	ready      chan struct{}
 }
 
 func (f *fakeEncoderEngine) SendFrame(frame *media.Frame) error {
@@ -39,6 +38,7 @@ func (f *fakeEncoderEngine) Flush() error {
 
 func (f *fakeEncoderEngine) Close() error {
 	f.closed = true
+	f.closeCount++
 	return nil
 }
 
@@ -48,6 +48,7 @@ func (f *fakeEncoderEngine) OutputReady() <-chan struct{} {
 
 func connectEncoderAdapter(t *testing.T, engine EncoderEngine) (node interface {
 	Start(ctx context.Context) error
+	Close() error
 }, in *pipeline.ChanEdge[media.Frame]) {
 	t.Helper()
 	adapter := WrapEncoder(engine)
@@ -58,7 +59,7 @@ func connectEncoderAdapter(t *testing.T, engine EncoderEngine) (node interface {
 	return adapter, in
 }
 
-func TestEncoderAdapter_CloseOnGracefulCompletion(t *testing.T) {
+func TestEncoderAdapter_CloseAfterGracefulCompletion(t *testing.T) {
 	t.Parallel()
 	fake := &fakeEncoderEngine{}
 	adapter, in := connectEncoderAdapter(t, fake)
@@ -70,12 +71,24 @@ func TestEncoderAdapter_CloseOnGracefulCompletion(t *testing.T) {
 	if !fake.flushed {
 		t.Fatal("expected Flush() to have run on graceful completion")
 	}
+	if fake.closed {
+		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	if !fake.closed {
-		t.Fatal("expected Close() to have run on graceful completion")
+		t.Fatal("engine was not closed")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if fake.closeCount != 1 {
+		t.Fatalf("engine Close() called %d times, want 1", fake.closeCount)
 	}
 }
 
-func TestEncoderAdapter_CloseOnSendError(t *testing.T) {
+func TestEncoderAdapter_CloseAfterSendError(t *testing.T) {
 	t.Parallel()
 	wantErr := ErrEAGAIN // reuse a sentinel as a stand-in send failure
 	fake := &fakeEncoderEngine{sendErr: wantErr}
@@ -94,12 +107,18 @@ func TestEncoderAdapter_CloseOnSendError(t *testing.T) {
 	if fake.flushed {
 		t.Fatal("expected Flush() NOT to have run on a send error")
 	}
+	if fake.closed {
+		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	if !fake.closed {
-		t.Fatal("expected Close() to have run even though the send errored")
+		t.Fatal("engine was not closed")
 	}
 }
 
-func TestEncoderAdapter_CloseOnContextCancellation(t *testing.T) {
+func TestEncoderAdapter_CloseAfterContextCancellation(t *testing.T) {
 	t.Parallel()
 	fake := &fakeEncoderEngine{ready: make(chan struct{})} // never becomes ready
 	adapter, _ := connectEncoderAdapter(t, fake)
@@ -121,7 +140,13 @@ func TestEncoderAdapter_CloseOnContextCancellation(t *testing.T) {
 	if fake.flushed {
 		t.Fatal("expected Flush() NOT to have run on context cancellation")
 	}
+	if fake.closed {
+		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	if !fake.closed {
-		t.Fatal("expected Close() to have run on context cancellation")
+		t.Fatal("engine was not closed")
 	}
 }

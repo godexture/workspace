@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/godexture/core/node"
 )
@@ -11,15 +12,30 @@ type outputNotifier interface {
 	OutputReady() <-chan struct{}
 }
 
-// engineCloser is an optional interface an engine may implement to release
-// resources it owns (e.g. background worker goroutines) on teardown.
-// Flush() is not a reliable place for this: runCodecLoop/runAsyncCodecLoop
-// only call it on the graceful io.EOF exit path — every other return (a
-// Pull/Push/send/receive error, or ctx cancellation propagated by errgroup
-// from a sibling node's failure) skips it. Adapters invoke Close() via
-// defer in Start so it runs on every exit path.
+// engineCloser is implemented by engines that own resources. Adapters expose
+// it through the mandatory node lifecycle and make repeated Close calls safe.
 type engineCloser interface {
 	Close() error
+}
+
+type engineLifecycle struct {
+	closer engineCloser
+	once   sync.Once
+	err    error
+}
+
+func newEngineLifecycle(engine any) engineLifecycle {
+	closer, _ := engine.(engineCloser)
+	return engineLifecycle{closer: closer}
+}
+
+func (l *engineLifecycle) Close() error {
+	l.once.Do(func() {
+		if l.closer != nil {
+			l.err = l.closer.Close()
+		}
+	})
+	return l.err
 }
 
 func runCodecLoop[I any, O any](

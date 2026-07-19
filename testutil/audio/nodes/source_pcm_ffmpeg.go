@@ -99,3 +99,5 @@ func (n *ffmpegPCMSourceNode) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (n *ffmpegPCMSourceNode) Close() error { return nil }

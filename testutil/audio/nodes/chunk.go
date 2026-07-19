@@ -99,6 +99,8 @@ func (n *audioChunkNode) Start(ctx context.Context) error {
 	}
 }
 
+func (n *audioChunkNode) Close() error { return nil }
+
 func pushAudioBytes(ctx context.Context, out node.Edge[media.Frame], data []byte, attrs media.AudioAttributes) error {
 	bytesPerFrame := attrs.ChannelLayout.ChannelCount() * attrs.Format.BytesPerSample()
 	if bytesPerFrame <= 0 || len(data)%bytesPerFrame != 0 {

@@ -120,7 +120,11 @@ func wrapMux(factory MuxerFactory, writer io.Writer, stream media.StreamInfo) (n
 }
 
 func runNodes(ctx context.Context, nodes ...node.Node) error {
-	return pipeline.NewRunner().Run(ctx, nodes)
+	pipeline, err := pipeline.New(nodes...)
+	if err != nil {
+		return err
+	}
+	return pipeline.Run(ctx)
 }
 
 func link[T any, A node.OutputNode[T], B node.InputNode[T]](from A, fromPort string, to B, toPort string) error {

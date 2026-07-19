@@ -69,3 +69,5 @@ func (n *frameCompareNode) Start(ctx context.Context) error {
 	}
 	return stats.Result(n.opts)
 }
+
+func (n *frameCompareNode) Close() error { return nil }
