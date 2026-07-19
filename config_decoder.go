@@ -3,23 +3,32 @@
 package pcm
 
 import (
+	binary "encoding/binary"
 	internal "github.com/godexture/codec-pcm/internal"
 )
 
-type DecoderConfig struct {
-}
+type DecoderConfig internal.DecoderConfig
 
 type DecoderConfigOption func(*DecoderConfig)
 
 func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
-	var config DecoderConfig
+	config := DecoderConfig(internal.DefaultDecoderConfig)
 	for _, option := range options {
 		option(&config)
 	}
 	return config
 }
 
-func (c DecoderConfig) ApplyDefaults() internal.DecoderConfig {
-	config := internal.DefaultDecoderConfig
-	return config
+func WithByteOrder(v binary.ByteOrder) DecoderConfigOption {
+	return func(c *DecoderConfig) {
+		c.ByteOrder = v
+	}
+}
+
+func (c DecoderConfig) ResolveDefault() internal.DecoderConfig {
+	return internal.DefaultDecoderConfig
+}
+
+func (c DecoderConfig) Resolve() internal.DecoderConfig {
+	return internal.DecoderConfig(c)
 }

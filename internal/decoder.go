@@ -13,20 +13,22 @@ import (
 )
 
 type DecoderConfig struct {
+	ByteOrder binary.ByteOrder
+
 	codecID       media.CodecID
 	sampleRate    int
 	format        media.SampleFormat
 	channelLayout media.ChannelLayout
-	byteOrder     binary.ByteOrder
 	adpcm         params.ADPCM
 }
 
 var DefaultDecoderConfig = DecoderConfig{
+	ByteOrder: binary.LittleEndian,
+
 	codecID:       media.CodecLPCM,
-	sampleRate:    48000,
+	sampleRate:    44100,
 	format:        media.SampleFormatS16,
 	channelLayout: media.LayoutStereo2_0,
-	byteOrder:     binary.LittleEndian,
 }
 
 func GetDecodedAttributes(codec media.CodecID, attrs media.AudioAttributes) media.AudioAttributes {
@@ -110,15 +112,15 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	var err error
 	switch d.config.codecID {
 	case media.CodecPCMU:
-		data = g711.DecodePCMU(data, d.config.byteOrder)
+		data = g711.DecodePCMU(data, d.config.ByteOrder)
 	case media.CodecPCMA:
-		data = g711.DecodePCMA(data, d.config.byteOrder)
+		data = g711.DecodePCMA(data, d.config.ByteOrder)
 	case media.CodecMSADPCM:
 		params, resolveErr := d.resolveADPCMParameters()
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		data, err = msadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.byteOrder)
+		data, err = msadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +129,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		data, err = imaadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.byteOrder)
+		data, err = imaadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
