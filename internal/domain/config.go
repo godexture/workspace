@@ -2,6 +2,8 @@ package domain
 
 type DecoderConfig struct{}
 
+var DefaultDecoderConfig = DecoderConfig{}
+
 type EncoderConfig struct {
 	Bitrate int
 }
