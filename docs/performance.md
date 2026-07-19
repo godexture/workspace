@@ -149,3 +149,32 @@ worker と作業領域を複数フレームで再利用する `BenchmarkEncoderD
 変更後の allocation profile では `lpcCoefficientSets` 固有の割当は消え、
 フレーム単体の総量は約 107.6 KiB/op、57 allocs/op になった。通常、SIMD、
 race detector の encoder 対象テストを通過した。
+
+## Four-way scalar LPC residual
+
+作業領域再利用後の frame encode CPU profile では、既定設定が使う次数 8 以下の
+`lpcResidualScalar` が flat 12.69% で最大の演算カーネルだった。4 出力の積和を
+同時に進め、係数の読取とループ制御を共有する。各出力内の加算順序は変えない。
+
+旧 serial kernel と新 kernel を同じバイナリ内で交互に実行し、各次数を 100 標本、
+標本内 100 ms 以上反復した。
+
+| order | current median | serial median | median improvement | mean improvement | wins |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 5,414.5 ns/op | 9,022.5 ns/op | 39.99% | 42.78% | 92/100 |
+| 8 | 8,570.5 ns/op | 13,688 ns/op | 37.39% | 34.50% | 89/100 |
+| 12 | 13,138 ns/op | 18,522 ns/op | 29.07% | 29.22% | 86/100 |
+| 32 | 29,829 ns/op | 41,165 ns/op | 27.54% | 25.37% | 78/100 |
+
+`BenchmarkEncodeFrameDefaultConfig` は直前コミットと 50 ペア、各 200 ms、
+順序を反転して実行した。48/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 249,293 ns/op | 232,050 ns/op | 6.92% |
+| mean | 250,295.7 ns/op | 233,184 ns/op | 6.84% |
+
+複数フレームを処理する `BenchmarkEncoderDefaultConfig` も 30 ペアで中央値
+6.12%、平均 4.22% 改善した。変更後 profile の `lpcResidualScalar` は flat
+8.66% まで低下した。端数長を含む全次数 1..32 と複数 shift を旧 kernel と
+照合し、通常、SIMD、race detector の encoder 対象テストを通過した。
