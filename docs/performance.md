@@ -106,3 +106,15 @@ sentinelを削除した。
 | --- | ---: | ---: | ---: |
 | median | 84,772.5 ns/op | 84,035 ns/op | 1.04% |
 | mean | 85,386.5 ns/op | 84,536.7 ns/op | 0.96% |
+
+## FLAC integration checkpoint
+
+bit/Rice decode 一連の変更を、47,782 byte の `60 - mono audio.flac` を使う
+`BenchmarkDecodeConformance/SmallMono` で基準コミットと比較した。デマルチプレクサ、
+decoder wrapper、audio frame生成を含む完全な復号パイプラインを、30 ペア、
+各 200 ms、ペアごとに順序を反転して実行した。29/30 ペアで現行が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 1,299,904 ns/op | 1,100,537 ns/op | 15.72% |
+| mean | 1,326,232 ns/op | 1,144,895.6 ns/op | 13.73% |
