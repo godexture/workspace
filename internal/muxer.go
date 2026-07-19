@@ -25,6 +25,7 @@ type Muxer struct {
 func NewMuxer(w io.Writer, _ MuxerConfig) *Muxer {
 	return &Muxer{w: w}
 }
+
 func (m *Muxer) AddStream(streamInfo media.StreamInfo) (int, error) {
 	if m.streamSet {
 		return 0, errors.New("mp3 muxer supports only one audio stream")
