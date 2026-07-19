@@ -5,7 +5,7 @@ package main
 import (
 	"log"
 
-	generator "github.com/godexture/tools/table-generator"
+	generator "github.com/godexture/tools/pkg/table-generator"
 )
 
 const (
