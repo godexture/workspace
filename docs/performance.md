@@ -39,3 +39,18 @@ FLAC frame の対象テストを通過した。
 MP3 の `BenchmarkDecodeFile` も 30 ペアで測定したが、中央値 -0.09%、平均
 +0.66%、改善 14/30 ペアで効果を確認できなかった。MP3 固有の
 `ReadBits32` 置換は採用せず、MP3 は別途 profile 上の大きなホットスポットを狙う。
+
+## Unaligned unary prefix scan
+
+32-bit fast path 導入後も FLAC residual 復号は CPU profile の 57.02% を占め、
+`Unary64` は累積 18.67%、その bit-at-a-time prefix は 7.20% を占めていた。
+Rice 符号は通常短く、開始位置も非 byte-aligned なので、先頭 byte の残りを
+1 bit ずつ読む代わりに、mask と `LeadingZeros8` で一括検査する。
+
+`BenchmarkDecodeFrameDefaultConfig` の変更前後バイナリを 50 ペア、各 200 ms、
+ペアごとに順序を反転して実行した。49/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 126,724.5 ns/op | 112,105 ns/op | 11.25% |
+| mean | 127,931.2 ns/op | 113,208.6 ns/op | 11.37% |

@@ -180,19 +180,40 @@ func (r *Reader) bitsSlow(width uint8) uint64 {
 // Unary64 reads a unary-coded value: the number of 0 bits before the next 1
 // bit. It stops at the limit instead of looping forever on truncated data.
 //
-// The scan runs in three phases so the hot middle phase can inspect whole
-// bytes at a time via math/bits.LeadingZeros instead of calling Bit() per
-// bit: (1) consume up to 7 bits to reach a byte boundary, (2) fast-scan
-// whole words then bytes that are fully within both the limit and the physical buffer,
-// (3) finish the remaining (<8-bit) tail with the plain bit-at-a-time path,
-// which also supplies the sticky-overrun bookkeeping on truncated data.
+// The scan runs in three phases using math/bits.LeadingZeros: (1) inspect
+// the remainder of an unaligned first byte, (2) fast-scan whole words then
+// bytes that are fully within both the limit and the physical buffer,
+// (3) finish the remaining (<8-bit) tail with the bit-at-a-time path, which
+// also supplies the sticky-overrun bookkeeping on truncated data.
 func (r *Reader) Unary64() uint64 {
 	var count uint64
-	for r.position&7 != 0 && r.position < r.limit {
-		if r.Bit() == 1 {
-			return count
+	if r.position&7 != 0 && r.position < r.limit {
+		byteIndex := int(r.position >> 3)
+		if byteIndex >= 0 && byteIndex < len(r.buffer) {
+			available := int32(8 - (r.position & 7))
+			if remaining := r.limit - r.position; remaining < available {
+				available = remaining
+			}
+			value := r.buffer[byteIndex] << uint(r.position&7)
+			if available < 8 {
+				value &= byte(0xff << uint(8-available))
+			}
+			if value != 0 {
+				zeros := int32(mathbits.LeadingZeros8(value))
+				count += uint64(zeros)
+				r.position += zeros + 1
+				return count
+			}
+			count += uint64(available)
+			r.position += available
+		} else {
+			for r.position&7 != 0 && r.position < r.limit {
+				if r.Bit() == 1 {
+					return count
+				}
+				count++
+			}
 		}
-		count++
 	}
 
 	bufBits := int32(len(r.buffer)) * 8
