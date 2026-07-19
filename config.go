@@ -1,3 +1,3 @@
-//go:generate go run ../../tools/config-generator -target DemuxerConfig -target MuxerConfig
+//go:generate config-generator -target DemuxerConfig -target MuxerConfig
 
 package mp3
