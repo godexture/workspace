@@ -14,18 +14,18 @@ func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {
 func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict bool) error {
 	blockSize := len(samples)
 	originalBitsPerSample := bitsPerSample
-	zero, err := r.ReadBits64(1)
+	zero, err := r.ReadBits32(1)
 	if err != nil {
 		return err
 	}
 	if zero != 0 {
 		return errors.New("invalid FLAC subframe header")
 	}
-	typeCode, err := r.ReadBits64(6)
+	typeCode, err := r.ReadBits32(6)
 	if err != nil {
 		return err
 	}
-	wastedFlag, err := r.ReadBits64(1)
+	wastedFlag, err := r.ReadBits32(1)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict b
 		if err := readWarmupSamples(r, samples, order, bitsPerSample); err != nil {
 			return err
 		}
-		precisionRaw, err := r.ReadBits64(4)
+		precisionRaw, err := r.ReadBits32(4)
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict b
 			return errors.New("invalid FLAC LPC coefficient precision")
 		}
 		precision := int(precisionRaw) + 1
-		shiftRaw, err := r.ReadBits64(5)
+		shiftRaw, err := r.ReadBits32(5)
 		if err != nil {
 			return err
 		}
@@ -256,12 +256,12 @@ func Decorrelate(samples [][]int64, assignment uint8) {
 	}
 }
 
-func signExtend(value uint64, bits uint8) int {
+func signExtend(value uint32, bits uint8) int {
 	if bits == 0 {
 		return 0
 	}
-	if value&(uint64(1)<<(bits-1)) != 0 {
-		value |= ^uint64(0) << bits
+	if value&(uint32(1)<<(bits-1)) != 0 {
+		value |= ^uint32(0) << bits
 	}
-	return int(int64(value))
+	return int(int32(value))
 }
