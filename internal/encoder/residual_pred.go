@@ -50,7 +50,22 @@ func lpcResidualScalar(samples []int64, order int, coefficients []int64, shift i
 	samplesBase := unsafe.Pointer(unsafe.SliceData(samples))
 	resultBase := unsafe.Pointer(unsafe.SliceData(result))
 	// i >= order and j < order keep i-1-j and i-order in range.
-	for i := order; i < len(samples); i++ {
+	i := order
+	for ; i+4 <= len(samples); i += 4 {
+		var sum0, sum1, sum2, sum3 int64
+		for j, coefficient := range coefficients {
+			index := i - 1 - j
+			sum0 += coefficient * loadScalarInt64At(samplesBase, index)
+			sum1 += coefficient * loadScalarInt64At(samplesBase, index+1)
+			sum2 += coefficient * loadScalarInt64At(samplesBase, index+2)
+			sum3 += coefficient * loadScalarInt64At(samplesBase, index+3)
+		}
+		storeScalarInt64At(resultBase, i-order, loadScalarInt64At(samplesBase, i)-(sum0>>uint(shift)))
+		storeScalarInt64At(resultBase, i-order+1, loadScalarInt64At(samplesBase, i+1)-(sum1>>uint(shift)))
+		storeScalarInt64At(resultBase, i-order+2, loadScalarInt64At(samplesBase, i+2)-(sum2>>uint(shift)))
+		storeScalarInt64At(resultBase, i-order+3, loadScalarInt64At(samplesBase, i+3)-(sum3>>uint(shift)))
+	}
+	for ; i < len(samples); i++ {
 		var sum int64
 		for j, coefficient := range coefficients {
 			sum += coefficient * loadScalarInt64At(samplesBase, i-1-j)
