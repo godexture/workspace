@@ -76,7 +76,7 @@ func init() {
 				return profile, nil
 			},
 		},
-		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
+		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
 			return engine.WrapDecoder(internal.NewDecoder()), nil
 		},
 	}); err != nil {
@@ -101,8 +101,8 @@ func init() {
 		Supports: func(codec media.CodecID) bool {
 			return codec == media.CodecMP3
 		},
-		Factory: func(s media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			resolved, err := engine.ResolveConfig[domain.EncoderConfig, EncoderConfig](cfg)
+		Factory: func(s media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
+			resolved, err := engine.ResolveConfig[domain.EncoderConfig, EncoderConfig](options.Config)
 			if err != nil {
 				return nil, err
 			}
