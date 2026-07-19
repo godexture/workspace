@@ -72,15 +72,3 @@ func (m *Map[K, V]) Clone() map[K]V {
 
 	return snapshot
 }
-
-func EnumerateMapValues[T any, K comparable, V any](m *Map[K, V]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, val := range m.All() {
-			if v, ok := any(val).(T); ok {
-				if !yield(v) {
-					break
-				}
-			}
-		}
-	}
-}

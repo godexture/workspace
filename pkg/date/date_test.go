@@ -7,6 +7,7 @@ import (
 )
 
 func TestNewPartial(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		input      string
@@ -301,6 +302,7 @@ func TestNewPartial(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := NewPartial(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("NewPartial(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
@@ -332,6 +334,7 @@ func TestNewPartial(t *testing.T) {
 }
 
 func TestPartial_ToISOString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -349,6 +352,7 @@ func TestPartial_ToISOString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			p, _ := NewPartial(tt.input)
 			if got := p.ToISOString(); got != tt.expected {
 				t.Errorf("Partial.ToISOString() = %q, want %q", got, tt.expected)
@@ -358,6 +362,7 @@ func TestPartial_ToISOString(t *testing.T) {
 }
 
 func TestPartial_ToISOString_EdgeCases(t *testing.T) {
+	t.Parallel()
 	// Missing year should return empty string
 	p1 := Partial{
 		month: optional.Some[int8](12),

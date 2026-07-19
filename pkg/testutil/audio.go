@@ -1,18 +1,19 @@
 package testutil
 
-import "github.com/godexture/sdk/testutil/audio"
-
-type CompareOptions = audio.CompareOptions
-
-var (
-	DownmixToMono   = audio.DownmixToMono
-	Resample16kTo8k = audio.Resample16kTo8k
+import (
+	"github.com/godexture/sdk/testutil/audio"
+	"github.com/godexture/sdk/testutil/audio/pcm"
 )
 
-var (
-	EncodeToMuxer   = audio.EncodeToMuxer
-	DecodeToFloat32 = audio.DecodeToFloat32
-)
+type CompareOptions = pcm.CompareOptions
+
+type DecodeConfig = audio.DecodeConfig
+type RoundtripConfig = audio.RoundtripConfig
+type SnapshotConfig = audio.SnapshotConfig
+type OutputTester = audio.OutputTester
+type Buffer = audio.Buffer
+
+var NewBuffer = audio.NewBuffer
 
 var (
 	SaveSnapshot = audio.SaveSnapshot
@@ -20,13 +21,7 @@ var (
 )
 
 var (
-	EncodeWithFFmpeg = audio.EncodeWithFFmpeg
-	DecodeWithFFmpeg = audio.DecodeWithFFmpeg
-)
-
-var (
-	RunSnapshotEncode        = audio.RunSnapshotEncode
-	RunSnapshotDecode        = audio.RunSnapshotDecode
-	RunRoundtripEncodeDecode = audio.RunRoundtripEncodeDecode
-	RunRoundtripDecodeEncode = audio.RunRoundtripDecodeEncode
+	RunDecode         = audio.RunDecode
+	RunSnapshotTests  = audio.RunSnapshotTests
+	RunRoundtripTests = audio.RunRoundtripTests
 )

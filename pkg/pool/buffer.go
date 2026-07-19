@@ -40,7 +40,7 @@ func Get(size int) *[]byte {
 
 func Put(b *[]byte) {
 	cap := cap(*b)
-	if cap < 1<<minShift || cap > 1<<maxShift {
+	if cap < 1<<minShift || cap > 1<<maxShift || cap&(cap-1) != 0 {
 		return
 	}
 

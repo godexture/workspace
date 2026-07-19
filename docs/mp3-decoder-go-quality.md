@@ -381,24 +381,15 @@ MP3の仕様上、1ファイル内でサンプルレートやチャンネル数�
 
 ### 8. `encoder.go` / `register.go` の問題
 
-#### 8-1. `NodeConfigaration` のタイポ
+#### 8-1. Config marker method
 
-**現状の問題:**
+**解決済み:**
 
 ```go
-// decoder.go
-func (DecoderConfig) NodeConfigaration() {}
-
-// encoder.go
-func (EncoderConfig) NodeConfigaration() {}
+type Configuration interface{}
 ```
 
-`NodeConfiguration` と綴るべきところが `NodeConfigaration`（`u` が抜けている）になっている。インターフェースを実装するために定義されているメソッドと思われるが、タイポがあるため、もしインターフェース側のメソッド名が正しく `NodeConfiguration` であればコンパイルエラーになっているはずである（コンパイルが通っているなら、インターフェース側も同じタイポを持っているか、このメソッドがインターフェース要件でない可能性がある）。
-
-**改善方針:**
-
-- インターフェース側の定義と照合し、タイポを修正する
-- インターフェース側も同じタイポであれば、インターフェース定義まで含めて修正する
+marker method は廃止された。Registry が named config 型の reflection から強制的に `PluginKey` を生成するため、Config 側で ID 用メソッドを実装する必要はない。
 
 #### 8-2. `register.go` の `TransformFunc` がモノラルを考慮していない
 
@@ -435,7 +426,6 @@ TransformFunc: func(s media.StreamInfo) media.Profile {
 | 高 | 4-3: `requireBitExact` と `compareExact` を削除 | `snapshot_test.go` | 低 |
 | 高 | 1-4: `sfbtab` を `[]byte` に変更し `getSfbVal` を廃止 | `huffman.go`, `dequant.go` | 低 |
 | 高 | 2-3: 組み込み `min`/`max` に置き換え | `huffman.go`, `dequant.go` | 低 |
-| 高 | 8-1: `NodeConfigaration` タイポを修正 | `decoder.go`, `encoder.go` | 低 |
 | 高 | 1-2: 2次元配列を1次元配列に変更し `unsafe.Slice` を排除 | `minimp3.go`, `dequant.go` | 中 |
 | 高 | 1-1: `bs_t` を `[]byte` ベースの型に置き換え（`getBits` の `unsafe.Slice` 排除） | `huffman.go`, `dequant.go` | 中 |
 | 高 | 1-3 / 5: `L3HuffmanDecode` の `unsafe.Pointer`・`uintptr` をスライスに書き換え（GC安全性） | `huffman.go`, `dequant.go` | 高 |
@@ -466,7 +456,6 @@ TransformFunc: func(s media.StreamInfo) media.Profile {
 - [ ] `snapshot_test.go` から `requireBitExact` 定数および `compareExact` 関数を削除し、常に `comparePCM` で検証するようにする
 
 ### 低コスト改善（名前・型）
-- [ ] `NodeConfigaration` → `NodeConfiguration` のタイポを `decoder.go`・`encoder.go`・インターフェース定義まで含めて修正する
 - [ ] `go.mod` の Go バージョンを確認し、1.21 以上であれば `min`/`max` のカスタム定義を削除する
 - [ ] 非公開にすべき型・関数のエクスポートを解除する（命名を Go 慣習に統一する）
 

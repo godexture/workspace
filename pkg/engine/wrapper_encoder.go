@@ -9,16 +9,18 @@ import (
 )
 
 type EncoderAdapter struct {
-	engine EncoderEngine
-	in     *node.InPort[media.Frame]
-	out    *node.OutPort[*media.Packet]
+	engine    EncoderEngine
+	lifecycle engineLifecycle
+	in        *node.InPort[media.Frame]
+	out       *node.OutPort[*media.Packet]
 }
 
 func WrapEncoder(engine EncoderEngine) node.Encoder {
 	return &EncoderAdapter{
-		engine: engine,
-		in:     node.NewInPort[media.Frame]("in", nil),
-		out:    node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		in:        node.NewInPort[media.Frame]("in", nil),
+		out:       node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
 	}
 }
 
@@ -28,14 +30,17 @@ func (n *EncoderAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("encoder ports not connected")
 	}
+	send := func(f media.Frame) error {
+		return n.engine.SendFrame(&f)
+	}
+	if notifier, ok := n.engine.(outputNotifier); ok {
+		return runAsyncCodecLoop(ctx, in, out, send, n.engine.ReceivePacket, n.engine.Flush, notifier)
+	}
+	return runCodecLoop(ctx, in, out, send, n.engine.ReceivePacket, n.engine.Flush)
+}
 
-	return runCodecLoop(ctx, in, out,
-		func(f media.Frame) error {
-			return n.engine.SendFrame(&f)
-		},
-		n.engine.ReceivePacket,
-		n.engine.Flush,
-	)
+func (n *EncoderAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 func (n *EncoderAdapter) InputPorts() map[string]*node.InPort[media.Frame] {

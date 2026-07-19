@@ -5,43 +5,52 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-mp3/internal"
 	engine "github.com/godexture/sdk/engine"
 )
 
-// Config はformat-mp3プラグインの設定型。キーとして使われる。
-type Config struct{}
+var (
+	Probe = internal.Probe
 
-func (Config) NodeConfiguration() {}
+	NewDemuxer = internal.NewDemuxer
+	NewMuxer   = internal.NewMuxer
+)
 
-func Probe(r io.Reader) manifest.ProbeScore {
-	return internal.Probe(r)
+func NewDemuxerEngine(r io.ReadSeeker, config DemuxerConfig) (engine.DemuxerEngine, error) {
+	resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](config)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewDemuxer(r, resolved)
 }
 
-func NewDemuxerEngine(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r)
-}
-
-func NewMuxerEngine(w io.Writer) engine.MuxerEngine {
-	return internal.NewMuxer(w)
+func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error) {
+	resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewMuxer(w, resolved), nil
 }
 
 func init() {
-	if err := godec.Register(Config{}, registry.DemuxerManifest{
+	if err := godec.Register(NewDemuxerConfig(), registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-demuxer",
 			Description: "MP3 demuxer (format-mp3 plugin)",
 		},
 		Probe: Probe,
-		Factory: func(r io.Reader, _ registry.Configuration) (node.Demuxer, error) {
+		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
 			rs, ok := r.(io.ReadSeeker)
 			if !ok {
 				return nil, fmt.Errorf("format-mp3 demuxer requires io.ReadSeeker")
 			}
-			demuxer, err := NewDemuxerEngine(rs)
+			resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](config)
+			if err != nil {
+				return nil, err
+			}
+			demuxer, err := internal.NewDemuxer(rs, resolved)
 			if err != nil {
 				return nil, err
 			}
@@ -51,13 +60,17 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(Config{}, registry.MuxerManifest{
+	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "mp3-muxer",
 			Description: "MP3 muxer (format-mp3 plugin)",
 		},
-		Factory: func(w io.Writer, _ registry.Configuration) (node.Muxer, error) {
-			return engine.WrapMuxer(NewMuxerEngine(w)), nil
+		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
+			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
+			if err != nil {
+				return nil, err
+			}
+			return engine.WrapMuxer(internal.NewMuxer(w, resolved)), nil
 		},
 	}); err != nil {
 		panic(err)

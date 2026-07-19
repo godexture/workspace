@@ -16,6 +16,7 @@ import (
 )
 
 func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
+	t.Parallel()
 	_, thisFile, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(thisFile), "assets")
 
@@ -30,13 +31,14 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			input, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demuxer, err := wav.NewDemuxerEngine(bytes.NewReader(input))
+			demuxer, err := wav.NewDemuxerEngine(bytes.NewReader(input), wav.NewDemuxerConfig())
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}
@@ -49,14 +51,15 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 				t.Fatalf("no streams found in %s", e.Name())
 			}
 
-			a := streams[0].MediaAttributes.Audio
-			cfg := pcm.NewConfigWithAudio(a.SampleRate, a.Format, a.ChannelLayout)
-			decoder := pcm.NewDecoderEngine(cfg)
-			encoder := pcm.NewEncoderEngine(pcm.EncoderConfig{})
+			decoder := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			encoder := pcm.NewEncoderEngine(streams[0], pcm.NewEncoderConfig())
 
 			f := testutil.NewBuffer(nil)
 
-			muxer := wav.NewMuxerEngine(f)
+			muxer, err := wav.NewMuxerEngine(f, wav.NewMuxerConfig())
+			if err != nil {
+				t.Fatalf("NewMuxerEngine: %v", err)
+			}
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}

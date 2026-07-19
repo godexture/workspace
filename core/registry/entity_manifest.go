@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/godexture/core/domain/manifest"
@@ -16,17 +17,21 @@ type Validator interface {
 }
 
 type BaseManifest struct {
-	id          reflect.Type
+	key         PluginKey
 	Name        string
 	Description string
 }
 
-func (m BaseManifest) ID() reflect.Type { return m.id }
+func (m BaseManifest) ID() PluginKey { return m.key }
 
 type TransformManifest struct {
 	BaseManifest
-	Capabilities  []manifest.Capability
-	TransformFunc func(p media.StreamInfo) media.Profile
+	Capabilities []manifest.Capability
+	Resources    ResourceRequest
+	// TransformFunc resolves the output profile for this transform. target is
+	// the desired codec (the input codec for decoders) and cfg is the node
+	// configuration that will be used to construct the transform.
+	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
 }
 
 type MuxerManifest struct {
@@ -56,8 +61,8 @@ type FilterManifest struct {
 	Factory FilterFactory
 }
 
-func (m TransformManifest) Transform(stream media.StreamInfo) media.Profile {
-	return m.TransformFunc(stream)
+func (m TransformManifest) Transform(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error) {
+	return m.TransformFunc(stream, target, cfg)
 }
 
 func (m TransformManifest) Accept(stream media.StreamInfo) bool {
@@ -67,4 +72,90 @@ func (m TransformManifest) Accept(stream media.StreamInfo) bool {
 		}
 	}
 	return false
+}
+
+func (m BaseManifest) validate() error {
+	if m.Name == "" {
+		return fmt.Errorf("manifest name must not be empty")
+	}
+	return nil
+}
+
+func (m TransformManifest) validate() error {
+	if err := m.BaseManifest.validate(); err != nil {
+		return err
+	}
+	if len(m.Capabilities) == 0 {
+		return fmt.Errorf("transform manifest %q must declare at least one capability", m.Name)
+	}
+	for i, capability := range m.Capabilities {
+		if isNilCapability(capability) {
+			return fmt.Errorf("transform manifest %q capability %d is nil", m.Name, i)
+		}
+	}
+	return nil
+}
+
+func isNilCapability(capability manifest.Capability) bool {
+	if capability == nil {
+		return true
+	}
+	value := reflect.ValueOf(capability)
+	return value.Kind() == reflect.Pointer && value.IsNil()
+}
+
+func (m MuxerManifest) Validate() error {
+	if err := m.BaseManifest.validate(); err != nil {
+		return err
+	}
+	if m.Factory == nil {
+		return fmt.Errorf("muxer manifest %q has no factory", m.Name)
+	}
+	return nil
+}
+
+func (m DemuxerManifest) Validate() error {
+	if err := m.BaseManifest.validate(); err != nil {
+		return err
+	}
+	if m.Probe == nil {
+		return fmt.Errorf("demuxer manifest %q has no probe", m.Name)
+	}
+	if m.Factory == nil {
+		return fmt.Errorf("demuxer manifest %q has no factory", m.Name)
+	}
+	return nil
+}
+
+func (m EncoderManifest) Validate() error {
+	if err := m.TransformManifest.validate(); err != nil {
+		return err
+	}
+	if m.Supports == nil {
+		return fmt.Errorf("encoder manifest %q has no codec matcher", m.Name)
+	}
+	if m.Factory == nil {
+		return fmt.Errorf("encoder manifest %q has no factory", m.Name)
+	}
+	return nil
+}
+
+func (m DecoderManifest) Validate() error {
+	if err := m.TransformManifest.validate(); err != nil {
+		return err
+	}
+	if m.Factory == nil {
+		return fmt.Errorf("decoder manifest %q has no factory", m.Name)
+	}
+	return nil
+}
+
+func (m FilterManifest) Validate() error {
+	if err := m.TransformManifest.validate(); err != nil {
+		return err
+	}
+	if m.Factory == nil {
+		return fmt.Errorf("filter manifest %q has no factory", m.Name)
+	}
+	return nil
 }

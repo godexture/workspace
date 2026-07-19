@@ -97,7 +97,7 @@ godec の品質保証の中心は **roundtrip テスト** です:
 | `TestWaveFilesInDataRoundtrip` | `wav_data_roundtrip_test.go` | WAV → Demux → Mux → WAV roundtrip |
 | `TestWAVDemuxerMuxerRoundtrip` | `wav_system_test.go` | インメモリ WAV roundtrip |
 | `TestWaveFilesDemuxDecodeEncodeMuxRoundtrip` | `wav_pcm_integration_test.go` | WAV + PCM デコード・エンコード roundtrip |
-| `TestRunnerPipeline_WavPcmRoundtrip` | `runner_integration_test.go` | pipeline.Runner を使った roundtrip |
+| `TestPipeline_WavPcmRoundtrip` | `pipeline_integration_test.go` | ownership-aware Pipeline を使った roundtrip |
 
 ### テストの書き方
 
@@ -149,7 +149,7 @@ func TestMyFeature(t *testing.T) {
 | Config 型 | `Config` / `XxxConfig` | `Config`, `EncoderConfig` |
 | ファクトリ関数 | `NewXxx()` | `NewDemuxer()`, `NewInPort()` |
 | ラッパー関数 | `WrapXxx()` | `WrapDemuxer()`, `WrapEncoder()` |
-| エラー変数 | `ErrXxx` | `ErrEAGAIN`, `ErrNoPathFound` |
+| エラー変数 | `ErrXxx` | `ErrEAGAIN`, `ErrInvalidPipeline` |
 | 定数 (ProbeScore等) | `ProbeXxx`, `ActionXxx` | `ProbeExactSignature`, `ActionStop` |
 
 ### パッケージ設計
@@ -236,6 +236,14 @@ go mod tidy
 
 ---
 
+## 設計上の必須条件
+
+- Plugin ID は named config 型から Registry に生成させ、手動 ID を追加しない
+- codec の semantic config に worker 数などの execution resource を含めない
+- Node の `Close` は idempotent にし、Geometry / Pipeline へ ownership を渡す
+- 並列実装は sequential / parallel で同一出力になることをテストする
+- goroutine は constructor で開始せず、instance-owned resource を lazy に起動する
+
 ## 既知の問題・TODO
 
 | 項目 | 詳細 |
@@ -245,9 +253,7 @@ go mod tidy
 | `VideoAttributes` が未実装 | ビデオ処理サポートは将来予定 |
 | `domain/time/rescale.go` が空 | タイムスタンプのリスケールが未実装 |
 | `pkg/bits/reader.go` が空 | ビットリーダーが未実装 |
-| `resolver` の `ResolverBundle` フィールドが未使用 | 自動パイプライン構築機能が未実装 |
 | Muxer `AddStream` の `time.Rational` 引数が未使用 | タイムベース設定が未実装 |
-| `registry.Error` が使われていない | 将来の統一エラー型として予約 |
 | `manifest.AudioConstraint.Diagnose` は bool を返すが設計と矛盾 | インターフェースと実装が不一致 |
 | WAV Muxer がメモリにパケットを蓄積する | 大容量ファイルでメモリ問題が発生する可能性 |
 | `codec-pcm` の Decoder Factory で `cfg` から設定を読み込んでいない | `register.go:102` の TODO — 現在はデフォルト値のみ使用 |

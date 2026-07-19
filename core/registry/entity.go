@@ -7,17 +7,17 @@ import (
 	"github.com/godexture/core/node"
 )
 
-type Configuration interface {
-	NodeConfiguration()
+type Configuration interface{}
+
+type MuxerFactory func(io.Writer, Configuration) (node.Muxer, error)
+type DemuxerFactory func(io.Reader, Configuration) (node.Demuxer, error)
+
+type TransformFactoryOptions struct {
+	Config    Configuration
+	Resources ResourceBudget
 }
 
-type NodeFactory func(config Configuration) (node.Node, error)
+type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)
+type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error)
 
-type MuxerFactory func(w io.Writer, config Configuration) (node.Muxer, error)
-type DemuxerFactory func(r io.Reader, config Configuration) (node.Demuxer, error)
-
-type EncoderFactory func(inStream media.StreamInfo, targetCodec media.CodecID, config Configuration) (node.Encoder, error)
-type DecoderFactory func(stream media.StreamInfo, config Configuration) (node.Decoder, error)
-
-type FilterFactory func(inStream media.StreamInfo, config Configuration) (node.Filter, error)
-
+type FilterFactory func(media.StreamInfo, TransformFactoryOptions) (node.Filter, error)

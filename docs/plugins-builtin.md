@@ -18,10 +18,9 @@ RIFF/WAV コンテナの読み書きをサポートします。
 
 ```go
 type Config struct{}
-func (Config) NodeConfigaration() {}
 ```
 
-Config はシングルトン相当です。WAV フォーマットには設定オプションはありません。
+Config は reflection 由来の plugin key としても使われます。marker method は不要です。
 
 ### Probe スコア
 
@@ -148,7 +147,6 @@ func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.
 type EncoderConfig struct {
     CodecID media.CodecID
 }
-func (EncoderConfig) NodeConfigaration() {}
 ```
 
 ### Decoder の挙動

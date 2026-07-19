@@ -9,9 +9,11 @@ import (
 	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-wav/params"
 )
 
 func TestADPCMRoundtrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -25,6 +27,7 @@ func TestADPCMRoundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			sampleRate := 8000
 			numSamples := sampleRate
 			pcm := make([]byte, numSamples*tt.channels*2)
@@ -34,28 +37,31 @@ func TestADPCMRoundtrip(t *testing.T) {
 					binary.LittleEndian.PutUint16(pcm[(i*tt.channels+c)*2:(i*tt.channels+c)*2+2], uint16(val))
 				}
 			}
+			params, err := params.Default(tt.codec, tt.channels)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			var encoded []byte
-			var err error
 			if tt.codec == media.CodecMSADPCM {
-				encoded, err = msadpcm.Encode(pcm, tt.channels, binary.LittleEndian)
+				encoded, err = msadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian)
 			} else {
 				state := &imaadpcm.EncodeState{}
-				encoded, err = imaadpcm.Encode(pcm, tt.channels, binary.LittleEndian, state)
+				encoded, err = imaadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian, state)
 			}
 			if err != nil {
 				t.Fatalf("Encode error = %v", err)
 			}
 
-			blockAlign := 256 * tt.channels
+			blockAlign := int(params.BlockAlign)
 			var decoded []byte
 			for offset := 0; offset+blockAlign <= len(encoded); offset += blockAlign {
 				block := encoded[offset : offset+blockAlign]
 				var decBlock []byte
 				if tt.codec == media.CodecMSADPCM {
-					decBlock, err = msadpcm.Decode(block, tt.channels, binary.LittleEndian)
+					decBlock, err = msadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
 				} else {
-					decBlock, err = imaadpcm.Decode(block, tt.channels, binary.LittleEndian)
+					decBlock, err = imaadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
 				}
 				if err != nil {
 					t.Fatalf("Decode error = %v at offset %d", err, offset)
@@ -83,5 +89,29 @@ func TestADPCMRoundtrip(t *testing.T) {
 				t.Errorf("MAE is too high: %.2f, expected < 500", mae)
 			}
 		})
+	}
+}
+
+func TestMSADPCMDecodeUsesConfiguredCoefficients(t *testing.T) {
+	t.Parallel()
+	adpcm, err := params.Default(media.CodecMSADPCM, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.BlockAlign = 8
+	adpcm.SamplesPerBlock, err = params.SamplesPerBlock(media.CodecMSADPCM, 1, adpcm.BlockAlign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.Coefficients = []params.Coefficient{{Coeff1: 0, Coeff2: 0}}
+	block := []byte{0, 16, 0, 10, 0, 20, 0, 0}
+
+	decoded, err := msadpcm.Decode(block, 1, adpcm, binary.LittleEndian)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := bits.BytesToS16(decoded, binary.LittleEndian)
+	if samples[2] != 0 {
+		t.Fatalf("sample decoded with configured coefficients = %d, want 0", samples[2])
 	}
 }

@@ -2,33 +2,6 @@ package mp3
 
 import "github.com/godexture/codec-mp3/internal/mp3/layer3"
 
-// ConvertF32ToS16 converts float32 PCM samples to int16 PCM samples.
-func ConvertF32ToS16(f32 []float32, s16 []int16) {
-	if len(f32) == 0 || len(s16) == 0 {
-		return
-	}
-	n := len(f32)
-	if len(s16) < n {
-		n = len(s16)
-	}
-	for i := 0; i < n; i++ {
-		sample := f32[i] * 32768.0
-		if sample >= 32766.5 {
-			s16[i] = 32767
-		} else if sample <= -32767.5 {
-			s16[i] = -32768
-		} else {
-			var s int16
-			if sample >= 0 {
-				s = int16(sample + 0.5)
-			} else {
-				s = int16(sample - 0.5)
-			}
-			s16[i] = s
-		}
-	}
-}
-
 func synthesizePair(samples []float32, channelCount int, zBuffer []float32) {
 	accumulator := (zBuffer[14*64] - zBuffer[0]) * 29
 	accumulator += (zBuffer[1*64] + zBuffer[13*64]) * 213
@@ -106,82 +79,8 @@ func synthesizeFloat(granule []float32, samples []float32, channelCount int, wor
 		workspace[zLineOffset+4*(i-16)+2] = left[18*(1+i)]
 		workspace[zLineOffset+4*(i-16)+3] = right[18*(1+i)]
 
-		load := func(k int) (float32, float32, int, int) {
-			w0 := synthesizeWindowTable[windowIndex]
-			windowIndex++
-			w1 := synthesizeWindowTable[windowIndex]
-			windowIndex++
-			vZeroIndex := zLineOffset + 4*i - k*64
-			vYIndex := zLineOffset + 4*i - (15-k)*64
-			return w0, w1, vZeroIndex, vYIndex
-		}
-
-		var a, b [4]float32
-
-		// S0(0)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(0)
-			for j := 0; j < 4; j++ {
-				b[j] = workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] = workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(1)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(1)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(2)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(2)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(3)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(3)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(4)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(4)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(5)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(5)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
-		// S1(6)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(6)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vZeroIndex+j]*w0 - workspace[vYIndex+j]*w1
-			}
-		}
-		// S2(7)
-		{
-			w0, w1, vZeroIndex, vYIndex := load(7)
-			for j := 0; j < 4; j++ {
-				b[j] += workspace[vZeroIndex+j]*w1 + workspace[vYIndex+j]*w0
-				a[j] += workspace[vYIndex+j]*w1 - workspace[vZeroIndex+j]*w0
-			}
-		}
+		a, b := synthWindow(workspace, zLineOffset, i, synthesizeWindowTable[windowIndex:windowIndex+16])
+		windowIndex += 16
 
 		if channelCount == 2 {
 			samples[(15-i)*2+1] = a[1] / 32768.0
@@ -273,23 +172,28 @@ func dctType2(granule []float32, bandCount int) {
 	}
 }
 
-// SynthesizeGranule is the Go native implementation of subBand synthesis filtering.
-func SynthesizeGranule(quadratureMirrorFilterState []float32, granule []float32, bandCount int, channelCount int, pcmSamples []float32, synthesisWorkspace []float32) {
+func (d *Decoder) synthesizeGranule(granule []float32, bandCount int, channelCount int, pcmSamples []float32) {
 	for i := 0; i < channelCount; i++ {
 		dctType2(granule[layer3.SamplesPerGranule*i:], bandCount)
 	}
 
-	copy(synthesisWorkspace[:15*64], quadratureMirrorFilterState[:15*64])
+	d.synthesis.Grow(bandCount * 64)
+	window := d.synthesis.Data()
+	switch {
+	case channelCount == 1 && d.synthesisChannels != 1:
+		for i := 1; i < synthHistoryLength; i += 2 {
+			d.synthesisOdd[i/2] = window[i]
+		}
+	case channelCount == 2 && d.synthesisChannels == 1:
+		for i := 1; i < synthHistoryLength; i += 2 {
+			window[i] = d.synthesisOdd[i/2]
+		}
+	}
 
 	for i := 0; i < bandCount; i += 2 {
-		synthesizeFloat(granule[i:], pcmSamples[32*channelCount*i:], channelCount, synthesisWorkspace[i*64:])
+		synthesizeFloat(granule[i:], pcmSamples[32*channelCount*i:], channelCount, window[i*64:])
 	}
 
-	if channelCount == 1 {
-		for i := 0; i < 15*64; i += 2 {
-			quadratureMirrorFilterState[i] = synthesisWorkspace[bandCount*64+i]
-		}
-	} else {
-		copy(quadratureMirrorFilterState[:15*64], synthesisWorkspace[bandCount*64:bandCount*64+15*64])
-	}
+	d.synthesis.Discard(bandCount * 64)
+	d.synthesisChannels = channelCount
 }

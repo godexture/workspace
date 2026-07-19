@@ -22,9 +22,10 @@ type Muxer struct {
 	headerDone bool
 }
 
-func NewMuxer(w io.Writer) *Muxer {
+func NewMuxer(w io.Writer, _ MuxerConfig) *Muxer {
 	return &Muxer{w: w}
 }
+
 func (m *Muxer) AddStream(streamInfo media.StreamInfo) (int, error) {
 	if m.streamSet {
 		return 0, errors.New("mp3 muxer supports only one audio stream")
@@ -71,6 +72,12 @@ func (m *Muxer) WritePacket(streamIndex int, packet *media.Packet) error {
 	}
 	if packet == nil {
 		return errors.New("mp3 muxer received nil packet")
+	}
+	if packet.Kind == media.PacketKindStreamEnd {
+		return nil
+	}
+	if packet.Kind != media.PacketKindData {
+		return fmt.Errorf("mp3 muxer unsupported packet kind: %d", packet.Kind)
 	}
 	if err := m.WriteHeader(); err != nil {
 		return err

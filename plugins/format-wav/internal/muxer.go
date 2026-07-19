@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-wav/params"
 )
 
 type Muxer struct {
@@ -21,7 +22,7 @@ type Muxer struct {
 	headerWritten bool
 
 	// Configuration Options
-	ForceRF64 bool
+	forceRF64 bool
 
 	// Seekable streaming mode
 	seekable   bool
@@ -30,8 +31,12 @@ type Muxer struct {
 	startPos   int64
 }
 
-func NewMuxer(w io.Writer) *Muxer {
-	return &Muxer{w: w}
+type MuxerConfig struct {
+	ForceRF64 bool
+}
+
+func NewMuxer(w io.Writer, config MuxerConfig) *Muxer {
+	return &Muxer{w: w, forceRF64: config.ForceRF64}
 }
 
 func (m *Muxer) AddStream(info media.StreamInfo) (int, error) {
@@ -75,7 +80,7 @@ func (m *Muxer) WriteHeader() error {
 			m.startPos = pos
 		}
 
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, 0, m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, 0, 0, m.forceRF64)
 		if err != nil {
 			return err
 		}
@@ -87,7 +92,7 @@ func (m *Muxer) WriteHeader() error {
 	} else {
 		m.seekable = false
 		// For non-seekable streams, write header with unknown size immediately and do not buffer in memory
-		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), 0, m.ForceRF64)
+		headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, ^uint64(0), 0, m.forceRF64)
 		if err != nil {
 			return err
 		}
@@ -111,6 +116,12 @@ func (m *Muxer) WritePacket(streamIndex int, pkt *media.Packet) error {
 
 	if pkt == nil {
 		return errors.New("wav muxer received nil packet")
+	}
+	if pkt.Kind == media.PacketKindStreamEnd {
+		return nil
+	}
+	if pkt.Kind != media.PacketKindData {
+		return fmt.Errorf("wav muxer unsupported packet kind: %d", pkt.Kind)
 	}
 
 	if !m.headerWritten {
@@ -144,27 +155,18 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		return nil, errors.New("wav muxer requires a valid sample rate")
 	}
 
+	var adpcmParams params.ADPCM
 	var blockAlign int
+	samplesPerBlock := 1
 	if attr.Codec == media.CodecMSADPCM || attr.Codec == media.CodecIMAADPCM {
-		blockAlign = 256 * channels
+		adpcmParams, err = adpcmParametersFromMediaAttributes(attr, channels)
+		if err != nil {
+			return nil, err
+		}
+		blockAlign = int(adpcmParams.BlockAlign)
+		samplesPerBlock = int(adpcmParams.SamplesPerBlock)
 	} else {
 		blockAlign = channels * int(bitsPerSample/8)
-	}
-
-	samplesPerBlock := 1
-	switch attr.Codec {
-	case media.CodecMSADPCM:
-		if channels == 1 {
-			samplesPerBlock = (blockAlign-7)*2 + 2
-		} else {
-			samplesPerBlock = (blockAlign-14)*1 + 2
-		}
-	case media.CodecIMAADPCM:
-		if channels == 1 {
-			samplesPerBlock = (blockAlign-4)*2 + 1
-		} else {
-			samplesPerBlock = (blockAlign-8)*1 + 1
-		}
 	}
 
 	var byteRate int
@@ -193,7 +195,7 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	if useExtensible {
 		fmtSize = 40
 	} else if attr.Codec == media.CodecMSADPCM {
-		fmtSize = 50
+		fmtSize = uint32(22 + len(adpcmParams.Coefficients)*4)
 	} else if attr.Codec == media.CodecIMAADPCM {
 		fmtSize = 20
 	}
@@ -271,20 +273,28 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)
 
 	if useExtensible {
+		// LPCM samples narrower than their container are left-justified by the
+		// pcm encoder, so the significant width goes out as validBitsPerSample.
+		validBits := bitsPerSample
+		if (attr.Codec == media.CodecLPCM || attr.Codec == "") &&
+			attr.Audio.BitsPerSample > 0 && attr.Audio.BitsPerSample < int(bitsPerSample) {
+			validBits = uint16(attr.Audio.BitsPerSample)
+		}
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))            // cbSize
-		binary.Write(&headerBuf, binary.LittleEndian, bitsPerSample)         // validBitsPerSample
+		binary.Write(&headerBuf, binary.LittleEndian, validBits)             // validBitsPerSample
 		binary.Write(&headerBuf, binary.LittleEndian, uint32(layout.Mask())) // channelMask
 
 		binary.Write(&headerBuf, binary.LittleEndian, formatTag)
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(0))
 		headerBuf.Write(wavSubFormatBase)
 	} else if attr.Codec == media.CodecMSADPCM {
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(32)) // cbSize
+		cbSize := 4 + len(adpcmParams.Coefficients)*4
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(cbSize))
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(samplesPerBlock))
-		binary.Write(&headerBuf, binary.LittleEndian, uint16(7)) // numCoefficients
-		coeffs := [...]int16{256, 0, 512, -256, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232}
-		for _, c := range coeffs {
-			binary.Write(&headerBuf, binary.LittleEndian, c)
+		binary.Write(&headerBuf, binary.LittleEndian, uint16(len(adpcmParams.Coefficients)))
+		for _, c := range adpcmParams.Coefficients {
+			binary.Write(&headerBuf, binary.LittleEndian, c.Coeff1)
+			binary.Write(&headerBuf, binary.LittleEndian, c.Coeff2)
 		}
 	} else if attr.Codec == media.CodecIMAADPCM {
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(2)) // cbSize
@@ -321,6 +331,16 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 	}
 
 	return headerBuf.Bytes(), nil
+}
+
+func adpcmParametersFromMediaAttributes(attr media.MediaAttributes, channels int) (params.ADPCM, error) {
+	if attr.Codec != media.CodecMSADPCM && attr.Codec != media.CodecIMAADPCM {
+		return params.ADPCM{}, fmt.Errorf("unsupported ADPCM codec: %s", attr.Codec)
+	}
+	if media.IsCodecParameters[params.ADPCM](attr.CodecParameters) {
+		return params.Parse(attr.Codec, channels, attr.CodecParameters.Data)
+	}
+	return params.Default(attr.Codec, channels)
 }
 
 func (m *Muxer) WriteTrailer() error {
@@ -367,7 +387,7 @@ func (m *Muxer) WriteTrailer() error {
 
 	if m.seekable {
 		if seeker, ok := m.w.(io.Seeker); ok {
-			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, uint64(len(trailerBytes)), m.ForceRF64)
+			headerBytes, err := buildWAVHeader(m.stream.MediaAttributes, m.dataSize, uint64(len(trailerBytes)), m.forceRF64)
 			if err != nil {
 				return err
 			}

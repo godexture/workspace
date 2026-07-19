@@ -2,7 +2,6 @@ package metadata
 
 import (
 	"reflect"
-	"slices"
 	"testing"
 )
 
@@ -110,7 +109,7 @@ func AssertBundleValue[T interface {
 
 	got := Get[T](bundle)
 
-	if got != expected {
+	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("Got (%v) = %v, expected %v", reflect.TypeFor[T]().Name(), got, expected)
 	}
 }
@@ -123,7 +122,7 @@ func AssertBundleSlice[T interface {
 
 	got := Enumerate[T](bundle)
 
-	if !slices.Equal(got, expected) {
+	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("Got (%v) = %v, expected %v", reflect.TypeFor[T](), got, expected)
 	}
 }

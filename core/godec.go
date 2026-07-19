@@ -30,7 +30,6 @@ var (
 	NewResolver   = f.NewResolver
 	NewNegotiator = f.NewNegotiator
 	NewBuilder    = pipeline.NewBuilder
-	NewRunner     = pipeline.NewRunner
 )
 
 func Register(config registry.Configuration, manifest registry.Manifest) error {

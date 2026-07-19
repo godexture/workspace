@@ -1,44 +1,31 @@
 package pcm
 
 import (
-	"encoding/binary"
-
 	internal "github.com/godexture/codec-pcm/internal"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/engine"
 )
 
-type Config = internal.Config
-type EncoderConfig = internal.EncoderConfig
-
-func DefaultConfig() Config {
-	return internal.DefaultConfig()
+func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) engine.DecoderEngine {
+	resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
+	if err != nil {
+		panic(err)
+	}
+	return internal.NewDecoder(stream, resolved)
 }
 
-func NewDecoderEngine(config Config) engine.DecoderEngine {
-	return internal.NewDecoder(config)
-}
-
-func NewEncoderEngine(config EncoderConfig) engine.EncoderEngine {
-	return internal.NewEncoder(config)
-}
-
-func NewConfigWithAudio(sampleRate int, format media.SampleFormat, layout media.ChannelLayout) Config {
-	cfg := internal.DefaultConfig()
-	if sampleRate > 0 {
-		cfg.SampleRate = sampleRate
+func NewEncoderEngine(stream media.StreamInfo, cfg EncoderConfig) engine.EncoderEngine {
+	resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+	if err != nil {
+		panic(err)
 	}
-	if format != media.SampleFormatUnknown {
-		cfg.Format = format
-	}
-	if layout.ChannelCount() > 0 {
-		cfg.ChannelLayout = layout
-	}
-	return cfg
+	enc, _ := internal.NewEncoder(stream, resolved.CodecID, resolved)
+	return enc
 }
 
 type pcmCapability struct {
@@ -57,7 +44,7 @@ func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
 
 func init() {
 	// --- Decoder ---
-	if err := godec.Register(Config{}, registry.DecoderManifest{
+	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-decoder",
@@ -70,79 +57,25 @@ func init() {
 				pcmCapability{codec: media.CodecMSADPCM},
 				pcmCapability{codec: media.CodecIMAADPCM},
 			},
-			TransformFunc: func(s media.StreamInfo) media.Profile {
+			TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
 				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
-				return p
+				return p, nil
 			},
 		},
-		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			c := DefaultConfig()
-			if s.MediaAttributes.Codec != "" {
-				c.CodecID = s.MediaAttributes.Codec
+		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
+			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](options.Config)
+			if err != nil {
+				return nil, err
 			}
-			if s.MediaAttributes.Audio.SampleRate > 0 {
-				c.SampleRate = s.MediaAttributes.Audio.SampleRate
-			}
-			if s.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
-				c.Format = s.MediaAttributes.Audio.Format
-			}
-			if s.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
-				c.ChannelLayout = s.MediaAttributes.Audio.ChannelLayout
-			}
-
-			if cfg != nil {
-				if pcmCfg, ok := cfg.(Config); ok {
-					if pcmCfg.CodecID != "" {
-						c.CodecID = pcmCfg.CodecID
-					}
-					if pcmCfg.SampleRate > 0 {
-						c.SampleRate = pcmCfg.SampleRate
-					}
-					if pcmCfg.Format != media.SampleFormatUnknown {
-						c.Format = pcmCfg.Format
-					}
-					if pcmCfg.ChannelLayout.ChannelCount() > 0 {
-						c.ChannelLayout = pcmCfg.ChannelLayout
-					}
-					if pcmCfg.ByteOrder != nil {
-						c.ByteOrder = pcmCfg.ByteOrder
-					}
-				} else if pcmCfgPtr, ok := cfg.(*Config); ok && pcmCfgPtr != nil {
-					if pcmCfgPtr.CodecID != "" {
-						c.CodecID = pcmCfgPtr.CodecID
-					}
-					if pcmCfgPtr.SampleRate > 0 {
-						c.SampleRate = pcmCfgPtr.SampleRate
-					}
-					if pcmCfgPtr.Format != media.SampleFormatUnknown {
-						c.Format = pcmCfgPtr.Format
-					}
-					if pcmCfgPtr.ChannelLayout.ChannelCount() > 0 {
-						c.ChannelLayout = pcmCfgPtr.ChannelLayout
-					}
-					if pcmCfgPtr.ByteOrder != nil {
-						c.ByteOrder = pcmCfgPtr.ByteOrder
-					}
-				}
-			}
-			// Set G.711 default sample rate & layout if not explicitly set
-			// if c.CodecID == media.CodecPCMU || c.CodecID == media.CodecPCMA {
-			// 	if c.SampleRate == 48000 {
-			// 		c.SampleRate = 8000
-			// 	}
-			// 	if c.Layout == media.LayoutStereo2_0 {
-			// 		c.Layout = media.LayoutMono1
-			// 	}
-			// }
-			return engine.WrapDecoder(NewDecoderEngine(c)), nil
+			return engine.WrapDecoder(internal.NewDecoder(s, resolved)), nil
 		},
 	}); err != nil {
 		panic(err)
 	}
 
 	// --- Encoder ---
-	if err := godec.Register(EncoderConfig{}, registry.EncoderManifest{
+	if err := godec.Register(NewEncoderConfig(), registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-encoder",
@@ -155,33 +88,54 @@ func init() {
 				pcmCapability{codec: media.CodecMSADPCM},
 				pcmCapability{codec: media.CodecIMAADPCM},
 			},
-			TransformFunc: func(s media.StreamInfo) media.Profile {
-				return media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+			TransformFunc: func(in media.StreamInfo, target media.CodecID, cfg registry.Configuration) (media.Profile, error) {
+				resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+				if err != nil {
+					return media.Profile{}, err
+				}
+				profile := media.Profile{Type: in.Type, MediaAttributes: in.MediaAttributes}
+				profile.Codec = target
+				if target == media.CodecMSADPCM || target == media.CodecIMAADPCM {
+					channels := profile.Audio.ChannelLayout.ChannelCount()
+					if channels == 0 {
+						channels = 1
+					}
+
+					adpcm := resolved.ADPCM
+					if adpcm.BlockAlign == 0 {
+						if in.Codec == target && media.IsCodecParameters[params.ADPCM](in.CodecParameters) {
+							if p, err := params.Parse(target, in.Audio.ChannelLayout.ChannelCount(), in.CodecParameters.Data); err == nil {
+								adpcm = p
+							}
+						}
+					}
+					if adpcm.BlockAlign == 0 {
+						adpcm, _ = params.Default(target, channels)
+					}
+
+					if err := adpcm.Validate(target, channels); err != nil {
+						return media.Profile{}, err
+					}
+					profile.CodecParameters = media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary())
+				} else {
+					profile.CodecParameters = media.CodecParameters{}
+				}
+				return profile, nil
 			},
 		},
 		Supports: func(codec media.CodecID) bool {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
-		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			encCfg := EncoderConfig{CodecID: targetCodec, ByteOrder: binary.LittleEndian}
-			if cfg != nil {
-				if pcmEncCfg, ok := cfg.(EncoderConfig); ok {
-					if pcmEncCfg.CodecID != "" {
-						encCfg.CodecID = pcmEncCfg.CodecID
-					}
-					if pcmEncCfg.ByteOrder != nil {
-						encCfg.ByteOrder = pcmEncCfg.ByteOrder
-					}
-				} else if pcmEncCfgPtr, ok := cfg.(*EncoderConfig); ok && pcmEncCfgPtr != nil {
-					if pcmEncCfgPtr.CodecID != "" {
-						encCfg.CodecID = pcmEncCfgPtr.CodecID
-					}
-					if pcmEncCfgPtr.ByteOrder != nil {
-						encCfg.ByteOrder = pcmEncCfgPtr.ByteOrder
-					}
-				}
+		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
+			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](options.Config)
+			if err != nil {
+				return nil, err
 			}
-			return engine.WrapEncoder(NewEncoderEngine(encCfg)), nil
+			enc, err := internal.NewEncoder(inStream, targetCodec, resolved)
+			if err != nil {
+				return nil, err
+			}
+			return engine.WrapEncoder(enc), nil
 		},
 	}); err != nil {
 		panic(err)

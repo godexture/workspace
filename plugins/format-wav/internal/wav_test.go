@@ -11,11 +11,13 @@ import (
 	mp3codec "github.com/godexture/codec-mp3"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/engine"
 	"github.com/godexture/sdk/testutil"
 )
 
-func TestProbercognizesWAVSignature(t *testing.T) {
+func TestProberCognizesWAVSignature(t *testing.T) {
+	t.Parallel()
 	data := buildTestWAV(t, []byte{0x01, 0x02, 0x03, 0x04})
 
 	if got := Probe(bytes.NewReader(data)); got != 100 {
@@ -24,10 +26,11 @@ func TestProbercognizesWAVSignature(t *testing.T) {
 }
 
 func TestWAVRoundTripMonoPCM16(t *testing.T) {
+	t.Parallel()
 	original := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 	wavData := buildTestWAV(t, original)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -67,7 +70,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -87,6 +90,7 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 }
 
 func TestWAVRoundTripPCM24(t *testing.T) {
+	t.Parallel()
 	// 24-bit PCM (3 bytes per sample). Let's do 2 channels. 3 samples each = 18 bytes.
 	original := []byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // sample 1 (L, R)
@@ -104,7 +108,7 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 	}
 	wavData := buildTestWAVWithAttr(t, original, attr)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -144,7 +148,7 @@ func TestWAVRoundTripPCM24(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -178,7 +182,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 	t.Helper()
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type:            media.MediaAudio,
 		MediaAttributes: attr,
@@ -204,6 +208,7 @@ func buildTestWAVWithAttr(t *testing.T, payload []byte, attr media.MediaAttribut
 }
 
 func TestRF64RoundTrip(t *testing.T) {
+	t.Parallel()
 	attr := media.MediaAttributes{
 		Codec: media.CodecLPCM,
 		Audio: media.AudioAttributes{
@@ -229,7 +234,7 @@ func TestRF64RoundTrip(t *testing.T) {
 	}
 
 	// Parse it back using Demuxer
-	demuxer, err := NewDemuxer(bytes.NewReader(headerBytes))
+	demuxer, err := NewDemuxer(bytes.NewReader(headerBytes), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -254,6 +259,7 @@ func TestRF64RoundTrip(t *testing.T) {
 }
 
 func TestReadPacketMemoryLimit(t *testing.T) {
+	t.Parallel()
 	// Setup a mock demuxer with extremely large dataSize
 	demuxer := &Demuxer{
 		r: bytes.NewReader(nil),
@@ -273,6 +279,7 @@ func TestReadPacketMemoryLimit(t *testing.T) {
 }
 
 func TestProbeRecognizesRF64Signature(t *testing.T) {
+	t.Parallel()
 	attr := media.MediaAttributes{
 		Codec: media.CodecLPCM,
 		Audio: media.AudioAttributes{
@@ -297,6 +304,7 @@ func TestProbeRecognizesRF64Signature(t *testing.T) {
 }
 
 func TestWAVRoundTripFloat32(t *testing.T) {
+	t.Parallel()
 	// 1 channel, Float32. This should trigger writeFact (since F32 is non-PCM).
 	original := []byte{
 		0x00, 0x00, 0x80, 0x3f, // 1.0f
@@ -304,7 +312,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 	}
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -341,7 +349,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 	}
 
 	// Now demux it and verify
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -374,6 +382,7 @@ func TestWAVRoundTripFloat32(t *testing.T) {
 }
 
 func TestRF64Demuxer(t *testing.T) {
+	t.Parallel()
 	// Construct a minimal RF64 WAV file manually.
 	var buf bytes.Buffer
 	buf.WriteString("RF64")
@@ -403,7 +412,7 @@ func TestRF64Demuxer(t *testing.T) {
 	binary.Write(&buf, binary.LittleEndian, uint32(0xFFFFFFFF))
 	buf.Write(make([]byte, 100))
 
-	demuxer, err := NewDemuxer(bytes.NewReader(buf.Bytes()))
+	demuxer, err := NewDemuxer(bytes.NewReader(buf.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -436,6 +445,7 @@ func TestRF64Demuxer(t *testing.T) {
 }
 
 func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
+	t.Parallel()
 	// 5.1 layout has 6 channels. 24-bit PCM.
 	// 6 channels * 3 bytes/sample = 18 bytes per sample frame.
 	// Let's write 2 sample frames = 36 bytes.
@@ -466,7 +476,7 @@ func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
 		t.Errorf("expected format tag to be 0xFFFE (WAVEFORMATEXTENSIBLE), got 0x%x", formatTag)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -510,6 +520,7 @@ func TestWAVRoundTripExtensible5_1_24Bit(t *testing.T) {
 }
 
 func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
+	t.Parallel()
 	// Let's create a custom layout: 1 channel but mapped to FrontRight (0x2)
 	// which is different from default LayoutMono1 (0x4).
 	customLayout := media.NewNativeLayout(media.FrontRight)
@@ -533,7 +544,7 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 		t.Errorf("expected format tag to be 0xFFFE (WAVEFORMATEXTENSIBLE), got 0x%x", formatTag)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -553,8 +564,9 @@ func TestWAVRoundTripExtensibleCustomLayout(t *testing.T) {
 }
 
 func TestWAVMuxerNonSeekable(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
-	muxer := NewMuxer(&out)
+	muxer := NewMuxer(&out, MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -601,10 +613,10 @@ func TestWAVMuxerNonSeekable(t *testing.T) {
 	}
 }
 
-func TestWAVMuxerForceRF64(t *testing.T) {
+func TestWAVMuxerforceRF64(t *testing.T) {
+	t.Parallel()
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
-	muxer.ForceRF64 = true
+	muxer := NewMuxer(out, MuxerConfig{ForceRF64: true})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -664,6 +676,7 @@ func TestWAVMuxerForceRF64(t *testing.T) {
 }
 
 func TestWAVDemuxerSeek(t *testing.T) {
+	t.Parallel()
 
 	// Create a WAV with 48000 Hz, 16-bit, Mono. 1 second of data.
 	// 48000 samples * 2 bytes = 96000 bytes
@@ -682,7 +695,7 @@ func TestWAVDemuxerSeek(t *testing.T) {
 	}
 	wavData := buildTestWAVWithAttr(t, payload, attr)
 
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -709,6 +722,7 @@ func TestWAVDemuxerSeek(t *testing.T) {
 }
 
 func TestWAVDemuxerSeekADPCM(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -722,6 +736,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			blockAlign := 256 * tt.channels
 			// Create a 10-block payload
 			original := make([]byte, blockAlign*10)
@@ -740,7 +755,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 
 			wavData := buildTestWAVWithAttr(t, original, attr)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -758,12 +773,12 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 			var samplesPerBlock int
 			if tt.codec == media.CodecMSADPCM {
 				if tt.channels == 1 {
-					samplesPerBlock = (blockAlign - 7) * 2 + 2
+					samplesPerBlock = (blockAlign-7)*2 + 2
 				} else {
-					samplesPerBlock = (blockAlign - 14) * 1 + 2
+					samplesPerBlock = (blockAlign-14)*1 + 2
 				}
 			} else {
-				samplesPerBlock = (blockAlign - 4*tt.channels) * 2 / tt.channels + 1
+				samplesPerBlock = (blockAlign-4*tt.channels)*2/tt.channels + 1
 			}
 
 			// Seek to the start of the 5th block (block index 4)
@@ -791,6 +806,7 @@ func TestWAVDemuxerSeekADPCM(t *testing.T) {
 }
 
 func TestWAVMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	originalAudio := []byte{0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40, 0x00}
 
 	attr := media.MediaAttributes{
@@ -820,7 +836,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 	meta.AddRaw("smpl", smplPayload)
 
 	out := testutil.NewBuffer(nil)
-	muxer := NewMuxer(out)
+	muxer := NewMuxer(out, MuxerConfig{})
 	if _, err := muxer.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}
@@ -839,7 +855,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
 
-	demuxer, err := NewDemuxer(bytes.NewReader(out.Bytes()))
+	demuxer, err := NewDemuxer(bytes.NewReader(out.Bytes()), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -882,6 +898,7 @@ func TestWAVMetadataRoundTrip(t *testing.T) {
 }
 
 func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		audioFormat   uint16
@@ -936,9 +953,10 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			wavData := buildWAVWithFormatTag(t, tt.audioFormat, tt.bitsPerSample, tt.channels, tt.sampleRate, tt.blockAlign, tt.payload)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -980,13 +998,14 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 }
 
 func TestWAVMP3PacketizationDecodes(t *testing.T) {
+	t.Parallel()
 	mp3Data, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
 	wavData := buildWAVWithFormatTag(t, wavAudioMP3, 0, 2, 44100, 1, mp3Data)
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -1002,7 +1021,7 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 		t.Fatalf("codec = %s, want %s", streams[0].MediaAttributes.Codec, media.CodecMP3)
 	}
 
-	decoder := mp3codec.NewDecoderEngine(mp3codec.DecoderConfig{})
+	decoder := mp3codec.NewDecoderEngine(mp3codec.NewDecoderConfig())
 	decodedFrames := 0
 	decodedSamples := 0
 
@@ -1046,8 +1065,9 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 }
 
 func TestWAVAnalyzeUnsupportedFormatTag(t *testing.T) {
+	t.Parallel()
 	wavData := buildWAVWithFormatTag(t, 0x1234, 8, 1, 8000, 1, []byte{0x00})
-	demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer() error = %v", err)
 	}
@@ -1096,6 +1116,7 @@ func buildWAVWithFormatTag(t *testing.T, audioFormat uint16, bitsPerSample uint1
 }
 
 func TestWAVADPCMRoundTrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		codec    media.CodecID
@@ -1109,6 +1130,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			blockAlign := 256 * tt.channels
 			original := make([]byte, blockAlign*3)
 			for i := range original {
@@ -1126,7 +1148,7 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 
 			wavData := buildTestWAVWithAttr(t, original, attr)
 
-			demuxer, err := NewDemuxer(bytes.NewReader(wavData))
+			demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
 			if err != nil {
 				t.Fatalf("NewDemuxer() error = %v", err)
 			}
@@ -1163,5 +1185,56 @@ func TestWAVADPCMRoundTrip(t *testing.T) {
 				t.Errorf("payload mismatch: got %d bytes, want %d bytes", len(gotPayload), len(original))
 			}
 		})
+	}
+}
+
+func TestWAVADPCMCodecParametersRoundTrip(t *testing.T) {
+	t.Parallel()
+	adpcm, err := params.Default(media.CodecMSADPCM, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.BlockAlign = 1024
+	adpcm.SamplesPerBlock, err = params.SamplesPerBlock(media.CodecMSADPCM, 2, adpcm.BlockAlign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adpcm.Coefficients[0] = params.Coefficient{Coeff1: 128, Coeff2: 64}
+
+	attr := media.MediaAttributes{
+		Codec:           media.CodecMSADPCM,
+		CodecParameters: media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary()),
+		Audio: media.AudioAttributes{
+			SampleRate:    8000,
+			ChannelLayout: media.LayoutStereo2_0,
+		},
+	}
+	payload := make([]byte, int(adpcm.BlockAlign)*2)
+	wavData := buildTestWAVWithAttr(t, payload, attr)
+
+	demuxer, err := NewDemuxer(bytes.NewReader(wavData), DemuxerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams, _, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := params.Parse(media.CodecMSADPCM, 2, streams[0].CodecParameters.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !media.IsCodecParameters[params.ADPCM](streams[0].CodecParameters) || got.BlockAlign != adpcm.BlockAlign || got.SamplesPerBlock != adpcm.SamplesPerBlock || got.Coefficients[0] != adpcm.Coefficients[0] {
+		t.Fatalf("ADPCM parameters were not preserved: %#v", got)
+	}
+
+	for i := 0; i < 2; i++ {
+		pkt, _, err := demuxer.ReadPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkt.Data()) != int(adpcm.BlockAlign) {
+			t.Fatalf("packet %d size = %d, want %d", i, len(pkt.Data()), adpcm.BlockAlign)
+		}
 	}
 }

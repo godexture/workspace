@@ -12,17 +12,19 @@ import (
 )
 
 type DemuxerAdapter struct {
-	engine   DemuxerEngine
-	streams  []media.StreamInfo
-	metadata *metadata.Bundle
-	analyzed bool
-	out      *node.OutPort[*media.Packet]
+	engine    DemuxerEngine
+	lifecycle engineLifecycle
+	streams   []media.StreamInfo
+	metadata  *metadata.Bundle
+	analyzed  bool
+	out       *node.OutPort[*media.Packet]
 }
 
 func WrapDemuxer(engine DemuxerEngine) node.Demuxer {
 	adapter := &DemuxerAdapter{
-		engine: engine,
-		out:    node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		out:       node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
 	}
 
 	if seeker, ok := engine.(SeekerEngine); ok {
@@ -33,6 +35,10 @@ func WrapDemuxer(engine DemuxerEngine) node.Demuxer {
 	}
 
 	return adapter
+}
+
+func (n *DemuxerAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 type SeekableDemuxerAdapter struct {

@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 	mp3header "github.com/godexture/format-mp3/header"
+	"github.com/godexture/format-wav/params"
 )
 
 const (
@@ -29,7 +30,7 @@ type Demuxer struct {
 	mp3FreeFormatBytes int
 }
 
-func NewDemuxer(r io.ReadSeeker) (*Demuxer, error) {
+func NewDemuxer(r io.ReadSeeker, _ DemuxerConfig) (*Demuxer, error) {
 	if r == nil {
 		return nil, errors.New("wav demuxer requires a readable stream")
 	}
@@ -65,7 +66,8 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			IsDefault: true,
 			Metadata:  d.meta,
 			MediaAttributes: media.MediaAttributes{
-				Codec: codec,
+				Codec:           codec,
+				CodecParameters: d.codecParameters(codec),
 				Audio: media.AudioAttributes{
 					SampleRate:    int(header.sampleRate),
 					Format:        sampleFormatFromWAV(audioFormat, header.bitsPerSample),
@@ -77,6 +79,13 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 
 	return []media.StreamInfo{d.streamInfo}, d.meta, nil
+}
+
+func (d *Demuxer) codecParameters(codec media.CodecID) media.CodecParameters {
+	if (codec != media.CodecMSADPCM && codec != media.CodecIMAADPCM) || d.header.adpcm == nil {
+		return media.CodecParameters{}
+	}
+	return media.NewCodecParameters[params.ADPCM](d.header.adpcm.MarshalBinary())
 }
 
 func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {

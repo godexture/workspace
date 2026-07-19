@@ -21,6 +21,7 @@ prompts/
 coverage.*
 *.coverprofile
 profile.cov
+*.pprof
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

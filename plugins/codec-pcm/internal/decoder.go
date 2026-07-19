@@ -8,83 +8,81 @@ import (
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
 	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/format-wav/params"
 	"github.com/godexture/sdk/engine"
 )
 
-type Config struct {
-	CodecID media.CodecID
-	media.AudioAttributes
+type DecoderConfig struct {
 	ByteOrder binary.ByteOrder
+
+	codecID       media.CodecID
+	sampleRate    int
+	format        media.SampleFormat
+	channelLayout media.ChannelLayout
+	adpcm         params.ADPCM
 }
 
-func (Config) NodeConfiguration() {}
+var DefaultDecoderConfig = DecoderConfig{
+	ByteOrder: binary.LittleEndian,
 
-func DefaultConfig() Config {
-	return Config{
-		CodecID: media.CodecLPCM,
-		AudioAttributes: media.AudioAttributes{
-			SampleRate:    48000,
-			Format:        media.SampleFormatS16,
-			ChannelLayout: media.LayoutStereo2_0,
-		},
-		ByteOrder: binary.LittleEndian,
-	}
+	codecID:       media.CodecLPCM,
+	sampleRate:    44100,
+	format:        media.SampleFormatS16,
+	channelLayout: media.LayoutStereo2_0,
 }
 
 func GetDecodedAttributes(codec media.CodecID, attrs media.AudioAttributes) media.AudioAttributes {
 	switch codec {
 	case media.CodecPCMU, media.CodecPCMA:
-		// p.Audio.SampleRate = 8000
 		attrs.Format = media.SampleFormatS16
-		// p.Audio.ChannelLayout = media.LayoutMono1
 	case media.CodecMSADPCM, media.CodecIMAADPCM:
 		attrs.Format = media.SampleFormatS16
 	}
 
 	return attrs
-
 }
 
 type Decoder struct {
-	config  Config
+	config  DecoderConfig
 	pending *media.Packet
 	flushed bool
 }
 
-func NewDecoder(config Config) *Decoder {
-	if config.CodecID == "" {
-		config.CodecID = media.CodecLPCM
+func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) *Decoder {
+	if stream.MediaAttributes.Codec != "" {
+		cfg.codecID = stream.MediaAttributes.Codec
 	}
-	if config.ByteOrder == nil {
-		config.ByteOrder = binary.LittleEndian
+	if stream.MediaAttributes.Audio.SampleRate > 0 {
+		cfg.sampleRate = stream.MediaAttributes.Audio.SampleRate
 	}
-
-	isG711 := config.CodecID == media.CodecPCMU || config.CodecID == media.CodecPCMA
-	isADPCM := config.CodecID == media.CodecMSADPCM || config.CodecID == media.CodecIMAADPCM
-
-	if config.SampleRate <= 0 {
-		if isG711 {
-			config.SampleRate = 8000
-		} else {
-			config.SampleRate = 48000
-		}
+	if stream.MediaAttributes.Audio.Format != media.SampleFormatUnknown {
+		cfg.format = stream.MediaAttributes.Audio.Format
 	}
-	if config.Format == media.SampleFormatUnknown {
-		if isG711 || isADPCM {
-			config.Format = media.SampleFormatS16
-		} else {
-			config.Format = media.SampleFormatS16
-		}
+	if stream.MediaAttributes.Audio.ChannelLayout.ChannelCount() > 0 {
+		cfg.channelLayout = stream.MediaAttributes.Audio.ChannelLayout
 	}
-	if config.ChannelLayout.ChannelCount() <= 0 {
-		if isG711 {
-			config.ChannelLayout = media.LayoutMono1
-		} else {
-			config.ChannelLayout = media.LayoutStereo2_0
+	if media.IsCodecParameters[params.ADPCM](stream.CodecParameters) {
+		if adpcm, err := params.Parse(stream.Codec, stream.Audio.ChannelLayout.ChannelCount(), stream.CodecParameters.Data); err == nil {
+			cfg.adpcm = adpcm
 		}
 	}
 
-	return &Decoder{config: config}
+	isG711 := cfg.codecID == media.CodecPCMU || cfg.codecID == media.CodecPCMA
+	isADPCM := cfg.codecID == media.CodecMSADPCM || cfg.codecID == media.CodecIMAADPCM
+
+	if cfg.sampleRate == 0 && isG711 {
+		cfg.sampleRate = 8000
+	}
+	if cfg.format == media.SampleFormatUnknown && (isG711 || isADPCM) {
+		cfg.format = media.SampleFormatS16
+	}
+	if cfg.channelLayout.ChannelCount() == 0 && isG711 {
+		cfg.channelLayout = media.LayoutMono1
+	}
+
+	return &Decoder{
+		config: cfg,
+	}
 }
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
@@ -112,27 +110,35 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 
 	data := pkt.Data()
 	var err error
-	switch d.config.CodecID {
+	switch d.config.codecID {
 	case media.CodecPCMU:
 		data = g711.DecodePCMU(data, d.config.ByteOrder)
 	case media.CodecPCMA:
 		data = g711.DecodePCMA(data, d.config.ByteOrder)
 	case media.CodecMSADPCM:
-		data, err = msadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), d.config.ByteOrder)
+		params, resolveErr := d.resolveADPCMParameters()
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		data, err = msadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
 	case media.CodecIMAADPCM:
-		data, err = imaadpcm.Decode(data, d.config.ChannelLayout.ChannelCount(), d.config.ByteOrder)
+		params, resolveErr := d.resolveADPCMParameters()
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		data, err = imaadpcm.Decode(data, d.config.channelLayout.ChannelCount(), params, d.config.ByteOrder)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	outAttrs := GetDecodedAttributes(d.config.CodecID, media.AudioAttributes{
-		SampleRate:    d.config.SampleRate,
-		ChannelLayout: d.config.ChannelLayout,
-		Format:        d.config.Format,
+	outAttrs := GetDecodedAttributes(d.config.codecID, media.AudioAttributes{
+		SampleRate:    d.config.sampleRate,
+		ChannelLayout: d.config.channelLayout,
+		Format:        d.config.format,
 	})
 
 	bytesPerSample := outAttrs.Format.BytesPerSample()
@@ -150,6 +156,17 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 
 	var frame media.Frame = f
 	return &frame, nil
+}
+
+func (d *Decoder) resolveADPCMParameters() (params.ADPCM, error) {
+	channels := d.config.channelLayout.ChannelCount()
+	if d.config.adpcm.BlockAlign != 0 {
+		if err := d.config.adpcm.Validate(d.config.codecID, channels); err != nil {
+			return params.ADPCM{}, err
+		}
+		return d.config.adpcm, nil
+	}
+	return params.Default(d.config.codecID, channels)
 }
 
 func (d *Decoder) Flush() error {

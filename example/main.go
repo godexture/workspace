@@ -4,25 +4,56 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
+	"runtime/pprof"
+
+	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/sdk/timer"
 
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/routing"
 
+	flacFormat "github.com/godexture/format-flac"
+
+	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-mp3"
 	_ "github.com/godexture/codec-pcm"
+	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-mp3"
-	wav "github.com/godexture/format-wav"
+	_ "github.com/godexture/format-wav"
 )
 
+const targetCodec = media.CodecFLAC
+
 func main() {
-	if len(os.Args) < 2 {
+	debug.SetGCPercent(200)
+
+	fmt.Printf("Environment: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("SIMD Support: AVX2=%v, AVX2+FMA=%v\n", dsp.HasAVX2, dsp.HasAVX2FMA)
+
+	if len(os.Args) <= 2 {
 		fmt.Println("Usage: go run . <input> <output.wav>")
 		return
 	}
 
 	inputPath := os.Args[1]
 	outputPath := os.Args[2]
+
+	if profilePath := os.Getenv("GODEC_CPUPROFILE"); profilePath != "" {
+		profileFile, err := os.Create(profilePath)
+		if err != nil {
+			fmt.Printf("Failed to create profile: %v\n", err)
+			return
+		}
+		defer profileFile.Close()
+		if err := pprof.StartCPUProfile(profileFile); err != nil {
+			fmt.Printf("Failed to start CPU profile: %v\n", err)
+			return
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	inputFile, err := os.Open(inputPath)
 	if err != nil {
@@ -44,8 +75,8 @@ func main() {
 	spec := routing.ConversionSpec{
 		Input:       inputFile,
 		Output:      outputFile,
-		TargetCodec: media.CodecMSADPCM,
-		MuxConfig:   wav.Config{},
+		TargetCodec: targetCodec,
+		MuxConfig:   flacFormat.NewMuxerConfig(),
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)
@@ -56,18 +87,20 @@ func main() {
 
 	// 2. Build Pipeline
 	builder := godec.NewBuilder()
-	nodes, err := builder.Build(geometry)
+	conversion, err := builder.Build(geometry)
 	if err != nil {
 		fmt.Printf("Failed to build pipeline: %v\n", err)
 		return
 	}
+	defer conversion.Close()
 
-	// 3. Run Pipeline
-	runner := godec.NewRunner()
-	if err := runner.Run(context.Background(), nodes); err != nil {
+	fmt.Printf("Starting conversion from %s to %s (%s)\n", inputPath, outputPath, targetCodec)
+	timer := timer.New()
+
+	if err := conversion.Run(context.Background()); err != nil {
 		fmt.Printf("Pipeline execution failed: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Successfully converted %s to %s (%s)\n", inputPath, outputPath, media.CodecLPCM)
+	defer fmt.Printf("Successfully converted %s to %s (%s) in %v\n", inputPath, outputPath, targetCodec, timer.Elapsed())
 }

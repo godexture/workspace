@@ -9,16 +9,18 @@ import (
 )
 
 type DecoderAdapter struct {
-	engine DecoderEngine
-	in     *node.InPort[*media.Packet]
-	out    *node.OutPort[media.Frame]
+	engine    DecoderEngine
+	lifecycle engineLifecycle
+	in        *node.InPort[*media.Packet]
+	out       *node.OutPort[media.Frame]
 }
 
 func WrapDecoder(engine DecoderEngine) node.Decoder {
 	return &DecoderAdapter{
-		engine: engine,
-		in:     node.NewInPort[*media.Packet]("in", nil),
-		out:    node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
+		engine:    engine,
+		lifecycle: newEngineLifecycle(engine),
+		in:        node.NewInPort[*media.Packet]("in", nil),
+		out:       node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
 	}
 }
 
@@ -28,21 +30,33 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 	if in == nil || out == nil {
 		return fmt.Errorf("decoder ports not connected")
 	}
+	send := func(pkt *media.Packet) error {
+		if pkt.Kind == media.PacketKindStreamEnd {
+			return nil
+		}
+		if pkt.Kind != media.PacketKindData {
+			return fmt.Errorf("unsupported packet kind: %d", pkt.Kind)
+		}
+		return n.engine.SendPacket(pkt)
+	}
+	receive := func() (media.Frame, error) {
+		f, err := n.engine.ReceiveFrame()
+		if err != nil {
+			return nil, err
+		}
+		if f == nil || *f == nil {
+			return nil, fmt.Errorf("decoder returned nil frame")
+		}
+		return *f, nil
+	}
+	if notifier, ok := n.engine.(outputNotifier); ok {
+		return runAsyncCodecLoop(ctx, in, out, send, receive, n.engine.Flush, notifier)
+	}
+	return runCodecLoop(ctx, in, out, send, receive, n.engine.Flush)
+}
 
-	return runCodecLoop(ctx, in, out,
-		n.engine.SendPacket,
-		func() (media.Frame, error) {
-			f, err := n.engine.ReceiveFrame()
-			if err != nil {
-				return nil, err
-			}
-			if f == nil || *f == nil {
-				return nil, fmt.Errorf("decoder returned nil frame")
-			}
-			return *f, nil
-		},
-		n.engine.Flush,
-	)
+func (n *DecoderAdapter) Close() error {
+	return n.lifecycle.Close()
 }
 
 func (n *DecoderAdapter) InputPorts() map[string]*node.InPort[*media.Packet] {

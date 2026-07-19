@@ -6,6 +6,7 @@ import (
 )
 
 func TestRemoveUnsynchronisation(t *testing.T) {
+	t.Parallel()
 	input := []byte{0xFF, 0x00, 0x12, 0xFF, 0x00, 0x00}
 	expected := []byte{0xFF, 0x12, 0xFF, 0x00}
 	result := removeUnsynchronisation(input)
@@ -15,6 +16,7 @@ func TestRemoveUnsynchronisation(t *testing.T) {
 }
 
 func TestUTF16Endian(t *testing.T) {
+	t.Parallel()
 	be := utf16BigEndian([]byte{0x12, 0x34})
 	if be != 0x1234 {
 		t.Errorf("utf16BigEndian failed: %x", be)
@@ -26,6 +28,7 @@ func TestUTF16Endian(t *testing.T) {
 }
 
 func TestEncodeDecodeText(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -42,6 +45,7 @@ func TestEncodeDecodeText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			encByte, payload := encodeText(tt.input, tt.encoding, tt.version)
 			decoded := decodeEncodedText(encByte, payload)
 			if decoded != tt.input {

@@ -10,6 +10,7 @@ import (
 )
 
 func TestDecoder_SendPacketAfterFlush(t *testing.T) {
+	t.Parallel()
 	decoder := NewDecoder()
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush failed: %v", err)
@@ -22,6 +23,7 @@ func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 }
 
 func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
+	t.Parallel()
 	decoder := NewDecoder()
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush failed: %v", err)
@@ -34,6 +36,7 @@ func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 }
 
 func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
+	t.Parallel()
 	decoder := NewDecoder()
 	audioFrame, err := decoder.ReceiveFrame()
 	if !errors.Is(err, engine.ErrEAGAIN) || audioFrame != nil {
@@ -42,6 +45,7 @@ func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 }
 
 func TestDecoder_ChannelLayoutChange(t *testing.T) {
+	t.Parallel()
 	decoder := NewDecoder()
 	decoder.sampleRate = 44100
 	decoder.channelCount = 2

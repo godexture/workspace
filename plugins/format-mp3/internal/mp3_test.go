@@ -16,6 +16,7 @@ import (
 )
 
 func TestProbe_ValidMP3(t *testing.T) {
+	t.Parallel()
 	// 0xFF 0xFB = MPEG1 Layer3 の有効な同期ワード
 	mp3Data := []byte{0xFF, 0xFB, 0x90, 0x00}
 	score := internal.Probe(bytes.NewReader(mp3Data))
@@ -25,6 +26,7 @@ func TestProbe_ValidMP3(t *testing.T) {
 }
 
 func TestProbe_ID3Header(t *testing.T) {
+	t.Parallel()
 	id3Data := []byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	score := internal.Probe(bytes.NewReader(id3Data))
 	if score < manifest.ProbeSharedMetadata {
@@ -33,6 +35,7 @@ func TestProbe_ID3Header(t *testing.T) {
 }
 
 func TestProbe_NotMP3(t *testing.T) {
+	t.Parallel()
 	otherData := []byte{'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00}
 	score := internal.Probe(bytes.NewReader(otherData))
 	if score != manifest.ProbeMismatch {
@@ -41,6 +44,7 @@ func TestProbe_NotMP3(t *testing.T) {
 }
 
 func TestSkipID3v2(t *testing.T) {
+	t.Parallel()
 	tag := append([]byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}, []byte("abc")...)
 	mp3Frame := []byte{0xFF, 0xFB, 0x90, 0x00}
 	br := bufio.NewReader(bytes.NewReader(append(tag, mp3Frame...)))
@@ -63,6 +67,7 @@ func TestSkipID3v2(t *testing.T) {
 }
 
 func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
@@ -74,7 +79,7 @@ func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
 	id3Header := []byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, byte(len(tagPayload))}
 	file := append(append(id3Header, tagPayload...), audio...)
 
-	demuxer, err := internal.NewDemuxer(bytes.NewReader(file))
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(file), internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -93,13 +98,14 @@ func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
 }
 
 func TestMuxer_WritesID3Metadata(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
 
 	var out bytes.Buffer
-	muxer := internal.NewMuxer(&out)
+	muxer := internal.NewMuxer(&out, internal.MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -131,7 +137,7 @@ func TestMuxer_WritesID3Metadata(t *testing.T) {
 		t.Fatalf("WritePacket returned error: %v", err)
 	}
 
-	demuxer, err := internal.NewDemuxer(bytes.NewReader(out.Bytes()))
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(out.Bytes()), internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -145,13 +151,14 @@ func TestMuxer_WritesID3Metadata(t *testing.T) {
 }
 
 func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
 
 	var out bytes.Buffer
-	muxer := internal.NewMuxer(&out)
+	muxer := internal.NewMuxer(&out, internal.MuxerConfig{})
 	stream := media.StreamInfo{
 		Type: media.MediaAudio,
 		MediaAttributes: media.MediaAttributes{
@@ -181,7 +188,7 @@ func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
 		t.Fatalf("WritePacket returned error: %v", err)
 	}
 
-	demuxer, err := internal.NewDemuxer(bytes.NewReader(out.Bytes()))
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(out.Bytes()), internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -195,12 +202,13 @@ func TestMuxer_ImplicitHeaderWriting(t *testing.T) {
 }
 
 func TestDemuxerSeek_CBR(t *testing.T) {
+	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
 
-	demuxer, err := internal.NewDemuxer(bytes.NewReader(audio))
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(audio), internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -244,6 +252,7 @@ func (tr *trackingReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func TestDemuxerSeek_Xing(t *testing.T) {
+	t.Parallel()
 	// Frame size = 417 bytes.
 	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
 	frame1 := make([]byte, 417)
@@ -261,12 +270,12 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 	}
 
 	frame2Header := []byte{0xFF, 0xFB, 0x90, 0x00}
-	
+
 	// Create payload
 	payload := append(frame1, frame2Header...)
-	
+
 	tr := &trackingReader{Reader: bytes.NewReader(payload)}
-	demuxer, err := internal.NewDemuxer(tr)
+	demuxer, err := internal.NewDemuxer(tr, internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -278,7 +287,7 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 
 	// Xing duration = 100 frames * 1152 samples / 44100 = 2.6122 seconds
 	// Let's seek to 50% of duration
-	duration := time.Duration(100 * 1152) * time.Second / 44100
+	duration := time.Duration(100*1152) * time.Second / 44100
 	seekTime := duration/2 + 1*time.Nanosecond
 	if err := demuxer.Seek(seekTime); err != nil {
 		t.Fatalf("Seek returned error: %v", err)
@@ -294,31 +303,32 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 }
 
 func TestDemuxerSeek_VBRI(t *testing.T) {
+	t.Parallel()
 	// Frame size = 417 bytes.
 	// MPEG1 Layer 3, Stereo, 128 kbps, 44100 Hz.
 	frame1 := make([]byte, 417)
 	copy(frame1[0:4], []byte{0xFF, 0xFB, 0x90, 0x00})
 	copy(frame1[36:40], []byte("VBRI"))
-	binary.BigEndian.PutUint16(frame1[40:42], 1) // version
-	binary.BigEndian.PutUint16(frame1[42:44], 0) // delay
-	binary.BigEndian.PutUint16(frame1[44:46], 0) // quality
+	binary.BigEndian.PutUint16(frame1[40:42], 1)     // version
+	binary.BigEndian.PutUint16(frame1[42:44], 0)     // delay
+	binary.BigEndian.PutUint16(frame1[44:46], 0)     // quality
 	binary.BigEndian.PutUint32(frame1[46:50], 41700) // bytes
-	binary.BigEndian.PutUint32(frame1[50:54], 100) // frames
-	binary.BigEndian.PutUint16(frame1[54:56], 10) // TOC entries
-	binary.BigEndian.PutUint16(frame1[56:58], 1) // scale
-	binary.BigEndian.PutUint16(frame1[58:60], 2) // entry size
-	binary.BigEndian.PutUint16(frame1[60:62], 10) // frames per entry
+	binary.BigEndian.PutUint32(frame1[50:54], 100)   // frames
+	binary.BigEndian.PutUint16(frame1[54:56], 10)    // TOC entries
+	binary.BigEndian.PutUint16(frame1[56:58], 1)     // scale
+	binary.BigEndian.PutUint16(frame1[58:60], 2)     // entry size
+	binary.BigEndian.PutUint16(frame1[60:62], 10)    // frames per entry
 	for i := 0; i < 10; i++ {
 		// Each entry size is 4170 bytes
 		binary.BigEndian.PutUint16(frame1[62+i*2:64+i*2], 4170)
 	}
 
 	frame2Header := []byte{0xFF, 0xFB, 0x90, 0x00}
-	
+
 	payload := append(frame1, frame2Header...)
-	
+
 	tr := &trackingReader{Reader: bytes.NewReader(payload)}
-	demuxer, err := internal.NewDemuxer(tr)
+	demuxer, err := internal.NewDemuxer(tr, internal.DemuxerConfig{})
 	if err != nil {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
@@ -331,7 +341,7 @@ func TestDemuxerSeek_VBRI(t *testing.T) {
 	// VBRI duration = 100 frames * 1152 samples / 44100 = 2.6122 seconds
 	// durationPerEntry = 10 frames * 1152 samples / 44100 = 0.26122 seconds
 	// Seek to 50% of duration (5.0 entries)
-	duration := time.Duration(100 * 1152) * time.Second / 44100
+	duration := time.Duration(100*1152) * time.Second / 44100
 	seekTime := duration/2 + 1*time.Nanosecond
 	if err := demuxer.Seek(seekTime); err != nil {
 		t.Fatalf("Seek returned error: %v", err)

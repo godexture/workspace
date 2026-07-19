@@ -1,8 +1,8 @@
 package layer12
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/bits"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/sdk/bits"
 )
 
 type ScaleFactorInfo struct {
@@ -93,7 +93,7 @@ var dequantizationTable = [18 * 3]float32{
 	9.53674316e-07 / 9.0, 7.56931807e-07 / 9.0, 6.00777173e-07 / 9.0,
 }
 
-func readScaleFactors(bitReader *bits.BitReader, bitAllocationTable []uint8, scaleFactorTransmissionCode []uint8, bands int, scaleFactors []float32) {
+func readScaleFactors(bitReader *bits.Reader, bitAllocationTable []uint8, scaleFactorTransmissionCode []uint8, bands int, scaleFactors []float32) {
 	bitAllocationIndex := 0
 	scaleFactorIndex := 0
 	for i := 0; i < bands; i++ {
@@ -106,7 +106,7 @@ func readScaleFactors(bitReader *bits.BitReader, bitAllocationTable []uint8, sca
 		}
 		for bitMask := 4; bitMask > 0; bitMask >>= 1 {
 			if (transmissionMask & bitMask) != 0 {
-				scaleFactorCode := int(bitReader.GetBits(6))
+				scaleFactorCode := int(bitReader.Bits32(6))
 				scaleFactorValue = dequantizationTable[bitAllocation*3-6+scaleFactorCode%3] * float32(int(1<<21)>>(scaleFactorCode/3))
 			}
 			scaleFactors[scaleFactorIndex] = scaleFactorValue
@@ -125,7 +125,7 @@ var bitAllocationCodeTable = []byte{
 	0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 }
 
-func ReadScaleFactorInfo(h header.Header, bitReader *bits.BitReader, scaleFactorInfo *ScaleFactorInfo) {
+func ReadScaleFactorInfo(h header.Header, bitReader *bits.Reader, scaleFactorInfo *ScaleFactorInfo) {
 	subBandAllocation := subBandAllocationTable(h, scaleFactorInfo)
 
 	nextBoundaryBand := 0
@@ -142,11 +142,11 @@ func ReadScaleFactorInfo(h header.Header, bitReader *bits.BitReader, scaleFactor
 			allocationBitsCount = int(sa.CodeTableWidth)
 			codeTableOffset = int(sa.TableOffset)
 		}
-		rawBits := int(bitReader.GetBits(allocationBitsCount))
+		rawBits := int(bitReader.Bits32(uint8(allocationBitsCount)))
 		bitAllocation = bitAllocationCodeTable[codeTableOffset+rawBits]
 		scaleFactorInfo.BitAllocation[2*i] = bitAllocation
 		if i < int(scaleFactorInfo.StereoBands) {
-			rawBits = int(bitReader.GetBits(allocationBitsCount))
+			rawBits = int(bitReader.Bits32(uint8(allocationBitsCount)))
 			bitAllocation = bitAllocationCodeTable[codeTableOffset+rawBits]
 		}
 		if scaleFactorInfo.StereoBands != 0 {
@@ -161,7 +161,7 @@ func ReadScaleFactorInfo(h header.Header, bitReader *bits.BitReader, scaleFactor
 			if h.IsLayer1() {
 				scaleFactorInfo.ScaleFactorTransmissionCode[i] = 2
 			} else {
-				scaleFactorInfo.ScaleFactorTransmissionCode[i] = byte(bitReader.GetBits(2))
+				scaleFactorInfo.ScaleFactorTransmissionCode[i] = byte(bitReader.Bits32(2))
 			}
 		} else {
 			scaleFactorInfo.ScaleFactorTransmissionCode[i] = 6
@@ -175,7 +175,7 @@ func ReadScaleFactorInfo(h header.Header, bitReader *bits.BitReader, scaleFactor
 	}
 }
 
-func DequantizeGranule(granule []float32, bitReader *bits.BitReader, scaleFactorInfo *ScaleFactorInfo, groupSize int) int {
+func DequantizeGranule(granule []float32, bitReader *bits.Reader, scaleFactorInfo *ScaleFactorInfo, groupSize int) int {
 	channelOffset := header.SamplesPerGranuleLayer3
 	for groupIdx := 0; groupIdx < 4; groupIdx++ {
 		destinationOffset := groupSize * groupIdx
@@ -185,11 +185,11 @@ func DequantizeGranule(granule []float32, bitReader *bits.BitReader, scaleFactor
 				if bitAllocation < 17 {
 					halfRange := (1 << (bitAllocation - 1)) - 1
 					for k := 0; k < groupSize; k++ {
-						granule[destinationOffset+k] = float32(int(bitReader.GetBits(bitAllocation)) - halfRange)
+						granule[destinationOffset+k] = float32(int(bitReader.Bits32(uint8(bitAllocation))) - halfRange)
 					}
 				} else {
 					steps := uint32((2 << (bitAllocation - 17)) + 1)
-					groupedCode := bitReader.GetBits(int(steps + 2 - (steps >> 3)))
+					groupedCode := bitReader.Bits32(uint8(steps + 2 - (steps >> 3)))
 					for k := 0; k < groupSize; k++ {
 						granule[destinationOffset+k] = float32(int(groupedCode%steps) - int(steps/2))
 						groupedCode /= steps

@@ -10,8 +10,9 @@ import (
 )
 
 func TestDecoderEncoderRoundtrip(t *testing.T) {
-	dec := NewDecoder(DefaultConfig())
-	enc := NewEncoder(EncoderConfig{})
+	t.Parallel()
+	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
+	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	in := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD}
 	pkt := media.NewPacket(len(in), media.WithPts(42), media.WithDts(42), media.WithStreamIndex(0))
@@ -45,10 +46,11 @@ func TestDecoderEncoderRoundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Format = media.SampleFormatS24
-	dec := NewDecoder(cfg)
-	enc := NewEncoder(EncoderConfig{})
+	t.Parallel()
+	cfg := DefaultDecoderConfig
+	cfg.format = media.SampleFormatS24
+	dec := NewDecoder(media.StreamInfo{}, cfg)
+	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	// 2 channels * 3 bytes/sample * 3 samples = 18 bytes
 	in := []byte{
@@ -98,6 +100,7 @@ func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
 }
 
 func TestG711Roundtrip(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		codec media.CodecID
@@ -108,10 +111,13 @@ func TestG711Roundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			cfg.CodecID = tt.codec
-			dec := NewDecoder(cfg)
-			enc := NewEncoder(EncoderConfig{CodecID: tt.codec})
+			t.Parallel()
+			cfg := DefaultDecoderConfig
+			cfg.codecID = tt.codec
+			dec := NewDecoder(media.StreamInfo{}, cfg)
+			cfgEnc := DefaultEncoderConfig
+			cfgEnc.CodecID = tt.codec
+			enc, _ := NewEncoder(media.StreamInfo{}, tt.codec, cfgEnc)
 
 			in := []byte{0x00, 0x55, 0xAA, 0xFF, 0x12, 0x34}
 			pkt := media.NewPacket(len(in), media.WithPts(100))
@@ -147,8 +153,9 @@ func TestG711Roundtrip(t *testing.T) {
 }
 
 func TestDecoderEncoderNeedMoreData(t *testing.T) {
-	dec := NewDecoder(DefaultConfig())
-	enc := NewEncoder(EncoderConfig{})
+	t.Parallel()
+	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
+	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	if _, err := dec.ReceiveFrame(); err != engine.ErrEAGAIN {
 		t.Fatalf("ReceiveFrame() error = %v, want ErrEAGAIN", err)
@@ -173,13 +180,14 @@ func TestDecoderEncoderNeedMoreData(t *testing.T) {
 }
 
 func TestG711Endianness(t *testing.T) {
+	t.Parallel()
 	in := []byte{0x00, 0x55, 0xAA, 0xFF}
 
 	// Decode with Little Endian
-	cfgLE := DefaultConfig()
-	cfgLE.CodecID = media.CodecPCMU
+	cfgLE := DefaultDecoderConfig
+	cfgLE.codecID = media.CodecPCMU
 	cfgLE.ByteOrder = binary.LittleEndian
-	decLE := NewDecoder(cfgLE)
+	decLE := NewDecoder(media.StreamInfo{}, cfgLE)
 	pktLE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktLE.Data(), in)
 	pktLE.MediaType = media.MediaAudio
@@ -188,10 +196,10 @@ func TestG711Endianness(t *testing.T) {
 	dataLE := (*frameLE).(*media.AudioFrame).Planes()[0]
 
 	// Decode with Big Endian
-	cfgBE := DefaultConfig()
-	cfgBE.CodecID = media.CodecPCMU
+	cfgBE := DefaultDecoderConfig
+	cfgBE.codecID = media.CodecPCMU
 	cfgBE.ByteOrder = binary.BigEndian
-	decBE := NewDecoder(cfgBE)
+	decBE := NewDecoder(media.StreamInfo{}, cfgBE)
 	pktBE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktBE.Data(), in)
 	pktBE.MediaType = media.MediaAudio
@@ -210,10 +218,78 @@ func TestG711Endianness(t *testing.T) {
 	}
 
 	// Now test encoder with BigEndian
-	encBE := NewEncoder(EncoderConfig{CodecID: media.CodecPCMU, ByteOrder: binary.BigEndian})
+	encBE, _ := NewEncoder(media.StreamInfo{}, media.CodecPCMU, EncoderConfig{CodecID: media.CodecPCMU, byteOrder: binary.BigEndian})
 	_ = encBE.SendFrame(frameBE)
 	outPktBE, _ := encBE.ReceivePacket()
 	if !bytes.Equal(outPktBE.Data(), in) {
 		t.Errorf("BigEndian encode mismatch: got %x want %x", outPktBE.Data(), in)
+	}
+}
+
+func TestLeftJustifyPCM(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		format        media.SampleFormat
+		bitsPerSample int
+		in            []byte
+		want          []byte
+	}{
+		{
+			name:          "S16 full width passthrough",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 16,
+			in:            []byte{0x34, 0x12},
+			want:          []byte{0x34, 0x12},
+		},
+		{
+			name:          "S16 unset bits passthrough",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 0,
+			in:            []byte{0x34, 0x12},
+			want:          []byte{0x34, 0x12},
+		},
+		{
+			// 12-bit -0x001 carried in S16 becomes full-scale -0x0010.
+			name:          "S16 12-bit shifts left 4",
+			format:        media.SampleFormatS16,
+			bitsPerSample: 12,
+			in:            []byte{0xFF, 0x0F, 0x01, 0x00},
+			want:          []byte{0xF0, 0xFF, 0x10, 0x00},
+		},
+		{
+			// 20-bit -0x00001 carried in S24 becomes full-scale -0x00010.
+			name:          "S24 20-bit shifts left 4",
+			format:        media.SampleFormatS24,
+			bitsPerSample: 20,
+			in:            []byte{0xFF, 0xFF, 0x0F, 0x01, 0x00, 0x00},
+			want:          []byte{0xF0, 0xFF, 0xFF, 0x10, 0x00, 0x00},
+		},
+		{
+			// 24-bit -1 carried in S32 becomes full-scale -0x100.
+			name:          "S32 24-bit shifts left 8",
+			format:        media.SampleFormatS32,
+			bitsPerSample: 24,
+			in:            []byte{0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00},
+			want:          []byte{0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x00},
+		},
+		{
+			// 25-bit -1 carried in S32 becomes full-scale -0x80.
+			name:          "S32 25-bit shifts left 7",
+			format:        media.SampleFormatS32,
+			bitsPerSample: 25,
+			in:            []byte{0xFF, 0xFF, 0xFF, 0xFF},
+			want:          []byte{0x80, 0xFF, 0xFF, 0xFF},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := leftJustifyPCM(tt.in, tt.format, tt.bitsPerSample)
+			if !bytes.Equal(got, tt.want) {
+				t.Errorf("leftJustifyPCM() = %x, want %x", got, tt.want)
+			}
+		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 )
 
 func TestWaveFilesInDataRoundtrip(t *testing.T) {
+	t.Parallel()
 	_, thisFile, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(thisFile), "assets")
 	entries, err := os.ReadDir(dataDir)
@@ -29,13 +30,14 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 		}
 
 		t.Run(e.Name(), func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(dataDir, e.Name())
 			orig, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig))
+			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig), wavpkg.NewDemuxerConfig())
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}
@@ -50,7 +52,10 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 
 			f := testutil.NewBuffer(nil)
 
-			muxer := wavpkg.NewMuxerEngine(f)
+			muxer, err := wavpkg.NewMuxerEngine(f, wavpkg.NewMuxerConfig())
+			if err != nil {
+				t.Fatalf("NewMuxerEngine: %v", err)
+			}
 			if _, err := muxer.AddStream(streams[0]); err != nil {
 				t.Fatalf("AddStream: %v", err)
 			}
