@@ -14,10 +14,10 @@ import (
 )
 
 type Decoder struct {
+	cfg          config.DecoderConfig
 	pendingQueue []*pendingEntry
 	parsed       bool
 	info         streaminfo.StreamInfo
-	strict       bool
 	configErr    error
 	flushed      bool
 	endValidated bool
@@ -31,7 +31,7 @@ type Decoder struct {
 }
 
 func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig) *Decoder {
-	decoder := &Decoder{strict: cfg.Strict}
+	decoder := &Decoder{cfg: cfg}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -89,10 +89,10 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	}
 	entry := &pendingEntry{done: make(chan struct{})}
 	d.pendingQueue = append(d.pendingQueue, entry)
-	decoderJobs() <- frameJob{
+	decoderJobs(d.cfg.Workers) <- frameJob{
 		data:   append([]byte(nil), pkt.Data()...),
 		info:   d.info,
-		strict: d.strict,
+		strict: d.cfg.Strict,
 		entry:  entry,
 	}
 	return nil
@@ -149,7 +149,7 @@ func (d *Decoder) Flush() error {
 }
 
 func (d *Decoder) initMD5() {
-	if d.strict && d.info.MD5 != [16]byte{} {
+	if d.cfg.Strict && d.info.MD5 != [16]byte{} {
 		d.md5 = flac.NewPCMMD5()
 	}
 }
@@ -166,18 +166,18 @@ func (d *Decoder) validateFrame(header frame.Header) error {
 		}
 	} else if header.BlockingStrategy {
 		if header.Number != d.sampleCount {
-			if d.strict {
+			if d.cfg.Strict {
 				return fmt.Errorf("unexpected FLAC sample number: got %d, want %d", header.Number, d.sampleCount)
 			}
 			d.reposition(header)
 		}
 	} else if header.Number != d.frameCount && header.Number != d.nextSample {
-		if d.strict {
+		if d.cfg.Strict {
 			return fmt.Errorf("unexpected FLAC frame/sample number: got %d, want frame %d or sample %d", header.Number, d.frameCount, d.nextSample)
 		}
 		d.reposition(header)
 	}
-	if d.strict && d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
+	if d.cfg.Strict && d.info.MaxBlockSize > 0 && header.BlockSize > int(d.info.MaxBlockSize) {
 		return fmt.Errorf("FLAC frame block size %d exceeds STREAMINFO maximum %d", header.BlockSize, d.info.MaxBlockSize)
 	}
 	d.frameCount++
@@ -199,7 +199,7 @@ func (d *Decoder) validateEnd() error {
 	}
 	if d.info.TotalSamples > 0 && d.sampleCount != d.info.TotalSamples {
 		err := fmt.Errorf("FLAC sample count mismatch: got %d, want %d", d.sampleCount, d.info.TotalSamples)
-		if d.strict {
+		if d.cfg.Strict {
 			return err
 		}
 		log.Printf("WARNING: %v", err)
@@ -210,7 +210,7 @@ func (d *Decoder) validateEnd() error {
 	got := d.md5.Sum()
 	if got != d.info.MD5 {
 		err := fmt.Errorf("FLAC PCM MD5 mismatch: got %x, want %x", got, d.info.MD5)
-		if d.strict {
+		if d.cfg.Strict {
 			return err
 		}
 		log.Printf("WARNING: %v", err)

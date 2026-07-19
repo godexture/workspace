@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 )
 
 func main() {
+	log.Printf("starting generate")
 	scriptArgs, generateArgs := workspace.SplitArgs(os.Args[1:])
 
 	var workPath string
@@ -49,6 +51,7 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
+	log.Printf("finished generate")
 }
 
 func runGenerate(goCommand, goWork string, passthroughFlags, pkgPattern []string, test bool) error {
