@@ -95,8 +95,6 @@ func (r *mockMuxerResolver) ResolveMuxer(config registry.Configuration) (registr
 
 type dummyConfig struct{}
 
-func (dummyConfig) NodeConfiguration() {}
-
 func TestNegotiator_CustomResolvers(t *testing.T) {
 	t.Parallel()
 	// 1. Set up mock nodes

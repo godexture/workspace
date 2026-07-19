@@ -10,8 +10,6 @@ import (
 
 type testConfig struct{}
 
-func (testConfig) NodeConfiguration() {}
-
 func TestBundleRegisterRoutesByManifestType(t *testing.T) {
 	t.Parallel()
 	muxerReg := NewRegistry[MuxerManifest]()
