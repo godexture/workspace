@@ -6,7 +6,7 @@ import (
 	stdbits "math/bits"
 	"sync"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/sdk/bits"
 )
 
@@ -45,7 +45,7 @@ var riceWorkspacePool = sync.Pool{New: func() any { return &riceWorkspace{} }}
 var ricePartitionPool sync.Pool
 
 func chooseRiceCoding(residual []int64) (riceCoding, bool) {
-	return chooseRiceCodingForBlock(residual, len(residual), 0, 15, flac.RiceCostEstimated)
+	return chooseRiceCodingForBlock(residual, len(residual), 0, 15, config.RiceCostEstimated)
 }
 
 var riceMethods = []struct {
@@ -57,7 +57,7 @@ var riceMethods = []struct {
 	{1, 5, 30},
 }
 
-func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode flac.RiceCostMode) (riceCoding, bool) {
+func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode config.RiceCostMode) (riceCoding, bool) {
 	workspace := riceWorkspacePool.Get().(*riceWorkspace)
 	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, mode, workspace)
 	if ok {
@@ -83,8 +83,8 @@ func releaseRiceCoding(coding *riceCoding) {
 	coding.partitions = nil
 }
 
-func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode flac.RiceCostMode, workspace *riceWorkspace) (riceCoding, bool) {
-	exhaustive := mode == flac.RiceCostExact
+func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode config.RiceCostMode, workspace *riceWorkspace) (riceCoding, bool) {
+	exhaustive := mode == config.RiceCostExact
 	if blockSize <= predictorOrder || len(residual) != blockSize-predictorOrder {
 		return riceCoding{}, false
 	}

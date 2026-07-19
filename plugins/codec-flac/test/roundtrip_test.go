@@ -31,14 +31,25 @@ func TestRoundtrip(t *testing.T) {
 			},
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
 				streamInfo.Metadata = *metadata.NewBundle()
-				return flacCodec.NewDecoderEngine(streamInfo, flacCodec.NewDecoderConfig(flacCodec.WithStrict(true)))
+				dec, err := flacCodec.NewDecoderEngine(streamInfo, flacCodec.NewDecoderConfig(flacCodec.WithStrict(true)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return dec
 			},
 			Encode: func() engine.EncoderEngine {
-				encoder, _ := flacCodec.NewEncoderEngine(flacCodec.EncoderConfig{})
+				encoder, err := flacCodec.NewEncoderEngine(flacCodec.NewEncoderConfig())
+				if err != nil {
+					t.Fatal(err)
+				}
 				return encoder
 			},
 			Mux: func(w io.Writer) engine.MuxerEngine {
-				return flacFormat.NewMuxerEngine(w, flacFormat.MuxerConfig{})
+				mux, err := flacFormat.NewMuxerEngine(w, flacFormat.NewMuxerConfig())
+				if err != nil {
+					t.Fatal(err)
+				}
+				return mux
 			},
 			Tester: testFLAC,
 		})

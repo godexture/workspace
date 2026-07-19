@@ -237,11 +237,11 @@ func TestWriterUnaryBits64MatchesUnaryThenBits64(t *testing.T) {
 		{1, 0},
 		{5, 0},
 		{0, 5},
-		{0b101011, 2},              // quotient 10, remainder 0b11: typical Rice case
-		{100, 0},                   // quotient 100, width 0: total 101 > 64, forces fallback
-		{(53 << 10) | 0x2ab, 10},   // quotient 53, width 10: total 64, boundary fast path
-		{(54 << 10) | 0x2ab, 10},   // quotient 54, width 10: total 65, boundary fallback
-		{0xFFFFFFFFFFFFFFFF, 64},   // width 64: quotient forced to 0, forces fallback
+		{0b101011, 2},            // quotient 10, remainder 0b11: typical Rice case
+		{100, 0},                 // quotient 100, width 0: total 101 > 64, forces fallback
+		{(53 << 10) | 0x2ab, 10}, // quotient 53, width 10: total 64, boundary fast path
+		{(54 << 10) | 0x2ab, 10}, // quotient 54, width 10: total 65, boundary fallback
+		{0xFFFFFFFFFFFFFFFF, 64}, // width 64: quotient forced to 0, forces fallback
 		{0x2ab, 12},
 	}
 	for _, c := range cases {

@@ -3,23 +3,17 @@
 package pcm
 
 import (
-	binary "encoding/binary"
 	internal "github.com/godexture/codec-pcm/internal"
 	media "github.com/godexture/core/domain/media"
 	params "github.com/godexture/format-wav/params"
-	optional "github.com/godexture/sdk/optional"
 )
 
-type EncoderConfig struct {
-	CodecID   optional.Optional[media.CodecID]
-	ByteOrder optional.Optional[binary.ByteOrder]
-	ADPCM     optional.Optional[params.ADPCM]
-}
+type EncoderConfig internal.EncoderConfig
 
 type EncoderConfigOption func(*EncoderConfig)
 
 func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
-	var config EncoderConfig
+	config := EncoderConfig(internal.DefaultEncoderConfig)
 	for _, option := range options {
 		option(&config)
 	}
@@ -28,26 +22,20 @@ func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
 
 func WithCodecID(v media.CodecID) EncoderConfigOption {
 	return func(c *EncoderConfig) {
-		c.CodecID = optional.Some(v)
-	}
-}
-
-func WithByteOrder(v binary.ByteOrder) EncoderConfigOption {
-	return func(c *EncoderConfig) {
-		c.ByteOrder = optional.Some(v)
+		c.CodecID = v
 	}
 }
 
 func WithADPCM(v params.ADPCM) EncoderConfigOption {
 	return func(c *EncoderConfig) {
-		c.ADPCM = optional.Some(v)
+		c.ADPCM = v
 	}
 }
 
-func (c EncoderConfig) ApplyDefaults() internal.EncoderConfig {
-	config := internal.DefaultEncoderConfig
-	config.CodecID = c.CodecID.ValueOr(config.CodecID)
-	config.ByteOrder = c.ByteOrder.ValueOr(config.ByteOrder)
-	config.ADPCM = c.ADPCM.ValueOr(config.ADPCM)
-	return config
+func (c EncoderConfig) ResolveDefault() internal.EncoderConfig {
+	return internal.DefaultEncoderConfig
+}
+
+func (c EncoderConfig) Resolve() internal.EncoderConfig {
+	return internal.EncoderConfig(c)
 }

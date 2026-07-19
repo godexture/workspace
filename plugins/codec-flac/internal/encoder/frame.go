@@ -3,19 +3,20 @@ package encoder
 import (
 	"fmt"
 
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/hash"
 )
 
-func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig) ([]byte, error) {
+func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options config.EncoderConfig) ([]byte, error) {
 	var writer bits.Writer
 	windows := newWindowSet(options.Apodizations)
 	return encodeFrameWithWriter(samples, sampleRate, bitsPerSample, frameNumber, options, false, &windows, &writer)
 }
 
-func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options flac.EncoderConfig, samplesValidated bool, windows *windowSet, w *bits.Writer) ([]byte, error) {
+func encodeFrameWithWriter(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options config.EncoderConfig, samplesValidated bool, windows *windowSet, w *bits.Writer) ([]byte, error) {
 	if err := validateFrame(samples, sampleRate, bitsPerSample, options, samplesValidated); err != nil {
 		return nil, err
 	}
@@ -46,7 +47,7 @@ func (a *frameAnalysis) release() {
 	a.channels, a.candidates, a.scratch = nil, nil, nil
 }
 
-func analyzeFrame(samples [][]int64, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) (*frameAnalysis, error) {
+func analyzeFrame(samples [][]int64, bitsPerSample int, options config.EncoderConfig, windows *windowSet) (*frameAnalysis, error) {
 	assignment, channels, candidates, scratch, err := chooseChannelAssignment(samples, bitsPerSample, options, windows)
 	if err != nil {
 		return nil, err
@@ -81,7 +82,7 @@ func writeAnalyzedFrame(w *bits.Writer, analysis *frameAnalysis, blockSize, samp
 	return w.Bytes(), nil
 }
 
-func validateFrame(samples [][]int64, sampleRate, bitsPerSample int, options flac.EncoderConfig, samplesValidated bool) error {
+func validateFrame(samples [][]int64, sampleRate, bitsPerSample int, options config.EncoderConfig, samplesValidated bool) error {
 	if bitsPerSample < 4 || bitsPerSample > 32 {
 		return fmt.Errorf("unsupported FLAC bit depth: %d", bitsPerSample)
 	}
@@ -94,7 +95,7 @@ func validateFrame(samples [][]int64, sampleRate, bitsPerSample int, options fla
 	if options.LPCPrecision != 0 && (options.LPCPrecision < 4 || options.LPCPrecision > 15) {
 		return fmt.Errorf("invalid FLAC LPC precision: %d", options.LPCPrecision)
 	}
-	if options.StereoMode > flac.StereoExhaustive {
+	if options.StereoMode > config.StereoExhaustive {
 		return fmt.Errorf("invalid FLAC stereo mode: %d", options.StereoMode)
 	}
 	if len(samples) == 0 || len(samples) > 8 {
@@ -145,9 +146,9 @@ func streamableMaxBlockSize(sampleRate int) int {
 	return 16384
 }
 
-func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) (uint8, [][]int64, []subframeCandidate, [][]int64, error) {
+func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options config.EncoderConfig, windows *windowSet) (uint8, [][]int64, []subframeCandidate, [][]int64, error) {
 	frameWindows := windows.forLength(len(samples[0]))
-	if options.StereoMode == flac.StereoIndependent || len(samples) != 2 {
+	if options.StereoMode == config.StereoIndependent || len(samples) != 2 {
 		candidates := make([]subframeCandidate, len(samples))
 		for ch := range samples {
 			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options, frameWindows)
@@ -164,7 +165,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options flac.
 	side := getResidualBuffer(len(left))
 	scratch := [][]int64{mid, side}
 	computeMidSide(left, right, mid, side)
-	if options.StereoMode == flac.StereoAdaptive && len(left) >= 3 {
+	if options.StereoMode == config.StereoAdaptive && len(left) >= 3 {
 		assignment := estimateStereoAssignment(left, right, mid, side)
 		channels := assignmentChannels(assignment, left, right, mid, side)
 		candidates := []subframeCandidate{

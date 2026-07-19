@@ -1,6 +1,7 @@
 package flac
 
 import (
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/codec-flac/internal/encoder"
 	godec "github.com/godexture/core"
@@ -11,14 +12,20 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func NewDecoderEngine(stream media.StreamInfo, config DecoderConfig) engine.DecoderEngine {
-	resolved := engine.ResolveConfig[DecoderConfig](config)
-	return decoder.NewDecoder(stream, resolved)
+func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) (engine.DecoderEngine, error) {
+	resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](cfg)
+	if err != nil {
+		return nil, err
+	}
+	return decoder.NewDecoder(stream, resolved), nil
 }
 
-func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
-	resolved := engine.ResolveConfig[EncoderConfig](config)
-	return encoder.NewEncoder(media.StreamInfo{}, resolved)
+func NewEncoderEngine(cfg EncoderConfig) (engine.EncoderEngine, error) {
+	resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](cfg)
+	if err != nil {
+		return nil, err
+	}
+	return encoder.NewEncoder(media.StreamInfo{}, resolved), nil
 }
 
 type flacCapability struct{}
@@ -49,7 +56,7 @@ func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
 
 func init() {
 	if err := godec.Register(
-		DecoderConfig{},
+		NewDecoderConfig(),
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -69,8 +76,11 @@ func init() {
 					return profile, nil
 				},
 			},
-			Factory: func(stream media.StreamInfo, config registry.Configuration) (node.Decoder, error) {
-				resolved := engine.ResolveConfig[DecoderConfig](config)
+			Factory: func(stream media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
+				resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](cfg)
+				if err != nil {
+					return nil, err
+				}
 				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved)), nil
 			},
 		},
@@ -79,7 +89,7 @@ func init() {
 	}
 
 	if err := godec.Register(
-		EncoderConfig{},
+		NewEncoderConfig(),
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
@@ -100,11 +110,11 @@ func init() {
 				return codec == media.CodecFLAC
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-				resolved := engine.ResolveConfig[EncoderConfig](cfg)
-				enc, err := encoder.NewEncoder(inStream, resolved)
+				resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](cfg)
 				if err != nil {
 					return nil, err
 				}
+				enc := encoder.NewEncoder(inStream, resolved)
 				return engine.WrapEncoder(enc), nil
 			},
 		},

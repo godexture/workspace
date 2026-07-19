@@ -1,6 +1,8 @@
 package encoder
 
-import "github.com/godexture/codec-flac/internal/flac"
+import (
+	"github.com/godexture/codec-flac/internal/config"
+)
 
 type blockSpan struct {
 	offset   int
@@ -16,7 +18,7 @@ type blockSplitNode struct {
 	right *blockSplitNode
 }
 
-func chooseBlockSplit(block [][]int64, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) ([]blockSpan, error) {
+func chooseBlockSplit(block [][]int64, bitsPerSample int, options config.EncoderConfig, windows *windowSet) ([]blockSpan, error) {
 	if options.BlockSplitDepth <= 0 {
 		return []blockSpan{{length: len(block[0])}}, nil
 	}
@@ -29,10 +31,10 @@ func chooseBlockSplit(block [][]int64, bitsPerSample int, options flac.EncoderCo
 	return spans, nil
 }
 
-func buildBlockSplitNode(block [][]int64, offset, length, depth, bitsPerSample int, options flac.EncoderConfig, windows *windowSet) (*blockSplitNode, error) {
+func buildBlockSplitNode(block [][]int64, offset, length, depth, bitsPerSample int, options config.EncoderConfig, windows *windowSet) (*blockSplitNode, error) {
 	samples := blockSlice(block, offset, length)
 	node := &blockSplitNode{blockSpan: blockSpan{offset: offset, length: length}}
-	if options.BlockSplitMode == flac.BlockSplitExact {
+	if options.BlockSplitMode == config.BlockSplitExact {
 		analysis, err := analyzeFrame(samples, bitsPerSample, options, windows)
 		if err != nil {
 			return nil, err

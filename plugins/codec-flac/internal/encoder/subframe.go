@@ -6,7 +6,7 @@ import (
 	stdbits "math/bits"
 	"sync"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/sdk/bits"
 )
 
@@ -78,7 +78,7 @@ func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int,
 	return nil
 }
 
-func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig, windows [][]float64) subframeCandidate {
+func bestSubframe(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64) subframeCandidate {
 	wasted := 0
 	if options.EnableWastedBits {
 		wasted = commonTrailingZeros(samples, bitsPerSample)
@@ -99,7 +99,7 @@ func bestSubframe(samples []int64, bitsPerSample int, options flac.EncoderConfig
 	return candidate
 }
 
-func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.EncoderConfig, windows [][]float64) subframeCandidate {
+func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options config.EncoderConfig, windows [][]float64) subframeCandidate {
 	best := subframeCandidate{kind: subframeKindVerbatim, costBits: uint64(8 + len(samples)*bitsPerSample), valid: true}
 	if isConstant(samples) {
 		best = subframeCandidate{kind: subframeKindConstant, costBits: uint64(8 + bitsPerSample), valid: true}
@@ -112,7 +112,7 @@ func bestSubframeWithoutWasted(samples []int64, bitsPerSample int, options flac.
 	if maxFixed >= len(samples) {
 		maxFixed = len(samples) - 1
 	}
-	if options.FixedOrderSearch == flac.OrderSearchExhaustive {
+	if options.FixedOrderSearch == config.OrderSearchExhaustive {
 		for order := 0; order <= maxFixed; order++ {
 			residual := fixedResidual(samples, order)
 			rice, ok := chooseRiceCodingForBlock(residual, len(samples), order, options.MaxRicePartitionOrder, options.RiceCost)
@@ -242,10 +242,10 @@ func isConstant(samples []int64) bool {
 	return true
 }
 
-func lpcPrecisionCandidates(options flac.EncoderConfig) []int {
+func lpcPrecisionCandidates(options config.EncoderConfig) []int {
 	precision := options.LPCPrecision
 	if precision == 0 {
-		precision = flac.DefaultLPCPrecision
+		precision = config.DefaultLPCPrecision
 	}
 	if !options.EnablePrecisionSearch {
 		return []int{precision}
@@ -289,8 +289,8 @@ func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
 	return bestOrder, fixedResidual(samples, bestOrder)
 }
 
-func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.OrderSearchMode, window []float64, bitsPerSample int) [][]float64 {
-	exhaustive := mode == flac.OrderSearchExhaustive
+func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.OrderSearchMode, window []float64, bitsPerSample int) [][]float64 {
+	exhaustive := mode == config.OrderSearchExhaustive
 	if maxOrder >= len(samples) {
 		maxOrder = len(samples) - 1
 	}
@@ -298,7 +298,7 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode flac.Orde
 		return nil
 	}
 	if precision == 0 {
-		precision = flac.DefaultLPCPrecision
+		precision = config.DefaultLPCPrecision
 	}
 	if window != nil && len(window) != len(samples) {
 		return nil

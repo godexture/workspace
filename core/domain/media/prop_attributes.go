@@ -1,6 +1,8 @@
 package media
 
-import "reflect"
+import (
+	"reflect"
+)
 
 type MediaAttributes struct {
 	Codec           CodecID

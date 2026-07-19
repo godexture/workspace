@@ -186,7 +186,7 @@ func TestG711Endianness(t *testing.T) {
 	// Decode with Little Endian
 	cfgLE := DefaultDecoderConfig
 	cfgLE.codecID = media.CodecPCMU
-	cfgLE.byteOrder = binary.LittleEndian
+	cfgLE.ByteOrder = binary.LittleEndian
 	decLE := NewDecoder(media.StreamInfo{}, cfgLE)
 	pktLE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktLE.Data(), in)
@@ -198,7 +198,7 @@ func TestG711Endianness(t *testing.T) {
 	// Decode with Big Endian
 	cfgBE := DefaultDecoderConfig
 	cfgBE.codecID = media.CodecPCMU
-	cfgBE.byteOrder = binary.BigEndian
+	cfgBE.ByteOrder = binary.BigEndian
 	decBE := NewDecoder(media.StreamInfo{}, cfgBE)
 	pktBE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktBE.Data(), in)
@@ -218,7 +218,7 @@ func TestG711Endianness(t *testing.T) {
 	}
 
 	// Now test encoder with BigEndian
-	encBE, _ := NewEncoder(media.StreamInfo{}, media.CodecPCMU, EncoderConfig{CodecID: media.CodecPCMU, ByteOrder: binary.BigEndian})
+	encBE, _ := NewEncoder(media.StreamInfo{}, media.CodecPCMU, EncoderConfig{CodecID: media.CodecPCMU, byteOrder: binary.BigEndian})
 	_ = encBE.SendFrame(frameBE)
 	outPktBE, _ := encBE.ReceivePacket()
 	if !bytes.Equal(outPktBE.Data(), in) {

@@ -33,7 +33,11 @@ func BenchmarkDecodeConformance(b *testing.B) {
 					return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig(flacFormat.WithStrict(true)))
 				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
-					return flacCodec.NewDecoderEngine(stream, flacCodec.DecoderConfig{})
+					dec, err := flacCodec.NewDecoderEngine(stream, flacCodec.NewDecoderConfig())
+					if err != nil {
+						b.Fatal(err)
+					}
+					return dec
 				},
 			}
 			b.ReportAllocs()

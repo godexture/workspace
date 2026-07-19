@@ -76,7 +76,7 @@ func main() {
 		Input:       inputFile,
 		Output:      outputFile,
 		TargetCodec: targetCodec,
-		MuxConfig:   flacFormat.MuxerConfig{},
+		MuxConfig:   flacFormat.NewMuxerConfig(),
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)

@@ -17,14 +17,15 @@ import (
 )
 
 type EncoderConfig struct {
-	CodecID   media.CodecID
-	ByteOrder binary.ByteOrder
-	ADPCM     params.ADPCM
+	CodecID media.CodecID
+	ADPCM   params.ADPCM
+
+	byteOrder binary.ByteOrder
 }
 
 var DefaultEncoderConfig = EncoderConfig{
 	CodecID:   media.CodecLPCM,
-	ByteOrder: binary.LittleEndian,
+	byteOrder: binary.LittleEndian,
 }
 
 type Encoder struct {
@@ -115,9 +116,9 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 	var err error
 	switch e.config.CodecID {
 	case media.CodecPCMU:
-		data = g711.EncodePCMU(data, e.config.ByteOrder)
+		data = g711.EncodePCMU(data, e.config.byteOrder)
 	case media.CodecPCMA:
-		data = g711.EncodePCMA(data, e.config.ByteOrder)
+		data = g711.EncodePCMA(data, e.config.byteOrder)
 	case media.CodecMSADPCM:
 		bytesPerBlock := msadpcm.BytesPerPCMBlock(e.lastChannels, int(e.adpcm.BlockAlign))
 		e.buf.Append(data)
@@ -125,7 +126,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		if toEncode == nil {
 			return nil
 		}
-		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.ByteOrder)
+		data, err = msadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.byteOrder)
 		if err != nil {
 			return err
 		}
@@ -137,7 +138,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		if toEncode == nil {
 			return nil
 		}
-		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.ByteOrder, e.imaState)
+		data, err = imaadpcm.Encode(toEncode, e.lastChannels, e.adpcm, e.config.byteOrder, e.imaState)
 		if err != nil {
 			return err
 		}
@@ -176,9 +177,9 @@ func (e *Encoder) Flush() error {
 		var err error
 		switch e.config.CodecID {
 		case media.CodecMSADPCM:
-			data, err = msadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.ByteOrder)
+			data, err = msadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.byteOrder)
 		case media.CodecIMAADPCM:
-			data, err = imaadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.ByteOrder, e.imaState)
+			data, err = imaadpcm.Encode(remains, e.lastChannels, e.adpcm, e.config.byteOrder, e.imaState)
 		}
 		if err != nil {
 			return err

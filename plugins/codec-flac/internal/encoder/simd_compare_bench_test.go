@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/sdk/dsp"
 )
 
@@ -203,7 +203,7 @@ func BenchmarkEncodeFrameSIMDCompare(b *testing.B) {
 		dsp.HasAVX2 = hasAVX2
 		dsp.HasAVX2FMA = hasAVX2FMA
 	})
-	run := func(b *testing.B, avx2, fma bool, block [][]int64, config flac.EncoderConfig) {
+	run := func(b *testing.B, avx2, fma bool, block [][]int64, config config.EncoderConfig) {
 		dsp.HasAVX2 = avx2
 		dsp.HasAVX2FMA = fma
 		b.ReportAllocs()
@@ -214,7 +214,7 @@ func BenchmarkEncodeFrameSIMDCompare(b *testing.B) {
 		}
 	}
 	for _, preset := range []int{3, 5, 7} {
-		config := flac.GetPreset(preset)
+		config := config.GetPreset(preset)
 		block := benchmarkBlock(config.BlockSize)
 		b.Run("preset"+strconv.Itoa(preset), func(b *testing.B) {
 			b.Run("scalar", func(b *testing.B) {

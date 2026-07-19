@@ -6,20 +6,22 @@ import (
 	internal "github.com/godexture/format-mp3/internal"
 )
 
-type MuxerConfig struct {
-}
+type MuxerConfig internal.MuxerConfig
 
 type MuxerConfigOption func(*MuxerConfig)
 
 func NewMuxerConfig(options ...MuxerConfigOption) MuxerConfig {
-	var config MuxerConfig
+	config := MuxerConfig(internal.MuxerConfig{})
 	for _, option := range options {
 		option(&config)
 	}
 	return config
 }
 
-func (c MuxerConfig) ApplyDefaults() internal.MuxerConfig {
-	config := internal.MuxerConfig{}
-	return config
+func (c MuxerConfig) ResolveDefault() internal.MuxerConfig {
+	return internal.MuxerConfig{}
+}
+
+func (c MuxerConfig) Resolve() internal.MuxerConfig {
+	return internal.MuxerConfig(c)
 }

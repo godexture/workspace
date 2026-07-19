@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/decoder"
-	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
@@ -39,25 +39,25 @@ func clamp16(v int64) int64 {
 }
 
 func BenchmarkEncodeFrameDefaultConfig(b *testing.B) {
-	block := benchmarkBlock(flac.DefaultEncoderConfig.BlockSize)
+	block := benchmarkBlock(config.DefaultEncoderConfig.BlockSize)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := EncodeFrame(block, 44100, 16, uint64(i), flac.DefaultEncoderConfig); err != nil {
+		if _, err := EncodeFrame(block, 44100, 16, uint64(i), config.DefaultEncoderConfig); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkDecodeFrameDefaultConfig(b *testing.B) {
-	block := benchmarkBlock(flac.DefaultEncoderConfig.BlockSize)
-	data, err := EncodeFrame(block, 44100, 16, 0, flac.DefaultEncoderConfig)
+	block := benchmarkBlock(config.DefaultEncoderConfig.BlockSize)
+	data, err := EncodeFrame(block, 44100, 16, 0, config.DefaultEncoderConfig)
 	if err != nil {
 		b.Fatal(err)
 	}
 	info := streaminfo.StreamInfo{
-		MinBlockSize:  uint16(flac.DefaultEncoderConfig.BlockSize),
-		MaxBlockSize:  uint16(flac.DefaultEncoderConfig.BlockSize),
+		MinBlockSize:  uint16(config.DefaultEncoderConfig.BlockSize),
+		MaxBlockSize:  uint16(config.DefaultEncoderConfig.BlockSize),
 		SampleRate:    44100,
 		Channels:      2,
 		BitsPerSample: 16,
@@ -72,8 +72,8 @@ func BenchmarkDecodeFrameDefaultConfig(b *testing.B) {
 }
 
 func BenchmarkDecoderValidationMode(b *testing.B) {
-	block := benchmarkBlock(flac.DefaultEncoderConfig.BlockSize)
-	data, err := EncodeFrame(block, 44100, 16, 0, flac.DefaultEncoderConfig)
+	block := benchmarkBlock(config.DefaultEncoderConfig.BlockSize)
+	data, err := EncodeFrame(block, 44100, 16, 0, config.DefaultEncoderConfig)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func BenchmarkDecoderValidationMode(b *testing.B) {
 	packet := media.NewPacketFromData(data)
 
 	decode := func(strict bool) {
-		dec := decoder.NewDecoder(stream, flac.DecoderConfig{Strict: strict})
+		dec := decoder.NewDecoder(stream, config.DecoderConfig{Strict: strict})
 		if err := dec.SendPacket(packet); err != nil {
 			b.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func BenchmarkDecoderValidationMode(b *testing.B) {
 }
 
 func BenchmarkEncoderDefaultConfig(b *testing.B) {
-	cfg := flac.DefaultEncoderConfig
+	cfg := config.DefaultEncoderConfig
 	blocks := 4
 	samples := benchmarkBlock(cfg.BlockSize * blocks)
 	frame := media.NewAudioFrame(media.SampleFormatS16, media.LayoutStereo2_0, 44100, cfg.BlockSize*blocks)
@@ -136,10 +136,7 @@ func BenchmarkEncoderDefaultConfig(b *testing.B) {
 	b.SetBytes(int64(len(plane)))
 	b.ResetTimer()
 	for b.Loop() {
-		enc, err := NewEncoder(media.StreamInfo{}, cfg)
-		if err != nil {
-			b.Fatal(err)
-		}
+		enc := NewEncoder(media.StreamInfo{}, cfg)
 		if err := enc.SendFrame(&wrapped); err != nil {
 			b.Fatal(err)
 		}

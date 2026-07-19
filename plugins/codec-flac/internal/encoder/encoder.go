@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/streaminfo"
@@ -13,7 +14,7 @@ import (
 )
 
 type Encoder struct {
-	config flac.EncoderConfig
+	config config.EncoderConfig
 
 	pendingQueue []*pendingEntry
 	flushed      bool
@@ -47,11 +48,8 @@ type Encoder struct {
 	jobsClosed bool
 }
 
-func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, error) {
-	cfg = flac.MergeEncoderConfigForFactory(cfg, stream)
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
+func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig) *Encoder {
+	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
 	workers := cfg.Workers
 	if workers == 0 {
 		workers = runtime.GOMAXPROCS(0)
@@ -63,7 +61,7 @@ func NewEncoder(stream media.StreamInfo, cfg flac.EncoderConfig) (*Encoder, erro
 			go e.runWorker()
 		}
 	}
-	return e, nil
+	return e
 }
 
 func (e *Encoder) SendFrame(frame *media.Frame) error {
@@ -329,7 +327,7 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 		bitsPerSample = frame.BitsPerSample
 	}
 	if bitsPerSample <= 0 {
-		bitsPerSample = flac.BitDepthFromSampleFormat(format)
+		bitsPerSample = config.BitDepthFromSampleFormat(format)
 	}
 	if format == media.SampleFormatS16 && (bitsPerSample < 4 || bitsPerSample > 16) {
 		return 0, 0, 0, fmt.Errorf("S16 FLAC input requires 4..16 bits per sample, got %d", bitsPerSample)

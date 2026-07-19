@@ -6,20 +6,22 @@ import (
 	domain "github.com/godexture/codec-mp3/internal/domain"
 )
 
-type DecoderConfig struct {
-}
+type DecoderConfig domain.DecoderConfig
 
 type DecoderConfigOption func(*DecoderConfig)
 
 func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
-	var config DecoderConfig
+	config := DecoderConfig(domain.DefaultDecoderConfig)
 	for _, option := range options {
 		option(&config)
 	}
 	return config
 }
 
-func (c DecoderConfig) ApplyDefaults() domain.DecoderConfig {
-	config := domain.DecoderConfig{}
-	return config
+func (c DecoderConfig) ResolveDefault() domain.DecoderConfig {
+	return domain.DefaultDecoderConfig
+}
+
+func (c DecoderConfig) Resolve() domain.DecoderConfig {
+	return domain.DecoderConfig(c)
 }

@@ -4,17 +4,14 @@ package mp3
 
 import (
 	domain "github.com/godexture/codec-mp3/internal/domain"
-	optional "github.com/godexture/sdk/optional"
 )
 
-type EncoderConfig struct {
-	Bitrate optional.Optional[int]
-}
+type EncoderConfig domain.EncoderConfig
 
 type EncoderConfigOption func(*EncoderConfig)
 
 func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
-	var config EncoderConfig
+	config := EncoderConfig(domain.DefaultEncoderConfig)
 	for _, option := range options {
 		option(&config)
 	}
@@ -23,12 +20,14 @@ func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
 
 func WithBitrate(v int) EncoderConfigOption {
 	return func(c *EncoderConfig) {
-		c.Bitrate = optional.Some(v)
+		c.Bitrate = v
 	}
 }
 
-func (c EncoderConfig) ApplyDefaults() domain.EncoderConfig {
-	config := domain.DefaultEncoderConfig
-	config.Bitrate = c.Bitrate.ValueOr(config.Bitrate)
-	return config
+func (c EncoderConfig) ResolveDefault() domain.EncoderConfig {
+	return domain.DefaultEncoderConfig
+}
+
+func (c EncoderConfig) Resolve() domain.EncoderConfig {
+	return domain.EncoderConfig(c)
 }

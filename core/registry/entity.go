@@ -7,9 +7,7 @@ import (
 	"github.com/godexture/core/node"
 )
 
-type Configuration interface {
-	NodeConfiguration()
-}
+type Configuration interface{}
 
 type NodeFactory func(Configuration) (node.Node, error)
 

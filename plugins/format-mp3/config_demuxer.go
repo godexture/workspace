@@ -6,20 +6,22 @@ import (
 	internal "github.com/godexture/format-mp3/internal"
 )
 
-type DemuxerConfig struct {
-}
+type DemuxerConfig internal.DemuxerConfig
 
 type DemuxerConfigOption func(*DemuxerConfig)
 
 func NewDemuxerConfig(options ...DemuxerConfigOption) DemuxerConfig {
-	var config DemuxerConfig
+	config := DemuxerConfig(internal.DemuxerConfig{})
 	for _, option := range options {
 		option(&config)
 	}
 	return config
 }
 
-func (c DemuxerConfig) ApplyDefaults() internal.DemuxerConfig {
-	config := internal.DemuxerConfig{}
-	return config
+func (c DemuxerConfig) ResolveDefault() internal.DemuxerConfig {
+	return internal.DemuxerConfig{}
+}
+
+func (c DemuxerConfig) Resolve() internal.DemuxerConfig {
+	return internal.DemuxerConfig(c)
 }

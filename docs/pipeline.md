@@ -127,7 +127,7 @@ func main() {
 
     a := streams[0].MediaAttributes.Audio
     decEngine := pcm.NewDecoderEngine(pcm.NewConfigWithAudio(a.SampleRate, a.Format, a.ChannelLayout))
-    encEngine := pcm.NewEncoderEngine(pcm.EncoderConfig{})
+    encEngine := pcm.NewEncoderEngine(pcm.NewEncoderConfig())
 
     var out bytes.Buffer
     muxEngine := wav.NewMuxerEngine(&out)

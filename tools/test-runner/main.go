@@ -3,23 +3,16 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strconv"
 	"strings"
-)
 
-type workFile struct {
-	Use []struct {
-		DiskPath string
-	} `json:"Use"`
-}
+	"github.com/godexture/tools/internal/workspace"
+)
 
 type testEvent struct {
 	Action  string  `json:"Action"`
@@ -30,7 +23,7 @@ type testEvent struct {
 }
 
 func main() {
-	scriptArgs, testArgs := splitArgs(os.Args[1:])
+	scriptArgs, testArgs := workspace.SplitArgs(os.Args[1:])
 
 	var workPath string
 	var goCommand string
@@ -46,22 +39,22 @@ func main() {
 		fatal(err)
 	}
 
-	testArgs = ensurePackagePattern(testArgs)
-	passthroughFlags, pkgPattern := splitPackagePattern(testArgs)
+	testArgs = workspace.EnsurePackagePattern(testArgs, flagNeedsValue)
+	passthroughFlags, pkgPattern := workspace.SplitPackagePattern(testArgs, flagNeedsValue)
 
-	goWork, err := resolveGoWork(goCommand, workPath)
+	goWork, err := workspace.ResolveGoWork(goCommand, workPath)
 	if err != nil {
 		fatal(err)
 	}
 
-	modules, err := workspaceModules(goCommand, goWork)
+	modules, err := workspace.WorkspaceModules(goCommand, goWork)
 	if err != nil {
 		fatal(err)
 	}
 	if len(modules) == 0 {
 		fatal(fmt.Errorf("no modules found in %s", goWork))
 	}
-	pkgPattern = workspacePackagePatterns(modules, pkgPattern)
+	pkgPattern = workspace.WorkspacePackagePatterns(modules, pkgPattern)
 
 	err = runTests(goCommand, goWork, passthroughFlags, pkgPattern, parallel, simd)
 	if err != nil {
@@ -69,88 +62,12 @@ func main() {
 	}
 }
 
-func splitArgs(args []string) ([]string, []string) {
-	for i, arg := range args {
-		if arg == "--" {
-			return args[:i], args[i+1:]
-		}
-	}
-	return args, nil
-}
-
-func resolveGoWork(goCommand, explicit string) (string, error) {
-	if explicit != "" {
-		return filepath.Abs(explicit)
-	}
-
-	if output, err := exec.Command(goCommand, "env", "GOWORK").Output(); err == nil {
-		path := strings.TrimSpace(string(output))
-		if path != "" && path != "off" {
-			if abs, err := filepath.Abs(path); err == nil {
-				return abs, nil
-			}
-			return path, nil
-		}
-	}
-
-	if path, err := findUpward("go.work", mustGetwd()); err == nil {
-		return path, nil
-	}
-
-	if _, source, _, ok := runtime.Caller(0); ok {
-		if path, err := findUpward("go.work", filepath.Dir(source)); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", errors.New("go.work not found; run from the workspace or pass -work")
-}
-
-func workspaceModules(goCommand, goWork string) (map[string]string, error) {
-	cmd := exec.Command(goCommand, "work", "edit", "-json", goWork)
-	output, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("go work edit failed: %s", strings.TrimSpace(string(exitErr.Stderr)))
-		}
-		return nil, err
-	}
-
-	var parsed workFile
-	if err := json.Unmarshal(output, &parsed); err != nil {
-		return nil, err
-	}
-
-	baseDir := filepath.Dir(goWork)
-	modules := make(map[string]string, len(parsed.Use))
-	for _, use := range parsed.Use {
-		if use.DiskPath == "" {
-			continue
-		}
-		path := filepath.FromSlash(use.DiskPath)
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(baseDir, path)
-		}
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			return nil, err
-		}
-		rel, err := filepath.Rel(baseDir, abs)
-		if err != nil {
-			rel = abs
-		}
-		modules[filepath.ToSlash(rel)] = abs
-	}
-	return modules, nil
-}
-
 func runTests(goCommand, goWork string, passthroughFlags, pkgPattern []string, parallel int, simd bool) error {
 	args := append([]string{"test", "-json"}, passthroughFlags...)
 	if parallel > 0 && !hasFlag(args, "parallel") {
 		args = append(args, "-parallel", strconv.Itoa(parallel))
 	}
-	args = appendPackageArgs(args, pkgPattern)
+	args = workspace.AppendPackageArgs(args, pkgPattern)
 
 	cmd := exec.Command(goCommand, args...)
 	cmd.Dir = filepath.Dir(goWork)
@@ -263,115 +180,6 @@ func setEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(result, prefix+value)
-}
-
-func workspacePackagePatterns(modules map[string]string, patterns []string) []string {
-	if len(patterns) != 1 || patterns[0] != "./..." {
-		return patterns
-	}
-	modulesByPath := make([]string, 0, len(modules))
-	for module := range modules {
-		modulesByPath = append(modulesByPath, module)
-	}
-	sort.Strings(modulesByPath)
-	patterns = make([]string, 0, len(modulesByPath))
-	for _, module := range modulesByPath {
-		patterns = append(patterns, "./"+module+"/...")
-	}
-	return patterns
-}
-
-func findUpward(name, start string) (string, error) {
-	dir, err := filepath.Abs(start)
-	if err != nil {
-		return "", err
-	}
-	for {
-		candidate := filepath.Join(dir, name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return "", os.ErrNotExist
-}
-
-func mustGetwd() string {
-	wd, err := os.Getwd()
-	if err != nil {
-		fatal(err)
-	}
-	return wd
-}
-
-func ensurePackagePattern(args []string) []string {
-	if len(args) == 0 {
-		return []string{"./..."}
-	}
-
-	start, argsIndex := findPatternBounds(args)
-	if start < argsIndex {
-		return args
-	}
-
-	withPattern := make([]string, 0, len(args)+1)
-	withPattern = append(withPattern, args[:argsIndex]...)
-	withPattern = append(withPattern, "./...")
-	withPattern = append(withPattern, args[argsIndex:]...)
-	return withPattern
-}
-
-func argsSeparatorIndex(args []string) int {
-	for i, arg := range args {
-		if arg == "-args" {
-			return i
-		}
-	}
-	return len(args)
-}
-
-func findPatternBounds(args []string) (start, argsIndex int) {
-	argsIndex = argsSeparatorIndex(args)
-	i := 0
-	for i < argsIndex {
-		arg := args[i]
-		if arg == "" {
-			i++
-			continue
-		}
-		if !strings.HasPrefix(arg, "-") {
-			break
-		}
-		if flagNeedsValue(arg) && !strings.Contains(arg, "=") {
-			i++
-		}
-		i++
-	}
-	return i, argsIndex
-}
-
-func splitPackagePattern(args []string) (flags, pattern []string) {
-	start, argsIndex := findPatternBounds(args)
-	flags = append(flags, args[:start]...)
-	pattern = append(pattern, args[start:argsIndex]...)
-	flags = append(flags, args[argsIndex:]...)
-	return flags, pattern
-}
-
-func appendPackageArgs(args, packages []string) []string {
-	separator := argsSeparatorIndex(args)
-	if separator == len(args) {
-		return append(args, packages...)
-	}
-	result := make([]string, 0, len(args)+len(packages))
-	result = append(result, args[:separator]...)
-	result = append(result, packages...)
-	result = append(result, args[separator:]...)
-	return result
 }
 
 func flagNeedsValue(flag string) bool {

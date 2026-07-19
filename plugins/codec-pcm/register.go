@@ -12,12 +12,18 @@ import (
 )
 
 func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) engine.DecoderEngine {
-	resolved := engine.ResolveConfig[DecoderConfig](cfg)
+	resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
+	if err != nil {
+		panic(err)
+	}
 	return internal.NewDecoder(stream, resolved)
 }
 
 func NewEncoderEngine(stream media.StreamInfo, cfg EncoderConfig) engine.EncoderEngine {
-	resolved := engine.ResolveConfig[EncoderConfig](cfg)
+	resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+	if err != nil {
+		panic(err)
+	}
 	enc, _ := internal.NewEncoder(stream, resolved.CodecID, resolved)
 	return enc
 }
@@ -38,7 +44,7 @@ func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
 
 func init() {
 	// --- Decoder ---
-	if err := godec.Register(DecoderConfig{}, registry.DecoderManifest{
+	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-decoder",
@@ -58,7 +64,10 @@ func init() {
 			},
 		},
 		Factory: func(s media.StreamInfo, cfg registry.Configuration) (node.Decoder, error) {
-			resolved := engine.ResolveConfig[DecoderConfig](cfg)
+			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
+			if err != nil {
+				return nil, err
+			}
 			return engine.WrapDecoder(internal.NewDecoder(s, resolved)), nil
 		},
 	}); err != nil {
@@ -66,7 +75,7 @@ func init() {
 	}
 
 	// --- Encoder ---
-	if err := godec.Register(EncoderConfig{}, registry.EncoderManifest{
+	if err := godec.Register(NewEncoderConfig(), registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:        "pcm-encoder",
@@ -80,7 +89,10 @@ func init() {
 				pcmCapability{codec: media.CodecIMAADPCM},
 			},
 			TransformFunc: func(in media.StreamInfo, target media.CodecID, cfg registry.Configuration) (media.Profile, error) {
-				resolved := engine.ResolveConfig[EncoderConfig](cfg)
+				resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+				if err != nil {
+					return media.Profile{}, err
+				}
 				profile := media.Profile{Type: in.Type, MediaAttributes: in.MediaAttributes}
 				profile.Codec = target
 				if target == media.CodecMSADPCM || target == media.CodecIMAADPCM {
@@ -115,7 +127,10 @@ func init() {
 			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
 		},
 		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, cfg registry.Configuration) (node.Encoder, error) {
-			resolved := engine.ResolveConfig[EncoderConfig](cfg)
+			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
+			if err != nil {
+				return nil, err
+			}
 			enc, err := internal.NewEncoder(inStream, targetCodec, resolved)
 			if err != nil {
 				return nil, err

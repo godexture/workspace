@@ -4,17 +4,14 @@ package wav
 
 import (
 	internal "github.com/godexture/format-wav/internal"
-	optional "github.com/godexture/sdk/optional"
 )
 
-type MuxerConfig struct {
-	ForceRF64 optional.Optional[bool]
-}
+type MuxerConfig internal.MuxerConfig
 
 type MuxerConfigOption func(*MuxerConfig)
 
 func NewMuxerConfig(options ...MuxerConfigOption) MuxerConfig {
-	var config MuxerConfig
+	config := MuxerConfig(internal.MuxerConfig{})
 	for _, option := range options {
 		option(&config)
 	}
@@ -23,12 +20,14 @@ func NewMuxerConfig(options ...MuxerConfigOption) MuxerConfig {
 
 func WithForceRF64(v bool) MuxerConfigOption {
 	return func(c *MuxerConfig) {
-		c.ForceRF64 = optional.Some(v)
+		c.ForceRF64 = v
 	}
 }
 
-func (c MuxerConfig) ApplyDefaults() internal.MuxerConfig {
-	config := internal.MuxerConfig{}
-	config.ForceRF64 = c.ForceRF64.ValueOr(config.ForceRF64)
-	return config
+func (c MuxerConfig) ResolveDefault() internal.MuxerConfig {
+	return internal.MuxerConfig{}
+}
+
+func (c MuxerConfig) Resolve() internal.MuxerConfig {
+	return internal.MuxerConfig(c)
 }
