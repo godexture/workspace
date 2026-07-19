@@ -331,6 +331,42 @@ func TestUnary64FastScanOverrunMatchesBitByBit(t *testing.T) {
 	}
 }
 
+func TestRice64FastPathMatchesSplit(t *testing.T) {
+	t.Parallel()
+	for offset := 0; offset < 8; offset++ {
+		for _, param := range []uint8{0, 1, 4, 8, 16, 30} {
+			for _, quotient := range []uint64{0, 1, 7, 31, 65} {
+				remainder := uint64(0)
+				if param > 0 {
+					remainder = (uint64(1) << param) - 1
+				}
+				value := quotient<<param | remainder
+
+				var writer Writer
+				writer.Bits64(0, uint8(offset))
+				writer.UnaryBits64(value, param)
+				limit := writer.Position()
+				data := append(append([]byte(nil), writer.Bytes()...), make([]byte, 8)...)
+
+				var fast, split Reader
+				fast.Init(data, int32(offset), limit)
+				split.Init(data, int32(offset), limit)
+				got := fast.Rice64(param)
+				want := split.rice64Split(param)
+				if got != want || got != value {
+					t.Fatalf("Rice64(param=%d, quotient=%d, offset=%d) = %d, split = %d, want %d", param, quotient, offset, got, want, value)
+				}
+				if fast.Position() != split.Position() || fast.Position() != limit {
+					t.Fatalf("Rice64 position(param=%d, quotient=%d, offset=%d) = %d, split = %d, want %d", param, quotient, offset, fast.Position(), split.Position(), limit)
+				}
+				if fast.Overrun() || split.Overrun() {
+					t.Fatalf("Rice64 overran valid input (param=%d, quotient=%d, offset=%d)", param, quotient, offset)
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkBits64(b *testing.B) {
 	data := make([]byte, 1024)
 	for i := range data {
