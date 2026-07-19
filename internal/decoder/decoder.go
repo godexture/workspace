@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -28,10 +29,20 @@ type Decoder struct {
 	positioned   bool
 	startSample  uint64
 	md5          *flac.PCMMD5
+
+	workers    int
+	jobs       chan frameJob
+	jobsClosed bool
+	closed     bool
+	workerWG   sync.WaitGroup
+	workspace  decodeWorkspace
 }
 
-func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig) *Decoder {
-	decoder := &Decoder{cfg: cfg}
+func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, parallelism int) *Decoder {
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	decoder := &Decoder{cfg: cfg, workers: parallelism}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -87,9 +98,24 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
+	if d.jobsClosed {
+		return engine.ErrEOF
+	}
 	entry := &pendingEntry{done: make(chan struct{})}
+	if d.workers <= 1 {
+		entry.done = nil
+		decodeJob(frameJob{
+			data:   pkt.Data(),
+			info:   d.info,
+			strict: d.cfg.Strict,
+			entry:  entry,
+		}, &d.workspace)
+		d.pendingQueue = append(d.pendingQueue, entry)
+		return nil
+	}
+	d.startWorkers()
 	d.pendingQueue = append(d.pendingQueue, entry)
-	decoderJobs(d.cfg.Workers) <- frameJob{
+	d.jobs <- frameJob{
 		data:   append([]byte(nil), pkt.Data()...),
 		info:   d.info,
 		strict: d.cfg.Strict,
@@ -120,7 +146,9 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, errors.New("flac decoder requires STREAMINFO metadata or audio attributes")
 	}
 	entry := d.pendingQueue[0]
-	<-entry.done
+	if entry.done != nil {
+		<-entry.done
+	}
 	d.pendingQueue[0] = nil
 	d.pendingQueue = d.pendingQueue[1:]
 	if len(d.pendingQueue) == 0 {
@@ -145,7 +173,36 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 
 func (d *Decoder) Flush() error {
 	d.flushed = true
+	d.closeJobs()
 	return nil
+}
+
+func (d *Decoder) Close() error {
+	if d.closed {
+		return nil
+	}
+	d.closed = true
+	d.flushed = true
+	d.closeJobs()
+	for _, entry := range d.pendingQueue {
+		if entry != nil && entry.audio != nil {
+			entry.audio.Release()
+			entry.audio = nil
+		}
+	}
+	d.pendingQueue = nil
+	return nil
+}
+
+func (d *Decoder) closeJobs() {
+	if d.jobsClosed {
+		return
+	}
+	d.jobsClosed = true
+	if d.jobs != nil {
+		close(d.jobs)
+		d.workerWG.Wait()
+	}
 }
 
 func (d *Decoder) initMD5() {

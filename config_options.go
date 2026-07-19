@@ -171,24 +171,6 @@ func WithStreamableSubset(v bool) EncoderConfigOption {
 	})
 }
 
-type WorkersOption interface {
-	EncoderConfigOption
-	DecoderConfigOption
-}
-
-type workersOpt struct{ v int }
-
-func (o workersOpt) applyEncoderConfig(c *EncoderConfig) {
-	c.Workers = o.v
-}
-func (o workersOpt) applyDecoderConfig(c *DecoderConfig) {
-	c.Workers = o.v
-}
-
-func WithWorkers(v int) WorkersOption {
-	return workersOpt{v}
-}
-
 func WithStrict(v bool) DecoderConfigOption {
 	return decoderConfigOptionFunc(func(c *DecoderConfig) {
 		c.Strict = v

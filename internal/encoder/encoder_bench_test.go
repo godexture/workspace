@@ -3,6 +3,7 @@ package encoder
 import (
 	"encoding/binary"
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func BenchmarkDecoderValidationMode(b *testing.B) {
 	packet := media.NewPacketFromData(data)
 
 	decode := func(strict bool) {
-		dec := decoder.NewDecoder(stream, config.DecoderConfig{Strict: strict})
+		dec := decoder.NewDecoder(stream, config.DecoderConfig{Strict: strict}, 1)
 		if err := dec.SendPacket(packet); err != nil {
 			b.Fatal(err)
 		}
@@ -136,7 +137,7 @@ func BenchmarkEncoderDefaultConfig(b *testing.B) {
 	b.SetBytes(int64(len(plane)))
 	b.ResetTimer()
 	for b.Loop() {
-		enc := NewEncoder(media.StreamInfo{}, cfg)
+		enc := NewEncoder(media.StreamInfo{}, cfg, runtime.GOMAXPROCS(0))
 		if err := enc.SendFrame(&wrapped); err != nil {
 			b.Fatal(err)
 		}

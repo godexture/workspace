@@ -2,7 +2,6 @@ package decoder
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
@@ -31,42 +30,50 @@ type frameJob struct {
 	entry  *pendingEntry
 }
 
-var sharedDecoderPool struct {
-	once sync.Once
-	jobs chan frameJob
-}
-
-func decoderJobs(workers int) chan frameJob {
-	sharedDecoderPool.once.Do(func() {
-		sharedDecoderPool.jobs = make(chan frameJob, 2*workers)
-		for range workers {
-			go runDecoderWorker(sharedDecoderPool.jobs)
-		}
-	})
-	return sharedDecoderPool.jobs
+func (d *Decoder) startWorkers() {
+	if d.jobs != nil || d.jobsClosed {
+		return
+	}
+	d.jobs = make(chan frameJob, 2*d.workers)
+	d.workerWG.Add(d.workers)
+	for range d.workers {
+		go func() {
+			defer d.workerWG.Done()
+			runDecoderWorker(d.jobs)
+		}()
+	}
 }
 
 func runDecoderWorker(jobs <-chan frameJob) {
 	var workspace decodeWorkspace
 	for job := range jobs {
-		decoded, err := decodeFrame(job.data, job.info, job.strict, &workspace)
-		if err == nil && decoded.Bytes != len(job.data) {
-			err = fmt.Errorf("FLAC packet contains trailing data: decoded %d of %d bytes", decoded.Bytes, len(job.data))
+		decodeJob(job, &workspace)
+	}
+}
+
+func decodeJob(job frameJob, workspace *decodeWorkspace) {
+	decoded, err := decodeFrame(job.data, job.info, job.strict, workspace)
+	if err == nil && decoded.Bytes != len(job.data) {
+		err = fmt.Errorf("FLAC packet contains trailing data: decoded %d of %d bytes", decoded.Bytes, len(job.data))
+	}
+	if err == nil {
+		job.entry.header = decoded.Header
+		job.entry.audio, err = buildAudioFrame(decoded)
+		if err == nil && job.strict && job.entry.audio.Format.BytesPerSample() != (decoded.Header.BitsPerSample+7)/8 {
+			job.entry.md5 = flac.PackPCMMD5(nil, decoded.Samples, decoded.Header.BitsPerSample)
 		}
-		if err == nil {
-			job.entry.header = decoded.Header
-			job.entry.audio, err = buildAudioFrame(decoded)
-			if err == nil && job.strict && job.entry.audio.Format.BytesPerSample() != (decoded.Header.BitsPerSample+7)/8 {
-				job.entry.md5 = flac.PackPCMMD5(nil, decoded.Samples, decoded.Header.BitsPerSample)
-			}
-		}
-		job.entry.err = err
+	}
+	job.entry.err = err
+	if job.entry.done != nil {
 		close(job.entry.done)
 	}
 }
 
 func (d *Decoder) OutputReady() <-chan struct{} {
 	if len(d.pendingQueue) > 0 {
+		if d.pendingQueue[0].done == nil {
+			return decoderOutputReady
+		}
 		return d.pendingQueue[0].done
 	}
 	if d.flushed {

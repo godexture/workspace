@@ -71,9 +71,6 @@ type EncoderConfig struct {
 	BlockSplitDepth       int
 	BlockSplitMode        BlockSplitMode
 	StreamableSubset      bool
-
-	// Execution parameters. Workers does not affect encoded bytes.
-	Workers int
 }
 
 var DefaultEncoderConfig = GetPreset(5)
@@ -156,9 +153,6 @@ func (c EncoderConfig) Validate() error {
 	}
 	if c.RiceCost > RiceCostExact {
 		return fmt.Errorf("invalid FLAC encoder Rice cost mode")
-	}
-	if c.Workers < 0 {
-		return fmt.Errorf("FLAC encoder workers must be non-negative: %d", c.Workers)
 	}
 	if len(c.Apodizations) > 32 {
 		return fmt.Errorf("FLAC encoder supports at most 32 apodization windows: %d", len(c.Apodizations))
