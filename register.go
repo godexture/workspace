@@ -5,35 +5,37 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-wav/internal"
 	engine "github.com/godexture/sdk/engine"
 )
 
-func Probe(r io.Reader) manifest.ProbeScore {
-	return internal.Probe(r)
-}
+var (
+	Probe = internal.Probe
 
-func NewDemuxer(r io.ReadSeeker, config DemuxerConfig) (*internal.Demuxer, error) {
-	return internal.NewDemuxer(r, config.ApplyDefaults())
-}
-
-func NewMuxer(w io.Writer, config MuxerConfig) *internal.Muxer {
-	return internal.NewMuxer(w, config.ApplyDefaults())
-}
+	NewDemuxer = internal.NewDemuxer
+	NewMuxer   = internal.NewMuxer
+)
 
 func NewDemuxerEngine(r io.ReadSeeker, config DemuxerConfig) (engine.DemuxerEngine, error) {
-	return internal.NewDemuxer(r, config.ApplyDefaults())
+	resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](config)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewDemuxer(r, resolved)
 }
 
-func NewMuxerEngine(w io.Writer, config MuxerConfig) engine.MuxerEngine {
-	return internal.NewMuxer(w, config.ApplyDefaults())
+func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error) {
+	resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
+	if err != nil {
+		return nil, err
+	}
+	return internal.NewMuxer(w, resolved), nil
 }
 
 func init() {
-	if err := godec.Register(DemuxerConfig{}, registry.DemuxerManifest{
+	if err := godec.Register(NewDemuxerConfig(), registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-demuxer",
 			Description: "WAV demuxer",
@@ -45,7 +47,10 @@ func init() {
 				return nil, fmt.Errorf("format-wav demuxer requires io.ReadSeeker")
 			}
 
-			resolved := engine.ResolveConfig[DemuxerConfig](config)
+			resolved, err := engine.ResolveConfig[internal.DemuxerConfig, DemuxerConfig](config)
+			if err != nil {
+				return nil, err
+			}
 			dmx, err := internal.NewDemuxer(rs, resolved)
 			if err != nil {
 				return nil, err
@@ -56,13 +61,16 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(MuxerConfig{}, registry.MuxerManifest{
+	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:        "wav-muxer",
 			Description: "WAV muxer",
 		},
 		Factory: func(w io.Writer, cfg registry.Configuration) (node.Muxer, error) {
-			resolved := engine.ResolveConfig[MuxerConfig](cfg)
+			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](cfg)
+			if err != nil {
+				return nil, err
+			}
 			mux := internal.NewMuxer(w, resolved)
 			return engine.WrapMuxer(mux), nil
 		},
