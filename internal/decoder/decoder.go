@@ -106,6 +106,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		entry.done = nil
 		decodeJob(frameJob{
 			data:   pkt.Data(),
+			pts:    pkt.PTS,
 			info:   d.info,
 			strict: d.cfg.Strict,
 			entry:  entry,
@@ -117,6 +118,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	d.pendingQueue = append(d.pendingQueue, entry)
 	d.jobs <- frameJob{
 		data:   append([]byte(nil), pkt.Data()...),
+		pts:    pkt.PTS,
 		info:   d.info,
 		strict: d.cfg.Strict,
 		entry:  entry,
