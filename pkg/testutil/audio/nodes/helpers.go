@@ -12,6 +12,19 @@ import (
 
 const pcmFramesPerChunk = 4096
 
+func pushFrame(ctx context.Context, edge node.Edge[media.Frame], frame media.Frame) error {
+	if err := edge.Push(ctx, frame); err != nil {
+		frame.Release()
+		return err
+	}
+	return nil
+}
+
+func retainAndPushFrame(ctx context.Context, edge node.Edge[media.Frame], frame media.Frame) error {
+	frame.Retain()
+	return pushFrame(ctx, edge, frame)
+}
+
 func consumeUntilEOF[T media.Retainer](ctx context.Context, port *node.InPort[T], process func(T) error) error {
 	for {
 		val, err := port.Pull(ctx)
