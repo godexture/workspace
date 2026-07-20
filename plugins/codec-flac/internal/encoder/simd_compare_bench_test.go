@@ -119,27 +119,6 @@ func BenchmarkRiceStatsCompare(b *testing.B) {
 	}
 }
 
-func BenchmarkMidSideCompare(b *testing.B) {
-	for _, length := range []int{16, 64, 256, 4096} {
-		block := benchmarkBlock(length)
-		left, right := block[0], block[1]
-		mid := make([]int64, len(left))
-		side := make([]int64, len(left))
-		b.Run(strconv.Itoa(length), func(b *testing.B) {
-			b.Run("scalar", func(b *testing.B) {
-				for b.Loop() {
-					computeMidSideScalar(left, right, mid, side)
-				}
-			})
-			b.Run("simd", func(b *testing.B) {
-				for b.Loop() {
-					computeMidSideSIMD(left, right, mid, side)
-				}
-			})
-		})
-	}
-}
-
 func BenchmarkWindowSamplesCompare(b *testing.B) {
 	for _, length := range []int{4, 16, 64, 256, 4096} {
 		samples := benchmarkBlock(length)[0]

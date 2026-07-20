@@ -238,3 +238,30 @@ allocation profile では `bits.Writer.Bits64` 内の段階的な `append` growt
 4.19%、平均 4.07% 改善した。全 offset/width を bit-by-bit oracle と照合する
 既存テストに加え、共通 bits、通常/SIMD FLAC encoder、race detector の対象
 テストを通過した。
+
+## Removed slower mid/side SIMD
+
+frame encode profile では `computeMidSide4` が flat 7.68% を占めていた。
+現 SIMD 実装は slice load/store と shift 補正のコストが大きく、4096 sample
+では単純な scalar loop より遅かった。同一バイナリの両 kernel を 100 ペア、
+各 50 ms、順序を反転して比較すると、全 100 ペアで scalar が速い。
+
+| metric | scalar | SIMD | scalar improvement |
+| --- | ---: | ---: | ---: |
+| median | 4,563.5 ns/op | 25,443 ns/op | 82.06% |
+| mean | 4,618.1 ns/op | 25,501.4 ns/op | 81.89% |
+
+閾値を変えるだけでなく、build-tag dispatch、SIMD kernel、それ専用のテストと
+比較ベンチを削除し、全 build で共通の `computeMidSide` へ集約した。
+
+`BenchmarkEncodeFrameDefaultConfig` は直前コミットと 50 ペア、各 200 ms、
+順序を反転して実行した。47/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 214,565.5 ns/op | 192,545 ns/op | 10.26% |
+| mean | 226,039.3 ns/op | 199,967.5 ns/op | 11.53% |
+
+`BenchmarkEncoderDefaultConfig` は 30 ペア中 21 ペアで変更後が速く、中央値
+0.89%、平均 2.69% 改善した。変更後 profile では `computeMidSide4` は上位から
+消えた。通常、SIMD、race detector の encoder 対象テストを通過した。
