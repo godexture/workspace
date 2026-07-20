@@ -8,12 +8,8 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-// ConvertToFloat32 converts an AudioFrame's samples to a float32 slice.
-func ConvertToFloat32(af *media.AudioFrame) ([]float32, error) {
-	return convertToFloat32(nil, af)
-}
-
-func convertToFloat32(dst []float32, af *media.AudioFrame) ([]float32, error) {
+// ConvertToFloat32 converts an AudioFrame's samples to float32, reusing dst when possible.
+func ConvertToFloat32(dst []float32, af *media.AudioFrame) ([]float32, error) {
 	plane := af.Planes()[0]
 	channels := af.Layout.ChannelCount()
 	samples := af.Samples

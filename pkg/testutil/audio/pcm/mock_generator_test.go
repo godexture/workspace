@@ -37,7 +37,7 @@ func TestCreateAudioFramePreservesIntegerPCMGrid(t *testing.T) {
 			if audioFrame.BitsPerSample != tt.bitsPerSample {
 				t.Fatalf("BitsPerSample = %d, want %d", audioFrame.BitsPerSample, tt.bitsPerSample)
 			}
-			got, err := ConvertToFloat32(audioFrame)
+			got, err := ConvertToFloat32(nil, audioFrame)
 			if err != nil {
 				t.Fatal(err)
 			}
