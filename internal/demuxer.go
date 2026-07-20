@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"time"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	mediatime "github.com/godexture/core/domain/time"
 	"github.com/godexture/format-mp3/header"
 	id3 "github.com/godexture/metadata-id3"
 )
@@ -160,6 +162,8 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.presentationTimestamp)
+	packet.DTS = media.Dts(d.presentationTimestamp)
+	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(frameHeader.SampleRate)))
 
 	samplesPerFrame := frameHeader.Samples
 	d.presentationTimestamp += int64(samplesPerFrame)
