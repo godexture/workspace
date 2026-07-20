@@ -56,7 +56,7 @@ func (s *sampleStream) fill(ctx context.Context) error {
 	if !ok {
 		return errors.New("expected AudioFrame")
 	}
-	s.samples, err = pcm.ConvertToFloat32(audioFrame)
+	s.samples, err = pcm.ConvertToFloat32(s.samples, audioFrame)
 	if err != nil {
 		return err
 	}
