@@ -61,7 +61,7 @@ var (
 	LayoutFront6_0     ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | FrontCenter | FrontLeftOfCenter | FrontRightOfCenter | BackCenter)
 	LayoutSide6_0      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | SideLeft | SideRight | FrontCenter | BackCenter)
 	LayoutSide6_1      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | SideLeft | SideRight | FrontCenter | LowFrequency | BackCenter)
-	LayoutWide7_1      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | FrontCenter | LowFrequency | BackLeft | BackRight | SideLeft | SideRight)
+	LayoutWide7_1      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | FrontCenter | LowFrequency | BackLeft | BackRight | FrontLeftOfCenter | FrontRightOfCenter)
 	LayoutSide7_0      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | SideLeft | SideRight | FrontCenter | BackLeft | BackRight)
 	LayoutSide7_1      ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | SideLeft | SideRight | FrontCenter | BackLeft | BackRight | LowFrequency)
 	LayoutSurround7_1  ChannelLayout = NewNativeLayout(FrontLeft | FrontRight | FrontCenter | LowFrequency | BackLeft | BackRight | SideLeft | SideRight)

@@ -62,10 +62,7 @@ func (c *AudioConstraint) matchesFormat(attrs media.AudioAttributes) bool {
 	if len(c.SampleFormats) == 0 {
 		return true
 	}
-	bits := attrs.BitsPerSample
-	if bits == 0 {
-		bits = attrs.Format.BytesPerSample() * 8
-	}
+	bits := attrs.EffectiveBitsPerSample()
 	return slices.ContainsFunc(c.SampleFormats, func(candidate SampleFormatConstraint) bool {
 		return candidate.Format == attrs.Format && candidate.BitsPerSample.Match(bits)
 	})
@@ -101,8 +98,9 @@ func (c *AudioConstraint) Diagnose(stream media.StreamInfo) error {
 			stream.Audio.ChannelLayout.String(), c.Layouts)
 
 	case reasonFormat:
+		bits := stream.Audio.EffectiveBitsPerSample()
 		return fmt.Errorf("unsupported sample format: %s/%d bits (allowed: %v)",
-			stream.Audio.Format, stream.Audio.BitsPerSample, c.SampleFormats)
+			stream.Audio.Format, bits, c.SampleFormats)
 
 	default:
 		return fmt.Errorf("unknown constraint violation")

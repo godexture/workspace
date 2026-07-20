@@ -446,6 +446,21 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 	}
 }
 
+func TestNegotiatorRejectsDiscontinuousBridgePlan(t *testing.T) {
+	t.Parallel()
+	current := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{SampleRate: 44100}}}
+	output := current
+	output.Audio.SampleRate = 48000
+	bridge := &mockBridgeResolver{steps: []resolver.BridgeStep{{
+		Input:  media.StreamInfo{Type: media.MediaAudio},
+		Output: output,
+	}}}
+	_, _, err := (&Negotiator{bridgeResolver: bridge}).satisfy(current, []manifest.Capability{&manifest.AudioConstraint{SampleRates: manifest.IntConstraint{Values: []int{48000}}}}, new(int))
+	if err == nil || !strings.Contains(err.Error(), "input does not match") {
+		t.Fatalf("satisfy() error = %v, want continuity error", err)
+	}
+}
+
 func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	t.Parallel()
 	streamIn := media.StreamInfo{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"runtime"
 
 	"github.com/godexture/core/domain/manifest"
@@ -162,10 +163,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if requirementErr != nil {
 			return nil, fmt.Errorf("resolve filter %d requirements: %w", i, requirementErr)
 		}
-		accepted, requirementErr := filterManifest.Accept(currentStream, currentStream.Codec, filterSpec.Config)
-		if requirementErr != nil {
-			return nil, fmt.Errorf("resolve filter %d requirements: %w", i, requirementErr)
-		}
+		accepted := manifest.MatchesAny(requirements, currentStream)
 		if !accepted {
 			var bridgePlans []transformPlan
 			currentStream, bridgePlans, err = n.satisfy(currentStream, requirements, &bridgeID)
@@ -199,10 +197,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
 	}
-	accepted, err := encoderManifest.Accept(currentStream, spec.TargetCodec, spec.EncodeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
-	}
+	accepted := manifest.MatchesAny(requirements, currentStream)
 	if !accepted {
 		var bridgePlans []transformPlan
 		currentStream, bridgePlans, err = n.satisfy(currentStream, requirements, &bridgeID)
@@ -300,16 +295,27 @@ func (n *Negotiator) satisfy(
 	required []manifest.Capability,
 	bridgeID *int,
 ) (media.StreamInfo, []transformPlan, error) {
-	if acceptsAny(required, current) {
+	if manifest.MatchesAny(required, current) {
 		return current, nil, nil
 	}
 	if n.bridgeResolver == nil {
-		return current, nil, diagnoseRequired(current, required)
+		return current, nil, manifest.Diagnose(current, required)
 	}
 	steps, err := n.bridgeResolver.ResolveBridge(current, required)
 	if err != nil {
 		return current, nil, err
 	}
+	expected := current
+	for i, step := range steps {
+		if !reflect.DeepEqual(step.Input, expected) {
+			return current, nil, fmt.Errorf("bridge step %d input does not match the preceding stream", i)
+		}
+		expected = step.Output
+	}
+	if !manifest.MatchesAny(required, expected) {
+		return current, nil, fmt.Errorf("bridge resolver returned a plan that does not satisfy the required capability")
+	}
+
 	plans := make([]transformPlan, 0, len(steps))
 	for _, step := range steps {
 		step := step
@@ -324,33 +330,5 @@ func (n *Negotiator) satisfy(
 			},
 		})
 	}
-	if !acceptsAny(required, currentAfterSteps(current, steps)) {
-		return current, nil, fmt.Errorf("bridge resolver returned a plan that does not satisfy the required capability")
-	}
-	return currentAfterSteps(current, steps), plans, nil
-}
-
-func currentAfterSteps(current media.StreamInfo, steps []resolver.BridgeStep) media.StreamInfo {
-	if len(steps) == 0 {
-		return current
-	}
-	return steps[len(steps)-1].Output
-}
-
-func acceptsAny(required []manifest.Capability, stream media.StreamInfo) bool {
-	for _, capability := range required {
-		if capability.Match(stream) {
-			return true
-		}
-	}
-	return false
-}
-
-func diagnoseRequired(stream media.StreamInfo, required []manifest.Capability) error {
-	for _, capability := range required {
-		if err := capability.Diagnose(stream); err != nil {
-			return err
-		}
-	}
-	return fmt.Errorf("stream does not satisfy any required capability")
+	return expected, plans, nil
 }

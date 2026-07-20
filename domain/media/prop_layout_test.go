@@ -72,6 +72,16 @@ func TestCustomLayoutIsValueBased(t *testing.T) {
 	}
 }
 
+func TestWideSevenOneUsesFrontWideChannels(t *testing.T) {
+	t.Parallel()
+	if !LayoutWide7_1.Contains(FrontLeftOfCenter) || !LayoutWide7_1.Contains(FrontRightOfCenter) {
+		t.Fatal("wide 7.1 layout is missing front-wide channels")
+	}
+	if LayoutWide7_1.Contains(SideLeft) || LayoutWide7_1.Contains(SideRight) {
+		t.Fatal("wide 7.1 layout must not use side channels")
+	}
+}
+
 func TestAmbisonicLayoutDoesNotOverflow(t *testing.T) {
 	t.Parallel()
 	layout := NewAmbisonicLayout(15)

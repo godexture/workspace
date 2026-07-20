@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/godexture/core/domain/media"
@@ -57,5 +58,18 @@ func TestAudioConstraintRejectsNonAudio(t *testing.T) {
 	constraint := &AudioConstraint{}
 	if constraint.Match(media.StreamInfo{Type: media.MediaVideo}) {
 		t.Fatal("audio constraint accepted video stream")
+	}
+}
+
+func TestAudioConstraintDiagnoseUsesEffectiveBitDepth(t *testing.T) {
+	t.Parallel()
+	constraint := &AudioConstraint{SampleFormats: []SampleFormatConstraint{{
+		Format:        media.SampleFormatS16,
+		BitsPerSample: IntConstraint{Values: []int{24}},
+	}}}
+	stream := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{Format: media.SampleFormatS16}}}
+	err := constraint.Diagnose(stream)
+	if err == nil || !strings.Contains(err.Error(), "16 bits") {
+		t.Fatalf("Diagnose() error = %v, want effective bit depth", err)
 	}
 }

@@ -13,6 +13,7 @@ type Capability interface {
 }
 
 type IntConstraint struct {
+	// A zero Min or Max leaves that bound unset.
 	Values []int
 	Min    int
 	Max    int
@@ -46,7 +47,9 @@ func (c IntConstraint) String() string {
 
 func (c IntConstraint) Candidates(current int) []int {
 	if len(c.Values) > 0 {
-		return append([]int(nil), c.Values...)
+		return slices.DeleteFunc(append([]int(nil), c.Values...), func(value int) bool {
+			return !c.Match(value)
+		})
 	}
 	if c.Match(current) {
 		return []int{current}
@@ -58,6 +61,21 @@ func (c IntConstraint) Candidates(current int) []int {
 		return []int{c.Max}
 	}
 	return nil
+}
+
+func MatchesAny(capabilities []Capability, stream media.StreamInfo) bool {
+	return slices.ContainsFunc(capabilities, func(capability Capability) bool {
+		return capability.Match(stream)
+	})
+}
+
+func Diagnose(stream media.StreamInfo, capabilities []Capability) error {
+	for _, capability := range capabilities {
+		if err := capability.Diagnose(stream); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("stream does not satisfy any required capability")
 }
 
 func (c IntConstraint) Preferred(current int) int {
