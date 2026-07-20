@@ -126,6 +126,70 @@ func BenchmarkDemuxerReadPackets(b *testing.B) {
 	}
 }
 
+func TestDemuxerResynchronizesAfterCorruptBytes(t *testing.T) {
+	t.Parallel()
+	audio := append(syntheticMP3Frame(1), syntheticMP3Frame(2)...)
+	audio = append(audio, 0x00, 0x12, 0x34)
+	audio = append(audio, syntheticMP3Frame(3)...)
+	audio = append(audio, syntheticMP3Frame(4)...)
+
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(audio), internal.DemuxerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := demuxer.Analyze(); err != nil {
+		t.Fatal(err)
+	}
+	for want := byte(1); want <= 4; want++ {
+		packet, _, err := demuxer.ReadPacket()
+		if err != nil {
+			t.Fatalf("ReadPacket %d: %v", want, err)
+		}
+		if got := packet.Data()[4]; got != want {
+			packet.Release()
+			t.Fatalf("packet marker = %d, want %d", got, want)
+		}
+		packet.Release()
+	}
+	if packet, _, err := demuxer.ReadPacket(); err != io.EOF || packet != nil {
+		t.Fatalf("final ReadPacket = (%v, %v), want nil, EOF", packet, err)
+	}
+}
+
+func TestDemuxerIgnoresTruncatedTrailingFrame(t *testing.T) {
+	t.Parallel()
+	audio := append(syntheticMP3Frame(1), syntheticMP3Frame(2)...)
+	audio = append(audio, syntheticMP3Frame(3)[:100]...)
+
+	demuxer, err := internal.NewDemuxer(bytes.NewReader(audio), internal.DemuxerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := demuxer.Analyze(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		packet, _, err := demuxer.ReadPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet.Release()
+	}
+	if packet, _, err := demuxer.ReadPacket(); err != io.EOF || packet != nil {
+		t.Fatalf("truncated ReadPacket = (%v, %v), want nil, EOF", packet, err)
+	}
+}
+
+func syntheticMP3Frame(marker byte) []byte {
+	const frameSize = 417
+	frame := make([]byte, frameSize)
+	copy(frame, []byte{0xff, 0xfb, 0x90, 0x00})
+	for i := 4; i < len(frame); i++ {
+		frame[i] = marker
+	}
+	return frame
+}
+
 func TestMuxer_WritesID3Metadata(t *testing.T) {
 	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
