@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 )
 
-type alphaConfig struct{}
+type alphaConfig struct{ value int }
 type betaConfig struct{}
 
 func TestPluginKeyIsDerivedFromRoleAndNamedConfigurationType(t *testing.T) {
@@ -60,7 +61,7 @@ func TestRegistryRejectsInvalidConfigurationIdentity(t *testing.T) {
 		"map":       map[string]int{},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := registry.Register(config, testMuxerManifest("muxer")); err == nil {
+			if err := registry.Register(testMuxerManifest("muxer", config)); err == nil {
 				t.Fatalf("Register(%T) succeeded", config)
 			}
 		})
@@ -70,10 +71,10 @@ func TestRegistryRejectsInvalidConfigurationIdentity(t *testing.T) {
 func TestRegistryRejectsDuplicateKeyWithoutReplacingOriginal(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry[MuxerManifest]()
-	if err := registry.Register(alphaConfig{}, testMuxerManifest("original")); err != nil {
+	if err := registry.Register(testMuxerManifest("original", alphaConfig{})); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.Register(&alphaConfig{}, testMuxerManifest("replacement")); err == nil {
+	if err := registry.Register(testMuxerManifest("replacement", &alphaConfig{})); err == nil {
 		t.Fatal("duplicate registration succeeded")
 	}
 	key, _ := registry.Key(alphaConfig{})
@@ -89,10 +90,10 @@ func TestRegistryRejectsDuplicateKeyWithoutReplacingOriginal(t *testing.T) {
 func TestRegistryEnumerationIsDeterministic(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry[MuxerManifest]()
-	if err := registry.Register(betaConfig{}, testMuxerManifest("beta")); err != nil {
+	if err := registry.Register(testMuxerManifest("beta", betaConfig{})); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.Register(alphaConfig{}, testMuxerManifest("alpha")); err != nil {
+	if err := registry.Register(testMuxerManifest("alpha", alphaConfig{})); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,9 +109,40 @@ func TestRegistryEnumerationIsDeterministic(t *testing.T) {
 	}
 }
 
-func testMuxerManifest(name string) MuxerManifest {
+func TestRegistryLooksUpNamesAndCreatesFreshConfigurations(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry[MuxerManifest]()
+	manifest := testMuxerManifest("alpha", alphaConfig{})
+	manifest.ConfigurationFactory = func() Configuration { return &alphaConfig{} }
+	if err := registry.Register(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := registry.Names(), []string{"alpha"}; !slices.Equal(got, want) {
+		t.Fatalf("Names() = %v, want %v", got, want)
+	}
+	resolved, err := registry.Lookup("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := resolved.NewConfiguration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolved.NewConfiguration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("NewConfiguration() returned the same instance twice")
+	}
+}
+
+func testMuxerManifest(name string, config Configuration) MuxerManifest {
 	return MuxerManifest{
-		BaseManifest: BaseManifest{Name: name},
+		BaseManifest: BaseManifest{Name: name, ConfigurationFactory: func() Configuration { return config }},
+		Extensions:   []string{".mux"},
+		Codecs:       []media.CodecID{media.CodecFLAC},
+		DefaultCodec: media.CodecFLAC,
 		Factory: func(io.Writer, Configuration) (node.Muxer, error) {
 			return nil, nil
 		},

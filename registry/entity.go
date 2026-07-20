@@ -9,6 +9,15 @@ import (
 
 type Configuration interface{}
 
+type ConfigurationFactory func() Configuration
+
+func NewConfigurationFactory[T any, Option any](newConfiguration func(...Option) T) ConfigurationFactory {
+	return func() Configuration {
+		configuration := newConfiguration()
+		return &configuration
+	}
+}
+
 type MuxerFactory func(io.Writer, Configuration) (node.Muxer, error)
 type DemuxerFactory func(io.Reader, Configuration) (node.Demuxer, error)
 

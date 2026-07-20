@@ -32,6 +32,6 @@ var (
 	NewBuilder    = pipeline.NewBuilder
 )
 
-func Register(config registry.Configuration, manifest registry.Manifest) error {
-	return DefaultRegistry.Register(config, manifest)
+func Register(manifest registry.Manifest) error {
+	return DefaultRegistry.Register(manifest)
 }

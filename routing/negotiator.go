@@ -257,6 +257,9 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err := geometry.AddNode("muxer", muxNode); err != nil {
 		return nil, fmt.Errorf("add muxer to geometry: %w", err)
 	}
+	if err := muxNode.SetMetadata(demuxNode.Metadata().Clone()); err != nil {
+		return nil, fmt.Errorf("set muxer metadata: %w", err)
+	}
 
 	outputStream := encoderOutput
 	if spec.PrepareOutputStream != nil {

@@ -70,7 +70,7 @@ func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 					},
 				}).Validate()
 			},
-			contains: "codec matcher",
+			contains: "no codecs",
 		},
 		{
 			name: "typed nil capability",
