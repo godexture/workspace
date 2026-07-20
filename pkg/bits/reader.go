@@ -195,9 +195,7 @@ func (r *Reader) Unary64() uint64 {
 				available = remaining
 			}
 			value := r.buffer[byteIndex] << uint(r.position&7)
-			if available < 8 {
-				value &= byte(0xff << uint(8-available))
-			}
+			value &= byte(0xff << uint(8-available))
 			if value != 0 {
 				zeros := int32(mathbits.LeadingZeros8(value))
 				count += uint64(zeros)
