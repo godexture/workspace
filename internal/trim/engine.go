@@ -17,6 +17,8 @@ type Engine struct {
 	nextTail                      *spool.Blocks
 	format                        media.SampleFormat
 	bits                          int
+	layout                        media.ChannelLayout
+	rate                          int
 	set, started, flushed, replay bool
 	pending                       *audio.Block
 	threshold                     float32
@@ -40,10 +42,9 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	input := (*frame).(*media.AudioFrame)
 	if !e.set {
-		e.format, e.bits, e.set = input.Format, input.BitsPerSample, true
-	} else if e.format != input.Format || e.bits != input.BitsPerSample {
+		e.format, e.bits, e.layout, e.rate, e.set = block.Format, block.Bits, block.Layout, block.Rate, true
+	} else if e.format != block.Format || e.bits != block.Bits || e.layout != block.Layout || e.rate != block.Rate {
 		return fmt.Errorf("trim input format changed within stream")
 	}
 	first, last := activity(block, e.threshold)
@@ -137,11 +138,11 @@ func activity(block audio.Block, threshold float32) (int, int) {
 }
 
 func slice(block audio.Block, start, end int) audio.Block {
-	result := audio.CloneBlock(block)
+	result := block
 	result.PTS += media.Pts(start)
 	for channel := range result.Channels {
 		result.Channels[channel] = result.Channels[channel][start:end]
 	}
-	return result
+	return audio.CloneBlock(result)
 }
 func ptr(block audio.Block) *audio.Block { return &block }

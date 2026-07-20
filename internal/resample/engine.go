@@ -38,16 +38,13 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	input, ok := (*frame).(*media.AudioFrame)
-	if !ok {
-		return fmt.Errorf("resample expected *media.AudioFrame, got %T", *frame)
-	}
 	if !e.initialized {
-		e.initialize(block, input)
-	} else if err := e.validateInput(block, input); err != nil {
+		e.initialize(block)
+	} else if err := e.validateInput(block); err != nil {
 		return err
 	}
 	if e.inputRate == e.config.SampleRate {
+		input := (*frame).(*media.AudioFrame)
 		input.Retain()
 		return e.queue.Push(input)
 	}
@@ -134,19 +131,19 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-func (e *Engine) initialize(block audio.Block, input *media.AudioFrame) {
+func (e *Engine) initialize(block audio.Block) {
 	e.initialized = true
 	e.inputRate = block.Rate
 	e.layout = block.Layout
-	e.format = input.Format
-	e.bits = input.BitsPerSample
+	e.format = block.Format
+	e.bits = block.Bits
 	e.baseInputPTS = block.PTS
 	e.baseOutputPTS = rescalePTS(block.PTS, e.inputRate, e.config.SampleRate)
 	e.last = make([]float32, len(block.Channels))
 }
 
-func (e *Engine) validateInput(block audio.Block, input *media.AudioFrame) error {
-	if block.Rate != e.inputRate || block.Layout != e.layout || input.Format != e.format || input.BitsPerSample != e.bits {
+func (e *Engine) validateInput(block audio.Block) error {
+	if block.Rate != e.inputRate || block.Layout != e.layout || block.Format != e.format || block.Bits != e.bits {
 		return fmt.Errorf("resample input format changed within stream")
 	}
 	if block.PTS != e.baseInputPTS+media.Pts(e.totalInput) {

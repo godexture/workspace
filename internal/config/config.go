@@ -16,6 +16,10 @@ type FormatConfig struct {
 	BitsPerSample int
 }
 
+func (c FormatConfig) EffectiveBitsPerSample() int {
+	return media.EffectiveBitsPerSample(c.Format, c.BitsPerSample)
+}
+
 type ResampleConfig struct {
 	SampleRate int
 }

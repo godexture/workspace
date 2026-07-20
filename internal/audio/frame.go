@@ -9,9 +9,12 @@ import (
 )
 
 type Block struct {
+	Source   *media.AudioFrame
 	Channels [][]float32
 	Layout   media.ChannelLayout
 	Rate     int
+	Format   media.SampleFormat
+	Bits     int
 	PTS      media.Pts
 	Metadata *metadata.Bundle
 }
@@ -42,9 +45,12 @@ func Decode(frame *media.Frame) (Block, error) {
 		return Block{}, fmt.Errorf("invalid audio frame properties")
 	}
 	result := Block{
+		Source:   audioFrame,
 		Channels: make([][]float32, channels),
 		Layout:   audioFrame.Layout,
 		Rate:     audioFrame.SampleRate,
+		Format:   audioFrame.Format,
+		Bits:     audioFrame.BitsPerSample,
 		PTS:      audioFrame.Pts(),
 		Metadata: audioFrame.Metadata(),
 	}
@@ -144,6 +150,7 @@ func CloneChannels(channels [][]float32) [][]float32 {
 
 func CloneBlock(block Block) Block {
 	clone := block
+	clone.Source = nil
 	clone.Channels = CloneChannels(block.Channels)
 	if block.Metadata != nil {
 		clone.Metadata = block.Metadata.Clone()

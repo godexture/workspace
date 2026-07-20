@@ -29,10 +29,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if !ok {
 		return fmt.Errorf("convert expected *media.AudioFrame, got %T", *frame)
 	}
-	bits := e.config.BitsPerSample
-	if bits == 0 {
-		bits = e.config.Format.BytesPerSample() * 8
-	}
+	bits := e.config.EffectiveBitsPerSample()
 	if input.Format == e.config.Format && input.BitsPerSample == bits {
 		input.Retain()
 		return e.queue.Push(input)

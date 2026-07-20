@@ -96,6 +96,16 @@ func TestTrimKeepsOnlyAudibleRange(t *testing.T) {
 	assertEOF(t, item)
 }
 
+func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
+	t.Parallel()
+	if got := formatLoss(media.SampleFormatS32, media.SampleFormatS16, 32, 16); got != 1 {
+		t.Fatalf("S32 to S16 quality loss = %d, want 1", got)
+	}
+	if got := formatLoss(media.SampleFormatS16, media.SampleFormatS32, 16, 32); got != 0 {
+		t.Fatalf("S16 to S32 quality loss = %d, want 0", got)
+	}
+}
+
 func frame(rate int, pts media.Pts, values []float32) media.Frame {
 	block := audio.Block{Channels: [][]float32{values}, Layout: media.LayoutMono1, Rate: rate, PTS: pts}
 	result, err := audio.Encode(block, media.SampleFormatF32P, 32)
