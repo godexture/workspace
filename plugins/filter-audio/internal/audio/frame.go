@@ -141,3 +141,12 @@ func CloneChannels(channels [][]float32) [][]float32 {
 	}
 	return result
 }
+
+func CloneBlock(block Block) Block {
+	clone := block
+	clone.Channels = CloneChannels(block.Channels)
+	if block.Metadata != nil {
+		clone.Metadata = block.Metadata.Clone()
+	}
+	return clone
+}
