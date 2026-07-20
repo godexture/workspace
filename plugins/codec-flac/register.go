@@ -36,32 +36,6 @@ func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.Encode
 	return encoder.NewEncoder(media.StreamInfo{}, resolved, execution.parallelism), nil
 }
 
-type flacCapability struct{}
-
-type lpcmCapability struct{}
-
-func (flacCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c flacCapability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecFLAC
-}
-
-func (c flacCapability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
-func (lpcmCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c lpcmCapability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecLPCM
-}
-
-func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
 func init() {
 	if err := godec.Register(
 		NewDecoderConfig(),
@@ -71,7 +45,7 @@ func init() {
 					Name:        "flac-decoder",
 					Description: "FLAC decoder",
 				},
-				Capabilities: []manifest.Capability{flacCapability{}},
+				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}}),
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},
@@ -107,7 +81,16 @@ func init() {
 					Name:        "flac-encoder",
 					Description: "FLAC encoder",
 				},
-				Capabilities: []manifest.Capability{lpcmCapability{}},
+				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+					Codecs:      []media.CodecID{media.CodecLPCM},
+					SampleRates: manifest.IntConstraint{Min: 1},
+					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
+					SampleFormats: []manifest.SampleFormatConstraint{
+						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
+						{Format: media.SampleFormatS24, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 24}},
+						{Format: media.SampleFormatS32, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 32}},
+					},
+				}),
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},

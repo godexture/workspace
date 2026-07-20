@@ -27,6 +27,17 @@ func (a AudioAttributes) ChannelCount() int {
 	return a.ChannelLayout.ChannelCount()
 }
 
+func (a AudioAttributes) EffectiveBitsPerSample() int {
+	return EffectiveBitsPerSample(a.Format, a.BitsPerSample)
+}
+
+func EffectiveBitsPerSample(format SampleFormat, bitsPerSample int) int {
+	if bitsPerSample != 0 {
+		return bitsPerSample
+	}
+	return format.BytesPerSample() << 3
+}
+
 // CodecParameters is an opaque codec configuration payload.
 //
 // Consumers must only interpret Data when they recognize Schema. The type is

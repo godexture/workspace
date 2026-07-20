@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/godexture/core/domain/media"
@@ -24,9 +25,15 @@ func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ..
 
 	var bestManifest registry.DecoderManifest
 	var maxPriority Priority = -1
+	var acceptErr error
 
 	for manifest := range r.registry.Enumerate() {
-		if manifest.Accept(stream) {
+		accepted, err := manifest.Accept(stream, stream.Codec, nil)
+		if err != nil {
+			acceptErr = errors.Join(acceptErr, fmt.Errorf("check decoder %s: %w", manifest.Name, err))
+			continue
+		}
+		if accepted {
 			priority := options.priority(manifest.ID())
 			if priority > maxPriority {
 				maxPriority = priority
@@ -36,7 +43,7 @@ func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ..
 	}
 
 	if maxPriority < 0 {
-		return bestManifest, fmt.Errorf("no decoder found for codec: %s", stream.Codec)
+		return bestManifest, errors.Join(fmt.Errorf("no decoder found for codec: %s", stream.Codec), acceptErr)
 	}
 
 	return bestManifest, nil

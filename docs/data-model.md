@@ -290,9 +290,8 @@ bundle.Clear()
 
 ```go
 type Capability interface {
-    MediaType() media.MediaType
-    Match(p media.StreamInfo) bool     // 受け入れ可能か
-    Diagnose(p media.StreamInfo) bool  // 診断モード
+    Match(p media.StreamInfo) bool
+    Diagnose(p media.StreamInfo) error
 }
 ```
 
@@ -300,15 +299,14 @@ type Capability interface {
 
 ```go
 cap := &manifest.AudioConstraint{
-    SampleRates: []int{44100, 48000},
-    Channels:    []int{1, 2},
+    SampleRates: manifest.IntConstraint{Values: []int{44100, 48000}},
+    Channels:    manifest.IntConstraint{Values: []int{1, 2}},
     Layouts:     []media.ChannelLayout{media.LayoutMono1, media.LayoutStereo2_0},
-    Formats:     []media.SampleFormat{media.SampleFormatS16, media.SampleFormatF32},
+    SampleFormats: []manifest.SampleFormatConstraint{{Format: media.SampleFormatS16}},
 }
 
-// StreamInfo.Audio ではなく Profile を使う点に注意
-cap.Match(profile)   // → bool
-cap.Diagnose(profile) // → error (詳細なエラーメッセージ付き)
+cap.Match(stream)    // → bool
+cap.Diagnose(stream) // → error (詳細なエラーメッセージ付き)
 ```
 
 ---

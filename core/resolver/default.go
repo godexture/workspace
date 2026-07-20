@@ -18,4 +18,7 @@ var Default = Bundle{
 	NewFilterResolver: func(reg *registry.FilterRegistry) FilterResolver {
 		return NewDefaultFilterResolver(reg)
 	},
+	NewBridgeResolver: func(reg *registry.FilterRegistry) BridgeResolver {
+		return NewDefaultBridgeResolver(reg)
+	},
 }

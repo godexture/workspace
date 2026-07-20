@@ -46,7 +46,7 @@ Config は reflection 由来の plugin key としても使われます。marker 
 ### Demuxer の挙動
 
 - `Analyze()` でヘッダーを解析し、1つの `StreamInfo` を返す
-- `ReadPacket()` で `data` チャンク全体を1つの `*media.Packet` として返す (以降は `io.EOF`)
+- `ReadPacket()` は `data` チャンクを block align を保った packet に分割して返す。PTS/DTS は先頭からの sample index、timebase は `1/sampleRate`
 - WAV は単一ストリームのみサポート
 - `io.ReadSeeker` が必要 (通常の `io.Reader` は不可)
 
@@ -214,31 +214,29 @@ TransformFunc (Decoder 用):
 
 ---
 
-## `filter-audio` — オーディオフィルタプラグイン (stub)
+## `filter-audio` — オーディオフィルタプラグイン
 
 **モジュール:** `github.com/godexture/filter-audio`  
 **場所:** `plugins/filter-audio/`
 
-### 現在の状態
+**有効化:** ブランクインポート `_ "github.com/godexture/filter-audio"`
 
-現在は空の stub です。以下のフィルタが将来実装予定です:
+### フィルター
 
-| ファイル | 予定されているフィルタ |
-|---------|-------------------|
-| `internal/mixer.go` | ミキサー (複数チャネルのミックス) |
-| `internal/resampler.go` | リサンプラー (サンプルレート変換) |
+| 設定型 | 登録名 | 用途 |
+|--------|--------|------|
+| `FormatConfig` | `audio-convert` | packed / planar を含む sample format と bit depth の変換 |
+| `ResampleConfig` | `audio-resample` | 線形補間による sample rate 変換 |
+| `RemixConfig` | `audio-remix` | channel layout の remap / downmix |
+| `GainConfig` | `audio-gain` | dB 単位の gain |
+| `NormalizeConfig` | `audio-normalize` | peak normalization |
+| `FadeConfig` | `audio-fade` | 線形 fade in / fade out |
+| `DCOffsetConfig` | `audio-dc-offset` | 1-pole DC offset 除去 |
+| `TrimConfig` | `audio-trim` | 先頭・末尾無音の除去 |
 
-### 実装予定の仕様
+`audio-convert`、`audio-resample`、`audio-remix` は `routing.Negotiator` の format bridge として登録される。後段の `AudioConstraint` が要求する format / rate / layout に入力が一致しない場合、明示的な filter 指定なしで必要な変換が探索・挿入される。エフェクト系フィルターは明示指定で使用する。
 
-#### mixer (ミキサー)
-
-- 複数の `media.Frame` を受け取り、1つにミックスする
-- 想定インターフェース: `Filter` (複数 InPort)
-
-#### resampler (リサンプラー)
-
-- サンプルレートを変換する (例: 44100Hz → 48000Hz)
-- `routing.Negotiator` と組み合わせて自動変換パスに組み込まれる予定
+`normalize`、`fade`、`trim` は出力を確定するために入力を保持する。指定したメモリ上限を超える PCM サンプルは一時ファイルへ退避する。
 
 ---
 

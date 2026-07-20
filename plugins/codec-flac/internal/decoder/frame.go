@@ -110,7 +110,7 @@ func (w *decodeWorkspace) sampleBuffers(channels, blockSize int) [][]int64 {
 	return w.samples
 }
 
-func buildAudioFrame(decoded *flac.Frame) (*media.AudioFrame, error) {
+func buildAudioFrame(decoded *flac.Frame, pts media.Pts) (*media.AudioFrame, error) {
 	format := streaminfo.SampleFormat(decoded.Header.BitsPerSample)
 	layout := streaminfo.ChannelLayout(decoded.Header.Channels)
 	frame := media.NewAudioFrame(
@@ -119,6 +119,7 @@ func buildAudioFrame(decoded *flac.Frame) (*media.AudioFrame, error) {
 		decoded.Header.SampleRate,
 		decoded.Header.BlockSize,
 		media.WithAudioBitsPerSample(decoded.Header.BitsPerSample),
+		media.WithAudioPts(pts),
 	)
 	plane := frame.Planes()[0]
 

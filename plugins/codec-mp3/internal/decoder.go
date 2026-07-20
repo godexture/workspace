@@ -29,7 +29,7 @@ func NewDecoder() *Decoder {
 }
 
 // processFrame processes raw PCM float samples and packages them into a media.Frame.
-func processFrame(float32PCMSamples []float32, sampleCount int, frameInfo domain.FrameInfo) (media.Frame, error) {
+func processFrame(float32PCMSamples []float32, sampleCount int, frameInfo domain.FrameInfo, pts media.Pts) (media.Frame, error) {
 	channelCount := frameInfo.Channels
 	totalDecodedSamples := sampleCount * channelCount
 
@@ -45,6 +45,7 @@ func processFrame(float32PCMSamples []float32, sampleCount int, frameInfo domain
 		channelLayout,
 		frameInfo.SampleRateHertz,
 		sampleCount,
+		media.WithAudioPts(pts),
 	)
 
 	audioPlane := audioFrame.Planes()[0]
@@ -101,7 +102,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 				return nil, d.lastErr
 			}
 
-			audioFrame, err := processFrame(d.float32PCMSamples, sampleCount, frameInfo)
+			audioFrame, err := processFrame(d.float32PCMSamples, sampleCount, frameInfo, packet.PTS)
 			if err != nil {
 				d.lastErr = err
 				return nil, d.lastErr

@@ -68,6 +68,9 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	if !bytes.Equal(pkt.Data(), original) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
+	if pkt.PTS != 0 || pkt.DTS != 0 {
+		t.Fatalf("packet timestamps = %d/%d, want 0/0", pkt.PTS, pkt.DTS)
+	}
 
 	out := testutil.NewBuffer(nil)
 	muxer := NewMuxer(out, MuxerConfig{})
@@ -86,6 +89,31 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 
 	if !bytes.Equal(out.Bytes(), wavData) {
 		t.Fatalf("muxed wav mismatch: got %d bytes, want %d bytes", len(out.Bytes()), len(wavData))
+	}
+}
+
+func TestDemuxerAssignsSampleIndexTimestamps(t *testing.T) {
+	t.Parallel()
+	data := make([]byte, wavPacketChunkSize+2)
+	demuxer, err := NewDemuxer(bytes.NewReader(buildTestWAV(t, data)), DemuxerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := demuxer.Analyze(); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	second, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release()
+	if first.PTS != 0 || second.PTS != media.Pts(wavPacketChunkSize/2) {
+		t.Fatalf("packet PTS = %d, %d; want 0, %d", first.PTS, second.PTS, wavPacketChunkSize/2)
 	}
 }
 

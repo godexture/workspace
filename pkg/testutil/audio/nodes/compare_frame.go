@@ -18,8 +18,8 @@ type frameCompareNode struct {
 
 func NewFrameCompare(opts pcm.CompareOptions, requireActualLength bool) *frameCompareNode {
 	return &frameCompareNode{
-		expected:            node.NewInPort[media.Frame]("expected", nil),
-		actual:              node.NewInPort[media.Frame]("actual", nil),
+		expected:            node.NewInPort[media.Frame]("expected"),
+		actual:              node.NewInPort[media.Frame]("actual"),
 		opts:                opts,
 		requireActualLength: requireActualLength,
 	}

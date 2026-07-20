@@ -90,11 +90,10 @@ func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict b
 			return errors.New("invalid FLAC LPC coefficient precision")
 		}
 		precision := int(precisionRaw) + 1
-		shiftRaw, err := r.ReadBits32(5)
+		shift, err := r.ReadSigned32(5)
 		if err != nil {
 			return err
 		}
-		shift := signExtend(shiftRaw, 5)
 		if shift < 0 {
 			return errors.New("negative FLAC LPC shift is reserved")
 		}
@@ -109,7 +108,7 @@ func decodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int, strict b
 		if err := DecodeResidualInto(r, samples[order:], blockSize, order); err != nil {
 			return err
 		}
-		if err := restoreLPC(samples, coefficients, order, shift, bitsPerSample, strict); err != nil {
+		if err := restoreLPC(samples, coefficients, order, int(shift), bitsPerSample, strict); err != nil {
 			return err
 		}
 
@@ -254,14 +253,4 @@ func Decorrelate(samples [][]int64, assignment uint8) {
 			samples[1][i] = (mid - side) >> 1
 		}
 	}
-}
-
-func signExtend(value uint32, bits uint8) int {
-	if bits == 0 {
-		return 0
-	}
-	if value&(uint32(1)<<(bits-1)) != 0 {
-		value |= ^uint32(0) << bits
-	}
-	return int(int32(value))
 }

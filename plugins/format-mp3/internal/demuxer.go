@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	mediatime "github.com/godexture/core/domain/time"
 	"github.com/godexture/format-mp3/header"
 	id3 "github.com/godexture/metadata-id3"
 )
@@ -29,6 +30,7 @@ type Demuxer struct {
 	xingHeader       *header.XingHeader
 	vbriHeader       *header.VBRIHeader
 	duration         time.Duration
+	timebase         mediatime.Rational
 }
 
 func NewDemuxer(r io.ReadSeeker, _ DemuxerConfig) (*Demuxer, error) {
@@ -67,6 +69,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 
 	d.bitRate = frameHeader.BitRate
+	d.timebase = mediatime.NewRational(1, int64(frameHeader.SampleRate))
 
 	isMPEG1 := frameHeader.Version == 3
 	isMono := frameHeader.ChannelMode == header.ChannelModeMono
@@ -160,6 +163,8 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.presentationTimestamp)
+	packet.DTS = media.Dts(d.presentationTimestamp)
+	packet.Timebase = d.timebase
 
 	samplesPerFrame := frameHeader.Samples
 	d.presentationTimestamp += int64(samplesPerFrame)

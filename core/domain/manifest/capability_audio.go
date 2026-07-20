@@ -12,7 +12,7 @@ type rejectReason uint8
 const (
 	reasonNone rejectReason = iota
 	reasonTypeMismatch
-	reasonInvalidProfile
+	reasonCodec
 	reasonSampleRate
 	reasonChannel
 	reasonLayout
@@ -20,32 +20,36 @@ const (
 )
 
 type AudioConstraint struct {
-	SampleRates []int
-	Channels    []int
-	Layouts     []media.ChannelLayout
-	Formats     []media.SampleFormat
+	Codecs        []media.CodecID
+	SampleRates   IntConstraint
+	Channels      IntConstraint
+	Layouts       []media.ChannelLayout
+	SampleFormats []SampleFormatConstraint
 }
 
-func (c *AudioConstraint) check(p media.Profile) rejectReason {
-	if p.Type != media.MediaAudio {
+func (c *AudioConstraint) check(stream media.StreamInfo) rejectReason {
+	if stream.Type != media.MediaAudio {
 		return reasonTypeMismatch
 	}
 
-	attrs := p.Audio
+	attrs := stream.Audio
+	if len(c.Codecs) > 0 && !slices.Contains(c.Codecs, stream.Codec) {
+		return reasonCodec
+	}
 
-	if !slices.Contains(c.SampleRates, attrs.SampleRate) {
+	if !c.SampleRates.Match(attrs.SampleRate) {
 		return reasonSampleRate
 	}
 
-	if !slices.Contains(c.Channels, attrs.ChannelCount()) {
+	if !c.Channels.Match(attrs.ChannelCount()) {
 		return reasonChannel
 	}
 
-	if !slices.Contains(c.Formats, attrs.Format) {
+	if !c.matchesFormat(attrs) {
 		return reasonFormat
 	}
 
-	if !slices.ContainsFunc(c.Layouts, func(l media.ChannelLayout) bool {
+	if len(c.Layouts) > 0 && !slices.ContainsFunc(c.Layouts, func(l media.ChannelLayout) bool {
 		return l == attrs.ChannelLayout
 	}) {
 		return reasonLayout
@@ -54,34 +58,49 @@ func (c *AudioConstraint) check(p media.Profile) rejectReason {
 	return reasonNone
 }
 
-func (c *AudioConstraint) Match(p media.Profile) bool {
-	return c.check(p) == reasonNone
+func (c *AudioConstraint) matchesFormat(attrs media.AudioAttributes) bool {
+	if len(c.SampleFormats) == 0 {
+		return true
+	}
+	bits := attrs.EffectiveBitsPerSample()
+	return slices.ContainsFunc(c.SampleFormats, func(candidate SampleFormatConstraint) bool {
+		return candidate.Format == attrs.Format && candidate.BitsPerSample.Match(bits)
+	})
 }
 
-func (c *AudioConstraint) Diagnose(p media.Profile) error {
-	code := c.check(p)
+func (c *AudioConstraint) Match(stream media.StreamInfo) bool {
+	return c.check(stream) == reasonNone
+}
+
+func (c *AudioConstraint) Diagnose(stream media.StreamInfo) error {
+	code := c.check(stream)
 
 	switch code {
 	case reasonNone:
 		return nil
 
 	case reasonTypeMismatch:
-		return fmt.Errorf("type mismatch: expected audio, got %s", p.Type)
+		return fmt.Errorf("type mismatch: expected audio, got %s", stream.Type)
 
-	case reasonInvalidProfile:
-		return fmt.Errorf("internal error: profile is not AudioProfile")
+	case reasonCodec:
+		return fmt.Errorf("unsupported codec: %s (allowed: %v)", stream.Codec, c.Codecs)
 
 	case reasonSampleRate:
 		return fmt.Errorf("unsupported sample rate: %d Hz (allowed: %v)",
-			p.Audio.SampleRate, c.SampleRates)
+			stream.Audio.SampleRate, c.SampleRates)
 
 	case reasonChannel:
 		return fmt.Errorf("unsupported channel: %d ch. (allowed: %v)",
-			p.Audio.ChannelCount(), c.Channels)
+			stream.Audio.ChannelCount(), c.Channels)
 
 	case reasonLayout:
 		return fmt.Errorf("unsupported channel layout: %s (allowed: %v)",
-			p.Audio.ChannelLayout.String(), c.Layouts)
+			stream.Audio.ChannelLayout.String(), c.Layouts)
+
+	case reasonFormat:
+		bits := stream.Audio.EffectiveBitsPerSample()
+		return fmt.Errorf("unsupported sample format: %s/%d bits (allowed: %v)",
+			stream.Audio.Format, bits, c.SampleFormats)
 
 	default:
 		return fmt.Errorf("unknown constraint violation")

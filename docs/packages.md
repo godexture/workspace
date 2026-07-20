@@ -155,7 +155,7 @@ type Bundle struct {
 | 型 | フィールド | 説明 |
 |---|-----------|------|
 | `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は registry-assigned `PluginKey` |
-| `TransformManifest` | `BaseManifest`, `Capabilities`, `Resources`, `TransformFunc` | 変換ノード共通 |
+| `TransformManifest` | `BaseManifest`, `InputRequirements`, `Resources`, `TransformFunc` | 変換ノード共通 |
 | `DemuxerManifest` | `BaseManifest`, `Probe manifest.Prober`, `Factory DemuxerFactory` | デマックスプラグイン |
 | `MuxerManifest` | `BaseManifest`, `Factory MuxerFactory` | マックスプラグイン |
 | `DecoderManifest` | `TransformManifest`, `Factory DecoderFactory` | デコーダプラグイン |
@@ -206,7 +206,7 @@ import "github.com/godexture/core/resolver"
 | 型 | 主要メソッド | 説明 |
 |---|------------|------|
 | `DefaultDemuxerResolver` | `ResolveDemuxer(io.ReadSeeker, ...Option) (DemuxerManifest, error)` | ProbeScore が最大のデマックスを選択 |
-| `DefaultDecoderResolver` | `ResolveDecoder(media.StreamInfo, ...Option) (DecoderManifest, error)` | Capability.Accept() + Priority で選択 |
+| `DefaultDecoderResolver` | `ResolveDecoder(media.StreamInfo, ...Option) (DecoderManifest, error)` | InputRequirements による受理判定 + Priority で選択 |
 | `DefaultEncoderResolver` | `ResolveEncoder(media.CodecID, ...Option) (EncoderManifest, error)` | Supports() + Priority で選択 |
 | `DefaultMuxerResolver` | `ResolveMuxer(registry.Configuration) (MuxerManifest, error)` | 設定の型をキーに検索 |
 | `DefaultFilterResolver` | `ResolveFilter(registry.Configuration) (FilterManifest, error)` | 設定の型をキーに検索 |
@@ -565,23 +565,19 @@ const (
 
 // 能力インターフェース
 type Capability interface {
-    MediaType() media.MediaType
     Match(p media.StreamInfo) bool
-    Diagnose(p media.StreamInfo) bool
+    Diagnose(p media.StreamInfo) error
 }
 
-// オーディオ制約実装
-// 注意: AudioConstraint は Capability インターフェースを実装していない。
-// Capability.Diagnose は (media.StreamInfo) bool を要求するが、
-// AudioConstraint.Diagnose は (media.Profile) error を返す (シグネチャ不一致)。
 type AudioConstraint struct {
-    SampleRates []int
-    Channels    []int
+    Codecs        []media.CodecID
+    SampleRates   IntConstraint
+    Channels      IntConstraint
     Layouts     []media.ChannelLayout
-    Formats     []media.SampleFormat
+    SampleFormats []SampleFormatConstraint
 }
-func (c *AudioConstraint) Match(p media.Profile) bool    // Capability.Match とはシグネチャが異なる
-func (c *AudioConstraint) Diagnose(p media.Profile) error // Capability.Diagnose とはシグネチャが異なる
+func (c *AudioConstraint) Match(p media.StreamInfo) bool
+func (c *AudioConstraint) Diagnose(p media.StreamInfo) error
 ```
 
 ---

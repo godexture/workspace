@@ -56,7 +56,7 @@ func (d *syntheticDecoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, engine.ErrEAGAIN
 	}
 	frame := media.NewAudioFrame(d.attrs.Format, d.attrs.ChannelLayout, d.attrs.SampleRate, len(d.pending.Data())/2,
-		media.WithAudioBitsPerSample(d.attrs.BitsPerSample))
+		media.WithAudioBitsPerSample(d.attrs.EffectiveBitsPerSample()))
 	copy(frame.Planes()[0], d.pending.Data())
 	d.pending = nil
 	var wrapped media.Frame = frame

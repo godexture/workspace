@@ -57,10 +57,7 @@ func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, parallelism i
 	}
 
 	if !hasRawStreamInfo && (stream.Audio.SampleRate > 0 || stream.Audio.ChannelCount() > 0 || stream.Audio.Format != media.SampleFormatUnknown) {
-		bitsPerSample := stream.Audio.BitsPerSample
-		if bitsPerSample == 0 {
-			bitsPerSample = config.BitDepthFromSampleFormat(stream.Audio.Format)
-		}
+		bitsPerSample := stream.Audio.EffectiveBitsPerSample()
 		decoder.info = buildStreamInfo(stream.Audio.SampleRate, stream.Audio.ChannelCount(), bitsPerSample)
 		if err := streaminfo.Validate(decoder.info); err != nil {
 			decoder.configErr = err
@@ -106,6 +103,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		entry.done = nil
 		decodeJob(frameJob{
 			data:   pkt.Data(),
+			pts:    pkt.PTS,
 			info:   d.info,
 			strict: d.cfg.Strict,
 			entry:  entry,
@@ -117,6 +115,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	d.pendingQueue = append(d.pendingQueue, entry)
 	d.jobs <- frameJob{
 		data:   append([]byte(nil), pkt.Data()...),
+		pts:    pkt.PTS,
 		info:   d.info,
 		strict: d.cfg.Strict,
 		entry:  entry,

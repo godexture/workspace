@@ -28,20 +28,6 @@ func NewEncoderEngine(stream media.StreamInfo, cfg EncoderConfig) engine.Encoder
 	return enc
 }
 
-type pcmCapability struct {
-	codec media.CodecID
-}
-
-func (pcmCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c pcmCapability) Match(stream media.StreamInfo) bool {
-	return stream.Type == media.MediaAudio && stream.MediaAttributes.Codec == c.codec
-}
-
-func (c pcmCapability) Diagnose(stream media.StreamInfo) bool {
-	return c.Match(stream)
-}
-
 func init() {
 	// --- Decoder ---
 	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
@@ -50,15 +36,12 @@ func init() {
 				Name:        "pcm-decoder",
 				Description: "PCM/G.711 decoder",
 			},
-			Capabilities: []manifest.Capability{
-				pcmCapability{codec: media.CodecLPCM},
-				pcmCapability{codec: media.CodecPCMU},
-				pcmCapability{codec: media.CodecPCMA},
-				pcmCapability{codec: media.CodecMSADPCM},
-				pcmCapability{codec: media.CodecIMAADPCM},
-			},
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
+			}}),
 			TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+				p.Codec = media.CodecLPCM
 				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
 				return p, nil
 			},
@@ -81,13 +64,9 @@ func init() {
 				Name:        "pcm-encoder",
 				Description: "PCM/G.711 encoder",
 			},
-			Capabilities: []manifest.Capability{
-				pcmCapability{codec: media.CodecLPCM},
-				pcmCapability{codec: media.CodecPCMU},
-				pcmCapability{codec: media.CodecPCMA},
-				pcmCapability{codec: media.CodecMSADPCM},
-				pcmCapability{codec: media.CodecIMAADPCM},
-			},
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
+			}}),
 			TransformFunc: func(in media.StreamInfo, target media.CodecID, cfg registry.Configuration) (media.Profile, error) {
 				resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
 				if err != nil {

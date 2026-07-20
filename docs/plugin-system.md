@@ -49,8 +49,8 @@ Config に ID 用メソッドを実装する必要はありません。Config �
 - 全 role: 空でない `Name`
 - Demuxer: `Probe` と `Factory`
 - Muxer: `Factory`
-- Decoder / Filter: 1 個以上の `Capabilities` と `Factory`
-- Encoder: 1 個以上の `Capabilities`、`Supports`、`Factory`
+- Decoder / Filter: `InputRequirements` と `Factory`
+- Encoder: `InputRequirements`、`Supports`、`Factory`
 
 不完全な manifest は plugin の `init` 時点で失敗するため、処理開始後に nil function panic にはなりません。
 
@@ -63,7 +63,7 @@ Config に ID 用メソッドを実装する必要はありません。Config �
 ```go
 TransformManifest: registry.TransformManifest{
     BaseManifest: registry.BaseManifest{Name: "my-decoder"},
-    Capabilities: []manifest.Capability{myCapability{}},
+    InputRequirements: registry.StaticRequirements(myCapability{}),
     Resources: registry.ResourceRequest{
         Parallelism: true,
     },
@@ -92,14 +92,16 @@ Factory: func(
 ## Decoder plugin の例
 
 ```go
+import "fmt"
+
 type flacCapability struct{}
 
-func (flacCapability) MediaType() media.MediaType { return media.MediaAudio }
 func (flacCapability) Match(stream media.StreamInfo) bool {
     return stream.Type == media.MediaAudio && stream.Codec == media.CodecFLAC
 }
-func (c flacCapability) Diagnose(stream media.StreamInfo) bool {
-    return c.Match(stream)
+func (c flacCapability) Diagnose(stream media.StreamInfo) error {
+	if c.Match(stream) { return nil }
+	return fmt.Errorf("not FLAC audio")
 }
 
 func init() {
@@ -109,7 +111,7 @@ func init() {
                 Name:        "my-flac-decoder",
                 Description: "FLAC decoder",
             },
-            Capabilities: []manifest.Capability{flacCapability{}},
+            InputRequirements: registry.StaticRequirements(flacCapability{}),
             Resources: registry.ResourceRequest{Parallelism: true},
             TransformFunc: func(
                 stream media.StreamInfo,

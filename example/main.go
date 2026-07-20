@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"runtime/pprof"
 
+	"github.com/godexture/filter-audio"
 	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/timer"
 
@@ -76,7 +77,14 @@ func main() {
 		Input:       inputFile,
 		Output:      outputFile,
 		TargetCodec: targetCodec,
-		MuxConfig:   flacFormat.NewMuxerConfig(),
+		Filters: []routing.FilterSpec{
+			{
+				Config: filter.NewResampleConfig(
+					filter.WithSampleRate(48000),
+				),
+			},
+		},
+		MuxConfig: flacFormat.NewMuxerConfig(),
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)
