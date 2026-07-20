@@ -23,32 +23,6 @@ func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
 	return internal.NewEncoder(resolved), nil
 }
 
-type mp3Capability struct{}
-
-func (mp3Capability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c mp3Capability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecMP3
-}
-
-func (c mp3Capability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
-type lpcmCapability struct{}
-
-func (lpcmCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c lpcmCapability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecLPCM
-}
-
-func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
 func init() {
 	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
@@ -56,9 +30,7 @@ func init() {
 				Name:        "mp3-decoder",
 				Description: "MP3 decoder",
 			},
-			Capabilities: []manifest.Capability{
-				mp3Capability{},
-			},
+			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}},
 			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				profile := media.Profile{
 					Type:            stream.Type,
@@ -89,9 +61,7 @@ func init() {
 				Name:        "mp3-encoder",
 				Description: "MP3 encoder (codec-mp3 plugin)",
 			},
-			Capabilities: []manifest.Capability{
-				lpcmCapability{},
-			},
+			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}},
 			TransformFunc: func(stream media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
 				profile.Codec = target
