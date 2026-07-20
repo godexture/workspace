@@ -61,6 +61,7 @@ func analyzeFrame(samples [][]int64, bitsPerSample int, options config.EncoderCo
 
 func writeAnalyzedFrame(w *bits.Writer, analysis *frameAnalysis, blockSize, sampleRate, bitsPerSample int, number uint64, variable, streamableSubset bool) ([]byte, error) {
 	w.Init()
+	w.Grow(int((analysis.costBits+7)/8) + 16)
 	header := &frame.Header{
 		BlockSize: blockSize, SampleRate: sampleRate,
 		ChannelAssignment: assignmentForChannels(analysis.assignment, len(analysis.channels)),
