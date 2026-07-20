@@ -34,6 +34,13 @@ func (c DemuxerConfig) Resolve() internal.DemuxerConfig {
 	return internal.DemuxerConfig(c)
 }
 
+func (c DemuxerConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type MuxerConfig internal.MuxerConfig
 
 type MuxerConfigOption interface {
