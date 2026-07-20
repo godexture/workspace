@@ -178,3 +178,34 @@ race detector の encoder 対象テストを通過した。
 6.12%、平均 4.22% 改善した。変更後 profile の `lpcResidualScalar` は flat
 8.66% まで低下した。端数長を含む全次数 1..32 と複数 shift を旧 kernel と
 照合し、通常、SIMD、race detector の encoder 対象テストを通過した。
+
+## Pre-sized frame bit writer
+
+allocation profile では `bits.Writer.Bits64` 内の段階的な `append` growth が
+フレーム割当量の 31.81% を占めていた。解析済みフレームの `costBits` から
+出力容量を事前確保し、最大ヘッダ差分用に 16 byte の余裕を加える。共通
+`bits.Writer.Grow` は `slices.Grow` と同じ「追加 n byte」の契約にした。
+
+`BenchmarkEncodeFrameDefaultConfig` を直前コミットと 50 ペア、各 200 ms、
+ペアごとに順序を反転し、`benchmem` 付きで実行した。49/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 231,175.5 ns/op | 223,480.5 ns/op | 3.33% |
+| mean | 234,302.9 ns/op | 223,713 ns/op | 4.52% |
+| median bytes/op | 107,059.5 | 80,671.5 | 24.65% |
+| allocations/op | 57 | 43 | 24.56% |
+
+`BenchmarkEncoderDefaultConfig` は 30 ペア中 29 ペアで変更後が速く、連続する
+4 frame それぞれの grow を削減するため、単体より効果が大きい。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 845,056 ns/op | 753,952 ns/op | 10.78% |
+| mean | 860,906.4 ns/op | 767,385.2 ns/op | 10.86% |
+| median bytes/op | 1,322,030.5 | 1,141,993 | 13.62% |
+| allocations/op | 364 | 295 | 18.96% |
+
+変更後 allocation profile では writer 出力は単一の `Grow` になり、割当量の
+11.66% まで低下した。共通 bits、通常/SIMD FLAC encoder、race detector の
+対象テストを通過した。

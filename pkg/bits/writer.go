@@ -1,5 +1,7 @@
 package bits
 
+import "slices"
+
 // Writer writes MSB-first bits to an in-memory byte buffer.
 type Writer struct {
 	buffer   []byte
@@ -13,6 +15,11 @@ func NewWriter() *Writer { return &Writer{} }
 func (w *Writer) Init() {
 	w.buffer = w.buffer[:0]
 	w.position = 0
+}
+
+// Grow ensures space for n more bytes without another allocation.
+func (w *Writer) Grow(n int) {
+	w.buffer = slices.Grow(w.buffer, n)
 }
 
 // Position returns the current bit position.
