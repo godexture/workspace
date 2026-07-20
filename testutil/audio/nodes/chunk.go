@@ -64,11 +64,12 @@ func (n *audioChunkNode) Start(ctx context.Context) error {
 		frameAttrs := media.AudioAttributes{
 			SampleRate: audioFrame.SampleRate, Format: audioFrame.Format, BitsPerSample: audioFrame.BitsPerSample, ChannelLayout: audioFrame.Layout,
 		}
+		frameAttrs.BitsPerSample = frameAttrs.EffectiveBitsPerSample()
 		if !configured {
 			attrs = frameAttrs
 			configured = true
 		} else if frameAttrs.SampleRate != attrs.SampleRate || frameAttrs.Format != attrs.Format ||
-			frameAttrs.BitsPerSample != attrs.BitsPerSample || frameAttrs.ChannelLayout != attrs.ChannelLayout {
+			frameAttrs.BitsPerSample != attrs.EffectiveBitsPerSample() || frameAttrs.ChannelLayout != attrs.ChannelLayout {
 			frame.Release()
 			return fmt.Errorf("audio attributes changed while rechunking")
 		}

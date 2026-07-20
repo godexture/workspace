@@ -18,11 +18,8 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 		return nil, fmt.Errorf("PCM sample count %d is not divisible by %d channels", len(pcm), channels)
 	}
 
-	bitsPerSample := attrs.BitsPerSample
+	bitsPerSample := attrs.EffectiveBitsPerSample()
 	storageBits := attrs.Format.BytesPerSample() * 8
-	if bitsPerSample == 0 {
-		bitsPerSample = storageBits
-	}
 	if attrs.Format != media.SampleFormatF32 && (bitsPerSample <= 0 || bitsPerSample > storageBits) {
 		return nil, fmt.Errorf("invalid %d-bit precision for %s storage", bitsPerSample, attrs.Format)
 	}
