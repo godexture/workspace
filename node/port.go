@@ -6,29 +6,15 @@ import (
 	"github.com/godexture/core/domain/media"
 )
 
-type ConstraintFunc func(info media.StreamInfo) error
-
 type InPort[T any] struct {
-	id             string
-	constraintFunc ConstraintFunc
-
+	id   string
 	edge Edge[T]
 }
 
-func NewInPort[T any](id string, c ConstraintFunc) *InPort[T] {
-	return &InPort[T]{id: id, constraintFunc: c}
-}
+func NewInPort[T any](id string) *InPort[T] { return &InPort[T]{id: id} }
 
 func (p *InPort[T]) ID() string        { return p.id }
 func (p *InPort[T]) Connect(e Edge[T]) { p.edge = e }
-
-func (p *InPort[T]) Accept(info media.StreamInfo) error {
-	if p.constraintFunc != nil {
-		return p.constraintFunc(info)
-	}
-
-	return nil
-}
 
 func (p *InPort[T]) Pull(ctx context.Context) (T, error) {
 	return p.edge.Pull(ctx)
