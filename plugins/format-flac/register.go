@@ -5,6 +5,7 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-flac/internal"
@@ -35,10 +36,11 @@ func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error)
 }
 
 func init() {
-	if err := godec.Register(DemuxerConfig{}, registry.DemuxerManifest{
+	if err := godec.Register(registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "flac-demuxer",
-			Description: "FLAC demuxer",
+			Name:                 "flac",
+			Description:          "FLAC demuxer",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewDemuxerConfig),
 		},
 		Probe: Probe,
 		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
@@ -61,11 +63,15 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
+	if err := godec.Register(registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "flac-muxer",
-			Description: "FLAC muxer",
+			Name:                 "flac",
+			Description:          "FLAC muxer",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewMuxerConfig),
 		},
+		Extensions:   []string{".flac"},
+		Codecs:       []media.CodecID{media.CodecFLAC},
+		DefaultCodec: media.CodecFLAC,
 		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
 			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
 			if err != nil {

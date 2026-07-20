@@ -31,10 +31,11 @@ func (m *mockNode) Close() error {
 
 type mockDemuxer struct {
 	mockNode
-	streams []media.StreamInfo
+	streams  []media.StreamInfo
+	metadata *metadata.Bundle
 }
 
-func (m *mockDemuxer) Metadata() *metadata.Bundle                           { return nil }
+func (m *mockDemuxer) Metadata() *metadata.Bundle                           { return m.metadata }
 func (m *mockDemuxer) Streams() ([]media.StreamInfo, error)                 { return m.streams, nil }
 func (m *mockDemuxer) OutputPorts() map[string]*node.OutPort[*media.Packet] { return nil }
 
@@ -63,13 +64,14 @@ func (m *mockFilter) OutputPorts() map[string]*node.OutPort[media.Frame] { retur
 type mockMuxer struct {
 	mockNode
 	addedStreams []media.StreamInfo
+	metadata     *metadata.Bundle
 }
 
 func (m *mockMuxer) AddStream(info media.StreamInfo) (int, error) {
 	m.addedStreams = append(m.addedStreams, info)
 	return len(m.addedStreams) - 1, nil
 }
-func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error            { return nil }
+func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error            { m.metadata = meta; return nil }
 func (m *mockMuxer) InputPorts() map[string]*node.InPort[*media.Packet] { return nil }
 
 // Mock Resolvers
@@ -161,7 +163,9 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 			},
 		},
 	}
-	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}}
+	inputMetadata := metadata.NewBundle()
+	inputMetadata.Set(metadata.KeyTitle("Input title"))
+	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}, metadata: inputMetadata}
 	dec := &mockDecoder{}
 	enc := &mockEncoder{}
 	mux := &mockMuxer{}
@@ -242,6 +246,10 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	} else if mux.addedStreams[0].Codec != media.CodecLPCM {
 		t.Errorf("expected target codec %s, got %s", media.CodecLPCM, mux.addedStreams[0].Codec)
 	}
+	if mux.metadata == inputMetadata {
+		t.Fatal("muxer received the demuxer metadata without cloning it")
+	}
+	metadata.AssertBundleValue(t, mux.metadata, metadata.KeyTitle("Input title"))
 }
 
 func TestNegotiator_AppliesTransforms(t *testing.T) {

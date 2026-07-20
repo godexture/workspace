@@ -17,7 +17,7 @@ type acceptingDecoderConfig struct{}
 func TestDefaultDecoderResolverReportsRequirementErrorsWhenNoDecoderMatches(t *testing.T) {
 	t.Parallel()
 	decoders := registry.NewRegistry[registry.DecoderManifest]()
-	if err := decoders.Register(invalidDecoderConfig{}, decoderManifest("invalid", func(media.CodecID, registry.Configuration) ([]manifest.Capability, error) {
+	if err := decoders.Register(decoderManifest("invalid", invalidDecoderConfig{}, func(media.CodecID, registry.Configuration) ([]manifest.Capability, error) {
 		return nil, errors.New("invalid decoder requirements")
 	})); err != nil {
 		t.Fatal(err)
@@ -32,12 +32,12 @@ func TestDefaultDecoderResolverReportsRequirementErrorsWhenNoDecoderMatches(t *t
 func TestDefaultDecoderResolverAcceptsValidCandidateAfterRequirementError(t *testing.T) {
 	t.Parallel()
 	decoders := registry.NewRegistry[registry.DecoderManifest]()
-	if err := decoders.Register(invalidDecoderConfig{}, decoderManifest("invalid", func(media.CodecID, registry.Configuration) ([]manifest.Capability, error) {
+	if err := decoders.Register(decoderManifest("invalid", invalidDecoderConfig{}, func(media.CodecID, registry.Configuration) ([]manifest.Capability, error) {
 		return nil, errors.New("invalid decoder requirements")
 	})); err != nil {
 		t.Fatal(err)
 	}
-	if err := decoders.Register(acceptingDecoderConfig{}, decoderManifest("accepting", registry.StaticRequirements(&manifest.AudioConstraint{}))); err != nil {
+	if err := decoders.Register(decoderManifest("accepting", acceptingDecoderConfig{}, registry.StaticRequirements(&manifest.AudioConstraint{}))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,10 +50,10 @@ func TestDefaultDecoderResolverAcceptsValidCandidateAfterRequirementError(t *tes
 	}
 }
 
-func decoderManifest(name string, requirements registry.InputRequirementsFunc) registry.DecoderManifest {
+func decoderManifest(name string, config registry.Configuration, requirements registry.InputRequirementsFunc) registry.DecoderManifest {
 	return registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
-			BaseManifest:      registry.BaseManifest{Name: name},
+			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
 			InputRequirements: requirements,
 		},
 		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) { return nil, nil },

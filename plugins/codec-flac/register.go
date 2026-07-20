@@ -38,12 +38,12 @@ func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.Encode
 
 func init() {
 	if err := godec.Register(
-		NewDecoderConfig(),
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
-					Name:        "flac-decoder",
-					Description: "FLAC decoder",
+					Name:                 "flac",
+					Description:          "FLAC decoder",
+					ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 				},
 				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}}),
 				Resources: registry.ResourceRequest{
@@ -74,12 +74,12 @@ func init() {
 	}
 
 	if err := godec.Register(
-		NewEncoderConfig(),
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
-					Name:        "flac-encoder",
-					Description: "FLAC encoder",
+					Name:                 "flac",
+					Description:          "FLAC encoder",
+					ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 				},
 				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
 					Codecs:      []media.CodecID{media.CodecLPCM},
@@ -103,9 +103,7 @@ func init() {
 					return profile, nil
 				},
 			},
-			Supports: func(codec media.CodecID) bool {
-				return codec == media.CodecFLAC
-			},
+			Codecs: []media.CodecID{media.CodecFLAC},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
 				resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](options.Config)
 				if err != nil {

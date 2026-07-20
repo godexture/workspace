@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 )
 
@@ -27,10 +28,13 @@ func TestBundleRegisterRoutesByManifestType(t *testing.T) {
 	}
 
 	muxerManifest := MuxerManifest{
-		BaseManifest: BaseManifest{Name: "muxer"},
+		BaseManifest: BaseManifest{Name: "muxer", ConfigurationFactory: func() Configuration { return testConfig{} }},
+		Extensions:   []string{".mux"},
+		Codecs:       []media.CodecID{media.CodecFLAC},
+		DefaultCodec: media.CodecFLAC,
 		Factory:      func(io.Writer, Configuration) (node.Muxer, error) { return nil, nil },
 	}
-	if err := b.Register(testConfig{}, muxerManifest); err != nil {
+	if err := b.Register(muxerManifest); err != nil {
 		t.Fatalf("register muxer: %v", err)
 	}
 
@@ -50,11 +54,11 @@ func TestBundleRegisterRoutesByManifestType(t *testing.T) {
 	}
 
 	demuxerManifest := DemuxerManifest{
-		BaseManifest: BaseManifest{Name: "demuxer"},
+		BaseManifest: BaseManifest{Name: "demuxer", ConfigurationFactory: func() Configuration { return testConfig{} }},
 		Probe:        func(io.Reader) manifest.ProbeScore { return manifest.ProbeExactSignature },
 		Factory:      func(io.Reader, Configuration) (node.Demuxer, error) { return nil, nil },
 	}
-	if err := b.Register(testConfig{}, demuxerManifest); err != nil {
+	if err := b.Register(demuxerManifest); err != nil {
 		t.Fatalf("register demuxer: %v", err)
 	}
 
@@ -80,11 +84,15 @@ func (unknownManifest) ID() PluginKey {
 	return PluginKey{}
 }
 
+func (unknownManifest) RegistryName() string { return "unknown" }
+
+func (unknownManifest) NewConfiguration() (Configuration, error) { return testConfig{}, nil }
+
 func TestBundleRegisterRejectsUnknownManifest(t *testing.T) {
 	t.Parallel()
 	b := Bundle{}
 
-	if err := b.Register(testConfig{}, unknownManifest{}); err == nil {
+	if err := b.Register(unknownManifest{}); err == nil {
 		t.Fatal("expected error for unknown manifest type")
 	}
 }
