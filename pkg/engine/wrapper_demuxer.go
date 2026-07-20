@@ -85,6 +85,7 @@ func (n *DemuxerAdapter) Start(ctx context.Context) error {
 		}
 
 		if err := out.Push(ctx, pkt); err != nil {
+			pkt.Release()
 			return err
 		}
 	}

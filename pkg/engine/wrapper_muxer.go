@@ -46,7 +46,9 @@ func (n *MuxerAdapter) Start(ctx context.Context) error {
 			return err
 		}
 
-		if err := n.engine.WritePacket(0, pkt); err != nil {
+		err = n.engine.WritePacket(0, pkt)
+		pkt.Release()
+		if err != nil {
 			return err
 		}
 	}
