@@ -46,7 +46,7 @@ Config は reflection 由来の plugin key としても使われます。marker 
 ### Demuxer の挙動
 
 - `Analyze()` でヘッダーを解析し、1つの `StreamInfo` を返す
-- `ReadPacket()` で `data` チャンク全体を1つの `*media.Packet` として返す (以降は `io.EOF`)
+- `ReadPacket()` は `data` チャンクを block align を保った packet に分割して返す。PTS/DTS は先頭からの sample index、timebase は `1/sampleRate`
 - WAV は単一ストリームのみサポート
 - `io.ReadSeeker` が必要 (通常の `io.Reader` は不可)
 
