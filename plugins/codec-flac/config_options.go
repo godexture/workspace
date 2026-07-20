@@ -35,6 +35,27 @@ func (c EncoderConfig) Resolve() config.EncoderConfig {
 	return config.EncoderConfig(c)
 }
 
+func (c EncoderConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c EncoderConfig) FieldChoices(field string) []string {
+	switch field {
+	case "StereoMode":
+		return []string{"independent", "adaptive", "exhaustive"}
+	case "FixedOrderSearch":
+		return []string{"estimated", "exhaustive"}
+	case "LPCOrderSearch":
+		return []string{"estimated", "exhaustive"}
+	case "RiceCost":
+		return []string{"estimated", "exact"}
+	case "BlockSplitMode":
+		return []string{"estimated", "exact"}
+	default:
+		return nil
+	}
+}
+
 type DecoderConfig config.DecoderConfig
 
 type DecoderConfigOption interface {
@@ -61,6 +82,13 @@ func (c DecoderConfig) ResolveDefault() config.DecoderConfig {
 
 func (c DecoderConfig) Resolve() config.DecoderConfig {
 	return config.DecoderConfig(c)
+}
+
+func (c DecoderConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 func WithBlockSize(v int) EncoderConfigOption {

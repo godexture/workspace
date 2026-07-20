@@ -16,37 +16,37 @@ const (
 	DefaultLPCPrecision         = 15
 )
 
-type BlockSplitMode uint8
+type BlockSplitMode string
 
 const (
-	BlockSplitEstimated BlockSplitMode = iota
-	BlockSplitExact
+	BlockSplitEstimated BlockSplitMode = "estimated"
+	BlockSplitExact     BlockSplitMode = "exact"
 )
 
-type StereoMode uint8
+type StereoMode string
 
 const (
-	StereoIndependent StereoMode = iota
-	StereoAdaptive
-	StereoExhaustive
+	StereoIndependent StereoMode = "independent"
+	StereoAdaptive    StereoMode = "adaptive"
+	StereoExhaustive  StereoMode = "exhaustive"
 )
 
 // OrderSearchMode controls how predictor orders are selected. Estimated mode
 // only narrows candidates; emitted frames and their final costs stay exact.
-type OrderSearchMode uint8
+type OrderSearchMode string
 
 const (
-	OrderSearchEstimated OrderSearchMode = iota
-	OrderSearchExhaustive
+	OrderSearchEstimated  OrderSearchMode = "estimated"
+	OrderSearchExhaustive OrderSearchMode = "exhaustive"
 )
 
 // RiceCostMode controls Rice parameter selection. Estimated mode only selects
 // parameters approximately; the selected coding is always costed exactly.
-type RiceCostMode uint8
+type RiceCostMode string
 
 const (
-	RiceCostEstimated RiceCostMode = iota
-	RiceCostExact
+	RiceCostEstimated RiceCostMode = "estimated"
+	RiceCostExact     RiceCostMode = "exact"
 )
 
 type EncoderConfig struct {
@@ -56,21 +56,21 @@ type EncoderConfig struct {
 	bitsPerSample int
 
 	// Compression parameters.
-	BlockSize             int
-	MaxFixedOrder         int
-	MaxLPCOrder           int
-	MaxRicePartitionOrder int
-	LPCPrecision          int
-	EnablePrecisionSearch bool
-	EnableWastedBits      bool
-	StereoMode            StereoMode
-	FixedOrderSearch      OrderSearchMode
-	LPCOrderSearch        OrderSearchMode
-	RiceCost              RiceCostMode
+	BlockSize             int             `cli:"block-size" help:"FLAC block size in samples"`
+	MaxFixedOrder         int             `cli:"max-fixed-order" help:"Maximum fixed predictor order"`
+	MaxLPCOrder           int             `cli:"max-lpc-order" help:"Maximum LPC predictor order"`
+	MaxRicePartitionOrder int             `cli:"max-rice-partition-order" help:"Maximum Rice partition order"`
+	LPCPrecision          int             `cli:"lpc-precision" help:"LPC coefficient precision"`
+	EnablePrecisionSearch bool            `cli:"precision-search" help:"Enable LPC precision search"`
+	EnableWastedBits      bool            `cli:"wasted-bits" help:"Enable wasted-bits optimization"`
+	StereoMode            StereoMode      `cli:"stereo-mode" help:"Stereo coding mode"`
+	FixedOrderSearch      OrderSearchMode `cli:"fixed-order-search" help:"Fixed predictor order search"`
+	LPCOrderSearch        OrderSearchMode `cli:"lpc-order-search" help:"LPC predictor order search"`
+	RiceCost              RiceCostMode    `cli:"rice-cost" help:"Rice parameter cost mode"`
 	Apodizations          []flac.Apodization
-	BlockSplitDepth       int
-	BlockSplitMode        BlockSplitMode
-	StreamableSubset      bool
+	BlockSplitDepth       int            `cli:"block-split-depth" help:"Block split depth"`
+	BlockSplitMode        BlockSplitMode `cli:"block-split-mode" help:"Block split strategy"`
+	StreamableSubset      bool           `cli:"streamable-subset" help:"Restrict output to the FLAC streamable subset"`
 }
 
 func (c EncoderConfig) SampleRate() int    { return c.sampleRate }
@@ -92,9 +92,12 @@ func GetPreset(level int) EncoderConfig {
 	mode := StereoExhaustive
 	apodizations := []flac.Apodization{flac.Tukey(0.5)}
 	switch level {
-	case 0, 1, 2:
-		blockSize, maxLPC, maxRice = 1152, 0, 3
-		mode = StereoMode(level)
+	case 0:
+		blockSize, maxLPC, maxRice, mode = 1152, 0, 3, StereoIndependent
+	case 1:
+		blockSize, maxLPC, maxRice, mode = 1152, 0, 3, StereoAdaptive
+	case 2:
+		blockSize, maxLPC, maxRice, mode = 1152, 0, 3, StereoExhaustive
 	case 3:
 		maxLPC, mode = 6, StereoIndependent
 	case 4:
@@ -149,13 +152,13 @@ func (c EncoderConfig) Validate() error {
 	if c.LPCPrecision != 0 && (c.LPCPrecision < 4 || c.LPCPrecision > 15) {
 		return fmt.Errorf("FLAC LPC precision must be between 4 and 15: %d", c.LPCPrecision)
 	}
-	if c.StereoMode > StereoExhaustive {
-		return fmt.Errorf("invalid FLAC stereo mode: %d", c.StereoMode)
+	if !validStereoMode(c.StereoMode) {
+		return fmt.Errorf("invalid FLAC stereo mode: %q", c.StereoMode)
 	}
-	if c.FixedOrderSearch > OrderSearchExhaustive || c.LPCOrderSearch > OrderSearchExhaustive {
+	if !validOrderSearchMode(c.FixedOrderSearch) || !validOrderSearchMode(c.LPCOrderSearch) {
 		return fmt.Errorf("invalid FLAC encoder order search mode")
 	}
-	if c.RiceCost > RiceCostExact {
+	if !validRiceCostMode(c.RiceCost) {
 		return fmt.Errorf("invalid FLAC encoder Rice cost mode")
 	}
 	if len(c.Apodizations) > 32 {
@@ -175,8 +178,8 @@ func (c EncoderConfig) Validate() error {
 	if c.BlockSplitDepth < 0 {
 		return fmt.Errorf("FLAC block split depth must be non-negative: %d", c.BlockSplitDepth)
 	}
-	if c.BlockSplitMode > BlockSplitExact {
-		return fmt.Errorf("invalid FLAC block split mode: %d", c.BlockSplitMode)
+	if !validBlockSplitMode(c.BlockSplitMode) {
+		return fmt.Errorf("invalid FLAC block split mode: %q", c.BlockSplitMode)
 	}
 	if c.BlockSplitDepth > 0 {
 		if c.BlockSplitDepth > 15 {
@@ -191,6 +194,19 @@ func (c EncoderConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validStereoMode(value StereoMode) bool {
+	return value == "" || value == StereoIndependent || value == StereoAdaptive || value == StereoExhaustive
+}
+func validOrderSearchMode(value OrderSearchMode) bool {
+	return value == "" || value == OrderSearchEstimated || value == OrderSearchExhaustive
+}
+func validRiceCostMode(value RiceCostMode) bool {
+	return value == "" || value == RiceCostEstimated || value == RiceCostExact
+}
+func validBlockSplitMode(value BlockSplitMode) bool {
+	return value == "" || value == BlockSplitEstimated || value == BlockSplitExact
 }
 
 func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) EncoderConfig {

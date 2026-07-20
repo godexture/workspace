@@ -10,9 +10,11 @@ type Target struct {
 	Preset       string
 	ExtraImports map[string]string
 
-	StructType  *ast.StructType
-	PackageName string
-	ImportPath  string
+	StructType   *ast.StructType
+	PackageName  string
+	ImportPath   string
+	HasValidate  bool
+	FieldChoices map[string][]string
 }
 
 type FieldInfo struct {

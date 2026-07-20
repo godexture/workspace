@@ -96,8 +96,8 @@ func validateFrame(samples [][]int64, sampleRate, bitsPerSample int, options con
 	if options.LPCPrecision != 0 && (options.LPCPrecision < 4 || options.LPCPrecision > 15) {
 		return fmt.Errorf("invalid FLAC LPC precision: %d", options.LPCPrecision)
 	}
-	if options.StereoMode > config.StereoExhaustive {
-		return fmt.Errorf("invalid FLAC stereo mode: %d", options.StereoMode)
+	if options.StereoMode != "" && options.StereoMode != config.StereoIndependent && options.StereoMode != config.StereoAdaptive && options.StereoMode != config.StereoExhaustive {
+		return fmt.Errorf("invalid FLAC stereo mode: %q", options.StereoMode)
 	}
 	if len(samples) == 0 || len(samples) > 8 {
 		return fmt.Errorf("unsupported FLAC channel count: %d", len(samples))
