@@ -11,38 +11,35 @@ type Spec struct {
 }
 
 func ParseSpec(input string) (Spec, error) {
-	parts, err := splitEscaped(input, ':')
+	name, options, found, err := splitFirst(input, ':')
+	if err != nil || name == "" {
+		return Spec{}, fmt.Errorf("invalid specification %q", input)
+	}
+	spec := Spec{Name: name, Values: map[string]string{}}
+	if !found {
+		return spec, nil
+	}
+	items, err := splitEscaped(options, ',')
 	if err != nil {
 		return Spec{}, err
 	}
-	if len(parts) > 2 || parts[0] == "" {
-		return Spec{}, fmt.Errorf("invalid specification %q", input)
-	}
-	spec := Spec{Name: parts[0], Values: map[string]string{}}
-	if len(parts) == 1 {
-		return spec, nil
-	}
-	for _, item := range splitComma(parts[1]) {
-		pair, err := splitEscaped(item, '=')
-		if err != nil {
-			return Spec{}, err
-		}
-		if len(pair) != 2 || pair[0] == "" {
+	for _, item := range items {
+		key, value, found, err := splitFirst(item, '=')
+		if err != nil || !found || key == "" {
 			return Spec{}, fmt.Errorf("invalid option %q", item)
 		}
-		if _, exists := spec.Values[pair[0]]; exists {
-			return Spec{}, fmt.Errorf("duplicate option %q", pair[0])
+		if _, exists := spec.Values[key]; exists {
+			return Spec{}, fmt.Errorf("duplicate option %q", key)
 		}
-		spec.Values[pair[0]] = pair[1]
+		spec.Values[key] = value
 	}
 	return spec, nil
 }
 
-func splitComma(input string) []string {
-	var result []string
+func splitFirst(input string, separator rune) (string, string, bool, error) {
 	var value strings.Builder
 	escaped := false
-	for _, char := range input {
+	for index, char := range input {
 		if escaped {
 			value.WriteRune(char)
 			escaped = false
@@ -52,17 +49,15 @@ func splitComma(input string) []string {
 			escaped = true
 			continue
 		}
-		if char == ',' {
-			result = append(result, value.String())
-			value.Reset()
-			continue
+		if char == separator {
+			return value.String(), input[index+1:], true, nil
 		}
 		value.WriteRune(char)
 	}
 	if escaped {
-		value.WriteByte('\\')
+		return "", "", false, fmt.Errorf("trailing escape in %q", input)
 	}
-	return append(result, value.String())
+	return value.String(), "", false, nil
 }
 
 func splitEscaped(input string, separator rune) ([]string, error) {
