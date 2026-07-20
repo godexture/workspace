@@ -1,3 +1,3 @@
-//go:generate config-generator -target DemuxerConfig -target MuxerConfig
+//go:generate config-generator --target DemuxerConfig --target MuxerConfig
 
 package flac

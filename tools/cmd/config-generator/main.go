@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"go/ast"
 	goparser "go/parser"
 	"go/token"
@@ -13,11 +12,13 @@ import (
 	"github.com/godexture/tools/internal/config-generator/generator"
 	"github.com/godexture/tools/internal/config-generator/parser"
 	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/spf13/pflag"
 )
 
 type stringSlice []string
 
 func (i *stringSlice) String() string { return strings.Join(*i, ",") }
+func (*stringSlice) Type() string     { return "string" }
 func (i *stringSlice) Set(value string) error {
 	*i = append(*i, value)
 	return nil
@@ -25,10 +26,10 @@ func (i *stringSlice) Set(value string) error {
 
 func main() {
 	var targetsFlag stringSlice
-	flag.Var(&targetsFlag, "target", "target configurations (e.g., EncoderConfig,default=...)")
-	outputFlag := flag.String("output", "", "generated file name (default: {GOFILE}_options.go)")
+	pflag.Var(&targetsFlag, "target", "target configurations (e.g., EncoderConfig,default=...)")
+	outputFlag := pflag.String("output", "", "generated file name (default: {GOFILE}_options.go)")
 
-	flag.Parse()
+	pflag.Parse()
 
 	if len(targetsFlag) == 0 {
 		cli.Fatalf("at least one -target is required")
