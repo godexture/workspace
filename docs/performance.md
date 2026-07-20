@@ -294,3 +294,31 @@ scalar 実装を全 build 共通の `synthWindow` にした。
 変更後 profile では `synthWindow` は flat 29.69%、MP3 synthesis は累積 56.58%
 まで低下した。通常/SIMD の internal 全 package、race detector、同じ入力の
 snapshot integration テストを通過した。
+
+## Removed slower PCM left-justify SIMD
+
+PCM encoder は有効 bit 数が container 幅より小さい入力を left-justify する。
+4096 sample の現 SIMD 実装は SIMD API の load/shift/store 固定費が大きく、
+単純な scalar byte loop より大幅に遅かった。同一バイナリの直接 kernel 比較を
+S16/S32 それぞれ 100 ペア、各 50 ms、順序を反転して実行した。すべてのペアで
+scalar が速い。
+
+| format | scalar median | SIMD median | median improvement | mean improvement |
+| --- | ---: | ---: | ---: | ---: |
+| S16 | 3,550.5 ns/op | 45,142.5 ns/op | 92.13% | 91.85% |
+| S32 | 1,768.5 ns/op | 45,417.5 ns/op | 96.11% | 96.04% |
+
+build-tag dispatch、SIMD kernel、それ専用の比較テストを削除し、scalar 実装を
+全 build 共通の `leftJustifyS16` / `leftJustifyS32` にした。有効な MS ADPCM
+predictor SIMD は変更していない。
+
+割当と copy を含む `BenchmarkLeftJustifyPCM` も変更前後バイナリで各 format
+100 ペア、各 50 ms、順序を反転して実行した。すべてのペアで変更後が速い。
+
+| format | baseline median | current median | median improvement | mean improvement |
+| --- | ---: | ---: | ---: | ---: |
+| S16 | 24,777.5 ns/op | 3,875 ns/op | 84.36% | 84.19% |
+| S32 | 48,809 ns/op | 4,537.5 ns/op | 90.70% | 90.46% |
+
+codec-pcm 全 package の通常/SIMD テストと integration test、race detector の
+internal テストを通過した。
