@@ -36,6 +36,17 @@ func (c FormatConfig) Resolve() config.FormatConfig {
 	return config.FormatConfig(c)
 }
 
+func (c FormatConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c FormatConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type ResampleConfig config.ResampleConfig
 
 type ResampleConfigOption interface {
@@ -62,6 +73,17 @@ func (c ResampleConfig) ResolveDefault() config.ResampleConfig {
 
 func (c ResampleConfig) Resolve() config.ResampleConfig {
 	return config.ResampleConfig(c)
+}
+
+func (c ResampleConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c ResampleConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type RemixConfig config.RemixConfig
@@ -92,6 +114,17 @@ func (c RemixConfig) Resolve() config.RemixConfig {
 	return config.RemixConfig(c)
 }
 
+func (c RemixConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c RemixConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type GainConfig config.GainConfig
 
 type GainConfigOption interface {
@@ -118,6 +151,17 @@ func (c GainConfig) ResolveDefault() config.GainConfig {
 
 func (c GainConfig) Resolve() config.GainConfig {
 	return config.GainConfig(c)
+}
+
+func (c GainConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c GainConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type NormalizeConfig config.NormalizeConfig
@@ -148,6 +192,17 @@ func (c NormalizeConfig) Resolve() config.NormalizeConfig {
 	return config.NormalizeConfig(c)
 }
 
+func (c NormalizeConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c NormalizeConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type FadeConfig config.FadeConfig
 
 type FadeConfigOption interface {
@@ -174,6 +229,17 @@ func (c FadeConfig) ResolveDefault() config.FadeConfig {
 
 func (c FadeConfig) Resolve() config.FadeConfig {
 	return config.FadeConfig(c)
+}
+
+func (c FadeConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c FadeConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type DCOffsetConfig config.DCOffsetConfig
@@ -204,6 +270,17 @@ func (c DCOffsetConfig) Resolve() config.DCOffsetConfig {
 	return config.DCOffsetConfig(c)
 }
 
+func (c DCOffsetConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c DCOffsetConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type TrimConfig config.TrimConfig
 
 type TrimConfigOption interface {
@@ -230,6 +307,17 @@ func (c TrimConfig) ResolveDefault() config.TrimConfig {
 
 func (c TrimConfig) Resolve() config.TrimConfig {
 	return config.TrimConfig(c)
+}
+
+func (c TrimConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c TrimConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 func WithFormat(v media.SampleFormat) FormatConfigOption {
