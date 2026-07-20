@@ -63,24 +63,6 @@ func (c DecoderConfig) Resolve() config.DecoderConfig {
 	return config.DecoderConfig(c)
 }
 
-func WithSampleRate(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.SampleRate = v
-	})
-}
-
-func WithChannels(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.Channels = v
-	})
-}
-
-func WithBitsPerSample(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.BitsPerSample = v
-	})
-}
-
 func WithBlockSize(v int) EncoderConfigOption {
 	return encoderConfigOptionFunc(func(c *EncoderConfig) {
 		c.BlockSize = v
