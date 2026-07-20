@@ -60,7 +60,11 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 				if candidate.Config == nil {
 					return nil, fmt.Errorf("bridge filter %s returned nil configuration", filter.Name)
 				}
-				if !filter.Accept(next.stream) {
+				accepted, err := filter.Accept(next.stream, next.stream.Codec, candidate.Config)
+				if err != nil {
+					return nil, fmt.Errorf("resolve bridge input for %s: %w", filter.Name, err)
+				}
+				if !accepted {
 					continue
 				}
 				output, err := filter.TransformStream(next.stream, next.stream.Codec, candidate.Config)

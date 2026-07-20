@@ -26,12 +26,20 @@ func (m BaseManifest) ID() PluginKey { return m.key }
 
 type TransformManifest struct {
 	BaseManifest
-	Capabilities []manifest.Capability
-	Resources    ResourceRequest
+	InputRequirements InputRequirementsFunc
+	Resources         ResourceRequest
 	// TransformFunc resolves the output profile for this transform. target is
 	// the desired codec (the input codec for decoders) and cfg is the node
 	// configuration that will be used to construct the transform.
 	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
+}
+
+type InputRequirementsFunc func(target media.CodecID, config Configuration) ([]manifest.Capability, error)
+
+func StaticRequirements(capabilities ...manifest.Capability) InputRequirementsFunc {
+	return func(media.CodecID, Configuration) ([]manifest.Capability, error) {
+		return capabilities, nil
+	}
 }
 
 type ConversionCost struct {
@@ -94,13 +102,36 @@ func (m TransformManifest) TransformStream(stream media.StreamInfo, target media
 	return stream, nil
 }
 
-func (m TransformManifest) Accept(stream media.StreamInfo) bool {
-	for _, c := range m.Capabilities {
-		if c.Match(stream) {
-			return true
+func (m TransformManifest) Requirements(target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+	if m.InputRequirements == nil {
+		return nil, fmt.Errorf("transform manifest %q has no input requirements", m.Name)
+	}
+	requirements, err := m.InputRequirements(target, config)
+	if err != nil {
+		return nil, err
+	}
+	if len(requirements) == 0 {
+		return nil, fmt.Errorf("transform manifest %q has no input requirements", m.Name)
+	}
+	for i, capability := range requirements {
+		if isNilCapability(capability) {
+			return nil, fmt.Errorf("transform manifest %q input requirement %d is nil", m.Name, i)
 		}
 	}
-	return false
+	return requirements, nil
+}
+
+func (m TransformManifest) Accept(stream media.StreamInfo, target media.CodecID, config Configuration) (bool, error) {
+	requirements, err := m.Requirements(target, config)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range requirements {
+		if c.Match(stream) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m BaseManifest) validate() error {
@@ -114,13 +145,8 @@ func (m TransformManifest) validate() error {
 	if err := m.BaseManifest.validate(); err != nil {
 		return err
 	}
-	if len(m.Capabilities) == 0 {
-		return fmt.Errorf("transform manifest %q must declare at least one capability", m.Name)
-	}
-	for i, capability := range m.Capabilities {
-		if isNilCapability(capability) {
-			return fmt.Errorf("transform manifest %q capability %d is nil", m.Name, i)
-		}
+	if m.InputRequirements == nil {
+		return fmt.Errorf("transform manifest %q must declare input requirements", m.Name)
 	}
 	return nil
 }
