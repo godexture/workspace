@@ -2,37 +2,7 @@
 
 package mp3
 
-import (
-	domain "github.com/godexture/codec-mp3/internal/domain"
-)
-
-type EncoderConfig domain.EncoderConfig
-
-type EncoderConfigOption interface {
-	applyEncoderConfig(*EncoderConfig)
-}
-
-type encoderConfigOptionFunc func(*EncoderConfig)
-
-func (f encoderConfigOptionFunc) applyEncoderConfig(c *EncoderConfig) {
-	f(c)
-}
-
-func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
-	config := EncoderConfig(domain.DefaultEncoderConfig)
-	for _, option := range options {
-		option.applyEncoderConfig(&config)
-	}
-	return config
-}
-
-func (c EncoderConfig) ResolveDefault() domain.EncoderConfig {
-	return domain.EncoderConfig(domain.DefaultEncoderConfig)
-}
-
-func (c EncoderConfig) Resolve() domain.EncoderConfig {
-	return domain.EncoderConfig(c)
-}
+import domain "github.com/godexture/codec-mp3/internal/domain"
 
 type DecoderConfig domain.DecoderConfig
 
@@ -60,10 +30,4 @@ func (c DecoderConfig) ResolveDefault() domain.DecoderConfig {
 
 func (c DecoderConfig) Resolve() domain.DecoderConfig {
 	return domain.DecoderConfig(c)
-}
-
-func WithBitrate(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.Bitrate = v
-	})
 }

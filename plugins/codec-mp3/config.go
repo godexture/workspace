@@ -1,3 +1,3 @@
-//go:generate config-generator -target EncoderConfig -target DecoderConfig
+//go:generate config-generator -target DecoderConfig
 
 package mp3

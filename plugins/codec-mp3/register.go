@@ -2,7 +2,6 @@ package mp3
 
 import (
 	"github.com/godexture/codec-mp3/internal"
-	domain "github.com/godexture/codec-mp3/internal/domain"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -13,14 +12,6 @@ import (
 
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 	return internal.NewDecoder()
-}
-
-func NewEncoderEngine(config EncoderConfig) (engine.EncoderEngine, error) {
-	resolved, err := engine.ResolveConfig[domain.EncoderConfig, EncoderConfig](config)
-	if err != nil {
-		return nil, err
-	}
-	return internal.NewEncoder(resolved), nil
 }
 
 func init() {
@@ -55,30 +46,4 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(NewEncoderConfig(), registry.EncoderManifest{
-		TransformManifest: registry.TransformManifest{
-			BaseManifest: registry.BaseManifest{
-				Name:        "mp3-encoder",
-				Description: "MP3 encoder (codec-mp3 plugin)",
-			},
-			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}},
-			TransformFunc: func(stream media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Codec = target
-				return profile, nil
-			},
-		},
-		Supports: func(codec media.CodecID) bool {
-			return codec == media.CodecMP3
-		},
-		Factory: func(s media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
-			resolved, err := engine.ResolveConfig[domain.EncoderConfig, EncoderConfig](options.Config)
-			if err != nil {
-				return nil, err
-			}
-			return engine.WrapEncoder(internal.NewEncoder(resolved)), nil
-		},
-	}); err != nil {
-		panic(err)
-	}
 }
