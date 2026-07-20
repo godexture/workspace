@@ -36,32 +36,6 @@ func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.Encode
 	return encoder.NewEncoder(media.StreamInfo{}, resolved, execution.parallelism), nil
 }
 
-type flacCapability struct{}
-
-type lpcmCapability struct{}
-
-func (flacCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c flacCapability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecFLAC
-}
-
-func (c flacCapability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
-func (lpcmCapability) MediaType() media.MediaType { return media.MediaAudio }
-
-func (c lpcmCapability) Match(streamInfo media.StreamInfo) bool {
-	return streamInfo.Type == media.MediaAudio &&
-		streamInfo.MediaAttributes.Codec == media.CodecLPCM
-}
-
-func (c lpcmCapability) Diagnose(streamInfo media.StreamInfo) bool {
-	return c.Match(streamInfo)
-}
-
 func init() {
 	if err := godec.Register(
 		NewDecoderConfig(),
@@ -71,7 +45,7 @@ func init() {
 					Name:        "flac-decoder",
 					Description: "FLAC decoder",
 				},
-				Capabilities: []manifest.Capability{flacCapability{}},
+				Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}}},
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},
@@ -107,7 +81,7 @@ func init() {
 					Name:        "flac-encoder",
 					Description: "FLAC encoder",
 				},
-				Capabilities: []manifest.Capability{lpcmCapability{}},
+				Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}},
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},
