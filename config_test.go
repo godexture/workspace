@@ -14,7 +14,7 @@ func TestPresetConfig(t *testing.T) {
 			t.Fatalf("level %d: %v", level, err)
 		}
 	}
-	if got := NewEncoderConfig(WithPreset(0)); got.BlockSize != 1152 || got.StereoMode != 0 {
+	if got := NewEncoderConfig(WithPreset(0)); got.BlockSize != 1152 || got.StereoMode != StereoIndependent {
 		t.Fatalf("level 0 = %#v", got)
 	}
 	if got := NewEncoderConfig(WithPreset(7)); got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitEstimated {
@@ -34,7 +34,7 @@ func TestBlockSplitConfigValidation(t *testing.T) {
 		{"negative depth", func(c *EncoderConfig) { c.BlockSplitDepth = -1 }},
 		{"small leaf", func(c *EncoderConfig) { c.BlockSplitDepth = 9 }},
 		{"uneven split", func(c *EncoderConfig) { c.BlockSize, c.BlockSplitDepth = 4095, 2 }},
-		{"invalid mode", func(c *EncoderConfig) { c.BlockSplitMode = BlockSplitMode(2) }},
+		{"invalid mode", func(c *EncoderConfig) { c.BlockSplitMode = BlockSplitMode("invalid") }},
 	} {
 		t.Run(config.name, func(t *testing.T) {
 			cfg := NewEncoderConfig()

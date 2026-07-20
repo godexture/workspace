@@ -137,7 +137,7 @@ func TestChooseBlockSplit_SelectsSignalBoundaries(t *testing.T) {
 		block[i] = int64(math.Round(12000 * math.Sin(float64(i)*frequency)))
 	}
 	for _, mode := range []config.BlockSplitMode{config.BlockSplitEstimated, config.BlockSplitExact} {
-		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
 			cfg := config.DefaultEncoderConfig
 			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
 			windows := newWindowSet(cfg.Apodizations)
@@ -166,7 +166,7 @@ func TestChooseBlockSplit_SelectsSignalBoundaries(t *testing.T) {
 func TestChooseBlockSplit_KeepsUniformSignalWhole(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []config.BlockSplitMode{config.BlockSplitEstimated, config.BlockSplitExact} {
-		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
 			cfg := config.DefaultEncoderConfig
 			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
 			windows := newWindowSet(cfg.Apodizations)
@@ -193,7 +193,7 @@ func TestEncoder_AdaptiveBlocksPreserveNumbersPTSAndSamples(t *testing.T) {
 		input[i] = int16(math.Round(12000 * math.Sin(float64(i)*frequency)))
 	}
 	for _, mode := range []config.BlockSplitMode{config.BlockSplitEstimated, config.BlockSplitExact} {
-		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
 			cfg := config.DefaultEncoderConfig
 			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
 			enc := NewEncoder(media.StreamInfo{}, cfg, 1)
@@ -728,7 +728,7 @@ func TestEncoder_ParallelismDoesNotChangeOutput(t *testing.T) {
 	}
 
 	for _, mode := range []config.BlockSplitMode{config.BlockSplitEstimated, config.BlockSplitExact} {
-		t.Run(fmt.Sprintf("mode=%d", mode), func(t *testing.T) {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
 			t.Parallel()
 			base := config.DefaultEncoderConfig
 			base.BlockSize = 1024
