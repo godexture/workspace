@@ -12,8 +12,7 @@ import (
 
 const pcmFramesPerChunk = 4096
 
-// PullUntilEOF pulls frames from an InPort until EOF, passing them to the process function.
-func PullUntilEOF[T any](ctx context.Context, port *node.InPort[T], process func(T) error) error {
+func consumeUntilEOF[T media.Retainer](ctx context.Context, port *node.InPort[T], process func(T) error) error {
 	for {
 		val, err := port.Pull(ctx)
 		if errors.Is(err, io.EOF) {
@@ -22,7 +21,9 @@ func PullUntilEOF[T any](ctx context.Context, port *node.InPort[T], process func
 		if err != nil {
 			return err
 		}
-		if err := process(val); err != nil {
+		err = process(val)
+		val.Release()
+		if err != nil {
 			return err
 		}
 	}
@@ -50,6 +51,7 @@ func (s *sampleStream) fill(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer frame.Release()
 	audioFrame, ok := frame.(*media.AudioFrame)
 	if !ok {
 		return errors.New("expected AudioFrame")

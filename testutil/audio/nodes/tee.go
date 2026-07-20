@@ -31,11 +31,18 @@ func (n *frameTeeNode) Start(ctx context.Context) error {
 	defer first.Close()
 	defer second.Close()
 
-	return PullUntilEOF(ctx, n.in, func(frame media.Frame) error {
+	return consumeUntilEOF(ctx, n.in, func(frame media.Frame) error {
+		frame.Retain()
 		if err := first.Push(ctx, frame); err != nil {
+			frame.Release()
 			return err
 		}
-		return second.Push(ctx, frame)
+		frame.Retain()
+		if err := second.Push(ctx, frame); err != nil {
+			frame.Release()
+			return err
+		}
+		return nil
 	})
 }
 
