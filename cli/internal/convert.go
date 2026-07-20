@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/core/routing"
+	"github.com/godexture/sdk/cliflag"
 	"github.com/spf13/cobra"
 )
 
@@ -19,21 +20,74 @@ func newConvertCommand() *cobra.Command {
 	var format, codec string
 	var jobs int
 	var force bool
+	var filters []string
+	var configs map[string]registry.Configuration
 	command := &cobra.Command{
 		Use:  "convert INPUT OUTPUT",
 		Args: cobra.ExactArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
-			return runConvert(command, args[0], args[1], format, codec, jobs, force)
+			return runConvert(command, args[0], args[1], format, codec, jobs, force, filters, configs)
 		},
 	}
 	command.Flags().StringVar(&format, "format", "", "Output format")
 	command.Flags().StringVar(&codec, "codec", "", "Output codec")
 	command.Flags().IntVarP(&jobs, "jobs", "j", 0, "Maximum parallel jobs")
 	command.Flags().BoolVar(&force, "force", false, "Overwrite an existing output file")
+	command.Flags().StringArrayVar(&filters, "filter", nil, "Filter specification (name:key=value,...)")
+	bindings, configs, err := bindPluginConfigurations(command)
+	if err != nil {
+		panic(err)
+	}
+	command.PreRunE = func(_ *cobra.Command, _ []string) error {
+		for _, binding := range bindings {
+			if err := binding.binding.Apply(binding.config); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return command
 }
 
-func runConvert(command *cobra.Command, inputPath, outputPath, format, codec string, jobs int, force bool) error {
+type configBinding struct {
+	config  registry.Configuration
+	binding *cliflag.Binding
+}
+
+func bindPluginConfigurations(command *cobra.Command) ([]configBinding, map[string]registry.Configuration, error) {
+	bindings := make([]configBinding, 0)
+	configs := make(map[string]registry.Configuration)
+	bind := func(namespace string, config registry.Configuration) error {
+		binding, err := cliflag.BindStruct(command.Flags(), namespace, config)
+		if err != nil {
+			return err
+		}
+		bindings = append(bindings, configBinding{config: config, binding: binding})
+		configs[namespace] = config
+		return nil
+	}
+	for manifest := range godec.DefaultMuxerRegistry.Enumerate() {
+		config, err := manifest.NewConfiguration()
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := bind("muxer."+manifest.Name, config); err != nil {
+			return nil, nil, err
+		}
+	}
+	for manifest := range godec.DefaultEncoderRegistry.Enumerate() {
+		config, err := manifest.NewConfiguration()
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := bind("encoder."+manifest.Name, config); err != nil {
+			return nil, nil, err
+		}
+	}
+	return bindings, configs, nil
+}
+
+func runConvert(command *cobra.Command, inputPath, outputPath, format, codec string, jobs int, force bool, filters []string, configs map[string]registry.Configuration) error {
 	input, err := os.Open(inputPath)
 	if err != nil {
 		return err
@@ -43,10 +97,7 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 	if err != nil {
 		return err
 	}
-	muxConfig, err := muxer.NewConfiguration()
-	if err != nil {
-		return err
-	}
+	muxConfig := configs["muxer."+muxer.Name]
 	targetCodec := muxer.DefaultCodec
 	if codec != "" {
 		targetCodec = media.CodecID(codec)
@@ -54,13 +105,22 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 	if !muxer.Supports(targetCodec) {
 		return fmt.Errorf("format %q does not support codec %q", muxer.Name, targetCodec)
 	}
+	encoder, err := godec.NewResolver().NewEncoderResolver(godec.DefaultEncoderRegistry).ResolveEncoder(targetCodec)
+	if err != nil {
+		return err
+	}
+	encoderConfig := configs["encoder."+encoder.Name]
+	filterSpecs, err := resolveFilters(filters)
+	if err != nil {
+		return err
+	}
 	output, skip, err := prepareOutput(command, outputPath, force)
 	if err != nil || skip {
 		return err
 	}
 	defer output.abort()
 	geometry, err := godec.NewNegotiator().NegotiateConversion(command.Context(), routing.ConversionSpec{
-		Input: input, Output: output.file, TargetCodec: targetCodec, MuxConfig: muxConfig,
+		Input: input, Output: output.file, Filters: filterSpecs, TargetCodec: targetCodec, EncodeConfig: encoderConfig, MuxConfig: muxConfig,
 		Resources: registry.ResourceBudget{Parallelism: jobs},
 	})
 	if err != nil {
@@ -76,6 +136,29 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 		return err
 	}
 	return output.commit()
+}
+
+func resolveFilters(values []string) ([]routing.FilterSpec, error) {
+	filters := make([]routing.FilterSpec, 0, len(values))
+	for _, value := range values {
+		spec, err := cliflag.ParseSpec(value)
+		if err != nil {
+			return nil, err
+		}
+		manifest, err := godec.DefaultFilterRegistry.Lookup(spec.Name)
+		if err != nil {
+			return nil, err
+		}
+		config, err := manifest.NewConfiguration()
+		if err != nil {
+			return nil, err
+		}
+		if err := cliflag.DecodeStruct(config, spec.Values); err != nil {
+			return nil, fmt.Errorf("filter %q: %w", spec.Name, err)
+		}
+		filters = append(filters, routing.FilterSpec{Config: config})
+	}
+	return filters, nil
 }
 
 func selectMuxer(name, output string) (registry.MuxerManifest, error) {
