@@ -18,6 +18,7 @@ var decoderOutputReady = func() <-chan struct{} {
 type pendingEntry struct {
 	header frame.Header
 	audio  *media.AudioFrame
+	pts    media.Pts
 	md5    []byte
 	err    error
 	done   chan struct{}
@@ -25,6 +26,7 @@ type pendingEntry struct {
 
 type frameJob struct {
 	data   []byte
+	pts    media.Pts
 	info   streaminfo.StreamInfo
 	strict bool
 	entry  *pendingEntry
@@ -58,7 +60,7 @@ func decodeJob(job frameJob, workspace *decodeWorkspace) {
 	}
 	if err == nil {
 		job.entry.header = decoded.Header
-		job.entry.audio, err = buildAudioFrame(decoded)
+		job.entry.audio, err = buildAudioFrame(decoded, job.pts)
 		if err == nil && job.strict && job.entry.audio.Format.BytesPerSample() != (decoded.Header.BitsPerSample+7)/8 {
 			job.entry.md5 = flac.PackPCMMD5(nil, decoded.Samples, decoded.Header.BitsPerSample)
 		}

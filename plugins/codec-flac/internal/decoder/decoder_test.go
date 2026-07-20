@@ -223,6 +223,7 @@ func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.Strea
 	packet := media.NewPacket(len(data))
 	copy(packet.Data(), data)
 	packet.MediaType = media.MediaAudio
+	packet.PTS = 123
 
 	decoder := NewDecoder(stream, config, 1)
 	if err := decoder.SendPacket(packet); err != nil {
@@ -252,6 +253,9 @@ func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.Strea
 	}
 	if audioFrame.Samples != 1 {
 		t.Fatalf("samples = %d, want 1", audioFrame.Samples)
+	}
+	if audioFrame.Pts() != 123 {
+		t.Fatalf("PTS = %d, want 123", audioFrame.Pts())
 	}
 
 	want := []byte{0xf4, 0x63, 0xb0, 0x28} // left=25588, right=10416, little-endian S16
