@@ -51,9 +51,9 @@ const (
 
 type EncoderConfig struct {
 	// Stream parameters.
-	SampleRate    int
-	Channels      int
-	BitsPerSample int
+	sampleRate    int
+	channels      int
+	bitsPerSample int
 
 	// Compression parameters.
 	BlockSize             int
@@ -72,6 +72,10 @@ type EncoderConfig struct {
 	BlockSplitMode        BlockSplitMode
 	StreamableSubset      bool
 }
+
+func (c EncoderConfig) SampleRate() int    { return c.sampleRate }
+func (c EncoderConfig) Channels() int      { return c.channels }
+func (c EncoderConfig) BitsPerSample() int { return c.bitsPerSample }
 
 var DefaultEncoderConfig = GetPreset(5)
 
@@ -130,14 +134,14 @@ func (c EncoderConfig) Validate() error {
 	if c.MaxFixedOrder < 0 || c.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
 		return fmt.Errorf("FLAC encoder fixed predictor order must be between 0 and %d: %d", DefaultEncoderMaxFixedOrder, c.MaxFixedOrder)
 	}
-	if c.SampleRate < 0 {
-		return fmt.Errorf("invalid FLAC encoder sample rate: %d", c.SampleRate)
+	if c.sampleRate < 0 {
+		return fmt.Errorf("invalid FLAC encoder sample rate: %d", c.sampleRate)
 	}
-	if c.Channels < 0 || c.Channels > 8 {
-		return fmt.Errorf("invalid FLAC encoder channel count: %d", c.Channels)
+	if c.channels < 0 || c.channels > 8 {
+		return fmt.Errorf("invalid FLAC encoder channel count: %d", c.channels)
 	}
-	if c.BitsPerSample != 0 && (c.BitsPerSample < 4 || c.BitsPerSample > 32) {
-		return fmt.Errorf("unsupported FLAC encoder bit depth: %d", c.BitsPerSample)
+	if c.bitsPerSample != 0 && (c.bitsPerSample < 4 || c.bitsPerSample > 32) {
+		return fmt.Errorf("unsupported FLAC encoder bit depth: %d", c.bitsPerSample)
 	}
 	if c.MaxLPCOrder < 0 || c.MaxLPCOrder > 32 {
 		return fmt.Errorf("invalid FLAC LPC order: %d", c.MaxLPCOrder)
@@ -190,16 +194,16 @@ func (c EncoderConfig) Validate() error {
 }
 
 func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) EncoderConfig {
-	if cfg.SampleRate == 0 && stream.Audio.SampleRate > 0 {
-		cfg.SampleRate = stream.Audio.SampleRate
+	if cfg.sampleRate == 0 && stream.Audio.SampleRate > 0 {
+		cfg.sampleRate = stream.Audio.SampleRate
 	}
-	if cfg.Channels == 0 {
-		cfg.Channels = stream.Audio.ChannelCount()
+	if cfg.channels == 0 {
+		cfg.channels = stream.Audio.ChannelCount()
 	}
-	if cfg.BitsPerSample == 0 {
-		cfg.BitsPerSample = stream.Audio.EffectiveBitsPerSample()
-		if cfg.BitsPerSample == 0 {
-			cfg.BitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
+	if cfg.bitsPerSample == 0 {
+		cfg.bitsPerSample = stream.Audio.EffectiveBitsPerSample()
+		if cfg.bitsPerSample == 0 {
+			cfg.bitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
 		}
 	}
 

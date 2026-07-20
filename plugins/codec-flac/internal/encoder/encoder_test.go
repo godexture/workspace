@@ -374,8 +374,13 @@ func TestEncoder_S32As24BitRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	cfg.BitsPerSample = 24
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				BitsPerSample: 24,
+			},
+		},
+	}, cfg, 1)
 
 	input := []int32{-8_388_608, -1, 0, 8_388_607}
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 48000, 0, 24, input)
@@ -399,8 +404,13 @@ func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	cfg.BitsPerSample = 32
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				BitsPerSample: 32,
+			},
+		},
+	}, cfg, 1)
 	input := []int32{-2_147_483_648, -1, 0, 2_147_483_647}
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 96000, 0, 32, input)
 	var wrapped media.Frame = frame
@@ -423,8 +433,13 @@ func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	cfg.BitsPerSample = 24
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				BitsPerSample: 24,
+			},
+		},
+	}, cfg, 1)
 
 	input := []int32{-8_388_608, -1, 0, 8_388_607}
 	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 24, input)
@@ -448,8 +463,13 @@ func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	cfg.BitsPerSample = 20
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				BitsPerSample: 20,
+			},
+		},
+	}, cfg, 1)
 
 	input := []int32{-524_288, -1, 0, 524_287}
 	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 20, input)
@@ -473,8 +493,13 @@ func TestEncoder_Rejects24BitOutOfRange(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	cfg.BitsPerSample = 24
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				BitsPerSample: 24,
+			},
+		},
+	}, cfg, 1)
 
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 44100, 0, 24, []int32{8_388_608})
 	var wrapped media.Frame = frame
