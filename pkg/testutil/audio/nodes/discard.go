@@ -16,7 +16,7 @@ func NewFrameDiscard() *frameDiscardNode {
 }
 
 func (n *frameDiscardNode) Start(ctx context.Context) error {
-	return PullUntilEOF(ctx, n.in, func(media.Frame) error { return nil })
+	return consumeUntilEOF(ctx, n.in, func(media.Frame) error { return nil })
 }
 
 func (n *frameDiscardNode) Close() error { return nil }
