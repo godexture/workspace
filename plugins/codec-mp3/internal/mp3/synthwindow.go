@@ -1,6 +1,6 @@
 package mp3
 
-func synthWindowScalar(workspace []float32, zLineOffset, index int, window []float32) (a, b [4]float32) {
+func synthWindow(workspace []float32, zLineOffset, index int, window []float32) (a, b [4]float32) {
 	load := func(k int) (float32, float32, int, int) {
 		vZeroIndex := zLineOffset + 4*index - k*64
 		vYIndex := zLineOffset + 4*index - (15-k)*64

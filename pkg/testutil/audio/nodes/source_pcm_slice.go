@@ -44,7 +44,7 @@ func (n *slicePCMSourceNode) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := out.Push(ctx, *frame); err != nil {
+		if err := pushFrame(ctx, out, *frame); err != nil {
 			return err
 		}
 	}

@@ -76,7 +76,7 @@ func (n *ffmpegPCMSourceNode) Start(ctx context.Context) error {
 				_ = cmd.Wait()
 				return err
 			}
-			if err := out.Push(ctx, *frame); err != nil {
+			if err := pushFrame(ctx, out, *frame); err != nil {
 				_ = cmd.Process.Kill()
 				_ = cmd.Wait()
 				return err

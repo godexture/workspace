@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-mp3/header"
 	"github.com/godexture/metadata-id3/id3v2"
 )
@@ -33,22 +34,71 @@ func SkipID3v2(r *bufio.Reader) (int, error) {
 
 type Header = header.Header
 
-// NextFrameHeader searches for the next sync word and parses the header.
-func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
+func nextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
+	return nextFrame(br,
+		func(size int) ([]byte, []byte) {
+			data := make([]byte, size)
+			return data, data
+		},
+		func([]byte) {},
+	)
+}
+
+func nextFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, error) {
+	return nextFrame(br,
+		func(size int) (*media.Packet, []byte) {
+			packet := media.NewPacket(size)
+			return packet, packet.Data()
+		},
+		func(packet *media.Packet) { packet.Release() },
+	)
+}
+
+func readFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, bool, error) {
+	headerBytes, err := br.Peek(4)
+	if err != nil {
+		return FrameHeader{}, nil, false, err
+	}
+	var currentHeader Header
+	copy(currentHeader[:], headerBytes)
+	if !currentHeader.IsValid() {
+		return FrameHeader{}, nil, false, nil
+	}
+	totalSize := currentHeader.FrameBytes(0) + currentHeader.Padding()
+	if totalSize <= 4 {
+		return FrameHeader{}, nil, false, nil
+	}
+	if _, err := br.Peek(totalSize); err != nil {
+		return FrameHeader{}, nil, false, nil
+	}
+	packet := media.NewPacket(totalSize)
+	if _, err := io.ReadFull(br, packet.Data()); err != nil {
+		packet.Release()
+		return FrameHeader{}, nil, false, err
+	}
+	return makeFrameHeader(currentHeader, totalSize), packet, true, nil
+}
+
+func nextFrame[T any](
+	br *bufio.Reader,
+	allocate func(int) (T, []byte),
+	release func(T),
+) (FrameHeader, T, error) {
+	var zero T
 	for {
 		// Read 1 byte at a time until we see 0xFF
 		currentByte, err := br.ReadByte()
 		if err != nil {
-			return FrameHeader{}, nil, err
+			return FrameHeader{}, zero, err
 		}
 
 		if currentByte == 0xFF {
 			peekedBytes, err := br.Peek(3)
 			if err != nil {
 				if err == io.EOF {
-					return FrameHeader{}, nil, io.EOF
+					return FrameHeader{}, zero, io.EOF
 				}
-				return FrameHeader{}, nil, err
+				return FrameHeader{}, zero, err
 			}
 
 			// Parse header
@@ -87,7 +137,7 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 				_, _ = br.Discard(3)
 
 				// Read the rest of the frame data
-				frameData := make([]byte, totalSize)
+				result, frameData := allocate(totalSize)
 				frameData[0] = currentHeader[0]
 				frameData[1] = currentHeader[1]
 				frameData[2] = currentHeader[2]
@@ -95,27 +145,25 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 
 				_, err = io.ReadFull(br, frameData[4:])
 				if err != nil {
-					return FrameHeader{}, nil, err
+					release(result)
+					return FrameHeader{}, zero, err
 				}
 
-				versionCode := currentHeader.VersionCode()
-				layer := currentHeader.Layer()
-				sampleRate := currentHeader.SampleRateHz()
-				bitrate := currentHeader.BitrateKbps() * 1000
-
-				frameHeader := FrameHeader{
-					Version:     versionCode,
-					Layer:       layer,
-					BitRate:     bitrate,
-					SampleRate:  sampleRate,
-					Padding:     currentHeader.Padding(),
-					ChannelMode: currentHeader.StereoMode(),
-					FrameSize:   totalSize,
-					Samples:     currentHeader.FrameSamples(),
-				}
-
-				return frameHeader, frameData, nil
+				return makeFrameHeader(currentHeader, totalSize), result, nil
 			}
 		}
+	}
+}
+
+func makeFrameHeader(header Header, frameSize int) FrameHeader {
+	return FrameHeader{
+		Version:     header.VersionCode(),
+		Layer:       header.Layer(),
+		BitRate:     header.BitrateKbps() * 1000,
+		SampleRate:  header.SampleRateHz(),
+		Padding:     header.Padding(),
+		ChannelMode: header.StereoMode(),
+		FrameSize:   frameSize,
+		Samples:     header.FrameSamples(),
 	}
 }

@@ -12,8 +12,20 @@ import (
 
 const pcmFramesPerChunk = 4096
 
-// PullUntilEOF pulls frames from an InPort until EOF, passing them to the process function.
-func PullUntilEOF[T any](ctx context.Context, port *node.InPort[T], process func(T) error) error {
+func pushFrame(ctx context.Context, edge node.Edge[media.Frame], frame media.Frame) error {
+	if err := edge.Push(ctx, frame); err != nil {
+		frame.Release()
+		return err
+	}
+	return nil
+}
+
+func retainAndPushFrame(ctx context.Context, edge node.Edge[media.Frame], frame media.Frame) error {
+	frame.Retain()
+	return pushFrame(ctx, edge, frame)
+}
+
+func consumeUntilEOF[T media.Retainer](ctx context.Context, port *node.InPort[T], process func(T) error) error {
 	for {
 		val, err := port.Pull(ctx)
 		if errors.Is(err, io.EOF) {
@@ -22,7 +34,9 @@ func PullUntilEOF[T any](ctx context.Context, port *node.InPort[T], process func
 		if err != nil {
 			return err
 		}
-		if err := process(val); err != nil {
+		err = process(val)
+		val.Release()
+		if err != nil {
 			return err
 		}
 	}
@@ -50,11 +64,12 @@ func (s *sampleStream) fill(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer frame.Release()
 	audioFrame, ok := frame.(*media.AudioFrame)
 	if !ok {
 		return errors.New("expected AudioFrame")
 	}
-	s.samples, err = pcm.ConvertToFloat32(audioFrame)
+	s.samples, err = pcm.ConvertToFloat32(s.samples, audioFrame)
 	if err != nil {
 		return err
 	}

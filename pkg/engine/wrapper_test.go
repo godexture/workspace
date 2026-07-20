@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/core/pipeline"
 )
 
@@ -18,9 +20,22 @@ type fakeEncoderEngine struct {
 	closed     bool
 	closeCount int
 	ready      chan struct{}
+	sent       chan struct{}
 }
 
+type trackedFrame struct {
+	releases atomic.Int32
+}
+
+func (*trackedFrame) Retain()                    {}
+func (f *trackedFrame) Release()                 { f.releases.Add(1) }
+func (*trackedFrame) Pts() media.Pts             { return 0 }
+func (*trackedFrame) Metadata() *metadata.Bundle { return nil }
+
 func (f *fakeEncoderEngine) SendFrame(frame *media.Frame) error {
+	if f.sent != nil {
+		close(f.sent)
+	}
 	return f.sendErr
 }
 
@@ -94,7 +109,7 @@ func TestEncoderAdapter_CloseAfterSendError(t *testing.T) {
 	fake := &fakeEncoderEngine{sendErr: wantErr}
 	adapter, in := connectEncoderAdapter(t, fake)
 
-	frame := media.NewAudioFrame(media.SampleFormatS16, media.LayoutMono1, 44100, 1)
+	frame := &trackedFrame{}
 	var wrapped media.Frame = frame
 	if err := in.Push(context.Background(), wrapped); err != nil {
 		t.Fatalf("Push() error = %v", err)
@@ -110,6 +125,9 @@ func TestEncoderAdapter_CloseAfterSendError(t *testing.T) {
 	if fake.closed {
 		t.Fatal("engine closed before adapter ownership was released")
 	}
+	if got := frame.releases.Load(); got != 1 {
+		t.Fatalf("input frame released %d times, want 1", got)
+	}
 	if err := adapter.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -120,13 +138,19 @@ func TestEncoderAdapter_CloseAfterSendError(t *testing.T) {
 
 func TestEncoderAdapter_CloseAfterContextCancellation(t *testing.T) {
 	t.Parallel()
-	fake := &fakeEncoderEngine{ready: make(chan struct{})} // never becomes ready
-	adapter, _ := connectEncoderAdapter(t, fake)
+	fake := &fakeEncoderEngine{ready: make(chan struct{}), sent: make(chan struct{})} // output never becomes ready
+	adapter, in := connectEncoderAdapter(t, fake)
+	frame := &trackedFrame{}
+	var wrapped media.Frame = frame
+	if err := in.Push(context.Background(), wrapped); err != nil {
+		t.Fatalf("Push() error = %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- adapter.Start(ctx) }()
 
+	<-fake.sent
 	cancel()
 
 	select {
@@ -142,6 +166,9 @@ func TestEncoderAdapter_CloseAfterContextCancellation(t *testing.T) {
 	}
 	if fake.closed {
 		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if got := frame.releases.Load(); got != 1 {
+		t.Fatalf("input frame released %d times, want 1", got)
 	}
 	if err := adapter.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)

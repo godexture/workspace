@@ -22,12 +22,12 @@ func DecodeResidual(r *bits.Reader, blockSize, predictorOrder int) ([]int64, err
 }
 
 func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOrder int) error {
-	method, err := r.ReadBits64(2)
+	method, err := r.ReadBits32(2)
 	if err != nil {
 		return err
 	}
 	var paramBits uint8
-	var escape uint64
+	var escape uint32
 	switch method {
 	case 0:
 		paramBits = 4
@@ -38,7 +38,7 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 	default:
 		return errors.New("reserved FLAC residual coding method")
 	}
-	partitionOrderRaw, err := r.ReadBits64(4)
+	partitionOrderRaw, err := r.ReadBits32(4)
 	if err != nil {
 		return err
 	}
@@ -63,12 +63,12 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 			return errors.New("FLAC residual partition smaller than predictor order")
 		}
 
-		param, err := r.ReadBits64(paramBits)
+		param, err := r.ReadBits32(paramBits)
 		if err != nil {
 			return err
 		}
 		if param == escape {
-			rawBits, err := r.ReadBits64(5)
+			rawBits, err := r.ReadBits32(5)
 			if err != nil {
 				return err
 			}
@@ -90,14 +90,14 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 		}
 
 		for i := 0; i < samplesInPartition; i++ {
-			value := decodeRiceSigned(r, uint8(param))
+			unsigned := r.Rice64(uint8(param))
 			if r.Overrun() {
 				return io.ErrUnexpectedEOF
 			}
-			if !validFLACResidual(value) {
+			if unsigned > 0xfffffffe {
 				return errors.New("FLAC residual is outside encodable range")
 			}
-			residual[index] = value
+			residual[index] = int64(unsigned>>1) ^ -int64(unsigned&1)
 			index++
 		}
 	}
@@ -105,23 +105,6 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 		return errors.New("decoded FLAC residual size mismatch")
 	}
 	return nil
-}
-
-// decodeRiceSigned decodes one Rice-coded residual sample. It is called per
-// sample (potentially thousands of times per frame), so it uses the Fast
-// tier: a truncated stream here is detected in aggregate via Overrun()
-// rather than per call.
-func decodeRiceSigned(r *bits.Reader, param uint8) int64 {
-	unsigned := r.Rice64(param)
-	quotient := unsigned >> param
-	if quotient > uint64(0xffffffff)>>param {
-		r.Seek(r.Position())
-		return 1 << 62
-	}
-	if unsigned&1 == 0 {
-		return int64(unsigned >> 1)
-	}
-	return -int64((unsigned >> 1) + 1)
 }
 
 // validFLACResidual checks if the residual is within the signed one's-complement

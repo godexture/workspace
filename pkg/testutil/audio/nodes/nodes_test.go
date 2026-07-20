@@ -43,6 +43,40 @@ type packetSource struct {
 	packets [][]byte
 }
 
+type retainedFrame struct {
+	media.ResourceBase
+	released chan struct{}
+}
+
+func newRetainedFrame() *retainedFrame {
+	frame := &retainedFrame{released: make(chan struct{})}
+	frame.Init(func() { close(frame.released) })
+	return frame
+}
+
+func (*retainedFrame) Pts() media.Pts             { return 0 }
+func (*retainedFrame) Metadata() *metadata.Bundle { return nil }
+
+type retainedFrameSource struct {
+	out   *node.OutPort[media.Frame]
+	frame media.Frame
+}
+
+func (n *retainedFrameSource) Start(ctx context.Context) error {
+	defer n.out.Edge().Close()
+	if err := n.out.Push(ctx, n.frame); err != nil {
+		n.frame.Release()
+		return err
+	}
+	return nil
+}
+
+func (*retainedFrameSource) Close() error { return nil }
+
+func (n *retainedFrameSource) OutputPorts() map[string]*node.OutPort[media.Frame] {
+	return map[string]*node.OutPort[media.Frame]{"out": n.out}
+}
+
 func newPacketSource(packets ...[]byte) *packetSource {
 	return &packetSource{out: node.NewOutPort[*media.Packet]("out", media.StreamInfo{}), packets: packets}
 }
@@ -143,6 +177,34 @@ func TestAudioChunkNodeCombinesAndSplitsWithoutChangingPCM(t *testing.T) {
 	}
 	if err := runNodes(t.Context(), input, chunker, expected, compare); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFrameTeeBalancesReferences(t *testing.T) {
+	t.Parallel()
+	frame := newRetainedFrame()
+	var wrapped media.Frame = frame
+	source := &retainedFrameSource{out: node.NewOutPort[media.Frame]("out", media.StreamInfo{}), frame: wrapped}
+	tee := nodes.NewFrameTee()
+	first := nodes.NewFrameDiscard()
+	second := nodes.NewFrameDiscard()
+	links := []error{
+		link(source, "out", tee, "in"),
+		link(tee, "first", first, "in"),
+		link(tee, "second", second, "in"),
+	}
+	for _, err := range links {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runNodes(t.Context(), source, tee, first, second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-frame.released:
+	default:
+		t.Fatal("tee pipeline did not release its input frame")
 	}
 }
 

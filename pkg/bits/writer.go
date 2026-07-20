@@ -1,5 +1,7 @@
 package bits
 
+import "slices"
+
 // Writer writes MSB-first bits to an in-memory byte buffer.
 type Writer struct {
 	buffer   []byte
@@ -13,6 +15,11 @@ func NewWriter() *Writer { return &Writer{} }
 func (w *Writer) Init() {
 	w.buffer = w.buffer[:0]
 	w.position = 0
+}
+
+// Grow ensures space for n more bytes without another allocation.
+func (w *Writer) Grow(n int) {
+	w.buffer = slices.Grow(w.buffer, n)
 }
 
 // Position returns the current bit position.
@@ -80,6 +87,10 @@ func (w *Writer) Bits64(value uint64, width uint8) {
 	if width < 64 {
 		value &= (uint64(1) << width) - 1
 	}
+	if width <= 16 {
+		w.bits16(uint16(value), width)
+		return
+	}
 	remaining := uint(width)
 
 	if bitOffset := uint(w.position & 7); bitOffset != 0 {
@@ -116,6 +127,27 @@ func (w *Writer) Bits64(value uint64, width uint8) {
 		w.buffer = append(w.buffer, uint8(value&((1<<remaining)-1))<<(8-remaining))
 		w.position += int32(remaining)
 	}
+}
+
+func (w *Writer) bits16(value uint16, width uint8) {
+	offset := uint8(w.position & 7)
+	span := offset + width
+	packed := uint32(value) << (24 - span)
+	if offset == 0 {
+		if width <= 8 {
+			w.buffer = append(w.buffer, byte(packed>>16))
+		} else {
+			w.buffer = append(w.buffer, byte(packed>>16), byte(packed>>8))
+		}
+	} else {
+		w.buffer[len(w.buffer)-1] |= byte(packed >> 16)
+		if span > 16 {
+			w.buffer = append(w.buffer, byte(packed>>8), byte(packed))
+		} else if span > 8 {
+			w.buffer = append(w.buffer, byte(packed>>8))
+		}
+	}
+	w.position += int32(width)
 }
 
 // Signed64 writes width bits (width <= 64) as a two's-complement signed value.
@@ -168,6 +200,11 @@ func (w *Writer) Unary64(value uint64) {
 func (w *Writer) UnaryBits64(value uint64, width uint8) {
 	quotient := value >> width
 	total := uint64(width) + 1 + quotient
+	if total <= 16 {
+		remainder := value & ((uint64(1) << width) - 1)
+		w.bits16(uint16((uint64(1)<<width)|remainder), uint8(total))
+		return
+	}
 	if total <= 64 {
 		remainder := value
 		if width < 64 {

@@ -58,6 +58,7 @@ func (n *audioChunkNode) Start(ctx context.Context) error {
 		}
 		audioFrame, ok := frame.(*media.AudioFrame)
 		if !ok {
+			frame.Release()
 			return fmt.Errorf("expected AudioFrame, got %T", frame)
 		}
 		frameAttrs := media.AudioAttributes{
@@ -68,34 +69,42 @@ func (n *audioChunkNode) Start(ctx context.Context) error {
 			configured = true
 		} else if frameAttrs.SampleRate != attrs.SampleRate || frameAttrs.Format != attrs.Format ||
 			frameAttrs.BitsPerSample != attrs.BitsPerSample || frameAttrs.ChannelLayout != attrs.ChannelLayout {
+			frame.Release()
 			return fmt.Errorf("audio attributes changed while rechunking")
 		}
 		chunkBytes := n.chunkSize * attrs.ChannelLayout.ChannelCount() * attrs.Format.BytesPerSample()
 		data := audioFrame.Planes()[0]
 		if len(pending) == 0 && len(data) == chunkBytes {
-			if err := out.Push(ctx, frame); err != nil {
+			if err := pushFrame(ctx, out, frame); err != nil {
 				return err
 			}
 			continue
 		}
-		if len(pending) > 0 {
-			take := min(chunkBytes-len(pending), len(data))
-			pending = append(pending, data[:take]...)
-			data = data[take:]
-			if len(pending) == chunkBytes {
-				if err := pushAudioBytes(ctx, out, pending, attrs); err != nil {
+		err = func() error {
+			defer frame.Release()
+			if len(pending) > 0 {
+				take := min(chunkBytes-len(pending), len(data))
+				pending = append(pending, data[:take]...)
+				data = data[take:]
+				if len(pending) == chunkBytes {
+					if err := pushAudioBytes(ctx, out, pending, attrs); err != nil {
+						return err
+					}
+					pending = pending[:0]
+				}
+			}
+			for len(data) >= chunkBytes {
+				if err := pushAudioBytes(ctx, out, data[:chunkBytes], attrs); err != nil {
 					return err
 				}
-				pending = pending[:0]
+				data = data[chunkBytes:]
 			}
+			pending = append(pending, data...)
+			return nil
+		}()
+		if err != nil {
+			return err
 		}
-		for len(data) >= chunkBytes {
-			if err := pushAudioBytes(ctx, out, data[:chunkBytes], attrs); err != nil {
-				return err
-			}
-			data = data[chunkBytes:]
-		}
-		pending = append(pending, data...)
 	}
 }
 
@@ -109,6 +118,5 @@ func pushAudioBytes(ctx context.Context, out node.Edge[media.Frame], data []byte
 	frame := media.NewAudioFrame(attrs.Format, attrs.ChannelLayout, attrs.SampleRate, len(data)/bytesPerFrame,
 		media.WithAudioBitsPerSample(attrs.BitsPerSample))
 	copy(frame.Planes()[0], data)
-	var wrapped media.Frame = frame
-	return out.Push(ctx, wrapped)
+	return pushFrame(ctx, out, frame)
 }

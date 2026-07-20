@@ -139,6 +139,19 @@ func TestWriterInitReuse(t *testing.T) {
 	}
 }
 
+func TestWriterGrow(t *testing.T) {
+	t.Parallel()
+	w := NewWriter()
+	w.Grow(100)
+	if cap(w.buffer) < 100 {
+		t.Fatalf("Grow(100) capacity = %d", cap(w.buffer))
+	}
+	w.Bits64(0x42, 8)
+	if got := w.Bytes(); len(got) != 1 || got[0] != 0x42 {
+		t.Fatalf("Bytes() after Grow = % x, want [42]", got)
+	}
+}
+
 // bitByBitWriter mirrors the pre-batching Bits64/Unary64 implementations
 // (single-bit Bit() calls only), used as a reference oracle below.
 type bitByBitWriter struct{ w *Writer }

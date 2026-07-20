@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 )
 
@@ -38,7 +39,7 @@ func (l *engineLifecycle) Close() error {
 	return l.err
 }
 
-func runCodecLoop[I any, O any](
+func runCodecLoop[I media.Retainer, O media.Retainer](
 	ctx context.Context,
 	in node.Edge[I],
 	out node.Edge[O],
@@ -62,6 +63,7 @@ func runCodecLoop[I any, O any](
 					return err
 				}
 				if err := out.Push(ctx, output); err != nil {
+					output.Release()
 					return err
 				}
 			}
@@ -70,17 +72,22 @@ func runCodecLoop[I any, O any](
 		}
 
 		if err := send(input); err != nil {
+			input.Release()
 			return err
 		}
 
 		for {
 			output, err := receive()
 			if err == ErrEAGAIN {
+				input.Release()
 				break
 			} else if err != nil {
+				input.Release()
 				return err
 			}
 			if err := out.Push(ctx, output); err != nil {
+				output.Release()
+				input.Release()
 				return err
 			}
 		}
@@ -92,7 +99,7 @@ type inputResult[T any] struct {
 	err   error
 }
 
-func runAsyncCodecLoop[I any, O any](
+func runAsyncCodecLoop[I media.Retainer, O media.Retainer](
 	ctx context.Context,
 	in node.Edge[I],
 	out node.Edge[O],
@@ -103,18 +110,31 @@ func runAsyncCodecLoop[I any, O any](
 ) error {
 	defer out.Close()
 
-	inputs := make(chan inputResult[I], 1)
+	pullCtx, cancelPull := context.WithCancel(ctx)
+	inputResults := make(chan inputResult[I], 1)
+	inputs := inputResults
 	go func() {
-		defer close(inputs)
+		defer close(inputResults)
 		for {
-			value, err := in.Pull(ctx)
+			value, err := in.Pull(pullCtx)
 			select {
-			case inputs <- inputResult[I]{value: value, err: err}:
-			case <-ctx.Done():
+			case inputResults <- inputResult[I]{value: value, err: err}:
+			case <-pullCtx.Done():
+				if err == nil {
+					value.Release()
+				}
 				return
 			}
 			if err != nil {
 				return
+			}
+		}
+	}()
+	defer func() {
+		cancelPull()
+		for input := range inputResults {
+			if input.err == nil {
+				input.value.Release()
 			}
 		}
 	}()
@@ -144,7 +164,9 @@ func runAsyncCodecLoop[I any, O any](
 			if input.err != nil {
 				return input.err
 			}
-			if err := send(input.value); err != nil {
+			err := send(input.value)
+			input.value.Release()
+			if err != nil {
 				return err
 			}
 
@@ -160,6 +182,7 @@ func runAsyncCodecLoop[I any, O any](
 				return err
 			}
 			if err := out.Push(ctx, output); err != nil {
+				output.Release()
 				return err
 			}
 

@@ -22,6 +22,7 @@ type Demuxer struct {
 	parsed                bool
 	presentationTimestamp int64
 	id3Skipped            bool
+	synced                bool
 
 	firstFrameOffset int64
 	bitRate          int
@@ -60,7 +61,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 
 	d.firstFrameOffset = int64(id3SkippedBytes)
 
-	frameHeader, frameData, err := NextFrameHeader(br)
+	frameHeader, frameData, err := nextFrameHeader(br)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 analyze: %w", err)
 	}
@@ -117,6 +118,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 	d.br = bufio.NewReader(d.r)
 	d.id3Skipped = false
+	d.synced = false
 
 	return []media.StreamInfo{d.streamInfo}, d.metadataBundle, nil
 }
@@ -135,15 +137,26 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		d.id3Skipped = true
 	}
 
-	frameHeader, data, err := NextFrameHeader(d.br)
+	var frameHeader FrameHeader
+	var packet *media.Packet
+	var err error
+	if d.synced {
+		var ok bool
+		frameHeader, packet, ok, err = readFramePacket(d.br)
+		if err == nil && !ok {
+			frameHeader, packet, err = nextFramePacket(d.br)
+		}
+	} else {
+		frameHeader, packet, err = nextFramePacket(d.br)
+	}
 	if err != nil {
 		if err == io.EOF {
 			return nil, 0, io.EOF
 		}
 		return nil, 0, fmt.Errorf("mp3 read packet: %w", err)
 	}
+	d.synced = true
 
-	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.presentationTimestamp)
@@ -249,6 +262,7 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 
 	d.br = bufio.NewReader(d.r)
 	d.id3Skipped = true
+	d.synced = false
 
 	sampleRate := float64(d.streamInfo.MediaAttributes.Audio.SampleRate)
 	d.presentationTimestamp = int64(offset.Seconds() * sampleRate)

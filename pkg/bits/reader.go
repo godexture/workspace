@@ -122,10 +122,14 @@ func (r *Reader) Byte() uint8 {
 
 // Bits64 reads width bits (width <= 64) MSB-first.
 func (r *Reader) Bits64(width uint8) uint64 {
-	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
-	if width == 0 {
-		return 0
+	if width <= 32 {
+		return uint64(r.Bits32(width))
 	}
+	return r.bits64Wide(width)
+}
+
+func (r *Reader) bits64Wide(width uint8) uint64 {
+	assertf(width <= 64, "bits: Bits64 width out of range: %d", width)
 	start := r.position
 	end := start + int32(width)
 	if end > r.limit {
@@ -176,19 +180,40 @@ func (r *Reader) bitsSlow(width uint8) uint64 {
 // Unary64 reads a unary-coded value: the number of 0 bits before the next 1
 // bit. It stops at the limit instead of looping forever on truncated data.
 //
-// The scan runs in three phases so the hot middle phase can inspect whole
-// bytes at a time via math/bits.LeadingZeros instead of calling Bit() per
-// bit: (1) consume up to 7 bits to reach a byte boundary, (2) fast-scan
-// whole words then bytes that are fully within both the limit and the physical buffer,
-// (3) finish the remaining (<8-bit) tail with the plain bit-at-a-time path,
-// which also supplies the sticky-overrun bookkeeping on truncated data.
+// The scan runs in three phases using math/bits.LeadingZeros: (1) inspect
+// the remainder of an unaligned first byte, (2) fast-scan whole words then
+// bytes that are fully within both the limit and the physical buffer,
+// (3) finish the remaining (<8-bit) tail with the bit-at-a-time path, which
+// also supplies the sticky-overrun bookkeeping on truncated data.
 func (r *Reader) Unary64() uint64 {
 	var count uint64
-	for r.position&7 != 0 && r.position < r.limit {
-		if r.Bit() == 1 {
-			return count
+	if r.position&7 != 0 && r.position < r.limit {
+		byteIndex := int(r.position >> 3)
+		if byteIndex >= 0 && byteIndex < len(r.buffer) {
+			available := int32(8 - (r.position & 7))
+			if remaining := r.limit - r.position; remaining < available {
+				available = remaining
+			}
+			value := r.buffer[byteIndex] << uint(r.position&7)
+			if available < 8 {
+				value &= byte(0xff << uint(8-available))
+			}
+			if value != 0 {
+				zeros := int32(mathbits.LeadingZeros8(value))
+				count += uint64(zeros)
+				r.position += zeros + 1
+				return count
+			}
+			count += uint64(available)
+			r.position += available
+		} else {
+			for r.position&7 != 0 && r.position < r.limit {
+				if r.Bit() == 1 {
+					return count
+				}
+				count++
+			}
 		}
-		count++
 	}
 
 	bufBits := int32(len(r.buffer)) * 8
@@ -231,6 +256,23 @@ func (r *Reader) Unary64() uint64 {
 
 // Rice64 reads a unary quotient followed by param remainder bits.
 func (r *Reader) Rice64(param uint8) uint64 {
+	start := r.position
+	byteIndex := int(start >> 3)
+	bitOffset := uint(start & 7)
+	if param <= 32 && byteIndex >= 0 && byteIndex+8 <= len(r.buffer) {
+		word := binary.BigEndian.Uint64(r.buffer[byteIndex:]) << bitOffset
+		zeros := mathbits.LeadingZeros64(word)
+		consumed := zeros + 1 + int(param)
+		if consumed <= 64-int(bitOffset) && start+int32(consumed) <= r.limit {
+			r.position = start + int32(consumed)
+			remainder := (word << uint(zeros+1)) >> (64 - param)
+			return uint64(zeros)<<param | remainder
+		}
+	}
+	return r.rice64Split(param)
+}
+
+func (r *Reader) rice64Split(param uint8) uint64 {
 	q := r.Unary64()
 	return q<<param | uint64(r.Bits32(param))
 }
@@ -238,17 +280,19 @@ func (r *Reader) Rice64(param uint8) uint64 {
 // Signed32 reads width bits (width in [1, 32]) and sign-extends the result.
 func (r *Reader) Signed32(width uint8) int32 {
 	assertf(width <= 32, "bits: Signed32 width out of range: %d", width)
-	value := r.Bits64(width)
-	if value&(uint64(1)<<(width-1)) != 0 {
-		value |= ^uint64(0) << width
+	value := r.Bits32(width)
+	if value&(uint32(1)<<(width-1)) != 0 {
+		value |= ^uint32(0) << width
 	}
 	return int32(value)
 }
 
 // Signed64 reads width bits (width in [1, 64]) and sign-extends the result.
 func (r *Reader) Signed64(width uint8) int64 {
-	assertf(width <= 64, "bits: Signed64 width out of range: %d", width)
-	value := r.Bits64(width)
+	if width <= 32 {
+		return int64(r.Signed32(width))
+	}
+	value := r.bits64Wide(width)
 	if width < 64 && value&(uint64(1)<<(width-1)) != 0 {
 		value |= ^uint64(0) << width
 	}
@@ -319,6 +363,15 @@ func (r *Reader) ReadByte() (byte, error) {
 // ReadBits64 is the Checked-tier wrapper around Bits64.
 func (r *Reader) ReadBits64(width uint8) (uint64, error) {
 	v := r.Bits64(width)
+	if r.Overrun() {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return v, nil
+}
+
+// ReadBits32 is the Checked-tier wrapper around Bits32.
+func (r *Reader) ReadBits32(width uint8) (uint32, error) {
+	v := r.Bits32(width)
 	if r.Overrun() {
 		return 0, io.ErrUnexpectedEOF
 	}
