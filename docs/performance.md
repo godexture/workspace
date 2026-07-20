@@ -265,3 +265,32 @@ frame encode profile では `computeMidSide4` が flat 7.68% を占めていた�
 `BenchmarkEncoderDefaultConfig` は 30 ペア中 21 ペアで変更後が速く、中央値
 0.89%、平均 2.69% 改善した。変更後 profile では `computeMidSide4` は上位から
 消えた。通常、SIMD、race detector の encoder 対象テストを通過した。
+
+## Removed slower MP3 synthesis-window SIMD
+
+MP3 file decode profile では `synthWindowSIMD` が flat 83.38%、synthesis 全体が
+95.64% を占めていた。処理単位が 4 lane と短いため、8 回の SIMD load、
+broadcast、演算、store の固定費が scalar の unrolled loop を大幅に上回る。
+
+同一バイナリの `BenchmarkSynthWindowCompare` を 100 ペア、各 50 ms、
+ペアごとに順序を反転して実行した。全 100 ペアで scalar が速い。
+
+| metric | scalar | SIMD | scalar improvement |
+| --- | ---: | ---: | ---: |
+| median | 32.665 ns/op | 385.05 ns/op | 91.52% |
+| mean | 32.885 ns/op | 388.347 ns/op | 91.53% |
+
+build-tag dispatch、SIMD kernel、それ専用の比較テストを削除し、既存の unrolled
+scalar 実装を全 build 共通の `synthWindow` にした。
+
+`l3-sin1k0db.mp3` 全体を復号する `BenchmarkDecodeFile` を変更前後バイナリで
+20 ペア、各 300 ms、順序を反転して実行した。全 20 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 75,357,162.5 ns/op | 7,051,986.5 ns/op | 90.64% |
+| mean | 75,292,963 ns/op | 7,207,012.8 ns/op | 90.43% |
+
+変更後 profile では `synthWindow` は flat 29.69%、MP3 synthesis は累積 56.58%
+まで低下した。通常/SIMD の internal 全 package、race detector、同じ入力の
+snapshot integration テストを通過した。
