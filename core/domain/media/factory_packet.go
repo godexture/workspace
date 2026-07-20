@@ -1,6 +1,21 @@
 package media
 
-import "github.com/godexture/sdk/pool"
+import (
+	"sync"
+
+	"github.com/godexture/core/domain/time"
+	"github.com/godexture/sdk/pool"
+)
+
+var packetPool sync.Pool
+
+func init() {
+	packetPool.New = func() any {
+		packet := &Packet{}
+		packet.freeFunc = packet.free
+		return packet
+	}
+}
 
 type PacketOption func(*Packet)
 
@@ -42,19 +57,30 @@ func NewPacketEvent(kind PacketKind, streamIndex int, parameters []CodecParamete
 }
 
 func newPacket(data *[]byte, opts ...PacketOption) *Packet {
-	pkt := &Packet{
-		data: data,
-	}
+	pkt := packetPool.Get().(*Packet)
+	pkt.reset(data)
 	pkt.refCount.Store(1)
 
 	for _, opt := range opts {
 		opt(pkt)
 	}
 
-	pkt.Init(func() {
-		pool.Put(pkt.data)
-		pkt.data = nil
-	})
-
 	return pkt
+}
+
+func (p *Packet) free() {
+	pool.Put(p.data)
+	p.reset(nil)
+	packetPool.Put(p)
+}
+
+func (p *Packet) reset(data *[]byte) {
+	p.data = data
+	p.MediaType = ""
+	p.StreamIndex = 0
+	p.Kind = PacketKindData
+	p.CodecParameters = nil
+	p.PTS = 0
+	p.DTS = 0
+	p.Timebase = time.Rational{}
 }
