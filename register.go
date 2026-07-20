@@ -30,7 +30,7 @@ func init() {
 }
 
 func registerConvert() {
-	register(NewFormatConfig(), "audio-convert", "Convert audio sample format", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+	register(registry.NewConfigurationFactory(NewFormatConfig), "convert", "Convert audio sample format", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
 		value, err := engine.ResolveConfig[config.FormatConfig, FormatConfig](cfg)
 		if err != nil {
 			return media.Profile{}, err
@@ -52,7 +52,7 @@ func registerConvert() {
 }
 
 func registerResample() {
-	register(NewResampleConfig(), "audio-resample", "Resample audio with linear interpolation", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+	register(registry.NewConfigurationFactory(NewResampleConfig), "resample", "Resample audio with linear interpolation", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
 		value, err := engine.ResolveConfig[config.ResampleConfig, ResampleConfig](cfg)
 		if err != nil {
 			return media.Profile{}, err
@@ -74,7 +74,7 @@ func registerResample() {
 }
 
 func registerRemix() {
-	register(NewRemixConfig(), "audio-remix", "Remix audio channel layout", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+	register(registry.NewConfigurationFactory(NewRemixConfig), "remix", "Remix audio channel layout", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
 		value, err := engine.ResolveConfig[config.RemixConfig, RemixConfig](cfg)
 		if err != nil {
 			return media.Profile{}, err
@@ -96,7 +96,7 @@ func registerRemix() {
 }
 
 func registerGain() {
-	register(NewGainConfig(), "audio-gain", "Adjust audio gain", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewGainConfig), "gain", "Adjust audio gain", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.GainConfig, GainConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -109,7 +109,7 @@ func registerGain() {
 	}, nil)
 }
 func registerNormalize() {
-	register(NewNormalizeConfig(), "audio-normalize", "Normalize peak level", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewNormalizeConfig), "normalize", "Normalize peak level", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.NormalizeConfig, NormalizeConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -122,7 +122,7 @@ func registerNormalize() {
 	}, nil)
 }
 func registerFade() {
-	register(NewFadeConfig(), "audio-fade", "Apply fade in and fade out", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewFadeConfig), "fade", "Apply fade in and fade out", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.FadeConfig, FadeConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -135,7 +135,7 @@ func registerFade() {
 	}, nil)
 }
 func registerDCOffset() {
-	register(NewDCOffsetConfig(), "audio-dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewDCOffsetConfig), "dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.DCOffsetConfig, DCOffsetConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -148,7 +148,7 @@ func registerDCOffset() {
 	}, nil)
 }
 func registerTrim() {
-	register(NewTrimConfig(), "audio-trim", "Trim leading and trailing silence", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewTrimConfig), "trim", "Trim leading and trailing silence", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.TrimConfig, TrimConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -161,8 +161,8 @@ func registerTrim() {
 	}, nil)
 }
 
-func register(cfg registry.Configuration, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc) {
-	if err := godec.Register(cfg, registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{}), TransformFunc: func(in media.StreamInfo, _ media.CodecID, cfg registry.Configuration) (media.Profile, error) {
+func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc) {
+	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{}), TransformFunc: func(in media.StreamInfo, _ media.CodecID, cfg registry.Configuration) (media.Profile, error) {
 		return transform(in, cfg)
 	}}, Bridge: bridge, Factory: func(_ media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
 		return factory(options.Config)
