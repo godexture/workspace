@@ -92,6 +92,31 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	}
 }
 
+func TestDemuxerAssignsSampleIndexTimestamps(t *testing.T) {
+	t.Parallel()
+	data := make([]byte, wavPacketChunkSize+2)
+	demuxer, err := NewDemuxer(bytes.NewReader(buildTestWAV(t, data)), DemuxerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := demuxer.Analyze(); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	second, _, err := demuxer.ReadPacket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release()
+	if first.PTS != 0 || second.PTS != media.Pts(wavPacketChunkSize/2) {
+		t.Fatalf("packet PTS = %d, %d; want 0, %d", first.PTS, second.PTS, wavPacketChunkSize/2)
+	}
+}
+
 func TestWAVRoundTripPCM24(t *testing.T) {
 	t.Parallel()
 	// 24-bit PCM (3 bytes per sample). Let's do 2 channels. 3 samples each = 18 bytes.
