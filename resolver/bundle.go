@@ -8,4 +8,5 @@ type Bundle struct {
 	NewEncoderResolver func(*registry.EncoderRegistry) EncoderResolver
 	NewDecoderResolver func(*registry.DecoderRegistry) DecoderResolver
 	NewFilterResolver  func(*registry.FilterRegistry) FilterResolver
+	NewBridgeResolver  func(*registry.FilterRegistry) BridgeResolver
 }

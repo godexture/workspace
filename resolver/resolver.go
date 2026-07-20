@@ -3,6 +3,7 @@ package resolver
 import (
 	"io"
 
+	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
 )
@@ -25,4 +26,15 @@ type DecoderResolver interface {
 
 type FilterResolver interface {
 	ResolveFilter(config registry.Configuration) (registry.FilterManifest, error)
+}
+
+type BridgeStep struct {
+	Manifest registry.FilterManifest
+	Config   registry.Configuration
+	Input    media.StreamInfo
+	Output   media.StreamInfo
+}
+
+type BridgeResolver interface {
+	ResolveBridge(current media.StreamInfo, required []manifest.Capability) ([]BridgeStep, error)
 }
