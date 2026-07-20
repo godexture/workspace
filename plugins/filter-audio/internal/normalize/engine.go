@@ -37,10 +37,9 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	input := (*frame).(*media.AudioFrame)
 	if !e.set {
-		e.format, e.bits, e.set = input.Format, input.BitsPerSample, true
-	} else if e.format != input.Format || e.bits != input.BitsPerSample {
+		e.format, e.bits, e.set = block.Format, block.Bits, true
+	} else if e.format != block.Format || e.bits != block.Bits {
 		return fmt.Errorf("normalize input format changed within stream")
 	}
 	for _, values := range block.Channels {

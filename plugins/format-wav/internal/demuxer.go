@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"time"
 
 	"github.com/godexture/core/domain/media"
@@ -29,6 +28,7 @@ type Demuxer struct {
 	sent       bool
 	bytesRead  uint64
 	samplePos  uint64
+	timebase   mediatime.Rational
 
 	mp3FreeFormatBytes int
 }
@@ -50,6 +50,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		}
 
 		d.header = header
+		d.timebase = mediatime.NewRational(1, int64(header.sampleRate))
 		audioFormat := wavResolvedAudioFormat(header)
 		codec, ok := codecFromWAVAudioFormat(audioFormat)
 		if !ok {
@@ -162,8 +163,10 @@ func (d *Demuxer) readRawPacket() (*media.Packet, int, error) {
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.samplePos)
 	packet.DTS = media.Dts(d.samplePos)
-	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(d.header.sampleRate)))
-	d.samplePos += uint64(n/int(d.header.blockAlign)) * uint64(d.samplesPerBlock())
+	packet.Timebase = d.timebase
+	if d.header.blockAlign > 0 {
+		d.samplePos += uint64(n/int(d.header.blockAlign)) * uint64(d.samplesPerBlock())
+	}
 
 	return packet, 0, nil
 }
@@ -208,7 +211,7 @@ func (d *Demuxer) readMP3Packet() (*media.Packet, int, error) {
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.samplePos)
 	packet.DTS = media.Dts(d.samplePos)
-	packet.Timebase = mediatime.Rational(*big.NewRat(1, int64(d.header.sampleRate)))
+	packet.Timebase = d.timebase
 	header, err := mp3header.ParseHeader(probe[offset : offset+4])
 	if err != nil {
 		packet.Release()
@@ -313,7 +316,9 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 	}
 
 	d.bytesRead = uint64(targetByteOffset)
-	d.samplePos = uint64(targetByteOffset/int64(d.header.blockAlign)) * uint64(samplesPerBlock)
+	if d.header.blockAlign > 0 {
+		d.samplePos = uint64(targetByteOffset/int64(d.header.blockAlign)) * uint64(samplesPerBlock)
+	}
 	d.sent = true
 	d.mp3FreeFormatBytes = 0
 	return nil

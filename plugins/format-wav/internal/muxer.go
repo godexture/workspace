@@ -276,9 +276,9 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		// LPCM samples narrower than their container are left-justified by the
 		// pcm encoder, so the significant width goes out as validBitsPerSample.
 		validBits := bitsPerSample
-		if (attr.Codec == media.CodecLPCM || attr.Codec == "") &&
-			attr.Audio.BitsPerSample > 0 && attr.Audio.BitsPerSample < int(bitsPerSample) {
-			validBits = uint16(attr.Audio.BitsPerSample)
+		if effectiveBits := attr.Audio.EffectiveBitsPerSample(); (attr.Codec == media.CodecLPCM || attr.Codec == "") &&
+			effectiveBits > 0 && effectiveBits < int(bitsPerSample) {
+			validBits = uint16(effectiveBits)
 		}
 		binary.Write(&headerBuf, binary.LittleEndian, uint16(22))            // cbSize
 		binary.Write(&headerBuf, binary.LittleEndian, validBits)             // validBitsPerSample

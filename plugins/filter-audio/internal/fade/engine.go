@@ -34,10 +34,9 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	input := (*frame).(*media.AudioFrame)
 	if !e.set {
-		e.format, e.bits, e.rate, e.set = input.Format, input.BitsPerSample, block.Rate, true
-	} else if e.format != input.Format || e.bits != input.BitsPerSample || e.rate != block.Rate {
+		e.format, e.bits, e.rate, e.set = block.Format, block.Bits, block.Rate, true
+	} else if e.format != block.Format || e.bits != block.Bits || e.rate != block.Rate {
 		return fmt.Errorf("fade input format changed within stream")
 	}
 	e.total += int64(block.Samples())

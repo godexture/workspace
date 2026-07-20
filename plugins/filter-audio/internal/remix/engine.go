@@ -23,26 +23,19 @@ func New(config config.RemixConfig) (*Engine, error) {
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
-	if frame == nil || *frame == nil {
-		return fmt.Errorf("remix received nil frame")
-	}
-	input, ok := (*frame).(*media.AudioFrame)
-	if !ok {
-		return fmt.Errorf("remix expected *media.AudioFrame, got %T", *frame)
-	}
-	if input.Layout == e.config.Layout {
-		input.Retain()
-		return e.queue.Push(input)
-	}
 	block, err := audio.Decode(frame)
 	if err != nil {
 		return err
+	}
+	if block.Layout == e.config.Layout {
+		block.Source.Retain()
+		return e.queue.Push(block.Source)
 	}
 	output, err := Mix(block, e.config)
 	if err != nil {
 		return err
 	}
-	encoded, err := audio.Encode(output, input.Format, input.BitsPerSample)
+	encoded, err := audio.Encode(output, block.Format, block.Bits)
 	if err != nil {
 		return err
 	}

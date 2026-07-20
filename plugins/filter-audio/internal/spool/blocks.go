@@ -89,7 +89,7 @@ func (s *Blocks) Next() (audio.Block, bool, error) {
 		return audio.Block{}, false, nil
 	}
 	if s.file == nil {
-		block := s.memory[s.index]
+		block := audio.CloneBlock(s.memory[s.index])
 		s.index++
 		return block, true, nil
 	}
@@ -98,7 +98,11 @@ func (s *Blocks) Next() (audio.Block, bool, error) {
 	for i := range channels {
 		channels[i] = make([]float32, rec.samples)
 	}
-	block := audio.Block{Channels: channels, Layout: s.layout, Rate: s.rate, PTS: rec.pts, Metadata: rec.metadata}
+	var metadata *metadata.Bundle
+	if rec.metadata != nil {
+		metadata = rec.metadata.Clone()
+	}
+	block := audio.Block{Channels: channels, Layout: s.layout, Rate: s.rate, PTS: rec.pts, Metadata: metadata}
 	if err := readBlock(s.reader, block); err != nil {
 		return audio.Block{}, false, err
 	}

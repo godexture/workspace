@@ -197,7 +197,7 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 		cfg.Channels = stream.Audio.ChannelCount()
 	}
 	if cfg.BitsPerSample == 0 {
-		cfg.BitsPerSample = stream.Audio.BitsPerSample
+		cfg.BitsPerSample = stream.Audio.EffectiveBitsPerSample()
 		if cfg.BitsPerSample == 0 {
 			cfg.BitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
 		}

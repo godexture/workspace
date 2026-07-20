@@ -126,12 +126,7 @@ func (m TransformManifest) Accept(stream media.StreamInfo, target media.CodecID,
 	if err != nil {
 		return false, err
 	}
-	for _, c := range requirements {
-		if c.Match(stream) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return manifest.MatchesAny(requirements, stream), nil
 }
 
 func (m BaseManifest) validate() error {

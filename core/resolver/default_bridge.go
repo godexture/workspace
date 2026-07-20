@@ -26,7 +26,7 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 	if len(required) == 0 {
 		return nil, fmt.Errorf("bridge target has no capabilities")
 	}
-	if acceptsAny(required, current) {
+	if manifest.MatchesAny(required, current) {
 		return nil, nil
 	}
 
@@ -44,7 +44,7 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 	visited := map[string]bridgeScore{bridgeStreamSignature(current): {}}
 	for len(pending) > 0 {
 		next := takeBestBridgeState(&pending)
-		if acceptsAny(required, next.stream) {
+		if manifest.MatchesAny(required, next.stream) {
 			return next.plan, nil
 		}
 		if len(visited) >= maxBridgeStates {
@@ -155,22 +155,11 @@ func appendBridgeStep(plan []BridgeStep, step BridgeStep) []BridgeStep {
 	return result
 }
 
-func acceptsAny(required []manifest.Capability, stream media.StreamInfo) bool {
-	return slices.ContainsFunc(required, func(capability manifest.Capability) bool {
-		return capability.Match(stream)
-	})
-}
-
 func diagnoseBridgeTarget(stream media.StreamInfo, required []manifest.Capability) error {
-	for _, capability := range required {
-		if err := capability.Diagnose(stream); err != nil {
-			return fmt.Errorf("no automatic conversion path: %w", err)
-		}
-	}
-	return fmt.Errorf("no automatic conversion path")
+	return fmt.Errorf("no automatic conversion path: %w", manifest.Diagnose(stream, required))
 }
 
 func bridgeStreamSignature(stream media.StreamInfo) string {
 	audio := stream.Audio
-	return fmt.Sprintf("%s|%s|%d|%s|%d|%s", stream.Type, stream.Codec, audio.SampleRate, audio.Format, audio.BitsPerSample, audio.ChannelLayout)
+	return fmt.Sprintf("%s|%s|%d|%s|%d|%s", stream.Type, stream.Codec, audio.SampleRate, audio.Format, audio.EffectiveBitsPerSample(), audio.ChannelLayout)
 }

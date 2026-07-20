@@ -59,7 +59,8 @@ func TestDecoder_ChannelLayoutChange(t *testing.T) {
 	}
 
 	float32PCMSamples := make([]float32, 1152)
-	audioFrame, err := processFrame(float32PCMSamples, 576, frameInfo, 0)
+	const pts = media.Pts(37)
+	audioFrame, err := processFrame(float32PCMSamples, 576, frameInfo, pts)
 	if err != nil {
 		t.Fatalf("processFrame failed: %v", err)
 	}
@@ -71,5 +72,8 @@ func TestDecoder_ChannelLayoutChange(t *testing.T) {
 
 	if actualAudioFrame.Layout != media.LayoutMono1 {
 		t.Errorf("expected LayoutMono1, got %v", actualAudioFrame.Layout)
+	}
+	if actualAudioFrame.Pts() != pts {
+		t.Errorf("PTS = %d, want %d", actualAudioFrame.Pts(), pts)
 	}
 }

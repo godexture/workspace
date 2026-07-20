@@ -56,18 +56,18 @@ func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]fl
 
 	switch kind {
 	case PCMU8:
-		scale := float32(uint64(1) << uint(bitsPerSample-1))
-		midpoint := float32(uint64(1) << uint(bitsPerSample-1))
+		scale := float32(signedHalfRange(bitsPerSample))
+		midpoint := scale
 		for i, value := range src {
 			dst[i] = (float32(value) - midpoint) / scale
 		}
 	case PCMS16:
-		scale := float32(uint64(1) << uint(bitsPerSample-1))
+		scale := float32(signedHalfRange(bitsPerSample))
 		for i := range dst {
 			dst[i] = float32(int16(binary.LittleEndian.Uint16(src[i*2:]))) / scale
 		}
 	case PCMS24:
-		scale := float32(uint64(1) << uint(bitsPerSample-1))
+		scale := float32(signedHalfRange(bitsPerSample))
 		for i := range dst {
 			offset := i * 3
 			value := int32(uint32(src[offset]) | uint32(src[offset+1])<<8 | uint32(src[offset+2])<<16)
@@ -77,7 +77,7 @@ func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]fl
 			dst[i] = float32(value) / scale
 		}
 	case PCMS32:
-		scale := float32(uint64(1) << uint(bitsPerSample-1))
+		scale := float32(signedHalfRange(bitsPerSample))
 		for i := range dst {
 			dst[i] = float32(int32(binary.LittleEndian.Uint32(src[i*4:]))) / scale
 		}
@@ -109,7 +109,7 @@ func FromFloat32(dst []byte, src []float32, kind PCMKind, bitsPerSample int) err
 	switch kind {
 	case PCMU8:
 		max := int64((uint64(1) << uint(bitsPerSample)) - 1)
-		midpoint := int64(uint64(1) << uint(bitsPerSample-1))
+		midpoint := signedHalfRange(bitsPerSample)
 		for i, sample := range src {
 			value := midpoint + scaleSignedSample(sample, bitsPerSample)
 			if value < 0 {
@@ -165,7 +165,7 @@ func scaleSignedSample(sample float32, bitsPerSample int) int64 {
 	if math.IsNaN(float64(sample)) {
 		return 0
 	}
-	negativeScale := int64(uint64(1) << uint(bitsPerSample-1))
+	negativeScale := signedHalfRange(bitsPerSample)
 	positiveScale := negativeScale - 1
 	if sample <= -1 || math.IsInf(float64(sample), -1) {
 		return -negativeScale
@@ -177,4 +177,8 @@ func scaleSignedSample(sample float32, bitsPerSample int) int64 {
 		return int64(sample * float32(negativeScale))
 	}
 	return int64(sample * float32(positiveScale))
+}
+
+func signedHalfRange(bitsPerSample int) int64 {
+	return int64(uint64(1) << uint(bitsPerSample-1))
 }
