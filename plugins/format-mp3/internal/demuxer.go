@@ -60,7 +60,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 
 	d.firstFrameOffset = int64(id3SkippedBytes)
 
-	frameHeader, frameData, err := NextFrameHeader(br)
+	frameHeader, frameData, err := nextFrameHeader(br)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 analyze: %w", err)
 	}
@@ -135,7 +135,7 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		d.id3Skipped = true
 	}
 
-	frameHeader, data, err := NextFrameHeader(d.br)
+	frameHeader, packet, err := nextFramePacket(d.br)
 	if err != nil {
 		if err == io.EOF {
 			return nil, 0, io.EOF
@@ -143,7 +143,6 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 		return nil, 0, fmt.Errorf("mp3 read packet: %w", err)
 	}
 
-	packet := media.NewPacketFromData(data)
 	packet.MediaType = media.MediaAudio
 	packet.StreamIndex = 0
 	packet.PTS = media.Pts(d.presentationTimestamp)
