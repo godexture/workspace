@@ -407,6 +407,29 @@ ownership-transfer 契約も変えない。
 core、engine、testutil、全 format と codec internal の通常/SIMDテスト、
 core の race detector を通過した。
 
+## Aligned MP3 frame fast path
+
+Packet object pool 後は frame scanner が MP3 demux CPU の累積55.07%を占めた。
+一度同期した連続 stream でも、各 frame で次 frame の header まで `Peek` して
+再検証していた。最初の scanner 成功後は現在位置の4-byte header と frame 全長を
+検査して直接読み、header が不正なら従来 scanner へ戻す。Analyze と Seek 後は
+必ず同期を再確立する。末尾の切詰め frame は消費前の `Peek` で検出する。
+
+直前版と変更後 binary を1標本10回、20標本、計200回、順序を交互に実行した。
+全20標本で変更後が速く、allocation は同じだった。
+
+| metric | verified every frame | aligned fast path | improvement |
+| --- | ---: | ---: | ---: |
+| median | 36,290 ns/op | 27,770 ns/op | 23.48% |
+| mean | 36,022 ns/op | 28,116 ns/op | 21.95% |
+| bytes/op | 9,777 | 9,776 | 0.01% |
+| allocations/op | 11 | 11 | 0% |
+
+破損 byte 後の再同期と切詰め末尾を専用テストで固定し、通常/SIMD の format
+全テスト、race detector、実 MP3 の codec snapshot を通過した。変更後 profile
+は 5.27 GB/s で、残りは必須 `memmove` 12.70%、Packet pool/atomic、
+複数の5〜7% header 演算に分散したため、この plugin の最適化を終了した。
+
 ## Investigated and stopped candidates
 
 10%以上の改善が難しい候補は実装を残さず、次の領域へ移った。
