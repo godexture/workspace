@@ -32,14 +32,10 @@ func (n *frameTeeNode) Start(ctx context.Context) error {
 	defer second.Close()
 
 	return consumeUntilEOF(ctx, n.in, func(frame media.Frame) error {
-		frame.Retain()
-		if err := first.Push(ctx, frame); err != nil {
-			frame.Release()
+		if err := retainAndPushFrame(ctx, first, frame); err != nil {
 			return err
 		}
-		frame.Retain()
-		if err := second.Push(ctx, frame); err != nil {
-			frame.Release()
+		if err := retainAndPushFrame(ctx, second, frame); err != nil {
 			return err
 		}
 		return nil

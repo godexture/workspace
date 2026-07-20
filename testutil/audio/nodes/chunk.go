@@ -75,8 +75,7 @@ func (n *audioChunkNode) Start(ctx context.Context) error {
 		chunkBytes := n.chunkSize * attrs.ChannelLayout.ChannelCount() * attrs.Format.BytesPerSample()
 		data := audioFrame.Planes()[0]
 		if len(pending) == 0 && len(data) == chunkBytes {
-			if err := out.Push(ctx, frame); err != nil {
-				frame.Release()
+			if err := pushFrame(ctx, out, frame); err != nil {
 				return err
 			}
 			continue
@@ -119,10 +118,5 @@ func pushAudioBytes(ctx context.Context, out node.Edge[media.Frame], data []byte
 	frame := media.NewAudioFrame(attrs.Format, attrs.ChannelLayout, attrs.SampleRate, len(data)/bytesPerFrame,
 		media.WithAudioBitsPerSample(attrs.BitsPerSample))
 	copy(frame.Planes()[0], data)
-	var wrapped media.Frame = frame
-	if err := out.Push(ctx, wrapped); err != nil {
-		frame.Release()
-		return err
-	}
-	return nil
+	return pushFrame(ctx, out, frame)
 }
