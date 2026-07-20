@@ -23,6 +23,7 @@ import (
 	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-mp3"
 	_ "github.com/godexture/format-wav"
+	_ "github.com/godexture/filter-audio"
 )
 
 const targetCodec = media.CodecFLAC
