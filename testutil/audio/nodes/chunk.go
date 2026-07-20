@@ -18,7 +18,7 @@ type audioChunkNode struct {
 
 func NewAudioChunk(chunkSize int) *audioChunkNode {
 	return &audioChunkNode{
-		in:        node.NewInPort[media.Frame]("in", nil),
+		in:        node.NewInPort[media.Frame]("in"),
 		out:       node.NewOutPort[media.Frame]("out", media.StreamInfo{}),
 		chunkSize: chunkSize,
 	}

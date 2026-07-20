@@ -19,7 +19,7 @@ func WrapEncoder(engine EncoderEngine) node.Encoder {
 	return &EncoderAdapter{
 		engine:    engine,
 		lifecycle: newEngineLifecycle(engine),
-		in:        node.NewInPort[media.Frame]("in", nil),
+		in:        node.NewInPort[media.Frame]("in"),
 		out:       node.NewOutPort[*media.Packet]("out", media.StreamInfo{}),
 	}
 }

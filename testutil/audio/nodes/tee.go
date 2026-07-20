@@ -16,7 +16,7 @@ type frameTeeNode struct {
 
 func NewFrameTee() *frameTeeNode {
 	return &frameTeeNode{
-		in:     node.NewInPort[media.Frame]("in", nil),
+		in:     node.NewInPort[media.Frame]("in"),
 		first:  node.NewOutPort[media.Frame]("first", media.StreamInfo{}),
 		second: node.NewOutPort[media.Frame]("second", media.StreamInfo{}),
 	}

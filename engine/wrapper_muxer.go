@@ -20,7 +20,7 @@ func WrapMuxer(engine MuxerEngine) node.Muxer {
 	return &MuxerAdapter{
 		engine:    engine,
 		lifecycle: newEngineLifecycle(engine),
-		in:        node.NewInPort[*media.Packet]("in", nil),
+		in:        node.NewInPort[*media.Packet]("in"),
 	}
 }
 
