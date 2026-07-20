@@ -90,3 +90,19 @@ func TestDecodeStructValidatesAndRejectsUnknownFields(t *testing.T) {
 		t.Fatalf("DecodeStruct() error = %v", err)
 	}
 }
+
+func TestParseSpec(t *testing.T) {
+	spec, err := ParseSpec(`trim:temp-dir=C:\\work\\tmp,threshold-dbfs=-40`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Name != "trim" || spec.Values["temp-dir"] != `C:\work\tmp` || spec.Values["threshold-dbfs"] != "-40" {
+		t.Fatalf("ParseSpec() = %#v", spec)
+	}
+	if _, err := ParseSpec(`trim:temp-dir=a\,b`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseSpec("trim:x=1,x=2"); err == nil {
+		t.Fatal("duplicate option accepted")
+	}
+}
