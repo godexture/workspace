@@ -21,7 +21,7 @@ func init() {
 				Name:        "mp3-decoder",
 				Description: "MP3 decoder",
 			},
-			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}},
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}),
 			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
 				profile := media.Profile{
 					Type:            stream.Type,

@@ -158,9 +158,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if err != nil {
 			return nil, fmt.Errorf("resolve filter %d: %w", i, err)
 		}
-		if !filterManifest.Accept(currentStream) {
+		requirements, requirementErr := filterManifest.Requirements(currentStream.Codec, filterSpec.Config)
+		if requirementErr != nil {
+			return nil, fmt.Errorf("resolve filter %d requirements: %w", i, requirementErr)
+		}
+		accepted, requirementErr := filterManifest.Accept(currentStream, currentStream.Codec, filterSpec.Config)
+		if requirementErr != nil {
+			return nil, fmt.Errorf("resolve filter %d requirements: %w", i, requirementErr)
+		}
+		if !accepted {
 			var bridgePlans []transformPlan
-			currentStream, bridgePlans, err = n.satisfy(currentStream, filterManifest.Capabilities, &bridgeID)
+			currentStream, bridgePlans, err = n.satisfy(currentStream, requirements, &bridgeID)
 			if err != nil {
 				return nil, fmt.Errorf("satisfy filter %d (%s): %w", i, filterManifest.Name, err)
 			}
@@ -187,9 +195,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder: %w", err)
 	}
-	if !encoderManifest.Accept(currentStream) {
+	requirements, err := encoderManifest.Requirements(spec.TargetCodec, spec.EncodeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
+	}
+	accepted, err := encoderManifest.Accept(currentStream, spec.TargetCodec, spec.EncodeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
+	}
+	if !accepted {
 		var bridgePlans []transformPlan
-		currentStream, bridgePlans, err = n.satisfy(currentStream, encoderManifest.Capabilities, &bridgeID)
+		currentStream, bridgePlans, err = n.satisfy(currentStream, requirements, &bridgeID)
 		if err != nil {
 			return nil, fmt.Errorf("satisfy encoder %s: %w", encoderManifest.Name, err)
 		}

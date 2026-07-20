@@ -36,13 +36,13 @@ func init() {
 				Name:        "pcm-decoder",
 				Description: "PCM/G.711 decoder",
 			},
-			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}},
-				TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					p.Codec = media.CodecLPCM
-					p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
+			}}),
+			TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
+				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+				p.Codec = media.CodecLPCM
+				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
 				return p, nil
 			},
 		},
@@ -64,9 +64,9 @@ func init() {
 				Name:        "pcm-encoder",
 				Description: "PCM/G.711 encoder",
 			},
-			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}},
+			}}),
 			TransformFunc: func(in media.StreamInfo, target media.CodecID, cfg registry.Configuration) (media.Profile, error) {
 				resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
 				if err != nil {
