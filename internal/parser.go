@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-mp3/header"
 	"github.com/godexture/metadata-id3/id3v2"
 )
@@ -33,22 +34,46 @@ func SkipID3v2(r *bufio.Reader) (int, error) {
 
 type Header = header.Header
 
-// NextFrameHeader searches for the next sync word and parses the header.
-func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
+func nextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
+	return nextFrame(br,
+		func(size int) ([]byte, []byte) {
+			data := make([]byte, size)
+			return data, data
+		},
+		func([]byte) {},
+	)
+}
+
+func nextFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, error) {
+	return nextFrame(br,
+		func(size int) (*media.Packet, []byte) {
+			packet := media.NewPacket(size)
+			return packet, packet.Data()
+		},
+		func(packet *media.Packet) { packet.Release() },
+	)
+}
+
+func nextFrame[T any](
+	br *bufio.Reader,
+	allocate func(int) (T, []byte),
+	release func(T),
+) (FrameHeader, T, error) {
+	var zero T
 	for {
 		// Read 1 byte at a time until we see 0xFF
 		currentByte, err := br.ReadByte()
 		if err != nil {
-			return FrameHeader{}, nil, err
+			return FrameHeader{}, zero, err
 		}
 
 		if currentByte == 0xFF {
 			peekedBytes, err := br.Peek(3)
 			if err != nil {
 				if err == io.EOF {
-					return FrameHeader{}, nil, io.EOF
+					return FrameHeader{}, zero, io.EOF
 				}
-				return FrameHeader{}, nil, err
+				return FrameHeader{}, zero, err
 			}
 
 			// Parse header
@@ -87,7 +112,7 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 				_, _ = br.Discard(3)
 
 				// Read the rest of the frame data
-				frameData := make([]byte, totalSize)
+				result, frameData := allocate(totalSize)
 				frameData[0] = currentHeader[0]
 				frameData[1] = currentHeader[1]
 				frameData[2] = currentHeader[2]
@@ -95,7 +120,8 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 
 				_, err = io.ReadFull(br, frameData[4:])
 				if err != nil {
-					return FrameHeader{}, nil, err
+					release(result)
+					return FrameHeader{}, zero, err
 				}
 
 				versionCode := currentHeader.VersionCode()
@@ -114,7 +140,7 @@ func NextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 					Samples:     currentHeader.FrameSamples(),
 				}
 
-				return frameHeader, frameData, nil
+				return frameHeader, result, nil
 			}
 		}
 	}

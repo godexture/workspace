@@ -97,6 +97,35 @@ func TestDemuxerAnalyze_ParsesID3Metadata(t *testing.T) {
 	metadata.AssertBundleValue(t, &streams[0].Metadata, metadata.KeyTitle("Test"))
 }
 
+func BenchmarkDemuxerReadPackets(b *testing.B) {
+	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(audio)))
+	b.ResetTimer()
+	for b.Loop() {
+		demuxer, err := internal.NewDemuxer(bytes.NewReader(audio), internal.DemuxerConfig{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, _, err := demuxer.Analyze(); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			packet, _, err := demuxer.ReadPacket()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			packet.Release()
+		}
+	}
+}
+
 func TestMuxer_WritesID3Metadata(t *testing.T) {
 	t.Parallel()
 	audio, err := os.ReadFile("../../codec-mp3/test/testdata/l3-sin1k0db.mp3")
