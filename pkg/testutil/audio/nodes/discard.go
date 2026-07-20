@@ -12,7 +12,7 @@ type frameDiscardNode struct {
 }
 
 func NewFrameDiscard() *frameDiscardNode {
-	return &frameDiscardNode{in: node.NewInPort[media.Frame]("in", nil)}
+	return &frameDiscardNode{in: node.NewInPort[media.Frame]("in")}
 }
 
 func (n *frameDiscardNode) Start(ctx context.Context) error {

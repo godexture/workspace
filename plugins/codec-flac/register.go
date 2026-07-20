@@ -81,7 +81,16 @@ func init() {
 					Name:        "flac-encoder",
 					Description: "FLAC encoder",
 				},
-				Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}},
+				Capabilities: []manifest.Capability{&manifest.AudioConstraint{
+					Codecs:      []media.CodecID{media.CodecLPCM},
+					SampleRates: manifest.IntConstraint{Min: 1},
+					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
+					SampleFormats: []manifest.SampleFormatConstraint{
+						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
+						{Format: media.SampleFormatS24, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 24}},
+						{Format: media.SampleFormatS32, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 32}},
+					},
+				}},
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},

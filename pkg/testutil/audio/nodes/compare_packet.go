@@ -25,8 +25,8 @@ type packetCursor struct {
 
 func NewPacketCompare() *packetCompareNode {
 	return &packetCompareNode{
-		expected: node.NewInPort[*media.Packet]("expected", nil),
-		actual:   node.NewInPort[*media.Packet]("actual", nil),
+		expected: node.NewInPort[*media.Packet]("expected"),
+		actual:   node.NewInPort[*media.Packet]("actual"),
 	}
 }
 

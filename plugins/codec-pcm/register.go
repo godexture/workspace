@@ -39,9 +39,10 @@ func init() {
 			Capabilities: []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
 			}}},
-			TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
+				TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
+					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
+					p.Codec = media.CodecLPCM
+					p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
 				return p, nil
 			},
 		},
