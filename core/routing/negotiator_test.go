@@ -122,6 +122,16 @@ type mockFilterResolver struct {
 	configs  []registry.Configuration
 }
 
+type mockBridgeResolver struct {
+	steps  []resolver.BridgeStep
+	called bool
+}
+
+func (r *mockBridgeResolver) ResolveBridge(media.StreamInfo, []manifest.Capability) ([]resolver.BridgeStep, error) {
+	r.called = true
+	return r.steps, nil
+}
+
 func (r *mockFilterResolver) ResolveFilter(config registry.Configuration) (registry.FilterManifest, error) {
 	r.configs = append(r.configs, config)
 	index := len(r.configs) - 1
@@ -190,7 +200,7 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	}
 
 	// 3. Create Negotiator with custom resolvers
-	neg := NewNegotiator(muxRes, demuxRes, encRes, decRes, nil)
+	neg := NewNegotiator(muxRes, demuxRes, encRes, decRes, nil, nil)
 
 	// 4. Run Negotiation
 	spec := ConversionSpec{
@@ -304,7 +314,7 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 		},
 	}
 
-	neg := NewNegotiator(muxRes, demuxRes, encRes, decRes, nil)
+	neg := NewNegotiator(muxRes, demuxRes, encRes, decRes, nil, nil)
 
 	spec := ConversionSpec{
 		Input:       strings.NewReader("dummy input"),
@@ -328,6 +338,111 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	}
 	if outStream.Audio.Format != media.SampleFormatS16 {
 		t.Errorf("expected sample format %s, got %s", media.SampleFormatS16, outStream.Audio.Format)
+	}
+}
+
+func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
+	t.Parallel()
+	streamIn := media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecFLAC,
+			Audio: media.AudioAttributes{
+				SampleRate:    44100,
+				Format:        media.SampleFormatS16,
+				BitsPerSample: 16,
+				ChannelLayout: media.LayoutStereo2_0,
+			},
+		},
+	}
+	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}}
+	mux := &mockMuxer{}
+	decoder := &mockDecoder{}
+	bridgeFilter := &mockFilter{}
+	encoder := &mockEncoder{}
+
+	demuxResolver := &mockDemuxerResolver{resolved: registry.DemuxerManifest{
+		Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) { return demux, nil },
+	}}
+	decoderResolver := &mockDecoderResolver{resolved: registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{
+			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
+				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
+				profile.Codec = media.CodecLPCM
+				return profile, nil
+			},
+		},
+		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) { return decoder, nil },
+	}}
+	var bridgeInput media.StreamInfo
+	bridgeManifest := registry.FilterManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{Name: "bridge-format"},
+			Capabilities: []manifest.Capability{alwaysCapability{}},
+			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
+				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
+				profile.Audio.Format = media.SampleFormatF32
+				profile.Audio.BitsPerSample = 32
+				return profile, nil
+			},
+		},
+		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, error) {
+			bridgeInput = input
+			return bridgeFilter, nil
+		},
+	}
+	decoderOutput := streamIn
+	decoderOutput.Codec = media.CodecLPCM
+	bridgeOutput, err := bridgeManifest.TransformStream(decoderOutput, decoderOutput.Codec, struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridgeResolver := &mockBridgeResolver{steps: []resolver.BridgeStep{{
+		Manifest: bridgeManifest,
+		Config:   struct{}{},
+		Input:    decoderOutput,
+		Output:   bridgeOutput,
+	}}}
+	var encoderInput media.StreamInfo
+	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
+		TransformManifest: registry.TransformManifest{
+			Capabilities: []manifest.Capability{&manifest.AudioConstraint{
+				Codecs: []media.CodecID{media.CodecLPCM},
+				SampleFormats: []manifest.SampleFormatConstraint{{
+					Format: media.SampleFormatF32,
+				}},
+			}},
+		},
+		Factory: func(input media.StreamInfo, _ media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, error) {
+			encoderInput = input
+			return encoder, nil
+		},
+	}}
+	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
+		Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) { return mux, nil },
+	}}
+
+	geometry, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil, bridgeResolver).
+		NegotiateConversion(context.Background(), ConversionSpec{
+			Input:       strings.NewReader("input"),
+			Output:      &strings.Builder{},
+			TargetCodec: media.CodecFLAC,
+			MuxConfig:   dummyConfig{},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bridgeResolver.called {
+		t.Fatal("bridge resolver was not called")
+	}
+	if got, want := bridgeInput.Audio.Format, media.SampleFormatS16; got != want {
+		t.Fatalf("bridge input format = %s, want %s", got, want)
+	}
+	if got, want := encoderInput.Audio.Format, media.SampleFormatF32; got != want {
+		t.Fatalf("encoder input format = %s, want %s", got, want)
+	}
+	if got, want := len(geometry.Nodes()), 5; got != want {
+		t.Fatalf("geometry nodes = %d, want %d", got, want)
 	}
 }
 
@@ -410,7 +525,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 	}}
 
-	negotiator := NewNegotiator(muxRes, demuxRes, encoderRes, decoderRes, filterRes)
+	negotiator := NewNegotiator(muxRes, demuxRes, encoderRes, decoderRes, filterRes, nil)
 	geometry, err := negotiator.NegotiateConversion(context.Background(), ConversionSpec{
 		Input:       strings.NewReader("input"),
 		Output:      &strings.Builder{},
@@ -478,7 +593,7 @@ func TestNegotiatorResolvesCompletePlanBeforeCreatingTransforms(t *testing.T) {
 	}}
 	muxResolver := &mockMuxerResolver{err: errors.New("mux resolution")}
 
-	_, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil).
+	_, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil, nil).
 		NegotiateConversion(context.Background(), ConversionSpec{
 			Input:       strings.NewReader("input"),
 			Output:      &strings.Builder{},
@@ -532,7 +647,7 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 	}}
 	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{}}
 
-	_, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil).
+	_, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil, nil).
 		NegotiateConversion(context.Background(), ConversionSpec{
 			Input:       strings.NewReader("input"),
 			Output:      &strings.Builder{},

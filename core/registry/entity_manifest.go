@@ -34,6 +34,21 @@ type TransformManifest struct {
 	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
 }
 
+type ConversionCost struct {
+	QualityLoss uint32
+	Work        uint32
+}
+
+type ConversionCandidate struct {
+	Config Configuration
+	Cost   ConversionCost
+}
+
+type BridgeFunc func(
+	current media.StreamInfo,
+	required []manifest.Capability,
+) ([]ConversionCandidate, error)
+
 type MuxerManifest struct {
 	BaseManifest
 	Factory MuxerFactory
@@ -58,11 +73,25 @@ type DecoderManifest struct {
 
 type FilterManifest struct {
 	TransformManifest
+	Bridge  BridgeFunc
 	Factory FilterFactory
 }
 
 func (m TransformManifest) Transform(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error) {
 	return m.TransformFunc(stream, target, cfg)
+}
+
+func (m TransformManifest) TransformStream(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error) {
+	if m.TransformFunc == nil {
+		return stream, nil
+	}
+	profile, err := m.Transform(stream, target, cfg)
+	if err != nil {
+		return media.StreamInfo{}, err
+	}
+	stream.Type = profile.Type
+	stream.MediaAttributes = profile.MediaAttributes
+	return stream, nil
 }
 
 func (m TransformManifest) Accept(stream media.StreamInfo) bool {

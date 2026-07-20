@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime"
 
+	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/pipeline"
@@ -20,6 +21,7 @@ type Negotiator struct {
 	encoderResolver resolver.EncoderResolver
 	muxerResolver   resolver.MuxerResolver
 	filterResolver  resolver.FilterResolver
+	bridgeResolver  resolver.BridgeResolver
 }
 
 func NewNegotiator(
@@ -28,6 +30,7 @@ func NewNegotiator(
 	encoder resolver.EncoderResolver,
 	decoder resolver.DecoderResolver,
 	filter resolver.FilterResolver,
+	bridge resolver.BridgeResolver,
 ) *Negotiator {
 	return &Negotiator{
 		demuxerResolver: demuxer,
@@ -35,6 +38,7 @@ func NewNegotiator(
 		encoderResolver: encoder,
 		muxerResolver:   muxer,
 		filterResolver:  filter,
+		bridgeResolver:  bridge,
 	}
 }
 
@@ -127,6 +131,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 
 	plans := make([]transformPlan, 0, 2+len(spec.Filters))
+	bridgeID := 0
 	currentStream := inputStream
 
 	decoderManifest, err := n.decoderResolver.ResolveDecoder(currentStream)
@@ -154,7 +159,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			return nil, fmt.Errorf("resolve filter %d: %w", i, err)
 		}
 		if !filterManifest.Accept(currentStream) {
-			return nil, fmt.Errorf("filter %d (%s) does not accept stream %s", i, filterManifest.Name, currentStream.Codec)
+			var bridgePlans []transformPlan
+			currentStream, bridgePlans, err = n.satisfy(currentStream, filterManifest.Capabilities, &bridgeID)
+			if err != nil {
+				return nil, fmt.Errorf("satisfy filter %d (%s): %w", i, filterManifest.Name, err)
+			}
+			plans = append(plans, bridgePlans...)
 		}
 		filterOutput, err := transformStream(filterManifest.TransformManifest, currentStream, currentStream.Codec, filterSpec.Config)
 		if err != nil {
@@ -178,7 +188,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, fmt.Errorf("resolve encoder: %w", err)
 	}
 	if !encoderManifest.Accept(currentStream) {
-		return nil, fmt.Errorf("encoder %s does not accept stream %s", encoderManifest.Name, currentStream.Codec)
+		var bridgePlans []transformPlan
+		currentStream, bridgePlans, err = n.satisfy(currentStream, encoderManifest.Capabilities, &bridgeID)
+		if err != nil {
+			return nil, fmt.Errorf("satisfy encoder %s: %w", encoderManifest.Name, err)
+		}
+		plans = append(plans, bridgePlans...)
 	}
 	encoderOutput, err := transformStream(encoderManifest.TransformManifest, currentStream, spec.TargetCodec, spec.EncodeConfig)
 	if err != nil {
@@ -261,14 +276,65 @@ func transformStream(
 	target media.CodecID,
 	config registry.Configuration,
 ) (media.StreamInfo, error) {
-	if transform.TransformFunc == nil {
-		return stream, nil
+	return transform.TransformStream(stream, target, config)
+}
+
+func (n *Negotiator) satisfy(
+	current media.StreamInfo,
+	required []manifest.Capability,
+	bridgeID *int,
+) (media.StreamInfo, []transformPlan, error) {
+	if acceptsAny(required, current) {
+		return current, nil, nil
 	}
-	profile, err := transform.Transform(stream, target, config)
+	if n.bridgeResolver == nil {
+		return current, nil, diagnoseRequired(current, required)
+	}
+	steps, err := n.bridgeResolver.ResolveBridge(current, required)
 	if err != nil {
-		return media.StreamInfo{}, err
+		return current, nil, err
 	}
-	stream.Type = profile.Type
-	stream.MediaAttributes = profile.MediaAttributes
-	return stream, nil
+	plans := make([]transformPlan, 0, len(steps))
+	for _, step := range steps {
+		step := step
+		id := fmt.Sprintf("bridge:%d", *bridgeID)
+		*bridgeID++
+		plans = append(plans, transformPlan{
+			id:        id,
+			config:    step.Config,
+			resources: step.Manifest.Resources,
+			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
+				return step.Manifest.Factory(step.Input, options)
+			},
+		})
+	}
+	if !acceptsAny(required, currentAfterSteps(current, steps)) {
+		return current, nil, fmt.Errorf("bridge resolver returned a plan that does not satisfy the required capability")
+	}
+	return currentAfterSteps(current, steps), plans, nil
+}
+
+func currentAfterSteps(current media.StreamInfo, steps []resolver.BridgeStep) media.StreamInfo {
+	if len(steps) == 0 {
+		return current
+	}
+	return steps[len(steps)-1].Output
+}
+
+func acceptsAny(required []manifest.Capability, stream media.StreamInfo) bool {
+	for _, capability := range required {
+		if capability.Match(stream) {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnoseRequired(stream media.StreamInfo, required []manifest.Capability) error {
+	for _, capability := range required {
+		if err := capability.Diagnose(stream); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("stream does not satisfy any required capability")
 }

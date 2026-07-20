@@ -47,6 +47,14 @@ func WithFilterResolver(res resolver.FilterResolver) ResolverOption {
 	}
 }
 
+func WithBridgeResolver(res resolver.BridgeResolver) ResolverOption {
+	return func(b *resolver.Bundle) {
+		b.NewBridgeResolver = func(*registry.FilterRegistry) resolver.BridgeResolver {
+			return res
+		}
+	}
+}
+
 func (f *Provider) NewResolver(opts ...ResolverOption) resolver.Bundle {
 	bundle := f.defaultResolver
 
