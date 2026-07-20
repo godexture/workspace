@@ -322,3 +322,105 @@ predictor SIMD は変更していない。
 
 codec-pcm 全 package の通常/SIMD テストと integration test、race detector の
 internal テストを通過した。
+
+## Ownership-aware media pipeline
+
+`BenchmarkAudioPipeline/CodecRoundtrip/64MiB` の初期 profile は 619 MB/op、
+約38万 allocs/op で、CPU 時間の多くを GC と scheduler に費やしていた。
+`media.Packet` / `media.Frame` の ownership 契約に反し、engine adapter と
+testutil node が消費済み resource を `Release` していなかったため、backing
+buffer pool が通常完了時にも再利用されていなかった。
+
+engine 境界では入力を処理し終えた時点で解放し、downstream への `Push` 失敗時は
+未移譲の出力を解放する。非同期 loop は pull goroutine の終了と未処理入力の解放を
+一つの cleanup に集約した。testutil の chunk/compare/discard は消費した frame を
+解放し、tee は二つの downstream ownership ごとに `Retain` する。
+
+旧版と変更後 binary を交互に実行した。1 MiB は10標本内で10回ずつ、計100回、
+64 MiB は30標本内で1回ずつ実行した。
+
+| workload | size | baseline median | current median | median improvement | mean improvement |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Decode | 1 MiB | 1,405,835 ns/op | 998,755 ns/op | 28.96% | 26.32% |
+| Codec roundtrip | 1 MiB | 4,349,425 ns/op | 3,814,780 ns/op | 12.29% | 14.60% |
+| Decode | 64 MiB | 74,036,550 ns/op | 54,241,950 ns/op | 26.74% | 25.94% |
+| Codec roundtrip | 64 MiB | 255,894,000 ns/op | 190,163,650 ns/op | 25.69% | 25.29% |
+
+64 MiB の allocation は Decode が 142,081,880 から 7,809,464 B/op へ
+94.50%減、Codec roundtrip が 618,885,224 から 285,828,924 B/op へ
+53.82%減った。ownership を数える専用テスト、通常テスト、race detector を
+通過した。
+
+## Reused PCM comparison buffers
+
+ownership 修正後の allocation profile では、比較用 `float32` 変換が
+263 MB/op を占めた。比較 stream ごとに直前の slice を保持し、次 frame の
+変換先として再利用する。公開 helper も destination を受け取る単一 API に
+集約し、互換 wrapper は残していない。
+
+直前版と変更後 binary を交互に、1 MiB は計100回、64 MiB は30回実行した。
+全10/10および30/30標本で変更後が速い。
+
+| size | baseline median | current median | median improvement | mean improvement | bytes/op reduction |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 MiB | 3,012,705 ns/op | 2,254,065 ns/op | 25.18% | 26.21% | 93.43% |
+| 64 MiB | 191,714,500 ns/op | 144,253,100 ns/op | 24.76% | 25.20% | 94.97% |
+
+## Pooled MP3 frame packets
+
+`l3-sin1k0db.mp3` の demux profile では、frame scanner が frame ごとに
+`make` した slice を `NewPacketFromData` で包み、214,656 B/op、
+1,279 allocs/op を発生させていた。scanner の検証処理は共通のまま、
+通常の packetization では `media.NewPacket` の pooled backing buffer へ
+直接 `ReadFull` する。読取失敗時の `Release` も allocator と同じ helper に
+集約した。
+
+実ファイル全 packet の demux を1標本10回、20標本、計200回実行し、旧版と
+変更後の順序を交互にした。全20標本で変更後が速い。
+
+| metric | baseline | pooled frame buffer | improvement |
+| --- | ---: | ---: | ---: |
+| median | 104,875 ns/op | 60,650 ns/op | 42.17% |
+| mean | 107,351 ns/op | 61,474 ns/op | 42.74% |
+| bytes/op | 214,656 | 65,317 | 69.57% |
+| allocations/op | 1,279 | 645 | 49.57% |
+
+## Pooled media Packet objects
+
+backing buffer pool 導入後の MP3 demux allocation profile では、残る object
+allocation の98.07%が `media.newPacket` だった。`Packet` 本体と解放 callback
+を `sync.Pool` で再利用し、取得時に全 scalar、codec parameters、timebase を
+初期化する。backing buffer の pool は従来どおりで、`NewPacketFromData` の
+ownership-transfer 契約も変えない。
+
+直前版と Packet object pool 版を上と同じ計200回で交互実行した。全20標本で
+変更後が速い。
+
+| metric | backing buffer pool | object pool | improvement |
+| --- | ---: | ---: | ---: |
+| median | 61,140 ns/op | 36,115 ns/op | 40.93% |
+| mean | 62,482 ns/op | 36,814 ns/op | 41.08% |
+| bytes/op | 65,317 | 9,776 | 85.03% |
+| allocations/op | 645 | 11 | 98.29% |
+
+専用の state reset、Retain/Release、16 goroutine 並行利用テストを追加した。
+core、engine、testutil、全 format と codec internal の通常/SIMDテスト、
+core の race detector を通過した。
+
+## Investigated and stopped candidates
+
+10%以上の改善が難しい候補は実装を残さず、次の領域へ移った。
+
+- FLAC LPC inner coefficient unroll は kernel 約5%に対して frame encode の
+  中央値1.1%、平均0.77%に留まった。
+- FLAC Rice fold/stat fusion は SIMD partition 版が約8.9%、scalar fusion が
+  約5.9%遅く、双方を破棄した。
+- MP3 decoder の unsafe bounds-check 除去は中央値3.51%、平均4.20%だった。
+- common audio の完全一致 fast path は64 MiBで中央値 -1.23%、平均0.05%、
+  native S16 view は中央値1.09%、平均3.12%だった。
+- AudioFrame 本体と metadata map の pool 化は allocation を最大93.56%削減したが、
+  64 MiB Decode は中央値6.33%、Codec roundtrip は0.56%で、実装を破棄した。
+- format-flac demux は 4 MiB で 19.4 GB/s、CPU は `memmove` 44.3% と
+  assembly `bytes.IndexByte` 31.3%だった。format-wav raw demux は
+  14.1 GB/s、`memmove` 91.9%であり、双方とも必須 copy/既存 assembly を
+  置き換えて10%を得る現実的な候補がなかった。
