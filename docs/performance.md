@@ -209,3 +209,32 @@ allocation profile では `bits.Writer.Bits64` 内の段階的な `append` growt
 変更後 allocation profile では writer 出力は単一の `Grow` になり、割当量の
 11.66% まで低下した。共通 bits、通常/SIMD FLAC encoder、race detector の
 対象テストを通過した。
+
+## Small-field bit writer path
+
+容量確保後も `bits.Writer.Bits64` は frame encode CPU profile の flat 11.33%
+を占めた。Rice residual とフレームヘッダで頻出する 1..16 bit は、汎用の
+非整列 merge、whole-byte loop、末尾処理を通さず、最大 3 byte の packed value
+を直接配置する。`UnaryBits64` も小さい Rice 符号を同じ helper へ直結する。
+
+1..16 bit を混在させ、4096 field ごとに writer を再利用する
+`BenchmarkWriterBits64Small` を変更前後バイナリで 100 ペア、各 50 ms、
+ペアごとに順序を反転して実行した。92/100 ペアで変更後が速い。
+
+| metric | generic | small-field path | improvement |
+| --- | ---: | ---: | ---: |
+| median | 34,274 ns/op | 23,674.5 ns/op | 30.93% |
+| mean | 39,393.7 ns/op | 27,520.4 ns/op | 30.14% |
+
+`BenchmarkEncodeFrameDefaultConfig` は直前コミットと 50 ペア、各 200 ms、
+順序を反転して実行した。42/50 ペアで変更後が速い。
+
+| metric | baseline | current | improvement |
+| --- | ---: | ---: | ---: |
+| median | 219,618.5 ns/op | 215,176.5 ns/op | 2.02% |
+| mean | 227,014.8 ns/op | 217,605 ns/op | 4.15% |
+
+`BenchmarkEncoderDefaultConfig` は 30 ペア中 25 ペアで変更後が速く、中央値
+4.19%、平均 4.07% 改善した。全 offset/width を bit-by-bit oracle と照合する
+既存テストに加え、共通 bits、通常/SIMD FLAC encoder、race detector の対象
+テストを通過した。
