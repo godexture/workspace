@@ -447,3 +447,6 @@ Packet object pool 後は frame scanner が MP3 demux CPU の累積55.07%を占�
   assembly `bytes.IndexByte` 31.3%だった。format-wav raw demux は
   14.1 GB/s、`memmove` 91.9%であり、双方とも必須 copy/既存 assembly を
   置き換えて10%を得る現実的な候補がなかった。
+
+最終確認では `test-runner.exe --simd` を1回実行し、`codec-flac/test`
+（88.6秒）を含む workspace 全 package が成功した。
