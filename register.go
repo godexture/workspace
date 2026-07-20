@@ -5,6 +5,7 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-mp3/internal"
@@ -35,10 +36,11 @@ func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error)
 }
 
 func init() {
-	if err := godec.Register(NewDemuxerConfig(), registry.DemuxerManifest{
+	if err := godec.Register(registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "mp3-demuxer",
-			Description: "MP3 demuxer (format-mp3 plugin)",
+			Name:                 "mp3",
+			Description:          "MP3 demuxer (format-mp3 plugin)",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewDemuxerConfig),
 		},
 		Probe: Probe,
 		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
@@ -60,11 +62,15 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
+	if err := godec.Register(registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "mp3-muxer",
-			Description: "MP3 muxer (format-mp3 plugin)",
+			Name:                 "mp3",
+			Description:          "MP3 muxer (format-mp3 plugin)",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewMuxerConfig),
 		},
+		Extensions:   []string{".mp3"},
+		Codecs:       []media.CodecID{media.CodecMP3},
+		DefaultCodec: media.CodecMP3,
 		Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
 			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](config)
 			if err != nil {
