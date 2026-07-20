@@ -68,6 +68,9 @@ func TestWAVRoundTripMonoPCM16(t *testing.T) {
 	if !bytes.Equal(pkt.Data(), original) {
 		t.Fatalf("packet data mismatch: got %v, want %v", pkt.Data(), original)
 	}
+	if pkt.PTS != 0 || pkt.DTS != 0 {
+		t.Fatalf("packet timestamps = %d/%d, want 0/0", pkt.PTS, pkt.DTS)
+	}
 
 	out := testutil.NewBuffer(nil)
 	muxer := NewMuxer(out, MuxerConfig{})
