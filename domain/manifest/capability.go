@@ -44,6 +44,29 @@ func (c IntConstraint) String() string {
 	return "any"
 }
 
+func (c IntConstraint) Candidates(current int) []int {
+	if len(c.Values) > 0 {
+		return append([]int(nil), c.Values...)
+	}
+	if c.Match(current) {
+		return []int{current}
+	}
+	if c.Min != 0 {
+		return []int{c.Min}
+	}
+	if c.Max != 0 {
+		return []int{c.Max}
+	}
+	return nil
+}
+
+func (c IntConstraint) Preferred(current int) int {
+	for _, value := range c.Candidates(current) {
+		return value
+	}
+	return current
+}
+
 type SampleFormatConstraint struct {
 	Format        media.SampleFormat
 	BitsPerSample IntConstraint

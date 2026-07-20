@@ -21,6 +21,12 @@ func NewBundle() *Bundle {
 	return (*Bundle)(newBundle())
 }
 
+func (b *Bundle) Clone() *Bundle {
+	clone := NewBundle()
+	clone.Merge(b)
+	return clone
+}
+
 func Get[T single](b *Bundle) T {
 	return get[T]((*baseBundle)(b))
 }
