@@ -137,9 +137,8 @@ type secondFilterConfig struct{}
 
 type alwaysCapability struct{}
 
-func (alwaysCapability) MediaType() media.MediaType     { return media.MediaAudio }
-func (alwaysCapability) Match(media.StreamInfo) bool    { return true }
-func (alwaysCapability) Diagnose(media.StreamInfo) bool { return true }
+func (alwaysCapability) Match(media.StreamInfo) bool     { return true }
+func (alwaysCapability) Diagnose(media.StreamInfo) error { return nil }
 
 func TestNegotiator_CustomResolvers(t *testing.T) {
 	t.Parallel()

@@ -13,13 +13,11 @@ import (
 type acceptAllCapability struct{}
 type pointerCapability struct{}
 
-func (acceptAllCapability) MediaType() media.MediaType     { return media.MediaAudio }
-func (acceptAllCapability) Match(media.StreamInfo) bool    { return true }
-func (acceptAllCapability) Diagnose(media.StreamInfo) bool { return true }
+func (acceptAllCapability) Match(media.StreamInfo) bool     { return true }
+func (acceptAllCapability) Diagnose(media.StreamInfo) error { return nil }
 
-func (*pointerCapability) MediaType() media.MediaType     { return media.MediaAudio }
-func (*pointerCapability) Match(media.StreamInfo) bool    { return true }
-func (*pointerCapability) Diagnose(media.StreamInfo) bool { return true }
+func (*pointerCapability) Match(media.StreamInfo) bool     { return true }
+func (*pointerCapability) Diagnose(media.StreamInfo) error { return nil }
 
 func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 	t.Parallel()
