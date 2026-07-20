@@ -20,6 +20,7 @@ func Execute(ctx context.Context, args []string) error {
 
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{Use: "godec", SilenceUsage: true}
+	root.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 	root.AddCommand(newListCommand())
 	root.AddCommand(newConvertCommand())
 	return root
