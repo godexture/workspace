@@ -186,16 +186,31 @@ func bridgeFormat(current media.StreamInfo, required []manifest.Capability) ([]r
 			continue
 		}
 		for _, target := range constraint.SampleFormats {
-			bits := target.BitsPerSample.Preferred(current.Audio.BitsPerSample)
-			if bits == 0 {
-				bits = target.Format.BytesPerSample() * 8
-			}
+			bits := preferredBits(target, current.Audio.BitsPerSample)
 			if target.Format != current.Audio.Format || bits != current.Audio.BitsPerSample {
 				result = append(result, registry.ConversionCandidate{Config: NewFormatConfig(WithFormat(target.Format), WithBitsPerSample(bits)), Cost: registry.ConversionCost{QualityLoss: formatLoss(current.Audio.Format, target.Format), Work: 1}})
 			}
 		}
 	}
 	return result, nil
+}
+
+func preferredBits(target manifest.SampleFormatConstraint, current int) int {
+	constraint := target.BitsPerSample
+	if len(constraint.Values) > 0 {
+		if constraint.Match(current) {
+			return current
+		}
+		return constraint.Values[0]
+	}
+	bits := target.Format.BytesPerSample() * 8
+	if constraint.Min != 0 && bits < constraint.Min {
+		bits = constraint.Min
+	}
+	if constraint.Max != 0 && bits > constraint.Max {
+		bits = constraint.Max
+	}
+	return bits
 }
 
 func bridgeRate(current media.StreamInfo, required []manifest.Capability) ([]registry.ConversionCandidate, error) {
