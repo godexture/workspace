@@ -72,6 +72,10 @@ func defaultBitsPerSample(format SampleFormat) int {
 		return 24
 	case SampleFormatS32:
 		return 32
+	case SampleFormatF32:
+		return 32
+	case SampleFormatF64:
+		return 64
 	default:
 		return 0
 	}
