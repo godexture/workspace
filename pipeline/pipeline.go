@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/godexture/core/node"
 	"golang.org/x/sync/errgroup"
@@ -24,12 +25,18 @@ const (
 // single-use: Run may be called exactly once, and always closes every node
 // before returning.
 type Pipeline struct {
-	mu       sync.Mutex
-	state    pipelineState
-	nodes    []node.Node
-	cancel   context.CancelFunc
-	done     chan struct{}
-	closeErr error
+	mu          sync.Mutex
+	state       pipelineState
+	nodes       []node.Node
+	description Description
+	observation ObservationMode
+	edgeMetrics []*edgeMetrics
+	nodeMetrics []*nodeMetrics
+	startedAt   time.Time
+	finishedAt  time.Time
+	cancel      context.CancelFunc
+	done        chan struct{}
+	closeErr    error
 }
 
 func New(nodes ...node.Node) (*Pipeline, error) {
@@ -54,10 +61,35 @@ func New(nodes ...node.Node) (*Pipeline, error) {
 			closeNodes(valid),
 		)
 	}
-	return &Pipeline{
-		nodes: owned,
-		done:  make(chan struct{}),
-	}, nil
+	description := Description{Nodes: make([]NodeDescription, len(owned))}
+	for i := range owned {
+		description.Nodes[i].ID = fmt.Sprintf("node:%d", i)
+	}
+	return newPipeline(owned, description, ObservationOff, nil)
+}
+
+func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics) (*Pipeline, error) {
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("%w: pipeline has no nodes", ErrInvalidPipeline)
+	}
+	pipeline := &Pipeline{
+		nodes:       append([]node.Node(nil), nodes...),
+		description: description,
+		observation: observation,
+		edgeMetrics: edges,
+		done:        make(chan struct{}),
+	}
+	if observation == ObservationMetrics {
+		pipeline.nodeMetrics = make([]*nodeMetrics, len(nodes))
+		for i := range nodes {
+			var description NodeDescription
+			if i < len(pipeline.description.Nodes) {
+				description = pipeline.description.Nodes[i]
+			}
+			pipeline.nodeMetrics[i] = newNodeMetrics(description)
+		}
+	}
+	return pipeline, nil
 }
 
 func isNilNode(value node.Node) bool {
@@ -87,9 +119,15 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	runContext, cancel := context.WithCancel(ctx)
 	p.state = pipelineRunning
 	p.cancel = cancel
+	p.startedAt = time.Now()
 	p.mu.Unlock()
 
-	runErr := runNodes(runContext, p.nodes)
+	var runErr error
+	if p.observation == ObservationMetrics {
+		runErr = runNodesObserved(runContext, p.nodes, p.nodeMetrics)
+	} else {
+		runErr = runNodes(runContext, p.nodes)
+	}
 	cancel()
 	return p.finish(runErr)
 }
@@ -123,12 +161,61 @@ func (p *Pipeline) Close() error {
 func (p *Pipeline) finish(runErr error) error {
 	p.mu.Lock()
 	p.state = pipelineClosing
+	p.finishedAt = time.Now()
 	p.mu.Unlock()
 	p.completeClose()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return errors.Join(runErr, p.closeErr)
+}
+
+func (p *Pipeline) Description() Description {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return cloneDescription(p.description)
+}
+
+func (p *Pipeline) Snapshot() Snapshot {
+	now := time.Now()
+	p.mu.Lock()
+	state := p.state.String()
+	started := p.startedAt
+	finished := p.finishedAt
+	edges := append([]*edgeMetrics(nil), p.edgeMetrics...)
+	nodes := append([]*nodeMetrics(nil), p.nodeMetrics...)
+	description := cloneDescription(p.description)
+	p.mu.Unlock()
+
+	end := finished
+	if end.IsZero() && !started.IsZero() {
+		end = now
+	}
+	var elapsed time.Duration
+	if !started.IsZero() {
+		elapsed = end.Sub(started)
+	}
+	snapshot := Snapshot{
+		State:      state,
+		StartedAt:  started,
+		FinishedAt: finished,
+		Elapsed:    elapsed,
+		Nodes:      make([]NodeSnapshot, len(description.Nodes)),
+		Edges:      make([]EdgeSnapshot, len(description.Edges)),
+	}
+	for i, current := range description.Nodes {
+		snapshot.Nodes[i] = NodeSnapshot{Description: current, State: "unobserved"}
+		if i < len(nodes) && nodes[i] != nil {
+			snapshot.Nodes[i] = nodes[i].snapshot(now)
+		}
+	}
+	for i, current := range description.Edges {
+		snapshot.Edges[i] = EdgeSnapshot{Description: current}
+		if i < len(edges) && edges[i] != nil {
+			snapshot.Edges[i] = edges[i].snapshot()
+		}
+	}
+	return snapshot
 }
 
 func (p *Pipeline) completeClose() {
@@ -148,6 +235,21 @@ func runNodes(ctx context.Context, nodes []node.Node) error {
 		current := current
 		group.Go(func() error {
 			return current.Start(groupContext)
+		})
+	}
+	return group.Wait()
+}
+
+func runNodesObserved(ctx context.Context, nodes []node.Node, metrics []*nodeMetrics) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for i, current := range nodes {
+		current := current
+		metric := metrics[i]
+		group.Go(func() error {
+			metric.start()
+			err := current.Start(groupContext)
+			metric.finish(err)
+			return err
 		})
 	}
 	return group.Wait()

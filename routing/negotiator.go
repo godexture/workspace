@@ -72,8 +72,12 @@ type ConversionSpec struct {
 
 type transformPlan struct {
 	id        string
+	role      manifest.NodeType
+	plugin    string
 	config    registry.Configuration
 	resources registry.ResourceRequest
+	input     media.StreamInfo
+	output    media.StreamInfo
 	factory   func(registry.TransformFactoryOptions) (node.Node, error)
 }
 
@@ -117,7 +121,13 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, fmt.Errorf("create demuxer: %w", err)
 	}
 	geometry := pipeline.NewGeometry()
-	if err := geometry.AddNode("demuxer", demuxNode); err != nil {
+	if err := geometry.AddNodeDef(pipeline.NodeDef{
+		ID:   "demuxer",
+		Node: demuxNode,
+		Description: pipeline.NodeDescription{
+			Role: manifest.RoleDemuxer, Plugin: demuxManifest.Name, Configuration: demuxConfig,
+		},
+	}); err != nil {
 		return nil, err
 	}
 	defer func() {
@@ -131,6 +141,11 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 	if len(streams) == 0 {
 		return nil, fmt.Errorf("no streams found in input")
+	}
+	if err := geometry.SetNodeDescription("demuxer", pipeline.NodeDescription{
+		Role: manifest.RoleDemuxer, Plugin: demuxManifest.Name, Configuration: demuxConfig, Outputs: streams,
+	}); err != nil {
+		return nil, err
 	}
 
 	inputStream := streams[0]
@@ -172,8 +187,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	decoderInput := currentStream
 	plans = append(plans, transformPlan{
 		id:        "decoder",
+		role:      manifest.RoleDecoder,
+		plugin:    decoderManifest.Name,
 		config:    decodeConfig,
 		resources: decoderManifest.Resources,
+		input:     decoderInput,
+		output:    decoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 			return decoderManifest.Factory(decoderInput, options)
 		},
@@ -203,13 +222,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			return nil, fmt.Errorf("resolve filter %d output stream: %w", i, err)
 		}
 		filterInput := currentStream
-		manifest := filterManifest
+		resolvedManifest := filterManifest
 		plans = append(plans, transformPlan{
 			id:        fmt.Sprintf("filter:%d", i),
+			role:      manifest.RoleFilter,
+			plugin:    resolvedManifest.Name,
 			config:    filterSpec.Config,
-			resources: manifest.Resources,
+			resources: resolvedManifest.Resources,
+			input:     filterInput,
+			output:    filterOutput,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-				return manifest.Factory(filterInput, options)
+				return resolvedManifest.Factory(filterInput, options)
 			},
 		})
 		currentStream = filterOutput
@@ -244,8 +267,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	encoderInput := currentStream
 	plans = append(plans, transformPlan{
 		id:        "encoder",
+		role:      manifest.RoleEncoder,
+		plugin:    encoderManifest.Name,
 		config:    encodeConfig,
 		resources: encoderManifest.Resources,
+		input:     encoderInput,
+		output:    encoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 			return encoderManifest.Factory(encoderInput, spec.TargetCodec, options)
 		},
@@ -279,7 +306,18 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", plan.id, err)
 		}
-		if err := geometry.AddNode(plan.id, transformNodes[i]); err != nil {
+		if err := geometry.AddNodeDef(pipeline.NodeDef{
+			ID:   plan.id,
+			Node: transformNodes[i],
+			Description: pipeline.NodeDescription{
+				Role:          plan.role,
+				Plugin:        plan.plugin,
+				Configuration: plan.config,
+				Resources:     allocations[i],
+				Inputs:        []media.StreamInfo{plan.input},
+				Outputs:       []media.StreamInfo{plan.output},
+			},
+		}); err != nil {
 			return nil, fmt.Errorf("add %s to geometry: %w", plan.id, err)
 		}
 	}
@@ -288,7 +326,13 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("create muxer: %w", err)
 	}
-	if err := geometry.AddNode("muxer", muxNode); err != nil {
+	if err := geometry.AddNodeDef(pipeline.NodeDef{
+		ID:   "muxer",
+		Node: muxNode,
+		Description: pipeline.NodeDescription{
+			Role: manifest.RoleMuxer, Plugin: muxManifest.Name, Configuration: muxConfig,
+		},
+	}); err != nil {
 		return nil, fmt.Errorf("add muxer to geometry: %w", err)
 	}
 	if err := muxNode.SetMetadata(demuxNode.Metadata().Clone()); err != nil {
@@ -299,20 +343,32 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if spec.PrepareOutputStream != nil {
 		outputStream = spec.PrepareOutputStream(outputStream)
 	}
-	if _, err := muxNode.AddStream(outputStream); err != nil {
+	outputIndex, err := muxNode.AddStream(outputStream)
+	if err != nil {
 		return nil, fmt.Errorf("add output stream to muxer: %w", err)
+	}
+	outputStream.Index = outputIndex
+	if err := geometry.SetNodeDescription("muxer", pipeline.NodeDescription{
+		Role: manifest.RoleMuxer, Plugin: muxManifest.Name, Configuration: muxConfig, Inputs: []media.StreamInfo{outputStream},
+	}); err != nil {
+		return nil, err
 	}
 
 	previous := "demuxer"
 	previousPort := "out"
-	for _, plan := range plans {
-		if err := geometry.AddEdge(previous, previousPort, plan.id, "in"); err != nil {
+	for i, plan := range plans {
+		if err := geometry.AddEdgeDef(pipeline.EdgeDef{
+			FromNode: previous, FromPort: previousPort, ToNode: plan.id, ToPort: "in",
+			Stream: plan.input, ProgressSource: i == 0,
+		}); err != nil {
 			return nil, err
 		}
 		previous = plan.id
 		previousPort = "out"
 	}
-	if err := geometry.AddEdge(previous, previousPort, "muxer", "in"); err != nil {
+	if err := geometry.AddEdgeDef(pipeline.EdgeDef{
+		FromNode: previous, FromPort: previousPort, ToNode: "muxer", ToPort: "in", Stream: outputStream,
+	}); err != nil {
 		return nil, err
 	}
 	return geometry, nil
@@ -385,8 +441,12 @@ func (n *Negotiator) satisfy(
 		*bridgeID++
 		plans = append(plans, transformPlan{
 			id:        id,
+			role:      manifest.RoleFilter,
+			plugin:    step.Manifest.Name,
 			config:    step.Config,
 			resources: step.Manifest.Resources,
+			input:     step.Input,
+			output:    step.Output,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 				return step.Manifest.Factory(step.Input, options)
 			},

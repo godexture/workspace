@@ -617,6 +617,34 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	if got := mux.addedStreams[0].Audio.SampleRate; got != 44103 {
 		t.Fatalf("muxer sample rate = %d, want 44103", got)
 	}
+	description := geometry.Description()
+	wantRoles := []manifest.NodeType{
+		manifest.RoleDemuxer,
+		manifest.RoleDecoder,
+		manifest.RoleFilter,
+		manifest.RoleFilter,
+		manifest.RoleEncoder,
+		manifest.RoleMuxer,
+	}
+	for i, want := range wantRoles {
+		if got := description.Nodes[i].Role; got != want {
+			t.Fatalf("description node %d role = %q, want %q", i, got, want)
+		}
+	}
+	if got, want := []int{
+		description.Nodes[1].Resources.Parallelism,
+		description.Nodes[2].Resources.Parallelism,
+		description.Nodes[3].Resources.Parallelism,
+		description.Nodes[4].Resources.Parallelism,
+	}, allocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("description allocations = %v, want %v", got, want)
+	}
+	if !description.Edges[0].ProgressSource {
+		t.Fatal("demuxer output edge is not marked as progress source")
+	}
+	if got, want := description.Edges[3].Stream.Audio.SampleRate, 44103; got != want {
+		t.Fatalf("encoder input edge sample rate = %d, want %d", got, want)
+	}
 }
 
 func TestNegotiatorResolvesCompletePlanBeforeCreatingTransforms(t *testing.T) {

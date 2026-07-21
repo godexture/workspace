@@ -52,6 +52,9 @@ type TransformManifest struct {
 	// the desired codec (the input codec for decoders) and cfg is the node
 	// configuration that will be used to construct the transform.
 	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
+	// TransformStreamFunc may update stream properties outside Profile, such as
+	// duration. When set, it is authoritative for TransformStream.
+	TransformStreamFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error)
 }
 
 type InputRequirementsFunc func(target media.CodecID, config Configuration) ([]manifest.Capability, error)
@@ -113,6 +116,9 @@ func (m TransformManifest) Transform(stream media.StreamInfo, target media.Codec
 }
 
 func (m TransformManifest) TransformStream(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error) {
+	if m.TransformStreamFunc != nil {
+		return m.TransformStreamFunc(stream, target, cfg)
+	}
 	if m.TransformFunc == nil {
 		return stream, nil
 	}

@@ -1,6 +1,10 @@
 package media
 
-import "github.com/godexture/core/domain/metadata"
+import (
+	"time"
+
+	"github.com/godexture/core/domain/metadata"
+)
 
 type StreamInfo struct {
 	Index int
@@ -9,6 +13,7 @@ type StreamInfo struct {
 	Metadata metadata.Bundle
 
 	IsDefault bool
+	Duration  time.Duration
 
 	MediaAttributes
 }

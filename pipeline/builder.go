@@ -30,11 +30,12 @@ func LinkWithBufferSize[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA 
 		return fmt.Errorf("input port '%s' not found on node B", portB)
 	}
 
-	edge := NewChanEdge[T](bufferSize)
+	return connectPorts(outPort, inPort, NewChanEdge[T](bufferSize))
+}
 
+func connectPorts[T any](outPort *node.OutPort[T], inPort *node.InPort[T], edge node.Edge[T]) error {
 	outPort.Connect(edge)
 	inPort.Connect(edge)
-
 	return nil
 }
 
@@ -58,9 +59,18 @@ func NewBuilder() *Builder {
 	return &Builder{}
 }
 
-func (b *Builder) Build(geo *Geometry) (*Pipeline, error) {
+func (b *Builder) Build(geo *Geometry, options ...BuildOption) (*Pipeline, error) {
 	if geo == nil {
 		return nil, fmt.Errorf("%w: geometry is nil", ErrInvalidPipeline)
+	}
+	config := buildConfig{}
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
+	}
+	if config.observation > ObservationMetrics {
+		return nil, fmt.Errorf("%w: unknown observation mode %d", ErrInvalidPipeline, config.observation)
 	}
 	nodeDefs, edges, err := geo.take()
 	if err != nil {
@@ -75,7 +85,11 @@ func (b *Builder) Build(geo *Geometry) (*Pipeline, error) {
 		nodeList = append(nodeList, n.Node)
 	}
 
-	for _, e := range edges {
+	var metricsByEdge []*edgeMetrics
+	if config.observation != ObservationOff {
+		metricsByEdge = make([]*edgeMetrics, len(edges))
+	}
+	for i, e := range edges {
 		fromNode, ok := nodeMap[e.FromNode]
 		if !ok {
 			return nil, errors.Join(
@@ -91,7 +105,14 @@ func (b *Builder) Build(geo *Geometry) (*Pipeline, error) {
 			)
 		}
 
-		if err := LinkAny(fromNode, e.FromPort, toNode, e.ToPort); err != nil {
+		observe := config.observation == ObservationMetrics || config.observation == ObservationProgress && e.ProgressSource
+		var metrics *edgeMetrics
+		if observe {
+			metrics = &edgeMetrics{description: e}
+			metricsByEdge[i] = metrics
+		}
+		progressOnly := config.observation == ObservationProgress && e.ProgressSource
+		if err := linkAnyConfigured(fromNode, e.FromPort, toNode, e.ToPort, metrics, progressOnly); err != nil {
 			return nil, errors.Join(
 				fmt.Errorf("%w: link %s:%s to %s:%s: %w", ErrInvalidPipeline, e.FromNode, e.FromPort, e.ToNode, e.ToPort, err),
 				closeNodes(nodeList),
@@ -99,9 +120,59 @@ func (b *Builder) Build(geo *Geometry) (*Pipeline, error) {
 		}
 	}
 
-	pipeline, err := New(nodeList...)
+	description := descriptionFromDefinitions(nodeDefs, edges)
+	pipeline, err := newPipeline(nodeList, description, config.observation, metricsByEdge)
 	if err != nil {
 		return nil, errors.Join(err, closeNodes(nodeList))
 	}
 	return pipeline, nil
+}
+
+func linkAnyConfigured(nodeA node.Node, portA string, nodeB node.Node, portB string, metrics *edgeMetrics, progressOnly bool) error {
+	if metrics == nil {
+		return LinkAny(nodeA, portA, nodeB, portB)
+	}
+	if outA, okA := nodeA.(node.OutputNode[*media.Packet]); okA {
+		if inB, okB := nodeB.(node.InputNode[*media.Packet]); okB {
+			if progressOnly {
+				return linkProgress(outA, portA, inB, portB, metrics)
+			}
+			return linkObserved(outA, portA, inB, portB, metrics)
+		}
+	}
+	if outA, okA := nodeA.(node.OutputNode[media.Frame]); okA {
+		if inB, okB := nodeB.(node.InputNode[media.Frame]); okB {
+			if progressOnly {
+				return linkProgress(outA, portA, inB, portB, metrics)
+			}
+			return linkObserved(outA, portA, inB, portB, metrics)
+		}
+	}
+	return fmt.Errorf("incompatible nodes or port types: %T and %T", nodeA, nodeB)
+}
+
+func linkProgress[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA string, nodeB B, portB string, metrics *edgeMetrics) error {
+	outPort, ok := nodeA.OutputPorts()[portA]
+	if !ok {
+		return fmt.Errorf("output port '%s' not found on node A", portA)
+	}
+	inPort, ok := nodeB.InputPorts()[portB]
+	if !ok {
+		return fmt.Errorf("input port '%s' not found on node B", portB)
+	}
+	edge := &progressEdge[T]{ChanEdge: NewChanEdge[T](100), metrics: metrics}
+	return connectPorts(outPort, inPort, edge)
+}
+
+func linkObserved[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA string, nodeB B, portB string, metrics *edgeMetrics) error {
+	outPort, ok := nodeA.OutputPorts()[portA]
+	if !ok {
+		return fmt.Errorf("output port '%s' not found on node A", portA)
+	}
+	inPort, ok := nodeB.InputPorts()[portB]
+	if !ok {
+		return fmt.Errorf("input port '%s' not found on node B", portB)
+	}
+	edge := &observedEdge[T]{ChanEdge: NewChanEdge[T](100), metrics: metrics}
+	return connectPorts(outPort, inPort, edge)
 }
