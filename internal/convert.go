@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	flac "github.com/godexture/codec-flac"
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
@@ -21,7 +20,6 @@ func newConvertCommand() *cobra.Command {
 	var format, codec string
 	var jobs int
 	var force bool
-	var flacPreset int
 	var filters []string
 	var configs map[string]registry.Configuration
 	command := &cobra.Command{
@@ -35,20 +33,12 @@ func newConvertCommand() *cobra.Command {
 	command.Flags().StringVar(&codec, "codec", "", "Output codec")
 	command.Flags().IntVarP(&jobs, "jobs", "j", 0, "Maximum parallel jobs")
 	command.Flags().BoolVar(&force, "force", false, "Overwrite an existing output file")
-	command.Flags().IntVar(&flacPreset, "encoder.flac.preset", -1, "FLAC compression preset (0-8)")
 	command.Flags().StringArrayVar(&filters, "filter", nil, "Filter specification (name:key=value,...)")
 	bindings, configs, err := bindPluginConfigurations(command)
 	if err != nil {
 		panic(err)
 	}
 	command.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if flacPreset >= 0 {
-			config, ok := configs["encoder.flac"].(*flac.EncoderConfig)
-			if !ok {
-				return fmt.Errorf("FLAC encoder configuration is unavailable")
-			}
-			*config = flac.NewEncoderConfig(flac.WithPreset(flacPreset))
-		}
 		for _, binding := range bindings {
 			if err := binding.binding.Apply(binding.config); err != nil {
 				return err
