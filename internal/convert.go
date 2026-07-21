@@ -30,11 +30,11 @@ func newConvertCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", "", "Output format")
-	command.Flags().StringVar(&codec, "codec", "", "Output codec")
+	command.Flags().StringVar(&codec, "codec", "", "Output codec specification (name:key=value,...)")
 	command.Flags().IntVarP(&jobs, "jobs", "j", 0, "Maximum parallel jobs")
 	command.Flags().BoolVar(&force, "force", false, "Overwrite an existing output file")
 	command.Flags().StringArrayVar(&filters, "filter", nil, "Filter specification (name:key=value,...)")
-	bindings, configs, err := bindPluginConfigurations(command)
+	bindings, configs, err := bindMuxerConfigurations(command)
 	if err != nil {
 		panic(err)
 	}
@@ -54,7 +54,7 @@ type configBinding struct {
 	binding *cliflag.Binding
 }
 
-func bindPluginConfigurations(command *cobra.Command) ([]configBinding, map[string]registry.Configuration, error) {
+func bindMuxerConfigurations(command *cobra.Command) ([]configBinding, map[string]registry.Configuration, error) {
 	bindings := make([]configBinding, 0)
 	configs := make(map[string]registry.Configuration)
 	bind := func(namespace string, config registry.Configuration) error {
@@ -75,15 +75,6 @@ func bindPluginConfigurations(command *cobra.Command) ([]configBinding, map[stri
 			return nil, nil, err
 		}
 	}
-	for manifest := range godec.DefaultEncoderRegistry.Enumerate() {
-		config, err := manifest.NewConfiguration()
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := bind("encoder."+manifest.Name, config); err != nil {
-			return nil, nil, err
-		}
-	}
 	return bindings, configs, nil
 }
 
@@ -98,9 +89,9 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 		return err
 	}
 	muxConfig := configs["muxer."+muxer.Name]
-	targetCodec := muxer.DefaultCodec
-	if codec != "" {
-		targetCodec = media.CodecID(codec)
+	targetCodec, codecValues, err := resolveCodec(codec, muxer.DefaultCodec)
+	if err != nil {
+		return err
 	}
 	if !muxer.Supports(targetCodec) {
 		return fmt.Errorf("format %q does not support codec %q", muxer.Name, targetCodec)
@@ -109,7 +100,13 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 	if err != nil {
 		return err
 	}
-	encoderConfig := configs["encoder."+encoder.Name]
+	encoderConfig, err := encoder.NewConfiguration()
+	if err != nil {
+		return err
+	}
+	if err := cliflag.DecodeStruct(encoderConfig, codecValues); err != nil {
+		return fmt.Errorf("codec %q: %w", encoder.Name, err)
+	}
 	filterSpecs, err := resolveFilters(filters)
 	if err != nil {
 		return err
@@ -136,6 +133,17 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec str
 		return err
 	}
 	return output.commit()
+}
+
+func resolveCodec(value string, defaultCodec media.CodecID) (media.CodecID, map[string]string, error) {
+	if value == "" {
+		return defaultCodec, nil, nil
+	}
+	spec, err := cliflag.ParseSpec(value)
+	if err != nil {
+		return "", nil, fmt.Errorf("codec: %w", err)
+	}
+	return media.CodecID(spec.Name), spec.Values, nil
 }
 
 func resolveFilters(values []string) ([]routing.FilterSpec, error) {
