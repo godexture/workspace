@@ -57,10 +57,21 @@ func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding
 		if flags.Lookup(name) != nil {
 			return nil, fmt.Errorf("flag %q already exists", name)
 		}
-		field.value = &flagValue{typeOf: field.typeOf, raw: formatValue(value.Field(field.index))}
-		flags.Var(field.value, name, field.help)
+		defaultValue := formatValue(value.Field(field.index))
+		field.value = &flagValue{typeOf: field.typeOf, raw: defaultValue}
+		flags.Var(field.value, name, helpWithDefault(field.help, value.Field(field.index), defaultValue))
 	}
 	return binding, nil
+}
+
+func helpWithDefault(help string, value reflect.Value, defaultValue string) string {
+	if !value.IsZero() && !(value.Kind() == reflect.Slice && value.Len() == 0) {
+		return help
+	}
+	if help == "" {
+		return "Default: " + defaultValue
+	}
+	return help + " (default: " + defaultValue + ")"
 }
 
 func (b *Binding) Apply(target any) error {

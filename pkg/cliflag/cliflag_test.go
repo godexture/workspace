@@ -75,6 +75,20 @@ func TestBindingRejectsInvalidChoiceWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
+func TestBindingShowsZeroValueDefaults(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	_, err := BindStruct(flags, "", &testConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage := flags.Lookup("enabled").Usage; !strings.Contains(usage, "default: false") {
+		t.Fatalf("enabled usage = %q", usage)
+	}
+	if usage := flags.Lookup("limit").Usage; !strings.Contains(usage, "default: 0") {
+		t.Fatalf("limit usage = %q", usage)
+	}
+}
+
 func TestDecodeStructValidatesAndRejectsUnknownFields(t *testing.T) {
 	actual := testConfig{}
 	if err := DecodeStruct(&actual, map[string]string{"limit": "3", "mode": "fast"}); err != nil {
