@@ -89,6 +89,21 @@ func TestBindingShowsZeroValueDefaults(t *testing.T) {
 	}
 }
 
+func TestBindingOwnsEveryDefaultDisplay(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	_, err := BindStruct(flags, "", &testConfig{Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := flags.Lookup("limit")
+	if flag.DefValue != "" {
+		t.Fatalf("DefValue = %q, want empty", flag.DefValue)
+	}
+	if !strings.Contains(flag.Usage, "default: 5") {
+		t.Fatalf("limit usage = %q", flag.Usage)
+	}
+}
+
 func TestDecodeStructValidatesAndRejectsUnknownFields(t *testing.T) {
 	actual := testConfig{}
 	if err := DecodeStruct(&actual, map[string]string{"limit": "3", "mode": "fast"}); err != nil {
