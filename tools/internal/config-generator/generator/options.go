@@ -66,6 +66,7 @@ func generatePresetOptions(body *bytes.Buffer, targets []*types.Target) {
 			fmt.Fprintf(body, "\treturn %s(func(c *%s) {\n", funcOptName, t.Type)
 			fmt.Fprintf(body, "\t\t*c = %s(%s(level))\n", t.Type, t.Preset)
 			fmt.Fprintf(body, "\t})\n}\n\n")
+			fmt.Fprintf(body, "func (c *%s) ApplyPreset(level int) {\n\t*c = New%s(WithPreset(level))\n}\n\n", t.Type, t.Type)
 		} else {
 			fmt.Fprintf(body, "type PresetOption interface {\n")
 			for _, t := range presetTargets {
@@ -78,6 +79,7 @@ func generatePresetOptions(body *bytes.Buffer, targets []*types.Target) {
 				fmt.Fprintf(body, "func (o presetOpt) apply%s(c *%s) {\n", t.Type, t.Type)
 				fmt.Fprintf(body, "\t*c = %s(%s(int(o)))\n", t.Type, t.Preset)
 				fmt.Fprintf(body, "}\n")
+				fmt.Fprintf(body, "func (c *%s) ApplyPreset(level int) {\n\t*c = %s(%s(level))\n}\n", t.Type, t.Type, t.Preset)
 			}
 			fmt.Fprintf(body, "\nfunc WithPreset(level int) PresetOption {\n")
 			fmt.Fprintf(body, "\treturn presetOpt(level)\n")

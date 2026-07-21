@@ -192,3 +192,7 @@ func WithPreset(level int) EncoderConfigOption {
 		*c = EncoderConfig(config.GetPreset(level))
 	})
 }
+
+func (c *EncoderConfig) ApplyPreset(level int) {
+	*c = NewEncoderConfig(WithPreset(level))
+}

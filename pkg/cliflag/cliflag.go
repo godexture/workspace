@@ -13,9 +13,11 @@ import (
 )
 
 type Binding struct {
-	fields []field
-	flags  *pflag.FlagSet
-	typeOf reflect.Type
+	fields     []field
+	flags      *pflag.FlagSet
+	typeOf     reflect.Type
+	preset     *int
+	presetFlag string
 }
 
 type field struct {
@@ -33,6 +35,10 @@ type choiceProvider interface {
 
 type validator interface {
 	Validate() error
+}
+
+type presetApplier interface {
+	ApplyPreset(int)
 }
 
 func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding, error) {
@@ -60,7 +66,21 @@ func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding
 		defaultValue := formatValue(value.Field(field.index))
 		field.value = &flagValue{typeOf: field.typeOf, raw: defaultValue}
 		flags.Var(field.value, name, helpWithDefault(field.help, defaultValue))
-		flags.Lookup(name).DefValue = ""
+		flags.Lookup(name).DefValue = "0"
+	}
+	if _, ok := prototype.(presetApplier); ok {
+		name := "preset"
+		if namespace != "" {
+			name = namespace + "." + name
+		}
+		if flags.Lookup(name) != nil {
+			return nil, fmt.Errorf("flag %q already exists", name)
+		}
+		binding.preset = new(int)
+		*binding.preset = -1
+		binding.presetFlag = name
+		flags.IntVar(binding.preset, name, -1, helpWithDefault("Configuration preset", "-1"))
+		flags.Lookup(name).DefValue = "0"
 	}
 	return binding, nil
 }
@@ -82,6 +102,16 @@ func (b *Binding) Apply(target any) error {
 	}
 	copy := reflect.New(typeOf).Elem()
 	copy.Set(value)
+	if b.preset != nil {
+		flag := b.flags.Lookup(b.presetFlag)
+		if flag != nil && flag.Changed {
+			applier, ok := copy.Addr().Interface().(presetApplier)
+			if !ok {
+				return fmt.Errorf("--%s: configuration does not support presets", flag.Name)
+			}
+			applier.ApplyPreset(*b.preset)
+		}
+	}
 	for _, field := range b.fields {
 		flag := b.flags.Lookup(flagName(b.flags, field.value))
 		if flag == nil || !flag.Changed {
@@ -108,6 +138,9 @@ func (b *Binding) ChangedFlags() []string {
 		if flag != nil && flag.Changed {
 			names = append(names, flag.Name)
 		}
+	}
+	if b.preset != nil && b.flags.Lookup(b.presetFlag).Changed {
+		names = append(names, b.presetFlag)
 	}
 	return names
 }
