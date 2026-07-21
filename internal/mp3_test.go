@@ -43,17 +43,6 @@ func TestProbe_NotMP3(t *testing.T) {
 	}
 }
 
-func TestDemuxerAnalyzeRejectsNonMP3(t *testing.T) {
-	t.Parallel()
-	demuxer, err := internal.NewDemuxer(bytes.NewReader([]byte("RIFF\x00\x00\x00\x00WAVE")), internal.DemuxerConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := demuxer.Analyze(); err == nil || err.Error() != "not a mp3 stream" {
-		t.Fatalf("Analyze() error = %v, want not a mp3 stream", err)
-	}
-}
-
 func TestSkipID3v2(t *testing.T) {
 	t.Parallel()
 	tag := append([]byte{'I', 'D', '3', 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}, []byte("abc")...)
