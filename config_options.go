@@ -320,6 +320,45 @@ func (c TrimConfig) FieldChoices(field string) []string {
 	}
 }
 
+type SpeedConfig config.SpeedConfig
+
+type SpeedConfigOption interface {
+	applySpeedConfig(*SpeedConfig)
+}
+
+type speedConfigOptionFunc func(*SpeedConfig)
+
+func (f speedConfigOptionFunc) applySpeedConfig(c *SpeedConfig) {
+	f(c)
+}
+
+func NewSpeedConfig(options ...SpeedConfigOption) SpeedConfig {
+	config := SpeedConfig(config.DefaultSpeedConfig)
+	for _, option := range options {
+		option.applySpeedConfig(&config)
+	}
+	return config
+}
+
+func (c SpeedConfig) ResolveDefault() config.SpeedConfig {
+	return config.SpeedConfig(config.DefaultSpeedConfig)
+}
+
+func (c SpeedConfig) Resolve() config.SpeedConfig {
+	return config.SpeedConfig(c)
+}
+
+func (c SpeedConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c SpeedConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
 		c.Format = v
@@ -451,5 +490,11 @@ func WithPole(v float64) DCOffsetConfigOption {
 func WithThresholdDBFS(v float64) TrimConfigOption {
 	return trimConfigOptionFunc(func(c *TrimConfig) {
 		c.ThresholdDBFS = v
+	})
+}
+
+func WithFactor(v float64) SpeedConfigOption {
+	return speedConfigOptionFunc(func(c *SpeedConfig) {
+		c.Factor = v
 	})
 }

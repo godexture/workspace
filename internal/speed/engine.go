@@ -1,7 +1,8 @@
-package resample
+package speed
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/audio"
@@ -11,7 +12,7 @@ import (
 )
 
 type Engine struct {
-	config config.ResampleConfig
+	config config.SpeedConfig
 	queue  framequeue.Single
 
 	initialized  bool
@@ -24,7 +25,7 @@ type Engine struct {
 	resampler    *linear.Resampler
 }
 
-func New(config config.ResampleConfig) (*Engine, error) {
+func New(config config.SpeedConfig) (*Engine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -41,12 +42,11 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	} else if err := e.validateInput(block); err != nil {
 		return err
 	}
-	if e.inputRate == e.config.SampleRate {
+	if e.config.Factor == 1 {
 		input := (*frame).(*media.AudioFrame)
 		input.Retain()
 		return e.queue.Push(input)
 	}
-
 	output := e.resampler.Process(block)
 	e.totalInput += int64(block.Samples())
 	if output.Samples() == 0 {
@@ -62,7 +62,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
 
 func (e *Engine) Flush() error {
-	if !e.initialized || e.inputRate == e.config.SampleRate {
+	if !e.initialized || e.config.Factor == 1 {
 		e.queue.Flush()
 		return nil
 	}
@@ -92,15 +92,19 @@ func (e *Engine) initialize(block audio.Block) {
 	e.format = block.Format
 	e.bits = block.Bits
 	e.baseInputPTS = block.PTS
-	e.resampler = linear.NewResampler(e.inputRate, e.config.SampleRate, e.config.SampleRate, block.PTS)
+	target := int(math.Round(float64(block.Rate) / e.config.Factor))
+	if target < 1 {
+		target = 1
+	}
+	e.resampler = linear.NewResampler(e.inputRate, target, e.inputRate, block.PTS)
 }
 
 func (e *Engine) validateInput(block audio.Block) error {
 	if block.Rate != e.inputRate || block.Layout != e.layout || block.Format != e.format || block.Bits != e.bits {
-		return fmt.Errorf("resample input format changed within stream")
+		return fmt.Errorf("speed input format changed within stream")
 	}
 	if block.PTS != e.baseInputPTS+media.Pts(e.totalInput) {
-		return fmt.Errorf("resample input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
+		return fmt.Errorf("speed input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
 	}
 	return nil
 }

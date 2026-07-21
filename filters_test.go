@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
+	"github.com/godexture/filter-audio/internal/speed"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/engine"
 )
@@ -27,6 +28,54 @@ func TestResampleLinearInterpolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSamples(t, receive(t, item), []float32{1, 1})
+	assertEOF(t, item)
+}
+
+func TestSpeedDoublesRateShortensOutput(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	output := receive(t, item)
+	assertSamples(t, output, []float32{0, 4})
+	if output.(*media.AudioFrame).SampleRate != 4 {
+		t.Fatalf("SampleRate = %d, want 4 (unchanged)", output.(*media.AudioFrame).SampleRate)
+	}
+	assertEOF(t, item)
+}
+
+func TestSpeedHalvesRateLengthensOutput(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	assertSamples(t, receive(t, item), []float32{0, 1, 2, 3, 4, 5})
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertSamples(t, receive(t, item), []float32{6, 6})
+	assertEOF(t, item)
+}
+
+func TestSpeedFactorOnePassesThrough(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	output := receive(t, item)
+	assertSamples(t, output, []float32{0, 2, 4, 6})
+	if output.(*media.AudioFrame).SampleRate != 4 {
+		t.Fatalf("SampleRate = %d, want 4 (unchanged)", output.(*media.AudioFrame).SampleRate)
+	}
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	assertEOF(t, item)
 }
 

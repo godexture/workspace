@@ -60,6 +60,10 @@ type TrimConfig struct {
 	TempDir          string  `name:"temp-dir" help:"Temporary directory"`
 }
 
+type SpeedConfig struct {
+	Factor float64 `name:"factor" help:"Playback speed multiplier (e.g. 2 for double speed, 0.5 for half); pitch shifts with speed"`
+}
+
 var (
 	DefaultFormatConfig   = FormatConfig{}
 	DefaultResampleConfig = ResampleConfig{}
@@ -78,6 +82,7 @@ var (
 	DefaultFadeConfig     = FadeConfig{MemoryLimitBytes: defaultMemoryLimitBytes}
 	DefaultDCOffsetConfig = DCOffsetConfig{Pole: 0.995}
 	DefaultTrimConfig     = TrimConfig{ThresholdDBFS: -60, MemoryLimitBytes: defaultMemoryLimitBytes}
+	DefaultSpeedConfig    = SpeedConfig{Factor: 1}
 )
 
 func (c FormatConfig) Validate() error {
@@ -143,6 +148,13 @@ func (c TrimConfig) Validate() error {
 		return fmt.Errorf("trim threshold must be finite and no greater than 0 dBFS")
 	}
 	return validateMemoryLimit(c.MemoryLimitBytes)
+}
+
+func (c SpeedConfig) Validate() error {
+	if !finite(c.Factor) || c.Factor <= 0 {
+		return fmt.Errorf("speed factor must be finite and positive")
+	}
+	return nil
 }
 
 func validateMemoryLimit(value int64) error {
