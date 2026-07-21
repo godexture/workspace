@@ -17,7 +17,7 @@ import (
 )
 
 func newConvertCommand() *cobra.Command {
-	var format, codec, demux, decode string
+	var format, codec, demuxer, decoder string
 	var jobs int
 	var force bool
 	var filters []string
@@ -25,20 +25,20 @@ func newConvertCommand() *cobra.Command {
 		Use:  "convert INPUT OUTPUT",
 		Args: cobra.ExactArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
-			return runConvert(command, args[0], args[1], format, codec, demux, decode, jobs, force, filters)
+			return runConvert(command, args[0], args[1], format, codec, demuxer, decoder, jobs, force, filters)
 		},
 	}
 	command.Flags().StringVar(&format, "format", "", "Output format specification (name:key=value,...)")
 	command.Flags().StringVar(&codec, "codec", "", "Output codec specification (name:key=value,...)")
-	command.Flags().StringVar(&demux, "demux", "", "Input demuxer specification (name:key=value,...)")
-	command.Flags().StringVar(&decode, "decode", "", "Input decoder specification (name:key=value,...)")
+	command.Flags().StringVar(&demuxer, "demuxer", "", "Input demuxer specification (name:key=value,...)")
+	command.Flags().StringVar(&decoder, "decoder", "", "Input decoder specification (name:key=value,...)")
 	command.Flags().IntVarP(&jobs, "jobs", "j", 0, "Maximum parallel jobs")
 	command.Flags().BoolVar(&force, "force", false, "Overwrite an existing output file")
 	command.Flags().StringArrayVar(&filters, "filter", nil, "Filter specification (name:key=value,...)")
 	return command
 }
 
-func runConvert(command *cobra.Command, inputPath, outputPath, format, codec, demux, decoder string, jobs int, force bool, filters []string) error {
+func runConvert(command *cobra.Command, inputPath, outputPath, format, codec, demuxer, decoder string, jobs int, force bool, filters []string) error {
 	input, err := os.Open(inputPath)
 	if err != nil {
 		return err
@@ -67,7 +67,7 @@ func runConvert(command *cobra.Command, inputPath, outputPath, format, codec, de
 	if err != nil {
 		return err
 	}
-	demuxManifest, demuxConfig, err := resolvePlugin("demuxer", demux, godec.DefaultDemuxerRegistry)
+	demuxManifest, demuxConfig, err := resolvePlugin("demuxer", demuxer, godec.DefaultDemuxerRegistry)
 	if err != nil {
 		return err
 	}
