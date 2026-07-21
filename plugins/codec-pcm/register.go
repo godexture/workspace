@@ -11,10 +11,10 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) engine.DecoderEngine {
+func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) (engine.DecoderEngine, error) {
 	resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return internal.NewDecoder(stream, resolved)
 }
@@ -52,7 +52,11 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
-			return engine.WrapDecoder(internal.NewDecoder(s, resolved)), nil
+			decoder, err := internal.NewDecoder(s, resolved)
+			if err != nil {
+				return nil, err
+			}
+			return engine.WrapDecoder(decoder), nil
 		},
 	}); err != nil {
 		panic(err)

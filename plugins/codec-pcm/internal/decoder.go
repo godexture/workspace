@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
@@ -48,7 +49,7 @@ type Decoder struct {
 	flushed bool
 }
 
-func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) *Decoder {
+func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) (*Decoder, error) {
 	if stream.MediaAttributes.Codec != "" {
 		cfg.codecID = stream.MediaAttributes.Codec
 	}
@@ -79,9 +80,21 @@ func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) *Decoder {
 	if cfg.channelLayout.ChannelCount() == 0 && isG711 {
 		cfg.channelLayout = media.LayoutMono1
 	}
+	if !supportsCodec(cfg.codecID) {
+		return nil, fmt.Errorf("codec-pcm decoder does not support codec %q", cfg.codecID)
+	}
 
 	return &Decoder{
 		config: cfg,
+	}, nil
+}
+
+func supportsCodec(codec media.CodecID) bool {
+	switch codec {
+	case media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM:
+		return true
+	default:
+		return false
 	}
 }
 

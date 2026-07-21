@@ -51,7 +51,10 @@ func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {
 				t.Fatalf("no streams found in %s", e.Name())
 			}
 
-			decoder := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			decoder, err := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			if err != nil {
+				t.Fatalf("NewDecoderEngine: %v", err)
+			}
 			encoder := pcm.NewEncoderEngine(streams[0], pcm.NewEncoderConfig())
 
 			f := testutil.NewBuffer(nil)
