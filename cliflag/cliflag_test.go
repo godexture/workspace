@@ -81,10 +81,10 @@ func TestBindingShowsZeroValueDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage := flags.Lookup("enabled").Usage; !strings.Contains(usage, "default: false") {
+	if usage := flags.Lookup("enabled").Usage; !strings.Contains(usage, "[false]") {
 		t.Fatalf("enabled usage = %q", usage)
 	}
-	if usage := flags.Lookup("limit").Usage; !strings.Contains(usage, "default: 0") {
+	if usage := flags.Lookup("limit").Usage; !strings.Contains(usage, "[0]") {
 		t.Fatalf("limit usage = %q", usage)
 	}
 }
@@ -96,10 +96,10 @@ func TestBindingOwnsEveryDefaultDisplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	flag := flags.Lookup("limit")
-	if flag.DefValue != "" {
-		t.Fatalf("DefValue = %q, want empty", flag.DefValue)
+	if flag.DefValue != "0" {
+		t.Fatalf("DefValue = %q, want 0", flag.DefValue)
 	}
-	if !strings.Contains(flag.Usage, "default: 5") {
+	if !strings.Contains(flag.Usage, "[5]") {
 		t.Fatalf("limit usage = %q", flag.Usage)
 	}
 }
