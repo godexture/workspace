@@ -56,21 +56,21 @@ type EncoderConfig struct {
 	bitsPerSample int
 
 	// Compression parameters.
-	BlockSize             int             `cli:"block-size" help:"FLAC block size in samples"`
-	MaxFixedOrder         int             `cli:"max-fixed-order" help:"Maximum fixed predictor order"`
-	MaxLPCOrder           int             `cli:"max-lpc-order" help:"Maximum LPC predictor order"`
-	MaxRicePartitionOrder int             `cli:"max-rice-partition-order" help:"Maximum Rice partition order"`
-	LPCPrecision          int             `cli:"lpc-precision" help:"LPC coefficient precision"`
-	EnablePrecisionSearch bool            `cli:"precision-search" help:"Enable LPC precision search"`
-	EnableWastedBits      bool            `cli:"wasted-bits" help:"Enable wasted-bits optimization"`
-	StereoMode            StereoMode      `cli:"stereo-mode" help:"Stereo coding mode"`
-	FixedOrderSearch      OrderSearchMode `cli:"fixed-order-search" help:"Fixed predictor order search"`
-	LPCOrderSearch        OrderSearchMode `cli:"lpc-order-search" help:"LPC predictor order search"`
-	RiceCost              RiceCostMode    `cli:"rice-cost" help:"Rice parameter cost mode"`
+	BlockSize             int             `name:"block-size" help:"FLAC block size in samples"`
+	MaxFixedOrder         int             `name:"max-fixed-order" help:"Maximum fixed predictor order"`
+	MaxLPCOrder           int             `name:"max-lpc-order" help:"Maximum LPC predictor order"`
+	MaxRicePartitionOrder int             `name:"max-rice-partition-order" help:"Maximum Rice partition order"`
+	LPCPrecision          int             `name:"lpc-precision" help:"LPC coefficient precision"`
+	EnablePrecisionSearch bool            `name:"precision-search" help:"Enable LPC precision search"`
+	EnableWastedBits      bool            `name:"wasted-bits" help:"Enable wasted-bits optimization"`
+	StereoMode            StereoMode      `name:"stereo-mode" help:"Stereo coding mode"`
+	FixedOrderSearch      OrderSearchMode `name:"fixed-order-search" help:"Fixed predictor order search"`
+	LPCOrderSearch        OrderSearchMode `name:"lpc-order-search" help:"LPC predictor order search"`
+	RiceCost              RiceCostMode    `name:"rice-cost" help:"Rice parameter cost mode"`
 	Apodizations          []flac.Apodization
-	BlockSplitDepth       int            `cli:"block-split-depth" help:"Block split depth"`
-	BlockSplitMode        BlockSplitMode `cli:"block-split-mode" help:"Block split strategy"`
-	StreamableSubset      bool           `cli:"streamable-subset" help:"Restrict output to the FLAC streamable subset"`
+	BlockSplitDepth       int            `name:"block-split-depth" help:"Block split depth"`
+	BlockSplitMode        BlockSplitMode `name:"block-split-mode" help:"Block split strategy"`
+	StreamableSubset      bool           `name:"streamable-subset" help:"Restrict output to the FLAC streamable subset"`
 }
 
 func (c EncoderConfig) SampleRate() int    { return c.sampleRate }

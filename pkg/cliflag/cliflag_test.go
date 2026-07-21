@@ -11,11 +11,11 @@ import (
 type testMode string
 
 type testConfig struct {
-	Enabled bool          `cli:"enabled" help:"Enable processing"`
-	Limit   int           `cli:"limit" help:"Processing limit"`
-	Delay   time.Duration `cli:"delay" help:"Processing delay"`
-	Mode    testMode      `cli:"mode" help:"Processing mode"`
-	Tags    []string      `cli:"tag" help:"Processing tags"`
+	Enabled bool          `name:"enabled" help:"Enable processing"`
+	Limit   int           `name:"limit" help:"Processing limit"`
+	Delay   time.Duration `name:"delay" help:"Processing delay"`
+	Mode    testMode      `name:"mode" help:"Processing mode"`
+	Tags    []string      `name:"tag" help:"Processing tags"`
 }
 
 func (testConfig) FieldChoices(field string) []string {

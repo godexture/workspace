@@ -199,7 +199,7 @@ func fieldsFor(typeOf reflect.Type) ([]field, error) {
 	seen := map[string]struct{}{}
 	for index := range typeOf.NumField() {
 		structField := typeOf.Field(index)
-		tag, exists := structField.Tag.Lookup("cli")
+		tag, exists := structField.Tag.Lookup("name")
 		if !exists || tag == "-" {
 			continue
 		}
