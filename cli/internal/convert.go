@@ -17,93 +17,38 @@ import (
 )
 
 func newConvertCommand() *cobra.Command {
-	var format, codec, demuxer, decoder string
-	var jobs int
-	var force bool
-	var filters []string
+	var options convertOptions
 	command := &cobra.Command{
 		Use:  "convert INPUT OUTPUT",
 		Args: cobra.ExactArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
-			return runConvert(command, args[0], args[1], format, codec, demuxer, decoder, jobs, force, filters)
+			return runConvert(command, args[0], args[1], options)
 		},
 	}
-	command.Flags().StringVar(&format, "format", "", "Output format specification (name:key=value,...)")
-	command.Flags().StringVar(&codec, "codec", "", "Output codec specification (name:key=value,...)")
-	command.Flags().StringVar(&demuxer, "demuxer", "", "Input demuxer specification (name:key=value,...)")
-	command.Flags().StringVar(&decoder, "decoder", "", "Input decoder specification (name:key=value,...)")
-	command.Flags().IntVarP(&jobs, "jobs", "j", 0, "Maximum parallel jobs")
-	command.Flags().BoolVar(&force, "force", false, "Overwrite an existing output file")
-	command.Flags().StringArrayVar(&filters, "filter", nil, "Filter specification (name:key=value,...)")
+	command.Flags().StringVar(&options.format, "format", "", "Output format specification (name:key=value,...)")
+	command.Flags().StringVar(&options.codec, "codec", "", "Output codec specification (name:key=value,...)")
+	command.Flags().StringVar(&options.demuxer, "demuxer", "", "Input demuxer specification (name:key=value,...)")
+	command.Flags().StringVar(&options.decoder, "decoder", "", "Input decoder specification (name:key=value,...)")
+	command.Flags().IntVarP(&options.jobs, "jobs", "j", 0, "Maximum parallel jobs")
+	command.Flags().BoolVar(&options.force, "force", false, "Overwrite an existing output file")
+	command.Flags().StringArrayVar(&options.filters, "filter", nil, "Filter specification (name:key=value,...)")
+	command.Flags().StringVar(&options.progress, "progress", "auto", "Progress display: auto, always, or never")
+	command.Flags().BoolVar(&options.metrics, "metrics", false, "Report conversion and runtime metrics")
+	command.Flags().BoolVar(&options.dryRun, "dry-run", false, "Resolve and validate the pipeline without converting")
 	return command
 }
 
-func runConvert(command *cobra.Command, inputPath, outputPath, format, codec, demuxer, decoder string, jobs int, force bool, filters []string) error {
-	input, err := os.Open(inputPath)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	muxer, muxValues, err := selectMuxer(format, outputPath)
-	if err != nil {
-		return err
-	}
-	muxConfig, err := configureManifest("format", muxer, muxValues)
-	if err != nil {
-		return err
-	}
-	targetCodec, codecValues, err := resolveCodec(codec, muxer.DefaultCodec)
-	if err != nil {
-		return err
-	}
-	if !muxer.Supports(targetCodec) {
-		return fmt.Errorf("format %q does not support codec %q", muxer.Name, targetCodec)
-	}
-	encoder, err := godec.NewResolver().NewEncoderResolver(godec.DefaultEncoderRegistry).ResolveEncoder(targetCodec)
-	if err != nil {
-		return err
-	}
-	encoderConfig, err := configureManifest("codec", encoder, codecValues)
-	if err != nil {
-		return err
-	}
-	demuxManifest, demuxConfig, err := resolvePlugin("demuxer", demuxer, godec.DefaultDemuxerRegistry)
-	if err != nil {
-		return err
-	}
-	decoderManifest, decodeConfig, err := resolvePlugin("decoder", decoder, godec.DefaultDecoderRegistry)
-	if err != nil {
-		return err
-	}
-	filterSpecs, err := resolveFilters(filters)
-	if err != nil {
-		return err
-	}
-	output, skip, err := prepareOutput(command, outputPath, force)
-	if err != nil || skip {
-		return err
-	}
-	defer output.abort()
-	geometry, err := godec.NewNegotiator().NegotiateConversion(command.Context(), routing.ConversionSpec{
-		Input: input, Output: output.file,
-		DemuxManifest: demuxManifest, DemuxConfig: demuxConfig,
-		DecoderManifest: decoderManifest, DecodeConfig: decodeConfig,
-		Filters: filterSpecs, TargetCodec: targetCodec, EncodeConfig: encoderConfig, MuxConfig: muxConfig,
-		Resources: registry.ResourceBudget{Parallelism: jobs},
-	})
-	if err != nil {
-		return err
-	}
-	conversion, err := godec.NewBuilder().Build(geometry)
-	if err != nil {
-		_ = geometry.Close()
-		return err
-	}
-	defer conversion.Close()
-	if err := conversion.Run(command.Context()); err != nil {
-		return err
-	}
-	return output.commit()
+type convertOptions struct {
+	format   string
+	codec    string
+	demuxer  string
+	decoder  string
+	progress string
+	jobs     int
+	force    bool
+	metrics  bool
+	dryRun   bool
+	filters  []string
 }
 
 func resolveCodec(value string, defaultCodec media.CodecID) (media.CodecID, map[string]string, error) {

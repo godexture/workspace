@@ -28,6 +28,27 @@ type FieldDescription struct {
 	Choices []string
 }
 
+type FieldValue struct {
+	Name  string
+	Value string
+}
+
+func StructValues(target any) ([]FieldValue, error) {
+	value, typeOf, err := structValue(target)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := fieldsFor(typeOf)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]FieldValue, 0, len(fields))
+	for _, field := range fields {
+		values = append(values, FieldValue{Name: field.name, Value: descriptionDefault(value.Field(field.index))})
+	}
+	return values, nil
+}
+
 type field struct {
 	index  int
 	goName string

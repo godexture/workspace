@@ -1,8 +1,6 @@
 package metadata
 
 import (
-	"time"
-
 	"github.com/godexture/sdk/date"
 )
 
@@ -10,7 +8,6 @@ type KeyId string
 type KeyFilename string
 type KeySize uint64
 type KeyMimeType string
-type KeyDuration time.Duration
 type KeyDate date.Partial
 type KeyTitle string
 type KeyDescription string
@@ -35,7 +32,6 @@ func (k KeyId) single()          {}
 func (k KeyFilename) single()    {}
 func (k KeySize) single()        {}
 func (k KeyMimeType) single()    {}
-func (k KeyDuration) single()    {}
 func (k KeyDate) single()        {}
 func (k KeyTitle) single()       {}
 func (k KeyDescription) single() {}

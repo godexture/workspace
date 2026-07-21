@@ -430,6 +430,43 @@ Packet object pool 後は frame scanner が MP3 demux CPU の累積55.07%を占�
 は 5.27 GB/s で、残りは必須 `memmove` 12.70%、Packet pool/atomic、
 複数の5〜7% header 演算に分散したため、この plugin の最適化を終了した。
 
+## Pipeline observation fast paths
+
+パイプライン観測は `Off`、`Progress`、`Metrics` の実行経路を分離した。`Off` は
+通常の `ChanEdge` を直接接続し、edge の atomic 更新、node collector、runtime
+sampler、表示 goroutine を生成しない。`Progress` は選択入力 edge の item 数と
+最大メディア時刻だけを更新し、`Metrics` は全 node/edge を収集する。
+
+同一テストバイナリの synthetic demux-decode-discard pipeline を使い、64 MiB を
+各標本1回、30標本、AB/BA の順序を標本ごとに反転して測定した。各 timed run
+の前に GC を実行して packet/frame pool と heap の開始条件を揃えた。この節の
+数値はこの実行内の paired 比較だけに使い、過去の測定値とは比較していない。
+
+| comparison | median overhead | criterion |
+| --- | ---: | ---: |
+| `ObservationOff` / direct `ChanEdge` | -4.985% | slowdown 1%以内 |
+| `ObservationProgress` / `ObservationOff` | +1.098% | slowdown 3%以内 |
+| `ObservationMetrics` / `ObservationOff` | +3.928% | 固定閾値なし |
+
+packet/frame の edge 単体 microbenchmark は同一 object を再利用し、全モードで
+`0 B/op, 0 allocs/op` だった。Progress/Off の差は atomic 更新の CPU コストだけで、
+item 数に比例する追加 allocation はない。
+
+| item | plain | progress | metrics |
+| --- | ---: | ---: | ---: |
+| packet | 103.0 ns/op | 148.3 ns/op | 206.8 ns/op |
+| audio frame | 163.2 ns/op | 160.2 ns/op | 256.8 ns/op |
+
+各モードの64 MiB CPU/heap profile は別々の専用 benchmark で採取した。Off-only
+profile を観測 edge、`runtime.ReadMemStats`、formatter、progress reporter、ticker、
+node metrics のシンボルへ絞った結果、CPU・heap とも sample はゼロだった。
+Progress/Metrics の上位 hotspot は synthetic input の packet 生成・copy と runtime
+scheduler で、観測処理による想定外の保持 object は見つからなかった。
+
+測定環境はこの文書冒頭の Windows/amd64、Go 1.26.4、Core i7-13620H。実行時間は
+電源供給・電源モードの影響を受けるため絶対値の判定には使わず、上記の同一実行内
+paired 中央値だけで基準を評価した。
+
 ## Investigated and stopped candidates
 
 10%以上の改善が難しい候補は実装を残さず、次の領域へ移った。

@@ -423,6 +423,7 @@ func (r *ResourceBase) Release()  // refCount-- → 0でfree()
 type StreamInfo struct {
     Index       int
     Type        MediaType
+    Duration    time.Duration
     Metadata    metadata.Bundle
     IsDefault   bool
     MediaAttributes

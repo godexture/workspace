@@ -92,6 +92,12 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			d.bitRate = int(float64(vh.Bytes) * 8.0 / d.duration.Seconds())
 		}
 	}
+	if d.duration == 0 && d.bitRate > 0 {
+		if size, sizeErr := getFileSize(d.r); sizeErr == nil && size > d.firstFrameOffset {
+			seconds := float64(size-d.firstFrameOffset) * 8 / float64(d.bitRate)
+			d.duration = time.Duration(seconds * float64(time.Second))
+		}
+	}
 
 	channelLayout := media.LayoutStereo2_0
 	if frameHeader.ChannelMode == header.ChannelModeMono {
@@ -102,6 +108,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 		Index:     0,
 		Type:      media.MediaAudio,
 		IsDefault: true,
+		Duration:  d.duration,
 		Metadata:  *parsedMetadata,
 		MediaAttributes: media.MediaAttributes{
 			Codec: media.CodecMP3,

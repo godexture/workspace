@@ -25,4 +25,9 @@ type Packet struct {
 	Timebase time.Rational
 }
 
-func (p *Packet) Data() []byte { return *p.data }
+func (p *Packet) Data() []byte {
+	if p == nil || p.data == nil {
+		return nil
+	}
+	return *p.data
+}

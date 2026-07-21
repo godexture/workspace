@@ -63,6 +63,44 @@ if err != nil {
 
 空 ID、nil Node、重複 ID、不完全な Edge、互換性のない Port はエラーになります。
 
+## Description と観測モード
+
+Negotiator は demuxer、decoder、明示 filter、自動 bridge、encoder、muxer の role、plugin、有効 configuration、入出力 stream、resource 割当を `Geometry` に登録します。`Geometry.Description()` は Build 前、`Pipeline.Description()` は ownership 移譲後の解決済み構造を返します。返り値は複製されるため、呼び出し側で変更しても実行中の Pipeline には影響しません。
+
+```go
+description := geometry.Description()
+
+conversion, err := pipeline.NewBuilder().Build(
+    geometry,
+    pipeline.WithObservation(pipeline.ObservationProgress),
+)
+```
+
+観測モードは次の3段階です。
+
+| mode | 実行経路 |
+|---|---|
+| `ObservationOff` | 全 edge を通常の `ChanEdge` へ直接接続し、collector や sampler を作らない |
+| `ObservationProgress` | 選択入力の progress-source edge だけを包み、item 数と最大メディア時刻を atomic 更新する |
+| `ObservationMetrics` | 全 edge の item、payload byte、audio sample、最大メディア時刻と、全 node の状態・時間を記録する |
+
+`Pipeline.Snapshot()` は実行前、並行実行中、完了・失敗・キャンセル後のいずれでも安全に呼び出せます。Off/Progress で収集対象外の値はゼロまたは `unobserved` です。
+
+## CLI のパイプライン観測
+
+`godec convert` は次の option を持ちます。実変換の表示は標準エラー、dry-run の構造だけは標準出力へ書きます。
+
+| option | 動作 |
+|---|---|
+| `--progress=auto\|always\|never` | `auto` は TTY のみ250ms間隔で同じ行を更新する。非TTYの `always` は1秒ごとに改行する |
+| `-v`, `--verbose` | plugin、configuration、parallelism、全入力・選択・予定出力 stream、node/edge 構造を表示する |
+| `--metrics` | 成功・失敗・キャンセル時に timing、I/O、node、edge、Go runtime 統計を表示する |
+| `--dry-run` | 出力を作らず negotiation と Build を検証し、解決済み構造を標準出力へ表示する |
+
+`--dry-run` と `--metrics` は同時指定できません。dry-run 中は progress を開始しません。`auto` が非TTYかつ metrics 無効なら Build 前に `ObservationOff` が選ばれます。
+
+進捗率は progress-source stream の最大メディア時刻を `StreamInfo.Duration` で割った値を優先します。尺が未知なら入力 `ReadSeeker` の論理位置とファイルサイズ、どちらも使えなければ item 数と経過時間を表示します。
+
 ## Pipeline
 
 `Pipeline` は single-use です。全 Node の `Start` を `errgroup` で並行実行し、正常終了・エラー・キャンセルのいずれでも、全 Node の終了後に逆順で `Close` します。実行エラーと Close エラーは `errors.Join` で両方返します。
