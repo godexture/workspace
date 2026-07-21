@@ -88,13 +88,41 @@ func TestConvertMetricsReportsSuccessfulRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items="} {
+	for _, expected := range []string{"Starting conversion:\n", "    --> ", "Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items=", "Conversion completed successfully."} {
 		if !strings.Contains(stderr, expected) {
 			t.Fatalf("metrics output does not contain %q:\n%s", expected, stderr)
 		}
 	}
+	if metricsIndex, successIndex := strings.Index(stderr, "Metrics:"), strings.Index(stderr, "Conversion completed successfully."); metricsIndex > successIndex {
+		t.Fatalf("success message precedes metrics:\n%s", stderr)
+	}
 	if info, err := os.Stat(output); err != nil || info.Size() == 0 {
 		t.Fatalf("output was not committed: info=%v err=%v", info, err)
+	}
+}
+
+func TestConvertPrintsStartAndSuccessWithoutVerbose(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.wav")
+	output := filepath.Join(dir, "output.wav")
+	writeObservableTestWAV(t, input)
+	stdout, stderr, err := executeRoot(t, "convert", input, output, "--progress=never")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	for _, expected := range []string{
+		"Starting conversion:\n  input[#0 audio",
+		"\n    --> demuxer(wav)\n    --> decoder(pcm)\n    --> encoder(pcm)\n    --> muxer(wav)\n    --> output[#0 audio",
+	} {
+		if !strings.Contains(stderr, expected) {
+			t.Fatalf("conversion output does not contain %q:\n%s", expected, stderr)
+		}
+	}
+	if !strings.HasSuffix(stderr, "Conversion completed successfully.\n") {
+		t.Fatalf("success message is not final output:\n%s", stderr)
 	}
 }
 
@@ -109,6 +137,9 @@ func TestConvertMetricsReportsFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "status: failed") || !strings.Contains(stderr, "format \"wav\" does not support codec \"flac\"") {
 		t.Fatalf("failure metrics = %s", stderr)
+	}
+	if strings.Contains(stderr, "Conversion completed successfully.") {
+		t.Fatalf("failure output contains success message: %s", stderr)
 	}
 }
 
@@ -131,6 +162,9 @@ func TestConvertMetricsReportsCancellation(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "status: canceled") || !strings.Contains(stderr.String(), "runtime:") {
 		t.Fatalf("cancellation metrics = %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Conversion completed successfully.") {
+		t.Fatalf("cancellation output contains success message: %s", stderr.String())
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("canceled conversion committed output: %v", err)

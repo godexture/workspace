@@ -92,6 +92,43 @@ func writePipelineDescription(writer io.Writer, description pipeline.Description
 	return nil
 }
 
+func writeConversionStart(writer io.Writer, description pipeline.Description) error {
+	if _, err := fmt.Fprintln(writer, "Starting conversion:"); err != nil {
+		return err
+	}
+	parts := make([]string, 0, len(description.Nodes)+1)
+	for _, edge := range description.Edges {
+		if edge.ProgressSource {
+			if _, err := fmt.Fprintf(writer, "  input[%s]\n", formatStream(edge.Stream)); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	for _, current := range description.Nodes {
+		label := string(current.Role)
+		if label == "" {
+			label = current.ID
+		}
+		if current.Plugin != "" {
+			label += "(" + current.Plugin + ")"
+		}
+		parts = append(parts, label)
+	}
+	for _, current := range description.Nodes {
+		if current.Role == manifest.RoleMuxer && len(current.Inputs) > 0 {
+			parts = append(parts, "output["+formatStream(current.Inputs[0])+"]")
+			break
+		}
+	}
+	for _, part := range parts {
+		if _, err := fmt.Fprintf(writer, "    --> %s\n", part); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func writeConfiguration(writer io.Writer, configuration registry.Configuration) error {
 	if configuration == nil {
 		return nil

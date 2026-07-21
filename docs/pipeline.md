@@ -99,6 +99,8 @@ conversion, err := pipeline.NewBuilder().Build(
 
 `--dry-run` と `--metrics` は同時指定できません。dry-run 中は progress を開始しません。`auto` が非TTYかつ metrics 無効なら Build 前に `ObservationOff` が選ばれます。
 
+実変換では verbose の有無にかかわらず、開始時に選択入力 stream、node 列、予定出力 stream をインデントした `-->` で結ぶ略図を標準エラーへ表示します。出力の commit まで成功した場合は、metricsなどの報告後に成功メッセージを表示します。
+
 進捗率は progress-source stream の最大メディア時刻を `StreamInfo.Duration` で割った値を優先します。尺が未知なら入力 `ReadSeeker` の論理位置とファイルサイズ、どちらも使えなければ item 数と経過時間を表示します。
 
 ## Pipeline
