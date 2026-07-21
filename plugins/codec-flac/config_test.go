@@ -8,20 +8,25 @@ import (
 
 func TestPresetConfig(t *testing.T) {
 	t.Parallel()
-	for level := 0; level <= 8; level++ {
+	for level := 0; level <= 23; level++ {
 		config := NewEncoderConfig(WithPreset(level))
 		if err := config.Resolve().Validate(); err != nil {
 			t.Fatalf("level %d: %v", level, err)
 		}
 	}
-	if got := NewEncoderConfig(WithPreset(0)); got.BlockSize != 1152 || got.StereoMode != StereoIndependent {
+	if got := NewEncoderConfig(WithPreset(0)); got.MaxLPCOrder != 0 || got.MaxRicePartitionOrder != 0 || got.StereoMode != StereoIndependent {
 		t.Fatalf("level 0 = %#v", got)
 	}
-	if got := NewEncoderConfig(WithPreset(7)); got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitEstimated {
-		t.Fatalf("level 7 = %#v", got)
+	if got := NewEncoderConfig(WithPreset(12)); got.MaxLPCOrder != 10 || got.RiceCost != RiceCostEstimated || got.BlockSplitMode != BlockSplitEstimated {
+		t.Fatalf("level 12 = %#v", got)
 	}
-	if got := NewEncoderConfig(WithPreset(8)); got.MaxLPCOrder != 12 || len(got.Apodizations) != 6 || got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitExact {
-		t.Fatalf("level 8 = %#v", got)
+	if got := NewEncoderConfig(WithPreset(16)); got.BlockSplitDepth != 2 || got.BlockSplitMode != BlockSplitExact || got.RiceCost != RiceCostExact {
+		t.Fatalf("level 16 = %#v", got)
+	}
+	if got := NewEncoderConfig(WithPreset(23)); got.MaxLPCOrder != 20 || got.MaxRicePartitionOrder != 8 || len(got.Apodizations) != 21 ||
+		got.BlockSplitDepth != 4 || got.BlockSplitMode != BlockSplitExact || got.RiceCost != RiceCostExact ||
+		!got.EnablePrecisionSearch || got.FixedOrderSearch != OrderSearchEstimated || got.LPCOrderSearch != OrderSearchEstimated {
+		t.Fatalf("level 23 = %#v", got)
 	}
 }
 
@@ -52,11 +57,11 @@ func TestPresetConfigClampsWithWarning(t *testing.T) {
 	previous := log.Writer()
 	log.SetOutput(&output)
 	t.Cleanup(func() { log.SetOutput(previous) })
-	if got := NewEncoderConfig(WithPreset(-1)); got.BlockSize != NewEncoderConfig(WithPreset(0)).BlockSize {
+	if got := NewEncoderConfig(WithPreset(-1)); got.MaxLPCOrder != NewEncoderConfig(WithPreset(0)).MaxLPCOrder {
 		t.Fatal("negative level did not clamp to 0")
 	}
-	if got := NewEncoderConfig(WithPreset(9)); got.MaxLPCOrder != NewEncoderConfig(WithPreset(8)).MaxLPCOrder {
-		t.Fatal("large level did not clamp to 8")
+	if got := NewEncoderConfig(WithPreset(24)); got.MaxLPCOrder != NewEncoderConfig(WithPreset(23)).MaxLPCOrder {
+		t.Fatal("large level did not clamp to 23")
 	}
 	if output.Len() == 0 {
 		t.Fatal("expected warning")
@@ -65,18 +70,18 @@ func TestPresetConfigClampsWithWarning(t *testing.T) {
 
 func TestWithPreset(t *testing.T) {
 	t.Parallel()
-	config := NewEncoderConfig(WithPreset(8), WithBlockSize(2048))
+	config := NewEncoderConfig(WithPreset(23), WithBlockSize(2048))
 	if config.BlockSize != 2048 {
 		t.Fatalf("BlockSize = %d, want 2048", config.BlockSize)
 	}
-	if config.MaxLPCOrder != 12 {
-		t.Fatalf("MaxLPCOrder = %d, want 12", config.MaxLPCOrder)
+	if config.MaxLPCOrder != 20 {
+		t.Fatalf("MaxLPCOrder = %d, want 20", config.MaxLPCOrder)
 	}
 }
 
 func TestWithPresetReplacesPreviousOptions(t *testing.T) {
 	t.Parallel()
-	config := NewEncoderConfig(WithBlockSize(2048), WithPreset(8))
+	config := NewEncoderConfig(WithBlockSize(2048), WithPreset(23))
 	if config.BlockSize != 4096 {
 		t.Fatalf("BlockSize = %d, want 4096", config.BlockSize)
 	}
