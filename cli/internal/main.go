@@ -28,7 +28,7 @@ func newRootCommand() *cobra.Command {
 
 func newListCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list [muxers|demuxers|decoders|encoders|filters]",
+		Use:   "list [formats|codecs|muxers|demuxers|decoders|encoders|filters]",
 		Short: "List available plugins",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -47,6 +47,16 @@ func newListCommand() *cobra.Command {
 
 func writeListedRole(writer io.Writer, role string) error {
 	switch role {
+	case "formats":
+		if err := writeRole(writer, "muxers", godec.DefaultMuxerRegistry); err != nil {
+			return err
+		}
+		return writeRole(writer, "demuxers", godec.DefaultDemuxerRegistry)
+	case "codecs":
+		if err := writeRole(writer, "encoders", godec.DefaultEncoderRegistry); err != nil {
+			return err
+		}
+		return writeRole(writer, "decoders", godec.DefaultDecoderRegistry)
 	case "muxers":
 		return writeRole(writer, role, godec.DefaultMuxerRegistry)
 	case "demuxers":
@@ -58,7 +68,7 @@ func writeListedRole(writer io.Writer, role string) error {
 	case "filters":
 		return writeRole(writer, role, godec.DefaultFilterRegistry)
 	default:
-		return fmt.Errorf("unknown plugin role %q; use muxers, demuxers, encoders, decoders, or filters", role)
+		return fmt.Errorf("unknown plugin role %q; use formats, codecs, muxers, demuxers, encoders, decoders, or filters", role)
 	}
 }
 
