@@ -12,8 +12,8 @@ import (
 const defaultMemoryLimitBytes int64 = 64 << 20
 
 type FormatConfig struct {
-	Format        media.SampleFormat `cli:"format" help:"Target sample format"`
-	BitsPerSample int                `cli:"bits-per-sample" help:"Target effective bit depth"`
+	Format        media.SampleFormat `name:"format" help:"Target sample format"`
+	BitsPerSample int                `name:"bits-per-sample" help:"Target effective bit depth"`
 }
 
 func (c FormatConfig) EffectiveBitsPerSample() int {
@@ -21,43 +21,43 @@ func (c FormatConfig) EffectiveBitsPerSample() int {
 }
 
 type ResampleConfig struct {
-	SampleRate int `cli:"sample-rate" help:"Target sample rate"`
+	SampleRate int `name:"sample-rate" help:"Target sample rate"`
 }
 
 type RemixConfig struct {
-	Layout        media.ChannelLayout `cli:"layout" help:"Target channel layout"`
-	CenterMixDB   float64             `cli:"center-mix-db" help:"Center channel mix level"`
-	SurroundMixDB float64             `cli:"surround-mix-db" help:"Surround channel mix level"`
-	LFEMixDB      float64             `cli:"lfe-mix-db" help:"LFE channel mix level"`
-	Normalize     bool                `cli:"normalize" help:"Normalize remix levels"`
+	Layout        media.ChannelLayout `name:"layout" help:"Target channel layout"`
+	CenterMixDB   float64             `name:"center-mix-db" help:"Center channel mix level"`
+	SurroundMixDB float64             `name:"surround-mix-db" help:"Surround channel mix level"`
+	LFEMixDB      float64             `name:"lfe-mix-db" help:"LFE channel mix level"`
+	Normalize     bool                `name:"normalize" help:"Normalize remix levels"`
 }
 
 type GainConfig struct {
-	Decibels float64 `cli:"decibels" help:"Gain in dB"`
+	Decibels float64 `name:"decibels" help:"Gain in dB"`
 }
 
 type NormalizeConfig struct {
-	TargetPeakDBFS     float64 `cli:"target-peak-dbfs" help:"Target peak level"`
-	AllowAmplification bool    `cli:"allow-amplification" help:"Allow gain above unity"`
-	MemoryLimitBytes   int64   `cli:"memory-limit-bytes" help:"Maximum buffered memory"`
-	TempDir            string  `cli:"temp-dir" help:"Temporary directory"`
+	TargetPeakDBFS     float64 `name:"target-peak-dbfs" help:"Target peak level"`
+	AllowAmplification bool    `name:"allow-amplification" help:"Allow gain above unity"`
+	MemoryLimitBytes   int64   `name:"memory-limit-bytes" help:"Maximum buffered memory"`
+	TempDir            string  `name:"temp-dir" help:"Temporary directory"`
 }
 
 type FadeConfig struct {
-	FadeIn           time.Duration `cli:"fade-in" help:"Fade-in duration"`
-	FadeOut          time.Duration `cli:"fade-out" help:"Fade-out duration"`
-	MemoryLimitBytes int64         `cli:"memory-limit-bytes" help:"Maximum buffered memory"`
-	TempDir          string        `cli:"temp-dir" help:"Temporary directory"`
+	FadeIn           time.Duration `name:"fade-in" help:"Fade-in duration"`
+	FadeOut          time.Duration `name:"fade-out" help:"Fade-out duration"`
+	MemoryLimitBytes int64         `name:"memory-limit-bytes" help:"Maximum buffered memory"`
+	TempDir          string        `name:"temp-dir" help:"Temporary directory"`
 }
 
 type DCOffsetConfig struct {
-	Pole float64 `cli:"pole" help:"DC offset filter pole"`
+	Pole float64 `name:"pole" help:"DC offset filter pole"`
 }
 
 type TrimConfig struct {
-	ThresholdDBFS    float64 `cli:"threshold-dbfs" help:"Silence threshold"`
-	MemoryLimitBytes int64   `cli:"memory-limit-bytes" help:"Maximum buffered memory"`
-	TempDir          string  `cli:"temp-dir" help:"Temporary directory"`
+	ThresholdDBFS    float64 `name:"threshold-dbfs" help:"Silence threshold"`
+	MemoryLimitBytes int64   `name:"memory-limit-bytes" help:"Maximum buffered memory"`
+	TempDir          string  `name:"temp-dir" help:"Temporary directory"`
 }
 
 var (
