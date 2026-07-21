@@ -31,7 +31,11 @@ func TestRoundtrip(t *testing.T) {
 					return wavFormat.NewDemuxerEngine(r, wavFormat.NewDemuxerConfig())
 				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
-					return pcmCodec.NewDecoderEngine(stream, pcmCodec.NewDecoderConfig())
+					decoder, err := pcmCodec.NewDecoderEngine(stream, pcmCodec.NewDecoderConfig())
+					if err != nil {
+						t.Fatal(err)
+					}
+					return decoder
 				},
 				Encode: func() engine.EncoderEngine {
 					return pcmCodec.NewEncoderEngine(
