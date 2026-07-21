@@ -1,6 +1,7 @@
 package cliflag
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,20 @@ func TestBindingOwnsEveryDefaultDisplay(t *testing.T) {
 	}
 	if !strings.Contains(flag.Usage, "[5]") {
 		t.Fatalf("limit usage = %q", flag.Usage)
+	}
+}
+
+func TestDescribeStruct(t *testing.T) {
+	descriptions, err := DescribeStruct(&testConfig{Enabled: true, Limit: 5, Mode: "safe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descriptions) != 5 {
+		t.Fatalf("len(DescribeStruct()) = %d", len(descriptions))
+	}
+	mode := descriptions[3]
+	if mode.Name != "mode" || mode.Type != "enum" || mode.Default != "safe" || !slices.Equal(mode.Choices, []string{"fast", "safe"}) {
+		t.Fatalf("mode description = %#v", mode)
 	}
 }
 

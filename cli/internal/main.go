@@ -22,6 +22,7 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{Use: "godec", SilenceUsage: true}
 	root.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 	root.AddCommand(newListCommand())
+	root.AddCommand(newDescribeCommand())
 	root.AddCommand(newConvertCommand())
 	return root
 }

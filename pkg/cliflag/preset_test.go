@@ -3,7 +3,7 @@ package cliflag
 import "testing"
 
 type presetConfig struct {
-	Limit int
+	Limit int `name:"limit"`
 }
 
 func (c *presetConfig) ApplyPreset(level int) {
@@ -17,5 +17,15 @@ func TestDecodeStructAppliesPreset(t *testing.T) {
 	}
 	if actual.Limit != 20 {
 		t.Fatalf("DecodeStruct() = %#v", actual)
+	}
+}
+
+func TestDescribeStructIncludesPreset(t *testing.T) {
+	descriptions, err := DescribeStruct(&presetConfig{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descriptions) != 2 || descriptions[0].Name != "preset" || descriptions[0].Default != "-1" {
+		t.Fatalf("DescribeStruct() = %#v", descriptions)
 	}
 }
