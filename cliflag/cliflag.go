@@ -59,19 +59,17 @@ func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding
 		}
 		defaultValue := formatValue(value.Field(field.index))
 		field.value = &flagValue{typeOf: field.typeOf, raw: defaultValue}
-		flags.Var(field.value, name, helpWithDefault(field.help, value.Field(field.index), defaultValue))
+		flags.Var(field.value, name, helpWithDefault(field.help, defaultValue))
+		flags.Lookup(name).DefValue = ""
 	}
 	return binding, nil
 }
 
-func helpWithDefault(help string, value reflect.Value, defaultValue string) string {
-	if !value.IsZero() && !(value.Kind() == reflect.Slice && value.Len() == 0) {
-		return help
+func helpWithDefault(help, defaultValue string) string {
+	if help != "" {
+		help += " "
 	}
-	if help == "" {
-		return "Default: " + defaultValue
-	}
-	return help + " (default: " + defaultValue + ")"
+	return fmt.Sprintf("%s[%s]", help, defaultValue)
 }
 
 func (b *Binding) Apply(target any) error {
