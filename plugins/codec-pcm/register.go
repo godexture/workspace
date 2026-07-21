@@ -34,7 +34,7 @@ func init() {
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:                 "pcm",
-				Description:          "PCM/G.711 decoder",
+				Description:          "LPCM/G.711/ADPCM decoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
@@ -67,7 +67,7 @@ func init() {
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
 				Name:                 "pcm",
-				Description:          "PCM/G.711 encoder",
+				Description:          "LPCM/G.711/ADPCM encoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
