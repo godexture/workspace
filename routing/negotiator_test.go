@@ -152,6 +152,40 @@ type alwaysCapability struct{}
 func (alwaysCapability) Match(media.StreamInfo) bool     { return true }
 func (alwaysCapability) Diagnose(media.StreamInfo) error { return nil }
 
+func TestNegotiatorRejectsExplicitIncompatibleDecoder(t *testing.T) {
+	demuxer := registry.DemuxerManifest{
+		BaseManifest: registry.BaseManifest{Name: "flac"},
+		Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) {
+			return &mockDemuxer{
+				streams:  []media.StreamInfo{{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}},
+				metadata: metadata.NewBundle(),
+			}, nil
+		},
+	}
+	decoder := registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{Name: "pcm"},
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+				Codecs: []media.CodecID{media.CodecLPCM},
+			}),
+		},
+	}
+	negotiator := NewNegotiator(&mockMuxerResolver{}, &mockDemuxerResolver{}, &mockEncoderResolver{}, &mockDecoderResolver{}, nil, nil)
+	_, err := negotiator.NegotiateConversion(context.Background(), ConversionSpec{
+		Input:           strings.NewReader("input"),
+		Output:          &strings.Builder{},
+		DemuxManifest:   demuxer,
+		DemuxConfig:     dummyConfig{},
+		DecoderManifest: decoder,
+		DecodeConfig:    dummyConfig{},
+		TargetCodec:     media.CodecLPCM,
+		MuxConfig:       dummyConfig{},
+	})
+	if err == nil || !strings.Contains(err.Error(), `decoder "pcm" does not accept input codec "flac"`) {
+		t.Fatalf("NegotiateConversion() error = %v", err)
+	}
+}
+
 func TestNegotiator_CustomResolvers(t *testing.T) {
 	t.Parallel()
 	// 1. Set up mock nodes

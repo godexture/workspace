@@ -53,7 +53,10 @@ func TestPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("no streams found in %s", e.Name())
 			}
 
-			decEngine := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			decEngine, err := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			if err != nil {
+				t.Fatalf("NewDecoderEngine: %v", err)
+			}
 			encEngine := pcm.NewEncoderEngine(streams[0], pcm.NewEncoderConfig())
 
 			f := testutil.NewBuffer(nil)

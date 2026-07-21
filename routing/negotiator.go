@@ -156,6 +156,15 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("configure decoder %s: %w", decoderManifest.Name, err)
 	}
+	if spec.DecoderManifest.Name != "" {
+		accepted, err := decoderManifest.Accept(currentStream, currentStream.Codec, decodeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("check decoder %s: %w", decoderManifest.Name, err)
+		}
+		if !accepted {
+			return nil, fmt.Errorf("decoder %q does not accept input codec %q", decoderManifest.Name, currentStream.Codec)
+		}
+	}
 	decoderOutput, err := transformStream(decoderManifest.TransformManifest, currentStream, currentStream.Codec, decodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve decoder output stream: %w", err)
