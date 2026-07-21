@@ -32,17 +32,27 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 		return err
 	}
 	defer inputFile.Close()
+
 	inputInfo, err := inputFile.Stat()
 	if err != nil {
 		return err
 	}
 
 	totalStarted := time.Now()
+	conversionSucceeded := false
+	defer func() {
+		if conversionSucceeded {
+			if _, writeErr := fmt.Fprintln(command.ErrOrStderr(), "Conversion completed successfully."); writeErr != nil {
+				resultErr = errors.Join(resultErr, writeErr)
+			}
+		}
+	}()
 	var report metricsReport
 	var sampler *runtimeSampler
 	var measuredInput *measuredReadSeeker
 	var measuredOutput *measuredWriter
 	var conversion *pipeline.Pipeline
+
 	if options.metrics {
 		sampler = startRuntimeSampler(500 * time.Millisecond)
 		defer func() {
@@ -153,8 +163,12 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	if options.dryRun {
 		return writePipelineDescription(command.OutOrStdout(), conversion.Description())
 	}
+	description := conversion.Description()
+	if err := writeConversionStart(command.ErrOrStderr(), description); err != nil {
+		return err
+	}
 	if verbose {
-		if err := writePipelineDescription(command.ErrOrStderr(), conversion.Description()); err != nil {
+		if err := writePipelineDescription(command.ErrOrStderr(), description); err != nil {
 			return err
 		}
 	}
@@ -179,10 +193,11 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	if err != nil {
 		return err
 	}
+	conversionSucceeded = true
 	if verbose && !options.metrics {
 		inputSnapshot := measuredInput.Snapshot()
 		outputSnapshot := measuredOutput.Snapshot()
-		_, err = fmt.Fprintf(command.ErrOrStderr(), "Completed in %s: read %s, wrote %s\n",
+		_, err = fmt.Fprintf(command.ErrOrStderr(), "Summary: elapsed=%s read=%s wrote=%s\n",
 			formatMetricDuration(report.Phases.Execution), formatBytes(inputSnapshot.BytesRead), formatBytes(outputSnapshot.BytesWritten))
 		return err
 	}
