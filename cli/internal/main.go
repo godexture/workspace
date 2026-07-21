@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/registry"
@@ -29,23 +28,66 @@ func newRootCommand() *cobra.Command {
 
 func newListCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "list",
-		RunE: func(command *cobra.Command, _ []string) error {
-			writeRole(command.OutOrStdout(), "muxers", godec.DefaultMuxerRegistry)
-			writeRole(command.OutOrStdout(), "demuxers", godec.DefaultDemuxerRegistry)
-			writeRole(command.OutOrStdout(), "encoders", godec.DefaultEncoderRegistry)
-			writeRole(command.OutOrStdout(), "decoders", godec.DefaultDecoderRegistry)
-			writeRole(command.OutOrStdout(), "filters", godec.DefaultFilterRegistry)
-			return nil
+		Use:   "list [muxers|demuxers|decoders|encoders|filters]",
+		Short: "List available plugins",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				for _, role := range []string{"muxers", "demuxers", "encoders", "decoders", "filters"} {
+					if err := writeListedRole(command.OutOrStdout(), role); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			return writeListedRole(command.OutOrStdout(), args[0])
 		},
 	}
 }
 
-func writeRole[V registry.Manifest](writer io.Writer, title string, values *registry.Registry[V]) {
+func writeListedRole(writer io.Writer, role string) error {
+	switch role {
+	case "muxers":
+		return writeRole(writer, role, godec.DefaultMuxerRegistry)
+	case "demuxers":
+		return writeRole(writer, role, godec.DefaultDemuxerRegistry)
+	case "encoders":
+		return writeRole(writer, role, godec.DefaultEncoderRegistry)
+	case "decoders":
+		return writeRole(writer, role, godec.DefaultDecoderRegistry)
+	case "filters":
+		return writeRole(writer, role, godec.DefaultFilterRegistry)
+	default:
+		return fmt.Errorf("unknown plugin role %q; use muxers, demuxers, encoders, decoders, or filters", role)
+	}
+}
+
+func writeRole[V registry.Manifest](writer io.Writer, title string, values *registry.Registry[V]) error {
 	names := values.Names()
-	sort.Strings(names)
 	_, _ = fmt.Fprintf(writer, "%s:\n", title)
 	for _, name := range names {
-		_, _ = fmt.Fprintf(writer, "  %s\n", name)
+		manifest, err := values.Lookup(name)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(writer, "  %-12s %s\n", name, manifestDescription(manifest))
+	}
+	return nil
+}
+
+func manifestDescription(manifest registry.Manifest) string {
+	switch manifest := any(manifest).(type) {
+	case registry.MuxerManifest:
+		return manifest.Description
+	case registry.DemuxerManifest:
+		return manifest.Description
+	case registry.EncoderManifest:
+		return manifest.Description
+	case registry.DecoderManifest:
+		return manifest.Description
+	case registry.FilterManifest:
+		return manifest.Description
+	default:
+		return ""
 	}
 }
