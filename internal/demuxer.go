@@ -108,14 +108,11 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			globalMetadata.AddRaw(streaminfo.MetadataBlockKey, block)
 		}
 	}
-	if duration := info.Duration(); duration > 0 {
-		globalMetadata.Set(metadata.KeyDuration(duration))
-	}
-
 	d.streamInfo = media.StreamInfo{
 		Index:     0,
 		Type:      media.MediaAudio,
 		IsDefault: true,
+		Duration:  info.Duration(),
 		Metadata:  *streamMetadata,
 		MediaAttributes: media.MediaAttributes{
 			Codec: media.CodecFLAC,
