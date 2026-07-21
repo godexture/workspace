@@ -1,6 +1,8 @@
 package filter
 
 import (
+	"time"
+
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -14,6 +16,7 @@ import (
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
+	"github.com/godexture/filter-audio/internal/speed"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/engine"
 )
@@ -27,6 +30,7 @@ func init() {
 	registerFade()
 	registerDCOffset()
 	registerTrim()
+	registerSpeed()
 }
 
 func registerConvert() {
@@ -160,6 +164,29 @@ func registerTrim() {
 		return engine.WrapFilter(item), nil
 	}, nil, func(in media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.StreamInfo, error) {
 		in.Duration = 0
+		return in, nil
+	})
+}
+
+func registerSpeed() {
+	register(registry.NewConfigurationFactory(NewSpeedConfig), "speed", "Change playback speed (pitch shifts with speed)", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
+		if err != nil {
+			return nil, err
+		}
+		item, err := speed.New(value)
+		if err != nil {
+			return nil, err
+		}
+		return engine.WrapFilter(item), nil
+	}, nil, func(in media.StreamInfo, _ media.CodecID, cfg registry.Configuration) (media.StreamInfo, error) {
+		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
+		if err != nil {
+			return media.StreamInfo{}, err
+		}
+		if in.Duration > 0 {
+			in.Duration = time.Duration(float64(in.Duration) / value.Factor)
+		}
 		return in, nil
 	})
 }

@@ -15,3 +15,13 @@ func TestFormatConfigEffectiveBitsPerSample(t *testing.T) {
 		t.Fatalf("explicit effective bits = %d, want %d", got, want)
 	}
 }
+
+func TestSpeedConfigValidate(t *testing.T) {
+	t.Parallel()
+	if err := (SpeedConfig{Factor: 0}).Validate(); err == nil {
+		t.Fatal("want error for non-positive factor")
+	}
+	if err := (SpeedConfig{Factor: 2}).Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
