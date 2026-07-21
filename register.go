@@ -48,7 +48,7 @@ func registerConvert() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, bridgeFormat)
+	}, bridgeFormat, nil)
 }
 
 func registerResample() {
@@ -70,7 +70,7 @@ func registerResample() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, bridgeRate)
+	}, bridgeRate, nil)
 }
 
 func registerRemix() {
@@ -92,7 +92,7 @@ func registerRemix() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, bridgeLayout)
+	}, bridgeLayout, nil)
 }
 
 func registerGain() {
@@ -106,7 +106,7 @@ func registerGain() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, nil)
+	}, nil, nil)
 }
 func registerNormalize() {
 	register(registry.NewConfigurationFactory(NewNormalizeConfig), "normalize", "Normalize peak level", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
@@ -119,7 +119,7 @@ func registerNormalize() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, nil)
+	}, nil, nil)
 }
 func registerFade() {
 	register(registry.NewConfigurationFactory(NewFadeConfig), "fade", "Apply fade in and fade out", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
@@ -132,7 +132,7 @@ func registerFade() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, nil)
+	}, nil, nil)
 }
 func registerDCOffset() {
 	register(registry.NewConfigurationFactory(NewDCOffsetConfig), "dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
@@ -145,7 +145,7 @@ func registerDCOffset() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, nil)
+	}, nil, nil)
 }
 func registerTrim() {
 	register(registry.NewConfigurationFactory(NewTrimConfig), "trim", "Trim leading and trailing silence", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
@@ -158,13 +158,16 @@ func registerTrim() {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
-	}, nil)
+	}, nil, func(in media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.StreamInfo, error) {
+		in.Duration = 0
+		return in, nil
+	})
 }
 
-func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc) {
+func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc, transformStream func(media.StreamInfo, media.CodecID, registry.Configuration) (media.StreamInfo, error)) {
 	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{}), TransformFunc: func(in media.StreamInfo, _ media.CodecID, cfg registry.Configuration) (media.Profile, error) {
 		return transform(in, cfg)
-	}}, Bridge: bridge, Factory: func(_ media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
+	}, TransformStreamFunc: transformStream}, Bridge: bridge, Factory: func(_ media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
 		return factory(options.Config)
 	}}); err != nil {
 		panic(err)
