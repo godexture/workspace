@@ -39,7 +39,7 @@ func init() {
 	if err := godec.Register(registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:                 "mp3",
-			Description:          "MP3 demuxer (format-mp3 plugin)",
+			Description:          "MP3 demuxer",
 			ConfigurationFactory: registry.NewConfigurationFactory(NewDemuxerConfig),
 		},
 		Probe: Probe,
@@ -65,7 +65,7 @@ func init() {
 	if err := godec.Register(registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:                 "mp3",
-			Description:          "MP3 muxer (format-mp3 plugin)",
+			Description:          "MP3 muxer",
 			ConfigurationFactory: registry.NewConfigurationFactory(NewMuxerConfig),
 		},
 		Extensions:   []string{".mp3"},
