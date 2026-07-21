@@ -160,7 +160,22 @@ func DecodeStruct(target any, values map[string]string) error {
 	}
 	copy := reflect.New(typeOf).Elem()
 	copy.Set(value)
+	if preset, exists := values["preset"]; exists {
+		applier, ok := copy.Addr().Interface().(presetApplier)
+		if ok {
+			level, err := strconv.Atoi(preset)
+			if err != nil {
+				return fmt.Errorf("preset: %w", err)
+			}
+			applier.ApplyPreset(level)
+		}
+	}
 	for name, raw := range values {
+		if name == "preset" {
+			if _, ok := copy.Addr().Interface().(presetApplier); ok {
+				continue
+			}
+		}
 		field, ok := byName[name]
 		if !ok {
 			return fmt.Errorf("unknown configuration field %q", name)
