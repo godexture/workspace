@@ -79,10 +79,10 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 
 	isRF64 := string(riff[0:4]) == wavTagRF64
 	if string(riff[0:4]) != wavTagRIFF && !isRF64 {
-		return wavHeader{}, errors.New("not a wav file")
+		return wavHeader{}, errors.New("not a wav stream")
 	}
 	if string(riff[8:12]) != wavTagWAVE {
-		return wavHeader{}, errors.New("not a wav file")
+		return wavHeader{}, errors.New("not a wav stream")
 	}
 
 	listMeta := metadata.NewBundle()
