@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
 )
 
@@ -26,5 +27,25 @@ func TestResolveCodecUsesDefault(t *testing.T) {
 	}
 	if codec != media.CodecFLAC || values != nil {
 		t.Fatalf("resolveCodec() = %q, %#v", codec, values)
+	}
+}
+
+func TestSelectMuxerParsesConfiguration(t *testing.T) {
+	manifest, values, err := selectMuxer("wav:force-rf64=true", "output.flac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name != "wav" || values["force-rf64"] != "true" {
+		t.Fatalf("selectMuxer() = %#v, %#v", manifest, values)
+	}
+}
+
+func TestResolvePluginCreatesConfiguration(t *testing.T) {
+	manifest, config, err := resolvePlugin("demuxer", "wav", godec.DefaultDemuxerRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name != "wav" || config == nil {
+		t.Fatalf("resolvePlugin() = %#v, %#v", manifest, config)
 	}
 }
