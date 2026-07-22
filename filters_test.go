@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/eq"
@@ -17,6 +16,7 @@ import (
 	"github.com/godexture/filter-audio/internal/resample"
 	"github.com/godexture/filter-audio/internal/speed"
 	"github.com/godexture/filter-audio/internal/trim"
+	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
 )
 

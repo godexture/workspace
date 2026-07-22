@@ -4,15 +4,14 @@ import (
 	"fmt"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/spool"
+	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
 )
 
 type Engine struct {
 	config       config.FadeConfig
-	blocks       *spool.Blocks
+	blocks       *audio.Spool
 	format       media.SampleFormat
 	bits, rate   int
 	total        int64
@@ -23,7 +22,7 @@ func New(config config.FadeConfig) (*Engine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Engine{config: config, blocks: spool.New(config.MemoryLimitBytes, config.TempDir)}, nil
+	return &Engine{config: config, blocks: audio.NewSpool(config.MemoryLimitBytes, config.TempDir)}, nil
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {

@@ -5,14 +5,13 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/spool"
+	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
 )
 
 // tailBuffer retains blocks that might need to be replayed if a later block
-// turns out to contain more activity. spool.Blocks implements it exactly;
+// turns out to contain more activity. audio.Spool implements it exactly;
 // silenceTail implements it approximately, by shape only.
 type tailBuffer interface {
 	Append(block audio.Block) error
@@ -54,7 +53,7 @@ func newTailBuffer(cfg config.TrimConfig) tailBuffer {
 	if cfg.ApproximateSilence {
 		return &silenceTail{}
 	}
-	return spool.New(cfg.MemoryLimitBytes, cfg.TempDir)
+	return audio.NewSpool(cfg.MemoryLimitBytes, cfg.TempDir)
 }
 
 // trimSides reports which ends of the stream mode trims silence from.

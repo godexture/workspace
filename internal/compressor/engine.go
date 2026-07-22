@@ -5,9 +5,8 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/sdk/audio"
 )
 
 // silenceFloorDB keeps amplitudeToDB finite for zero/near-zero samples.
@@ -21,7 +20,7 @@ type Engine struct {
 	rateSet      bool
 	rate         int
 	envelopeDB   float32
-	queue        framequeue.Single
+	queue        audio.FrameQueue
 }
 
 func New(cfg config.CompressorConfig) (*Engine, error) {
