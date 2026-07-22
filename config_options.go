@@ -3,10 +3,9 @@
 package filter
 
 import (
-	time "time"
-
 	media "github.com/godexture/core/domain/media"
 	config "github.com/godexture/filter-audio/internal/config"
+	time "time"
 )
 
 type FormatConfig config.FormatConfig
@@ -364,6 +363,86 @@ func (c SpeedConfig) FieldChoices(field string) []string {
 	}
 }
 
+type CompressorConfig config.CompressorConfig
+
+type CompressorConfigOption interface {
+	applyCompressorConfig(*CompressorConfig)
+}
+
+type compressorConfigOptionFunc func(*CompressorConfig)
+
+func (f compressorConfigOptionFunc) applyCompressorConfig(c *CompressorConfig) {
+	f(c)
+}
+
+func NewCompressorConfig(options ...CompressorConfigOption) CompressorConfig {
+	config := CompressorConfig(config.DefaultCompressorConfig)
+	for _, option := range options {
+		option.applyCompressorConfig(&config)
+	}
+	return config
+}
+
+func (c CompressorConfig) ResolveDefault() config.CompressorConfig {
+	return config.CompressorConfig(config.DefaultCompressorConfig)
+}
+
+func (c CompressorConfig) Resolve() config.CompressorConfig {
+	return config.CompressorConfig(c)
+}
+
+func (c CompressorConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c CompressorConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
+type EQConfig config.EQConfig
+
+type EQConfigOption interface {
+	applyEQConfig(*EQConfig)
+}
+
+type eQConfigOptionFunc func(*EQConfig)
+
+func (f eQConfigOptionFunc) applyEQConfig(c *EQConfig) {
+	f(c)
+}
+
+func NewEQConfig(options ...EQConfigOption) EQConfig {
+	config := EQConfig(config.DefaultEQConfig)
+	for _, option := range options {
+		option.applyEQConfig(&config)
+	}
+	return config
+}
+
+func (c EQConfig) ResolveDefault() config.EQConfig {
+	return config.EQConfig(config.DefaultEQConfig)
+}
+
+func (c EQConfig) Resolve() config.EQConfig {
+	return config.EQConfig(c)
+}
+
+func (c EQConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c EQConfig) FieldChoices(field string) []string {
+	switch field {
+	case "Type":
+		return []string{"peaking", "lowshelf", "highshelf", "lowpass", "highpass"}
+	default:
+		return nil
+	}
+}
+
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
 		c.Format = v
@@ -492,10 +571,22 @@ func WithPole(v float64) DCOffsetConfigOption {
 	})
 }
 
-func WithThresholdDBFS(v float64) TrimConfigOption {
-	return trimConfigOptionFunc(func(c *TrimConfig) {
-		c.ThresholdDBFS = v
-	})
+type ThresholdDBFSOption interface {
+	TrimConfigOption
+	CompressorConfigOption
+}
+
+type thresholdDBFSOpt struct{ v float64 }
+
+func (o thresholdDBFSOpt) applyTrimConfig(c *TrimConfig) {
+	c.ThresholdDBFS = o.v
+}
+func (o thresholdDBFSOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.ThresholdDBFS = o.v
+}
+
+func WithThresholdDBFS(v float64) ThresholdDBFSOption {
+	return thresholdDBFSOpt{v}
 }
 
 func WithTrimMode(v TrimMode) TrimConfigOption {
@@ -519,5 +610,59 @@ func WithFactor(v float64) SpeedConfigOption {
 func WithMode(v SpeedMode) SpeedConfigOption {
 	return speedConfigOptionFunc(func(c *SpeedConfig) {
 		c.Mode = v
+	})
+}
+
+func WithRatio(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.Ratio = v
+	})
+}
+
+func WithAttackMs(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.AttackMs = v
+	})
+}
+
+func WithReleaseMs(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.ReleaseMs = v
+	})
+}
+
+func WithKneeDB(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.KneeDB = v
+	})
+}
+
+func WithMakeupGainDB(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.MakeupGainDB = v
+	})
+}
+
+func WithType(v EQType) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.Type = v
+	})
+}
+
+func WithFrequencyHz(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.FrequencyHz = v
+	})
+}
+
+func WithGainDB(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.GainDB = v
+	})
+}
+
+func WithQ(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.Q = v
 	})
 }

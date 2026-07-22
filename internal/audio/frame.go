@@ -174,4 +174,3 @@ func Encode(block Block, format media.SampleFormat, bitsPerSample int) (*media.A
 	}
 	return frame, nil
 }
-

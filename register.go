@@ -9,9 +9,11 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
+	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/convert"
 	"github.com/godexture/filter-audio/internal/dcoffset"
+	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gain"
 	"github.com/godexture/filter-audio/internal/normalize"
@@ -32,6 +34,8 @@ func init() {
 	registerDCOffset()
 	registerTrim()
 	registerSpeed()
+	registerCompressor()
+	registerEQ()
 }
 
 func registerConvert() {
@@ -203,6 +207,34 @@ func registerSpeed() {
 		}
 		return in, nil
 	})
+}
+
+func registerCompressor() {
+	register(registry.NewConfigurationFactory(NewCompressorConfig), "compressor", "Reduce dynamic range above a threshold", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[config.CompressorConfig, CompressorConfig](cfg)
+		if err != nil {
+			return nil, err
+		}
+		item, err := compressor.New(value)
+		if err != nil {
+			return nil, err
+		}
+		return engine.WrapFilter(item), nil
+	}, nil, nil)
+}
+
+func registerEQ() {
+	register(registry.NewConfigurationFactory(NewEQConfig), "eq", "Apply a single-band parametric, shelf, or pass biquad filter", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[config.EQConfig, EQConfig](cfg)
+		if err != nil {
+			return nil, err
+		}
+		item, err := eq.New(value)
+		if err != nil {
+			return nil, err
+		}
+		return engine.WrapFilter(item), nil
+	}, nil, nil)
 }
 
 func speedRelabelRate(rate int, factor float64) int {

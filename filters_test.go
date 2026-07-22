@@ -7,7 +7,9 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/audio"
+	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
+	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
@@ -286,6 +288,48 @@ func TestTrimApproximateSilenceReplaysZerosInsteadOfBufferedSamples(t *testing.T
 	assertEOF(t, item)
 }
 
+func TestCompressorReducesGainAboveThresholdInstantly(t *testing.T) {
+	item, err := compressor.New(config.CompressorConfig{ThresholdDBFS: -6, Ratio: 4, KneeDB: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overshoot := 0.0 - (-6.0)
+	wantGain := float32(math.Pow(10, overshoot*(1.0/4-1)/20))
+	send(t, item, frame(48000, 0, []float32{1, 1, 1, 1}))
+	assertSamplesTol(t, receive(t, item), []float32{wantGain, wantGain, wantGain, wantGain}, 1e-4)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestCompressorPassesSignalBelowThresholdUnchanged(t *testing.T) {
+	item, err := compressor.New(config.CompressorConfig{ThresholdDBFS: -6, Ratio: 4, KneeDB: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{.1, .1}))
+	assertSamplesTol(t, receive(t, item), []float32{.1, .1}, 1e-5)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestEQPeakingZeroGainIsIdentity(t *testing.T) {
+	item, err := eq.New(config.EQConfig{Type: config.EQTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []float32{0.2, -0.5, 0.8, -0.1, 0.05, 0.9}
+	send(t, item, frame(48000, 0, values))
+	assertSamplesTol(t, receive(t, item), values, 1e-4)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
 func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
 	t.Parallel()
 	if got := formatLoss(media.SampleFormatS32, media.SampleFormatS16, 32, 16); got != 1 {
@@ -342,6 +386,23 @@ func assertFloat(t *testing.T, got, want float32) {
 	if math.Abs(float64(got-want)) > 1e-5 {
 		t.Fatalf("value = %g, want %g", got, want)
 	}
+}
+
+func assertSamplesTol(t *testing.T, output media.Frame, want []float32, tol float64) {
+	t.Helper()
+	block, err := audio.Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(block.Channels) != 1 || len(block.Channels[0]) != len(want) {
+		t.Fatalf("samples = %v, want %v", block.Channels, want)
+	}
+	for i := range want {
+		if math.Abs(float64(block.Channels[0][i]-want[i])) > tol {
+			t.Fatalf("sample[%d] = %g, want %g (tol %g)", i, block.Channels[0][i], want[i], tol)
+		}
+	}
+	output.Release()
 }
 func assertEOF(t *testing.T, item engine.FilterEngine) {
 	t.Helper()
