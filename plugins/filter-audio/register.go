@@ -153,7 +153,7 @@ func registerDCOffset() {
 	}, nil, nil)
 }
 func registerTrim() {
-	register(registry.NewConfigurationFactory(NewTrimConfig), "trim", "Trim leading and trailing silence", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewTrimConfig), "trim", "Trim silence from the start, end, or both", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.TrimConfig, TrimConfig](cfg)
 		if err != nil {
 			return nil, err

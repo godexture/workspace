@@ -188,7 +188,7 @@ func TestFadeAppliesBothEnds(t *testing.T) {
 }
 
 func TestTrimKeepsOnlyAudibleRange(t *testing.T) {
-	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, MemoryLimitBytes: 1})
+	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, TrimMode: config.TrimModeBoth, MemoryLimitBytes: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +200,88 @@ func TestTrimKeepsOnlyAudibleRange(t *testing.T) {
 	assertSamples(t, output, []float32{.1})
 	if output.(*media.AudioFrame).Pts() != 11 {
 		t.Fatalf("PTS = %d, want 11", output.(*media.AudioFrame).Pts())
+	}
+	assertEOF(t, item)
+}
+
+func TestTrimModeStartKeepsTrailingSilence(t *testing.T) {
+	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, TrimMode: config.TrimModeStart, MemoryLimitBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 10, []float32{0, .1, 0, 0}))
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	output := receive(t, item)
+	assertSamples(t, output, []float32{.1, 0, 0})
+	if output.(*media.AudioFrame).Pts() != 11 {
+		t.Fatalf("PTS = %d, want 11", output.(*media.AudioFrame).Pts())
+	}
+	assertEOF(t, item)
+}
+
+func TestTrimModeEndKeepsLeadingSilence(t *testing.T) {
+	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, TrimMode: config.TrimModeEnd, MemoryLimitBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 10, []float32{0, .1, 0, 0}))
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	output := receive(t, item)
+	assertSamples(t, output, []float32{0, .1})
+	if output.(*media.AudioFrame).Pts() != 10 {
+		t.Fatalf("PTS = %d, want 10", output.(*media.AudioFrame).Pts())
+	}
+	assertEOF(t, item)
+}
+
+func TestTrimReplaysExactBufferedSilenceByDefault(t *testing.T) {
+	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, TrimMode: config.TrimModeBoth, MemoryLimitBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{.1, .05}))
+	assertSamples(t, receive(t, item), []float32{.1})
+
+	send(t, item, frame(48000, 2, []float32{0, 0}))
+	if _, err := item.ReceiveFrame(); err != engine.ErrEAGAIN {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+
+	send(t, item, frame(48000, 4, []float32{.2}))
+	assertSamples(t, receive(t, item), []float32{.05})
+	assertSamples(t, receive(t, item), []float32{0, 0})
+	assertSamples(t, receive(t, item), []float32{.2})
+
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestTrimApproximateSilenceReplaysZerosInsteadOfBufferedSamples(t *testing.T) {
+	item, err := trim.New(config.TrimConfig{ThresholdDBFS: -20, TrimMode: config.TrimModeBoth, ApproximateSilence: true, MemoryLimitBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{.1, .05}))
+	assertSamples(t, receive(t, item), []float32{.1})
+
+	send(t, item, frame(48000, 2, []float32{0, 0}))
+	if _, err := item.ReceiveFrame(); err != engine.ErrEAGAIN {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+
+	send(t, item, frame(48000, 4, []float32{.2}))
+	assertSamples(t, receive(t, item), []float32{0}) // buffered .05 sample replays as digital silence, not its original value
+	assertSamples(t, receive(t, item), []float32{0, 0})
+	assertSamples(t, receive(t, item), []float32{.2})
+
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
 	}
 	assertEOF(t, item)
 }
