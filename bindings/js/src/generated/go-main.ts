@@ -17,10 +17,10 @@ export class GoMain {
   }
 
   /**
-   * Hello is a simple function exported to JavaScript via gowasm-bindgen.
+   * Convert takes an input byte array of media data and converts it to the specified format.
    */
-  hello(): string {
-    const result = (globalThis as any).hello();
+  convert(input: Uint8Array, format: string): Uint8Array {
+    const result = (globalThis as any).convert(input, format);
     if (result && typeof result === 'object' && '__error' in result) {
       throw new Error((result as { __error: string }).__error);
     }
