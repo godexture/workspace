@@ -7,11 +7,12 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/linear"
 	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/engine"
 )
 
 type Engine struct {
 	config config.ResampleConfig
-	queue  audio.FrameQueue
+	slot   engine.Slot[media.Frame]
 
 	initialized  bool
 	inputRate    int
@@ -43,7 +44,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.inputRate == e.config.SampleRate {
 		input := (*frame).(*media.AudioFrame)
 		input.Retain()
-		return e.queue.Push(input)
+		return e.slot.Push(input)
 	}
 
 	output := e.resampler.Process(block)
@@ -55,14 +56,20 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	return e.queue.Push(encoded)
+	return e.slot.Push(encoded)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
+func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+	frame, err := e.slot.Receive()
+	if err != nil {
+		return nil, err
+	}
+	return &frame, nil
+}
 
 func (e *Engine) Flush() error {
 	if !e.initialized || e.inputRate == e.config.SampleRate {
-		e.queue.Flush()
+		e.slot.Flush()
 		return nil
 	}
 	if output, ok := e.resampler.Finish(); ok {
@@ -70,17 +77,17 @@ func (e *Engine) Flush() error {
 		if err != nil {
 			return err
 		}
-		if err := e.queue.Push(encoded); err != nil {
+		if err := e.slot.Push(encoded); err != nil {
 			encoded.Release()
 			return err
 		}
 	}
-	e.queue.Flush()
+	e.slot.Flush()
 	return nil
 }
 
 func (e *Engine) Close() error {
-	e.queue.Close()
+	e.slot.Close()
 	return nil
 }
 
