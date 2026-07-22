@@ -59,9 +59,9 @@ type DCOffsetConfig struct {
 type TrimMode string
 
 const (
-	TrimModeBoth TrimMode = "both"
+	TrimModeBoth  TrimMode = "both"
 	TrimModeStart TrimMode = "start"
-	TrimModeEnd TrimMode = "end"
+	TrimModeEnd   TrimMode = "end"
 )
 
 type TrimConfig struct {
@@ -76,12 +76,38 @@ type SpeedMode string
 
 const (
 	SpeedModeInterpolate SpeedMode = "interpolate"
-	SpeedModeRelabel SpeedMode = "relabel"
+	SpeedModeRelabel     SpeedMode = "relabel"
 )
 
 type SpeedConfig struct {
 	Factor float64   `name:"factor" help:"Playback speed multiplier (e.g. 2 for double speed, 0.5 for half); pitch shifts with speed"`
 	Mode   SpeedMode `name:"mode" help:"How speed is applied: interpolate (resample, keeps input sample rate) or relabel (no resampling, retags the sample rate; lossless)"`
+}
+
+type CompressorConfig struct {
+	ThresholdDBFS float64 `name:"threshold-dbfs" help:"Level above which compression begins"`
+	Ratio         float64 `name:"ratio" help:"Compression ratio applied above the threshold (e.g. 4 for 4:1)"`
+	AttackMs      float64 `name:"attack-ms" help:"Time to react to level increases, in milliseconds"`
+	ReleaseMs     float64 `name:"release-ms" help:"Time to recover after level drops, in milliseconds"`
+	KneeDB        float64 `name:"knee-db" help:"Soft-knee width in dB around the threshold (0 for a hard knee)"`
+	MakeupGainDB  float64 `name:"makeup-gain-db" help:"Gain applied after compression to restore level"`
+}
+
+type EQType string
+
+const (
+	EQTypePeaking   EQType = "peaking"
+	EQTypeLowShelf  EQType = "lowshelf"
+	EQTypeHighShelf EQType = "highshelf"
+	EQTypeLowPass   EQType = "lowpass"
+	EQTypeHighPass  EQType = "highpass"
+)
+
+type EQConfig struct {
+	Type        EQType  `name:"type" help:"Filter shape: peaking, lowshelf, highshelf, lowpass, or highpass"`
+	FrequencyHz float64 `name:"frequency-hz" help:"Center frequency (peaking/shelf) or corner frequency (lowpass/highpass)"`
+	GainDB      float64 `name:"gain-db" help:"Gain applied at the center frequency; ignored by lowpass/highpass"`
+	Q           float64 `name:"q" help:"Filter Q; higher values narrow the band or sharpen the corner"`
 }
 
 var (
@@ -99,10 +125,12 @@ var (
 		AllowAmplification: true,
 		MemoryLimitBytes:   defaultMemoryLimitBytes,
 	}
-	DefaultFadeConfig     = FadeConfig{MemoryLimitBytes: defaultMemoryLimitBytes}
-	DefaultDCOffsetConfig = DCOffsetConfig{Pole: 0.995}
-	DefaultTrimConfig     = TrimConfig{ThresholdDBFS: -60, TrimMode: TrimModeBoth, MemoryLimitBytes: defaultMemoryLimitBytes}
-	DefaultSpeedConfig    = SpeedConfig{Factor: 1, Mode: SpeedModeInterpolate}
+	DefaultFadeConfig       = FadeConfig{MemoryLimitBytes: defaultMemoryLimitBytes}
+	DefaultDCOffsetConfig   = DCOffsetConfig{Pole: 0.995}
+	DefaultTrimConfig       = TrimConfig{ThresholdDBFS: -60, TrimMode: TrimModeBoth, MemoryLimitBytes: defaultMemoryLimitBytes}
+	DefaultSpeedConfig      = SpeedConfig{Factor: 1, Mode: SpeedModeInterpolate}
+	DefaultCompressorConfig = CompressorConfig{ThresholdDBFS: -18, Ratio: 4, AttackMs: 10, ReleaseMs: 100, KneeDB: 6}
+	DefaultEQConfig         = EQConfig{Type: EQTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476}
 )
 
 func (c FormatConfig) Validate() error {
@@ -179,6 +207,41 @@ func (c SpeedConfig) Validate() error {
 	}
 	if !c.Mode.Valid() {
 		return fmt.Errorf("invalid speed mode: %q", c.Mode)
+	}
+	return nil
+}
+
+func (c CompressorConfig) Validate() error {
+	if !finite(c.ThresholdDBFS) || c.ThresholdDBFS > 0 {
+		return fmt.Errorf("compressor threshold must be finite and no greater than 0 dBFS")
+	}
+	if !finite(c.Ratio) || c.Ratio < 1 {
+		return fmt.Errorf("compressor ratio must be finite and at least 1")
+	}
+	if c.AttackMs < 0 || c.ReleaseMs < 0 {
+		return fmt.Errorf("compressor attack and release must not be negative")
+	}
+	if c.KneeDB < 0 {
+		return fmt.Errorf("compressor knee must not be negative")
+	}
+	if !finite(c.MakeupGainDB) {
+		return fmt.Errorf("compressor makeup gain must be finite")
+	}
+	return nil
+}
+
+func (c EQConfig) Validate() error {
+	if !c.Type.Valid() {
+		return fmt.Errorf("invalid eq type: %q", c.Type)
+	}
+	if !finite(c.FrequencyHz) || c.FrequencyHz <= 0 {
+		return fmt.Errorf("eq frequency must be finite and positive")
+	}
+	if !finite(c.Q) || c.Q <= 0 {
+		return fmt.Errorf("eq Q must be finite and positive")
+	}
+	if !finite(c.GainDB) {
+		return fmt.Errorf("eq gain must be finite")
 	}
 	return nil
 }

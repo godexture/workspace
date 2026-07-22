@@ -17,3 +17,11 @@ func (v SpeedMode) Valid() bool {
 	}
 	return false
 }
+
+func (v EQType) Valid() bool {
+	switch v {
+	case "peaking", "lowshelf", "highshelf", "lowpass", "highpass":
+		return true
+	}
+	return false
+}

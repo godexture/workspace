@@ -18,7 +18,7 @@ func bridgeFormat(current media.StreamInfo, required []manifest.Capability) ([]r
 			if target.Format != current.Audio.Format || bits != currentBits {
 				result = append(result, registry.ConversionCandidate{
 					Config: NewFormatConfig(WithFormat(target.Format), WithBitsPerSample(bits)),
-					Cost: registry.ConversionCost{QualityLoss: formatLoss(current.Audio.Format, target.Format, currentBits, bits), Work: 1},
+					Cost:   registry.ConversionCost{QualityLoss: formatLoss(current.Audio.Format, target.Format, currentBits, bits), Work: 1},
 				})
 			}
 		}

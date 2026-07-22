@@ -1,6 +1,6 @@
 package filter
 
-//go:generate config-generator --target FormatConfig --target ResampleConfig --target RemixConfig --target GainConfig --target NormalizeConfig --target FadeConfig --target DCOffsetConfig --target TrimConfig --target SpeedConfig
+//go:generate config-generator --target FormatConfig --target ResampleConfig --target RemixConfig --target GainConfig --target NormalizeConfig --target FadeConfig --target DCOffsetConfig --target TrimConfig --target SpeedConfig --target CompressorConfig --target EQConfig
 
 import (
 	"github.com/godexture/filter-audio/internal/config"
@@ -19,4 +19,14 @@ const (
 	TrimModeBoth  = config.TrimModeBoth
 	TrimModeStart = config.TrimModeStart
 	TrimModeEnd   = config.TrimModeEnd
+)
+
+type EQType = config.EQType
+
+const (
+	EQTypePeaking   = config.EQTypePeaking
+	EQTypeLowShelf  = config.EQTypeLowShelf
+	EQTypeHighShelf = config.EQTypeHighShelf
+	EQTypeLowPass   = config.EQTypeLowPass
+	EQTypeHighPass  = config.EQTypeHighPass
 )
