@@ -53,9 +53,9 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 			return nil
 		}
 		e.started = true
-		e.pending = ptr(slice(block, first, last+1))
+		e.pending = ptr(block.Slice(first, last+1))
 		if last+1 < block.Samples() {
-			return e.tail.Append(slice(block, last+1, block.Samples()))
+			return e.tail.Append(block.Slice(last+1, block.Samples()))
 		}
 		return nil
 	}
@@ -66,10 +66,10 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		return err
 	}
 	e.replay = true
-	e.pending = ptr(slice(block, 0, last+1))
+	e.pending = ptr(block.Slice(0, last+1))
 	e.nextTail = spool.New(e.config.MemoryLimitBytes, e.config.TempDir)
 	if last+1 < block.Samples() {
-		return e.nextTail.Append(slice(block, last+1, block.Samples()))
+		return e.nextTail.Append(block.Slice(last+1, block.Samples()))
 	}
 	return nil
 }
@@ -137,12 +137,4 @@ func activity(block audio.Block, threshold float32) (int, int) {
 	return first, last
 }
 
-func slice(block audio.Block, start, end int) audio.Block {
-	result := block
-	result.PTS += media.Pts(start)
-	for channel := range result.Channels {
-		result.Channels[channel] = result.Channels[channel][start:end]
-	}
-	return audio.CloneBlock(result)
-}
 func ptr(block audio.Block) *audio.Block { return &block }

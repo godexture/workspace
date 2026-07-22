@@ -44,7 +44,7 @@ func (s *Blocks) Append(block audio.Block) error {
 	} else if s.layout != block.Layout || s.rate != block.Rate {
 		return fmt.Errorf("buffered audio format changed within stream")
 	}
-	clone := audio.CloneBlock(block)
+	clone := block.Clone()
 	s.records = append(s.records, record{pts: clone.PTS, samples: clone.Samples(), metadata: clone.Metadata})
 	size := int64(clone.Samples()*len(clone.Channels)) * 4
 	if s.file == nil && s.bytes+size <= s.limit {
@@ -90,7 +90,7 @@ func (s *Blocks) Next() (audio.Block, bool, error) {
 		return audio.Block{}, false, nil
 	}
 	if s.file == nil {
-		block := audio.CloneBlock(s.memory[s.index])
+		block := s.memory[s.index].Clone()
 		s.index++
 		return block, true, nil
 	}

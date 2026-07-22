@@ -8,9 +8,21 @@ import (
 	"github.com/godexture/core/domain/metadata"
 )
 
+// Channels holds one []float32 sample buffer per audio channel.
+type Channels [][]float32
+
+// Clone returns an independent copy that shares no backing arrays with c.
+func (c Channels) Clone() Channels {
+	result := make(Channels, len(c))
+	for i, values := range c {
+		result[i] = append([]float32(nil), values...)
+	}
+	return result
+}
+
 type Block struct {
 	Source   *media.AudioFrame
-	Channels [][]float32
+	Channels Channels
 	Layout   media.ChannelLayout
 	Rate     int
 	Format   media.SampleFormat
@@ -24,6 +36,29 @@ func (b Block) Samples() int {
 		return 0
 	}
 	return len(b.Channels[0])
+}
+
+// Slice returns an independent Block covering the [start, end) sample range.
+// It never aliases the receiver's Channels, so mutating the result is safe.
+func (b Block) Slice(start, end int) Block {
+	result := b
+	result.PTS += media.Pts(start)
+	result.Channels = make(Channels, len(b.Channels))
+	for channel, values := range b.Channels {
+		result.Channels[channel] = values[start:end]
+	}
+	return result.Clone()
+}
+
+// Clone returns an independent copy that shares no state with b.
+func (b Block) Clone() Block {
+	clone := b
+	clone.Source = nil
+	clone.Channels = b.Channels.Clone()
+	if b.Metadata != nil {
+		clone.Metadata = b.Metadata.Clone()
+	}
+	return clone
 }
 
 func Decode(frame *media.Frame) (Block, error) {
@@ -46,7 +81,7 @@ func Decode(frame *media.Frame) (Block, error) {
 	}
 	result := Block{
 		Source:   audioFrame,
-		Channels: make([][]float32, channels),
+		Channels: make(Channels, channels),
 		Layout:   audioFrame.Layout,
 		Rate:     audioFrame.SampleRate,
 		Format:   audioFrame.Format,
@@ -140,20 +175,3 @@ func Encode(block Block, format media.SampleFormat, bitsPerSample int) (*media.A
 	return frame, nil
 }
 
-func CloneChannels(channels [][]float32) [][]float32 {
-	result := make([][]float32, len(channels))
-	for i, values := range channels {
-		result[i] = append([]float32(nil), values...)
-	}
-	return result
-}
-
-func CloneBlock(block Block) Block {
-	clone := block
-	clone.Source = nil
-	clone.Channels = CloneChannels(block.Channels)
-	if block.Metadata != nil {
-		clone.Metadata = block.Metadata.Clone()
-	}
-	return clone
-}
