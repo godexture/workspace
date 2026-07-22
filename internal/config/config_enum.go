@@ -10,6 +10,14 @@ func (v TrimMode) Valid() bool {
 	return false
 }
 
+func (v GateMode) Valid() bool {
+	switch v {
+	case "hard", "lowpass":
+		return true
+	}
+	return false
+}
+
 func (v SpeedMode) Valid() bool {
 	switch v {
 	case "interpolate", "relabel":

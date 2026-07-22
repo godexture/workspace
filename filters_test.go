@@ -332,7 +332,7 @@ func TestEQPeakingZeroGainIsIdentity(t *testing.T) {
 }
 
 func TestGateSilencesSamplesBelowThreshold(t *testing.T) {
-	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20})
+	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20, GateMode: config.GateModeHard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestGateSilencesSamplesBelowThreshold(t *testing.T) {
 }
 
 func TestGateLinksChannelsSoAnyActiveChannelPreservesAll(t *testing.T) {
-	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20})
+	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20, GateMode: config.GateModeHard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,6 +372,50 @@ func TestGateLinksChannelsSoAnyActiveChannelPreservesAll(t *testing.T) {
 	assertFloat(t, decoded.Channels[0][1], 0)
 	assertFloat(t, decoded.Channels[1][1], 0)
 	output.Release()
+	assertEOF(t, item)
+}
+
+func TestGateLowpassSilencesQuietSignalBelowRange(t *testing.T) {
+	item, err := gate.New(config.GateConfig{
+		ThresholdDBFS: -20, GateMode: config.GateModeLowpass, RangeDB: 40,
+		OpenFrequencyHz: 20000, CloseFrequencyHz: 200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{.0001, .0001, .0001}))
+	assertSamples(t, receive(t, item), []float32{0, 0, 0})
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestGateLowpassSettlesToInputWhenFullyOpen(t *testing.T) {
+	item, err := gate.New(config.GateConfig{
+		ThresholdDBFS: -20, GateMode: config.GateModeLowpass, RangeDB: 40,
+		OpenFrequencyHz: 20000, CloseFrequencyHz: 200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]float32, 200)
+	for i := range values {
+		values[i] = 1
+	}
+	send(t, item, frame(48000, 0, values))
+	output := receive(t, item)
+	block, err := audio.Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := block.Channels[0][len(block.Channels[0])-1]; math.Abs(float64(last-1)) > 1e-3 {
+		t.Fatalf("settled output = %g, want ~1", last)
+	}
+	output.Release()
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	assertEOF(t, item)
 }
 

@@ -159,7 +159,7 @@ func registerDCOffset() {
 	}, nil, nil)
 }
 func registerGate() {
-	register(registry.NewConfigurationFactory(NewGateConfig), "gate", "Silence samples below a threshold", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewGateConfig), "gate", "Silence samples below a threshold (hard cut or Buchla-style low-pass gate)", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.GateConfig, GateConfig](cfg)
 		if err != nil {
 			return nil, err
