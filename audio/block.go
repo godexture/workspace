@@ -5,7 +5,6 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	mediapcm "github.com/godexture/core/domain/media/pcm"
-	"github.com/godexture/core/domain/metadata"
 )
 
 // Channels holds one []float32 sample buffer per audio channel.
@@ -28,7 +27,6 @@ type Block struct {
 	Format   media.SampleFormat
 	Bits     int
 	PTS      media.Pts
-	Metadata *metadata.Bundle
 }
 
 func (b Block) Samples() int {
@@ -55,9 +53,6 @@ func (b Block) Clone() Block {
 	clone := b
 	clone.Source = nil
 	clone.Channels = b.Channels.Clone()
-	if b.Metadata != nil {
-		clone.Metadata = b.Metadata.Clone()
-	}
 	return clone
 }
 
@@ -87,7 +82,6 @@ func Decode(frame *media.Frame) (Block, error) {
 		Format:   audioFrame.Format,
 		Bits:     audioFrame.BitsPerSample,
 		PTS:      audioFrame.Pts(),
-		Metadata: audioFrame.Metadata(),
 	}
 	if audioFrame.Format.IsPlanar() {
 		planes := audioFrame.Planes()
@@ -149,9 +143,6 @@ func Encode(block Block, format media.SampleFormat, bitsPerSample int) (*media.A
 		options = append(options, media.WithAudioBitsPerSample(bitsPerSample))
 	}
 	frame := media.NewAudioFrame(format, block.Layout, block.Rate, samples, options...)
-	if block.Metadata != nil {
-		frame.Metadata().Merge(block.Metadata)
-	}
 	if format.IsPlanar() {
 		for channel, values := range block.Channels {
 			if err := mediapcm.FromFloat32(frame.Planes()[channel], values, format, bitsPerSample); err != nil {

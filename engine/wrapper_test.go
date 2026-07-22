@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/core/pipeline"
 )
 
@@ -27,10 +26,9 @@ type trackedFrame struct {
 	releases atomic.Int32
 }
 
-func (*trackedFrame) Retain()                    {}
-func (f *trackedFrame) Release()                 { f.releases.Add(1) }
-func (*trackedFrame) Pts() media.Pts             { return 0 }
-func (*trackedFrame) Metadata() *metadata.Bundle { return nil }
+func (*trackedFrame) Retain()        {}
+func (f *trackedFrame) Release()     { f.releases.Add(1) }
+func (*trackedFrame) Pts() media.Pts { return 0 }
 
 func (f *fakeEncoderEngine) SendFrame(frame *media.Frame) error {
 	if f.sent != nil {
