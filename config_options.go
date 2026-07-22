@@ -281,6 +281,45 @@ func (c DCOffsetConfig) FieldChoices(field string) []string {
 	}
 }
 
+type GateConfig config.GateConfig
+
+type GateConfigOption interface {
+	applyGateConfig(*GateConfig)
+}
+
+type gateConfigOptionFunc func(*GateConfig)
+
+func (f gateConfigOptionFunc) applyGateConfig(c *GateConfig) {
+	f(c)
+}
+
+func NewGateConfig(options ...GateConfigOption) GateConfig {
+	config := GateConfig(config.DefaultGateConfig)
+	for _, option := range options {
+		option.applyGateConfig(&config)
+	}
+	return config
+}
+
+func (c GateConfig) ResolveDefault() config.GateConfig {
+	return config.GateConfig(config.DefaultGateConfig)
+}
+
+func (c GateConfig) Resolve() config.GateConfig {
+	return config.GateConfig(c)
+}
+
+func (c GateConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c GateConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type TrimConfig config.TrimConfig
 
 type TrimConfigOption interface {
@@ -572,12 +611,16 @@ func WithPole(v float64) DCOffsetConfigOption {
 }
 
 type ThresholdDBFSOption interface {
+	GateConfigOption
 	TrimConfigOption
 	CompressorConfigOption
 }
 
 type thresholdDBFSOpt struct{ v float64 }
 
+func (o thresholdDBFSOpt) applyGateConfig(c *GateConfig) {
+	c.ThresholdDBFS = o.v
+}
 func (o thresholdDBFSOpt) applyTrimConfig(c *TrimConfig) {
 	c.ThresholdDBFS = o.v
 }

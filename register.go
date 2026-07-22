@@ -16,6 +16,7 @@ import (
 	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gain"
+	"github.com/godexture/filter-audio/internal/gate"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
@@ -32,6 +33,7 @@ func init() {
 	registerNormalize()
 	registerFade()
 	registerDCOffset()
+	registerGate()
 	registerTrim()
 	registerSpeed()
 	registerCompressor()
@@ -156,6 +158,20 @@ func registerDCOffset() {
 		return engine.WrapFilter(item), nil
 	}, nil, nil)
 }
+func registerGate() {
+	register(registry.NewConfigurationFactory(NewGateConfig), "gate", "Silence samples below a threshold", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[config.GateConfig, GateConfig](cfg)
+		if err != nil {
+			return nil, err
+		}
+		item, err := gate.New(value)
+		if err != nil {
+			return nil, err
+		}
+		return engine.WrapFilter(item), nil
+	}, nil, nil)
+}
+
 func registerTrim() {
 	register(registry.NewConfigurationFactory(NewTrimConfig), "trim", "Trim silence from the start, end, or both", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.TrimConfig, TrimConfig](cfg)

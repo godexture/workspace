@@ -32,6 +32,16 @@ func TestSpeedConfigValidate(t *testing.T) {
 	}
 }
 
+func TestGateConfigValidate(t *testing.T) {
+	t.Parallel()
+	if err := (GateConfig{ThresholdDBFS: -60}).Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (GateConfig{ThresholdDBFS: 1}).Validate(); err == nil {
+		t.Fatal("want error for positive threshold")
+	}
+}
+
 func TestCompressorConfigValidate(t *testing.T) {
 	t.Parallel()
 	valid := CompressorConfig{ThresholdDBFS: -18, Ratio: 4, AttackMs: 10, ReleaseMs: 100, KneeDB: 6}
