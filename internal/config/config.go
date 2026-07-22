@@ -1,5 +1,7 @@
 package config
 
+//go:generate enum-generator
+
 import (
 	"fmt"
 	"math"
@@ -54,15 +56,11 @@ type DCOffsetConfig struct {
 	Pole float64 `name:"pole" help:"DC offset filter pole"`
 }
 
-// TrimMode selects which end of the stream a TrimConfig filter trims silence from.
 type TrimMode string
 
 const (
-	// TrimModeBoth trims leading and trailing silence.
 	TrimModeBoth TrimMode = "both"
-	// TrimModeStart trims only leading silence and keeps trailing silence.
 	TrimModeStart TrimMode = "start"
-	// TrimModeEnd trims only trailing silence and keeps leading silence.
 	TrimModeEnd TrimMode = "end"
 )
 
@@ -74,17 +72,10 @@ type TrimConfig struct {
 	TempDir            string   `name:"temp-dir" help:"Temporary directory"`
 }
 
-// SpeedMode selects how a SpeedConfig filter achieves its speed change.
 type SpeedMode string
 
 const (
-	// SpeedModeInterpolate resamples the waveform via linear interpolation
-	// and keeps the output labeled at the input sample rate. Duration and
-	// pitch both change, but interpolation introduces some quality loss.
 	SpeedModeInterpolate SpeedMode = "interpolate"
-	// SpeedModeRelabel passes samples through untouched and only retags the
-	// output sample rate, so it is lossless, but downstream consumers see a
-	// stream whose sample rate has changed.
 	SpeedModeRelabel SpeedMode = "relabel"
 )
 
@@ -176,9 +167,7 @@ func (c TrimConfig) Validate() error {
 	if !finite(c.ThresholdDBFS) || c.ThresholdDBFS > 0 {
 		return fmt.Errorf("trim threshold must be finite and no greater than 0 dBFS")
 	}
-	switch c.TrimMode {
-	case TrimModeBoth, TrimModeStart, TrimModeEnd:
-	default:
+	if !c.TrimMode.Valid() {
 		return fmt.Errorf("invalid trim mode: %q", c.TrimMode)
 	}
 	return validateMemoryLimit(c.MemoryLimitBytes)
@@ -188,9 +177,7 @@ func (c SpeedConfig) Validate() error {
 	if !finite(c.Factor) || c.Factor <= 0 {
 		return fmt.Errorf("speed factor must be finite and positive")
 	}
-	switch c.Mode {
-	case SpeedModeInterpolate, SpeedModeRelabel:
-	default:
+	if !c.Mode.Valid() {
 		return fmt.Errorf("invalid speed mode: %q", c.Mode)
 	}
 	return nil
