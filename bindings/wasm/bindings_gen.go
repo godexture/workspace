@@ -23,11 +23,25 @@ func recoverFunc(fn func(js.Value, []js.Value) interface{}) js.Func {
 }
 
 func init() {
-	js.Global().Set("hello", recoverFunc(wasmHello))
+	js.Global().Set("convert", recoverFunc(wasmConvert))
 }
 
-func wasmHello(_ js.Value, args []js.Value) interface{} {
-	result := Hello()
-	return result
+func wasmConvert(_ js.Value, args []js.Value) interface{} {
+	input := func() []byte {
+		length := args[0].Length()
+		result := make([]byte, length)
+		js.CopyBytesToGo(result, args[0])
+		return result
+	}()
+	format := args[1].String()
+	result, err := Convert(input, format)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return func() js.Value {
+		arr := js.Global().Get("Uint8Array").New(len(result))
+		js.CopyBytesToJS(arr, result)
+		return arr
+	}()
 }
 
