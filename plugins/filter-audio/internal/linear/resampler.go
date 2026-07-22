@@ -27,7 +27,7 @@ func NewResampler(inputRate, targetRate, outputRate int, basePTS media.Pts) *Res
 		inputRate:     inputRate,
 		targetRate:    targetRate,
 		outputRate:    outputRate,
-		baseOutputPTS: rescalePTS(basePTS, inputRate, targetRate),
+		baseOutputPTS: RescalePTS(basePTS, inputRate, targetRate),
 	}
 }
 
@@ -95,7 +95,10 @@ func (r *Resampler) Finish() (audio.Block, bool) {
 	return output, true
 }
 
-func rescalePTS(value media.Pts, fromRate, toRate int) media.Pts {
+// RescalePTS converts a presentation timestamp expressed in fromRate units
+// into the equivalent timestamp in toRate units, rounding to the nearest
+// sample.
+func RescalePTS(value media.Pts, fromRate, toRate int) media.Pts {
 	if fromRate <= 0 || toRate <= 0 {
 		return value
 	}

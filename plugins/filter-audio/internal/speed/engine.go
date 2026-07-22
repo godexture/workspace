@@ -22,6 +22,7 @@ type Engine struct {
 	bits         int
 	baseInputPTS media.Pts
 	totalInput   int64
+	outputRate   int
 	resampler    *linear.Resampler
 }
 
@@ -47,6 +48,19 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		input.Retain()
 		return e.queue.Push(input)
 	}
+
+	if e.config.Mode == config.SpeedModeRelabel {
+		output := block
+		output.Rate = e.outputRate
+		output.PTS = linear.RescalePTS(block.PTS, e.inputRate, e.outputRate)
+		e.totalInput += int64(block.Samples())
+		encoded, err := audio.Encode(output, e.format, e.bits)
+		if err != nil {
+			return err
+		}
+		return e.queue.Push(encoded)
+	}
+
 	output := e.resampler.Process(block)
 	e.totalInput += int64(block.Samples())
 	if output.Samples() == 0 {
@@ -62,7 +76,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
 
 func (e *Engine) Flush() error {
-	if !e.initialized || e.config.Factor == 1 {
+	if !e.initialized || e.config.Factor == 1 || e.config.Mode == config.SpeedModeRelabel {
 		e.queue.Flush()
 		return nil
 	}
@@ -92,10 +106,11 @@ func (e *Engine) initialize(block audio.Block) {
 	e.format = block.Format
 	e.bits = block.Bits
 	e.baseInputPTS = block.PTS
-	target := int(math.Round(float64(block.Rate) / e.config.Factor))
-	if target < 1 {
-		target = 1
+	if e.config.Mode == config.SpeedModeRelabel {
+		e.outputRate = scaleRate(block.Rate, e.config.Factor)
+		return
 	}
+	target := scaleRate(block.Rate, 1/e.config.Factor)
 	e.resampler = linear.NewResampler(e.inputRate, target, e.inputRate, block.PTS)
 }
 
@@ -107,4 +122,12 @@ func (e *Engine) validateInput(block audio.Block) error {
 		return fmt.Errorf("speed input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
 	}
 	return nil
+}
+
+func scaleRate(rate int, factor float64) int {
+	target := int(math.Round(float64(rate) * factor))
+	if target < 1 {
+		target = 1
+	}
+	return target
 }

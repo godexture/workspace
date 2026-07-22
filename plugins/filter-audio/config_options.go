@@ -354,6 +354,8 @@ func (c SpeedConfig) Validate() error {
 
 func (c SpeedConfig) FieldChoices(field string) []string {
 	switch field {
+	case "Mode":
+		return []string{"interpolate", "relabel"}
 	default:
 		return nil
 	}
@@ -496,5 +498,11 @@ func WithThresholdDBFS(v float64) TrimConfigOption {
 func WithFactor(v float64) SpeedConfigOption {
 	return speedConfigOptionFunc(func(c *SpeedConfig) {
 		c.Factor = v
+	})
+}
+
+func WithMode(v SpeedMode) SpeedConfigOption {
+	return speedConfigOptionFunc(func(c *SpeedConfig) {
+		c.Mode = v
 	})
 }

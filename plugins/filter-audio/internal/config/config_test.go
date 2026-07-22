@@ -18,10 +18,16 @@ func TestFormatConfigEffectiveBitsPerSample(t *testing.T) {
 
 func TestSpeedConfigValidate(t *testing.T) {
 	t.Parallel()
-	if err := (SpeedConfig{Factor: 0}).Validate(); err == nil {
+	if err := (SpeedConfig{Factor: 0, Mode: SpeedModeInterpolate}).Validate(); err == nil {
 		t.Fatal("want error for non-positive factor")
 	}
-	if err := (SpeedConfig{Factor: 2}).Validate(); err != nil {
+	if err := (SpeedConfig{Factor: 2, Mode: SpeedModeInterpolate}).Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (SpeedConfig{Factor: 2, Mode: SpeedModeRelabel}).Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (SpeedConfig{Factor: 2, Mode: "bogus"}).Validate(); err == nil {
+		t.Fatal("want error for invalid mode")
 	}
 }
