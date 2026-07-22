@@ -21,10 +21,10 @@ export class Godexture {
         this.goMain = await GoMain.init(wasmBuffer);
     }
 
-    hello(): string {
+    convert(input: Uint8Array, format: string): Uint8Array {
         if (!this.goMain) {
             throw new Error("Godexture not initialized. Call init() first.");
         }
-        return this.goMain.hello();
+        return this.goMain.convert(input, format);
     }
 }
