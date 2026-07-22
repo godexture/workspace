@@ -41,7 +41,6 @@ func (r *Resampler) Process(block audio.Block) audio.Block {
 		Layout:   block.Layout,
 		Rate:     r.outputRate,
 		PTS:      r.baseOutputPTS + media.Pts(r.emitted),
-		Metadata: block.Metadata,
 	}
 	for sample := 0; sample < block.Samples(); sample++ {
 		if r.totalInput == 0 {
