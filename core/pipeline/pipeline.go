@@ -173,7 +173,7 @@ func (p *Pipeline) finish(runErr error) error {
 func (p *Pipeline) Description() Description {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return cloneDescription(p.description)
+	return p.description.Clone()
 }
 
 func (p *Pipeline) Snapshot() Snapshot {
@@ -184,7 +184,7 @@ func (p *Pipeline) Snapshot() Snapshot {
 	finished := p.finishedAt
 	edges := append([]*edgeMetrics(nil), p.edgeMetrics...)
 	nodes := append([]*nodeMetrics(nil), p.nodeMetrics...)
-	description := cloneDescription(p.description)
+	description := p.description.Clone()
 	p.mu.Unlock()
 
 	end := finished
