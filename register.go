@@ -82,8 +82,12 @@ func init() {
 					ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 				},
 				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
-					Codecs:      []media.CodecID{media.CodecLPCM},
-					SampleRates: manifest.IntConstraint{Min: 1},
+					Codecs: []media.CodecID{media.CodecLPCM},
+					// Max is the FLAC Subset format limit: the largest rate a frame
+					// header can still encode explicitly (10Hz-unit field, 16 bits).
+					// The raw STREAMINFO field allows up to 2^20-1, but Subset streams
+					// (the default) require an explicit per-frame sample-rate code.
+					SampleRates: manifest.IntConstraint{Min: 1, Max: 655350},
 					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
 					SampleFormats: []manifest.SampleFormatConstraint{
 						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
