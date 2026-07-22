@@ -113,6 +113,31 @@ func TestSpeedRelabelHalvesRateLossless(t *testing.T) {
 	assertEOF(t, item)
 }
 
+func TestSpeedRelabelPTSAdvancesBySampleCount(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 100, Mode: config.SpeedModeRelabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	first := receive(t, item)
+	if got := first.(*media.AudioFrame).Pts(); got != 0 {
+		t.Fatalf("first PTS = %d, want 0", got)
+	}
+	first.Release()
+
+	send(t, item, frame(4, 4, []float32{8, 10, 12, 14}))
+	second := receive(t, item)
+	if got := second.(*media.AudioFrame).Pts(); got != 4 {
+		t.Fatalf("second PTS = %d, want 4 (advances by the block's own sample count, not scaled by Factor)", got)
+	}
+	second.Release()
+
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
 func TestRemixDownmixesToMono(t *testing.T) {
 	input := audio.Block{Channels: [][]float32{{1, -1}, {1, -1}}, Layout: media.LayoutStereo2_0, Rate: 48000}
 	output, err := remix.Mix(input, config.RemixConfig{Layout: media.LayoutMono1, CenterMixDB: -3, SurroundMixDB: -3, LFEMixDB: math.Inf(-1)})
