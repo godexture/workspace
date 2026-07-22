@@ -30,33 +30,20 @@ type Description struct {
 	Edges []EdgeDescription
 }
 
-func cloneDescription(description Description) Description {
+// Clone returns an independent copy that shares no state with d.
+func (d Description) Clone() Description {
 	cloned := Description{
-		Nodes: make([]NodeDescription, len(description.Nodes)),
-		Edges: make([]EdgeDescription, len(description.Edges)),
+		Nodes: make([]NodeDescription, len(d.Nodes)),
+		Edges: make([]EdgeDescription, len(d.Edges)),
 	}
-	for i, current := range description.Nodes {
-		current.Inputs = cloneStreams(current.Inputs)
-		current.Outputs = cloneStreams(current.Outputs)
+	for i, current := range d.Nodes {
+		current.Inputs = media.CloneStreams(current.Inputs)
+		current.Outputs = media.CloneStreams(current.Outputs)
 		cloned.Nodes[i] = current
 	}
-	for i, current := range description.Edges {
-		current.Stream = cloneStream(current.Stream)
+	for i, current := range d.Edges {
+		current.Stream = current.Stream.Clone()
 		cloned.Edges[i] = current
 	}
 	return cloned
-}
-
-func cloneStreams(streams []media.StreamInfo) []media.StreamInfo {
-	cloned := make([]media.StreamInfo, len(streams))
-	for i := range streams {
-		cloned[i] = cloneStream(streams[i])
-	}
-	return cloned
-}
-
-func cloneStream(stream media.StreamInfo) media.StreamInfo {
-	stream.Metadata = *stream.Metadata.Clone()
-	stream.CodecParameters = stream.CodecParameters.Clone()
-	return stream
 }

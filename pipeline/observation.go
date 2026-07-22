@@ -50,7 +50,7 @@ type edgeMetrics struct {
 
 func (m *edgeMetrics) snapshot() EdgeSnapshot {
 	return EdgeSnapshot{
-		Description: cloneDescription(Description{Edges: []EdgeDescription{m.description}}).Edges[0],
+		Description: (Description{Edges: []EdgeDescription{m.description}}).Clone().Edges[0],
 		Items:       m.items.Load(),
 		Bytes:       m.bytes.Load(),
 		Samples:     m.samples.Load(),
@@ -111,7 +111,7 @@ func (m *nodeMetrics) snapshot(now time.Time) NodeSnapshot {
 		elapsed = finished.Sub(m.startedAt)
 	}
 	return NodeSnapshot{
-		Description: cloneDescription(Description{Nodes: []NodeDescription{m.description}}).Nodes[0],
+		Description: (Description{Nodes: []NodeDescription{m.description}}).Clone().Nodes[0],
 		State:       m.state,
 		StartedAt:   m.startedAt,
 		FinishedAt:  m.finishedAt,

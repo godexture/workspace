@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 )
 
@@ -63,8 +64,8 @@ func (g *Geometry) AddNodeDef(definition NodeDef) error {
 		return fmt.Errorf("%w: duplicate node ID %q", ErrInvalidPipeline, definition.ID)
 	}
 	definition.Description.ID = definition.ID
-	definition.Description.Inputs = cloneStreams(definition.Description.Inputs)
-	definition.Description.Outputs = cloneStreams(definition.Description.Outputs)
+	definition.Description.Inputs = media.CloneStreams(definition.Description.Inputs)
+	definition.Description.Outputs = media.CloneStreams(definition.Description.Outputs)
 	g.nodeIDs[definition.ID] = struct{}{}
 	g.nodes = append(g.nodes, definition)
 	return nil
@@ -79,8 +80,8 @@ func (g *Geometry) SetNodeDescription(id string, description NodeDescription) er
 	for i := range g.nodes {
 		if g.nodes[i].ID == id {
 			description.ID = id
-			description.Inputs = cloneStreams(description.Inputs)
-			description.Outputs = cloneStreams(description.Outputs)
+			description.Inputs = media.CloneStreams(description.Inputs)
+			description.Outputs = media.CloneStreams(description.Outputs)
 			g.nodes[i].Description = description
 			return nil
 		}
@@ -101,7 +102,7 @@ func (g *Geometry) AddEdgeDef(definition EdgeDef) error {
 	if definition.FromNode == "" || definition.FromPort == "" || definition.ToNode == "" || definition.ToPort == "" {
 		return fmt.Errorf("%w: edge endpoints and ports must not be empty", ErrInvalidPipeline)
 	}
-	definition.Stream = cloneStream(definition.Stream)
+	definition.Stream = definition.Stream.Clone()
 	g.edges = append(g.edges, definition)
 	return nil
 }
@@ -121,7 +122,7 @@ func (g *Geometry) Edges() []EdgeDef {
 func (g *Geometry) Description() Description {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return cloneDescription(descriptionFromDefinitions(g.nodes, g.edges))
+	return descriptionFromDefinitions(g.nodes, g.edges).Clone()
 }
 
 func descriptionFromDefinitions(nodes []NodeDef, edges []EdgeDef) Description {
