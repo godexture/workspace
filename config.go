@@ -12,3 +12,11 @@ const (
 	SpeedModeInterpolate = config.SpeedModeInterpolate
 	SpeedModeRelabel     = config.SpeedModeRelabel
 )
+
+type TrimMode = config.TrimMode
+
+const (
+	TrimModeBoth  = config.TrimModeBoth
+	TrimModeStart = config.TrimModeStart
+	TrimModeEnd   = config.TrimModeEnd
+)

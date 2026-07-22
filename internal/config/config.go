@@ -54,10 +54,24 @@ type DCOffsetConfig struct {
 	Pole float64 `name:"pole" help:"DC offset filter pole"`
 }
 
+// TrimMode selects which end of the stream a TrimConfig filter trims silence from.
+type TrimMode string
+
+const (
+	// TrimModeBoth trims leading and trailing silence.
+	TrimModeBoth TrimMode = "both"
+	// TrimModeStart trims only leading silence and keeps trailing silence.
+	TrimModeStart TrimMode = "start"
+	// TrimModeEnd trims only trailing silence and keeps leading silence.
+	TrimModeEnd TrimMode = "end"
+)
+
 type TrimConfig struct {
-	ThresholdDBFS    float64 `name:"threshold-dbfs" help:"Silence threshold"`
-	MemoryLimitBytes int64   `name:"memory-limit-bytes" help:"Maximum buffered memory"`
-	TempDir          string  `name:"temp-dir" help:"Temporary directory"`
+	ThresholdDBFS      float64  `name:"threshold-dbfs" help:"Silence threshold"`
+	TrimMode           TrimMode `name:"mode" help:"Which end to trim: both, start, or end"`
+	ApproximateSilence bool     `name:"approximate-silence" help:"Buffer trailing silence by shape only (dropping sample data) so memory stays bounded regardless of how long it runs; loses bit-exact reproduction of that silence if it turns out not to be the true end"`
+	MemoryLimitBytes   int64    `name:"memory-limit-bytes" help:"Maximum buffered memory"`
+	TempDir            string   `name:"temp-dir" help:"Temporary directory"`
 }
 
 // SpeedMode selects how a SpeedConfig filter achieves its speed change.
@@ -96,7 +110,7 @@ var (
 	}
 	DefaultFadeConfig     = FadeConfig{MemoryLimitBytes: defaultMemoryLimitBytes}
 	DefaultDCOffsetConfig = DCOffsetConfig{Pole: 0.995}
-	DefaultTrimConfig     = TrimConfig{ThresholdDBFS: -60, MemoryLimitBytes: defaultMemoryLimitBytes}
+	DefaultTrimConfig     = TrimConfig{ThresholdDBFS: -60, TrimMode: TrimModeBoth, MemoryLimitBytes: defaultMemoryLimitBytes}
 	DefaultSpeedConfig    = SpeedConfig{Factor: 1, Mode: SpeedModeInterpolate}
 )
 
@@ -161,6 +175,11 @@ func (c DCOffsetConfig) Validate() error {
 func (c TrimConfig) Validate() error {
 	if !finite(c.ThresholdDBFS) || c.ThresholdDBFS > 0 {
 		return fmt.Errorf("trim threshold must be finite and no greater than 0 dBFS")
+	}
+	switch c.TrimMode {
+	case TrimModeBoth, TrimModeStart, TrimModeEnd:
+	default:
+		return fmt.Errorf("invalid trim mode: %q", c.TrimMode)
 	}
 	return validateMemoryLimit(c.MemoryLimitBytes)
 }

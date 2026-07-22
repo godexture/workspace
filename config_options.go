@@ -3,9 +3,10 @@
 package filter
 
 import (
+	time "time"
+
 	media "github.com/godexture/core/domain/media"
 	config "github.com/godexture/filter-audio/internal/config"
-	time "time"
 )
 
 type FormatConfig config.FormatConfig
@@ -315,6 +316,8 @@ func (c TrimConfig) Validate() error {
 
 func (c TrimConfig) FieldChoices(field string) []string {
 	switch field {
+	case "TrimMode":
+		return []string{"both", "start", "end"}
 	default:
 		return nil
 	}
@@ -492,6 +495,18 @@ func WithPole(v float64) DCOffsetConfigOption {
 func WithThresholdDBFS(v float64) TrimConfigOption {
 	return trimConfigOptionFunc(func(c *TrimConfig) {
 		c.ThresholdDBFS = v
+	})
+}
+
+func WithTrimMode(v TrimMode) TrimConfigOption {
+	return trimConfigOptionFunc(func(c *TrimConfig) {
+		c.TrimMode = v
+	})
+}
+
+func WithApproximateSilence(v bool) TrimConfigOption {
+	return trimConfigOptionFunc(func(c *TrimConfig) {
+		c.ApproximateSilence = v
 	})
 }
 

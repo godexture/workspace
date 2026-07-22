@@ -11,10 +11,20 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
+// tailBuffer retains blocks that might need to be replayed if a later block
+// turns out to contain more activity. spool.Blocks implements it exactly;
+// silenceTail implements it approximately, by shape only.
+type tailBuffer interface {
+	Append(block audio.Block) error
+	Rewind() error
+	Next() (audio.Block, bool, error)
+	Close() error
+}
+
 type Engine struct {
 	config                        config.TrimConfig
-	tail                          *spool.Blocks
-	nextTail                      *spool.Blocks
+	tail                          tailBuffer
+	nextTail                      tailBuffer
 	format                        media.SampleFormat
 	bits                          int
 	layout                        media.ChannelLayout
@@ -22,13 +32,34 @@ type Engine struct {
 	set, started, flushed, replay bool
 	pending                       *audio.Block
 	threshold                     float32
+	trimLeading, trimTrailing     bool
 }
 
 func New(config config.TrimConfig) (*Engine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Engine{config: config, tail: spool.New(config.MemoryLimitBytes, config.TempDir), threshold: float32(math.Pow(10, config.ThresholdDBFS/20))}, nil
+	trimLeading, trimTrailing := trimSides(config.TrimMode)
+	return &Engine{
+		config:       config,
+		tail:         newTailBuffer(config),
+		threshold:    float32(math.Pow(10, config.ThresholdDBFS/20)),
+		trimLeading:  trimLeading,
+		trimTrailing: trimTrailing,
+		started:      !trimLeading,
+	}, nil
+}
+
+func newTailBuffer(cfg config.TrimConfig) tailBuffer {
+	if cfg.ApproximateSilence {
+		return &silenceTail{}
+	}
+	return spool.New(cfg.MemoryLimitBytes, cfg.TempDir)
+}
+
+// trimSides reports which ends of the stream mode trims silence from.
+func trimSides(mode config.TrimMode) (leading, trailing bool) {
+	return mode == config.TrimModeBoth || mode == config.TrimModeStart, mode == config.TrimModeBoth || mode == config.TrimModeEnd
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
@@ -47,18 +78,30 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	} else if e.format != block.Format || e.bits != block.Bits || e.layout != block.Layout || e.rate != block.Rate {
 		return fmt.Errorf("trim input format changed within stream")
 	}
-	first, last := activity(block, e.threshold)
+
 	if !e.started {
+		first, last := activity(block, e.threshold)
 		if last < 0 {
 			return nil
 		}
 		e.started = true
+		if !e.trimTrailing {
+			e.pending = ptr(block.Slice(first, block.Samples()))
+			return nil
+		}
 		e.pending = ptr(block.Slice(first, last+1))
 		if last+1 < block.Samples() {
 			return e.tail.Append(block.Slice(last+1, block.Samples()))
 		}
 		return nil
 	}
+
+	if !e.trimTrailing {
+		e.pending = ptr(block)
+		return nil
+	}
+
+	_, last := activity(block, e.threshold)
 	if last < 0 {
 		return e.tail.Append(block)
 	}
@@ -67,7 +110,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	}
 	e.replay = true
 	e.pending = ptr(block.Slice(0, last+1))
-	e.nextTail = spool.New(e.config.MemoryLimitBytes, e.config.TempDir)
+	e.nextTail = newTailBuffer(e.config)
 	if last+1 < block.Samples() {
 		return e.nextTail.Append(block.Slice(last+1, block.Samples()))
 	}
@@ -88,7 +131,7 @@ func (e *Engine) ReceiveFrame() (*media.Frame, error) {
 		}
 		e.tail, e.nextTail, e.replay = e.nextTail, nil, false
 		if e.tail == nil {
-			e.tail = spool.New(e.config.MemoryLimitBytes, e.config.TempDir)
+			e.tail = newTailBuffer(e.config)
 		}
 	}
 	if e.pending != nil {
