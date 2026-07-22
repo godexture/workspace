@@ -2,7 +2,6 @@ package internal
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 
 	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
@@ -44,9 +43,8 @@ func GetDecodedAttributes(codec media.CodecID, attrs media.AudioAttributes) medi
 }
 
 type Decoder struct {
-	config  DecoderConfig
-	pending *media.Packet
-	flushed bool
+	config DecoderConfig
+	slot   engine.Slot[*media.Packet]
 }
 
 func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) (*Decoder, error) {
@@ -100,29 +98,18 @@ func supportsCodec(codec media.CodecID) bool {
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if pkt == nil {
-		return errors.New("codec-pcm decoder received nil packet")
+		return fmt.Errorf("codec-pcm decoder received nil packet")
 	}
-	if d.pending != nil {
-		return errors.New("codec-pcm decoder has an unconsumed packet")
-	}
-
-	d.pending = pkt
-	return nil
+	return d.slot.Push(pkt)
 }
 
 func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
-	if d.pending == nil {
-		if d.flushed {
-			return nil, engine.ErrEOF
-		}
-		return nil, engine.ErrEAGAIN
+	pkt, err := d.slot.Receive()
+	if err != nil {
+		return nil, err
 	}
 
-	pkt := d.pending
-	d.pending = nil
-
 	data := pkt.Data()
-	var err error
 	switch d.config.codecID {
 	case media.CodecPCMU:
 		data = g711.DecodePCMU(data, d.config.ByteOrder)
@@ -183,6 +170,11 @@ func (d *Decoder) resolveADPCMParameters() (params.ADPCM, error) {
 }
 
 func (d *Decoder) Flush() error {
-	d.flushed = true
+	d.slot.Flush()
+	return nil
+}
+
+func (d *Decoder) Close() error {
+	d.slot.Close()
 	return nil
 }
