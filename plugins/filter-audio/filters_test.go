@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
+	"github.com/godexture/filter-audio/internal/gate"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
@@ -327,6 +328,50 @@ func TestEQPeakingZeroGainIsIdentity(t *testing.T) {
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)
 	}
+	assertEOF(t, item)
+}
+
+func TestGateSilencesSamplesBelowThreshold(t *testing.T) {
+	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{.5, .05, -.5, .02}))
+	assertSamples(t, receive(t, item), []float32{.5, 0, -.5, 0})
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestGateLinksChannelsSoAnyActiveChannelPreservesAll(t *testing.T) {
+	item, err := gate.New(config.GateConfig{ThresholdDBFS: -20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := audio.Block{Channels: [][]float32{{.5, .01}, {.01, .01}}, Layout: media.LayoutStereo2_0, Rate: 48000}
+	encoded, err := audio.Encode(block, media.SampleFormatF32P, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input media.Frame = encoded
+	if err := item.SendFrame(&input); err != nil {
+		t.Fatal(err)
+	}
+	input.Release()
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	output := receive(t, item)
+	decoded, err := audio.Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFloat(t, decoded.Channels[0][0], .5)
+	assertFloat(t, decoded.Channels[1][0], .01)
+	assertFloat(t, decoded.Channels[0][1], 0)
+	assertFloat(t, decoded.Channels[1][1], 0)
+	output.Release()
 	assertEOF(t, item)
 }
 

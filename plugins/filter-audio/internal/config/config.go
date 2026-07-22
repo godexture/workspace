@@ -72,6 +72,10 @@ type TrimConfig struct {
 	TempDir            string   `name:"temp-dir" help:"Temporary directory"`
 }
 
+type GateConfig struct {
+	ThresholdDBFS float64 `name:"threshold-dbfs" help:"Level below which samples are silenced"`
+}
+
 type SpeedMode string
 
 const (
@@ -127,6 +131,7 @@ var (
 	}
 	DefaultFadeConfig       = FadeConfig{MemoryLimitBytes: defaultMemoryLimitBytes}
 	DefaultDCOffsetConfig   = DCOffsetConfig{Pole: 0.995}
+	DefaultGateConfig       = GateConfig{ThresholdDBFS: -60}
 	DefaultTrimConfig       = TrimConfig{ThresholdDBFS: -60, TrimMode: TrimModeBoth, MemoryLimitBytes: defaultMemoryLimitBytes}
 	DefaultSpeedConfig      = SpeedConfig{Factor: 1, Mode: SpeedModeInterpolate}
 	DefaultCompressorConfig = CompressorConfig{ThresholdDBFS: -18, Ratio: 4, AttackMs: 10, ReleaseMs: 100, KneeDB: 6}
@@ -187,6 +192,13 @@ func (c FadeConfig) Validate() error {
 func (c DCOffsetConfig) Validate() error {
 	if !finite(c.Pole) || c.Pole <= 0 || c.Pole >= 1 {
 		return fmt.Errorf("DC offset pole must be in (0, 1)")
+	}
+	return nil
+}
+
+func (c GateConfig) Validate() error {
+	if !finite(c.ThresholdDBFS) || c.ThresholdDBFS > 0 {
+		return fmt.Errorf("gate threshold must be finite and no greater than 0 dBFS")
 	}
 	return nil
 }
