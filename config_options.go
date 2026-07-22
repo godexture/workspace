@@ -9,34 +9,6 @@ import (
 	params "github.com/godexture/format-wav/params"
 )
 
-type DecoderConfig internal.DecoderConfig
-
-type DecoderConfigOption interface {
-	applyDecoderConfig(*DecoderConfig)
-}
-
-type decoderConfigOptionFunc func(*DecoderConfig)
-
-func (f decoderConfigOptionFunc) applyDecoderConfig(c *DecoderConfig) {
-	f(c)
-}
-
-func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
-	config := DecoderConfig(internal.DefaultDecoderConfig)
-	for _, option := range options {
-		option.applyDecoderConfig(&config)
-	}
-	return config
-}
-
-func (c DecoderConfig) ResolveDefault() internal.DecoderConfig {
-	return internal.DecoderConfig(internal.DefaultDecoderConfig)
-}
-
-func (c DecoderConfig) Resolve() internal.DecoderConfig {
-	return internal.DecoderConfig(c)
-}
-
 type EncoderConfig internal.EncoderConfig
 
 type EncoderConfigOption interface {
@@ -65,10 +37,32 @@ func (c EncoderConfig) Resolve() internal.EncoderConfig {
 	return internal.EncoderConfig(c)
 }
 
-func WithByteOrder(v binary.ByteOrder) DecoderConfigOption {
-	return decoderConfigOptionFunc(func(c *DecoderConfig) {
-		c.ByteOrder = v
-	})
+type DecoderConfig internal.DecoderConfig
+
+type DecoderConfigOption interface {
+	applyDecoderConfig(*DecoderConfig)
+}
+
+type decoderConfigOptionFunc func(*DecoderConfig)
+
+func (f decoderConfigOptionFunc) applyDecoderConfig(c *DecoderConfig) {
+	f(c)
+}
+
+func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
+	config := DecoderConfig(internal.DefaultDecoderConfig)
+	for _, option := range options {
+		option.applyDecoderConfig(&config)
+	}
+	return config
+}
+
+func (c DecoderConfig) ResolveDefault() internal.DecoderConfig {
+	return internal.DecoderConfig(internal.DefaultDecoderConfig)
+}
+
+func (c DecoderConfig) Resolve() internal.DecoderConfig {
+	return internal.DecoderConfig(c)
 }
 
 func WithCodecID(v media.CodecID) EncoderConfigOption {
@@ -80,5 +74,11 @@ func WithCodecID(v media.CodecID) EncoderConfigOption {
 func WithADPCM(v params.ADPCM) EncoderConfigOption {
 	return encoderConfigOptionFunc(func(c *EncoderConfig) {
 		c.ADPCM = v
+	})
+}
+
+func WithByteOrder(v binary.ByteOrder) DecoderConfigOption {
+	return decoderConfigOptionFunc(func(c *DecoderConfig) {
+		c.ByteOrder = v
 	})
 }
