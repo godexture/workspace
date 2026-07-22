@@ -1,4 +1,4 @@
-package framequeue
+package audio
 
 import (
 	"fmt"
@@ -7,12 +7,14 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-type Single struct {
+// FrameQueue holds at most one pending output frame, matching the
+// node.Filter contract of emitting exactly one frame per ReceiveFrame call.
+type FrameQueue struct {
 	pending media.Frame
 	flushed bool
 }
 
-func (q *Single) Push(frame media.Frame) error {
+func (q *FrameQueue) Push(frame media.Frame) error {
 	if q.pending != nil {
 		return fmt.Errorf("filter has an unconsumed output frame")
 	}
@@ -20,7 +22,7 @@ func (q *Single) Push(frame media.Frame) error {
 	return nil
 }
 
-func (q *Single) Receive() (*media.Frame, error) {
+func (q *FrameQueue) Receive() (*media.Frame, error) {
 	if q.pending == nil {
 		if q.flushed {
 			return nil, engine.ErrEOF
@@ -32,11 +34,11 @@ func (q *Single) Receive() (*media.Frame, error) {
 	return &frame, nil
 }
 
-func (q *Single) Flush() {
+func (q *FrameQueue) Flush() {
 	q.flushed = true
 }
 
-func (q *Single) Close() {
+func (q *FrameQueue) Close() {
 	if q.pending != nil {
 		q.pending.Release()
 		q.pending = nil

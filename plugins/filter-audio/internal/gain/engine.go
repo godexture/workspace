@@ -5,14 +5,13 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/sdk/audio"
 )
 
 type Engine struct {
 	factor float32
-	queue  framequeue.Single
+	queue  audio.FrameQueue
 }
 
 func New(config config.GainConfig) (*Engine, error) {

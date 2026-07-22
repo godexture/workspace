@@ -5,9 +5,8 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/sdk/audio"
 )
 
 type biquad struct {
@@ -26,7 +25,7 @@ type Engine struct {
 	state   []channelState
 	rateSet bool
 	rate    int
-	queue   framequeue.Single
+	queue   audio.FrameQueue
 }
 
 func New(cfg config.EQConfig) (*Engine, error) {
