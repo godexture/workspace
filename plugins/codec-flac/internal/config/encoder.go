@@ -1,5 +1,7 @@
 package config
 
+//go:generate enum-generator
+
 import (
 	"fmt"
 	"log"
@@ -178,13 +180,13 @@ func (c EncoderConfig) Validate() error {
 	if c.LPCPrecision != 0 && (c.LPCPrecision < 4 || c.LPCPrecision > 15) {
 		return fmt.Errorf("FLAC LPC precision must be between 4 and 15: %d", c.LPCPrecision)
 	}
-	if !validStereoMode(c.StereoMode) {
+	if c.StereoMode != "" && !c.StereoMode.Valid() {
 		return fmt.Errorf("invalid FLAC stereo mode: %q", c.StereoMode)
 	}
-	if !validOrderSearchMode(c.FixedOrderSearch) || !validOrderSearchMode(c.LPCOrderSearch) {
+	if (c.FixedOrderSearch != "" && !c.FixedOrderSearch.Valid()) || (c.LPCOrderSearch != "" && !c.LPCOrderSearch.Valid()) {
 		return fmt.Errorf("invalid FLAC encoder order search mode")
 	}
-	if !validRiceCostMode(c.RiceCost) {
+	if c.RiceCost != "" && !c.RiceCost.Valid() {
 		return fmt.Errorf("invalid FLAC encoder Rice cost mode")
 	}
 	if len(c.Apodizations) > 32 {
@@ -204,7 +206,7 @@ func (c EncoderConfig) Validate() error {
 	if c.BlockSplitDepth < 0 {
 		return fmt.Errorf("FLAC block split depth must be non-negative: %d", c.BlockSplitDepth)
 	}
-	if !validBlockSplitMode(c.BlockSplitMode) {
+	if c.BlockSplitMode != "" && !c.BlockSplitMode.Valid() {
 		return fmt.Errorf("invalid FLAC block split mode: %q", c.BlockSplitMode)
 	}
 	if c.BlockSplitDepth > 0 {
@@ -220,19 +222,6 @@ func (c EncoderConfig) Validate() error {
 		}
 	}
 	return nil
-}
-
-func validStereoMode(value StereoMode) bool {
-	return value == "" || value == StereoIndependent || value == StereoAdaptive || value == StereoExhaustive
-}
-func validOrderSearchMode(value OrderSearchMode) bool {
-	return value == "" || value == OrderSearchEstimated || value == OrderSearchExhaustive
-}
-func validRiceCostMode(value RiceCostMode) bool {
-	return value == "" || value == RiceCostEstimated || value == RiceCostExact
-}
-func validBlockSplitMode(value BlockSplitMode) bool {
-	return value == "" || value == BlockSplitEstimated || value == BlockSplitExact
 }
 
 func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) EncoderConfig {
