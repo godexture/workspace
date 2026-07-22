@@ -1,9 +1,6 @@
 package media
 
-import (
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/sdk/pool"
-)
+import "github.com/godexture/sdk/pool"
 
 type AudioFrameOption func(*AudioFrame)
 
@@ -34,7 +31,6 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 		SampleRate:    sampleRate,
 		Samples:       samples,
 		baseData:      b,
-		meta:          metadata.NewBundle(),
 		planes:        make([][]byte, channels),
 	}
 	frame.refCount.Store(1)
@@ -56,7 +52,6 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 
 	frame.Init(func() {
 		pool.Put(b)
-		frame.meta.Clear()
 	})
 
 	return frame
