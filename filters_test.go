@@ -32,7 +32,7 @@ func TestResampleLinearInterpolation(t *testing.T) {
 }
 
 func TestSpeedDoublesRateShortensOutput(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 2})
+	item, err := speed.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSpeedDoublesRateShortensOutput(t *testing.T) {
 }
 
 func TestSpeedHalvesRateLengthensOutput(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 0.5})
+	item, err := speed.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestSpeedHalvesRateLengthensOutput(t *testing.T) {
 }
 
 func TestSpeedFactorOnePassesThrough(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 1})
+	item, err := speed.New(config.SpeedConfig{Factor: 1, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +72,40 @@ func TestSpeedFactorOnePassesThrough(t *testing.T) {
 	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if output.(*media.AudioFrame).SampleRate != 4 {
 		t.Fatalf("SampleRate = %d, want 4 (unchanged)", output.(*media.AudioFrame).SampleRate)
+	}
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestSpeedRelabelDoublesRateLossless(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeRelabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	output := receive(t, item)
+	assertSamples(t, output, []float32{0, 2, 4, 6})
+	if output.(*media.AudioFrame).SampleRate != 8 {
+		t.Fatalf("SampleRate = %d, want 8", output.(*media.AudioFrame).SampleRate)
+	}
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestSpeedRelabelHalvesRateLossless(t *testing.T) {
+	item, err := speed.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeRelabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
+	output := receive(t, item)
+	assertSamples(t, output, []float32{0, 2, 4, 6})
+	if output.(*media.AudioFrame).SampleRate != 2 {
+		t.Fatalf("SampleRate = %d, want 2", output.(*media.AudioFrame).SampleRate)
 	}
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)

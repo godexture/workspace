@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"math"
 	"time"
 
 	godec "github.com/godexture/core"
@@ -169,7 +170,17 @@ func registerTrim() {
 }
 
 func registerSpeed() {
-	register(registry.NewConfigurationFactory(NewSpeedConfig), "speed", "Change playback speed (pitch shifts with speed)", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewSpeedConfig), "speed", "Change playback speed (pitch shifts with speed)", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
+		if err != nil {
+			return media.Profile{}, err
+		}
+		profile := copyProfile(in)
+		if value.Mode == SpeedModeRelabel {
+			profile.Audio.SampleRate = speedRelabelRate(in.Audio.SampleRate, value.Factor)
+		}
+		return profile, nil
+	}, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -187,8 +198,19 @@ func registerSpeed() {
 		if in.Duration > 0 {
 			in.Duration = time.Duration(float64(in.Duration) / value.Factor)
 		}
+		if value.Mode == SpeedModeRelabel {
+			in.Audio.SampleRate = speedRelabelRate(in.Audio.SampleRate, value.Factor)
+		}
 		return in, nil
 	})
+}
+
+func speedRelabelRate(rate int, factor float64) int {
+	target := int(math.Round(float64(rate) * factor))
+	if target < 1 {
+		target = 1
+	}
+	return target
 }
 
 func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc, transformStream func(media.StreamInfo, media.CodecID, registry.Configuration) (media.StreamInfo, error)) {
