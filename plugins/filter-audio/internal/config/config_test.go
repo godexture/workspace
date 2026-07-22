@@ -34,11 +34,29 @@ func TestSpeedConfigValidate(t *testing.T) {
 
 func TestGateConfigValidate(t *testing.T) {
 	t.Parallel()
-	if err := (GateConfig{ThresholdDBFS: -60}).Validate(); err != nil {
+	hard := GateConfig{ThresholdDBFS: -60, GateMode: GateModeHard}
+	if err := hard.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if err := (GateConfig{ThresholdDBFS: 1}).Validate(); err == nil {
+	if err := (func() GateConfig { c := hard; c.ThresholdDBFS = 1; return c }()).Validate(); err == nil {
 		t.Fatal("want error for positive threshold")
+	}
+	if err := (func() GateConfig { c := hard; c.GateMode = "bogus"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for invalid mode")
+	}
+
+	lowpass := GateConfig{ThresholdDBFS: -60, GateMode: GateModeLowpass, RangeDB: 40, AttackMs: 5, ReleaseMs: 50, OpenFrequencyHz: 20000, CloseFrequencyHz: 200}
+	if err := lowpass.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (func() GateConfig { c := lowpass; c.RangeDB = -1; return c }()).Validate(); err == nil {
+		t.Fatal("want error for negative range")
+	}
+	if err := (func() GateConfig { c := lowpass; c.CloseFrequencyHz = 30000; return c }()).Validate(); err == nil {
+		t.Fatal("want error for close frequency above open frequency")
+	}
+	if err := (GateConfig{GateMode: GateModeLowpass}).Validate(); err == nil {
+		t.Fatal("want error for zero-value open/close frequencies")
 	}
 }
 

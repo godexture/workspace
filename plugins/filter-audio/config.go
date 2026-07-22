@@ -30,3 +30,10 @@ const (
 	EQTypeLowPass   = config.EQTypeLowPass
 	EQTypeHighPass  = config.EQTypeHighPass
 )
+
+type GateMode = config.GateMode
+
+const (
+	GateModeHard    = config.GateModeHard
+	GateModeLowpass = config.GateModeLowpass
+)

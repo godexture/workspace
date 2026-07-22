@@ -315,6 +315,8 @@ func (c GateConfig) Validate() error {
 
 func (c GateConfig) FieldChoices(field string) []string {
 	switch field {
+	case "GateMode":
+		return []string{"hard", "lowpass"}
 	default:
 		return nil
 	}
@@ -632,6 +634,66 @@ func WithThresholdDBFS(v float64) ThresholdDBFSOption {
 	return thresholdDBFSOpt{v}
 }
 
+func WithGateMode(v GateMode) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.GateMode = v
+	})
+}
+
+func WithRangeDB(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.RangeDB = v
+	})
+}
+
+type AttackMsOption interface {
+	GateConfigOption
+	CompressorConfigOption
+}
+
+type attackMsOpt struct{ v float64 }
+
+func (o attackMsOpt) applyGateConfig(c *GateConfig) {
+	c.AttackMs = o.v
+}
+func (o attackMsOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.AttackMs = o.v
+}
+
+func WithAttackMs(v float64) AttackMsOption {
+	return attackMsOpt{v}
+}
+
+type ReleaseMsOption interface {
+	GateConfigOption
+	CompressorConfigOption
+}
+
+type releaseMsOpt struct{ v float64 }
+
+func (o releaseMsOpt) applyGateConfig(c *GateConfig) {
+	c.ReleaseMs = o.v
+}
+func (o releaseMsOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.ReleaseMs = o.v
+}
+
+func WithReleaseMs(v float64) ReleaseMsOption {
+	return releaseMsOpt{v}
+}
+
+func WithOpenFrequencyHz(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.OpenFrequencyHz = v
+	})
+}
+
+func WithCloseFrequencyHz(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.CloseFrequencyHz = v
+	})
+}
+
 func WithTrimMode(v TrimMode) TrimConfigOption {
 	return trimConfigOptionFunc(func(c *TrimConfig) {
 		c.TrimMode = v
@@ -659,18 +721,6 @@ func WithMode(v SpeedMode) SpeedConfigOption {
 func WithRatio(v float64) CompressorConfigOption {
 	return compressorConfigOptionFunc(func(c *CompressorConfig) {
 		c.Ratio = v
-	})
-}
-
-func WithAttackMs(v float64) CompressorConfigOption {
-	return compressorConfigOptionFunc(func(c *CompressorConfig) {
-		c.AttackMs = v
-	})
-}
-
-func WithReleaseMs(v float64) CompressorConfigOption {
-	return compressorConfigOptionFunc(func(c *CompressorConfig) {
-		c.ReleaseMs = v
 	})
 }
 
