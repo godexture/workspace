@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
+	"github.com/godexture/filter-audio/internal/reverb"
 	"github.com/godexture/filter-audio/internal/speed"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/audio"
@@ -417,6 +418,66 @@ func TestGateLowpassSettlesToInputWhenFullyOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEOF(t, item)
+}
+
+func TestReverbWetZeroIsIdentity(t *testing.T) {
+	item, err := reverb.New(config.ReverbConfig{RoomSize: .5, Damping: .5, WetLevel: 0, DryLevel: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []float32{0.2, -0.5, 0.8, -0.1, 0.05, 0.9}
+	send(t, item, frame(48000, 0, values))
+	assertSamples(t, receive(t, item), values)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestReverbSilenceRemainsSilence(t *testing.T) {
+	item, err := reverb.New(config.DefaultReverbConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{0, 0, 0, 0}))
+	assertSamples(t, receive(t, item), []float32{0, 0, 0, 0})
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestReverbRejectsSampleRateChangeMidStream(t *testing.T) {
+	item, err := reverb.New(config.DefaultReverbConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{0}))
+	receive(t, item).Release()
+	input := frame(44100, 1, []float32{0})
+	if err := item.SendFrame(&input); err == nil {
+		t.Fatal("SendFrame with a different sample rate = nil error, want an error")
+	}
+	input.Release()
+}
+
+func TestReverbLowSampleRateDoesNotPanic(t *testing.T) {
+	item, err := reverb.New(config.DefaultReverbConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(1, 0, []float32{1, 0, 0, 0}))
+	output := receive(t, item)
+	block, err := audio.Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range block.Channels[0] {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output contains non-finite sample: %v", block.Channels[0])
+		}
+	}
+	output.Release()
 }
 
 func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
