@@ -6,11 +6,12 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/engine"
 )
 
 type Engine struct {
 	config config.FormatConfig
-	queue  audio.FrameQueue
+	slot   engine.Slot[media.Frame]
 }
 
 func New(config config.FormatConfig) (*Engine, error) {
@@ -31,7 +32,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	bits := e.config.EffectiveBitsPerSample()
 	if input.Format == e.config.Format && input.BitsPerSample == bits {
 		input.Retain()
-		return e.queue.Push(input)
+		return e.slot.Push(input)
 	}
 	block, err := audio.Decode(frame)
 	if err != nil {
@@ -41,9 +42,15 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	return e.queue.Push(output)
+	return e.slot.Push(output)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
-func (e *Engine) Flush() error                        { e.queue.Flush(); return nil }
-func (e *Engine) Close() error                        { e.queue.Close(); return nil }
+func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+	frame, err := e.slot.Receive()
+	if err != nil {
+		return nil, err
+	}
+	return &frame, nil
+}
+func (e *Engine) Flush() error { e.slot.Flush(); return nil }
+func (e *Engine) Close() error { e.slot.Close(); return nil }
