@@ -33,6 +33,9 @@ func (m *Muxer) AddStream(streamInfo media.StreamInfo) (int, error) {
 	if streamInfo.Type != media.MediaAudio {
 		return 0, errors.New("mp3 muxer expects an audio stream")
 	}
+	if streamInfo.Codec != media.CodecMP3 {
+		return 0, fmt.Errorf("mp3 muxer expects codec %q, got %q", media.CodecMP3, streamInfo.Codec)
+	}
 	m.streamInfo = streamInfo
 	m.streamSet = true
 	return 0, nil

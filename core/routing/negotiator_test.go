@@ -31,10 +31,11 @@ func (m *mockNode) Close() error {
 
 type mockDemuxer struct {
 	mockNode
-	streams []media.StreamInfo
+	streams  []media.StreamInfo
+	metadata *metadata.Bundle
 }
 
-func (m *mockDemuxer) Metadata() *metadata.Bundle                           { return nil }
+func (m *mockDemuxer) Metadata() *metadata.Bundle                           { return m.metadata }
 func (m *mockDemuxer) Streams() ([]media.StreamInfo, error)                 { return m.streams, nil }
 func (m *mockDemuxer) OutputPorts() map[string]*node.OutPort[*media.Packet] { return nil }
 
@@ -63,13 +64,14 @@ func (m *mockFilter) OutputPorts() map[string]*node.OutPort[media.Frame] { retur
 type mockMuxer struct {
 	mockNode
 	addedStreams []media.StreamInfo
+	metadata     *metadata.Bundle
 }
 
 func (m *mockMuxer) AddStream(info media.StreamInfo) (int, error) {
 	m.addedStreams = append(m.addedStreams, info)
 	return len(m.addedStreams) - 1, nil
 }
-func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error            { return nil }
+func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error            { m.metadata = meta; return nil }
 func (m *mockMuxer) InputPorts() map[string]*node.InPort[*media.Packet] { return nil }
 
 // Mock Resolvers
@@ -150,6 +152,40 @@ type alwaysCapability struct{}
 func (alwaysCapability) Match(media.StreamInfo) bool     { return true }
 func (alwaysCapability) Diagnose(media.StreamInfo) error { return nil }
 
+func TestNegotiatorRejectsExplicitIncompatibleDecoder(t *testing.T) {
+	demuxer := registry.DemuxerManifest{
+		BaseManifest: registry.BaseManifest{Name: "flac"},
+		Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) {
+			return &mockDemuxer{
+				streams:  []media.StreamInfo{{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}},
+				metadata: metadata.NewBundle(),
+			}, nil
+		},
+	}
+	decoder := registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{
+			BaseManifest: registry.BaseManifest{Name: "pcm"},
+			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+				Codecs: []media.CodecID{media.CodecLPCM},
+			}),
+		},
+	}
+	negotiator := NewNegotiator(&mockMuxerResolver{}, &mockDemuxerResolver{}, &mockEncoderResolver{}, &mockDecoderResolver{}, nil, nil)
+	_, err := negotiator.NegotiateConversion(context.Background(), ConversionSpec{
+		Input:           strings.NewReader("input"),
+		Output:          &strings.Builder{},
+		DemuxManifest:   demuxer,
+		DemuxConfig:     dummyConfig{},
+		DecoderManifest: decoder,
+		DecodeConfig:    dummyConfig{},
+		TargetCodec:     media.CodecLPCM,
+		MuxConfig:       dummyConfig{},
+	})
+	if err == nil || !strings.Contains(err.Error(), `decoder "pcm" does not accept input codec "flac"`) {
+		t.Fatalf("NegotiateConversion() error = %v", err)
+	}
+}
+
 func TestNegotiator_CustomResolvers(t *testing.T) {
 	t.Parallel()
 	// 1. Set up mock nodes
@@ -161,7 +197,9 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 			},
 		},
 	}
-	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}}
+	inputMetadata := metadata.NewBundle()
+	inputMetadata.Set(metadata.KeyTitle("Input title"))
+	demux := &mockDemuxer{streams: []media.StreamInfo{streamIn}, metadata: inputMetadata}
 	dec := &mockDecoder{}
 	enc := &mockEncoder{}
 	mux := &mockMuxer{}
@@ -242,6 +280,10 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	} else if mux.addedStreams[0].Codec != media.CodecLPCM {
 		t.Errorf("expected target codec %s, got %s", media.CodecLPCM, mux.addedStreams[0].Codec)
 	}
+	if mux.metadata == inputMetadata {
+		t.Fatal("muxer received the demuxer metadata without cloning it")
+	}
+	metadata.AssertBundleValue(t, mux.metadata, metadata.KeyTitle("Input title"))
 }
 
 func TestNegotiator_AppliesTransforms(t *testing.T) {
@@ -574,6 +616,34 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	}
 	if got := mux.addedStreams[0].Audio.SampleRate; got != 44103 {
 		t.Fatalf("muxer sample rate = %d, want 44103", got)
+	}
+	description := geometry.Description()
+	wantRoles := []manifest.NodeType{
+		manifest.RoleDemuxer,
+		manifest.RoleDecoder,
+		manifest.RoleFilter,
+		manifest.RoleFilter,
+		manifest.RoleEncoder,
+		manifest.RoleMuxer,
+	}
+	for i, want := range wantRoles {
+		if got := description.Nodes[i].Role; got != want {
+			t.Fatalf("description node %d role = %q, want %q", i, got, want)
+		}
+	}
+	if got, want := []int{
+		description.Nodes[1].Resources.Parallelism,
+		description.Nodes[2].Resources.Parallelism,
+		description.Nodes[3].Resources.Parallelism,
+		description.Nodes[4].Resources.Parallelism,
+	}, allocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("description allocations = %v, want %v", got, want)
+	}
+	if !description.Edges[0].ProgressSource {
+		t.Fatal("demuxer output edge is not marked as progress source")
+	}
+	if got, want := description.Edges[3].Stream.Audio.SampleRate, 44103; got != want {
+		t.Fatalf("encoder input edge sample rate = %d, want %d", got, want)
 	}
 }
 

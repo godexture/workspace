@@ -51,11 +51,13 @@ type ConversionSpec struct {
 	Input  io.ReadSeeker
 	Output io.Writer
 
+	DemuxManifest     registry.DemuxerManifest
 	DemuxConfig       registry.Configuration
 	SelectInputStream func(streams []media.StreamInfo) (media.StreamInfo, error)
 
-	DecodeConfig registry.Configuration
-	Filters      []FilterSpec
+	DecoderManifest registry.DecoderManifest
+	DecodeConfig    registry.Configuration
+	Filters         []FilterSpec
 
 	TargetCodec  media.CodecID
 	EncodeConfig registry.Configuration
@@ -70,8 +72,12 @@ type ConversionSpec struct {
 
 type transformPlan struct {
 	id        string
+	role      manifest.NodeType
+	plugin    string
 	config    registry.Configuration
 	resources registry.ResourceRequest
+	input     media.StreamInfo
+	output    media.StreamInfo
 	factory   func(registry.TransformFactoryOptions) (node.Node, error)
 }
 
@@ -98,16 +104,30 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, err
 	}
 
-	demuxManifest, err := n.demuxerResolver.ResolveDemuxer(spec.Input)
-	if err != nil {
-		return nil, fmt.Errorf("resolve demuxer: %w", err)
+	demuxManifest := spec.DemuxManifest
+	var err error
+	if demuxManifest.Name == "" {
+		demuxManifest, err = n.demuxerResolver.ResolveDemuxer(spec.Input)
+		if err != nil {
+			return nil, fmt.Errorf("resolve demuxer: %w", err)
+		}
 	}
-	demuxNode, err := demuxManifest.Factory(spec.Input, spec.DemuxConfig)
+	demuxConfig, err := configurationFor(demuxManifest, spec.DemuxConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure demuxer %s: %w", demuxManifest.Name, err)
+	}
+	demuxNode, err := demuxManifest.Factory(spec.Input, demuxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create demuxer: %w", err)
 	}
 	geometry := pipeline.NewGeometry()
-	if err := geometry.AddNode("demuxer", demuxNode); err != nil {
+	if err := geometry.AddNodeDef(pipeline.NodeDef{
+		ID:   "demuxer",
+		Node: demuxNode,
+		Description: pipeline.NodeDescription{
+			Role: manifest.RoleDemuxer, Plugin: demuxManifest.Name, Configuration: demuxConfig,
+		},
+	}); err != nil {
 		return nil, err
 	}
 	defer func() {
@@ -122,6 +142,11 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if len(streams) == 0 {
 		return nil, fmt.Errorf("no streams found in input")
 	}
+	if err := geometry.SetNodeDescription("demuxer", pipeline.NodeDescription{
+		Role: manifest.RoleDemuxer, Plugin: demuxManifest.Name, Configuration: demuxConfig, Outputs: streams,
+	}); err != nil {
+		return nil, err
+	}
 
 	inputStream := streams[0]
 	if spec.SelectInputStream != nil {
@@ -135,19 +160,39 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	bridgeID := 0
 	currentStream := inputStream
 
-	decoderManifest, err := n.decoderResolver.ResolveDecoder(currentStream)
-	if err != nil {
-		return nil, fmt.Errorf("resolve decoder: %w", err)
+	decoderManifest := spec.DecoderManifest
+	if decoderManifest.Name == "" {
+		decoderManifest, err = n.decoderResolver.ResolveDecoder(currentStream)
+		if err != nil {
+			return nil, fmt.Errorf("resolve decoder: %w", err)
+		}
 	}
-	decoderOutput, err := transformStream(decoderManifest.TransformManifest, currentStream, currentStream.Codec, spec.DecodeConfig)
+	decodeConfig, err := configurationFor(decoderManifest, spec.DecodeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure decoder %s: %w", decoderManifest.Name, err)
+	}
+	if spec.DecoderManifest.Name != "" {
+		accepted, err := decoderManifest.Accept(currentStream, currentStream.Codec, decodeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("check decoder %s: %w", decoderManifest.Name, err)
+		}
+		if !accepted {
+			return nil, fmt.Errorf("decoder %q does not accept input codec %q", decoderManifest.Name, currentStream.Codec)
+		}
+	}
+	decoderOutput, err := transformStream(decoderManifest.TransformManifest, currentStream, currentStream.Codec, decodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve decoder output stream: %w", err)
 	}
 	decoderInput := currentStream
 	plans = append(plans, transformPlan{
 		id:        "decoder",
-		config:    spec.DecodeConfig,
+		role:      manifest.RoleDecoder,
+		plugin:    decoderManifest.Name,
+		config:    decodeConfig,
 		resources: decoderManifest.Resources,
+		input:     decoderInput,
+		output:    decoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 			return decoderManifest.Factory(decoderInput, options)
 		},
@@ -177,13 +222,17 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			return nil, fmt.Errorf("resolve filter %d output stream: %w", i, err)
 		}
 		filterInput := currentStream
-		manifest := filterManifest
+		resolvedManifest := filterManifest
 		plans = append(plans, transformPlan{
 			id:        fmt.Sprintf("filter:%d", i),
+			role:      manifest.RoleFilter,
+			plugin:    resolvedManifest.Name,
 			config:    filterSpec.Config,
-			resources: manifest.Resources,
+			resources: resolvedManifest.Resources,
+			input:     filterInput,
+			output:    filterOutput,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-				return manifest.Factory(filterInput, options)
+				return resolvedManifest.Factory(filterInput, options)
 			},
 		})
 		currentStream = filterOutput
@@ -193,7 +242,11 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder: %w", err)
 	}
-	requirements, err := encoderManifest.Requirements(spec.TargetCodec, spec.EncodeConfig)
+	encodeConfig, err := configurationFor(encoderManifest, spec.EncodeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure encoder %s: %w", encoderManifest.Name, err)
+	}
+	requirements, err := encoderManifest.Requirements(spec.TargetCodec, encodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
 	}
@@ -206,7 +259,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		}
 		plans = append(plans, bridgePlans...)
 	}
-	encoderOutput, err := transformStream(encoderManifest.TransformManifest, currentStream, spec.TargetCodec, spec.EncodeConfig)
+	encoderOutput, err := transformStream(encoderManifest.TransformManifest, currentStream, spec.TargetCodec, encodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder output stream: %w", err)
 	}
@@ -214,8 +267,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	encoderInput := currentStream
 	plans = append(plans, transformPlan{
 		id:        "encoder",
-		config:    spec.EncodeConfig,
+		role:      manifest.RoleEncoder,
+		plugin:    encoderManifest.Name,
+		config:    encodeConfig,
 		resources: encoderManifest.Resources,
+		input:     encoderInput,
+		output:    encoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 			return encoderManifest.Factory(encoderInput, spec.TargetCodec, options)
 		},
@@ -224,6 +281,10 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	muxManifest, err := n.muxerResolver.ResolveMuxer(spec.MuxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve muxer: %w", err)
+	}
+	muxConfig, err := configurationFor(muxManifest, spec.MuxConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure muxer %s: %w", muxManifest.Name, err)
 	}
 
 	parallelism := spec.Resources.Parallelism
@@ -245,40 +306,97 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", plan.id, err)
 		}
-		if err := geometry.AddNode(plan.id, transformNodes[i]); err != nil {
+		if err := geometry.AddNodeDef(pipeline.NodeDef{
+			ID:   plan.id,
+			Node: transformNodes[i],
+			Description: pipeline.NodeDescription{
+				Role:          plan.role,
+				Plugin:        plan.plugin,
+				Configuration: plan.config,
+				Resources:     allocations[i],
+				Inputs:        []media.StreamInfo{plan.input},
+				Outputs:       []media.StreamInfo{plan.output},
+			},
+		}); err != nil {
 			return nil, fmt.Errorf("add %s to geometry: %w", plan.id, err)
 		}
 	}
 
-	muxNode, err := muxManifest.Factory(spec.Output, spec.MuxConfig)
+	muxNode, err := muxManifest.Factory(spec.Output, muxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create muxer: %w", err)
 	}
-	if err := geometry.AddNode("muxer", muxNode); err != nil {
+	if err := geometry.AddNodeDef(pipeline.NodeDef{
+		ID:   "muxer",
+		Node: muxNode,
+		Description: pipeline.NodeDescription{
+			Role: manifest.RoleMuxer, Plugin: muxManifest.Name, Configuration: muxConfig,
+		},
+	}); err != nil {
 		return nil, fmt.Errorf("add muxer to geometry: %w", err)
+	}
+	if err := muxNode.SetMetadata(demuxNode.Metadata().Clone()); err != nil {
+		return nil, fmt.Errorf("set muxer metadata: %w", err)
 	}
 
 	outputStream := encoderOutput
 	if spec.PrepareOutputStream != nil {
 		outputStream = spec.PrepareOutputStream(outputStream)
 	}
-	if _, err := muxNode.AddStream(outputStream); err != nil {
+	outputIndex, err := muxNode.AddStream(outputStream)
+	if err != nil {
 		return nil, fmt.Errorf("add output stream to muxer: %w", err)
+	}
+	outputStream.Index = outputIndex
+	if err := geometry.SetNodeDescription("muxer", pipeline.NodeDescription{
+		Role: manifest.RoleMuxer, Plugin: muxManifest.Name, Configuration: muxConfig, Inputs: []media.StreamInfo{outputStream},
+	}); err != nil {
+		return nil, err
 	}
 
 	previous := "demuxer"
 	previousPort := "out"
-	for _, plan := range plans {
-		if err := geometry.AddEdge(previous, previousPort, plan.id, "in"); err != nil {
+	for i, plan := range plans {
+		if err := geometry.AddEdgeDef(pipeline.EdgeDef{
+			FromNode: previous, FromPort: previousPort, ToNode: plan.id, ToPort: "in",
+			Stream: plan.input, ProgressSource: i == 0,
+		}); err != nil {
 			return nil, err
 		}
 		previous = plan.id
 		previousPort = "out"
 	}
-	if err := geometry.AddEdge(previous, previousPort, "muxer", "in"); err != nil {
+	if err := geometry.AddEdgeDef(pipeline.EdgeDef{
+		FromNode: previous, FromPort: previousPort, ToNode: "muxer", ToPort: "in", Stream: outputStream,
+	}); err != nil {
 		return nil, err
 	}
 	return geometry, nil
+}
+
+func configurationFor(manifest registry.Manifest, requested registry.Configuration) (registry.Configuration, error) {
+	if requested == nil {
+		if manifest.ID().ConfigurationType() == nil {
+			return nil, nil
+		}
+		return manifest.NewConfiguration()
+	}
+	actual := reflect.TypeOf(requested)
+	value := reflect.ValueOf(requested)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return nil, fmt.Errorf("configuration must not be a nil pointer")
+	}
+	for actual.Kind() == reflect.Pointer {
+		actual = actual.Elem()
+	}
+	expected := manifest.ID().ConfigurationType()
+	if expected == nil {
+		return requested, nil
+	}
+	if actual != expected {
+		return nil, fmt.Errorf("configuration type %s does not match %s", actual, manifest.ID())
+	}
+	return requested, nil
 }
 
 func transformStream(
@@ -323,8 +441,12 @@ func (n *Negotiator) satisfy(
 		*bridgeID++
 		plans = append(plans, transformPlan{
 			id:        id,
+			role:      manifest.RoleFilter,
+			plugin:    step.Manifest.Name,
 			config:    step.Config,
 			resources: step.Manifest.Resources,
+			input:     step.Input,
+			output:    step.Output,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 				return step.Manifest.Factory(step.Input, options)
 			},

@@ -2,7 +2,9 @@
 
 package mp3
 
-import domain "github.com/godexture/codec-mp3/internal/domain"
+import (
+	domain "github.com/godexture/codec-mp3/internal/domain"
+)
 
 type DecoderConfig domain.DecoderConfig
 

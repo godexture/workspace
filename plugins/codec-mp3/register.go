@@ -15,11 +15,12 @@ func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {
 }
 
 func init() {
-	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
+	if err := godec.Register(registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
-				Name:        "mp3-decoder",
-				Description: "MP3 decoder",
+				Name:                 "mp3",
+				Description:          "MP3 decoder",
+				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}),
 			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {

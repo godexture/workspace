@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"sync"
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/internal/xsync"
@@ -11,21 +12,30 @@ import (
 
 type Manifest interface {
 	ID() PluginKey
+	RegistryName() string
+	NewConfiguration() (Configuration, error)
 }
 
 type Registry[V Manifest] struct {
-	role  manifest.NodeType
-	items *xsync.Map[PluginKey, V]
+	role       manifest.NodeType
+	items      *xsync.Map[PluginKey, V]
+	names      *xsync.Map[string, PluginKey]
+	registerMu sync.Mutex
 }
 
 func NewRegistry[V Manifest]() *Registry[V] {
 	return &Registry[V]{
 		role:  manifestRole[V](),
 		items: xsync.NewMap[PluginKey, V](),
+		names: xsync.NewMap[string, PluginKey](),
 	}
 }
 
-func (r *Registry[V]) Register(config Configuration, manifest V) error {
+func (r *Registry[V]) Register(manifest V) error {
+	config, err := manifest.NewConfiguration()
+	if err != nil {
+		return fmt.Errorf("create configuration: %w", err)
+	}
 	key, err := pluginKey(r.role, config)
 	if err != nil {
 		return fmt.Errorf("derive plugin key: %w", err)
@@ -45,9 +55,16 @@ func (r *Registry[V]) Register(config Configuration, manifest V) error {
 		}
 	}
 
-	if _, loaded := r.items.LoadOrStore(key, manifest); loaded {
+	r.registerMu.Lock()
+	defer r.registerMu.Unlock()
+	if _, exists := r.items.Load(key); exists {
 		return fmt.Errorf("plugin already registered: %s", key)
 	}
+	if _, exists := r.names.Load(manifest.RegistryName()); exists {
+		return fmt.Errorf("plugin name already registered: %s", manifest.RegistryName())
+	}
+	r.items.Store(key, manifest)
+	r.names.Store(manifest.RegistryName(), key)
 
 	return nil
 }
@@ -115,6 +132,25 @@ func (r *Registry[V]) Get(key PluginKey) (V, error) {
 		return item, fmt.Errorf("plugin not found: %s", key)
 	}
 	return item, nil
+}
+
+func (r *Registry[V]) Lookup(name string) (V, error) {
+	key, exists := r.names.Load(name)
+	if !exists {
+		var zero V
+		return zero, fmt.Errorf("plugin not found: %s", name)
+	}
+	return r.Get(key)
+}
+
+func (r *Registry[V]) Names() []string {
+	snapshot := r.names.Clone()
+	names := make([]string, 0, len(snapshot))
+	for name := range snapshot {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func (r *Registry[V]) Enumerate() iter.Seq[V] {

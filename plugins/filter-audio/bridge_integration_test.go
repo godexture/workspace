@@ -40,8 +40,8 @@ func TestRegisteredBridgeSatisfiesFLACPCMInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) != 1 || steps[0].Manifest.Name != "audio-convert" {
-		t.Fatalf("bridge steps = %#v, want one audio-convert step", steps)
+	if len(steps) != 1 || steps[0].Manifest.Name != "convert" {
+		t.Fatalf("bridge steps = %#v, want one convert step", steps)
 	}
 	accepted, err := encoder.Accept(steps[0].Output, media.CodecFLAC, nil)
 	if err != nil || !accepted {

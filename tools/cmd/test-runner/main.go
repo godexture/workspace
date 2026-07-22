@@ -1,13 +1,13 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/godexture/tools/internal/cli"
 	"github.com/godexture/tools/internal/workspace"
+	"github.com/spf13/pflag"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	var parallel int
 	var simd bool
 
-	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
+	flags := pflag.NewFlagSet(filepath.Base(os.Args[0]), pflag.ExitOnError)
 	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	flags.StringVar(&goCommand, "go", "go", "go command to run")
 	flags.IntVar(&parallel, "parallel", 0, "maximum concurrent tests in each test binary; 0 uses Go's default")

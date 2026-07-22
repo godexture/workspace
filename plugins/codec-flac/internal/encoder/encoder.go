@@ -215,15 +215,17 @@ func (e *Encoder) configureStream(sampleRate, channels, bitsPerSample int) error
 	if e.config.StreamableSubset && e.config.BlockSize > streamableMaxBlockSize(sampleRate) {
 		return fmt.Errorf("FLAC streamable-subset block size %d exceeds %d at %d Hz", e.config.BlockSize, streamableMaxBlockSize(sampleRate), sampleRate)
 	}
-	if e.config.SampleRate > 0 && sampleRate != e.config.SampleRate {
-		return fmt.Errorf("FLAC encoder sample rate mismatch: got %d, want %d", sampleRate, e.config.SampleRate)
+
+	if e.config.SampleRate() > 0 && sampleRate != e.config.SampleRate() {
+		return fmt.Errorf("FLAC encoder sample rate mismatch: got %d, want %d", sampleRate, e.config.SampleRate())
 	}
-	if e.config.Channels > 0 && channels != e.config.Channels {
-		return fmt.Errorf("FLAC encoder channel count mismatch: got %d, want %d", channels, e.config.Channels)
+	if e.config.Channels() > 0 && channels != e.config.Channels() {
+		return fmt.Errorf("FLAC encoder channel count mismatch: got %d, want %d", channels, e.config.Channels())
 	}
-	if e.config.BitsPerSample > 0 && bitsPerSample != e.config.BitsPerSample {
-		return fmt.Errorf("FLAC encoder bit depth mismatch: got %d, want %d", bitsPerSample, e.config.BitsPerSample)
+	if e.config.BitsPerSample() > 0 && bitsPerSample != e.config.BitsPerSample() {
+		return fmt.Errorf("FLAC encoder bit depth mismatch: got %d, want %d", bitsPerSample, e.config.BitsPerSample())
 	}
+
 	if !e.streamSet {
 		e.sampleRate = sampleRate
 		e.channels = channels
@@ -338,7 +340,7 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 		return 0, 0, 0, fmt.Errorf("FLAC encoder does not support planar input format: %s", frame.Format)
 	}
 	format := frame.Format.Packed()
-	bitsPerSample := e.config.BitsPerSample
+	bitsPerSample := e.config.BitsPerSample()
 	if bitsPerSample <= 0 {
 		bitsPerSample = frame.BitsPerSample
 	}

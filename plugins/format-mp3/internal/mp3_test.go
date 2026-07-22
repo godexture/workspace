@@ -306,9 +306,12 @@ func TestDemuxerSeek_CBR(t *testing.T) {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
 
-	_, _, err = demuxer.Analyze()
+	streams, _, err := demuxer.Analyze()
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if streams[0].Duration <= 0 {
+		t.Fatalf("duration = %v, want a positive CBR estimate", streams[0].Duration)
 	}
 
 	// Seek to 0.5 seconds
@@ -373,7 +376,7 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
 
-	_, _, err = demuxer.Analyze()
+	streams, _, err := demuxer.Analyze()
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}
@@ -381,6 +384,9 @@ func TestDemuxerSeek_Xing(t *testing.T) {
 	// Xing duration = 100 frames * 1152 samples / 44100 = 2.6122 seconds
 	// Let's seek to 50% of duration
 	duration := time.Duration(100*1152) * time.Second / 44100
+	if got := streams[0].Duration; got != duration {
+		t.Fatalf("duration = %v, want %v", got, duration)
+	}
 	seekTime := duration/2 + 1*time.Nanosecond
 	if err := demuxer.Seek(seekTime); err != nil {
 		t.Fatalf("Seek returned error: %v", err)
@@ -426,7 +432,7 @@ func TestDemuxerSeek_VBRI(t *testing.T) {
 		t.Fatalf("NewDemuxer returned error: %v", err)
 	}
 
-	_, _, err = demuxer.Analyze()
+	streams, _, err := demuxer.Analyze()
 	if err != nil {
 		t.Fatalf("Analyze returned error: %v", err)
 	}
@@ -435,6 +441,9 @@ func TestDemuxerSeek_VBRI(t *testing.T) {
 	// durationPerEntry = 10 frames * 1152 samples / 44100 = 0.26122 seconds
 	// Seek to 50% of duration (5.0 entries)
 	duration := time.Duration(100*1152) * time.Second / 44100
+	if got := streams[0].Duration; got != duration {
+		t.Fatalf("duration = %v, want %v", got, duration)
+	}
 	seekTime := duration/2 + 1*time.Nanosecond
 	if err := demuxer.Seek(seekTime); err != nil {
 		t.Fatalf("Seek returned error: %v", err)

@@ -36,6 +36,17 @@ func (c FormatConfig) Resolve() config.FormatConfig {
 	return config.FormatConfig(c)
 }
 
+func (c FormatConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c FormatConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type ResampleConfig config.ResampleConfig
 
 type ResampleConfigOption interface {
@@ -62,6 +73,17 @@ func (c ResampleConfig) ResolveDefault() config.ResampleConfig {
 
 func (c ResampleConfig) Resolve() config.ResampleConfig {
 	return config.ResampleConfig(c)
+}
+
+func (c ResampleConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c ResampleConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type RemixConfig config.RemixConfig
@@ -92,6 +114,17 @@ func (c RemixConfig) Resolve() config.RemixConfig {
 	return config.RemixConfig(c)
 }
 
+func (c RemixConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c RemixConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type GainConfig config.GainConfig
 
 type GainConfigOption interface {
@@ -118,6 +151,17 @@ func (c GainConfig) ResolveDefault() config.GainConfig {
 
 func (c GainConfig) Resolve() config.GainConfig {
 	return config.GainConfig(c)
+}
+
+func (c GainConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c GainConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type NormalizeConfig config.NormalizeConfig
@@ -148,6 +192,17 @@ func (c NormalizeConfig) Resolve() config.NormalizeConfig {
 	return config.NormalizeConfig(c)
 }
 
+func (c NormalizeConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c NormalizeConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 type FadeConfig config.FadeConfig
 
 type FadeConfigOption interface {
@@ -174,6 +229,17 @@ func (c FadeConfig) ResolveDefault() config.FadeConfig {
 
 func (c FadeConfig) Resolve() config.FadeConfig {
 	return config.FadeConfig(c)
+}
+
+func (c FadeConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c FadeConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 type DCOffsetConfig config.DCOffsetConfig
@@ -204,6 +270,58 @@ func (c DCOffsetConfig) Resolve() config.DCOffsetConfig {
 	return config.DCOffsetConfig(c)
 }
 
+func (c DCOffsetConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c DCOffsetConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
+type GateConfig config.GateConfig
+
+type GateConfigOption interface {
+	applyGateConfig(*GateConfig)
+}
+
+type gateConfigOptionFunc func(*GateConfig)
+
+func (f gateConfigOptionFunc) applyGateConfig(c *GateConfig) {
+	f(c)
+}
+
+func NewGateConfig(options ...GateConfigOption) GateConfig {
+	config := GateConfig(config.DefaultGateConfig)
+	for _, option := range options {
+		option.applyGateConfig(&config)
+	}
+	return config
+}
+
+func (c GateConfig) ResolveDefault() config.GateConfig {
+	return config.GateConfig(config.DefaultGateConfig)
+}
+
+func (c GateConfig) Resolve() config.GateConfig {
+	return config.GateConfig(c)
+}
+
+func (c GateConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c GateConfig) FieldChoices(field string) []string {
+	switch field {
+	case "GateMode":
+		return []string{"hard", "lowpass"}
+	default:
+		return nil
+	}
+}
+
 type TrimConfig config.TrimConfig
 
 type TrimConfigOption interface {
@@ -230,6 +348,140 @@ func (c TrimConfig) ResolveDefault() config.TrimConfig {
 
 func (c TrimConfig) Resolve() config.TrimConfig {
 	return config.TrimConfig(c)
+}
+
+func (c TrimConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c TrimConfig) FieldChoices(field string) []string {
+	switch field {
+	case "TrimMode":
+		return []string{"both", "start", "end"}
+	default:
+		return nil
+	}
+}
+
+type SpeedConfig config.SpeedConfig
+
+type SpeedConfigOption interface {
+	applySpeedConfig(*SpeedConfig)
+}
+
+type speedConfigOptionFunc func(*SpeedConfig)
+
+func (f speedConfigOptionFunc) applySpeedConfig(c *SpeedConfig) {
+	f(c)
+}
+
+func NewSpeedConfig(options ...SpeedConfigOption) SpeedConfig {
+	config := SpeedConfig(config.DefaultSpeedConfig)
+	for _, option := range options {
+		option.applySpeedConfig(&config)
+	}
+	return config
+}
+
+func (c SpeedConfig) ResolveDefault() config.SpeedConfig {
+	return config.SpeedConfig(config.DefaultSpeedConfig)
+}
+
+func (c SpeedConfig) Resolve() config.SpeedConfig {
+	return config.SpeedConfig(c)
+}
+
+func (c SpeedConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c SpeedConfig) FieldChoices(field string) []string {
+	switch field {
+	case "Mode":
+		return []string{"interpolate", "relabel"}
+	default:
+		return nil
+	}
+}
+
+type CompressorConfig config.CompressorConfig
+
+type CompressorConfigOption interface {
+	applyCompressorConfig(*CompressorConfig)
+}
+
+type compressorConfigOptionFunc func(*CompressorConfig)
+
+func (f compressorConfigOptionFunc) applyCompressorConfig(c *CompressorConfig) {
+	f(c)
+}
+
+func NewCompressorConfig(options ...CompressorConfigOption) CompressorConfig {
+	config := CompressorConfig(config.DefaultCompressorConfig)
+	for _, option := range options {
+		option.applyCompressorConfig(&config)
+	}
+	return config
+}
+
+func (c CompressorConfig) ResolveDefault() config.CompressorConfig {
+	return config.CompressorConfig(config.DefaultCompressorConfig)
+}
+
+func (c CompressorConfig) Resolve() config.CompressorConfig {
+	return config.CompressorConfig(c)
+}
+
+func (c CompressorConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c CompressorConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
+type EQConfig config.EQConfig
+
+type EQConfigOption interface {
+	applyEQConfig(*EQConfig)
+}
+
+type eQConfigOptionFunc func(*EQConfig)
+
+func (f eQConfigOptionFunc) applyEQConfig(c *EQConfig) {
+	f(c)
+}
+
+func NewEQConfig(options ...EQConfigOption) EQConfig {
+	config := EQConfig(config.DefaultEQConfig)
+	for _, option := range options {
+		option.applyEQConfig(&config)
+	}
+	return config
+}
+
+func (c EQConfig) ResolveDefault() config.EQConfig {
+	return config.EQConfig(config.DefaultEQConfig)
+}
+
+func (c EQConfig) Resolve() config.EQConfig {
+	return config.EQConfig(c)
+}
+
+func (c EQConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c EQConfig) FieldChoices(field string) []string {
+	switch field {
+	case "Type":
+		return []string{"peaking", "lowshelf", "highshelf", "lowpass", "highpass"}
+	default:
+		return nil
+	}
 }
 
 func WithFormat(v media.SampleFormat) FormatConfigOption {
@@ -360,8 +612,150 @@ func WithPole(v float64) DCOffsetConfigOption {
 	})
 }
 
-func WithThresholdDBFS(v float64) TrimConfigOption {
+type ThresholdDBFSOption interface {
+	GateConfigOption
+	TrimConfigOption
+	CompressorConfigOption
+}
+
+type thresholdDBFSOpt struct{ v float64 }
+
+func (o thresholdDBFSOpt) applyGateConfig(c *GateConfig) {
+	c.ThresholdDBFS = o.v
+}
+func (o thresholdDBFSOpt) applyTrimConfig(c *TrimConfig) {
+	c.ThresholdDBFS = o.v
+}
+func (o thresholdDBFSOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.ThresholdDBFS = o.v
+}
+
+func WithThresholdDBFS(v float64) ThresholdDBFSOption {
+	return thresholdDBFSOpt{v}
+}
+
+func WithGateMode(v GateMode) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.GateMode = v
+	})
+}
+
+func WithRangeDB(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.RangeDB = v
+	})
+}
+
+type AttackMsOption interface {
+	GateConfigOption
+	CompressorConfigOption
+}
+
+type attackMsOpt struct{ v float64 }
+
+func (o attackMsOpt) applyGateConfig(c *GateConfig) {
+	c.AttackMs = o.v
+}
+func (o attackMsOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.AttackMs = o.v
+}
+
+func WithAttackMs(v float64) AttackMsOption {
+	return attackMsOpt{v}
+}
+
+type ReleaseMsOption interface {
+	GateConfigOption
+	CompressorConfigOption
+}
+
+type releaseMsOpt struct{ v float64 }
+
+func (o releaseMsOpt) applyGateConfig(c *GateConfig) {
+	c.ReleaseMs = o.v
+}
+func (o releaseMsOpt) applyCompressorConfig(c *CompressorConfig) {
+	c.ReleaseMs = o.v
+}
+
+func WithReleaseMs(v float64) ReleaseMsOption {
+	return releaseMsOpt{v}
+}
+
+func WithOpenFrequencyHz(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.OpenFrequencyHz = v
+	})
+}
+
+func WithCloseFrequencyHz(v float64) GateConfigOption {
+	return gateConfigOptionFunc(func(c *GateConfig) {
+		c.CloseFrequencyHz = v
+	})
+}
+
+func WithTrimMode(v TrimMode) TrimConfigOption {
 	return trimConfigOptionFunc(func(c *TrimConfig) {
-		c.ThresholdDBFS = v
+		c.TrimMode = v
+	})
+}
+
+func WithApproximateSilence(v bool) TrimConfigOption {
+	return trimConfigOptionFunc(func(c *TrimConfig) {
+		c.ApproximateSilence = v
+	})
+}
+
+func WithFactor(v float64) SpeedConfigOption {
+	return speedConfigOptionFunc(func(c *SpeedConfig) {
+		c.Factor = v
+	})
+}
+
+func WithMode(v SpeedMode) SpeedConfigOption {
+	return speedConfigOptionFunc(func(c *SpeedConfig) {
+		c.Mode = v
+	})
+}
+
+func WithRatio(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.Ratio = v
+	})
+}
+
+func WithKneeDB(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.KneeDB = v
+	})
+}
+
+func WithMakeupGainDB(v float64) CompressorConfigOption {
+	return compressorConfigOptionFunc(func(c *CompressorConfig) {
+		c.MakeupGainDB = v
+	})
+}
+
+func WithType(v EQType) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.Type = v
+	})
+}
+
+func WithFrequencyHz(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.FrequencyHz = v
+	})
+}
+
+func WithGainDB(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.GainDB = v
+	})
+}
+
+func WithQ(v float64) EQConfigOption {
+	return eQConfigOptionFunc(func(c *EQConfig) {
+		c.Q = v
 	})
 }

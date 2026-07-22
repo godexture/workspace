@@ -72,9 +72,6 @@ func DecodeResidualInto(r *bits.Reader, residual []int64, blockSize, predictorOr
 			if err != nil {
 				return err
 			}
-			if rawBits > 32 {
-				return errors.New("invalid FLAC escaped residual width")
-			}
 			for i := 0; i < samplesInPartition; i++ {
 				value := int64(r.Signed32(uint8(rawBits)))
 				if r.Overrun() || !validFLACResidual(value) {

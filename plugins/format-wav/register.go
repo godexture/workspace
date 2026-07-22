@@ -5,6 +5,7 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
+	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	internal "github.com/godexture/format-wav/internal"
@@ -35,10 +36,11 @@ func NewMuxerEngine(w io.Writer, config MuxerConfig) (engine.MuxerEngine, error)
 }
 
 func init() {
-	if err := godec.Register(NewDemuxerConfig(), registry.DemuxerManifest{
+	if err := godec.Register(registry.DemuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "wav-demuxer",
-			Description: "WAV demuxer",
+			Name:                 "wav",
+			Description:          "WAV demuxer",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewDemuxerConfig),
 		},
 		Probe: Probe,
 		Factory: func(r io.Reader, config registry.Configuration) (node.Demuxer, error) {
@@ -61,11 +63,15 @@ func init() {
 		panic(err)
 	}
 
-	if err := godec.Register(NewMuxerConfig(), registry.MuxerManifest{
+	if err := godec.Register(registry.MuxerManifest{
 		BaseManifest: registry.BaseManifest{
-			Name:        "wav-muxer",
-			Description: "WAV muxer",
+			Name:                 "wav",
+			Description:          "WAV muxer",
+			ConfigurationFactory: registry.NewConfigurationFactory(NewMuxerConfig),
 		},
+		Extensions:   []string{".wav", ".wave"},
+		Codecs:       []media.CodecID{media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM},
+		DefaultCodec: media.CodecLPCM,
 		Factory: func(w io.Writer, cfg registry.Configuration) (node.Muxer, error) {
 			resolved, err := engine.ResolveConfig[internal.MuxerConfig, MuxerConfig](cfg)
 			if err != nil {

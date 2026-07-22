@@ -3,6 +3,8 @@ package registry
 import (
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -17,12 +19,30 @@ type Validator interface {
 }
 
 type BaseManifest struct {
-	key         PluginKey
-	Name        string
-	Description string
+	key                  PluginKey
+	Name                 string
+	Description          string
+	ConfigurationFactory ConfigurationFactory
 }
 
 func (m BaseManifest) ID() PluginKey { return m.key }
+
+func (m BaseManifest) RegistryName() string { return m.Name }
+
+func (m BaseManifest) NewConfiguration() (Configuration, error) {
+	if m.ConfigurationFactory == nil {
+		return nil, fmt.Errorf("manifest %q has no configuration factory", m.Name)
+	}
+	config := m.ConfigurationFactory()
+	configType, err := configurationType(config)
+	if err != nil {
+		return nil, err
+	}
+	if m.key.configType != nil && configType != m.key.configType {
+		return nil, fmt.Errorf("manifest %q configuration factory returned %s, want %s", m.Name, configType, m.key.configType)
+	}
+	return config, nil
+}
 
 type TransformManifest struct {
 	BaseManifest
@@ -32,6 +52,9 @@ type TransformManifest struct {
 	// the desired codec (the input codec for decoders) and cfg is the node
 	// configuration that will be used to construct the transform.
 	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
+	// TransformStreamFunc may update stream properties outside Profile, such as
+	// duration. When set, it is authoritative for TransformStream.
+	TransformStreamFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error)
 }
 
 type InputRequirementsFunc func(target media.CodecID, config Configuration) ([]manifest.Capability, error)
@@ -59,7 +82,10 @@ type BridgeFunc func(
 
 type MuxerManifest struct {
 	BaseManifest
-	Factory MuxerFactory
+	Extensions   []string
+	Codecs       []media.CodecID
+	DefaultCodec media.CodecID
+	Factory      MuxerFactory
 }
 
 type DemuxerManifest struct {
@@ -70,8 +96,8 @@ type DemuxerManifest struct {
 
 type EncoderManifest struct {
 	TransformManifest
-	Supports func(codec media.CodecID) bool
-	Factory  EncoderFactory
+	Codecs  []media.CodecID
+	Factory EncoderFactory
 }
 
 type DecoderManifest struct {
@@ -90,6 +116,9 @@ func (m TransformManifest) Transform(stream media.StreamInfo, target media.Codec
 }
 
 func (m TransformManifest) TransformStream(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error) {
+	if m.TransformStreamFunc != nil {
+		return m.TransformStreamFunc(stream, target, cfg)
+	}
 	if m.TransformFunc == nil {
 		return stream, nil
 	}
@@ -133,7 +162,33 @@ func (m BaseManifest) validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("manifest name must not be empty")
 	}
+	if !isManifestName(m.Name) {
+		return fmt.Errorf("manifest name %q must be lower kebab-case", m.Name)
+	}
 	return nil
+}
+
+func isManifestName(name string) bool {
+	if name == "" || name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+	previousDash := false
+	for _, char := range name {
+		isLower := char >= 'a' && char <= 'z'
+		isDigit := char >= '0' && char <= '9'
+		if char == '-' {
+			if previousDash {
+				return false
+			}
+			previousDash = true
+			continue
+		}
+		if !isLower && !isDigit {
+			return false
+		}
+		previousDash = false
+	}
+	return !previousDash
 }
 
 func (m TransformManifest) validate() error {
@@ -161,6 +216,23 @@ func (m MuxerManifest) Validate() error {
 	if m.Factory == nil {
 		return fmt.Errorf("muxer manifest %q has no factory", m.Name)
 	}
+	if len(m.Extensions) == 0 {
+		return fmt.Errorf("muxer manifest %q has no extensions", m.Name)
+	}
+	for _, extension := range m.Extensions {
+		if !strings.HasPrefix(extension, ".") || extension != strings.ToLower(extension) || len(extension) == 1 {
+			return fmt.Errorf("muxer manifest %q has invalid extension %q", m.Name, extension)
+		}
+	}
+	if hasDuplicates(m.Extensions) {
+		return fmt.Errorf("muxer manifest %q has duplicate extensions", m.Name)
+	}
+	if err := validateCodecs(m.Name, m.Codecs); err != nil {
+		return err
+	}
+	if !slices.Contains(m.Codecs, m.DefaultCodec) {
+		return fmt.Errorf("muxer manifest %q default codec %q is not supported", m.Name, m.DefaultCodec)
+	}
 	return nil
 }
 
@@ -181,13 +253,44 @@ func (m EncoderManifest) Validate() error {
 	if err := m.TransformManifest.validate(); err != nil {
 		return err
 	}
-	if m.Supports == nil {
-		return fmt.Errorf("encoder manifest %q has no codec matcher", m.Name)
-	}
 	if m.Factory == nil {
 		return fmt.Errorf("encoder manifest %q has no factory", m.Name)
 	}
+	return validateCodecs(m.Name, m.Codecs)
+}
+
+func (m EncoderManifest) Supports(codec media.CodecID) bool {
+	return slices.Contains(m.Codecs, codec)
+}
+
+func (m MuxerManifest) Supports(codec media.CodecID) bool {
+	return slices.Contains(m.Codecs, codec)
+}
+
+func validateCodecs(name string, codecs []media.CodecID) error {
+	if len(codecs) == 0 {
+		return fmt.Errorf("manifest %q has no codecs", name)
+	}
+	for _, codec := range codecs {
+		if codec == "" {
+			return fmt.Errorf("manifest %q has an empty codec", name)
+		}
+	}
+	if hasDuplicates(codecs) {
+		return fmt.Errorf("manifest %q has duplicate codecs", name)
+	}
 	return nil
+}
+
+func hasDuplicates[T comparable](values []T) bool {
+	seen := make(map[T]struct{}, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			return true
+		}
+		seen[value] = struct{}{}
+	}
+	return false
 }
 
 func (m DecoderManifest) Validate() error {

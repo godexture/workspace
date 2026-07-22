@@ -38,12 +38,12 @@ func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.Encode
 
 func init() {
 	if err := godec.Register(
-		NewDecoderConfig(),
 		registry.DecoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
-					Name:        "flac-decoder",
-					Description: "FLAC decoder",
+					Name:                 "flac",
+					Description:          "FLAC decoder",
+					ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 				},
 				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}}),
 				Resources: registry.ResourceRequest{
@@ -74,16 +74,20 @@ func init() {
 	}
 
 	if err := godec.Register(
-		NewEncoderConfig(),
 		registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
 				BaseManifest: registry.BaseManifest{
-					Name:        "flac-encoder",
-					Description: "FLAC encoder",
+					Name:                 "flac",
+					Description:          "FLAC encoder",
+					ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 				},
 				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
-					Codecs:      []media.CodecID{media.CodecLPCM},
-					SampleRates: manifest.IntConstraint{Min: 1},
+					Codecs: []media.CodecID{media.CodecLPCM},
+					// Max is the FLAC Subset format limit: the largest rate a frame
+					// header can still encode explicitly (10Hz-unit field, 16 bits).
+					// The raw STREAMINFO field allows up to 2^20-1, but Subset streams
+					// (the default) require an explicit per-frame sample-rate code.
+					SampleRates: manifest.IntConstraint{Min: 1, Max: 655350},
 					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
 					SampleFormats: []manifest.SampleFormatConstraint{
 						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
@@ -103,9 +107,7 @@ func init() {
 					return profile, nil
 				},
 			},
-			Supports: func(codec media.CodecID) bool {
-				return codec == media.CodecFLAC
-			},
+			Codecs: []media.CodecID{media.CodecFLAC},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
 				resolved, err := engine.ResolveConfig[config.EncoderConfig, EncoderConfig](options.Config)
 				if err != nil {

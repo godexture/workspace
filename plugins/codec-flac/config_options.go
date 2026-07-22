@@ -35,6 +35,27 @@ func (c EncoderConfig) Resolve() config.EncoderConfig {
 	return config.EncoderConfig(c)
 }
 
+func (c EncoderConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c EncoderConfig) FieldChoices(field string) []string {
+	switch field {
+	case "StereoMode":
+		return []string{"independent", "adaptive", "exhaustive"}
+	case "FixedOrderSearch":
+		return []string{"estimated", "exhaustive"}
+	case "LPCOrderSearch":
+		return []string{"estimated", "exhaustive"}
+	case "RiceCost":
+		return []string{"estimated", "exact"}
+	case "BlockSplitMode":
+		return []string{"estimated", "exact"}
+	default:
+		return nil
+	}
+}
+
 type DecoderConfig config.DecoderConfig
 
 type DecoderConfigOption interface {
@@ -63,22 +84,11 @@ func (c DecoderConfig) Resolve() config.DecoderConfig {
 	return config.DecoderConfig(c)
 }
 
-func WithSampleRate(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.SampleRate = v
-	})
-}
-
-func WithChannels(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.Channels = v
-	})
-}
-
-func WithBitsPerSample(v int) EncoderConfigOption {
-	return encoderConfigOptionFunc(func(c *EncoderConfig) {
-		c.BitsPerSample = v
-	})
+func (c DecoderConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
 }
 
 func WithBlockSize(v int) EncoderConfigOption {
@@ -181,4 +191,8 @@ func WithPreset(level int) EncoderConfigOption {
 	return encoderConfigOptionFunc(func(c *EncoderConfig) {
 		*c = EncoderConfig(config.GetPreset(level))
 	})
+}
+
+func (c *EncoderConfig) ApplyPreset(level int) {
+	*c = NewEncoderConfig(WithPreset(level))
 }

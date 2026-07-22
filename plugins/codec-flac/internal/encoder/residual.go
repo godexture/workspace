@@ -197,6 +197,12 @@ func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, 
 					chosen[partition] = bestRicePartition(sums, stats.max, count, method.paramBits, method.maxParam)
 				} else {
 					chosen[partition] = bestRicePartitionEstimate(stats.sum, stats.max, count, method.paramBits, method.maxParam)
+					pstart := partition*partitionSamples - predictorOrder
+					if pstart < 0 {
+						pstart = 0
+					}
+					pend := (partition+1)*partitionSamples - predictorOrder
+					chosen[partition].costBits = realPartitionCost(folded, pstart, pend, &chosen[partition], method.paramBits)
 				}
 				cost += chosen[partition].costBits
 			}
@@ -255,6 +261,23 @@ func exactRiceCodingCost(folded []uint64, blockSize, predictorOrder, partitionOr
 	return cost
 }
 
+// realPartitionCost computes the true bit cost of a single already-chosen
+// partition (param or escape). bestRicePartitionEstimate's sum>>k shortcut
+// over-estimates cost more for large partitions than small ones, which
+// otherwise biases chooseRiceCodingWithWorkspace's cross-order comparison
+// toward needlessly deep partitioning; this keeps that comparison honest.
+func realPartitionCost(folded []uint64, start, end int, part *ricePartition, paramBits uint8) uint64 {
+	count := end - start
+	if part.escaped {
+		return uint64(paramBits) + 5 + uint64(count)*uint64(part.rawBits)
+	}
+	var sum uint64
+	for _, v := range folded[start:end] {
+		sum += v >> part.param
+	}
+	return uint64(paramBits) + uint64(count)*uint64(part.param+1) + sum
+}
+
 func resize[T any](buffer []T, length int) []T {
 	if cap(buffer) < length {
 		return make([]T, length)
@@ -275,10 +298,11 @@ func bestRicePartition(sums []uint64, maxFolded uint64, count int, paramBits, ma
 		}
 	}
 
-	rawBits := uint8(stdbits.Len64(maxFolded))
-	escapeCost := uint64(paramBits) + 5 + uint64(count)*uint64(rawBits)
-	if escapeCost < best.costBits {
-		best = ricePartition{escaped: true, rawBits: rawBits, costBits: escapeCost}
+	if rawBits, ok := escapeRawBits(maxFolded); ok {
+		escapeCost := uint64(paramBits) + 5 + uint64(count)*uint64(rawBits)
+		if escapeCost < best.costBits {
+			best = ricePartition{escaped: true, rawBits: rawBits, costBits: escapeCost}
+		}
 	}
 	return best
 }
@@ -293,12 +317,28 @@ func bestRicePartitionEstimate(sum, maxFolded uint64, count int, paramBits, maxP
 			best = ricePartition{param: uint8(k), costBits: cost}
 		}
 	}
-	rawBits := uint8(stdbits.Len64(maxFolded))
-	escapeCost := uint64(paramBits) + 5 + uint64(count)*uint64(rawBits)
-	if escapeCost < best.costBits {
-		best = ricePartition{escaped: true, rawBits: rawBits, costBits: escapeCost}
+	if rawBits, ok := escapeRawBits(maxFolded); ok {
+		escapeCost := uint64(paramBits) + 5 + uint64(count)*uint64(rawBits)
+		if escapeCost < best.costBits {
+			best = ricePartition{escaped: true, rawBits: rawBits, costBits: escapeCost}
+		}
 	}
 	return best
+}
+
+// escapeRawBits returns the raw signed width needed to store any folded
+// value up to maxFolded, or ok=false if no width fits: the escape partition's
+// width field is 5 bits wide (0-31), one bit short of the 32 raw bits a
+// maximally negative FLAC residual can require. When that happens escape
+// coding simply isn't viable for the partition; Rice coding remains correct
+// (if less efficient) for any magnitude via its unbounded unary quotient, so
+// the caller's ordinary per-k search stays the fallback.
+func escapeRawBits(maxFolded uint64) (uint8, bool) {
+	bits := stdbits.Len64(maxFolded)
+	if bits > 31 {
+		return 0, false
+	}
+	return uint8(bits), true
 }
 
 func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
@@ -347,7 +387,7 @@ func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {
 			}
 		} else {
 			w.Bits64(uint64(maxParam+1), coding.paramBits)
-			if part.rawBits > 32 {
+			if part.rawBits > 31 {
 				return errors.New("invalid escaped FLAC residual width")
 			}
 			w.Bits64(uint64(part.rawBits), 5)

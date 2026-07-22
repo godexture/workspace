@@ -68,6 +68,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 			Index:     0,
 			Type:      media.MediaAudio,
 			IsDefault: true,
+			Duration:  d.duration(),
 			Metadata:  d.meta,
 			MediaAttributes: media.MediaAttributes{
 				Codec:           codec,
@@ -83,6 +84,28 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	}
 
 	return []media.StreamInfo{d.streamInfo}, d.meta, nil
+}
+
+func (d *Demuxer) duration() time.Duration {
+	if d.header.sampleRate == 0 || d.header.blockAlign == 0 {
+		return 0
+	}
+	samplesPerBlock := uint64(d.samplesPerBlock())
+	if samplesPerBlock == 0 {
+		return 0
+	}
+	blocks := d.header.dataSize / uint64(d.header.blockAlign)
+	if blocks > ^uint64(0)/samplesPerBlock {
+		return 0
+	}
+	totalSamples := blocks * samplesPerBlock
+	rate := uint64(d.header.sampleRate)
+	seconds := totalSamples / rate
+	if seconds > uint64((time.Duration(1<<63-1))/time.Second) {
+		return 0
+	}
+	remainder := totalSamples % rate
+	return time.Duration(seconds)*time.Second + time.Duration(remainder*uint64(time.Second)/rate)
 }
 
 func (d *Demuxer) codecParameters(codec media.CodecID) media.CodecParameters {

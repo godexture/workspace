@@ -11,10 +11,10 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) engine.DecoderEngine {
+func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) (engine.DecoderEngine, error) {
 	resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](cfg)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return internal.NewDecoder(stream, resolved)
 }
@@ -30,11 +30,12 @@ func NewEncoderEngine(stream media.StreamInfo, cfg EncoderConfig) engine.Encoder
 
 func init() {
 	// --- Decoder ---
-	if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
+	if err := godec.Register(registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
-				Name:        "pcm-decoder",
-				Description: "PCM/G.711 decoder",
+				Name:                 "pcm",
+				Description:          "LPCM/G.711/ADPCM decoder",
+				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
@@ -51,18 +52,23 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
-			return engine.WrapDecoder(internal.NewDecoder(s, resolved)), nil
+			decoder, err := internal.NewDecoder(s, resolved)
+			if err != nil {
+				return nil, err
+			}
+			return engine.WrapDecoder(decoder), nil
 		},
 	}); err != nil {
 		panic(err)
 	}
 
 	// --- Encoder ---
-	if err := godec.Register(NewEncoderConfig(), registry.EncoderManifest{
+	if err := godec.Register(registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{
-				Name:        "pcm-encoder",
-				Description: "PCM/G.711 encoder",
+				Name:                 "pcm",
+				Description:          "LPCM/G.711/ADPCM encoder",
+				ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
@@ -102,9 +108,7 @@ func init() {
 				return profile, nil
 			},
 		},
-		Supports: func(codec media.CodecID) bool {
-			return codec == media.CodecLPCM || codec == media.CodecPCMU || codec == media.CodecPCMA || codec == media.CodecMSADPCM || codec == media.CodecIMAADPCM
-		},
+		Codecs: []media.CodecID{media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM},
 		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
 			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](options.Config)
 			if err != nil {

@@ -27,7 +27,11 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 				}
 				var value bytes.Buffer
 				format.Node(&value, token.NewFileSet(), field.Type)
-				fmt.Fprintf(body, "%s %s\n", field.Names[0].Name, value.String())
+				tag := ""
+				if field.Tag != nil {
+					tag = " " + field.Tag.Value
+				}
+				fmt.Fprintf(body, "%s %s%s\n", field.Names[0].Name, value.String(), tag)
 			}
 			body.WriteString("}\n\n")
 		} else if t.ResolvedType != "" && strings.Contains(t.ResolvedType, ".") {
@@ -53,5 +57,30 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 
 		fmt.Fprintf(body, "func (c %s) ResolveDefault() %s {\n\treturn %s(%s)\n}\n\n", configName, t.ResolvedType, t.ResolvedType, initExpr)
 		fmt.Fprintf(body, "func (c %s) Resolve() %s {\n\treturn %s(c)\n}\n\n", configName, t.ResolvedType, t.ResolvedType)
+		if t.HasValidate {
+			fmt.Fprintf(body, "func (c %s) Validate() error {\n\treturn c.Resolve().Validate()\n}\n\n", configName)
+		}
+		if len(t.FieldChoices) > 0 {
+			fmt.Fprintf(body, "func (c %s) FieldChoices(field string) []string {\n\tswitch field {\n", configName)
+			for _, field := range t.StructType.Fields.List {
+				if len(field.Names) != 1 {
+					continue
+				}
+				values := t.FieldChoices[field.Names[0].Name]
+				if len(values) == 0 {
+					continue
+				}
+				fmt.Fprintf(body, "\tcase %q:\n\t\treturn []string{%s}\n", field.Names[0].Name, quoted(values))
+			}
+			body.WriteString("\tdefault:\n\t\treturn nil\n\t}\n}\n\n")
+		}
 	}
+}
+
+func quoted(values []string) string {
+	quoted := make([]string, len(values))
+	for index, value := range values {
+		quoted[index] = fmt.Sprintf("%q", value)
+	}
+	return strings.Join(quoted, ", ")
 }

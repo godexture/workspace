@@ -9,9 +9,18 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
+func mustNewDecoder(t *testing.T, stream media.StreamInfo, config DecoderConfig) *Decoder {
+	t.Helper()
+	decoder, err := NewDecoder(stream, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoder
+}
+
 func TestDecoderEncoderRoundtrip(t *testing.T) {
 	t.Parallel()
-	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
+	dec := mustNewDecoder(t, media.StreamInfo{}, DefaultDecoderConfig)
 	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	in := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD}
@@ -49,7 +58,7 @@ func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultDecoderConfig
 	cfg.format = media.SampleFormatS24
-	dec := NewDecoder(media.StreamInfo{}, cfg)
+	dec := mustNewDecoder(t, media.StreamInfo{}, cfg)
 	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	// 2 channels * 3 bytes/sample * 3 samples = 18 bytes
@@ -114,7 +123,7 @@ func TestG711Roundtrip(t *testing.T) {
 			t.Parallel()
 			cfg := DefaultDecoderConfig
 			cfg.codecID = tt.codec
-			dec := NewDecoder(media.StreamInfo{}, cfg)
+			dec := mustNewDecoder(t, media.StreamInfo{}, cfg)
 			cfgEnc := DefaultEncoderConfig
 			cfgEnc.CodecID = tt.codec
 			enc, _ := NewEncoder(media.StreamInfo{}, tt.codec, cfgEnc)
@@ -154,7 +163,7 @@ func TestG711Roundtrip(t *testing.T) {
 
 func TestDecoderEncoderNeedMoreData(t *testing.T) {
 	t.Parallel()
-	dec := NewDecoder(media.StreamInfo{}, DefaultDecoderConfig)
+	dec := mustNewDecoder(t, media.StreamInfo{}, DefaultDecoderConfig)
 	enc, _ := NewEncoder(media.StreamInfo{}, media.CodecLPCM, DefaultEncoderConfig)
 
 	if _, err := dec.ReceiveFrame(); err != engine.ErrEAGAIN {
@@ -187,7 +196,7 @@ func TestG711Endianness(t *testing.T) {
 	cfgLE := DefaultDecoderConfig
 	cfgLE.codecID = media.CodecPCMU
 	cfgLE.ByteOrder = binary.LittleEndian
-	decLE := NewDecoder(media.StreamInfo{}, cfgLE)
+	decLE := mustNewDecoder(t, media.StreamInfo{}, cfgLE)
 	pktLE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktLE.Data(), in)
 	pktLE.MediaType = media.MediaAudio
@@ -199,7 +208,7 @@ func TestG711Endianness(t *testing.T) {
 	cfgBE := DefaultDecoderConfig
 	cfgBE.codecID = media.CodecPCMU
 	cfgBE.ByteOrder = binary.BigEndian
-	decBE := NewDecoder(media.StreamInfo{}, cfgBE)
+	decBE := mustNewDecoder(t, media.StreamInfo{}, cfgBE)
 	pktBE := media.NewPacket(len(in), media.WithPts(100))
 	copy(pktBE.Data(), in)
 	pktBE.MediaType = media.MediaAudio
@@ -223,6 +232,13 @@ func TestG711Endianness(t *testing.T) {
 	outPktBE, _ := encBE.ReceivePacket()
 	if !bytes.Equal(outPktBE.Data(), in) {
 		t.Errorf("BigEndian encode mismatch: got %x want %x", outPktBE.Data(), in)
+	}
+}
+
+func TestNewDecoderRejectsUnsupportedCodec(t *testing.T) {
+	stream := media.StreamInfo{MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}
+	if _, err := NewDecoder(stream, DefaultDecoderConfig); err == nil {
+		t.Fatal("NewDecoder() accepted FLAC")
 	}
 }
 

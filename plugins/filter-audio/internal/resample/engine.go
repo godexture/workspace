@@ -7,23 +7,21 @@ import (
 	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/filter-audio/internal/linear"
 )
 
 type Engine struct {
 	config config.ResampleConfig
 	queue  framequeue.Single
 
-	initialized   bool
-	inputRate     int
-	layout        media.ChannelLayout
-	format        media.SampleFormat
-	bits          int
-	baseInputPTS  media.Pts
-	baseOutputPTS media.Pts
-	totalInput    int64
-	nextNumerator int64
-	emitted       int64
-	last          []float32
+	initialized  bool
+	inputRate    int
+	layout       media.ChannelLayout
+	format       media.SampleFormat
+	bits         int
+	baseInputPTS media.Pts
+	totalInput   int64
+	resampler    *linear.Resampler
 }
 
 func New(config config.ResampleConfig) (*Engine, error) {
@@ -49,38 +47,8 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		return e.queue.Push(input)
 	}
 
-	output := audio.Block{
-		Channels: make([][]float32, len(block.Channels)),
-		Layout:   block.Layout,
-		Rate:     e.config.SampleRate,
-		PTS:      e.baseOutputPTS + media.Pts(e.emitted),
-		Metadata: block.Metadata,
-	}
-	for sample := 0; sample < block.Samples(); sample++ {
-		if e.totalInput == 0 {
-			for channel := range block.Channels {
-				e.last[channel] = block.Channels[channel][sample]
-			}
-			e.totalInput++
-			continue
-		}
-		pairStart := e.totalInput - 1
-		upper := (pairStart + 1) * int64(e.config.SampleRate)
-		for e.nextNumerator < upper {
-			fraction := float32(e.nextNumerator-pairStart*int64(e.config.SampleRate)) / float32(e.config.SampleRate)
-			for channel := range output.Channels {
-				next := block.Channels[channel][sample]
-				value := e.last[channel] + (next-e.last[channel])*fraction
-				output.Channels[channel] = append(output.Channels[channel], value)
-			}
-			e.nextNumerator += int64(e.inputRate)
-			e.emitted++
-		}
-		for channel := range block.Channels {
-			e.last[channel] = block.Channels[channel][sample]
-		}
-		e.totalInput++
-	}
+	output := e.resampler.Process(block)
+	e.totalInput += int64(block.Samples())
 	if output.Samples() == 0 {
 		return nil
 	}
@@ -98,21 +66,7 @@ func (e *Engine) Flush() error {
 		e.queue.Flush()
 		return nil
 	}
-	desired := (e.totalInput*int64(e.config.SampleRate) + int64(e.inputRate)/2) / int64(e.inputRate)
-	if e.emitted < desired {
-		output := audio.Block{
-			Channels: make([][]float32, len(e.last)),
-			Layout:   e.layout,
-			Rate:     e.config.SampleRate,
-			PTS:      e.baseOutputPTS + media.Pts(e.emitted),
-		}
-		for e.emitted < desired {
-			for channel := range output.Channels {
-				output.Channels[channel] = append(output.Channels[channel], e.last[channel])
-			}
-			e.nextNumerator += int64(e.inputRate)
-			e.emitted++
-		}
+	if output, ok := e.resampler.Finish(); ok {
 		encoded, err := audio.Encode(output, e.format, e.bits)
 		if err != nil {
 			return err
@@ -138,8 +92,7 @@ func (e *Engine) initialize(block audio.Block) {
 	e.format = block.Format
 	e.bits = block.Bits
 	e.baseInputPTS = block.PTS
-	e.baseOutputPTS = rescalePTS(block.PTS, e.inputRate, e.config.SampleRate)
-	e.last = make([]float32, len(block.Channels))
+	e.resampler = linear.NewResampler(e.inputRate, e.config.SampleRate, e.config.SampleRate, block.PTS)
 }
 
 func (e *Engine) validateInput(block audio.Block) error {
@@ -150,11 +103,4 @@ func (e *Engine) validateInput(block audio.Block) error {
 		return fmt.Errorf("resample input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
 	}
 	return nil
-}
-
-func rescalePTS(value media.Pts, fromRate, toRate int) media.Pts {
-	if fromRate <= 0 || toRate <= 0 {
-		return value
-	}
-	return media.Pts((int64(value)*int64(toRate) + int64(fromRate)/2) / int64(fromRate))
 }

@@ -5,12 +5,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"os"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/filter-audio/internal/audio"
+	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/sdk/pool"
 )
 
 type record struct {
@@ -43,7 +44,7 @@ func (s *Blocks) Append(block audio.Block) error {
 	} else if s.layout != block.Layout || s.rate != block.Rate {
 		return fmt.Errorf("buffered audio format changed within stream")
 	}
-	clone := audio.CloneBlock(block)
+	clone := block.Clone()
 	s.records = append(s.records, record{pts: clone.PTS, samples: clone.Samples(), metadata: clone.Metadata})
 	size := int64(clone.Samples()*len(clone.Channels)) * 4
 	if s.file == nil && s.bytes+size <= s.limit {
@@ -89,7 +90,7 @@ func (s *Blocks) Next() (audio.Block, bool, error) {
 		return audio.Block{}, false, nil
 	}
 	if s.file == nil {
-		block := audio.CloneBlock(s.memory[s.index])
+		block := s.memory[s.index].Clone()
 		s.index++
 		return block, true, nil
 	}
@@ -132,43 +133,59 @@ func (s *Blocks) open() error {
 	return nil
 }
 
+const blockHeaderSize = 12 // little-endian: pts int64, sample count uint32
+
 func writeBlock(w io.Writer, block audio.Block) error {
-	if err := binary.Write(w, binary.LittleEndian, int64(block.PTS)); err != nil {
+	var header [blockHeaderSize]byte
+	binary.LittleEndian.PutUint64(header[0:8], uint64(block.PTS))
+	binary.LittleEndian.PutUint32(header[8:12], uint32(block.Samples()))
+	if _, err := w.Write(header[:]); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, uint32(block.Samples())); err != nil {
-		return err
-	}
-	for _, channel := range block.Channels {
-		for _, value := range channel {
-			if err := binary.Write(w, binary.LittleEndian, math.Float32bits(value)); err != nil {
-				return err
-			}
+
+	channelBytes := block.Samples() * 4
+	total := channelBytes * len(block.Channels)
+	payload := pool.Get(total)
+	defer pool.Put(payload)
+	*payload = (*payload)[:total]
+
+	for i, channel := range block.Channels {
+		dst := (*payload)[i*channelBytes : (i+1)*channelBytes]
+		if err := dsp.FromFloat32(dst, channel, dsp.PCMF32, 32); err != nil {
+			return err
 		}
 	}
-	return nil
+	_, err := w.Write(*payload)
+	return err
 }
 
 func readBlock(r io.Reader, block audio.Block) error {
-	var pts int64
-	var samples uint32
-	if err := binary.Read(r, binary.LittleEndian, &pts); err != nil {
+	var header [blockHeaderSize]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &samples); err != nil {
-		return err
-	}
+	pts := int64(binary.LittleEndian.Uint64(header[0:8]))
+	samples := binary.LittleEndian.Uint32(header[8:12])
 	if media.Pts(pts) != block.PTS || int(samples) != block.Samples() {
 		return fmt.Errorf("invalid temporary audio spool")
 	}
-	for _, channel := range block.Channels {
-		for i := range channel {
-			var value uint32
-			if err := binary.Read(r, binary.LittleEndian, &value); err != nil {
-				return err
-			}
-			channel[i] = math.Float32frombits(value)
+
+	channelBytes := block.Samples() * 4
+	total := channelBytes * len(block.Channels)
+	payload := pool.Get(total)
+	defer pool.Put(payload)
+	*payload = (*payload)[:total]
+	if _, err := io.ReadFull(r, *payload); err != nil {
+		return err
+	}
+
+	for i, channel := range block.Channels {
+		src := (*payload)[i*channelBytes : (i+1)*channelBytes]
+		decoded, err := dsp.ToFloat32(channel, src, dsp.PCMF32, 32)
+		if err != nil {
+			return err
 		}
+		block.Channels[i] = decoded
 	}
 	return nil
 }

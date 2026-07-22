@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/tools/internal/cli"
 	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/tools/internal/enumscan"
 )
 
 // FindTargetInfo searches through parsed AST files to find the struct definition for the target.
@@ -16,10 +17,40 @@ func FindTargetInfo(t *types.Target, allFiles []*ast.File, filePaths map[*ast.Fi
 	for _, f := range allFiles {
 		if findTargetInFile(t, f, filePaths[f], outputPackageName) {
 			autoDetectDefaultAndPreset(t, allFiles, t.PackageName)
+			discoverMetadata(t, allFiles)
 			return
 		}
 	}
 	cli.Fatalf("type %s not found in auto-discovery", t.Type)
+}
+
+func discoverMetadata(t *types.Target, allFiles []*ast.File) {
+	t.FieldChoices = make(map[string][]string)
+	for _, field := range t.StructType.Fields.List {
+		if len(field.Names) != 1 || !ast.IsExported(field.Names[0].Name) {
+			continue
+		}
+		ident, ok := field.Type.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		t.FieldChoices[field.Names[0].Name] = enumscan.StringConstants(allFiles, t.PackageName, ident.Name)
+	}
+	for _, file := range allFiles {
+		if file.Name.Name != t.PackageName {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "Validate" || function.Recv == nil || len(function.Recv.List) != 1 {
+				continue
+			}
+			receiver, ok := function.Recv.List[0].Type.(*ast.Ident)
+			if ok && receiver.Name == t.Type {
+				t.HasValidate = true
+			}
+		}
+	}
 }
 
 func findTargetInFile(t *types.Target, f *ast.File, filePath, outputPackageName string) bool {

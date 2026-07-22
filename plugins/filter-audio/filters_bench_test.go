@@ -16,7 +16,7 @@ func BenchmarkGainStereoF32(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(4096 * 2 * 4))
 	for i := 0; i < b.N; i++ {
-		block := audio.CloneBlock(values)
+		block := values.Clone()
 		for _, channel := range block.Channels {
 			gain.Apply(channel, 0.75)
 		}

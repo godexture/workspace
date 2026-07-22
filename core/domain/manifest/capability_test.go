@@ -12,3 +12,14 @@ func TestIntConstraintCandidatesRespectCombinedBounds(t *testing.T) {
 		t.Fatalf("Candidates() = %v, want %v", got, want)
 	}
 }
+
+func TestIntConstraintCandidatesClampsToTheViolatedBound(t *testing.T) {
+	t.Parallel()
+	constraint := IntConstraint{Min: 1, Max: 1048575}
+	if got, want := constraint.Candidates(4410000), []int{1048575}; !slices.Equal(got, want) {
+		t.Fatalf("Candidates() = %v, want %v (value exceeds Max, must clamp up to Max, not down to Min)", got, want)
+	}
+	if got, want := constraint.Candidates(0), []int{1}; !slices.Equal(got, want) {
+		t.Fatalf("Candidates() = %v, want %v (value is below Min, must clamp up to Min)", got, want)
+	}
+}

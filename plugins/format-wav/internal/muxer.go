@@ -32,7 +32,7 @@ type Muxer struct {
 }
 
 type MuxerConfig struct {
-	ForceRF64 bool
+	ForceRF64 bool `name:"force-rf64" help:"Always write RF64 output"`
 }
 
 func NewMuxer(w io.Writer, config MuxerConfig) *Muxer {

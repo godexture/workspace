@@ -57,11 +57,14 @@ Demuxer が `Analyze()` で返す各ストリームのメタデータです。
 type StreamInfo struct {
     Index       int             // ストリームインデックス (0-based)
     Type        MediaType       // "audio", "video" など
+    Duration    time.Duration   // 判定できる場合のストリーム尺。未知なら 0
     Metadata    metadata.Bundle // ストリームレベルのタグ情報
     IsDefault   bool            // デフォルトストリームかどうか
     MediaAttributes             // コーデック・音声属性など
 }
 ```
+
+尺は `Metadata` の任意キーではなく `Duration` を正規の表現とします。WAV、FLAC、MP3 の Demuxer はヘッダまたはファイル情報から判定できた場合に設定し、判定不能な stream はゼロのまま返します。
 
 ### 使用例
 

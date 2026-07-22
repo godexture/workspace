@@ -134,9 +134,9 @@ func registerBridgeFilter(
 	transform func(media.StreamInfo, registry.Configuration) media.StreamInfo,
 ) {
 	t.Helper()
-	err := filters.Register(config, registry.FilterManifest{
+	err := filters.Register(registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{
-			BaseManifest:      registry.BaseManifest{Name: name},
+			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
 			InputRequirements: registry.StaticRequirements(bridgeAnyAudioCapability{}),
 			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, config registry.Configuration) (media.Profile, error) {
 				stream = transform(stream, config)
