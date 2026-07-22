@@ -54,10 +54,10 @@ func (c IntConstraint) Candidates(current int) []int {
 	if c.Match(current) {
 		return []int{current}
 	}
-	if c.Min != 0 {
+	if c.Min != 0 && current < c.Min {
 		return []int{c.Min}
 	}
-	if c.Max != 0 {
+	if c.Max != 0 && current > c.Max {
 		return []int{c.Max}
 	}
 	return nil

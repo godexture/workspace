@@ -15,15 +15,16 @@ type Engine struct {
 	config config.SpeedConfig
 	queue  framequeue.Single
 
-	initialized  bool
-	inputRate    int
-	layout       media.ChannelLayout
-	format       media.SampleFormat
-	bits         int
-	baseInputPTS media.Pts
-	totalInput   int64
-	outputRate   int
-	resampler    *linear.Resampler
+	initialized   bool
+	inputRate     int
+	layout        media.ChannelLayout
+	format        media.SampleFormat
+	bits          int
+	baseInputPTS  media.Pts
+	totalInput    int64
+	outputRate    int
+	outputBasePTS media.Pts
+	resampler     *linear.Resampler
 }
 
 func New(config config.SpeedConfig) (*Engine, error) {
@@ -52,7 +53,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.config.Mode == config.SpeedModeRelabel {
 		output := block
 		output.Rate = e.outputRate
-		output.PTS = linear.RescalePTS(block.PTS, e.inputRate, e.outputRate)
+		output.PTS = e.outputBasePTS + media.Pts(e.totalInput)
 		e.totalInput += int64(block.Samples())
 		encoded, err := audio.Encode(output, e.format, e.bits)
 		if err != nil {
@@ -108,6 +109,7 @@ func (e *Engine) initialize(block audio.Block) {
 	e.baseInputPTS = block.PTS
 	if e.config.Mode == config.SpeedModeRelabel {
 		e.outputRate = scaleRate(block.Rate, e.config.Factor)
+		e.outputBasePTS = linear.RescalePTS(block.PTS, e.inputRate, e.outputRate)
 		return
 	}
 	target := scaleRate(block.Rate, 1/e.config.Factor)
