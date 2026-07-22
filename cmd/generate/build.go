@@ -13,7 +13,7 @@ import (
 // and prepends that directory to the PATH.
 func buildTools(goCommand, goWork, tmpDir string) error {
 	var buildWg sync.WaitGroup
-	buildErrs := make(chan error, 2)
+	buildErrs := make(chan error, 3)
 
 	buildWg.Add(1)
 	go func() {
@@ -28,6 +28,21 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 			return
 		}
 		log.Printf("built config-generator to %s", tmpDir)
+	}()
+
+	buildWg.Add(1)
+	go func() {
+		defer buildWg.Done()
+		log.Printf("building enum-generator...")
+		buildEnumCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "enum-generator.exe"), "github.com/godexture/tools/cmd/enum-generator")
+		buildEnumCmd.Env = append(os.Environ(), "GOWORK="+goWork)
+		buildEnumCmd.Stdout = os.Stdout
+		buildEnumCmd.Stderr = os.Stderr
+		if err := buildEnumCmd.Run(); err != nil {
+			buildErrs <- fmt.Errorf("failed to build enum-generator: %w", err)
+			return
+		}
+		log.Printf("built enum-generator to %s", tmpDir)
 	}()
 
 	buildWg.Add(1)

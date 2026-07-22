@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/tools/internal/cli"
 	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/tools/internal/enumscan"
 )
 
 // FindTargetInfo searches through parsed AST files to find the struct definition for the target.
@@ -33,7 +34,7 @@ func discoverMetadata(t *types.Target, allFiles []*ast.File) {
 		if !ok {
 			continue
 		}
-		t.FieldChoices[field.Names[0].Name] = stringConstants(allFiles, t.PackageName, ident.Name)
+		t.FieldChoices[field.Names[0].Name] = enumscan.StringConstants(allFiles, t.PackageName, ident.Name)
 	}
 	for _, file := range allFiles {
 		if file.Name.Name != t.PackageName {
@@ -50,34 +51,6 @@ func discoverMetadata(t *types.Target, allFiles []*ast.File) {
 			}
 		}
 	}
-}
-
-func stringConstants(files []*ast.File, packageName, typeName string) []string {
-	var values []string
-	for _, file := range files {
-		if file.Name.Name != packageName {
-			continue
-		}
-		for _, declaration := range file.Decls {
-			group, ok := declaration.(*ast.GenDecl)
-			if !ok || group.Tok != token.CONST {
-				continue
-			}
-			for _, item := range group.Specs {
-				spec, ok := item.(*ast.ValueSpec)
-				if !ok || spec.Type == nil || len(spec.Values) != 1 {
-					continue
-				}
-				declaredType, ok := spec.Type.(*ast.Ident)
-				literal, literalOK := spec.Values[0].(*ast.BasicLit)
-				if !ok || !literalOK || declaredType.Name != typeName || literal.Kind != token.STRING {
-					continue
-				}
-				values = append(values, strings.Trim(literal.Value, "\""))
-			}
-		}
-	}
-	return values
 }
 
 func findTargetInFile(t *types.Target, f *ast.File, filePath, outputPackageName string) bool {
