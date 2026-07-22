@@ -65,7 +65,6 @@ func Mix(input audio.Block, config config.RemixConfig) (audio.Block, error) {
 		Layout:   config.Layout,
 		Rate:     input.Rate,
 		PTS:      input.PTS,
-		Metadata: input.Metadata,
 	}
 	for channel := range output.Channels {
 		output.Channels[channel] = make([]float32, input.Samples())

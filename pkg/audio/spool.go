@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/pool"
 )
@@ -38,7 +37,7 @@ func (s *Spool) Append(block Block) error {
 		return fmt.Errorf("buffered audio format changed within stream")
 	}
 	clone := block.Clone()
-	s.records = append(s.records, Record{PTS: clone.PTS, Samples: clone.Samples(), Metadata: clone.Metadata})
+	s.records = append(s.records, Record{PTS: clone.PTS, Samples: clone.Samples()})
 	size := int64(clone.Samples()*len(clone.Channels)) * 4
 	if s.file == nil && s.bytes+size <= s.limit {
 		s.memory = append(s.memory, clone)
@@ -92,11 +91,7 @@ func (s *Spool) Next() (Block, bool, error) {
 	for i := range channels {
 		channels[i] = make([]float32, rec.Samples)
 	}
-	var metadata *metadata.Bundle
-	if rec.Metadata != nil {
-		metadata = rec.Metadata.Clone()
-	}
-	block := Block{Channels: channels, Layout: s.layout, Rate: s.rate, PTS: rec.PTS, Metadata: metadata}
+	block := Block{Channels: channels, Layout: s.layout, Rate: s.rate, PTS: rec.PTS}
 	if err := readBlock(s.reader, block); err != nil {
 		return Block{}, false, err
 	}

@@ -374,7 +374,6 @@ func WithDts(dts Dts) PacketOption
 type Frame interface {
     Retainer
     Pts() Pts
-    Metadata() *metadata.Bundle
 }
 
 type AudioFrame struct {
@@ -388,7 +387,6 @@ type AudioFrame struct {
 
 func (f *AudioFrame) Pts() Pts
 func (f *AudioFrame) Planes() [][]byte
-func (f *AudioFrame) Metadata() *metadata.Bundle
 
 // ジェネリックプレーン取得 (unsafe ポインタ経由)
 func Plane[T SampleType](f *AudioFrame, planeIndex int) []T
@@ -498,34 +496,39 @@ type ErrorHandler interface {
 import "github.com/godexture/core/domain/metadata"
 ```
 
-型安全なキー/値ストアです。
+型安全なキー/値ストアです。`StreamInfo.Metadata` / `Muxer.SetMetadata` / `Demuxer.Metadata`
+を通じてストリーム単位のタグ情報 (タイトル・アーティスト名など) を運びます。`AudioFrame` は
+これを保持しません — フレーム単位のメタデータは現状未実装です。
 
 ```go
 type Bundle struct { ... }
 
 func NewBundle() *Bundle
-func (b *Bundle) Set(key any, value any)
 func (b *Bundle) Clear()
+func (b *Bundle) Merge(other *Bundle)
+func (b *Bundle) Clone() *Bundle
 
-// 型パラメータで取得 (型不一致時は TypeError を返す)
-func Get[T any](b *Bundle, key any) (T, error)
+// single キーは上書き、multiple キーは追記
+func (b *Bundle) Set(value single)
+func (b *Bundle) PushBack(value multiple)
+func (b *Bundle) PushFront(value multiple)
 
-var ErrNotFound = errors.New("metadata: key not found")
-
-type TypeError struct {
-    Key      any
-    Expected string
-    Actual   string
-}
+// 型パラメータで取得 (未設定ならゼロ値)
+func Get[T single](b *Bundle) T
+func Enumerate[T multiple](b *Bundle) []T
 ```
 
-#### 定義済みキー型
+#### 定義済みキー型 (抜粋)
 
 ```go
-type KeySilence struct{}     // bool: このフレームが無音かどうか
-type KeyVolume struct{}      // float64: 音量
-type KeyIsKeyFrame struct{}  // bool: キーフレームかどうか
+type KeyTitle string        // タイトル
+type KeyArtist string        // アーティスト (multiple)
+type KeyAlbum string          // アルバム名
+type KeyTrackNumber int64     // トラック番号
+type KeyThumbnail []Thumbnail // サムネイル画像 (multiple)
 ```
+
+全キーは `core/domain/metadata/keys.go` を参照してください。
 
 ---
 
