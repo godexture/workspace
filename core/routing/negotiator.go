@@ -59,9 +59,11 @@ type ConversionSpec struct {
 	DecodeConfig    registry.Configuration
 	Filters         []FilterSpec
 
-	TargetCodec  media.CodecID
-	EncodeConfig registry.Configuration
+	EncoderManifest registry.EncoderManifest
+	TargetCodec     media.CodecID
+	EncodeConfig    registry.Configuration
 
+	MuxManifest         registry.MuxerManifest
 	MuxConfig           registry.Configuration
 	PrepareOutputStream func(inStream media.StreamInfo) media.StreamInfo
 
@@ -71,14 +73,15 @@ type ConversionSpec struct {
 }
 
 type transformPlan struct {
-	id        string
-	role      manifest.NodeType
-	plugin    string
-	config    registry.Configuration
-	resources registry.ResourceRequest
-	input     media.StreamInfo
-	output    media.StreamInfo
-	factory   func(registry.TransformFactoryOptions) (node.Node, error)
+	id           string
+	role         manifest.NodeType
+	plugin       string
+	config       registry.Configuration
+	resources    registry.ResourceRequest
+	input        media.StreamInfo
+	output       media.StreamInfo
+	autoInserted bool
+	factory      func(registry.TransformFactoryOptions) (node.Node, error)
 }
 
 func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpec) (result *pipeline.Geometry, resultErr error) {
@@ -238,9 +241,14 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		currentStream = filterOutput
 	}
 
-	encoderManifest, err := n.encoderResolver.ResolveEncoder(spec.TargetCodec)
-	if err != nil {
-		return nil, fmt.Errorf("resolve encoder: %w", err)
+	encoderManifest := spec.EncoderManifest
+	if encoderManifest.Name == "" {
+		encoderManifest, err = n.encoderResolver.ResolveEncoder(spec.TargetCodec)
+		if err != nil {
+			return nil, fmt.Errorf("resolve encoder: %w", err)
+		}
+	} else if !encoderManifest.Supports(spec.TargetCodec) {
+		return nil, fmt.Errorf("encoder %q does not support codec %q", encoderManifest.Name, spec.TargetCodec)
 	}
 	encodeConfig, err := configurationFor(encoderManifest, spec.EncodeConfig)
 	if err != nil {
@@ -278,9 +286,15 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		},
 	})
 
-	muxManifest, err := n.muxerResolver.ResolveMuxer(spec.MuxConfig)
-	if err != nil {
-		return nil, fmt.Errorf("resolve muxer: %w", err)
+	muxManifest := spec.MuxManifest
+	if muxManifest.Name == "" {
+		muxManifest, err = n.muxerResolver.ResolveMuxer(spec.MuxConfig)
+		if err != nil {
+			return nil, fmt.Errorf("resolve muxer: %w", err)
+		}
+	}
+	if !muxManifest.Supports(spec.TargetCodec) {
+		return nil, fmt.Errorf("muxer %q does not support codec %q", muxManifest.Name, spec.TargetCodec)
 	}
 	muxConfig, err := configurationFor(muxManifest, spec.MuxConfig)
 	if err != nil {
@@ -316,6 +330,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 				Resources:     allocations[i],
 				Inputs:        []media.StreamInfo{plan.input},
 				Outputs:       []media.StreamInfo{plan.output},
+				AutoInserted:  plan.autoInserted,
 			},
 		}); err != nil {
 			return nil, fmt.Errorf("add %s to geometry: %w", plan.id, err)
@@ -440,13 +455,14 @@ func (n *Negotiator) satisfy(
 		id := fmt.Sprintf("bridge:%d", *bridgeID)
 		*bridgeID++
 		plans = append(plans, transformPlan{
-			id:        id,
-			role:      manifest.RoleFilter,
-			plugin:    step.Manifest.Name,
-			config:    step.Config,
-			resources: step.Manifest.Resources,
-			input:     step.Input,
-			output:    step.Output,
+			id:           id,
+			role:         manifest.RoleFilter,
+			plugin:       step.Manifest.Name,
+			config:       step.Config,
+			resources:    step.Manifest.Resources,
+			input:        step.Input,
+			output:       step.Output,
+			autoInserted: true,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
 				return step.Manifest.Factory(step.Input, options)
 			},

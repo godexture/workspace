@@ -6,13 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/routing"
+	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/cliflag"
+	"github.com/godexture/sdk/conversion"
 	"github.com/spf13/cobra"
 )
 
@@ -51,100 +50,77 @@ type convertOptions struct {
 	filters  []string
 }
 
-func resolveCodec(value string, defaultCodec media.CodecID) (media.CodecID, map[string]string, error) {
-	if value == "" {
-		return defaultCodec, nil, nil
-	}
-	spec, err := cliflag.ParseSpec(value)
+// buildSpec turns convert flags into a conversion.Spec. --format infers the
+// muxer from the output extension (via the catalog) when omitted; --codec
+// carries both the target codec ID and the values applied to whichever
+// encoder is resolved for it (CLI has no separate flag to pick an encoder
+// plugin by name).
+func buildSpec(options convertOptions, outputPath string, outputs []catalog.OutputFormat) (conversion.Spec, error) {
+	format, err := parsePluginSpec(options.format)
 	if err != nil {
-		return "", nil, fmt.Errorf("codec: %w", err)
+		return conversion.Spec{}, fmt.Errorf("format: %w", err)
 	}
-	return media.CodecID(spec.Name), spec.Values, nil
+	if format == nil {
+		name, inferErr := inferMuxerName(outputs, outputPath)
+		if inferErr != nil {
+			return conversion.Spec{}, inferErr
+		}
+		format = &conversion.PluginSpec{Name: name}
+	}
+
+	codec, err := parsePluginSpec(options.codec)
+	if err != nil {
+		return conversion.Spec{}, fmt.Errorf("codec: %w", err)
+	}
+
+	spec := conversion.Spec{Muxer: *format, Parallelism: options.jobs}
+	if codec != nil {
+		spec.Codec = codec.Name
+		spec.Encoder = &conversion.PluginSpec{Values: codec.Values}
+	}
+	if spec.Demuxer, err = parsePluginSpec(options.demuxer); err != nil {
+		return conversion.Spec{}, fmt.Errorf("demuxer: %w", err)
+	}
+	if spec.Decoder, err = parsePluginSpec(options.decoder); err != nil {
+		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
+	}
+	for _, value := range options.filters {
+		filter, parseErr := parsePluginSpec(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("filter: %w", parseErr)
+		}
+		spec.Filters = append(spec.Filters, conversion.FilterSpec{PluginSpec: *filter})
+	}
+	return spec, nil
 }
 
-func resolvePlugin[V registry.Manifest](role, value string, plugins *registry.Registry[V]) (V, registry.Configuration, error) {
-	var zero V
+func parsePluginSpec(value string) (*conversion.PluginSpec, error) {
 	if value == "" {
-		return zero, nil, nil
+		return nil, nil
 	}
 	spec, err := cliflag.ParseSpec(value)
-	if err != nil {
-		return zero, nil, fmt.Errorf("%s: %w", role, err)
-	}
-	manifest, err := plugins.Lookup(spec.Name)
-	if err != nil {
-		return zero, nil, err
-	}
-	config, err := configureManifest(role, manifest, spec.Values)
-	if err != nil {
-		return zero, nil, err
-	}
-	return manifest, config, nil
-}
-
-func configureManifest(role string, manifest registry.Manifest, values map[string]string) (registry.Configuration, error) {
-	config, err := manifest.NewConfiguration()
 	if err != nil {
 		return nil, err
 	}
-	if err := cliflag.DecodeStruct(config, values); err != nil {
-		return nil, fmt.Errorf("%s %q: %w", role, manifest.RegistryName(), err)
-	}
-	return config, nil
+	return &conversion.PluginSpec{Name: spec.Name, Values: spec.Values}, nil
 }
 
-func resolveFilters(values []string) ([]routing.FilterSpec, error) {
-	filters := make([]routing.FilterSpec, 0, len(values))
-	for _, value := range values {
-		spec, err := cliflag.ParseSpec(value)
-		if err != nil {
-			return nil, err
-		}
-		manifest, err := godec.DefaultFilterRegistry.Lookup(spec.Name)
-		if err != nil {
-			return nil, err
-		}
-		config, err := configureManifest("filter", manifest, spec.Values)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, routing.FilterSpec{Config: config})
-	}
-	return filters, nil
-}
-
-func selectMuxer(value, output string) (registry.MuxerManifest, map[string]string, error) {
-	if value != "" {
-		spec, err := cliflag.ParseSpec(value)
-		if err != nil {
-			return registry.MuxerManifest{}, nil, fmt.Errorf("format: %w", err)
-		}
-		manifest, err := godec.DefaultMuxerRegistry.Lookup(spec.Name)
-		return manifest, spec.Values, err
-	}
+func inferMuxerName(outputs []catalog.OutputFormat, output string) (string, error) {
 	extension := strings.ToLower(filepath.Ext(output))
-	var match registry.MuxerManifest
-	for manifest := range godec.DefaultMuxerRegistry.Enumerate() {
-		if strings.EqualFold(filepath.Ext(output), extension) && slicesContain(manifest.Extensions, extension) {
-			if match.Name != "" {
-				return match, nil, fmt.Errorf("multiple output formats match %q", extension)
-			}
-			match = manifest
+	var match string
+	for _, format := range outputs {
+		if !slices.Contains(format.Extensions, extension) {
+			continue
 		}
-	}
-	if match.Name == "" {
-		return match, nil, fmt.Errorf("cannot infer output format from %q; use --format", output)
-	}
-	return match, nil, nil
-}
-
-func slicesContain(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+		if match != "" {
+			return "", fmt.Errorf("multiple output formats match %q", extension)
 		}
+		match = format.Muxer
 	}
-	return false
+	if match == "" {
+		return "", fmt.Errorf("cannot infer output format from %q; use --format", output)
+	}
+	return match, nil
 }
 
 type pendingOutput struct {

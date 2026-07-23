@@ -1,0 +1,8 @@
+{
+    "name": "godexture-packages",
+    "private": true,
+    "workspaces": [
+        "bindings/js",
+        "example/web/client"
+    ]
+}

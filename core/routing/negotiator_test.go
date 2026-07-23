@@ -231,6 +231,7 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	}
 	muxRes := &mockMuxerResolver{
 		resolved: registry.MuxerManifest{
+			Codecs: []media.CodecID{media.CodecLPCM},
 			Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
 				return mux, nil
 			},
@@ -350,6 +351,7 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 
 	muxRes := &mockMuxerResolver{
 		resolved: registry.MuxerManifest{
+			Codecs: []media.CodecID{media.CodecLPCM},
 			Factory: func(w io.Writer, config registry.Configuration) (node.Muxer, error) {
 				return mux, nil
 			},
@@ -461,6 +463,7 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 		},
 	}}
 	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
+		Codecs:  []media.CodecID{media.CodecFLAC},
 		Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) { return mux, nil },
 	}}
 
@@ -485,6 +488,13 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 	}
 	if got, want := len(geometry.Nodes()), 5; got != want {
 		t.Fatalf("geometry nodes = %d, want %d", got, want)
+	}
+	description := geometry.Description()
+	for _, node := range description.Nodes {
+		want := node.ID == "bridge:0"
+		if node.AutoInserted != want {
+			t.Errorf("node %q AutoInserted = %t, want %t", node.ID, node.AutoInserted, want)
+		}
 	}
 }
 
@@ -520,6 +530,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 	}}
 	muxRes := &mockMuxerResolver{resolved: registry.MuxerManifest{
+		Codecs: []media.CodecID{media.CodecFLAC},
 		Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) {
 			return mux, nil
 		},
@@ -730,7 +741,9 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 			return nil, factoryErr
 		},
 	}}
-	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{}}
+	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
+		Codecs: []media.CodecID{media.CodecFLAC},
+	}}
 
 	_, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil, nil).
 		NegotiateConversion(context.Background(), ConversionSpec{

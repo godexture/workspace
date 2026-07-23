@@ -189,8 +189,7 @@ func formatStream(stream media.StreamInfo) string {
 }
 
 type phaseMetrics struct {
-	Negotiation time.Duration
-	Build       time.Duration
+	Negotiation time.Duration // includes pipeline build; conversion.Build() performs both atomically
 	Execution   time.Duration
 	Finalize    time.Duration
 	Total       time.Duration
@@ -222,8 +221,8 @@ func writeMetricsReport(writer io.Writer, report metricsReport) error {
 		}
 	}
 	if _, err := fmt.Fprintf(writer,
-		"  timing: negotiation=%s build=%s execution=%s finalize=%s total=%s\n",
-		formatMetricDuration(report.Phases.Negotiation), formatMetricDuration(report.Phases.Build),
+		"  timing: negotiation=%s execution=%s finalize=%s total=%s\n",
+		formatMetricDuration(report.Phases.Negotiation),
 		formatMetricDuration(report.Phases.Execution), formatMetricDuration(report.Phases.Finalize), formatMetricDuration(report.Phases.Total)); err != nil {
 		return err
 	}

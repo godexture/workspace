@@ -1,0 +1,121 @@
+.panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.rowLabel {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    min-width: 5.5rem;
+}
+
+.modeToggle {
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.mode,
+.modeActive {
+    border: none;
+    border-radius: 0;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.8rem;
+}
+
+.modeActive {
+    background: var(--color-accent);
+    color: var(--color-accent-contrast);
+}
+
+.subheading {
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.6rem;
+}
+
+.basicList {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.basicFilter {
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) / 1.5);
+    padding: 0.5rem 0.65rem;
+}
+
+.basicToggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.filterDescription {
+    font-family: var(--font-sans);
+    color: var(--color-muted);
+    font-size: 0.75rem;
+}
+
+.addFilter {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.addFilter select {
+    flex: 1;
+}
+
+.advancedList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.advancedItem {
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) / 1.5);
+    padding: 0.5rem 0.65rem;
+}
+
+.advancedHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.filterName {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.advancedActions {
+    display: flex;
+    gap: 0.3rem;
+}
+
+.advancedActions button {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+}

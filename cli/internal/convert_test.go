@@ -3,49 +3,68 @@ package cli
 import (
 	"testing"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/sdk/catalog"
 )
 
-func TestResolveCodec(t *testing.T) {
-	codec, values, err := resolveCodec("flac:preset=2,block-size=1024", media.CodecLPCM)
+func TestParsePluginSpecParsesNameAndValues(t *testing.T) {
+	spec, err := parsePluginSpec("flac:preset=2,block-size=1024")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if codec != media.CodecFLAC {
-		t.Fatalf("codec = %q", codec)
-	}
-	if values["preset"] != "2" || values["block-size"] != "1024" {
-		t.Fatalf("values = %#v", values)
+	if spec.Name != "flac" || spec.Values["preset"] != "2" || spec.Values["block-size"] != "1024" {
+		t.Fatalf("parsePluginSpec() = %#v", spec)
 	}
 }
 
-func TestResolveCodecUsesDefault(t *testing.T) {
-	codec, values, err := resolveCodec("", media.CodecFLAC)
+func TestParsePluginSpecEmptyValueIsNil(t *testing.T) {
+	spec, err := parsePluginSpec("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if codec != media.CodecFLAC || values != nil {
-		t.Fatalf("resolveCodec() = %q, %#v", codec, values)
+	if spec != nil {
+		t.Fatalf("parsePluginSpec(\"\") = %#v, want nil", spec)
 	}
 }
 
-func TestSelectMuxerParsesConfiguration(t *testing.T) {
-	manifest, values, err := selectMuxer("wav:force-rf64=true", "output.flac")
+func TestInferMuxerNameMatchesExtension(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	name, err := inferMuxerName(outputs, "output.flac")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Name != "wav" || values["force-rf64"] != "true" {
-		t.Fatalf("selectMuxer() = %#v, %#v", manifest, values)
+	if name != "flac" {
+		t.Fatalf("inferMuxerName() = %q, want %q", name, "flac")
 	}
 }
 
-func TestResolvePluginCreatesConfiguration(t *testing.T) {
-	manifest, config, err := resolvePlugin("demuxer", "wav", godec.DefaultDemuxerRegistry)
+func TestInferMuxerNameRequiresFormatWhenUnknown(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	if _, err := inferMuxerName(outputs, "output.xyz"); err == nil {
+		t.Fatal("inferMuxerName() accepted an unknown extension")
+	}
+}
+
+func TestBuildSpecUsesExplicitFormatOverExtension(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	spec, err := buildSpec(convertOptions{format: "wav:force-rf64=true"}, "output.flac", outputs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Name != "wav" || config == nil {
-		t.Fatalf("resolvePlugin() = %#v, %#v", manifest, config)
+	if spec.Muxer.Name != "wav" || spec.Muxer.Values["force-rf64"] != "true" {
+		t.Fatalf("buildSpec() muxer = %#v", spec.Muxer)
+	}
+}
+
+func TestBuildSpecAppliesCodecValuesWithoutOverridingEncoderSelection(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	spec, err := buildSpec(convertOptions{codec: "flac:preset=2"}, "output.flac", outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Codec != "flac" {
+		t.Fatalf("buildSpec() codec = %q", spec.Codec)
+	}
+	if spec.Encoder == nil || spec.Encoder.Name != "" || spec.Encoder.Values["preset"] != "2" {
+		t.Fatalf("buildSpec() encoder = %#v", spec.Encoder)
 	}
 }

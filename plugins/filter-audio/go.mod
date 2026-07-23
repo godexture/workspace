@@ -7,6 +7,8 @@ require (
 	github.com/godexture/sdk v0.0.0
 )
 
+require golang.org/x/sync v0.21.0 // indirect
+
 replace github.com/godexture/core => ../../core
 
 replace github.com/godexture/sdk => ../../pkg
