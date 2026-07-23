@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
+	"github.com/godexture/filter-audio/internal/convolve"
 	"github.com/godexture/filter-audio/internal/delay"
 	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
@@ -546,8 +547,159 @@ func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
 	}
 }
 
+func TestConvolveIdentityImpulseIsPassthrough(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{{1}},
+		WetDryMix:       1,
+		BlockSize:       8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []float32{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
+	send(t, item, frame(48000, 0, input))
+	assertSamplesTol(t, receive(t, item), input, 1e-4)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestConvolveMatchesDirectConvolution(t *testing.T) {
+	const hop = 4
+	ir := []float32{0.5, 0.3, -0.2, 0.1, 0.05, -0.05, 0.02, 0.01, -0.01} // len 9 = 2*hop+1 -> 3 partitions
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{ir},
+		WetDryMix:       1,
+		Normalize:       false,
+		BlockSize:       hop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := make([]float32, 20) // multiple of hop, split across uneven SendFrame calls below
+	for i := range input {
+		input[i] = float32(math.Sin(float64(i) * 0.7))
+	}
+	send(t, item, frame(48000, 0, input[:7]))
+	send(t, item, frame(48000, 7, input[7:]))
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []float32
+	for {
+		output, err := item.ReceiveFrame()
+		if err != nil {
+			break
+		}
+		block, err := audio.Decode(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, block.Channels[0]...)
+		(*output).Release()
+	}
+
+	want := directConvolution(input, ir)
+	if len(got) != len(want) {
+		t.Fatalf("output length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if diff := math.Abs(float64(got[i] - want[i])); diff > 1e-4 {
+			t.Fatalf("sample[%d] = %g, want %g (diff %g)", i, got[i], want[i], diff)
+		}
+	}
+}
+
+func TestConvolveWetDryMixZeroIsDry(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{{0.5, 0.3, -0.2, 0.1}},
+		WetDryMix:       0,
+		BlockSize:       4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []float32{0.1, 0.2, 0.3, 0.4}
+	send(t, item, frame(48000, 0, input))
+	assertSamplesTol(t, receive(t, item), input, 1e-4)
+}
+
+func TestConvolveMonoImpulseBroadcastsToEveryChannel(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{{1}},
+		WetDryMix:       1,
+		BlockSize:       4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := []float32{0.1, 0.2, 0.3, 0.4}
+	right := []float32{-0.1, -0.2, -0.3, -0.4}
+	send(t, item, multiFrame(48000, 0, media.LayoutStereo2_0, [][]float32{left, right}))
+	output := receive(t, item)
+	block, err := audio.Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFloatSlice(t, block.Channels[0], left)
+	assertFloatSlice(t, block.Channels[1], right)
+	output.Release()
+}
+
+func TestConvolvePerChannelImpulseRequiresMatchingChannelCount(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{{1}, {1}, {1}}, // 3 channels, input below has 2
+		WetDryMix:       1,
+		BlockSize:       4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := multiFrame(48000, 0, media.LayoutStereo2_0, [][]float32{{0.1, 0.2, 0.3, 0.4}, {0.1, 0.2, 0.3, 0.4}})
+	if err := item.SendFrame(&input); err == nil {
+		t.Fatal("want error for impulse response channel count mismatch")
+	}
+	input.Release()
+}
+
+func directConvolution(x, h []float32) []float32 {
+	y := make([]float32, len(x)+len(h)-1)
+	for n := range y {
+		var sum float32
+		for k := 0; k < len(h); k++ {
+			if n-k >= 0 && n-k < len(x) {
+				sum += h[k] * x[n-k]
+			}
+		}
+		y[n] = sum
+	}
+	return y
+}
+
+func assertFloatSlice(t *testing.T, got, want []float32) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		assertFloat(t, got[i], want[i])
+	}
+}
+
 func frame(rate int, pts media.Pts, values []float32) media.Frame {
 	block := audio.Block{Channels: [][]float32{values}, Layout: media.LayoutMono1, Rate: rate, PTS: pts}
+	result, err := audio.Encode(block, media.SampleFormatF32P, 32)
+	if err != nil {
+		panic(err)
+	}
+	return result
+}
+
+func multiFrame(rate int, pts media.Pts, layout media.ChannelLayout, channels [][]float32) media.Frame {
+	block := audio.Block{Channels: channels, Layout: layout, Rate: rate, PTS: pts}
 	result, err := audio.Encode(block, media.SampleFormatF32P, 32)
 	if err != nil {
 		panic(err)
