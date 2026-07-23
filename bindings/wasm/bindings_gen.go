@@ -24,6 +24,7 @@ func recoverFunc(fn func(js.Value, []js.Value) interface{}) js.Func {
 
 func init() {
 	js.Global().Set("catalog", recoverFunc(wasmCatalog))
+	js.Global().Set("describeFilter", recoverFunc(wasmDescribeFilter))
 	js.Global().Set("resolve", recoverFunc(wasmResolve))
 	js.Global().Set("start", recoverFunc(wasmStart))
 	js.Global().Set("snapshot", recoverFunc(wasmSnapshot))
@@ -39,15 +40,47 @@ func wasmCatalog(_ js.Value, args []js.Value) interface{} {
 	return result
 }
 
+func wasmDescribeFilter(_ js.Value, args []js.Value) interface{} {
+	name := args[0].String()
+	parameters := func() map[string]string {
+		result := make(map[string]string)
+		keys := js.Global().Get("Object").Call("keys", args[1])
+		for i := 0; i < keys.Length(); i++ {
+			key := keys.Index(i).String()
+			result[key] = args[1].Get(key).String()
+		}
+		return result
+	}()
+	result, err := DescribeFilter(name, parameters)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
 func wasmResolve(_ js.Value, args []js.Value) interface{} {
-	input := func() []byte {
+	mainInput := func() []byte {
 		length := args[0].Length()
 		result := make([]byte, length)
 		js.CopyBytesToGo(result, args[0])
 		return result
 	}()
-	specJSON := args[1].String()
-	result, err := Resolve(input, specJSON)
+	auxInputs := func() map[string][]byte {
+		result := make(map[string][]byte)
+		keys := js.Global().Get("Object").Call("keys", args[1])
+		for i := 0; i < keys.Length(); i++ {
+			key := keys.Index(i).String()
+			result[key] = func() []byte {
+		length := args[1].Get(key).Length()
+		result := make([]byte, length)
+		js.CopyBytesToGo(result, args[1].Get(key))
+		return result
+	}()
+		}
+		return result
+	}()
+	specJSON := args[2].String()
+	result, err := Resolve(mainInput, auxInputs, specJSON)
 	if err != nil {
 		return map[string]interface{}{ErrorFieldName: err.Error()}
 	}
@@ -55,14 +88,28 @@ func wasmResolve(_ js.Value, args []js.Value) interface{} {
 }
 
 func wasmStart(_ js.Value, args []js.Value) interface{} {
-	input := func() []byte {
+	mainInput := func() []byte {
 		length := args[0].Length()
 		result := make([]byte, length)
 		js.CopyBytesToGo(result, args[0])
 		return result
 	}()
-	specJSON := args[1].String()
-	result, err := Start(input, specJSON)
+	auxInputs := func() map[string][]byte {
+		result := make(map[string][]byte)
+		keys := js.Global().Get("Object").Call("keys", args[1])
+		for i := 0; i < keys.Length(); i++ {
+			key := keys.Index(i).String()
+			result[key] = func() []byte {
+		length := args[1].Get(key).Length()
+		result := make([]byte, length)
+		js.CopyBytesToGo(result, args[1].Get(key))
+		return result
+	}()
+		}
+		return result
+	}()
+	specJSON := args[2].String()
+	result, err := Start(mainInput, auxInputs, specJSON)
 	if err != nil {
 		return map[string]interface{}{ErrorFieldName: err.Error()}
 	}

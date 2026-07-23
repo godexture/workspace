@@ -39,12 +39,12 @@ export const clientBackend: ConversionBackend = {
 
     async resolvePipeline(input, spec) {
         const [godec, bytes] = await Promise.all([getClient(), readInput(input)]);
-        return godec.resolvePipeline(bytes, spec);
+        return godec.resolvePipeline({ main: bytes }, spec);
     },
 
     async start(input, spec) {
         const [godec, bytes] = await Promise.all([getClient(), readInput(input)]);
-        return godec.start(bytes, spec);
+        return godec.start({ main: bytes }, spec);
     },
 
     subscribe(jobId, onProgress) {

@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/godexture/core/domain/manifest"
@@ -105,6 +106,12 @@ func (n *Negotiator) negotiateFilters(ctx context.Context, spec ConversionSpec, 
 		filterNode, outputSet, err := fm.Factory(inputSet, registry.TransformFactoryOptions{Config: filterSpec.Config})
 		if err != nil {
 			return resolvedSource{}, fmt.Errorf("resolve filter %d (%s) output streams: %w", i, nodeID, err)
+		}
+		if err := fm.ValidateOutputs(outputSet); err != nil {
+			return resolvedSource{}, errors.Join(
+				fmt.Errorf("resolve filter %d (%s) output streams: %w", i, nodeID, err),
+				filterNode.Close(),
+			)
 		}
 		state.ownedNodes = append(state.ownedNodes, filterNode)
 		state.resolvedOutputs[nodeID] = outputSet
