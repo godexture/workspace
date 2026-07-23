@@ -484,6 +484,84 @@ func (c EQConfig) FieldChoices(field string) []string {
 	}
 }
 
+type DelayConfig config.DelayConfig
+
+type DelayConfigOption interface {
+	applyDelayConfig(*DelayConfig)
+}
+
+type delayConfigOptionFunc func(*DelayConfig)
+
+func (f delayConfigOptionFunc) applyDelayConfig(c *DelayConfig) {
+	f(c)
+}
+
+func NewDelayConfig(options ...DelayConfigOption) DelayConfig {
+	config := DelayConfig(config.DefaultDelayConfig)
+	for _, option := range options {
+		option.applyDelayConfig(&config)
+	}
+	return config
+}
+
+func (c DelayConfig) ResolveDefault() config.DelayConfig {
+	return config.DelayConfig(config.DefaultDelayConfig)
+}
+
+func (c DelayConfig) Resolve() config.DelayConfig {
+	return config.DelayConfig(c)
+}
+
+func (c DelayConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c DelayConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
+type ReverbConfig config.ReverbConfig
+
+type ReverbConfigOption interface {
+	applyReverbConfig(*ReverbConfig)
+}
+
+type reverbConfigOptionFunc func(*ReverbConfig)
+
+func (f reverbConfigOptionFunc) applyReverbConfig(c *ReverbConfig) {
+	f(c)
+}
+
+func NewReverbConfig(options ...ReverbConfigOption) ReverbConfig {
+	config := ReverbConfig(config.DefaultReverbConfig)
+	for _, option := range options {
+		option.applyReverbConfig(&config)
+	}
+	return config
+}
+
+func (c ReverbConfig) ResolveDefault() config.ReverbConfig {
+	return config.ReverbConfig(config.DefaultReverbConfig)
+}
+
+func (c ReverbConfig) Resolve() config.ReverbConfig {
+	return config.ReverbConfig(c)
+}
+
+func (c ReverbConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c ReverbConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
 		c.Format = v
@@ -757,5 +835,65 @@ func WithGainDB(v float64) EQConfigOption {
 func WithQ(v float64) EQConfigOption {
 	return eQConfigOptionFunc(func(c *EQConfig) {
 		c.Q = v
+	})
+}
+
+func WithDelayMs(v float64) DelayConfigOption {
+	return delayConfigOptionFunc(func(c *DelayConfig) {
+		c.DelayMs = v
+	})
+}
+
+func WithFeedback(v float64) DelayConfigOption {
+	return delayConfigOptionFunc(func(c *DelayConfig) {
+		c.Feedback = v
+	})
+}
+
+type WetLevelOption interface {
+	DelayConfigOption
+	ReverbConfigOption
+}
+
+type wetLevelOpt struct{ v float64 }
+
+func (o wetLevelOpt) applyDelayConfig(c *DelayConfig) {
+	c.WetLevel = o.v
+}
+func (o wetLevelOpt) applyReverbConfig(c *ReverbConfig) {
+	c.WetLevel = o.v
+}
+
+func WithWetLevel(v float64) WetLevelOption {
+	return wetLevelOpt{v}
+}
+
+type DryLevelOption interface {
+	DelayConfigOption
+	ReverbConfigOption
+}
+
+type dryLevelOpt struct{ v float64 }
+
+func (o dryLevelOpt) applyDelayConfig(c *DelayConfig) {
+	c.DryLevel = o.v
+}
+func (o dryLevelOpt) applyReverbConfig(c *ReverbConfig) {
+	c.DryLevel = o.v
+}
+
+func WithDryLevel(v float64) DryLevelOption {
+	return dryLevelOpt{v}
+}
+
+func WithRoomSize(v float64) ReverbConfigOption {
+	return reverbConfigOptionFunc(func(c *ReverbConfig) {
+		c.RoomSize = v
+	})
+}
+
+func WithDamping(v float64) ReverbConfigOption {
+	return reverbConfigOptionFunc(func(c *ReverbConfig) {
+		c.Damping = v
 	})
 }

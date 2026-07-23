@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
+	"github.com/godexture/filter-audio/internal/delay"
 	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gate"
@@ -418,6 +419,61 @@ func TestGateLowpassSettlesToInputWhenFullyOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEOF(t, item)
+}
+
+func TestDelayRepeatsInputAfterDelaySamples(t *testing.T) {
+	item, err := delay.New(config.DelayConfig{DelayMs: 250, Feedback: 0, WetLevel: 1, DryLevel: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// rate 8, delayMs 250 -> exactly 2 samples of delay.
+	send(t, item, frame(8, 0, []float32{1, 0, 0, 0, 0}))
+	assertSamples(t, receive(t, item), []float32{0, 0, 1, 0, 0})
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestDelayFeedbackProducesDecayingRepeats(t *testing.T) {
+	item, err := delay.New(config.DelayConfig{DelayMs: 250, Feedback: 0.5, WetLevel: 1, DryLevel: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(8, 0, []float32{1, 0, 0, 0, 0, 0}))
+	assertSamplesTol(t, receive(t, item), []float32{0, 0, 1, 0, 0.5, 0}, 1e-6)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestDelayWetZeroIsIdentity(t *testing.T) {
+	item, err := delay.New(config.DelayConfig{DelayMs: 250, Feedback: 0.3, WetLevel: 0, DryLevel: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []float32{0.2, -0.5, 0.8, -0.1, 0.05, 0.9}
+	send(t, item, frame(48000, 0, values))
+	assertSamples(t, receive(t, item), values)
+	if err := item.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertEOF(t, item)
+}
+
+func TestDelayRejectsSampleRateChangeMidStream(t *testing.T) {
+	item, err := delay.New(config.DefaultDelayConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, item, frame(48000, 0, []float32{0}))
+	receive(t, item).Release()
+	input := frame(44100, 1, []float32{0})
+	if err := item.SendFrame(&input); err == nil {
+		t.Fatal("SendFrame with a different sample rate = nil error, want an error")
+	}
+	input.Release()
 }
 
 func TestReverbWetZeroIsIdentity(t *testing.T) {
