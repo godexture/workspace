@@ -5,10 +5,12 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type lifecycleTestNode struct {
@@ -17,6 +19,18 @@ type lifecycleTestNode struct {
 	closeMu   sync.Mutex
 	closeCall int
 	onClose   func()
+}
+
+type preparingTestNode struct {
+	lifecycleTestNode
+	prepare func(registry.ResourceGrant) error
+}
+
+func (n *preparingTestNode) Prepare(grant registry.ResourceGrant) error {
+	if n.prepare == nil {
+		return nil
+	}
+	return n.prepare(grant)
 }
 
 func (n *lifecycleTestNode) Start(ctx context.Context) error {
@@ -141,6 +155,45 @@ func TestPipelineIsSingleUse(t *testing.T) {
 	}
 	if err := pipeline.Run(context.Background()); !errors.Is(err, ErrInvalidPipeline) {
 		t.Fatalf("second Run() error = %v, want ErrInvalidPipeline", err)
+	}
+}
+
+func TestPipelinePrepareWaitsForConcurrentCaller(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	pipeline, err := New(&preparingTestNode{prepare: func(registry.ResourceGrant) error {
+		calls.Add(1)
+		close(started)
+		<-release
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() { first <- pipeline.Prepare(context.Background()) }()
+	<-started
+	go func() { second <- pipeline.Prepare(context.Background()) }()
+	select {
+	case err := <-second:
+		t.Fatalf("concurrent Prepare() returned early: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Prepare() error = %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second Prepare() error = %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("Prepare() calls = %d, want 1", got)
+	}
+	if err := pipeline.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

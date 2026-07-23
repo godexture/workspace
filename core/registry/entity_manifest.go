@@ -46,23 +46,30 @@ func (m BaseManifest) NewConfiguration() (Configuration, error) {
 
 type TransformManifest struct {
 	BaseManifest
-	InputRequirements InputRequirementsFunc
-	Resources         ResourceRequest
-	// TransformFunc resolves the output profile for this transform. target is
-	// the desired codec (the input codec for decoders) and cfg is the node
-	// configuration that will be used to construct the transform.
-	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
-	// TransformStreamFunc may update stream properties outside Profile, such as
-	// duration. When set, it is authoritative for TransformStream.
-	TransformStreamFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error)
+	InputRequirements   InputRequirements
+	ProfileRequirements ProfileRequirements
+	Resources           ResourceRequest
 }
 
 type InputRequirementsFunc func(target media.CodecID, config Configuration) ([]manifest.Capability, error)
+
+type InputRequirements map[string]InputRequirementsFunc
+
+// ProfileRequirements can refine a port's requirements using the profiles of
+// the streams already connected to the transform. A profile requirement takes
+// precedence over the static requirement for the same port.
+type ProfileRequirementsFunc func(inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error)
+
+type ProfileRequirements map[string]ProfileRequirementsFunc
 
 func StaticRequirements(capabilities ...manifest.Capability) InputRequirementsFunc {
 	return func(media.CodecID, Configuration) ([]manifest.Capability, error) {
 		return capabilities, nil
 	}
+}
+
+func SingleInputRequirements(requirements InputRequirementsFunc) InputRequirements {
+	return InputRequirements{"in": requirements}
 }
 
 type ConversionCost struct {
@@ -107,38 +114,45 @@ type DecoderManifest struct {
 
 type FilterManifest struct {
 	TransformManifest
-	Bridge  BridgeFunc
+	Bridge  map[string]BridgeFunc
 	Factory FilterFactory
 }
 
-func (m TransformManifest) Transform(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error) {
-	return m.TransformFunc(stream, target, cfg)
+func SingleInputBridge(bridge BridgeFunc) map[string]BridgeFunc {
+	if bridge == nil {
+		return nil
+	}
+	return map[string]BridgeFunc{"in": bridge}
 }
 
-func (m TransformManifest) TransformStream(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error) {
-	if m.TransformStreamFunc != nil {
-		return m.TransformStreamFunc(stream, target, cfg)
-	}
-	if m.TransformFunc == nil {
-		return stream, nil
-	}
-	profile, err := m.Transform(stream, target, cfg)
-	if err != nil {
-		return media.StreamInfo{}, err
-	}
-	stream.Type = profile.Type
-	stream.MediaAttributes = profile.MediaAttributes
-	return stream, nil
+func (m TransformManifest) Requirements(port string, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+	return m.requirements(port, nil, target, config)
 }
 
-func (m TransformManifest) Requirements(target media.CodecID, config Configuration) ([]manifest.Capability, error) {
-	if m.InputRequirements == nil {
-		return nil, fmt.Errorf("transform manifest %q has no input requirements", m.Name)
+func (m TransformManifest) RequirementsFor(port string, inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+	return m.requirements(port, inputs, target, config)
+}
+
+func (m TransformManifest) requirements(port string, inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+	if profile := m.ProfileRequirements[port]; profile != nil && inputs != nil {
+		requirements, err := profile(inputs, target, config)
+		if err != nil {
+			return nil, err
+		}
+		return m.validateRequirements(port, requirements)
 	}
-	requirements, err := m.InputRequirements(target, config)
+	resolver, ok := m.InputRequirements[port]
+	if !ok || resolver == nil {
+		return nil, fmt.Errorf("transform manifest %q has no input requirements for port %q", m.Name, port)
+	}
+	requirements, err := resolver(target, config)
 	if err != nil {
 		return nil, err
 	}
+	return m.validateRequirements(port, requirements)
+}
+
+func (m TransformManifest) validateRequirements(port string, requirements []manifest.Capability) ([]manifest.Capability, error) {
 	if len(requirements) == 0 {
 		return nil, fmt.Errorf("transform manifest %q has no input requirements", m.Name)
 	}
@@ -150,8 +164,8 @@ func (m TransformManifest) Requirements(target media.CodecID, config Configurati
 	return requirements, nil
 }
 
-func (m TransformManifest) Accept(stream media.StreamInfo, target media.CodecID, config Configuration) (bool, error) {
-	requirements, err := m.Requirements(target, config)
+func (m TransformManifest) Accept(port string, stream media.StreamInfo, target media.CodecID, config Configuration) (bool, error) {
+	requirements, err := m.Requirements(port, target, config)
 	if err != nil {
 		return false, err
 	}
@@ -195,8 +209,18 @@ func (m TransformManifest) validate() error {
 	if err := m.BaseManifest.validate(); err != nil {
 		return err
 	}
-	if m.InputRequirements == nil {
+	if len(m.InputRequirements) == 0 {
 		return fmt.Errorf("transform manifest %q must declare input requirements", m.Name)
+	}
+	for port, requirements := range m.InputRequirements {
+		if port == "" || requirements == nil {
+			return fmt.Errorf("transform manifest %q has invalid input requirements for port %q", m.Name, port)
+		}
+	}
+	for port, requirements := range m.ProfileRequirements {
+		if _, ok := m.InputRequirements[port]; !ok || requirements == nil {
+			return fmt.Errorf("transform manifest %q has invalid profile requirements for port %q", m.Name, port)
+		}
 	}
 	return nil
 }
@@ -306,6 +330,11 @@ func (m DecoderManifest) Validate() error {
 func (m FilterManifest) Validate() error {
 	if err := m.TransformManifest.validate(); err != nil {
 		return err
+	}
+	for port, bridge := range m.Bridge {
+		if _, ok := m.InputRequirements[port]; !ok || bridge == nil {
+			return fmt.Errorf("filter manifest %q has invalid bridge for port %q", m.Name, port)
+		}
 	}
 	if m.Factory == nil {
 		return fmt.Errorf("filter manifest %q has no factory", m.Name)

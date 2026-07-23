@@ -40,13 +40,6 @@ func (c FormatConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c FormatConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type ResampleConfig config.ResampleConfig
 
 type ResampleConfigOption interface {
@@ -77,13 +70,6 @@ func (c ResampleConfig) Resolve() config.ResampleConfig {
 
 func (c ResampleConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c ResampleConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type RemixConfig config.RemixConfig
@@ -118,13 +104,6 @@ func (c RemixConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c RemixConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type GainConfig config.GainConfig
 
 type GainConfigOption interface {
@@ -155,13 +134,6 @@ func (c GainConfig) Resolve() config.GainConfig {
 
 func (c GainConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c GainConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type NormalizeConfig config.NormalizeConfig
@@ -196,13 +168,6 @@ func (c NormalizeConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c NormalizeConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type FadeConfig config.FadeConfig
 
 type FadeConfigOption interface {
@@ -235,13 +200,6 @@ func (c FadeConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c FadeConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type DCOffsetConfig config.DCOffsetConfig
 
 type DCOffsetConfigOption interface {
@@ -272,13 +230,6 @@ func (c DCOffsetConfig) Resolve() config.DCOffsetConfig {
 
 func (c DCOffsetConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c DCOffsetConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type GateConfig config.GateConfig
@@ -436,13 +387,6 @@ func (c CompressorConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c CompressorConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type EQConfig config.EQConfig
 
 type EQConfigOption interface {
@@ -483,6 +427,198 @@ func (c EQConfig) FieldChoices(field string) []string {
 		return nil
 	}
 }
+
+type DelayConfig config.DelayConfig
+
+type DelayConfigOption interface {
+	applyDelayConfig(*DelayConfig)
+}
+
+type delayConfigOptionFunc func(*DelayConfig)
+
+func (f delayConfigOptionFunc) applyDelayConfig(c *DelayConfig) {
+	f(c)
+}
+
+func NewDelayConfig(options ...DelayConfigOption) DelayConfig {
+	config := DelayConfig(config.DefaultDelayConfig)
+	for _, option := range options {
+		option.applyDelayConfig(&config)
+	}
+	return config
+}
+
+func (c DelayConfig) ResolveDefault() config.DelayConfig {
+	return config.DelayConfig(config.DefaultDelayConfig)
+}
+
+func (c DelayConfig) Resolve() config.DelayConfig {
+	return config.DelayConfig(c)
+}
+
+func (c DelayConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type ReverbConfig config.ReverbConfig
+
+type ReverbConfigOption interface {
+	applyReverbConfig(*ReverbConfig)
+}
+
+type reverbConfigOptionFunc func(*ReverbConfig)
+
+func (f reverbConfigOptionFunc) applyReverbConfig(c *ReverbConfig) {
+	f(c)
+}
+
+func NewReverbConfig(options ...ReverbConfigOption) ReverbConfig {
+	config := ReverbConfig(config.DefaultReverbConfig)
+	for _, option := range options {
+		option.applyReverbConfig(&config)
+	}
+	return config
+}
+
+func (c ReverbConfig) ResolveDefault() config.ReverbConfig {
+	return config.ReverbConfig(config.DefaultReverbConfig)
+}
+
+func (c ReverbConfig) Resolve() config.ReverbConfig {
+	return config.ReverbConfig(c)
+}
+
+func (c ReverbConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type ConvolutionConfig config.ConvolutionConfig
+
+type ConvolutionConfigOption interface {
+	applyConvolutionConfig(*ConvolutionConfig)
+}
+
+type convolutionConfigOptionFunc func(*ConvolutionConfig)
+
+func (f convolutionConfigOptionFunc) applyConvolutionConfig(c *ConvolutionConfig) {
+	f(c)
+}
+
+func NewConvolutionConfig(options ...ConvolutionConfigOption) ConvolutionConfig {
+	config := ConvolutionConfig(config.DefaultConvolutionConfig)
+	for _, option := range options {
+		option.applyConvolutionConfig(&config)
+	}
+	return config
+}
+
+func (c ConvolutionConfig) ResolveDefault() config.ConvolutionConfig {
+	return config.ConvolutionConfig(config.DefaultConvolutionConfig)
+}
+
+func (c ConvolutionConfig) Resolve() config.ConvolutionConfig {
+	return config.ConvolutionConfig(c)
+}
+
+func (c ConvolutionConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type MixerParameters config.MixerParameters
+
+type MixerParametersOption interface {
+	applyMixerParameters(*MixerParameters)
+}
+
+type mixerParametersOptionFunc func(*MixerParameters)
+
+func (f mixerParametersOptionFunc) applyMixerParameters(c *MixerParameters) {
+	f(c)
+}
+
+func NewMixerParameters(options ...MixerParametersOption) MixerParameters {
+	config := MixerParameters(config.DefaultMixerParameters)
+	for _, option := range options {
+		option.applyMixerParameters(&config)
+	}
+	return config
+}
+
+func (c MixerParameters) ResolveDefault() config.MixerParameters {
+	return config.MixerParameters(config.DefaultMixerParameters)
+}
+
+func (c MixerParameters) Resolve() config.MixerParameters {
+	return config.MixerParameters(c)
+}
+
+func (c MixerParameters) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type MixerConfig config.MixerConfig
+
+type MixerConfigOption interface {
+	applyMixerConfig(*MixerConfig)
+}
+
+type mixerConfigOptionFunc func(*MixerConfig)
+
+func (f mixerConfigOptionFunc) applyMixerConfig(c *MixerConfig) {
+	f(c)
+}
+
+func NewMixerConfig(options ...MixerConfigOption) MixerConfig {
+	config := MixerConfig(config.DefaultMixerConfig)
+	for _, option := range options {
+		option.applyMixerConfig(&config)
+	}
+	return config
+}
+
+func (c MixerConfig) ResolveDefault() config.MixerConfig {
+	return config.MixerConfig(config.DefaultMixerConfig)
+}
+
+func (c MixerConfig) Resolve() config.MixerConfig {
+	return config.MixerConfig(c)
+}
+
+func (c MixerConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type GateMode = config.GateMode
+
+const (
+	GateModeHard    = config.GateModeHard
+	GateModeLowpass = config.GateModeLowpass
+)
+
+type TrimMode = config.TrimMode
+
+const (
+	TrimModeBoth  = config.TrimModeBoth
+	TrimModeStart = config.TrimModeStart
+	TrimModeEnd   = config.TrimModeEnd
+)
+
+type SpeedMode = config.SpeedMode
+
+const (
+	SpeedModeInterpolate = config.SpeedModeInterpolate
+	SpeedModeRelabel     = config.SpeedModeRelabel
+)
+
+type EQType = config.EQType
+
+const (
+	EQTypePeaking   = config.EQTypePeaking
+	EQTypeLowShelf  = config.EQTypeLowShelf
+	EQTypeHighShelf = config.EQTypeHighShelf
+	EQTypeLowPass   = config.EQTypeLowPass
+	EQTypeHighPass  = config.EQTypeHighPass
+)
 
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
@@ -526,10 +662,22 @@ func WithLFEMixDB(v float64) RemixConfigOption {
 	})
 }
 
-func WithNormalize(v bool) RemixConfigOption {
-	return remixConfigOptionFunc(func(c *RemixConfig) {
-		c.Normalize = v
-	})
+type NormalizeOption interface {
+	RemixConfigOption
+	ConvolutionConfigOption
+}
+
+type normalizeOpt struct{ v bool }
+
+func (o normalizeOpt) applyRemixConfig(c *RemixConfig) {
+	c.Normalize = o.v
+}
+func (o normalizeOpt) applyConvolutionConfig(c *ConvolutionConfig) {
+	c.Normalize = o.v
+}
+
+func WithNormalize(v bool) NormalizeOption {
+	return normalizeOpt{v}
 }
 
 func WithDecibels(v float64) GainConfigOption {
@@ -757,5 +905,101 @@ func WithGainDB(v float64) EQConfigOption {
 func WithQ(v float64) EQConfigOption {
 	return eQConfigOptionFunc(func(c *EQConfig) {
 		c.Q = v
+	})
+}
+
+func WithDelayMs(v float64) DelayConfigOption {
+	return delayConfigOptionFunc(func(c *DelayConfig) {
+		c.DelayMs = v
+	})
+}
+
+func WithFeedback(v float64) DelayConfigOption {
+	return delayConfigOptionFunc(func(c *DelayConfig) {
+		c.Feedback = v
+	})
+}
+
+type WetLevelOption interface {
+	DelayConfigOption
+	ReverbConfigOption
+}
+
+type wetLevelOpt struct{ v float64 }
+
+func (o wetLevelOpt) applyDelayConfig(c *DelayConfig) {
+	c.WetLevel = o.v
+}
+func (o wetLevelOpt) applyReverbConfig(c *ReverbConfig) {
+	c.WetLevel = o.v
+}
+
+func WithWetLevel(v float64) WetLevelOption {
+	return wetLevelOpt{v}
+}
+
+type DryLevelOption interface {
+	DelayConfigOption
+	ReverbConfigOption
+}
+
+type dryLevelOpt struct{ v float64 }
+
+func (o dryLevelOpt) applyDelayConfig(c *DelayConfig) {
+	c.DryLevel = o.v
+}
+func (o dryLevelOpt) applyReverbConfig(c *ReverbConfig) {
+	c.DryLevel = o.v
+}
+
+func WithDryLevel(v float64) DryLevelOption {
+	return dryLevelOpt{v}
+}
+
+func WithRoomSize(v float64) ReverbConfigOption {
+	return reverbConfigOptionFunc(func(c *ReverbConfig) {
+		c.RoomSize = v
+	})
+}
+
+func WithDamping(v float64) ReverbConfigOption {
+	return reverbConfigOptionFunc(func(c *ReverbConfig) {
+		c.Damping = v
+	})
+}
+
+func WithImpulseResponse(v [][]float32) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.ImpulseResponse = v
+	})
+}
+
+func WithImpulseRate(v int) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.ImpulseRate = v
+	})
+}
+
+func WithWetDryMix(v float64) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.WetDryMix = v
+	})
+}
+
+func WithBlockSize(v int) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.BlockSize = v
+	})
+}
+
+func WithInputs(v int) MixerParametersOption {
+	return mixerParametersOptionFunc(func(c *MixerParameters) {
+		c.Inputs = v
+	})
+}
+
+func WithOutputs(v int) MixerParametersOption {
+	return mixerParametersOptionFunc(func(c *MixerParameters) {
+		c.Outputs = v
 	})
 }

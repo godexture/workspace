@@ -32,7 +32,7 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 
 	filters := make([]registry.FilterManifest, 0)
 	for filter := range r.registry.Enumerate() {
-		if filter.Bridge != nil {
+		if filter.Bridge["in"] != nil {
 			filters = append(filters, filter)
 		}
 	}
@@ -52,7 +52,7 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 		}
 
 		for _, filter := range filters {
-			candidates, err := filter.Bridge(next.stream, required)
+			candidates, err := filter.Bridge["in"](next.stream, required)
 			if err != nil {
 				return nil, fmt.Errorf("bridge filter %s: %w", filter.Name, err)
 			}
@@ -60,16 +60,19 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 				if candidate.Config == nil {
 					return nil, fmt.Errorf("bridge filter %s returned nil configuration", filter.Name)
 				}
-				accepted, err := filter.Accept(next.stream, next.stream.Codec, candidate.Config)
+				accepted, err := filter.Accept("in", next.stream, next.stream.Codec, candidate.Config)
 				if err != nil {
 					return nil, fmt.Errorf("resolve bridge input for %s: %w", filter.Name, err)
 				}
 				if !accepted {
 					continue
 				}
-				output, err := filter.TransformStream(next.stream, next.stream.Codec, candidate.Config)
+				candidateNode, output, err := filter.Factory(next.stream, registry.TransformFactoryOptions{Config: candidate.Config})
 				if err != nil {
 					return nil, fmt.Errorf("resolve bridge output for %s: %w", filter.Name, err)
+				}
+				if err := candidateNode.Close(); err != nil {
+					return nil, fmt.Errorf("close bridge probe for %s: %w", filter.Name, err)
 				}
 				inputKey := bridgeStreamSignature(next.stream)
 				outputKey := bridgeStreamSignature(output)

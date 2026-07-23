@@ -7,10 +7,9 @@ import (
 	"os"
 	"time"
 
-	godec "github.com/godexture/core"
 	"github.com/godexture/core/pipeline"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/routing"
+	"github.com/godexture/sdk/catalog"
+	"github.com/godexture/sdk/conversion"
 	"github.com/spf13/cobra"
 )
 
@@ -27,11 +26,29 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 		return err
 	}
 
+	spec, err := buildSpec(options, outputPath, catalog.Build().Outputs)
+	if err != nil {
+		return err
+	}
+
 	inputFile, err := os.Open(inputPath)
 	if err != nil {
 		return err
 	}
 	defer inputFile.Close()
+	auxiliaryInputs := make(map[string]io.ReadSeeker, len(options.inputs))
+	for _, value := range options.inputs {
+		name, path, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return fmt.Errorf("input: %w", parseErr)
+		}
+		auxiliaryFile, openErr := os.Open(path)
+		if openErr != nil {
+			return fmt.Errorf("input %q: %w", name, openErr)
+		}
+		defer auxiliaryFile.Close()
+		auxiliaryInputs[name] = auxiliaryFile
+	}
 
 	inputInfo, err := inputFile.Stat()
 	if err != nil {
@@ -51,7 +68,7 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	var sampler *runtimeSampler
 	var measuredInput *measuredReadSeeker
 	var measuredOutput *measuredWriter
-	var conversion *pipeline.Pipeline
+	var built *pipeline.Pipeline
 
 	if options.metrics {
 		sampler = startRuntimeSampler(500 * time.Millisecond)
@@ -64,8 +81,8 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 			if measuredOutput != nil {
 				report.Output = measuredOutput.Snapshot()
 			}
-			if conversion != nil {
-				report.Pipeline = conversion.Snapshot()
+			if built != nil {
+				report.Pipeline = built.Snapshot()
 			}
 			report.Runtime = sampler.Stop()
 			if writeErr := writeMetricsReport(command.ErrOrStderr(), report); writeErr != nil {
@@ -78,43 +95,6 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	if progress.enabled || options.metrics || (verbose && !options.dryRun) {
 		measuredInput = newMeasuredReadSeeker(inputFile, inputInfo.Size())
 		input = measuredInput
-	}
-
-	negotiationStarted := time.Now()
-	muxer, muxValues, err := selectMuxer(options.format, outputPath)
-	if err != nil {
-		return err
-	}
-	muxConfig, err := configureManifest("format", muxer, muxValues)
-	if err != nil {
-		return err
-	}
-	targetCodec, codecValues, err := resolveCodec(options.codec, muxer.DefaultCodec)
-	if err != nil {
-		return err
-	}
-	if !muxer.Supports(targetCodec) {
-		return fmt.Errorf("format %q does not support codec %q", muxer.Name, targetCodec)
-	}
-	encoder, err := godec.NewResolver().NewEncoderResolver(godec.DefaultEncoderRegistry).ResolveEncoder(targetCodec)
-	if err != nil {
-		return err
-	}
-	encoderConfig, err := configureManifest("codec", encoder, codecValues)
-	if err != nil {
-		return err
-	}
-	demuxManifest, demuxConfig, err := resolvePlugin("demuxer", options.demuxer, godec.DefaultDemuxerRegistry)
-	if err != nil {
-		return err
-	}
-	decoderManifest, decodeConfig, err := resolvePlugin("decoder", options.decoder, godec.DefaultDecoderRegistry)
-	if err != nil {
-		return err
-	}
-	filterSpecs, err := resolveFilters(options.filters)
-	if err != nil {
-		return err
 	}
 
 	var pending *pendingOutput
@@ -133,37 +113,25 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 		output = measuredOutput
 	}
 
-	geometry, err := godec.NewNegotiator().NegotiateConversion(command.Context(), routing.ConversionSpec{
-		Input: input, Output: output,
-		DemuxManifest: demuxManifest, DemuxConfig: demuxConfig,
-		DecoderManifest: decoderManifest, DecodeConfig: decodeConfig,
-		Filters: filterSpecs, TargetCodec: targetCodec, EncodeConfig: encoderConfig, MuxConfig: muxConfig,
-		Resources: registry.ResourceBudget{Parallelism: options.jobs},
-	})
-	report.Phases.Negotiation = time.Since(negotiationStarted)
-	if err != nil {
-		return err
-	}
-
 	observation := pipeline.ObservationOff
 	if options.metrics {
 		observation = pipeline.ObservationMetrics
 	} else if progress.enabled {
 		observation = pipeline.ObservationProgress
 	}
-	buildStarted := time.Now()
-	conversion, err = godec.NewBuilder().Build(geometry, pipeline.WithObservation(observation))
-	report.Phases.Build = time.Since(buildStarted)
+
+	negotiationStarted := time.Now()
+	built, err = conversion.Build(command.Context(), conversion.InputSet{Main: input, Aux: auxiliaryInputs}, output, spec, observation)
+	report.Phases.Negotiation = time.Since(negotiationStarted)
 	if err != nil {
-		_ = geometry.Close()
 		return err
 	}
-	defer conversion.Close()
+	defer built.Close()
 
 	if options.dryRun {
-		return writePipelineDescription(command.OutOrStdout(), conversion.Description())
+		return writePipelineDescription(command.OutOrStdout(), built.Description())
 	}
-	description := conversion.Description()
+	description := built.Description()
 	if err := writeConversionStart(command.ErrOrStderr(), description); err != nil {
 		return err
 	}
@@ -175,10 +143,10 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 
 	var progressReporter *progressReporter
 	if progress.enabled {
-		progressReporter = startProgressReporter(command.ErrOrStderr(), conversion, measuredInput, progress)
+		progressReporter = startProgressReporter(command.ErrOrStderr(), built, measuredInput, progress)
 	}
 	executionStarted := time.Now()
-	err = conversion.Run(command.Context())
+	err = built.Run(command.Context())
 	report.Phases.Execution = time.Since(executionStarted)
 	if progressReporter != nil {
 		progressReporter.Stop(err == nil)

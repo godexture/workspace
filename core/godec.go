@@ -8,19 +8,21 @@ import (
 )
 
 var (
-	DefaultMuxerRegistry   = registry.NewRegistry[registry.MuxerManifest]()
-	DefaultDemuxerRegistry = registry.NewRegistry[registry.DemuxerManifest]()
-	DefaultEncoderRegistry = registry.NewRegistry[registry.EncoderManifest]()
-	DefaultDecoderRegistry = registry.NewRegistry[registry.DecoderManifest]()
-	DefaultFilterRegistry  = registry.NewRegistry[registry.FilterManifest]()
+	DefaultMuxerRegistry               = registry.NewRegistry[registry.MuxerManifest]()
+	DefaultDemuxerRegistry             = registry.NewRegistry[registry.DemuxerManifest]()
+	DefaultEncoderRegistry             = registry.NewRegistry[registry.EncoderManifest]()
+	DefaultDecoderRegistry             = registry.NewRegistry[registry.DecoderManifest]()
+	DefaultFilterRegistry              = registry.NewRegistry[registry.FilterManifest]()
+	DefaultParameterizedFilterRegistry = registry.NewRegistry[registry.ParameterizedFilterManifest]()
 )
 
 var DefaultRegistry = registry.Bundle{
-	Muxers:   DefaultMuxerRegistry,
-	Demuxers: DefaultDemuxerRegistry,
-	Encoders: DefaultEncoderRegistry,
-	Decoders: DefaultDecoderRegistry,
-	Filters:  DefaultFilterRegistry,
+	Muxers:               DefaultMuxerRegistry,
+	Demuxers:             DefaultDemuxerRegistry,
+	Encoders:             DefaultEncoderRegistry,
+	Decoders:             DefaultDecoderRegistry,
+	Filters:              DefaultFilterRegistry,
+	ParameterizedFilters: DefaultParameterizedFilterRegistry,
 }
 
 var f = factory.NewProvider(DefaultRegistry, resolver.Default)

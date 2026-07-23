@@ -54,8 +54,7 @@ func newRetainedFrame() *retainedFrame {
 	return frame
 }
 
-func (*retainedFrame) Pts() media.Pts             { return 0 }
-func (*retainedFrame) Metadata() *metadata.Bundle { return nil }
+func (*retainedFrame) Pts() media.Pts { return 0 }
 
 type retainedFrameSource struct {
 	out   *node.OutPort[media.Frame]

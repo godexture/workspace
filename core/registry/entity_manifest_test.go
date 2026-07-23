@@ -63,10 +63,10 @@ func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 				return (EncoderManifest{
 					TransformManifest: TransformManifest{
 						BaseManifest:      BaseManifest{Name: "encoder"},
-						InputRequirements: StaticRequirements(acceptAllCapability{}),
+						InputRequirements: SingleInputRequirements(StaticRequirements(acceptAllCapability{})),
 					},
-					Factory: func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error) {
-						return nil, nil
+					Factory: func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+						return nil, media.StreamInfo{}, nil
 					},
 				}).Validate()
 			},
@@ -78,16 +78,16 @@ func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 				manifest := DecoderManifest{
 					TransformManifest: TransformManifest{
 						BaseManifest:      BaseManifest{Name: "decoder"},
-						InputRequirements: StaticRequirements((*pointerCapability)(nil)),
+						InputRequirements: SingleInputRequirements(StaticRequirements((*pointerCapability)(nil))),
 					},
-					Factory: func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error) {
-						return nil, nil
+					Factory: func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+						return nil, media.StreamInfo{}, nil
 					},
 				}
 				if err := manifest.Validate(); err != nil {
 					return err
 				}
-				_, err := manifest.Requirements(media.CodecID(""), nil)
+				_, err := manifest.Requirements("in", media.CodecID(""), nil)
 				return err
 			},
 			contains: "nil",
@@ -110,16 +110,16 @@ func TestTransformManifestUsesTargetAwareInputRequirements(t *testing.T) {
 	t.Parallel()
 	manifest := TransformManifest{
 		BaseManifest: BaseManifest{Name: "target-aware"},
-		InputRequirements: func(target media.CodecID, _ Configuration) ([]manifest.Capability, error) {
+		InputRequirements: InputRequirements{"in": func(target media.CodecID, _ Configuration) ([]manifest.Capability, error) {
 			return []manifest.Capability{&manifest.AudioConstraint{Codecs: []media.CodecID{target}}}, nil
-		},
+		}},
 	}
 	stream := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}
-	accepted, err := manifest.Accept(stream, media.CodecFLAC, nil)
+	accepted, err := manifest.Accept("in", stream, media.CodecFLAC, nil)
 	if err != nil || !accepted {
 		t.Fatalf("FLAC target accepted = %t, error = %v", accepted, err)
 	}
-	accepted, err = manifest.Accept(stream, media.CodecLPCM, nil)
+	accepted, err = manifest.Accept("in", stream, media.CodecLPCM, nil)
 	if err != nil || accepted {
 		t.Fatalf("LPCM target accepted = %t, error = %v", accepted, err)
 	}

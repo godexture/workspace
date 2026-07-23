@@ -2,9 +2,9 @@
 
 package config
 
-func (v TrimMode) Valid() bool {
+func (v EQType) Valid() bool {
 	switch v {
-	case "both", "start", "end":
+	case "peaking", "lowshelf", "highshelf", "lowpass", "highpass":
 		return true
 	}
 	return false
@@ -26,9 +26,9 @@ func (v SpeedMode) Valid() bool {
 	return false
 }
 
-func (v EQType) Valid() bool {
+func (v TrimMode) Valid() bool {
 	switch v {
-	case "peaking", "lowshelf", "highshelf", "lowpass", "highpass":
+	case "both", "start", "end":
 		return true
 	}
 	return false

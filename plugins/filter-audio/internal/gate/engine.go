@@ -5,9 +5,9 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/buffer"
 )
 
 // silenceFloorDB keeps amplitudeToDB finite for zero/near-zero samples.
@@ -22,7 +22,7 @@ type Engine struct {
 	rate         int
 	envelope     float32 // lowpass mode: smoothed openness, 0 (closed) to 1 (open)
 	state        []float32
-	queue        framequeue.Single
+	slot         buffer.Slot[media.Frame]
 }
 
 func New(cfg config.GateConfig) (*Engine, error) {
@@ -81,7 +81,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	return e.queue.Push(output)
+	return e.slot.Push(output)
 }
 
 // processHard silences a sample index only when every channel is below the
@@ -139,9 +139,15 @@ func (e *Engine) processLowpass(block audio.Block) {
 	}
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
-func (e *Engine) Flush() error                        { e.queue.Flush(); return nil }
-func (e *Engine) Close() error                        { e.queue.Close(); return nil }
+func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+	frame, err := e.slot.Receive()
+	if err != nil {
+		return nil, err
+	}
+	return &frame, nil
+}
+func (e *Engine) Flush() error { e.slot.Flush(); return nil }
+func (e *Engine) Close() error { e.slot.Close(); return nil }
 
 func amplitudeToDB(v float32) float64 {
 	if v <= 0 {

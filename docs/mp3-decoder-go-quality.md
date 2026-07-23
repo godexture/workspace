@@ -391,27 +391,9 @@ type Configuration interface{}
 
 marker method は廃止された。Registry が named config 型の reflection から強制的に `PluginKey` を生成するため、Config 側で ID 用メソッドを実装する必要はない。
 
-#### 8-2. `register.go` の `TransformFunc` がモノラルを考慮していない
+#### 8-2. `register.go` の出力チャンネルレイアウト
 
-**現状の問題:**
-
-```go
-// register.go
-TransformFunc: func(s media.StreamInfo) media.Profile {
-    p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-    p.Audio.CodecID = media.CodecLPCM
-    p.Audio.Format = media.SampleFormatS16
-    p.Audio.ChannelLayout = media.LayoutStereo2_0  // ← 常に Stereo 固定
-    return p
-},
-```
-
-デコーダは実際にはモノラルのMP3もデコードできる（`info.Channels` が 1 の場合は `LayoutMono1` を使用）のに、`TransformFunc` では常にステレオ出力と宣言している。これはメタデータの嘘になる。
-
-**改善方針:**
-
-- `TransformFunc` は入力の `StreamInfo` に基づいてチャンネルレイアウトを動的に返すよう修正する
-- もしくは「デコーダは常にステレオにアップミックスする」という仕様を明確にし、`decoder.go` でモノラル入力をステレオに変換する処理を追加する
+**解決済み:** `TransformFunc` は廃止され、Decoder Factory が唯一の output `StreamInfo` を返す。MP3 Factory は入力の channel count が 1 のとき `LayoutMono1`、それ以外では `LayoutStereo2_0` を返すため、交渉時の profile と実装が分離しない。
 
 ---
 
@@ -432,7 +414,7 @@ TransformFunc: func(s media.StreamInfo) media.Profile {
 | 中 | 2-2: `BitReader` と `bs_t` の統合（未使用なら `BitReader` を削除） | `header.go`, `huffman.go`, `dequant.go` | 中 |
 | 中 | 2-1: 型・命名の Go 化 | 全体 | 中 |
 | 中 | 7-3: サンプルレート・チャンネル変化の検知 | `decoder.go` | 低 |
-| 中 | 8-2: `TransformFunc` のチャンネルレイアウト宣言を修正 | `register.go` | 低 |
+| 完了 | 8-2: Factory のチャンネルレイアウト出力を入力 stream に合わせる | `register.go` | 低 |
 | 低 | 3-1: `*Offset` 引数パターンの解消（優先度の高い箇所から順次）| `dequant.go` | 中 |
 | 低 | 7-1: `decodeLoop` の責務分離 | `decoder.go` | 中 |
 | 低 | 7-2: `ReceiveFrame` の EOF 検知修正 | `decoder.go` | 中 |
@@ -474,7 +456,7 @@ TransformFunc: func(s media.StreamInfo) media.Profile {
 
 ### `decoder.go` 改善
 - [ ] サンプルレート・チャンネル数の変化を検知してエラーを返す処理を追加する
-- [ ] `register.go` の `TransformFunc` のチャンネルレイアウト宣言を実際の出力に合わせて修正する
+- [x] `register.go` の Factory が返すチャンネルレイアウトを実際の出力に合わせる
 - [ ] `decodeLoop` を責務ごとに分割する
 - [ ] `ReceiveFrame` の EOF 検知を `done` チャンネル等で正確に実装する
 

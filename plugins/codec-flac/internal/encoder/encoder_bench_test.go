@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
 )
@@ -84,7 +85,7 @@ func BenchmarkDecoderValidationMode(b *testing.B) {
 	packet := media.NewPacketFromData(data)
 
 	decode := func(strict bool) {
-		dec := decoder.NewDecoder(stream, config.DecoderConfig{Strict: strict}, 1)
+		dec := decoder.NewDecoder(stream, config.DecoderConfig{Strict: strict}, nil)
 		if err := dec.SendPacket(packet); err != nil {
 			b.Fatal(err)
 		}
@@ -133,11 +134,13 @@ func BenchmarkEncoderDefaultConfig(b *testing.B) {
 		}
 	}
 	var wrapped media.Frame = frame
+	pool := registry.NewWorkerPool(runtime.GOMAXPROCS(0))
+	defer pool.Close()
 	b.ReportAllocs()
 	b.SetBytes(int64(len(plane)))
 	b.ResetTimer()
 	for b.Loop() {
-		enc := NewEncoder(media.StreamInfo{}, cfg, runtime.GOMAXPROCS(0))
+		enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 		if err := enc.SendFrame(&wrapped); err != nil {
 			b.Fatal(err)
 		}

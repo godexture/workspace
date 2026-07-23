@@ -34,7 +34,14 @@ func discoverMetadata(t *types.Target, allFiles []*ast.File) {
 		if !ok {
 			continue
 		}
-		t.FieldChoices[field.Names[0].Name] = enumscan.StringConstants(allFiles, t.PackageName, ident.Name)
+		names, values := enumscan.StringEnumConstants(allFiles, t.PackageName, ident.Name)
+		if len(values) > 0 {
+			t.FieldChoices[field.Names[0].Name] = values
+			t.Enums = append(t.Enums, types.EnumInfo{
+				TypeName:   ident.Name,
+				ConstNames: names,
+			})
+		}
 	}
 	for _, file := range allFiles {
 		if file.Name.Name != t.PackageName {

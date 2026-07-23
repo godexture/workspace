@@ -1,10 +1,6 @@
 package media
 
-import (
-	"unsafe"
-
-	"github.com/godexture/core/domain/metadata"
-)
+import "unsafe"
 
 type SampleType interface {
 	~uint8 | ~int16 | ~int32 | ~float32 | ~float64
@@ -22,15 +18,12 @@ type AudioFrame struct {
 	Layout        ChannelLayout
 	SampleRate    int
 	Samples       int
-	meta          *metadata.Bundle
 
 	pts    Pts
 	planes [][]byte
 }
 
 func (f *AudioFrame) Pts() Pts { return f.pts }
-
-func (f *AudioFrame) Metadata() *metadata.Bundle { return f.meta }
 
 func (f *AudioFrame) Planes() [][]byte { return f.planes }
 

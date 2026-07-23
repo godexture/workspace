@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/gain"
 	"github.com/godexture/filter-audio/internal/remix"
+	"github.com/godexture/sdk/audio"
 )
 
 func BenchmarkGainStereoF32(b *testing.B) {

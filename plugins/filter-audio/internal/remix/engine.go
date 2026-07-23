@@ -5,14 +5,14 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/audio"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
+	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/buffer"
 )
 
 type Engine struct {
 	config config.RemixConfig
-	queue  framequeue.Single
+	slot   buffer.Slot[media.Frame]
 }
 
 func New(config config.RemixConfig) (*Engine, error) {
@@ -29,7 +29,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	}
 	if block.Layout == e.config.Layout {
 		block.Source.Retain()
-		return e.queue.Push(block.Source)
+		return e.slot.Push(block.Source)
 	}
 	output, err := Mix(block, e.config)
 	if err != nil {
@@ -39,16 +39,22 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	if err := e.queue.Push(encoded); err != nil {
+	if err := e.slot.Push(encoded); err != nil {
 		encoded.Release()
 		return err
 	}
 	return nil
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) { return e.queue.Receive() }
-func (e *Engine) Flush() error                        { e.queue.Flush(); return nil }
-func (e *Engine) Close() error                        { e.queue.Close(); return nil }
+func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+	frame, err := e.slot.Receive()
+	if err != nil {
+		return nil, err
+	}
+	return &frame, nil
+}
+func (e *Engine) Flush() error { e.slot.Flush(); return nil }
+func (e *Engine) Close() error { e.slot.Close(); return nil }
 
 func Mix(input audio.Block, config config.RemixConfig) (audio.Block, error) {
 	if input.Layout.IsAmbisonic() || config.Layout.IsAmbisonic() {
@@ -59,7 +65,6 @@ func Mix(input audio.Block, config config.RemixConfig) (audio.Block, error) {
 		Layout:   config.Layout,
 		Rate:     input.Rate,
 		PTS:      input.PTS,
-		Metadata: input.Metadata,
 	}
 	for channel := range output.Channels {
 		output.Channels[channel] = make([]float32, input.Samples())

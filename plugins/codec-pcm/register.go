@@ -37,26 +37,23 @@ func init() {
 				Description:          "LPCM/G.711/ADPCM decoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}),
-			TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-				p.Codec = media.CodecLPCM
-				p.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
-				return p, nil
-			},
+			}})),
 		},
-		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
+		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
 			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](options.Config)
 			if err != nil {
-				return nil, err
+				return nil, media.StreamInfo{}, err
 			}
 			decoder, err := internal.NewDecoder(s, resolved)
 			if err != nil {
-				return nil, err
+				return nil, media.StreamInfo{}, err
 			}
-			return engine.WrapDecoder(decoder), nil
+			output := s.Clone()
+			output.Codec = media.CodecLPCM
+			output.Audio = internal.GetDecodedAttributes(s.Codec, s.Audio)
+			return engine.WrapDecoder(decoder), output, nil
 		},
 	}); err != nil {
 		panic(err)
@@ -70,55 +67,48 @@ func init() {
 				Description:          "LPCM/G.711/ADPCM encoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 			},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}),
-			TransformFunc: func(in media.StreamInfo, target media.CodecID, cfg registry.Configuration) (media.Profile, error) {
-				resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](cfg)
-				if err != nil {
-					return media.Profile{}, err
-				}
-				profile := media.Profile{Type: in.Type, MediaAttributes: in.MediaAttributes}
-				profile.Codec = target
-				if target == media.CodecMSADPCM || target == media.CodecIMAADPCM {
-					channels := profile.Audio.ChannelLayout.ChannelCount()
-					if channels == 0 {
-						channels = 1
-					}
-
-					adpcm := resolved.ADPCM
-					if adpcm.BlockAlign == 0 {
-						if in.Codec == target && media.IsCodecParameters[params.ADPCM](in.CodecParameters) {
-							if p, err := params.Parse(target, in.Audio.ChannelLayout.ChannelCount(), in.CodecParameters.Data); err == nil {
-								adpcm = p
-							}
-						}
-					}
-					if adpcm.BlockAlign == 0 {
-						adpcm, _ = params.Default(target, channels)
-					}
-
-					if err := adpcm.Validate(target, channels); err != nil {
-						return media.Profile{}, err
-					}
-					profile.CodecParameters = media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary())
-				} else {
-					profile.CodecParameters = media.CodecParameters{}
-				}
-				return profile, nil
-			},
+			}})),
 		},
 		Codecs: []media.CodecID{media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM},
-		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
+		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 			resolved, err := engine.ResolveConfig[internal.EncoderConfig, EncoderConfig](options.Config)
 			if err != nil {
-				return nil, err
+				return nil, media.StreamInfo{}, err
 			}
 			enc, err := internal.NewEncoder(inStream, targetCodec, resolved)
 			if err != nil {
-				return nil, err
+				return nil, media.StreamInfo{}, err
 			}
-			return engine.WrapEncoder(enc), nil
+			profile := inStream.Clone()
+			profile.Codec = targetCodec
+			if targetCodec == media.CodecMSADPCM || targetCodec == media.CodecIMAADPCM {
+				channels := profile.Audio.ChannelLayout.ChannelCount()
+				if channels == 0 {
+					channels = 1
+				}
+
+				adpcm := resolved.ADPCM
+				if adpcm.BlockAlign == 0 {
+					if inStream.Codec == targetCodec && media.IsCodecParameters[params.ADPCM](inStream.CodecParameters) {
+						if p, err := params.Parse(targetCodec, inStream.Audio.ChannelLayout.ChannelCount(), inStream.CodecParameters.Data); err == nil {
+							adpcm = p
+						}
+					}
+				}
+				if adpcm.BlockAlign == 0 {
+					adpcm, _ = params.Default(targetCodec, channels)
+				}
+
+				if err := adpcm.Validate(targetCodec, channels); err != nil {
+					return nil, media.StreamInfo{}, err
+				}
+				profile.CodecParameters = media.NewCodecParameters[params.ADPCM](adpcm.MarshalBinary())
+			} else {
+				profile.CodecParameters = media.CodecParameters{}
+			}
+			return engine.WrapEncoder(enc), profile, nil
 		},
 	}); err != nil {
 		panic(err)

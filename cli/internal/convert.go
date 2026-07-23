@@ -6,13 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/routing"
+	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/cliflag"
+	"github.com/godexture/sdk/conversion"
 	"github.com/spf13/cobra"
 )
 
@@ -30,8 +29,10 @@ func newConvertCommand() *cobra.Command {
 	command.Flags().StringVar(&options.demuxer, "demuxer", "", "Input demuxer specification (name:key=value,...)")
 	command.Flags().StringVar(&options.decoder, "decoder", "", "Input decoder specification (name:key=value,...)")
 	command.Flags().IntVarP(&options.jobs, "jobs", "j", 0, "Maximum parallel jobs")
-	command.Flags().BoolVar(&options.force, "force", false, "Overwrite an existing output file")
-	command.Flags().StringArrayVar(&options.filters, "filter", nil, "Filter specification (name:key=value,...)")
+	command.Flags().BoolVarP(&options.force, "force", "f", false, "Overwrite an existing output file")
+	command.Flags().StringArrayVarP(&options.filters, "filter", "e", nil, "Filter specification (name:key=value,...)")
+	command.Flags().StringArrayVarP(&options.inputs, "input", "i", nil, "Named auxiliary input (NAME=PATH)")
+	command.Flags().StringArrayVarP(&options.wires, "wire", "w", nil, "Connect FILTER_ALIAS.PORT to INPUT_ALIAS.out or AUX_FILTER_ALIAS.out")
 	command.Flags().StringVar(&options.progress, "progress", "auto", "Progress display: auto, always, or never")
 	command.Flags().BoolVar(&options.metrics, "metrics", false, "Report conversion and runtime metrics")
 	command.Flags().BoolVar(&options.dryRun, "dry-run", false, "Resolve and validate the pipeline without converting")
@@ -49,102 +50,291 @@ type convertOptions struct {
 	metrics  bool
 	dryRun   bool
 	filters  []string
+	inputs   []string
+	wires    []string
 }
 
-func resolveCodec(value string, defaultCodec media.CodecID) (media.CodecID, map[string]string, error) {
-	if value == "" {
-		return defaultCodec, nil, nil
-	}
-	spec, err := cliflag.ParseSpec(value)
+// buildSpec turns convert flags into a conversion.Spec. --format infers the
+// muxer from the output extension (via the catalog) when omitted; --codec
+// carries both the target codec ID and the values applied to whichever
+// encoder is resolved for it (CLI has no separate flag to pick an encoder
+// plugin by name).
+func buildSpec(options convertOptions, outputPath string, outputs []catalog.OutputFormat) (conversion.Spec, error) {
+	format, _, err := parsePluginSpec(options.format)
 	if err != nil {
-		return "", nil, fmt.Errorf("codec: %w", err)
+		return conversion.Spec{}, fmt.Errorf("format: %w", err)
 	}
-	return media.CodecID(spec.Name), spec.Values, nil
-}
-
-func resolvePlugin[V registry.Manifest](role, value string, plugins *registry.Registry[V]) (V, registry.Configuration, error) {
-	var zero V
-	if value == "" {
-		return zero, nil, nil
-	}
-	spec, err := cliflag.ParseSpec(value)
-	if err != nil {
-		return zero, nil, fmt.Errorf("%s: %w", role, err)
-	}
-	manifest, err := plugins.Lookup(spec.Name)
-	if err != nil {
-		return zero, nil, err
-	}
-	config, err := configureManifest(role, manifest, spec.Values)
-	if err != nil {
-		return zero, nil, err
-	}
-	return manifest, config, nil
-}
-
-func configureManifest(role string, manifest registry.Manifest, values map[string]string) (registry.Configuration, error) {
-	config, err := manifest.NewConfiguration()
-	if err != nil {
-		return nil, err
-	}
-	if err := cliflag.DecodeStruct(config, values); err != nil {
-		return nil, fmt.Errorf("%s %q: %w", role, manifest.RegistryName(), err)
-	}
-	return config, nil
-}
-
-func resolveFilters(values []string) ([]routing.FilterSpec, error) {
-	filters := make([]routing.FilterSpec, 0, len(values))
-	for _, value := range values {
-		spec, err := cliflag.ParseSpec(value)
-		if err != nil {
-			return nil, err
+	if format == nil {
+		name, inferErr := inferMuxerName(outputs, outputPath)
+		if inferErr != nil {
+			return conversion.Spec{}, inferErr
 		}
-		manifest, err := godec.DefaultFilterRegistry.Lookup(spec.Name)
-		if err != nil {
-			return nil, err
-		}
-		config, err := configureManifest("filter", manifest, spec.Values)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, routing.FilterSpec{Config: config})
+		format = &conversion.PluginSpec{Name: name}
 	}
-	return filters, nil
-}
 
-func selectMuxer(value, output string) (registry.MuxerManifest, map[string]string, error) {
-	if value != "" {
-		spec, err := cliflag.ParseSpec(value)
-		if err != nil {
-			return registry.MuxerManifest{}, nil, fmt.Errorf("format: %w", err)
-		}
-		manifest, err := godec.DefaultMuxerRegistry.Lookup(spec.Name)
-		return manifest, spec.Values, err
+	codec, _, err := parsePluginSpec(options.codec)
+	if err != nil {
+		return conversion.Spec{}, fmt.Errorf("codec: %w", err)
 	}
-	extension := strings.ToLower(filepath.Ext(output))
-	var match registry.MuxerManifest
-	for manifest := range godec.DefaultMuxerRegistry.Enumerate() {
-		if strings.EqualFold(filepath.Ext(output), extension) && slicesContain(manifest.Extensions, extension) {
-			if match.Name != "" {
-				return match, nil, fmt.Errorf("multiple output formats match %q", extension)
+
+	spec := conversion.Spec{Muxer: *format, Parallelism: options.jobs}
+	if codec != nil {
+		spec.Codec = codec.Name
+		spec.Encoder = &conversion.PluginSpec{Values: codec.Values}
+	}
+	if spec.Demuxer, _, err = parsePluginSpec(options.demuxer); err != nil {
+		return conversion.Spec{}, fmt.Errorf("demuxer: %w", err)
+	}
+	if spec.Decoder, _, err = parsePluginSpec(options.decoder); err != nil {
+		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
+	}
+	filters := make([]graphFilter, 0, len(options.filters))
+	nodes := make(map[string]graphNode)
+	for _, value := range options.filters {
+		alias, filter, parameters, parseErr := parseFilterSpec(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("filter: %w", parseErr)
+		}
+		if alias == "" {
+			alias = filter.Name
+		}
+		if !validGraphAlias(alias) {
+			return conversion.Spec{}, fmt.Errorf("filter: invalid alias %q", alias)
+		}
+		if _, exists := nodes[alias]; exists {
+			return conversion.Spec{}, fmt.Errorf("filter: duplicate alias %q", alias)
+		}
+		nodes[alias] = graphNode{filter: len(filters)}
+		filters = append(filters, graphFilter{spec: conversion.FilterSpec{PluginSpec: *filter, Alias: alias, Parameters: parameters}, wires: make(map[string]string)})
+	}
+	for _, value := range options.inputs {
+		name, _, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("input: %w", parseErr)
+		}
+		if !validGraphAlias(name) {
+			return conversion.Spec{}, fmt.Errorf("input: invalid name %q", name)
+		}
+		if existing, exists := nodes[name]; exists {
+			if existing.input {
+				return conversion.Spec{}, fmt.Errorf("input: duplicate name %q", name)
 			}
-			match = manifest
+			return conversion.Spec{}, fmt.Errorf("input: name %q duplicates a filter alias", name)
 		}
+		if spec.AuxInputs == nil {
+			spec.AuxInputs = make(map[string]conversion.AuxInputSpec)
+		}
+		spec.AuxInputs[name] = conversion.AuxInputSpec{}
+		nodes[name] = graphNode{input: true}
 	}
-	if match.Name == "" {
-		return match, nil, fmt.Errorf("cannot infer output format from %q; use --format", output)
+	for _, value := range options.wires {
+		left, source, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("wire: %w", parseErr)
+		}
+		separator := strings.LastIndex(left, ".")
+		if separator <= 0 || separator == len(left)-1 {
+			return conversion.Spec{}, fmt.Errorf("wire: invalid destination %q", left)
+		}
+		alias, port := left[:separator], left[separator+1:]
+		target, ok := nodes[alias]
+		if !ok || target.input {
+			return conversion.Spec{}, fmt.Errorf("wire: unknown filter alias %q", alias)
+		}
+		sourceAlias, sourcePort, sourceErr := parseWireSource(source)
+		if sourceErr != nil {
+			return conversion.Spec{}, fmt.Errorf("wire: %w", sourceErr)
+		}
+		if sourcePort != "out" {
+			return conversion.Spec{}, fmt.Errorf("wire: source port %q must be out", sourcePort)
+		}
+		if _, ok := nodes[sourceAlias]; !ok {
+			return conversion.Spec{}, fmt.Errorf("wire: unknown source alias %q", sourceAlias)
+		}
+		filter := &filters[target.filter]
+		if _, exists := filter.wires[port]; exists {
+			return conversion.Spec{}, fmt.Errorf("wire: duplicate destination %s", left)
+		}
+		filter.wires[port] = sourceAlias
 	}
-	return match, nil, nil
+	if err := compileFilterGraph(&spec, filters, nodes); err != nil {
+		return conversion.Spec{}, err
+	}
+	return spec, nil
 }
 
-func slicesContain(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+type graphNode struct {
+	input  bool
+	filter int
+}
+
+type graphFilter struct {
+	spec  conversion.FilterSpec
+	wires map[string]string
+}
+
+func validGraphAlias(value string) bool {
+	return value != "" && !strings.ContainsAny(value, ".= \t\r\n")
+}
+
+func parseWireSource(value string) (string, string, error) {
+	if value == "" {
+		return "", "", fmt.Errorf("source must not be empty")
+	}
+	separator := strings.LastIndex(value, ".")
+	if separator < 0 {
+		return value, "out", nil
+	}
+	if separator == 0 || separator == len(value)-1 {
+		return "", "", fmt.Errorf("invalid source %q", value)
+	}
+	return value[:separator], value[separator+1:], nil
+}
+
+func compileFilterGraph(spec *conversion.Spec, filters []graphFilter, nodes map[string]graphNode) error {
+	uses := make(map[string]int)
+	for _, filter := range filters {
+		for _, source := range filter.wires {
+			uses[source]++
 		}
 	}
-	return false
+	for index := range filters {
+		filter := &filters[index]
+		_, auxiliary := filter.wires["in"]
+		if auxiliary {
+			if len(filter.wires) != 1 {
+				return fmt.Errorf("wire: auxiliary filter %q may only wire its in port", filter.spec.Alias)
+			}
+			if uses[filter.spec.Alias] != 1 {
+				return fmt.Errorf("wire: auxiliary filter %q output must be connected exactly once", filter.spec.Alias)
+			}
+			continue
+		}
+		filter.spec.Inputs = make(map[string]string, len(filter.wires))
+		for port, source := range filter.wires {
+			root, chain, err := resolveAuxiliarySource(source, filters, nodes, nil)
+			if err != nil {
+				return fmt.Errorf("wire: filter %q port %q: %w", filter.spec.Alias, port, err)
+			}
+			if _, already := filter.spec.Inputs[port]; already {
+				return fmt.Errorf("wire: duplicate destination %s.%s", filter.spec.Alias, port)
+			}
+			if _, configured := spec.AuxInputs[root]; !configured {
+				return fmt.Errorf("wire: unknown input %q", root)
+			}
+			if len(chain) > 0 {
+				auxiliary := spec.AuxInputs[root]
+				if len(auxiliary.Filters) != 0 {
+					return fmt.Errorf("wire: auxiliary input %q feeds more than one filter chain", root)
+				}
+				auxiliary.Filters = make([]conversion.FilterSpec, len(chain))
+				for i, chainIndex := range chain {
+					auxiliary.Filters[i] = filters[chainIndex].spec
+				}
+				spec.AuxInputs[root] = auxiliary
+			}
+			filter.spec.Inputs[port] = root
+		}
+		spec.Filters = append(spec.Filters, filter.spec)
+	}
+	for name := range spec.AuxInputs {
+		if uses[name] == 0 {
+			return fmt.Errorf("wire: auxiliary input %q is not connected", name)
+		}
+	}
+	return nil
+}
+
+func resolveAuxiliarySource(source string, filters []graphFilter, nodes map[string]graphNode, visiting map[string]bool) (string, []int, error) {
+	entry := nodes[source]
+	if entry.input {
+		return source, nil, nil
+	}
+	filter := filters[entry.filter]
+	input, ok := filter.wires["in"]
+	if !ok {
+		return "", nil, fmt.Errorf("source %q is a main-stream filter; only auxiliary filter outputs can be wired", source)
+	}
+	if visiting == nil {
+		visiting = make(map[string]bool)
+	}
+	if visiting[source] {
+		return "", nil, fmt.Errorf("auxiliary filter cycle at %q", source)
+	}
+	visiting[source] = true
+	root, chain, err := resolveAuxiliarySource(input, filters, nodes, visiting)
+	delete(visiting, source)
+	if err != nil {
+		return "", nil, err
+	}
+	return root, append(chain, entry.filter), nil
+}
+
+// parseFilterSpec splits an optional "alias=" prefix off a filter
+// specification before parsing the rest as a plugin spec. The alias's '='
+// must be searched for only in the name region — up to whichever of '['
+// or ':' comes first, or the end of the string — since a bracketed
+// parameter segment (e.g. "mixer[in=2]") may itself contain '=' that must
+// not be mistaken for the alias separator.
+func parseFilterSpec(value string) (string, *conversion.PluginSpec, map[string]string, error) {
+	nameEnd := len(value)
+	if idx := strings.IndexByte(value, '['); idx >= 0 && idx < nameEnd {
+		nameEnd = idx
+	}
+	if idx := strings.IndexByte(value, ':'); idx >= 0 && idx < nameEnd {
+		nameEnd = idx
+	}
+	if equals := strings.IndexByte(value[:nameEnd], '='); equals >= 0 {
+		alias := value[:equals]
+		if alias == "" {
+			return "", nil, nil, fmt.Errorf("filter alias must not be empty")
+		}
+		plugin, parameters, err := parsePluginSpec(value[equals+1:])
+		return alias, plugin, parameters, err
+	}
+	plugin, parameters, err := parsePluginSpec(value)
+	return "", plugin, parameters, err
+}
+
+func parseNamedValue(value string) (string, string, error) {
+	equals := strings.IndexByte(value, '=')
+	if equals <= 0 || equals == len(value)-1 {
+		return "", "", fmt.Errorf("want NAME=VALUE")
+	}
+	return value[:equals], value[equals+1:], nil
+}
+
+// parsePluginSpec parses "name[param=value,...]:key=value,...". Parameters
+// is nil unless a "[...]" segment was present; only filters currently
+// accept one (see conversion.FilterSpec.Parameters), but the syntax is
+// parsed uniformly here regardless of plugin role.
+func parsePluginSpec(value string) (*conversion.PluginSpec, map[string]string, error) {
+	if value == "" {
+		return nil, nil, nil
+	}
+	spec, err := cliflag.ParseSpec(value)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &conversion.PluginSpec{Name: spec.Name, Values: spec.Values}, spec.Parameters, nil
+}
+
+func inferMuxerName(outputs []catalog.OutputFormat, output string) (string, error) {
+	extension := strings.ToLower(filepath.Ext(output))
+	var match string
+	for _, format := range outputs {
+		if !slices.Contains(format.Extensions, extension) {
+			continue
+		}
+		if match != "" {
+			return "", fmt.Errorf("multiple output formats match %q", extension)
+		}
+		match = format.Muxer
+	}
+	if match == "" {
+		return "", fmt.Errorf("cannot infer output format from %q; use --format", output)
+	}
+	return match, nil
 }
 
 type pendingOutput struct {

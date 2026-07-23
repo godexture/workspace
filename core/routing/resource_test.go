@@ -1,25 +1,23 @@
 package routing
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/godexture/core/registry"
 )
 
-func TestAllocateResources(t *testing.T) {
+func TestGrantResources(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
 		requests []bool
-		budget   int
-		want     []int
+		withPool bool
 	}{
-		{name: "none", requests: []bool{false, false}, budget: 8, want: []int{0, 0}},
-		{name: "one", requests: []bool{false, true, false}, budget: 8, want: []int{0, 8, 0}},
-		{name: "even", requests: []bool{true, true}, budget: 8, want: []int{4, 4}},
-		{name: "remainder", requests: []bool{true, false, true, true}, budget: 8, want: []int{3, 0, 3, 2}},
-		{name: "more stages than budget", requests: []bool{true, true, true}, budget: 1, want: []int{1, 1, 1}},
+		{name: "none requested, pool available", requests: []bool{false, false}, withPool: true},
+		{name: "one requested", requests: []bool{false, true, false}, withPool: true},
+		{name: "all requested", requests: []bool{true, true}, withPool: true},
+		{name: "mixed", requests: []bool{true, false, true, true}, withPool: true},
+		{name: "no pool available", requests: []bool{true, true}, withPool: false},
 	}
 
 	for _, test := range tests {
@@ -30,14 +28,38 @@ func TestAllocateResources(t *testing.T) {
 			for i, parallel := range test.requests {
 				requests[i].Parallelism = parallel
 			}
-			allocations := allocateResources(requests, test.budget)
-			got := make([]int, len(allocations))
-			for i := range allocations {
-				got[i] = allocations[i].Parallelism
+			var pool *registry.WorkerPool
+			if test.withPool {
+				pool = registry.NewWorkerPool(4)
+				defer pool.Close()
 			}
-			if !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("allocateResources() = %v, want %v", got, test.want)
+			grants := grantResources(requests, pool)
+			if len(grants) != len(requests) {
+				t.Fatalf("len(grants) = %d, want %d", len(grants), len(requests))
+			}
+			for i, parallel := range test.requests {
+				want := (*registry.WorkerPool)(nil)
+				if parallel && test.withPool {
+					want = pool
+				}
+				if grants[i].Pool != want {
+					t.Fatalf("grants[%d].Pool = %v, want %v", i, grants[i].Pool, want)
+				}
 			}
 		})
+	}
+}
+
+func TestGrantResources_SharesOnePoolAcrossStages(t *testing.T) {
+	t.Parallel()
+	pool := registry.NewWorkerPool(4)
+	defer pool.Close()
+	requests := []registry.ResourceRequest{{Parallelism: true}, {Parallelism: false}, {Parallelism: true}}
+	grants := grantResources(requests, pool)
+	if grants[0].Pool == nil || grants[0].Pool != grants[2].Pool {
+		t.Fatalf("parallel-eligible stages must share the same pool, got %v and %v", grants[0].Pool, grants[2].Pool)
+	}
+	if grants[1].Pool != nil {
+		t.Fatalf("non-parallel stage got a pool: %v", grants[1].Pool)
 	}
 }

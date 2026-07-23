@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
 )
 
 type frameEdgeStub struct {
@@ -31,10 +30,9 @@ type frameReferenceStub struct {
 	released int
 }
 
-func (f *frameReferenceStub) Retain()                  { f.retained++ }
-func (f *frameReferenceStub) Release()                 { f.released++ }
-func (*frameReferenceStub) Pts() media.Pts             { return 0 }
-func (*frameReferenceStub) Metadata() *metadata.Bundle { return nil }
+func (f *frameReferenceStub) Retain()      { f.retained++ }
+func (f *frameReferenceStub) Release()     { f.released++ }
+func (*frameReferenceStub) Pts() media.Pts { return 0 }
 
 func TestPushFrameBalancesFailedTransfer(t *testing.T) {
 	pushErr := errors.New("push failed")

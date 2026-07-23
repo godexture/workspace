@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sync"
 	"testing"
+
+	"github.com/godexture/core/node"
 )
 
 func TestGeometryCloseReleasesAbandonedNodes(t *testing.T) {
@@ -33,6 +35,43 @@ func TestGeometryCloseReleasesAbandonedNodes(t *testing.T) {
 	defer mu.Unlock()
 	if got, want := order, []int{2, 1, 0}; !slices.Equal(got, want) {
 		t.Fatalf("close order = %v, want %v", got, want)
+	}
+}
+
+type stagedTestNode struct {
+	lifecycleTestNode
+	preload func(context.Context) error
+}
+
+func (n *stagedTestNode) InputPhases() map[string]node.InputPhase {
+	return map[string]node.InputPhase{"in": node.InputPhaseRun, "ir": node.InputPhasePreload}
+}
+
+func (n *stagedTestNode) Preload(ctx context.Context) error {
+	if n.preload == nil {
+		return nil
+	}
+	return n.preload(ctx)
+}
+
+func TestPlanPreparationSeparatesAuxiliaryPath(t *testing.T) {
+	t.Parallel()
+	aux := &lifecycleTestNode{}
+	consumer := &stagedTestNode{}
+	definitions := []NodeDef{{ID: "aux", Node: aux}, {ID: "consumer", Node: consumer}}
+	edges := []EdgeDef{{FromNode: "aux", FromPort: "out", ToNode: "consumer", ToPort: "ir"}}
+	plan, err := planPreparation(definitions, edges, map[string]node.Node{"aux": aux, "consumer": consumer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(plan.nodes), 1; got != want || plan.nodes[0] != aux {
+		t.Fatalf("prepare nodes = %#v, want auxiliary node", plan.nodes)
+	}
+	if got, want := len(plan.preloads), 1; got != want || plan.preloads[0] != consumer {
+		t.Fatalf("preload nodes = %#v, want consumer", plan.preloads)
+	}
+	if got, want := len(plan.run), 1; got != want || plan.run[0] != consumer {
+		t.Fatalf("run nodes = %#v, want consumer", plan.run)
 	}
 }
 

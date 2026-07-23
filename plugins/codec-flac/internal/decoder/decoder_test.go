@@ -6,10 +6,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
@@ -18,7 +20,7 @@ import (
 
 func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, nil)
 	frame, err := decoder.ReceiveFrame()
 	if !errors.Is(err, engine.ErrEAGAIN) || frame != nil {
 		t.Fatalf("expected ErrEAGAIN and nil frame, got err=%v, frame=%v", err, frame)
@@ -27,7 +29,7 @@ func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {
 
 func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, nil)
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -40,7 +42,7 @@ func TestDecoder_ReceiveFrameEmptyFlushed(t *testing.T) {
 
 func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, nil)
 	if err := decoder.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -53,7 +55,7 @@ func TestDecoder_SendPacketAfterFlush(t *testing.T) {
 
 func TestDecoder_SendNilPacket(t *testing.T) {
 	t.Parallel()
-	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, nil)
 	if err := decoder.SendPacket(nil); err == nil {
 		t.Fatal("expected error for nil packet")
 	}
@@ -74,7 +76,7 @@ func TestDecoderValidatesStreamEndAfterPendingFrameIsConsumed(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true}, 1)
+	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true}, nil)
 
 	packet := media.NewPacketFromData(data[42:])
 	if err := decoder.SendPacket(packet); err != nil {
@@ -99,7 +101,7 @@ func TestDecoderReportsMD5MismatchAtStreamEnd(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
-	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true}, 1)
+	decoder := NewDecoder(stream, config.DecoderConfig{Strict: true}, nil)
 
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatal(err)
@@ -123,7 +125,7 @@ func TestDecoderSkipsMD5ValidationWhenNonStrict(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, raw)
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, nil)
 
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatal(err)
@@ -148,7 +150,7 @@ func TestDecoderFrameCRCValidationMode(t *testing.T) {
 	frameData := append([]byte(nil), data[42:]...)
 	frameData[len(frameData)-1] ^= 1
 
-	nonStrict := NewDecoder(stream, config.DefaultDecoderConfig, 1)
+	nonStrict := NewDecoder(stream, config.DefaultDecoderConfig, nil)
 	if err := nonStrict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +158,7 @@ func TestDecoderFrameCRCValidationMode(t *testing.T) {
 		t.Fatalf("non-strict ReceiveFrame() error = %v", err)
 	}
 
-	strict := NewDecoder(stream, config.DecoderConfig{Strict: true}, 1)
+	strict := NewDecoder(stream, config.DecoderConfig{Strict: true}, nil)
 	if err := strict.SendPacket(media.NewPacketFromData(frameData)); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestDecoderAcceptsContiguousRunStartingAtNonzeroFrame(t *testing.T) {
 	crc := hash.CRC16(packetData[:len(packetData)-2])
 	packetData[len(packetData)-2], packetData[len(packetData)-1] = byte(crc>>8), byte(crc)
 
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, nil)
 	if err := decoder.SendPacket(media.NewPacketFromData(packetData)); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +211,7 @@ func TestDecoder_RejectsNativeStreamPacket(t *testing.T) {
 	t.Parallel()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	packet := media.NewPacketFromData(data)
-	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(media.StreamInfo{}, config.DefaultDecoderConfig, nil)
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +227,7 @@ func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.Strea
 	packet.MediaType = media.MediaAudio
 	packet.PTS = 123
 
-	decoder := NewDecoder(stream, config, 1)
+	decoder := NewDecoder(stream, config, nil)
 	if err := decoder.SendPacket(packet); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
 	}
@@ -270,7 +272,7 @@ func TestDecoder_RejectsIncompleteFramePacket(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, nil)
 	frameData := data[42:]
 
 	packet := media.NewPacketFromData(frameData[:len(frameData)-1])
@@ -288,7 +290,7 @@ func TestDecoder_RejectsPacketWithTrailingFrame(t *testing.T) {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, 1)
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, nil)
 	packet := media.NewPacket(len(data[42:]) * 2)
 	copy(packet.Data(), data[42:])
 	copy(packet.Data()[len(data[42:]):], data[42:])
@@ -314,22 +316,23 @@ func TestDecoder_ParallelismDoesNotChangeOutput(t *testing.T) {
 	}
 }
 
-func TestDecoder_CloseReleasesLazyWorkersWithoutFlush(t *testing.T) {
+// TestDecoder_CloseReleasesPendingWithoutFlush covers the goroutine-leak fix:
+// Close() must release any in-flight entry (by waiting for its done channel)
+// even when Flush() is never called, which is exactly what happens when a
+// pipeline aborts via error or context cancellation before reaching
+// end-of-stream. Close() must not touch the pool itself: it is shared with
+// other stages and owned by whoever constructed the decoder.
+func TestDecoder_CloseReleasesPendingWithoutFlush(t *testing.T) {
 	t.Parallel()
+	pool := registry.NewWorkerPool(4)
+	defer pool.Close()
 	data := mustDecodeHex(t, "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a")
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, 4)
-	if decoder.jobs != nil {
-		t.Fatal("worker pool started before work was submitted")
-	}
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, pool)
 	if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 		t.Fatalf("SendPacket() error = %v", err)
-	}
-	jobs := decoder.jobs
-	if jobs == nil {
-		t.Fatal("worker pool did not start after work was submitted")
 	}
 	if err := decoder.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -337,14 +340,15 @@ func TestDecoder_CloseReleasesLazyWorkersWithoutFlush(t *testing.T) {
 	if decoder.pendingQueue != nil {
 		t.Fatal("Close() retained pending decoded frames")
 	}
+
+	done := make(chan struct{})
+	pool.Submit(func() { close(done) })
 	select {
-	case _, ok := <-jobs:
-		if ok {
-			t.Fatal("jobs channel received a value instead of reporting closed")
-		}
-	default:
-		t.Fatal("jobs channel is not closed")
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pool did not run a task submitted after decoder Close()")
 	}
+
 	if err := decoder.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
 	}
@@ -356,7 +360,12 @@ func decodeRepeatedPackets(t *testing.T, parallelism int) [][]byte {
 	stream := media.StreamInfo{}
 	stream.Metadata = *metadata.NewBundle()
 	stream.Metadata.AddRaw(streaminfo.MetadataKey, data[8:42])
-	decoder := NewDecoder(stream, config.DefaultDecoderConfig, parallelism)
+	var pool *registry.WorkerPool
+	if parallelism > 1 {
+		pool = registry.NewWorkerPool(parallelism)
+		t.Cleanup(func() { pool.Close() })
+	}
+	decoder := NewDecoder(stream, config.DefaultDecoderConfig, pool)
 	for range 8 {
 		if err := decoder.SendPacket(media.NewPacketFromData(data[42:])); err != nil {
 			t.Fatalf("SendPacket() error = %v", err)

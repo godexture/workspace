@@ -88,7 +88,7 @@ func TestConvertMetricsReportsSuccessfulRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Starting conversion:\n", "    --> ", "Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items=", "Conversion completed successfully."} {
+	for _, expected := range []string{"Starting conversion:\n", "Streams:\n", "main: demuxer(wav) -> decoder(pcm)", "Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items=", "Conversion completed successfully."} {
 		if !strings.Contains(stderr, expected) {
 			t.Fatalf("metrics output does not contain %q:\n%s", expected, stderr)
 		}
@@ -114,8 +114,7 @@ func TestConvertPrintsStartAndSuccessWithoutVerbose(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout)
 	}
 	for _, expected := range []string{
-		"Starting conversion:\n  input[#0 audio",
-		"\n    --> demuxer(wav)\n    --> decoder(pcm)\n    --> encoder(pcm)\n    --> muxer(wav)\n    --> output[#0 audio",
+		"Starting conversion:\nStreams:\n  main: demuxer(wav) -> decoder(pcm) -> encoder(pcm) -> muxer(wav)",
 	} {
 		if !strings.Contains(stderr, expected) {
 			t.Fatalf("conversion output does not contain %q:\n%s", expected, stderr)
@@ -135,7 +134,7 @@ func TestConvertMetricsReportsFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("convert succeeded")
 	}
-	if !strings.Contains(stderr, "status: failed") || !strings.Contains(stderr, "format \"wav\" does not support codec \"flac\"") {
+	if !strings.Contains(stderr, "status: failed") || !strings.Contains(stderr, "muxer \"wav\" does not support codec \"flac\"") {
 		t.Fatalf("failure metrics = %s", stderr)
 	}
 	if strings.Contains(stderr, "Conversion completed successfully.") {
@@ -200,14 +199,17 @@ func TestResolveProgressConfig(t *testing.T) {
 }
 
 func TestFormatProgressPrefersMediaTimeAndCompletes(t *testing.T) {
-	snapshot := pipeline.Snapshot{Edges: []pipeline.EdgeSnapshot{{
-		Description: pipeline.EdgeDescription{ProgressSource: true, Stream: media.StreamInfo{Duration: 10 * time.Second}},
-		MediaTime:   4 * time.Second,
-	}}}
-	if line := formatProgress(snapshot, inputMetrics{Position: 9, Size: 10}, 2*time.Second, false); !strings.Contains(line, "40.00%") || !strings.Contains(line, "2.00x") {
+	snapshot := pipeline.Snapshot{
+		Elapsed: 2 * time.Second,
+		Edges: []pipeline.EdgeSnapshot{{
+			Description: pipeline.EdgeDescription{ProgressSource: true, Stream: media.StreamInfo{Duration: 10 * time.Second}},
+			MediaTime:   4 * time.Second,
+		}},
+	}
+	if line := formatProgress(snapshot, inputMetrics{Position: 9, Size: 10}, false); !strings.Contains(line, "40.00%") || !strings.Contains(line, "2.00x") {
 		t.Fatalf("progress = %q", line)
 	}
-	if line := formatProgress(snapshot, inputMetrics{}, 2*time.Second, true); !strings.Contains(line, "100.00%") {
+	if line := formatProgress(snapshot, inputMetrics{}, true); !strings.Contains(line, "100.00%") {
 		t.Fatalf("completed progress = %q", line)
 	}
 }

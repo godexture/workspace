@@ -22,11 +22,16 @@ type MuxerFactory func(io.Writer, Configuration) (node.Muxer, error)
 type DemuxerFactory func(io.Reader, Configuration) (node.Demuxer, error)
 
 type TransformFactoryOptions struct {
-	Config    Configuration
-	Resources ResourceBudget
+	Config Configuration
 }
 
-type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)
-type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error)
+// Preparer is an optional node capability for resource-dependent setup. It is
+// called after routing and linking, before the pipeline starts processing.
+type Preparer interface {
+	Prepare(ResourceGrant) error
+}
 
-type FilterFactory func(media.StreamInfo, TransformFactoryOptions) (node.Filter, error)
+type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error)
+type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error)
+
+type FilterFactory func(media.StreamInfo, TransformFactoryOptions) (node.Filter, media.StreamInfo, error)

@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/sdk/catalog"
 	"github.com/spf13/cobra"
 )
 
@@ -32,72 +31,47 @@ func newListCommand() *cobra.Command {
 		Short: "List available plugins",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
+			value := catalog.Build()
 			if len(args) == 0 {
 				for _, role := range []string{"muxers", "demuxers", "encoders", "decoders", "filters"} {
-					if err := writeListedRole(command.OutOrStdout(), role); err != nil {
+					if err := writeListedRole(command.OutOrStdout(), value, role); err != nil {
 						return err
 					}
 				}
 				return nil
 			}
-			return writeListedRole(command.OutOrStdout(), args[0])
+			return writeListedRole(command.OutOrStdout(), value, args[0])
 		},
 	}
 }
 
-func writeListedRole(writer io.Writer, role string) error {
+func writeListedRole(writer io.Writer, value catalog.Catalog, role string) error {
 	switch role {
 	case "formats":
-		if err := writeRole(writer, "muxers", godec.DefaultMuxerRegistry); err != nil {
-			return err
-		}
-		return writeRole(writer, "demuxers", godec.DefaultDemuxerRegistry)
+		writeEntries(writer, "muxers", value.Muxers)
+		writeEntries(writer, "demuxers", value.Demuxers)
 	case "codecs":
-		if err := writeRole(writer, "encoders", godec.DefaultEncoderRegistry); err != nil {
-			return err
-		}
-		return writeRole(writer, "decoders", godec.DefaultDecoderRegistry)
+		writeEntries(writer, "encoders", value.Encoders)
+		writeEntries(writer, "decoders", value.Decoders)
 	case "muxers":
-		return writeRole(writer, role, godec.DefaultMuxerRegistry)
+		writeEntries(writer, role, value.Muxers)
 	case "demuxers":
-		return writeRole(writer, role, godec.DefaultDemuxerRegistry)
+		writeEntries(writer, role, value.Demuxers)
 	case "encoders":
-		return writeRole(writer, role, godec.DefaultEncoderRegistry)
+		writeEntries(writer, role, value.Encoders)
 	case "decoders":
-		return writeRole(writer, role, godec.DefaultDecoderRegistry)
+		writeEntries(writer, role, value.Decoders)
 	case "filters":
-		return writeRole(writer, role, godec.DefaultFilterRegistry)
+		writeEntries(writer, role, value.Filters)
 	default:
 		return fmt.Errorf("unknown plugin role %q; use formats, codecs, muxers, demuxers, encoders, decoders, or filters", role)
-	}
-}
-
-func writeRole[V registry.Manifest](writer io.Writer, title string, values *registry.Registry[V]) error {
-	names := values.Names()
-	_, _ = fmt.Fprintf(writer, "%s:\n", title)
-	for _, name := range names {
-		manifest, err := values.Lookup(name)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(writer, "  %-12s %s\n", name, manifestDescription(manifest))
 	}
 	return nil
 }
 
-func manifestDescription(manifest registry.Manifest) string {
-	switch manifest := any(manifest).(type) {
-	case registry.MuxerManifest:
-		return manifest.Description
-	case registry.DemuxerManifest:
-		return manifest.Description
-	case registry.EncoderManifest:
-		return manifest.Description
-	case registry.DecoderManifest:
-		return manifest.Description
-	case registry.FilterManifest:
-		return manifest.Description
-	default:
-		return ""
+func writeEntries(writer io.Writer, title string, entries []catalog.PluginEntry) {
+	_, _ = fmt.Fprintf(writer, "%s:\n", title)
+	for _, entry := range entries {
+		_, _ = fmt.Fprintf(writer, "  %-12s %s\n", entry.Name, entry.Description)
 	}
 }

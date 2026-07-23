@@ -7,13 +7,18 @@ import (
 )
 
 type NodeDescription struct {
-	ID            string
-	Role          manifest.NodeType
-	Plugin        string
-	Configuration registry.Configuration
-	Resources     registry.ResourceBudget
+	ID     string
+	Role   manifest.NodeType
+	Plugin string
+	// Configuration is excluded from JSON: plugin config types are free to
+	// hold non-marshalable values (e.g. codec-flac's Apodizations, which are
+	// func([]float64)), so this live object was never meant as a wire
+	// format. Use cliflag.DescribeStruct for a safe, field-by-field view.
+	Configuration registry.Configuration `json:"-"`
+	Resources     registry.ResourceGrant
 	Inputs        []media.StreamInfo
 	Outputs       []media.StreamInfo
+	AutoInserted  bool
 }
 
 type EdgeDescription struct {

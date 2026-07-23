@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
@@ -30,19 +31,24 @@ type Decoder struct {
 	startSample  uint64
 	md5          *flac.PCMMD5
 
-	workers    int
-	jobs       chan frameJob
-	jobsClosed bool
-	closed     bool
-	workerWG   sync.WaitGroup
-	workspace  decodeWorkspace
+	// Sequential path (pool == nil): reused across the whole stream.
+	workspace decodeWorkspace
+
+	// Parallel path (pool != nil): jobs are submitted as tasks to a worker
+	// pool shared with every other parallel-eligible stage in the
+	// conversion. Each task borrows a scratch decodeWorkspace from scratch
+	// so concurrent tasks never contend.
+	pool    *registry.WorkerPool
+	scratch sync.Pool
+	closed  bool
 }
 
-func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, parallelism int) *Decoder {
-	if parallelism < 1 {
-		parallelism = 1
-	}
-	decoder := &Decoder{cfg: cfg, workers: parallelism}
+// NewDecoder builds a decoder. pool may be nil, in which case packets are
+// decoded synchronously; otherwise it must be a pool this decoder is allowed
+// to submit work to for its entire lifetime (the caller retains ownership and
+// is responsible for closing it once every stage sharing it has finished).
+func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, pool *registry.WorkerPool) *Decoder {
+	decoder := &Decoder{cfg: cfg, pool: pool}
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -66,6 +72,19 @@ func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, parallelism i
 		}
 	}
 	return decoder
+}
+
+func (d *Decoder) Prepare(resources registry.ResourceGrant) error {
+	if d.closed {
+		return errors.New("flac decoder is closed")
+	}
+	if len(d.pendingQueue) != 0 {
+		return errors.New("flac decoder cannot change resources after processing starts")
+	}
+	if d.pool == nil {
+		d.pool = resources.Pool
+	}
+	return nil
 }
 
 func buildStreamInfo(sampleRate, channels, bitsPerSample int) streaminfo.StreamInfo {
@@ -95,11 +114,8 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	if d.jobsClosed {
-		return engine.ErrEOF
-	}
 	entry := &pendingEntry{done: make(chan struct{})}
-	if d.workers <= 1 {
+	if d.pool == nil {
 		entry.done = nil
 		decodeJob(frameJob{
 			data:   pkt.Data(),
@@ -111,15 +127,15 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		d.pendingQueue = append(d.pendingQueue, entry)
 		return nil
 	}
-	d.startWorkers()
 	d.pendingQueue = append(d.pendingQueue, entry)
-	d.jobs <- frameJob{
+	job := frameJob{
 		data:   append([]byte(nil), pkt.Data()...),
 		pts:    pkt.PTS,
 		info:   d.info,
 		strict: d.cfg.Strict,
 		entry:  entry,
 	}
+	d.pool.Submit(func() { d.runJob(job) })
 	return nil
 }
 
@@ -172,36 +188,36 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 
 func (d *Decoder) Flush() error {
 	d.flushed = true
-	d.closeJobs()
 	return nil
 }
 
+// Close stops accepting further work without releasing pending frames. It
+// does not close the pool: that is shared with other stages and owned by
+// whoever constructed this decoder. Safe whether or not Flush ran first, and
+// safe to call more than once.
 func (d *Decoder) Close() error {
 	if d.closed {
 		return nil
 	}
 	d.closed = true
 	d.flushed = true
-	d.closeJobs()
 	for _, entry := range d.pendingQueue {
-		if entry != nil && entry.audio != nil {
-			entry.audio.Release()
-			entry.audio = nil
+		if entry != nil {
+			// Wait for this decoder's own outstanding task, if any, so its
+			// frame exists before being released. This never waits on other
+			// stages' work: the pool is shared, but each entry.done only
+			// depends on the single task that produces it.
+			if entry.done != nil {
+				<-entry.done
+			}
+			if entry.audio != nil {
+				entry.audio.Release()
+				entry.audio = nil
+			}
 		}
 	}
 	d.pendingQueue = nil
 	return nil
-}
-
-func (d *Decoder) closeJobs() {
-	if d.jobsClosed {
-		return
-	}
-	d.jobsClosed = true
-	if d.jobs != nil {
-		close(d.jobs)
-		d.workerWG.Wait()
-	}
 }
 
 func (d *Decoder) initMD5() {

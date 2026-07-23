@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -16,6 +17,8 @@ type pipelineState uint8
 
 const (
 	pipelineReady pipelineState = iota
+	pipelinePreparing
+	pipelinePrepared
 	pipelineRunning
 	pipelineClosing
 	pipelineClosed
@@ -25,18 +28,25 @@ const (
 // single-use: Run may be called exactly once, and always closes every node
 // before returning.
 type Pipeline struct {
-	mu          sync.Mutex
-	state       pipelineState
-	nodes       []node.Node
-	description Description
-	observation ObservationMode
-	edgeMetrics []*edgeMetrics
-	nodeMetrics []*nodeMetrics
-	startedAt   time.Time
-	finishedAt  time.Time
-	cancel      context.CancelFunc
-	done        chan struct{}
-	closeErr    error
+	mu              sync.Mutex
+	state           pipelineState
+	nodes           []node.Node
+	prepareNodes    []node.Node
+	preloadNodes    []node.StagedInput
+	runNodes        []node.Node
+	runIndexes      []int
+	description     Description
+	observation     ObservationMode
+	edgeMetrics     []*edgeMetrics
+	nodeMetrics     []*nodeMetrics
+	resourceClosers []func() error
+	startedAt       time.Time
+	finishedAt      time.Time
+	cancel          context.CancelFunc
+	prepareDone     chan struct{}
+	prepareErr      error
+	done            chan struct{}
+	closeErr        error
 }
 
 func New(nodes ...node.Node) (*Pipeline, error) {
@@ -65,19 +75,28 @@ func New(nodes ...node.Node) (*Pipeline, error) {
 	for i := range owned {
 		description.Nodes[i].ID = fmt.Sprintf("node:%d", i)
 	}
-	return newPipeline(owned, description, ObservationOff, nil)
+	return newPipeline(owned, description, ObservationOff, nil, nil, preparationPlan{run: owned, runIndex: makeIndexes(len(owned))})
 }
 
-func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics) (*Pipeline, error) {
+func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics, resourceClosers []func() error, preparation preparationPlan) (*Pipeline, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("%w: pipeline has no nodes", ErrInvalidPipeline)
 	}
 	pipeline := &Pipeline{
-		nodes:       append([]node.Node(nil), nodes...),
-		description: description,
-		observation: observation,
-		edgeMetrics: edges,
-		done:        make(chan struct{}),
+		nodes:           append([]node.Node(nil), nodes...),
+		prepareNodes:    append([]node.Node(nil), preparation.nodes...),
+		preloadNodes:    append([]node.StagedInput(nil), preparation.preloads...),
+		runNodes:        append([]node.Node(nil), preparation.run...),
+		runIndexes:      append([]int(nil), preparation.runIndex...),
+		description:     description,
+		observation:     observation,
+		edgeMetrics:     edges,
+		resourceClosers: resourceClosers,
+		done:            make(chan struct{}),
+	}
+	if len(pipeline.runNodes) == 0 {
+		pipeline.runNodes = append([]node.Node(nil), nodes...)
+		pipeline.runIndexes = makeIndexes(len(nodes))
 	}
 	if observation == ObservationMetrics {
 		pipeline.nodeMetrics = make([]*nodeMetrics, len(nodes))
@@ -90,6 +109,14 @@ func newPipeline(nodes []node.Node, description Description, observation Observa
 		}
 	}
 	return pipeline, nil
+}
+
+func makeIndexes(length int) []int {
+	indexes := make([]int, length)
+	for i := range indexes {
+		indexes[i] = i
+	}
+	return indexes
 }
 
 func isNilNode(value node.Node) bool {
@@ -109,9 +136,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("%w: run context is nil", ErrInvalidPipeline)
 	}
+	if err := p.Prepare(ctx); err != nil {
+		return err
+	}
 
 	p.mu.Lock()
-	if p.state != pipelineReady {
+	if p.state != pipelinePrepared {
 		state := p.state
 		p.mu.Unlock()
 		return fmt.Errorf("%w: cannot run pipeline in state %s", ErrInvalidPipeline, state)
@@ -124,21 +154,108 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	var runErr error
 	if p.observation == ObservationMetrics {
-		runErr = runNodesObserved(runContext, p.nodes, p.nodeMetrics)
+		runErr = runNodesObservedSelected(runContext, p.runNodes, p.runIndexes, p.nodeMetrics)
 	} else {
-		runErr = runNodes(runContext, p.nodes)
+		runErr = runNodes(runContext, p.runNodes)
 	}
 	cancel()
 	return p.finish(runErr)
 }
 
+// Prepare performs resource-dependent node setup. It is safe to call more
+// than once; Run calls it automatically when needed.
+func (p *Pipeline) Prepare(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("%w: prepare context is nil", ErrInvalidPipeline)
+	}
+
+	p.mu.Lock()
+	switch p.state {
+	case pipelinePrepared, pipelineRunning:
+		p.mu.Unlock()
+		return nil
+	case pipelineReady:
+		p.state = pipelinePreparing
+		p.prepareDone = make(chan struct{})
+	case pipelinePreparing:
+		done := p.prepareDone
+		p.mu.Unlock()
+		<-done
+		p.mu.Lock()
+		err := p.prepareErr
+		p.mu.Unlock()
+		return err
+	default:
+		state := p.state
+		p.mu.Unlock()
+		return fmt.Errorf("%w: cannot prepare pipeline in state %s", ErrInvalidPipeline, state)
+	}
+	nodes := append([]node.Node(nil), p.nodes...)
+	prepareNodes := append([]node.Node(nil), p.prepareNodes...)
+	preloadNodes := append([]node.StagedInput(nil), p.preloadNodes...)
+	description := p.description.Clone()
+	p.mu.Unlock()
+
+	for i, current := range nodes {
+		if err := ctx.Err(); err != nil {
+			return p.finishPrepare(err)
+		}
+		preparer, ok := current.(registry.Preparer)
+		if !ok {
+			continue
+		}
+		var grant registry.ResourceGrant
+		if i < len(description.Nodes) {
+			grant = description.Nodes[i].Resources
+		}
+		if err := preparer.Prepare(grant); err != nil {
+			return p.finishPrepare(fmt.Errorf("prepare node %d (%T): %w", i, current, err))
+		}
+	}
+	if err := runPreparation(ctx, prepareNodes, preloadNodes); err != nil {
+		return p.finishPrepare(err)
+	}
+
+	p.mu.Lock()
+	if p.state == pipelinePreparing {
+		p.state = pipelinePrepared
+		p.prepareErr = nil
+		close(p.prepareDone)
+		p.prepareDone = nil
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *Pipeline) finishPrepare(prepareErr error) error {
+	p.mu.Lock()
+	p.state = pipelineClosing
+	p.finishedAt = time.Now()
+	p.mu.Unlock()
+	p.completeClose()
+	p.mu.Lock()
+	result := errors.Join(prepareErr, p.closeErr)
+	p.prepareErr = result
+	if p.prepareDone != nil {
+		close(p.prepareDone)
+		p.prepareDone = nil
+	}
+	p.mu.Unlock()
+	return result
+}
+
 func (p *Pipeline) Close() error {
 	p.mu.Lock()
 	switch p.state {
-	case pipelineReady:
+	case pipelineReady, pipelinePrepared:
 		p.state = pipelineClosing
 		p.mu.Unlock()
 		p.completeClose()
+	case pipelinePreparing:
+		done := p.prepareDone
+		p.mu.Unlock()
+		<-done
+		return p.Close()
 	case pipelineRunning:
 		cancel := p.cancel
 		done := p.done
@@ -219,14 +336,34 @@ func (p *Pipeline) Snapshot() Snapshot {
 }
 
 func (p *Pipeline) completeClose() {
-	closeErr := closeNodes(p.nodes)
+	// Resources (e.g. a worker pool shared by several nodes) are closed only
+	// after every node has closed, since a node's own Close may still submit
+	// or await work on a shared resource.
+	closeErr := errors.Join(closeNodes(p.nodes), closeResources(p.resourceClosers))
 
 	p.mu.Lock()
 	p.closeErr = closeErr
 	p.state = pipelineClosed
 	p.nodes = nil
+	p.prepareNodes = nil
+	p.preloadNodes = nil
+	p.runNodes = nil
+	p.resourceClosers = nil
 	close(p.done)
 	p.mu.Unlock()
+}
+
+func runPreparation(ctx context.Context, nodes []node.Node, preloaders []node.StagedInput) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for _, current := range nodes {
+		current := current
+		group.Go(func() error { return current.Start(groupContext) })
+	}
+	for _, current := range preloaders {
+		current := current
+		group.Go(func() error { return current.Preload(groupContext) })
+	}
+	return group.Wait()
 }
 
 func runNodes(ctx context.Context, nodes []node.Node) error {
@@ -255,6 +392,22 @@ func runNodesObserved(ctx context.Context, nodes []node.Node, metrics []*nodeMet
 	return group.Wait()
 }
 
+func runNodesObservedSelected(ctx context.Context, nodes []node.Node, indexes []int, metrics []*nodeMetrics) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for i, current := range nodes {
+		current := current
+		index := indexes[i]
+		group.Go(func() error {
+			metric := metrics[index]
+			metric.start()
+			err := current.Start(groupContext)
+			metric.finish(err)
+			return err
+		})
+	}
+	return group.Wait()
+}
+
 func closeNodes(nodes []node.Node) error {
 	var result error
 	for i := len(nodes) - 1; i >= 0; i-- {
@@ -269,6 +422,10 @@ func (s pipelineState) String() string {
 	switch s {
 	case pipelineReady:
 		return "ready"
+	case pipelinePreparing:
+		return "preparing"
+	case pipelinePrepared:
+		return "prepared"
 	case pipelineRunning:
 		return "running"
 	case pipelineClosing:
