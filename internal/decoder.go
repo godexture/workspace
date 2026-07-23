@@ -9,7 +9,7 @@ import (
 	"github.com/godexture/codec-pcm/internal/g711"
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/buffer"
 )
 
 type DecoderConfig struct {
@@ -44,7 +44,7 @@ func GetDecodedAttributes(codec media.CodecID, attrs media.AudioAttributes) medi
 
 type Decoder struct {
 	config DecoderConfig
-	slot   engine.Slot[*media.Packet]
+	slot   buffer.Slot[*media.Packet]
 }
 
 func NewDecoder(stream media.StreamInfo, cfg DecoderConfig) (*Decoder, error) {
