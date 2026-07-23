@@ -12,6 +12,7 @@ import (
 	"math"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/framequeue"
 	"github.com/godexture/sdk/audio"
@@ -72,32 +73,40 @@ func New(cfg config.ConvolutionConfig) (*Engine, error) {
 	if hop == 0 {
 		hop = defaultBlockSize
 	}
-	plan, err := fft.NewRealPlan(2 * hop)
-	if err != nil {
-		return nil, err
-	}
-
-	ir := normalizeImpulseResponse(cfg.ImpulseResponse, cfg.Normalize)
-	partitions := make([][]partition, len(ir))
-	for ch, samples := range ir {
-		parts, err := buildPartitions(plan, hop, samples)
-		if err != nil {
-			return nil, err
-		}
-		partitions[ch] = parts
-	}
-
 	return &Engine{
-		cfg:        cfg,
-		hop:        hop,
-		plan:       plan,
-		bins:       plan.Bins(),
-		partitions: partitions,
-		tailHops:   len(partitions[0]) - 1,
+		cfg: cfg,
+		hop: hop,
 	}, nil
 }
 
+func (e *Engine) Prepare(_ registry.ResourceGrant) error {
+	if e.plan != nil {
+		return nil
+	}
+	plan, err := fft.NewRealPlan(2 * e.hop)
+	if err != nil {
+		return err
+	}
+	ir := normalizeImpulseResponse(e.cfg.ImpulseResponse, e.cfg.Normalize)
+	partitions := make([][]partition, len(ir))
+	for ch, samples := range ir {
+		parts, err := buildPartitions(plan, e.hop, samples)
+		if err != nil {
+			return err
+		}
+		partitions[ch] = parts
+	}
+	e.plan = plan
+	e.bins = plan.Bins()
+	e.partitions = partitions
+	e.tailHops = len(partitions[0]) - 1
+	return nil
+}
+
 func (e *Engine) SendFrame(frame *media.Frame) error {
+	if e.plan == nil {
+		return fmt.Errorf("convolve is not prepared")
+	}
 	if e.flushed {
 		return fmt.Errorf("convolve received a frame after flush")
 	}
