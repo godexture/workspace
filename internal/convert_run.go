@@ -36,6 +36,19 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 		return err
 	}
 	defer inputFile.Close()
+	auxiliaryInputs := make(map[string]io.ReadSeeker, len(options.inputs))
+	for _, value := range options.inputs {
+		name, path, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return fmt.Errorf("input: %w", parseErr)
+		}
+		auxiliaryFile, openErr := os.Open(path)
+		if openErr != nil {
+			return fmt.Errorf("input %q: %w", name, openErr)
+		}
+		defer auxiliaryFile.Close()
+		auxiliaryInputs[name] = auxiliaryFile
+	}
 
 	inputInfo, err := inputFile.Stat()
 	if err != nil {
@@ -108,7 +121,7 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	}
 
 	negotiationStarted := time.Now()
-	built, err = conversion.Build(command.Context(), input, output, spec, observation)
+	built, err = conversion.Build(command.Context(), conversion.InputSet{Main: input, Aux: auxiliaryInputs}, output, spec, observation)
 	report.Phases.Negotiation = time.Since(negotiationStarted)
 	if err != nil {
 		return err
