@@ -68,3 +68,32 @@ func TestBuildSpecAppliesCodecValuesWithoutOverridingEncoderSelection(t *testing
 		t.Fatalf("buildSpec() encoder = %#v", spec.Encoder)
 	}
 }
+
+func TestBuildSpecWiresNamedAuxiliaryInput(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	spec, err := buildSpec(convertOptions{
+		filters: []string{"reverb=convolve:wet-dry-mix=1"},
+		inputs:  []string{"IR=cabinet.wav"},
+		wires:   []string{"reverb.ir=IR"},
+	}, "output.wav", outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.AuxInputs["IR"]; !ok {
+		t.Fatalf("buildSpec() auxiliary inputs = %#v", spec.AuxInputs)
+	}
+	if got := spec.Filters[0].Inputs["ir"]; got != "IR" {
+		t.Fatalf("buildSpec() ir wire = %q, want IR", got)
+	}
+}
+
+func TestBuildSpecRejectsAmbiguousDefaultFilterAlias(t *testing.T) {
+	_, err := buildSpec(convertOptions{
+		filters: []string{"gain", "gain"},
+		inputs:  []string{"IR=cabinet.wav"},
+		wires:   []string{"gain.ir=IR"},
+	}, "output.wav", catalog.Build().Outputs)
+	if err == nil {
+		t.Fatal("buildSpec() accepted an ambiguous filter alias")
+	}
+}

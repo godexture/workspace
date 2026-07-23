@@ -10,6 +10,7 @@ package convolve
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
@@ -46,6 +47,7 @@ type Engine struct {
 	hop  int
 	plan *fft.RealPlan
 	bins int
+	pool *registry.WorkerPool
 
 	partitions [][]partition // [irChannel][partition]; len 1 when broadcasting to every input channel
 	tailHops   int           // extra silent hops owed on Flush to drain the impulse response tail
@@ -85,7 +87,7 @@ func New(cfg config.ConvolutionConfig) (*Engine, error) {
 	}, nil
 }
 
-func (e *Engine) Prepare(_ registry.ResourceGrant) error {
+func (e *Engine) Prepare(resources registry.ResourceGrant) error {
 	if e.plan != nil {
 		return nil
 	}
@@ -95,6 +97,7 @@ func (e *Engine) Prepare(_ registry.ResourceGrant) error {
 	}
 	e.plan = plan
 	e.bins = plan.Bins()
+	e.pool = resources.Pool
 	if len(e.cfg.ImpulseResponse) == 0 {
 		return nil
 	}
@@ -105,7 +108,7 @@ func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {
 	ir := normalizeImpulseResponse(impulse, e.cfg.Normalize)
 	partitions := make([][]partition, len(ir))
 	for ch, samples := range ir {
-		parts, err := buildPartitions(e.plan, e.hop, samples)
+		parts, err := buildPartitions(e.plan, e.hop, samples, e.pool)
 		if err != nil {
 			return err
 		}
@@ -378,25 +381,59 @@ func (e *Engine) pushBlock(channels audio.Channels) error {
 // buildPartitions splits samples into hop-length segments (the last one
 // zero-padded), and forward-transforms each into a spectrum ready for the
 // frequency-domain delay line.
-func buildPartitions(plan *fft.RealPlan, hop int, samples []float32) ([]partition, error) {
+func buildPartitions(plan *fft.RealPlan, hop int, samples []float32, pool *registry.WorkerPool) ([]partition, error) {
 	count := (len(samples) + hop - 1) / hop
-	windowed := make([]float32, 2*hop)
 	result := make([]partition, count)
-	for i := range result {
-		for j := range windowed {
-			windowed[j] = 0
+	if pool == nil || count == 1 {
+		for index := range result {
+			part, err := transformPartition(plan, hop, samples, index)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = part
 		}
-		start := i * hop
-		end := min(start+hop, len(samples))
-		copy(windowed[:hop], samples[start:end])
+		return result, nil
+	}
 
-		spectrum := make([]complex64, plan.Bins())
-		if err := plan.Forward(spectrum, windowed); err != nil {
-			return nil, err
-		}
-		result[i] = partition{spectrum: spectrum}
+	var group sync.WaitGroup
+	var errors struct {
+		sync.Mutex
+		value error
+	}
+	for i := range result {
+		index := i
+		group.Add(1)
+		pool.Submit(func() {
+			defer group.Done()
+			part, err := transformPartition(plan.Clone(), hop, samples, index)
+			if err != nil {
+				errors.Lock()
+				if errors.value == nil {
+					errors.value = err
+				}
+				errors.Unlock()
+				return
+			}
+			result[index] = part
+		})
+	}
+	group.Wait()
+	if errors.value != nil {
+		return nil, errors.value
 	}
 	return result, nil
+}
+
+func transformPartition(plan *fft.RealPlan, hop int, samples []float32, index int) (partition, error) {
+	windowed := make([]float32, 2*hop)
+	start := index * hop
+	end := min(start+hop, len(samples))
+	copy(windowed[:hop], samples[start:end])
+	spectrum := make([]complex64, plan.Bins())
+	if err := plan.Forward(spectrum, windowed); err != nil {
+		return partition{}, err
+	}
+	return partition{spectrum: spectrum}, nil
 }
 
 // normalizeImpulseResponse scales each impulse response channel down,

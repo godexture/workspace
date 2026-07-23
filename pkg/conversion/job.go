@@ -36,12 +36,12 @@ type Job struct {
 // StartJob negotiates, builds, and runs a conversion in the background. The
 // returned Job stays valid until Close is called; Snapshot and Cancel are
 // safe to call concurrently with the running conversion.
-func StartJob(ctx context.Context, input io.ReadSeeker, output io.Writer, spec Spec) (*Job, error) {
+func StartJob(ctx context.Context, inputs InputSet, output io.Writer, spec Spec) (*Job, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	// ObservationMetrics (not ObservationProgress) is required for per-node
 	// state ("running"/"completed"/"failed"); Progress.Nodes is core to the
 	// UI's node-by-node status display.
-	built, err := Build(runCtx, input, output, spec, pipeline.ObservationMetrics)
+	built, err := Build(runCtx, inputs, output, spec, pipeline.ObservationMetrics)
 	if err != nil {
 		cancel()
 		return nil, err

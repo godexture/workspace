@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"math"
 	"testing"
 
@@ -96,7 +97,7 @@ func TestBuildRunsWavToFlac(t *testing.T) {
 	writeTestWAV(t, &wav)
 
 	var flac bytes.Buffer
-	built, err := conversion.Build(context.Background(), bytes.NewReader(wav.Bytes()), &flac, conversion.Spec{
+	built, err := conversion.Build(context.Background(), conversion.InputSet{Main: bytes.NewReader(wav.Bytes())}, &flac, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "flac"},
 		Codec: string(media.CodecFLAC),
 	}, pipeline.ObservationProgress)
@@ -127,6 +128,33 @@ func TestBuildRunsWavToFlac(t *testing.T) {
 	}
 	if len(progress.Nodes) == 0 {
 		t.Fatal("Snapshot() reported no nodes")
+	}
+}
+
+func TestBuildPreloadsNamedAuxiliaryInput(t *testing.T) {
+	var mainWAV, impulseWAV, output bytes.Buffer
+	writeTestWAV(t, &mainWAV)
+	writeTestWAV(t, &impulseWAV)
+
+	built, err := conversion.Build(context.Background(), conversion.InputSet{
+		Main: bytes.NewReader(mainWAV.Bytes()),
+		Aux:  map[string]io.ReadSeeker{"IR": bytes.NewReader(impulseWAV.Bytes())},
+	}, &output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{Name: "convolve", Values: map[string]string{"wet-dry-mix": "1"}},
+			Inputs:     map[string]string{"ir": "IR"},
+		}},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output.Len() == 0 {
+		t.Fatal("Run() produced no output")
 	}
 }
 

@@ -31,6 +31,8 @@ func newConvertCommand() *cobra.Command {
 	command.Flags().IntVarP(&options.jobs, "jobs", "j", 0, "Maximum parallel jobs")
 	command.Flags().BoolVar(&options.force, "force", false, "Overwrite an existing output file")
 	command.Flags().StringArrayVar(&options.filters, "filter", nil, "Filter specification (name:key=value,...)")
+	command.Flags().StringArrayVarP(&options.inputs, "input", "i", nil, "Named auxiliary input (NAME=PATH)")
+	command.Flags().StringArrayVar(&options.wires, "wire", nil, "Connect FILTER_ALIAS.PORT to named input (FILTER_ALIAS.PORT=INPUT)")
 	command.Flags().StringVar(&options.progress, "progress", "auto", "Progress display: auto, always, or never")
 	command.Flags().BoolVar(&options.metrics, "metrics", false, "Report conversion and runtime metrics")
 	command.Flags().BoolVar(&options.dryRun, "dry-run", false, "Resolve and validate the pipeline without converting")
@@ -48,6 +50,8 @@ type convertOptions struct {
 	metrics  bool
 	dryRun   bool
 	filters  []string
+	inputs   []string
+	wires    []string
 }
 
 // buildSpec turns convert flags into a conversion.Spec. --format infers the
@@ -84,14 +88,81 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 	if spec.Decoder, err = parsePluginSpec(options.decoder); err != nil {
 		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
 	}
+	aliases := make(map[string][]int)
 	for _, value := range options.filters {
-		filter, parseErr := parsePluginSpec(value)
+		alias, filter, parseErr := parseFilterSpec(value)
 		if parseErr != nil {
 			return conversion.Spec{}, fmt.Errorf("filter: %w", parseErr)
 		}
-		spec.Filters = append(spec.Filters, conversion.FilterSpec{PluginSpec: *filter})
+		if alias == "" {
+			alias = filter.Name
+		}
+		aliases[alias] = append(aliases[alias], len(spec.Filters))
+		spec.Filters = append(spec.Filters, conversion.FilterSpec{PluginSpec: *filter, Alias: alias})
+	}
+	for _, value := range options.inputs {
+		name, _, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("input: %w", parseErr)
+		}
+		if _, exists := spec.AuxInputs[name]; exists {
+			return conversion.Spec{}, fmt.Errorf("input: duplicate name %q", name)
+		}
+		if spec.AuxInputs == nil {
+			spec.AuxInputs = make(map[string]conversion.AuxInputSpec)
+		}
+		spec.AuxInputs[name] = conversion.AuxInputSpec{}
+	}
+	for _, value := range options.wires {
+		left, name, parseErr := parseNamedValue(value)
+		if parseErr != nil {
+			return conversion.Spec{}, fmt.Errorf("wire: %w", parseErr)
+		}
+		separator := strings.LastIndex(left, ".")
+		if separator <= 0 || separator == len(left)-1 {
+			return conversion.Spec{}, fmt.Errorf("wire: invalid destination %q", left)
+		}
+		alias, port := left[:separator], left[separator+1:]
+		indexes := aliases[alias]
+		if len(indexes) != 1 {
+			return conversion.Spec{}, fmt.Errorf("wire: filter alias %q is ambiguous or unknown", alias)
+		}
+		if _, ok := spec.AuxInputs[name]; !ok {
+			return conversion.Spec{}, fmt.Errorf("wire: unknown input %q", name)
+		}
+		filter := &spec.Filters[indexes[0]]
+		if filter.Inputs == nil {
+			filter.Inputs = make(map[string]string)
+		}
+		if _, exists := filter.Inputs[port]; exists {
+			return conversion.Spec{}, fmt.Errorf("wire: duplicate destination %s", left)
+		}
+		filter.Inputs[port] = name
 	}
 	return spec, nil
+}
+
+func parseFilterSpec(value string) (string, *conversion.PluginSpec, error) {
+	colon := strings.IndexByte(value, ':')
+	equals := strings.IndexByte(value, '=')
+	if equals >= 0 && (colon < 0 || equals < colon) {
+		alias := value[:equals]
+		if alias == "" {
+			return "", nil, fmt.Errorf("filter alias must not be empty")
+		}
+		plugin, err := parsePluginSpec(value[equals+1:])
+		return alias, plugin, err
+	}
+	plugin, err := parsePluginSpec(value)
+	return "", plugin, err
+}
+
+func parseNamedValue(value string) (string, string, error) {
+	equals := strings.IndexByte(value, '=')
+	if equals <= 0 || equals == len(value)-1 {
+		return "", "", fmt.Errorf("want NAME=VALUE")
+	}
+	return value[:equals], value[equals+1:], nil
 }
 
 func parsePluginSpec(value string) (*conversion.PluginSpec, error) {

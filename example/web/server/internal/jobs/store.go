@@ -77,7 +77,7 @@ func (s *Store) Start(inputPath string, owned bool, spec conversion.Spec) (*Job,
 		return nil, err
 	}
 
-	conv, err := conversion.StartJob(context.Background(), input, output, spec)
+	conv, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: input}, output, spec)
 	if err != nil {
 		_ = input.Close()
 		_ = output.Close()
