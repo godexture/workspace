@@ -49,23 +49,46 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	return server, assetsDir
 }
 
-// multipartUpload builds a multipart/form-data body carrying a spec field
-// and either an uploaded "file" (when input is non-nil) or a "presetId"
-// field (when presetID is non-empty).
+// multipartUpload builds a single-main-input request in the current graph
+// upload format. Dedicated graph tests use multipartInputs below for aux data.
 func multipartUpload(t *testing.T, spec string, presetID string, input []byte) (string, io.Reader) {
+	t.Helper()
+	main := inputReference{Kind: "file"}
+	if presetID != "" {
+		main = inputReference{Kind: "preset", PresetID: presetID}
+	}
+	return multipartInputs(t, spec, inputManifest{Main: main, Aux: map[string]inputReference{}}, map[string][]byte{"main": input})
+}
+
+type inputReference struct {
+	Kind     string `json:"kind"`
+	PresetID string `json:"presetId,omitempty"`
+}
+
+type inputManifest struct {
+	Main inputReference            `json:"main"`
+	Aux  map[string]inputReference `json:"aux"`
+}
+
+func multipartInputs(t *testing.T, spec string, inputs inputManifest, files map[string][]byte) (string, io.Reader) {
 	t.Helper()
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	if err := writer.WriteField("spec", spec); err != nil {
 		t.Fatal(err)
 	}
-	if presetID != "" {
-		if err := writer.WriteField("presetId", presetID); err != nil {
-			t.Fatal(err)
-		}
+	encoded, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if input != nil {
-		part, err := writer.CreateFormFile("file", "input.wav")
+	if err := writer.WriteField("inputs", string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	for field, input := range files {
+		if input == nil {
+			continue
+		}
+		part, err := writer.CreateFormFile(field, "input.wav")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,6 +170,29 @@ func TestCatalogAndPresets(t *testing.T) {
 	}
 }
 
+func TestDescribeParameterizedFilter(t *testing.T) {
+	server, _ := newTestServer(t)
+	request := strings.NewReader(`{"name":"mixer","parameters":{"in":"2","out":"1"}}`)
+	resp, err := http.Post(server.URL+"/api/filters/describe", "application/json", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("describe status = %d", resp.StatusCode)
+	}
+	var filter struct {
+		Inputs  []string `json:"inputs"`
+		Outputs []string `json:"outputs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&filter); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(filter.Inputs, ",") != "in0,in1" || strings.Join(filter.Outputs, ",") != "out0" {
+		t.Fatalf("mixer topology = %#v", filter)
+	}
+}
+
 func TestResolvePipelinePreview(t *testing.T) {
 	server, _ := newTestServer(t)
 
@@ -168,6 +214,36 @@ func TestResolvePipelinePreview(t *testing.T) {
 	if len(description.Nodes) == 0 {
 		t.Fatal("resolve returned no nodes")
 	}
+}
+
+func TestResolvePipelinePreviewWithAuxiliaryUpload(t *testing.T) {
+	server, _ := newTestServer(t)
+	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolve","inputs":{"ir":{"alias":"ir"}}}]}`
+	contentType, body := multipartInputs(t, spec, inputManifest{
+		Main: inputReference{Kind: "file"},
+		Aux:  map[string]inputReference{"ir": {Kind: "file"}},
+	}, map[string][]byte{"main": testWAVBytes(t), "aux:ir": testWAVBytes(t)})
+	resp, err := http.Post(server.URL+"/api/pipelines/resolve", contentType, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("resolve status = %d: %s", resp.StatusCode, data)
+	}
+	var description struct {
+		Edges []struct{ ToPort string }
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&description); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range description.Edges {
+		if edge.ToPort == "ir" {
+			return
+		}
+	}
+	t.Fatalf("resolved graph has no auxiliary ir edge: %#v", description.Edges)
 }
 
 // TestResolvePipelinePreviewWithFLACEncoderJSONEncodes guards against a

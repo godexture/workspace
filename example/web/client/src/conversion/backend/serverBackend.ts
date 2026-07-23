@@ -8,9 +8,13 @@ function buildFormData(input: InputSource, spec: ConversionSpec): FormData {
     const form = new FormData();
     form.set("spec", JSON.stringify(spec));
     if (input.kind === "upload") {
-        form.set("file", input.file);
+        form.set("inputs", JSON.stringify({ main: { kind: "file" }, aux: {} }));
+        form.set("main", input.file);
     } else {
-        form.set("presetId", input.preset.id);
+        form.set("inputs", JSON.stringify({
+            main: { kind: "preset", presetId: input.preset.id },
+            aux: {},
+        }));
     }
     return form;
 }

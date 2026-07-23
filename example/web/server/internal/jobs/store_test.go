@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/sdk/conversion"
 
 	_ "github.com/godexture/codec-pcm"
+	_ "github.com/godexture/filter-audio"
 	_ "github.com/godexture/format-wav"
 )
 
@@ -45,11 +46,15 @@ func waitDone(t *testing.T, job *jobs.Job) {
 	}
 }
 
+func ownedInput(path string) jobs.Inputs {
+	return jobs.Inputs{Main: jobs.Input{Path: path, Owned: true}}
+}
+
 func TestStoreStartOwnedInputIsDeletedOnRemove(t *testing.T) {
 	store := newStore(t)
 	inputPath := writeInput(t, store)
 
-	job, err := store.Start(inputPath, true, conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
+	job, err := store.Start(ownedInput(inputPath), conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -89,7 +94,7 @@ func TestStoreStartUnownedInputSurvivesRemove(t *testing.T) {
 	}
 	sharedFile.Close()
 
-	job, err := store.Start(sharedPath, false, conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
+	job, err := store.Start(jobs.Inputs{Main: jobs.Input{Path: sharedPath}}, conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -101,11 +106,43 @@ func TestStoreStartUnownedInputSurvivesRemove(t *testing.T) {
 	}
 }
 
+func TestStoreRemovesEveryOwnedInput(t *testing.T) {
+	store := newStore(t)
+	mainPath := writeInput(t, store)
+	impulsePath := writeInput(t, store)
+
+	job, err := store.Start(jobs.Inputs{
+		Main: jobs.Input{Path: mainPath, Owned: true},
+		Aux:  map[string]jobs.Input{"ir": {Path: impulsePath, Owned: true}},
+	}, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{Name: "convolve"},
+			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "ir"}},
+		}},
+		AuxInputs: map[string]conversion.AuxInputSpec{"ir": {}},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitDone(t, job)
+	if err := job.Err(); err != nil {
+		t.Fatalf("job.Err() = %v", err)
+	}
+
+	store.Remove(job.ID)
+	for _, path := range []string{mainPath, impulsePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("owned input %s was not deleted: %v", path, err)
+		}
+	}
+}
+
 func TestStoreCancel(t *testing.T) {
 	store := newStore(t)
 	inputPath := writeInput(t, store)
 
-	job, err := store.Start(inputPath, true, conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
+	job, err := store.Start(ownedInput(inputPath), conversion.Spec{Muxer: conversion.PluginSpec{Name: "wav"}})
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
