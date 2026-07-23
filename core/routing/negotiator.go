@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"runtime"
+	"sort"
 
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -45,6 +46,18 @@ func NewNegotiator(
 
 type FilterSpec struct {
 	Config registry.Configuration
+	Inputs map[string]string
+}
+
+type AuxInputSpec struct {
+	Source io.ReadSeeker
+
+	DemuxManifest registry.DemuxerManifest
+	DemuxConfig   registry.Configuration
+
+	DecoderManifest registry.DecoderManifest
+	DecodeConfig    registry.Configuration
+	Filters         []FilterSpec
 }
 
 type ConversionSpec struct {
@@ -58,6 +71,7 @@ type ConversionSpec struct {
 	DecoderManifest registry.DecoderManifest
 	DecodeConfig    registry.Configuration
 	Filters         []FilterSpec
+	AuxInputs       map[string]AuxInputSpec
 
 	EncoderManifest registry.EncoderManifest
 	TargetCodec     media.CodecID
@@ -91,7 +105,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if n.decoderResolver == nil || n.encoderResolver == nil || n.demuxerResolver == nil || n.muxerResolver == nil {
 		return nil, fmt.Errorf("muxer, demuxer, encoder, and decoder resolvers must be provided")
 	}
-	if len(spec.Filters) > 0 && n.filterResolver == nil {
+	if (len(spec.Filters) > 0 || auxFiltersRequested(spec.AuxInputs)) && n.filterResolver == nil {
 		return nil, fmt.Errorf("filter resolver must be provided when filters are requested")
 	}
 	if spec.Input == nil {
@@ -159,8 +173,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		}
 	}
 
-	plans := make([]transformPlan, 0, 2+len(spec.Filters))
 	bridgeID := 0
+	auxPaths, err := n.negotiateAuxPaths(ctx, spec.AuxInputs, geometry, &bridgeID)
+	if err != nil {
+		return nil, err
+	}
+	plans := make([]transformPlan, 0, 2+len(spec.Filters))
 	currentStream := inputStream
 
 	decoderManifest := spec.DecoderManifest
@@ -334,14 +352,60 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, fmt.Errorf("configure muxer %s: %w", muxManifest.Name, err)
 	}
 
+	auxNames := make([]string, 0, len(auxPaths))
+	for name := range auxPaths {
+		auxNames = append(auxNames, name)
+	}
+	sort.Strings(auxNames)
+	auxEdges := make([]pipeline.EdgeDef, 0)
+	usedAux := make(map[string]struct{})
+	for index, filterSpec := range spec.Filters {
+		for port, name := range filterSpec.Inputs {
+			if port == "in" {
+				return nil, fmt.Errorf("filter %d input port in is reserved for the main stream", index)
+			}
+			path, ok := auxPaths[name]
+			if !ok {
+				return nil, fmt.Errorf("filter %d input port %q references unknown auxiliary input %q", index, port, name)
+			}
+			if _, used := usedAux[name]; used {
+				return nil, fmt.Errorf("auxiliary input %q is connected more than once", name)
+			}
+			filter, err := n.filterResolver.ResolveFilter(filterSpec.Config)
+			if err != nil {
+				return nil, fmt.Errorf("resolve filter %d for auxiliary input: %w", index, err)
+			}
+			requirements, err := filter.Requirements(port, path.output.Codec, filterSpec.Config)
+			if err != nil {
+				return nil, fmt.Errorf("resolve filter %d port %q requirements: %w", index, port, err)
+			}
+			if !manifest.MatchesAny(requirements, path.output) {
+				return nil, fmt.Errorf("auxiliary input %q does not satisfy filter %d port %q", name, index, port)
+			}
+			usedAux[name] = struct{}{}
+			auxEdges = append(auxEdges, pipeline.EdgeDef{FromNode: path.tailID, FromPort: "out", ToNode: fmt.Sprintf("filter:%d", index), ToPort: port, Stream: path.output})
+		}
+	}
+	for _, name := range auxNames {
+		if _, used := usedAux[name]; !used {
+			return nil, fmt.Errorf("auxiliary input %q is not connected", name)
+		}
+	}
+
+	allPlans := make([]transformPlan, 0, len(plans))
+	for _, name := range auxNames {
+		allPlans = append(allPlans, auxPaths[name].plans...)
+	}
+	allPlans = append(allPlans, plans...)
+
 	parallelism := spec.Resources.Parallelism
 	if parallelism == 0 {
 		parallelism = runtime.GOMAXPROCS(0)
 	}
-	requests := make([]registry.ResourceRequest, len(plans))
+	requests := make([]registry.ResourceRequest, len(allPlans))
 	needsPool := false
-	for i := range plans {
-		requests[i] = plans[i].resources
+	for i := range allPlans {
+		requests[i] = allPlans[i].resources
 		needsPool = needsPool || requests[i].Parallelism
 	}
 
@@ -358,8 +422,8 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}
 	grants := grantResources(requests, pool)
 
-	transformNodes := make([]node.Node, len(plans))
-	for i, plan := range plans {
+	transformNodes := make([]node.Node, len(allPlans))
+	for i, plan := range allPlans {
 		transformNodes[i], err = plan.factory(registry.TransformFactoryOptions{Config: plan.config})
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", plan.id, err)
@@ -430,7 +494,176 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	}); err != nil {
 		return nil, err
 	}
+	for _, name := range auxNames {
+		path := auxPaths[name]
+		previous := path.demuxID
+		for _, plan := range path.plans {
+			if err := geometry.AddEdgeDef(pipeline.EdgeDef{FromNode: previous, FromPort: "out", ToNode: plan.id, ToPort: "in", Stream: plan.input}); err != nil {
+				return nil, err
+			}
+			previous = plan.id
+		}
+	}
+	for _, edge := range auxEdges {
+		if err := geometry.AddEdgeDef(edge); err != nil {
+			return nil, err
+		}
+	}
 	return geometry, nil
+}
+
+func auxFiltersRequested(inputs map[string]AuxInputSpec) bool {
+	for _, input := range inputs {
+		if len(input.Filters) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+type auxPath struct {
+	name    string
+	demuxID string
+	plans   []transformPlan
+	tailID  string
+	output  media.StreamInfo
+}
+
+func (n *Negotiator) negotiateAuxPaths(ctx context.Context, inputs map[string]AuxInputSpec, geometry *pipeline.Geometry, bridgeID *int) (map[string]*auxPath, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(inputs))
+	for name := range inputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	paths := make(map[string]*auxPath, len(inputs))
+	for _, name := range names {
+		if name == "" {
+			return nil, fmt.Errorf("auxiliary input name must not be empty")
+		}
+		spec := inputs[name]
+		if spec.Source == nil {
+			return nil, fmt.Errorf("auxiliary input %q source must not be nil", name)
+		}
+		demux := spec.DemuxManifest
+		var err error
+		if demux.Name == "" {
+			demux, err = n.demuxerResolver.ResolveDemuxer(spec.Source)
+			if err != nil {
+				return nil, fmt.Errorf("resolve auxiliary input %q demuxer: %w", name, err)
+			}
+		}
+		demuxConfig, err := configurationFor(demux, spec.DemuxConfig)
+		if err != nil {
+			return nil, fmt.Errorf("configure auxiliary input %q demuxer: %w", name, err)
+		}
+		demuxNode, err := demux.Factory(spec.Source, demuxConfig)
+		if err != nil {
+			return nil, fmt.Errorf("create auxiliary input %q demuxer: %w", name, err)
+		}
+		demuxID := fmt.Sprintf("aux:%s:demuxer", name)
+		if err := geometry.AddNodeDef(pipeline.NodeDef{ID: demuxID, Node: demuxNode, Description: pipeline.NodeDescription{Role: manifest.RoleDemuxer, Plugin: demux.Name, Configuration: demuxConfig}}); err != nil {
+			return nil, err
+		}
+		streams, err := demuxNode.Streams()
+		if err != nil {
+			return nil, fmt.Errorf("get auxiliary input %q streams: %w", name, err)
+		}
+		if len(streams) == 0 {
+			return nil, fmt.Errorf("auxiliary input %q has no streams", name)
+		}
+		if err := geometry.SetNodeDescription(demuxID, pipeline.NodeDescription{Role: manifest.RoleDemuxer, Plugin: demux.Name, Configuration: demuxConfig, Outputs: streams}); err != nil {
+			return nil, err
+		}
+		current := streams[0]
+		decoder := spec.DecoderManifest
+		if decoder.Name == "" {
+			decoder, err = n.decoderResolver.ResolveDecoder(current)
+			if err != nil {
+				return nil, fmt.Errorf("resolve auxiliary input %q decoder: %w", name, err)
+			}
+		}
+		decodeConfig, err := configurationFor(decoder, spec.DecodeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("configure auxiliary input %q decoder: %w", name, err)
+		}
+		if spec.DecoderManifest.Name != "" {
+			accepted, err := decoder.Accept("in", current, current.Codec, decodeConfig)
+			if err != nil {
+				return nil, fmt.Errorf("check auxiliary input %q decoder: %w", name, err)
+			}
+			if !accepted {
+				return nil, fmt.Errorf("auxiliary input %q decoder %q does not accept input codec %q", name, decoder.Name, current.Codec)
+			}
+		}
+		probe, output, err := decoder.Factory(current, registry.TransformFactoryOptions{Config: decodeConfig})
+		if err != nil {
+			return nil, fmt.Errorf("resolve auxiliary input %q decoder output: %w", name, err)
+		}
+		if err := probe.Close(); err != nil {
+			return nil, fmt.Errorf("close auxiliary input %q decoder probe: %w", name, err)
+		}
+		input := current
+		plans := []transformPlan{{
+			id: fmt.Sprintf("aux:%s:decoder", name), role: manifest.RoleDecoder, plugin: decoder.Name, config: decodeConfig, resources: decoder.Resources, input: input, output: output,
+			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
+				created, actual, err := decoder.Factory(input, options)
+				if err != nil {
+					return nil, err
+				}
+				if !reflect.DeepEqual(actual, output) {
+					return nil, errors.Join(fmt.Errorf("auxiliary decoder factory output differs from its profile probe"), created.Close())
+				}
+				return created, nil
+			},
+		}}
+		current = output
+		for index, filterSpec := range spec.Filters {
+			filter, err := n.filterResolver.ResolveFilter(filterSpec.Config)
+			if err != nil {
+				return nil, fmt.Errorf("resolve auxiliary input %q filter %d: %w", name, index, err)
+			}
+			requirements, err := filter.Requirements("in", current.Codec, filterSpec.Config)
+			if err != nil {
+				return nil, fmt.Errorf("resolve auxiliary input %q filter %d requirements: %w", name, index, err)
+			}
+			if !manifest.MatchesAny(requirements, current) {
+				var bridges []transformPlan
+				current, bridges, err = n.satisfy(current, requirements, bridgeID)
+				if err != nil {
+					return nil, fmt.Errorf("satisfy auxiliary input %q filter %d: %w", name, index, err)
+				}
+				plans = append(plans, bridges...)
+			}
+			filterInput := current
+			probe, filterOutput, err := filter.Factory(filterInput, registry.TransformFactoryOptions{Config: filterSpec.Config})
+			if err != nil {
+				return nil, fmt.Errorf("resolve auxiliary input %q filter %d output: %w", name, index, err)
+			}
+			if err := probe.Close(); err != nil {
+				return nil, fmt.Errorf("close auxiliary input %q filter %d probe: %w", name, index, err)
+			}
+			resolved := filter
+			plans = append(plans, transformPlan{
+				id: fmt.Sprintf("aux:%s:filter:%d", name, index), role: manifest.RoleFilter, plugin: resolved.Name, config: filterSpec.Config, resources: resolved.Resources, input: filterInput, output: filterOutput,
+				factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
+					created, actual, err := resolved.Factory(filterInput, options)
+					if err != nil {
+						return nil, err
+					}
+					if !reflect.DeepEqual(actual, filterOutput) {
+						return nil, errors.Join(fmt.Errorf("auxiliary filter factory output differs from its profile probe"), created.Close())
+					}
+					return created, nil
+				},
+			})
+			current = filterOutput
+		}
+		paths[name] = &auxPath{name: name, demuxID: demuxID, plans: plans, tailID: plans[len(plans)-1].id, output: current}
+	}
+	return paths, nil
 }
 
 func configurationFor(manifest registry.Manifest, requested registry.Configuration) (registry.Configuration, error) {
