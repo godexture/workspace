@@ -32,25 +32,24 @@ type frameJob struct {
 	entry  *pendingEntry
 }
 
-func (d *Decoder) startWorkers() {
-	if d.jobs != nil || d.jobsClosed {
-		return
-	}
-	d.jobs = make(chan frameJob, 2*d.workers)
-	d.workerWG.Add(d.workers)
-	for range d.workers {
-		go func() {
-			defer d.workerWG.Done()
-			runDecoderWorker(d.jobs)
-		}()
-	}
+// runJob runs on a shared pool worker, not one dedicated to this decoder, so
+// it borrows a scratch decodeWorkspace for the duration of the call instead
+// of owning one for a whole goroutine's lifetime.
+func (d *Decoder) runJob(job frameJob) {
+	workspace := d.acquireWorkspace()
+	decodeJob(job, workspace)
+	d.releaseWorkspace(workspace)
 }
 
-func runDecoderWorker(jobs <-chan frameJob) {
-	var workspace decodeWorkspace
-	for job := range jobs {
-		decodeJob(job, &workspace)
+func (d *Decoder) acquireWorkspace() *decodeWorkspace {
+	if v := d.scratch.Get(); v != nil {
+		return v.(*decodeWorkspace)
 	}
+	return &decodeWorkspace{}
+}
+
+func (d *Decoder) releaseWorkspace(workspace *decodeWorkspace) {
+	d.scratch.Put(workspace)
 }
 
 func decodeJob(job frameJob, workspace *decodeWorkspace) {

@@ -21,7 +21,12 @@ func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig, options ...Eng
 	if err != nil {
 		return nil, err
 	}
-	return decoder.NewDecoder(stream, resolved, execution.parallelism), nil
+	pool := execution.newOwnedPool()
+	dec := decoder.NewDecoder(stream, resolved, pool)
+	if pool == nil {
+		return dec, nil
+	}
+	return &ownedPoolDecoderEngine{Decoder: dec, pool: pool}, nil
 }
 
 func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.EncoderEngine, error) {
@@ -33,7 +38,12 @@ func NewEncoderEngine(cfg EncoderConfig, options ...EngineOption) (engine.Encode
 	if err != nil {
 		return nil, err
 	}
-	return encoder.NewEncoder(media.StreamInfo{}, resolved, execution.parallelism), nil
+	pool := execution.newOwnedPool()
+	enc := encoder.NewEncoder(media.StreamInfo{}, resolved, pool)
+	if pool == nil {
+		return enc, nil
+	}
+	return &ownedPoolEncoderEngine{Encoder: enc, pool: pool}, nil
 }
 
 func init() {
@@ -66,7 +76,7 @@ func init() {
 				if err != nil {
 					return nil, err
 				}
-				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved, options.Resources.Parallelism)), nil
+				return engine.WrapDecoder(decoder.NewDecoder(stream, resolved, options.Resources.Pool)), nil
 			},
 		},
 	); err != nil {
@@ -113,7 +123,7 @@ func init() {
 				if err != nil {
 					return nil, err
 				}
-				enc := encoder.NewEncoder(inStream, resolved, options.Resources.Parallelism)
+				enc := encoder.NewEncoder(inStream, resolved, options.Resources.Pool)
 				return engine.WrapEncoder(enc), nil
 			},
 		},

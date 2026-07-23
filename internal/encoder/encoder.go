@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
@@ -32,33 +33,34 @@ type Encoder struct {
 	sampleNumber  uint64
 	md5           *flac.PCMMD5
 
-	// Sequential path (parallelism <= 1): reused across the whole stream, no
+	// Sequential path (pool == nil): reused across the whole stream, no
 	// goroutines or channels involved. This is the pre-parallel code path,
-	// kept byte-for-byte so parallelism 1 stays free of parallel overhead.
+	// kept byte-for-byte so a nil pool stays free of parallel overhead.
 	windows windowSet
 	writer  bits.Writer
 
-	// Parallel path (workers > 1): full (and, when flushing, the trailing
-	// partial) blocks are dispatched to a fixed worker pool over jobs. Each
-	// worker owns its own bits.Writer/windowSet so there is no contention.
-	// Parallelism never changes the encoded bytes; only scheduling changes.
-	workers    int
-	jobs       chan frameJob
-	jobsClosed bool
-	closed     bool
-	workerWG   sync.WaitGroup
+	// Parallel path (pool != nil): full (and, when flushing, the trailing
+	// partial) blocks are dispatched as tasks to a worker pool shared with
+	// every other parallel-eligible stage in the conversion. Each task
+	// borrows a scratch bits.Writer/windowSet from scratch so concurrent
+	// tasks never contend. Parallelism never changes the encoded bytes; only
+	// scheduling changes.
+	pool    *registry.WorkerPool
+	scratch sync.Pool
+	closed  bool
 }
 
-func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, parallelism int) *Encoder {
+// NewEncoder builds an encoder. pool may be nil, in which case blocks are
+// encoded synchronously; otherwise it must be a pool this encoder is allowed
+// to submit work to for its entire lifetime (the caller retains ownership and
+// is responsible for closing it once every stage sharing it has finished).
+func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, pool *registry.WorkerPool) *Encoder {
 	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
-	if parallelism < 1 {
-		parallelism = 1
-	}
 	return &Encoder{
 		config:  cfg,
 		windows: newWindowSet(cfg.Apodizations),
 		md5:     flac.NewPCMMD5(),
-		workers: parallelism,
+		pool:    pool,
 	}
 }
 
@@ -67,9 +69,6 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		return errors.New("flac encoder received nil frame")
 	}
 	if e.flushed {
-		return engine.ErrEOF
-	}
-	if e.jobsClosed {
 		return engine.ErrEOF
 	}
 
@@ -156,7 +155,7 @@ func (e *Encoder) Flush() error {
 	}
 	if e.buffered > 0 {
 		block := e.currentBlock(e.buffered)
-		if e.workers > 1 {
+		if e.pool != nil {
 			e.dispatchPartialBlock(block, e.bufferPTS)
 		} else if err := e.enqueueBlockSync(block, e.bufferPTS, nil); err != nil {
 			return err
@@ -164,7 +163,6 @@ func (e *Encoder) Flush() error {
 		e.dropBuffered(e.buffered)
 	}
 	e.flushed = true
-	e.closeJobs()
 	sum := e.MD5()
 	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
@@ -174,37 +172,33 @@ func (e *Encoder) Flush() error {
 	return nil
 }
 
-// Close releases the worker pool without emitting a final packet or MD5
+// Close stops accepting further work without emitting a final packet or MD5
 // summary. It exists so the pipeline wrapper (pkg/engine) can guarantee
-// worker goroutines are released on error/cancellation exits, which never
-// reach Flush's io.EOF-only call site. Safe whether or not Flush ran first,
-// and safe to call more than once.
+// in-flight state is released on error/cancellation exits, which never reach
+// Flush's io.EOF-only call site. It does not close the pool: that is shared
+// with other stages and owned by whoever constructed this encoder. Safe
+// whether or not Flush ran first, and safe to call more than once.
 func (e *Encoder) Close() error {
 	if e.closed {
 		return nil
 	}
 	e.closed = true
 	e.flushed = true
-	e.closeJobs()
 	for _, entry := range e.pendingQueue {
 		if entry != nil {
+			// Wait for this encoder's own outstanding task, if any, so its
+			// packets exist before being released. This never waits on other
+			// stages' work: the pool is shared, but each entry.done only
+			// depends on the single task that produces it.
+			if entry.done != nil {
+				<-entry.done
+			}
 			releasePackets(entry.packets)
 			entry.packets = nil
 		}
 	}
 	e.pendingQueue = nil
 	return nil
-}
-
-func (e *Encoder) closeJobs() {
-	if e.jobsClosed {
-		return
-	}
-	e.jobsClosed = true
-	if e.jobs != nil {
-		close(e.jobs)
-		e.workerWG.Wait()
-	}
 }
 
 func (e *Encoder) MD5() [16]byte {
@@ -258,7 +252,7 @@ func (e *Encoder) emitFullBlocks() error {
 }
 
 func (e *Encoder) enqueueFullBlock(block [][]int64) error {
-	if e.workers > 1 {
+	if e.pool != nil {
 		e.dispatchFullBlock(block)
 		e.bufferPTS += media.Pts(len(block[0]))
 		return nil

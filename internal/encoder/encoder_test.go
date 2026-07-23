@@ -9,10 +9,12 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/decoder"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
@@ -22,7 +24,7 @@ import (
 
 func TestEncoder_ReceivePacketEmptyActive(t *testing.T) {
 	t.Parallel()
-	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, 1)
+	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, nil)
 	pkt, err := enc.ReceivePacket()
 	if !errors.Is(err, engine.ErrEAGAIN) || pkt != nil {
 		t.Fatalf("expected ErrEAGAIN and nil packet, got err=%v, packet=%v", err, pkt)
@@ -31,7 +33,7 @@ func TestEncoder_ReceivePacketEmptyActive(t *testing.T) {
 
 func TestEncoder_ReceivePacketEmptyFlushed(t *testing.T) {
 	t.Parallel()
-	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, 1)
+	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, nil)
 	if err := enc.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
@@ -45,7 +47,7 @@ func TestEncoder_ReceivePacketEmptyFlushed(t *testing.T) {
 
 func TestEncoder_SendFrameAfterFlush(t *testing.T) {
 	t.Parallel()
-	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, 1)
+	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, nil)
 
 	if err := enc.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -60,7 +62,7 @@ func TestEncoder_SendFrameAfterFlush(t *testing.T) {
 
 func TestEncoder_SendNilFrame(t *testing.T) {
 	t.Parallel()
-	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, 1)
+	enc := NewEncoder(media.StreamInfo{}, config.DefaultEncoderConfig, nil)
 
 	if err := enc.SendFrame(nil); err == nil {
 		t.Fatal("expected error for nil frame")
@@ -71,7 +73,7 @@ func TestEncoder_S16StereoRoundtrip(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 
 	input := []int16{0, 100, 1, 99, 2, 98, 3, 97}
 	frame := makeAudioFrameS16(t, media.LayoutStereo2_0, 44100, 42, input)
@@ -100,7 +102,7 @@ func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 7, []int16{1, 2, 3})
 	var wrapped media.Frame = frame
@@ -196,7 +198,7 @@ func TestEncoder_AdaptiveBlocksPreserveNumbersPTSAndSamples(t *testing.T) {
 		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
 			cfg := config.DefaultEncoderConfig
 			cfg.BlockSplitDepth, cfg.BlockSplitMode = 2, mode
-			enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+			enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 			inputFrame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 17, input)
 			var wrapped media.Frame = inputFrame
 			if err := enc.SendFrame(&wrapped); err != nil {
@@ -244,7 +246,7 @@ func TestEncoder_ArbitraryInputChunksPreserveSamplesAndPTS(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 	chunks := []struct {
 		pts    media.Pts
 		values []int16
@@ -321,7 +323,7 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	// ReceivePacket returning already-encoded packets synchronously without
 	// calling Flush first; that only holds for the sequential path
 	// so pin it explicitly rather than retry-looping on ErrEAGAIN.
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 	input := make([]int16, 32)
 	for i := range input {
 		input[i] = int16(i)
@@ -341,7 +343,7 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	}
 	dec := decoder.NewDecoder(media.StreamInfo{MediaAttributes: media.MediaAttributes{Audio: media.AudioAttributes{
 		SampleRate: 44100, Format: media.SampleFormatS16, BitsPerSample: 16, ChannelLayout: media.LayoutMono1,
-	}}}, config.DefaultDecoderConfig, 1)
+	}}}, config.DefaultDecoderConfig, nil)
 
 	if err := dec.SendPacket(firstPacket); err != nil {
 		t.Fatalf("decoder SendPacket(first) error = %v", err)
@@ -380,7 +382,7 @@ func TestEncoder_S32As24BitRoundtrip(t *testing.T) {
 				BitsPerSample: 24,
 			},
 		},
-	}, cfg, 1)
+	}, cfg, nil)
 
 	input := []int32{-8_388_608, -1, 0, 8_388_607}
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 48000, 0, 24, input)
@@ -410,7 +412,7 @@ func TestEncoder_S32As32BitRoundtrip(t *testing.T) {
 				BitsPerSample: 32,
 			},
 		},
-	}, cfg, 1)
+	}, cfg, nil)
 	input := []int32{-2_147_483_648, -1, 0, 2_147_483_647}
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 96000, 0, 32, input)
 	var wrapped media.Frame = frame
@@ -439,7 +441,7 @@ func TestEncoder_S24As24BitRoundtrip(t *testing.T) {
 				BitsPerSample: 24,
 			},
 		},
-	}, cfg, 1)
+	}, cfg, nil)
 
 	input := []int32{-8_388_608, -1, 0, 8_388_607}
 	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 24, input)
@@ -469,7 +471,7 @@ func TestEncoder_S24As20BitRoundtrip(t *testing.T) {
 				BitsPerSample: 20,
 			},
 		},
-	}, cfg, 1)
+	}, cfg, nil)
 
 	input := []int32{-524_288, -1, 0, 524_287}
 	frame := makeAudioFrameS24(t, media.LayoutMono1, 48000, 0, 20, input)
@@ -499,7 +501,7 @@ func TestEncoder_Rejects24BitOutOfRange(t *testing.T) {
 				BitsPerSample: 24,
 			},
 		},
-	}, cfg, 1)
+	}, cfg, nil)
 
 	frame := makeAudioFrameS32(t, media.LayoutMono1, 44100, 0, 24, []int32{8_388_608})
 	var wrapped media.Frame = frame
@@ -512,7 +514,7 @@ func TestEncoder_RejectsStreamChange(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
 	cfg.BlockSize = 16
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 
 	first := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, []int16{1})
 	var firstWrapped media.Frame = first
@@ -710,7 +712,7 @@ func TestWriteResidualRejectsSigned32Minimum(t *testing.T) {
 func TestEncoderRejectsNonSubsetBlockSizeAtLowSampleRate(t *testing.T) {
 	t.Parallel()
 	cfg := config.EncoderConfig{BlockSize: 4609, StreamableSubset: true}
-	enc := NewEncoder(media.StreamInfo{}, cfg, 1)
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
 
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, []int16{1})
 	var wrapped media.Frame = frame
@@ -749,26 +751,23 @@ func TestEncoder_ParallelismDoesNotChangeOutput(t *testing.T) {
 	}
 }
 
-// TestEncoder_CloseReleasesWorkersWithoutFlush covers the goroutine-leak fix:
-// Close() must terminate the worker pool (by closing e.jobs) even when
-// Flush() is never called, which is exactly what happens when a pipeline
-// aborts via error or context cancellation before reaching end-of-stream.
-func TestEncoder_CloseReleasesWorkersWithoutFlush(t *testing.T) {
+// TestEncoder_CloseReleasesPendingWithoutFlush covers the goroutine-leak fix:
+// Close() must release any in-flight entry (by waiting for its done channel)
+// even when Flush() is never called, which is exactly what happens when a
+// pipeline aborts via error or context cancellation before reaching
+// end-of-stream. Close() must not touch the pool itself: it is shared with
+// other stages and owned by whoever constructed the encoder.
+func TestEncoder_CloseReleasesPendingWithoutFlush(t *testing.T) {
 	t.Parallel()
+	pool := registry.NewWorkerPool(4)
+	defer pool.Close()
 	cfg := config.DefaultEncoderConfig
-	enc := NewEncoder(media.StreamInfo{}, cfg, 4)
-	if enc.jobs != nil {
-		t.Fatal("worker pool started before work was submitted")
-	}
+	enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 	input := make([]int16, cfg.BlockSize)
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, input)
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
-	}
-	jobs := enc.jobs
-	if jobs == nil {
-		t.Fatal("worker pool did not start after parallel work was submitted")
 	}
 
 	if err := enc.Close(); err != nil {
@@ -778,26 +777,27 @@ func TestEncoder_CloseReleasesWorkersWithoutFlush(t *testing.T) {
 		t.Fatal("Close() retained pending encoded packets")
 	}
 
+	done := make(chan struct{})
+	pool.Submit(func() { close(done) })
 	select {
-	case _, ok := <-jobs:
-		if ok {
-			t.Fatal("jobs channel received a value instead of reporting closed")
-		}
-	default:
-		t.Fatal("jobs channel is not closed")
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pool did not run a task submitted after encoder Close()")
 	}
 }
 
 // TestEncoder_CloseAndFlushIdempotent covers both call orders between Close
-// and Flush: whichever runs first must not cause the other to double-close
-// e.jobs (which would panic).
+// and Flush: whichever runs first must not cause the other to panic or
+// double-release pending entries.
 func TestEncoder_CloseAndFlushIdempotent(t *testing.T) {
 	t.Parallel()
 
 	t.Run("FlushThenClose", func(t *testing.T) {
 		t.Parallel()
+		pool := registry.NewWorkerPool(2)
+		defer pool.Close()
 		cfg := config.DefaultEncoderConfig
-		enc := NewEncoder(media.StreamInfo{}, cfg, 4)
+		enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 		if err := enc.Flush(); err != nil {
 			t.Fatalf("Flush() error = %v", err)
 		}
@@ -808,8 +808,10 @@ func TestEncoder_CloseAndFlushIdempotent(t *testing.T) {
 
 	t.Run("CloseThenFlush", func(t *testing.T) {
 		t.Parallel()
+		pool := registry.NewWorkerPool(2)
+		defer pool.Close()
 		cfg := config.DefaultEncoderConfig
-		enc := NewEncoder(media.StreamInfo{}, cfg, 4)
+		enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 		if err := enc.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
@@ -820,8 +822,10 @@ func TestEncoder_CloseAndFlushIdempotent(t *testing.T) {
 
 	t.Run("CloseTwice", func(t *testing.T) {
 		t.Parallel()
+		pool := registry.NewWorkerPool(2)
+		defer pool.Close()
 		cfg := config.DefaultEncoderConfig
-		enc := NewEncoder(media.StreamInfo{}, cfg, 4)
+		enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 		if err := enc.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
@@ -837,7 +841,12 @@ func TestEncoder_CloseAndFlushIdempotent(t *testing.T) {
 // positions stay directly comparable across runs).
 func encodeAllPackets(t *testing.T, cfg config.EncoderConfig, parallelism int, input []int16) [][]byte {
 	t.Helper()
-	enc := NewEncoder(media.StreamInfo{}, cfg, parallelism)
+	var pool *registry.WorkerPool
+	if parallelism > 1 {
+		pool = registry.NewWorkerPool(parallelism)
+		t.Cleanup(func() { pool.Close() })
+	}
+	enc := NewEncoder(media.StreamInfo{}, cfg, pool)
 	frame := makeAudioFrameS16(t, media.LayoutMono1, 44100, 0, input)
 	var wrapped media.Frame = frame
 	if err := enc.SendFrame(&wrapped); err != nil {
