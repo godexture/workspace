@@ -207,8 +207,8 @@ func TestNegotiatorConnectsNamedAuxiliaryInput(t *testing.T) {
 			"in": registry.StaticRequirements(alwaysCapability{}),
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}),
 		}},
-		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
-			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, input, nil
+		Factory: func(inputs media.StreamSet, _ registry.TransformFactoryOptions) (node.Filter, media.StreamSet, error) {
+			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, media.StreamSet{"out": inputs["in"]}, nil
 		},
 	}
 	encoderManifest := registry.EncoderManifest{
@@ -230,7 +230,7 @@ func TestNegotiatorConnectsNamedAuxiliaryInput(t *testing.T) {
 	geometry, err := NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, filterResolver, nil).NegotiateConversion(context.Background(), ConversionSpec{
 		Input:       strings.NewReader("main"),
 		Output:      &strings.Builder{},
-		Filters:     []FilterSpec{{Config: auxFilterConfig{}, Inputs: map[string]string{"ir": "IR"}}},
+		Filters:     []FilterSpec{{Config: auxFilterConfig{}, Inputs: map[string]PortRef{"ir": {Alias: "IR"}}}},
 		TargetCodec: media.CodecFLAC,
 		MuxConfig:   dummyConfig{},
 		AuxInputs: map[string]AuxInputSpec{
@@ -272,15 +272,15 @@ func TestNegotiatorBridgesNamedAuxiliaryInput(t *testing.T) {
 			"in": registry.StaticRequirements(alwaysCapability{}),
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}),
 		}},
-		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
-			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, input, nil
+		Factory: func(inputs media.StreamSet, _ registry.TransformFactoryOptions) (node.Filter, media.StreamSet, error) {
+			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, media.StreamSet{"out": inputs["in"]}, nil
 		},
 	}
 	bridgeManifest := registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+		Factory: registry.SingleFactory(func(media.StreamInfo, registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			return &mockFilter{}, bridgeOutput, nil
-		},
+		}),
 	}
 	encoderManifest := registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
@@ -311,7 +311,7 @@ func TestNegotiatorBridgesNamedAuxiliaryInput(t *testing.T) {
 	).NegotiateConversion(context.Background(), ConversionSpec{
 		Input:       strings.NewReader("main"),
 		Output:      &strings.Builder{},
-		Filters:     []FilterSpec{{Config: auxFilterConfig{}, Inputs: map[string]string{"ir": "IR"}}},
+		Filters:     []FilterSpec{{Config: auxFilterConfig{}, Inputs: map[string]PortRef{"ir": {Alias: "IR"}}}},
 		TargetCodec: media.CodecFLAC,
 		MuxConfig:   dummyConfig{},
 		AuxInputs: map[string]AuxInputSpec{
@@ -560,20 +560,21 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 			BaseManifest:      registry.BaseManifest{Name: "bridge-format"},
 			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 		},
-		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+		Factory: registry.SingleFactory(func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			bridgeInput = input
 			output := input.Clone()
 			output.Audio.Format = media.SampleFormatF32
 			output.Audio.BitsPerSample = 32
 			return bridgeFilter, output, nil
-		},
+		}),
 	}
 	decoderOutput := streamIn
 	decoderOutput.Codec = media.CodecLPCM
-	bridgeProbe, bridgeOutput, err := bridgeManifest.Factory(decoderOutput, registry.TransformFactoryOptions{Config: struct{}{}})
+	bridgeProbe, bridgeOutputs, err := bridgeManifest.Factory(media.StreamSet{"in": decoderOutput}, registry.TransformFactoryOptions{Config: struct{}{}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	bridgeOutput := bridgeOutputs["out"]
 	if err := bridgeProbe.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -691,11 +692,11 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 				InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 				Resources:         registry.ResourceRequest{Parallelism: parallel},
 			},
-			Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+			Factory: registry.SingleFactory(func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 				output := input.Clone()
 				output.Audio.SampleRate += sampleRateDelta
 				return &mockFilter{}, output, nil
-			},
+			}),
 		}
 	}
 	filterRes := &mockFilterResolver{resolved: []registry.FilterManifest{

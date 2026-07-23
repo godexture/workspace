@@ -67,13 +67,14 @@ func (r *DefaultBridgeResolver) ResolveBridge(current media.StreamInfo, required
 				if !accepted {
 					continue
 				}
-				candidateNode, output, err := filter.Factory(next.stream, registry.TransformFactoryOptions{Config: candidate.Config})
+				candidateNode, outputs, err := filter.Factory(media.StreamSet{"in": next.stream}, registry.TransformFactoryOptions{Config: candidate.Config})
 				if err != nil {
 					return nil, fmt.Errorf("resolve bridge output for %s: %w", filter.Name, err)
 				}
 				if err := candidateNode.Close(); err != nil {
 					return nil, fmt.Errorf("close bridge probe for %s: %w", filter.Name, err)
 				}
+				output := outputs["out"]
 				inputKey := bridgeStreamSignature(next.stream)
 				outputKey := bridgeStreamSignature(output)
 				if outputKey == inputKey {
