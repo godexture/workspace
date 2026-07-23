@@ -42,6 +42,11 @@ func registerMixer() {
 				requirements[fmt.Sprintf("in%d", i)] = registry.StaticRequirements(&manifest.AudioConstraint{})
 			}
 
+			outputPorts := make([]string, outputs)
+			for o := 0; o < outputs; o++ {
+				outputPorts[o] = fmt.Sprintf("out%d", o)
+			}
+
 			return registry.FilterManifest{
 				TransformManifest: registry.TransformManifest{
 					BaseManifest: registry.BaseManifest{
@@ -51,6 +56,7 @@ func registerMixer() {
 					},
 					InputRequirements: requirements,
 				},
+				OutputPorts: outputPorts,
 				Factory: func(in media.StreamSet, options registry.TransformFactoryOptions) (node.Filter, media.StreamSet, error) {
 					if _, err := engine.ResolveConfig[config.MixerConfig, MixerConfig](options.Config); err != nil {
 						return nil, nil, err

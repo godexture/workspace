@@ -38,7 +38,7 @@ func registerConvolveManifest() {
 			},
 		},
 		Resources: registry.ResourceRequest{Parallelism: true},
-	}, Factory: registry.SingleFactory(func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+	}, OutputPorts: []string{"out"}, Factory: registry.SingleFactory(func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 		value, err := engine.ResolveConfig[config.ConvolutionConfig, ConvolutionConfig](options.Config)
 		if err != nil {
 			return nil, media.StreamInfo{}, err
