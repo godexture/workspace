@@ -54,8 +54,8 @@ func writePipelineDescription(writer io.Writer, description pipeline.Description
 		if _, err := fmt.Fprintf(writer, "  %s  role=%s plugin=%s", node.ID, node.Role, node.Plugin); err != nil {
 			return err
 		}
-		if node.Resources.Parallelism > 0 {
-			if _, err := fmt.Fprintf(writer, " parallelism=%d", node.Resources.Parallelism); err != nil {
+		if parallelism := node.Resources.Parallelism(); parallelism > 0 {
+			if _, err := fmt.Fprintf(writer, " parallelism=%d", parallelism); err != nil {
 				return err
 			}
 		}
@@ -265,7 +265,7 @@ func writeMetricsReport(writer io.Writer, report metricsReport) error {
 		}
 		for _, node := range report.Pipeline.Nodes {
 			if _, err := fmt.Fprintf(writer, "    %s: state=%s elapsed=%s parallelism=%d",
-				node.Description.ID, node.State, formatMetricDuration(node.Elapsed), node.Description.Resources.Parallelism); err != nil {
+				node.Description.ID, node.State, formatMetricDuration(node.Elapsed), node.Description.Resources.Parallelism()); err != nil {
 				return err
 			}
 			if node.Error != "" {
