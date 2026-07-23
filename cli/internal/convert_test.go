@@ -7,7 +7,7 @@ import (
 )
 
 func TestParsePluginSpecParsesNameAndValues(t *testing.T) {
-	spec, err := parsePluginSpec("flac:preset=2,block-size=1024")
+	spec, _, err := parsePluginSpec("flac:preset=2,block-size=1024")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,12 +17,56 @@ func TestParsePluginSpecParsesNameAndValues(t *testing.T) {
 }
 
 func TestParsePluginSpecEmptyValueIsNil(t *testing.T) {
-	spec, err := parsePluginSpec("")
+	spec, _, err := parsePluginSpec("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if spec != nil {
 		t.Fatalf("parsePluginSpec(\"\") = %#v, want nil", spec)
+	}
+}
+
+func TestParseFilterSpecWithParameters(t *testing.T) {
+	alias, plugin, parameters, err := parseFilterSpec("mixer[in=2,out=1]:normalize=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias != "" || plugin.Name != "mixer" || plugin.Values["normalize"] != "true" {
+		t.Fatalf("parseFilterSpec() = alias=%q plugin=%#v", alias, plugin)
+	}
+	if parameters["in"] != "2" || parameters["out"] != "1" {
+		t.Fatalf("parseFilterSpec() parameters = %#v", parameters)
+	}
+}
+
+// TestParseFilterSpecAliasWithParameters guards against a specific bug: a
+// naive "first '=' before the first ':'" alias split would mistake the
+// '=' inside "[in=2]" for the alias separator when there's no ':' segment
+// at all. The alias's '=' must only be looked for in the name region,
+// before any '[' or ':'.
+func TestParseFilterSpecAliasWithParameters(t *testing.T) {
+	alias, plugin, parameters, err := parseFilterSpec("myalias=mixer[in=2,out=1]:normalize=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias != "myalias" || plugin.Name != "mixer" || plugin.Values["normalize"] != "true" {
+		t.Fatalf("parseFilterSpec() = alias=%q plugin=%#v", alias, plugin)
+	}
+	if parameters["in"] != "2" || parameters["out"] != "1" {
+		t.Fatalf("parseFilterSpec() parameters = %#v", parameters)
+	}
+}
+
+func TestParseFilterSpecParametersWithoutColon(t *testing.T) {
+	alias, plugin, parameters, err := parseFilterSpec("mixer[in=2,out=1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias != "" || plugin.Name != "mixer" || len(plugin.Values) != 0 {
+		t.Fatalf("parseFilterSpec() = alias=%q plugin=%#v", alias, plugin)
+	}
+	if parameters["in"] != "2" || parameters["out"] != "1" {
+		t.Fatalf("parseFilterSpec() parameters = %#v", parameters)
 	}
 }
 

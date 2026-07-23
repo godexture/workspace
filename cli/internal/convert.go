@@ -29,10 +29,10 @@ func newConvertCommand() *cobra.Command {
 	command.Flags().StringVar(&options.demuxer, "demuxer", "", "Input demuxer specification (name:key=value,...)")
 	command.Flags().StringVar(&options.decoder, "decoder", "", "Input decoder specification (name:key=value,...)")
 	command.Flags().IntVarP(&options.jobs, "jobs", "j", 0, "Maximum parallel jobs")
-	command.Flags().BoolVar(&options.force, "force", false, "Overwrite an existing output file")
-	command.Flags().StringArrayVar(&options.filters, "filter", nil, "Filter specification (name:key=value,...)")
+	command.Flags().BoolVarP(&options.force, "force", "f", false, "Overwrite an existing output file")
+	command.Flags().StringArrayVarP(&options.filters, "filter", "e", nil, "Filter specification (name:key=value,...)")
 	command.Flags().StringArrayVarP(&options.inputs, "input", "i", nil, "Named auxiliary input (NAME=PATH)")
-	command.Flags().StringArrayVar(&options.wires, "wire", nil, "Connect FILTER_ALIAS.PORT to INPUT_ALIAS.out or AUX_FILTER_ALIAS.out")
+	command.Flags().StringArrayVarP(&options.wires, "wire", "w", nil, "Connect FILTER_ALIAS.PORT to INPUT_ALIAS.out or AUX_FILTER_ALIAS.out")
 	command.Flags().StringVar(&options.progress, "progress", "auto", "Progress display: auto, always, or never")
 	command.Flags().BoolVar(&options.metrics, "metrics", false, "Report conversion and runtime metrics")
 	command.Flags().BoolVar(&options.dryRun, "dry-run", false, "Resolve and validate the pipeline without converting")
@@ -60,7 +60,7 @@ type convertOptions struct {
 // encoder is resolved for it (CLI has no separate flag to pick an encoder
 // plugin by name).
 func buildSpec(options convertOptions, outputPath string, outputs []catalog.OutputFormat) (conversion.Spec, error) {
-	format, err := parsePluginSpec(options.format)
+	format, _, err := parsePluginSpec(options.format)
 	if err != nil {
 		return conversion.Spec{}, fmt.Errorf("format: %w", err)
 	}
@@ -72,7 +72,7 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		format = &conversion.PluginSpec{Name: name}
 	}
 
-	codec, err := parsePluginSpec(options.codec)
+	codec, _, err := parsePluginSpec(options.codec)
 	if err != nil {
 		return conversion.Spec{}, fmt.Errorf("codec: %w", err)
 	}
@@ -82,16 +82,16 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		spec.Codec = codec.Name
 		spec.Encoder = &conversion.PluginSpec{Values: codec.Values}
 	}
-	if spec.Demuxer, err = parsePluginSpec(options.demuxer); err != nil {
+	if spec.Demuxer, _, err = parsePluginSpec(options.demuxer); err != nil {
 		return conversion.Spec{}, fmt.Errorf("demuxer: %w", err)
 	}
-	if spec.Decoder, err = parsePluginSpec(options.decoder); err != nil {
+	if spec.Decoder, _, err = parsePluginSpec(options.decoder); err != nil {
 		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
 	}
 	filters := make([]graphFilter, 0, len(options.filters))
 	nodes := make(map[string]graphNode)
 	for _, value := range options.filters {
-		alias, filter, parseErr := parseFilterSpec(value)
+		alias, filter, parameters, parseErr := parseFilterSpec(value)
 		if parseErr != nil {
 			return conversion.Spec{}, fmt.Errorf("filter: %w", parseErr)
 		}
@@ -105,7 +105,7 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 			return conversion.Spec{}, fmt.Errorf("filter: duplicate alias %q", alias)
 		}
 		nodes[alias] = graphNode{filter: len(filters)}
-		filters = append(filters, graphFilter{spec: conversion.FilterSpec{PluginSpec: *filter, Alias: alias}, wires: make(map[string]string)})
+		filters = append(filters, graphFilter{spec: conversion.FilterSpec{PluginSpec: *filter, Alias: alias, Parameters: parameters}, wires: make(map[string]string)})
 	}
 	for _, value := range options.inputs {
 		name, _, parseErr := parseNamedValue(value)
@@ -270,19 +270,30 @@ func resolveAuxiliarySource(source string, filters []graphFilter, nodes map[stri
 	return root, append(chain, entry.filter), nil
 }
 
-func parseFilterSpec(value string) (string, *conversion.PluginSpec, error) {
-	colon := strings.IndexByte(value, ':')
-	equals := strings.IndexByte(value, '=')
-	if equals >= 0 && (colon < 0 || equals < colon) {
+// parseFilterSpec splits an optional "alias=" prefix off a filter
+// specification before parsing the rest as a plugin spec. The alias's '='
+// must be searched for only in the name region — up to whichever of '['
+// or ':' comes first, or the end of the string — since a bracketed
+// parameter segment (e.g. "mixer[in=2]") may itself contain '=' that must
+// not be mistaken for the alias separator.
+func parseFilterSpec(value string) (string, *conversion.PluginSpec, map[string]string, error) {
+	nameEnd := len(value)
+	if idx := strings.IndexByte(value, '['); idx >= 0 && idx < nameEnd {
+		nameEnd = idx
+	}
+	if idx := strings.IndexByte(value, ':'); idx >= 0 && idx < nameEnd {
+		nameEnd = idx
+	}
+	if equals := strings.IndexByte(value[:nameEnd], '='); equals >= 0 {
 		alias := value[:equals]
 		if alias == "" {
-			return "", nil, fmt.Errorf("filter alias must not be empty")
+			return "", nil, nil, fmt.Errorf("filter alias must not be empty")
 		}
-		plugin, err := parsePluginSpec(value[equals+1:])
-		return alias, plugin, err
+		plugin, parameters, err := parsePluginSpec(value[equals+1:])
+		return alias, plugin, parameters, err
 	}
-	plugin, err := parsePluginSpec(value)
-	return "", plugin, err
+	plugin, parameters, err := parsePluginSpec(value)
+	return "", plugin, parameters, err
 }
 
 func parseNamedValue(value string) (string, string, error) {
@@ -293,15 +304,19 @@ func parseNamedValue(value string) (string, string, error) {
 	return value[:equals], value[equals+1:], nil
 }
 
-func parsePluginSpec(value string) (*conversion.PluginSpec, error) {
+// parsePluginSpec parses "name[param=value,...]:key=value,...". Parameters
+// is nil unless a "[...]" segment was present; only filters currently
+// accept one (see conversion.FilterSpec.Parameters), but the syntax is
+// parsed uniformly here regardless of plugin role.
+func parsePluginSpec(value string) (*conversion.PluginSpec, map[string]string, error) {
 	if value == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	spec, err := cliflag.ParseSpec(value)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &conversion.PluginSpec{Name: spec.Name, Values: spec.Values}, nil
+	return &conversion.PluginSpec{Name: spec.Name, Values: spec.Values}, spec.Parameters, nil
 }
 
 func inferMuxerName(outputs []catalog.OutputFormat, output string) (string, error) {
