@@ -77,12 +77,20 @@ export class GoMain {
   }
 
   /**
-   * Resolve negotiates a pipeline for input against the JSON-encoded spec
+   * DescribeFilter resolves a filter's editable configuration and port topology
+   * for the given structural parameters.
+   */
+  describeFilter(name: string, parameters: {[key: string]: string}): Promise<string> {
+    return this.call<string>("describeFilter", [name, parameters]);
+  }
+
+  /**
+   * Resolve negotiates a pipeline for inputs against the JSON-encoded spec
    * without building or running it, returning the resolved node/edge topology
    * as JSON. Used to preview a pipeline before starting a conversion.
    */
-  resolve(input: Uint8Array, specJSON: string): Promise<string> {
-    return this.call<string>("resolve", [input, specJSON]);
+  resolve(mainInput: Uint8Array, auxInputs: {[key: string]: Uint8Array}, specJSON: string): Promise<string> {
+    return this.call<string>("resolve", [mainInput, auxInputs, specJSON]);
   }
 
   /**
@@ -90,8 +98,8 @@ export class GoMain {
    * returning a job ID. Poll Snapshot for progress and call Result once the
    * job has finished.
    */
-  start(input: Uint8Array, specJSON: string): Promise<string> {
-    return this.call<string>("start", [input, specJSON]);
+  start(mainInput: Uint8Array, auxInputs: {[key: string]: Uint8Array}, specJSON: string): Promise<string> {
+    return this.call<string>("start", [mainInput, auxInputs, specJSON]);
   }
 
   /**

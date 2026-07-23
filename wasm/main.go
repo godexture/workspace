@@ -28,15 +28,25 @@ func Catalog() (string, error) {
 	return marshal(catalog.Build())
 }
 
-// Resolve negotiates a pipeline for input against the JSON-encoded spec
+// DescribeFilter resolves a filter's editable configuration and port topology
+// for the given structural parameters.
+func DescribeFilter(name string, parameters map[string]string) (string, error) {
+	entry, err := catalog.DescribeFilter(name, parameters)
+	if err != nil {
+		return "", err
+	}
+	return marshal(entry)
+}
+
+// Resolve negotiates a pipeline for inputs against the JSON-encoded spec
 // without building or running it, returning the resolved node/edge topology
 // as JSON. Used to preview a pipeline before starting a conversion.
-func Resolve(input []byte, specJSON string) (string, error) {
+func Resolve(mainInput []byte, auxInputs map[string][]byte, specJSON string) (string, error) {
 	spec, err := unmarshalSpec(specJSON)
 	if err != nil {
 		return "", err
 	}
-	geometry, err := conversion.Negotiate(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, io.Discard, spec)
+	geometry, err := conversion.Negotiate(context.Background(), inputSet(mainInput, auxInputs), io.Discard, spec)
 	if err != nil {
 		return "", err
 	}
@@ -47,17 +57,25 @@ func Resolve(input []byte, specJSON string) (string, error) {
 // Start negotiates, builds, and begins a conversion in the background,
 // returning a job ID. Poll Snapshot for progress and call Result once the
 // job has finished.
-func Start(input []byte, specJSON string) (string, error) {
+func Start(mainInput []byte, auxInputs map[string][]byte, specJSON string) (string, error) {
 	spec, err := unmarshalSpec(specJSON)
 	if err != nil {
 		return "", err
 	}
 	output := &bytes.Buffer{}
-	job, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, output, spec)
+	job, err := conversion.StartJob(context.Background(), inputSet(mainInput, auxInputs), output, spec)
 	if err != nil {
 		return "", err
 	}
 	return jobs.add(&jobEntry{job: job, output: output}), nil
+}
+
+func inputSet(mainInput []byte, auxInputs map[string][]byte) conversion.InputSet {
+	aux := make(map[string]io.ReadSeeker, len(auxInputs))
+	for name, input := range auxInputs {
+		aux[name] = bytes.NewReader(input)
+	}
+	return conversion.InputSet{Main: bytes.NewReader(mainInput), Aux: aux}
 }
 
 // Snapshot reports a job's current progress and outcome as JSON.
