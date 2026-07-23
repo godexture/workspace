@@ -24,18 +24,7 @@ export function AudioPlayer({
                 )}
             </div>
             {src ? (
-                <>
-                    <audio controls src={src} />
-                    {downloadName && (
-                        <a
-                            className={styles.download}
-                            href={src}
-                            download={downloadName}
-                        >
-                            ダウンロード
-                        </a>
-                    )}
-                </>
+                <audio controls src={src} />
             ) : (
                 <p className={styles.empty}>Not selected</p>
             )}

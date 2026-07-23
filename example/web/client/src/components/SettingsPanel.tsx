@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 
-import type { Catalog, ConversionSpec, FilterSpec } from "../api/types";
+import type { Catalog, ConversionSpec, FilterSpec, PluginField } from "../api/types";
 import type { BackendMode } from "../conversion/backend/types";
 import { FieldInputs } from "./FieldInputs";
 import styles from "./SettingsPanel.module.css";
@@ -24,6 +25,18 @@ function nextEntryKey(): string {
     return `filter-${entryKeySeed}`;
 }
 
+function applyDefaults(
+    values: Record<string, string>,
+    fields: PluginField[],
+): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const field of fields) {
+        const val = values[field.name];
+        result[field.name] = val === "" || val === undefined ? field.default : val;
+    }
+    return result;
+}
+
 export function SettingsPanel({
     catalog,
     mode,
@@ -31,21 +44,23 @@ export function SettingsPanel({
     onSpecChange,
 }: SettingsPanelProps) {
     const outputs = catalog.outputs;
-    const [muxer, setMuxer] = useState(outputs[0]?.muxer ?? "");
+    const [muxer, setMuxer] = useLocalStorage("godec-muxer", outputs[0]?.muxer ?? "");
     const selectedOutput = outputs.find((o) => o.muxer === muxer) ?? outputs[0];
-    const [codec, setCodec] = useState(selectedOutput?.defaultCodec ?? "");
+    const [codec, setCodec] = useLocalStorage("godec-codec", selectedOutput?.defaultCodec ?? "");
 
     // Encoder fields are only shown when a catalog encoder entry happens to
     // share the codec's name (true for e.g. flac, not guaranteed for
     // multi-codec plugins like pcm) -- the codec still works either way,
     // just without an exposed advanced form in that case.
     const encoderEntry = catalog.encoders.find((e) => e.name === codec);
-    const [encoderValues, setEncoderValues] = useState<Record<string, string>>(
+    const [encoderValues, setEncoderValues] = useLocalStorage<Record<string, string>>(
+        "godec-encoder-values",
         {},
     );
 
-    const [advancedFilters, setAdvancedFilters] = useState<FilterEntry[]>([]);
-    const [addFilterChoice, setAddFilterChoice] = useState(
+    const [advancedFilters, setAdvancedFilters] = useLocalStorage<FilterEntry[]>("godec-advanced-filters", []);
+    const [addFilterChoice, setAddFilterChoice] = useLocalStorage(
+        "godec-add-filter-choice",
         catalog.filters[0]?.name ?? "",
     );
 
@@ -59,16 +74,19 @@ export function SettingsPanel({
 
     useEffect(() => {
         const filters: FilterSpec[] = [
-            ...advancedFilters.map((entry) => ({
-                name: entry.name,
-                values: entry.values,
-            })),
+            ...advancedFilters.map((entry) => {
+                const catalogEntry = catalog.filters.find((f) => f.name === entry.name);
+                return {
+                    name: entry.name,
+                    values: catalogEntry ? applyDefaults(entry.values, catalogEntry.fields) : entry.values,
+                };
+            }),
         ];
         onSpecChange({
             muxer: { name: muxer },
             codec,
             encoder: encoderEntry
-                ? { name: encoderEntry.name, values: encoderValues }
+                ? { name: encoderEntry.name, values: applyDefaults(encoderValues, encoderEntry.fields) }
                 : undefined,
             filters,
         });
