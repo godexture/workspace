@@ -25,18 +25,17 @@ type ConvolutionConfig struct {
 var DefaultConvolutionConfig = ConvolutionConfig{WetDryMix: 1, Normalize: true}
 
 func (c ConvolutionConfig) Validate() error {
-	if len(c.ImpulseResponse) == 0 {
-		return fmt.Errorf("convolution impulse response must have at least one channel")
-	}
-	length := -1
-	for i, channel := range c.ImpulseResponse {
-		if len(channel) == 0 {
-			return fmt.Errorf("convolution impulse response channel %d is empty", i)
-		}
-		if length == -1 {
-			length = len(channel)
-		} else if len(channel) != length {
-			return fmt.Errorf("convolution impulse response channels have mismatched lengths")
+	if len(c.ImpulseResponse) > 0 {
+		length := -1
+		for i, channel := range c.ImpulseResponse {
+			if len(channel) == 0 {
+				return fmt.Errorf("convolution impulse response channel %d is empty", i)
+			}
+			if length == -1 {
+				length = len(channel)
+			} else if len(channel) != length {
+				return fmt.Errorf("convolution impulse response channels have mismatched lengths")
+			}
 		}
 	}
 	if c.ImpulseRate < 0 {

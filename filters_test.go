@@ -654,6 +654,25 @@ func TestConvolveMonoImpulseBroadcastsToEveryChannel(t *testing.T) {
 	output.Release()
 }
 
+func TestConvolveUsesPortImpulseResponse(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{WetDryMix: 1, BlockSize: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepareConvolve(t, item)
+	ir := frame(48000, 0, []float32{1})
+	if err := item.SendInput("ir", &ir); err != nil {
+		t.Fatal(err)
+	}
+	ir.Release()
+	if err := item.EndInput("ir"); err != nil {
+		t.Fatal(err)
+	}
+	input := []float32{0.1, -0.2, 0.3, -0.4}
+	send(t, item, frame(48000, 0, input))
+	assertSamplesTol(t, receive(t, item), input, 1e-4)
+}
+
 func TestConvolvePerChannelImpulseRequiresMatchingChannelCount(t *testing.T) {
 	item, err := convolve.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{1}, {1}, {1}}, // 3 channels, input below has 2
