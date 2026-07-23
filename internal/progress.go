@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/godexture/core/pipeline"
+	"github.com/godexture/sdk/conversion"
 )
 
 type progressConfig struct {
@@ -46,7 +47,6 @@ type progressReporter struct {
 	pipeline  *pipeline.Pipeline
 	input     *measuredReadSeeker
 	config    progressConfig
-	startedAt time.Time
 	stop      chan bool
 	done      chan struct{}
 	lastWidth int
@@ -55,7 +55,7 @@ type progressReporter struct {
 func startProgressReporter(writer io.Writer, conversion *pipeline.Pipeline, input *measuredReadSeeker, config progressConfig) *progressReporter {
 	reporter := &progressReporter{
 		writer: writer, pipeline: conversion, input: input, config: config,
-		startedAt: time.Now(), stop: make(chan bool, 1), done: make(chan struct{}),
+		stop: make(chan bool, 1), done: make(chan struct{}),
 	}
 	go reporter.run()
 	return reporter
@@ -83,7 +83,7 @@ func (reporter *progressReporter) Stop(success bool) {
 }
 
 func (reporter *progressReporter) render(final, success bool) {
-	line := formatProgress(reporter.pipeline.Snapshot(), reporter.input.Snapshot(), time.Since(reporter.startedAt), success)
+	line := formatProgress(reporter.pipeline.Snapshot(), reporter.input.Snapshot(), success)
 	if reporter.config.terminal {
 		padding := ""
 		if reporter.lastWidth > len(line) {
@@ -99,31 +99,20 @@ func (reporter *progressReporter) render(final, success bool) {
 	_, _ = fmt.Fprintln(reporter.writer, line)
 }
 
-func formatProgress(snapshot pipeline.Snapshot, input inputMetrics, elapsed time.Duration, success bool) string {
-	for _, edge := range snapshot.Edges {
-		if !edge.Description.ProgressSource {
-			continue
-		}
-		duration := edge.Description.Stream.Duration
-		if duration > 0 && (edge.MediaTime > 0 || success) {
-			processed := edge.MediaTime
-			if success {
-				processed = duration
-			}
-			processed = min(processed, duration)
-			percent := float64(processed) / float64(duration) * 100
-			speed := 0.0
-			if elapsed > 0 {
-				speed = float64(processed) / float64(elapsed)
-			}
-			eta := time.Duration(0)
-			if speed > 0 && processed < duration {
-				eta = time.Duration(float64(duration-processed) / speed)
-			}
-			return fmt.Sprintf("%6.2f%%  %s / %s  %.2fx  elapsed %s  eta %s",
-				percent, formatElapsed(processed), formatElapsed(duration), speed, formatElapsed(elapsed), formatElapsed(eta))
-		}
-		break
+// formatProgress renders a pipeline.Snapshot as a single status line. The
+// percent/speed/ETA math is shared with the Server and WASM frontends via
+// conversion.Snapshot; this function only adds CLI-specific text formatting
+// and the byte-position fallback for when the pipeline has no media-time
+// progress source yet.
+func formatProgress(snapshot pipeline.Snapshot, input inputMetrics, success bool) string {
+	progress := conversion.Snapshot(snapshot, success)
+	elapsed := snapshot.Elapsed
+	if progress.Percent >= 0 {
+		processed := time.Duration(progress.ProcessedMs) * time.Millisecond
+		total := time.Duration(progress.TotalMs) * time.Millisecond
+		eta := time.Duration(progress.EtaMs) * time.Millisecond
+		return fmt.Sprintf("%6.2f%%  %s / %s  %.2fx  elapsed %s  eta %s",
+			progress.Percent, formatElapsed(processed), formatElapsed(total), progress.SpeedRatio, formatElapsed(elapsed), formatElapsed(eta))
 	}
 	if input.Size > 0 {
 		position := max(int64(0), min(input.Position, input.Size))
@@ -142,14 +131,7 @@ func formatProgress(snapshot pipeline.Snapshot, input inputMetrics, elapsed time
 		return fmt.Sprintf("%6.2f%%  %s / %s  %s/s  elapsed %s  eta %s",
 			percent, formatBytes(uint64(position)), formatBytes(uint64(input.Size)), formatBytes(uint64(rate)), formatElapsed(elapsed), formatElapsed(eta))
 	}
-	var items uint64
-	for _, edge := range snapshot.Edges {
-		if edge.Description.ProgressSource {
-			items = edge.Items
-			break
-		}
-	}
-	return fmt.Sprintf("processed %d items  elapsed %s", items, formatElapsed(elapsed))
+	return fmt.Sprintf("processed %d items  elapsed %s", progress.ProcessedItems, formatElapsed(elapsed))
 }
 
 func isTerminalWriter(writer io.Writer) bool {
