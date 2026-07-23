@@ -2,33 +2,18 @@ package routing
 
 import "github.com/godexture/core/registry"
 
-func allocateResources(requests []registry.ResourceRequest, parallelism int) []registry.ResourceBudget {
-	allocations := make([]registry.ResourceBudget, len(requests))
-	parallelStages := 0
-	for _, request := range requests {
-		if request.Parallelism {
-			parallelStages++
-		}
-	}
-	if parallelStages == 0 {
-		return allocations
-	}
-
-	perStage := parallelism / parallelStages
-	remainder := parallelism % parallelStages
-	if perStage < 1 {
-		perStage = 1
-		remainder = 0
+// grantResources hands every parallel-eligible request a reference to the
+// same shared pool, so idle stages never hold capacity a busy stage could
+// use instead. Non-parallel requests get a zero-value grant (no pool).
+func grantResources(requests []registry.ResourceRequest, pool *registry.WorkerPool) []registry.ResourceGrant {
+	grants := make([]registry.ResourceGrant, len(requests))
+	if pool == nil {
+		return grants
 	}
 	for i, request := range requests {
-		if !request.Parallelism {
-			continue
-		}
-		allocations[i].Parallelism = perStage
-		if remainder > 0 {
-			allocations[i].Parallelism++
-			remainder--
+		if request.Parallelism {
+			grants[i].Pool = pool
 		}
 	}
-	return allocations
+	return grants
 }

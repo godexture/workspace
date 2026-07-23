@@ -15,7 +15,7 @@ type NodeDescription struct {
 	// func([]float64)), so this live object was never meant as a wire
 	// format. Use cliflag.DescribeStruct for a safe, field-by-field view.
 	Configuration registry.Configuration `json:"-"`
-	Resources     registry.ResourceBudget
+	Resources     registry.ResourceGrant
 	Inputs        []media.StreamInfo
 	Outputs       []media.StreamInfo
 	AutoInserted  bool

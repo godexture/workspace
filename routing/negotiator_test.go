@@ -536,7 +536,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 	}}
 
-	var allocations []int
+	var allocations []*registry.WorkerPool
 	var inputs []media.StreamInfo
 	decoderRes := &mockDecoderResolver{resolved: registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
@@ -549,7 +549,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 		Factory: func(input media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
 			inputs = append(inputs, input)
-			allocations = append(allocations, options.Resources.Parallelism)
+			allocations = append(allocations, options.Resources.Pool)
 			return &mockDecoder{}, nil
 		},
 	}}
@@ -567,7 +567,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 			},
 			Factory: func(input media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
 				inputs = append(inputs, input)
-				allocations = append(allocations, options.Resources.Parallelism)
+				allocations = append(allocations, options.Resources.Pool)
 				return &mockFilter{}, nil
 			},
 		}
@@ -588,7 +588,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 		Factory: func(input media.StreamInfo, _ media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
 			inputs = append(inputs, input)
-			allocations = append(allocations, options.Resources.Parallelism)
+			allocations = append(allocations, options.Resources.Pool)
 			return &mockEncoder{}, nil
 		},
 	}}
@@ -606,8 +606,17 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := allocations, []int{3, 3, 0, 2}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("allocations = %v, want %v", got, want)
+	// decoder, filter0, and encoder requested Parallelism; filter1 did not.
+	// Every requesting stage must share the exact same pool instead of each
+	// getting its own exclusive slice of the budget.
+	if allocations[0] == nil || allocations[1] == nil || allocations[3] == nil {
+		t.Fatalf("parallel-eligible stages got no pool: %v", allocations)
+	}
+	if allocations[0] != allocations[1] || allocations[0] != allocations[3] {
+		t.Fatalf("parallel-eligible stages did not share the same pool: %v", allocations)
+	}
+	if allocations[2] != nil {
+		t.Fatalf("non-parallel filter got a pool: %v", allocations[2])
 	}
 	if got, want := []int{
 		inputs[0].Audio.SampleRate,
@@ -642,13 +651,16 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 			t.Fatalf("description node %d role = %q, want %q", i, got, want)
 		}
 	}
-	if got, want := []int{
-		description.Nodes[1].Resources.Parallelism,
-		description.Nodes[2].Resources.Parallelism,
-		description.Nodes[3].Resources.Parallelism,
-		description.Nodes[4].Resources.Parallelism,
-	}, allocations; !reflect.DeepEqual(got, want) {
-		t.Fatalf("description allocations = %v, want %v", got, want)
+	got := []*registry.WorkerPool{
+		description.Nodes[1].Resources.Pool,
+		description.Nodes[2].Resources.Pool,
+		description.Nodes[3].Resources.Pool,
+		description.Nodes[4].Resources.Pool,
+	}
+	for i := range got {
+		if got[i] != allocations[i] {
+			t.Fatalf("description node %d pool = %v, want %v (mismatch with pool actually passed to its factory)", i+1, got[i], allocations[i])
+		}
 	}
 	if !description.Edges[0].ProgressSource {
 		t.Fatal("demuxer output edge is not marked as progress source")

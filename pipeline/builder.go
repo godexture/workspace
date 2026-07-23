@@ -72,7 +72,7 @@ func (b *Builder) Build(geo *Geometry, options ...BuildOption) (*Pipeline, error
 	if config.observation > ObservationMetrics {
 		return nil, fmt.Errorf("%w: unknown observation mode %d", ErrInvalidPipeline, config.observation)
 	}
-	nodeDefs, edges, err := geo.take()
+	nodeDefs, edges, resourceClosers, err := geo.take()
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +95,7 @@ func (b *Builder) Build(geo *Geometry, options ...BuildOption) (*Pipeline, error
 			return nil, errors.Join(
 				fmt.Errorf("%w: node not found: %s", ErrInvalidPipeline, e.FromNode),
 				closeNodes(nodeList),
+				closeResources(resourceClosers),
 			)
 		}
 		toNode, ok := nodeMap[e.ToNode]
@@ -102,6 +103,7 @@ func (b *Builder) Build(geo *Geometry, options ...BuildOption) (*Pipeline, error
 			return nil, errors.Join(
 				fmt.Errorf("%w: node not found: %s", ErrInvalidPipeline, e.ToNode),
 				closeNodes(nodeList),
+				closeResources(resourceClosers),
 			)
 		}
 
@@ -116,14 +118,15 @@ func (b *Builder) Build(geo *Geometry, options ...BuildOption) (*Pipeline, error
 			return nil, errors.Join(
 				fmt.Errorf("%w: link %s:%s to %s:%s: %w", ErrInvalidPipeline, e.FromNode, e.FromPort, e.ToNode, e.ToPort, err),
 				closeNodes(nodeList),
+				closeResources(resourceClosers),
 			)
 		}
 	}
 
 	description := descriptionFromDefinitions(nodeDefs, edges)
-	pipeline, err := newPipeline(nodeList, description, config.observation, metricsByEdge)
+	pipeline, err := newPipeline(nodeList, description, config.observation, metricsByEdge, resourceClosers)
 	if err != nil {
-		return nil, errors.Join(err, closeNodes(nodeList))
+		return nil, errors.Join(err, closeNodes(nodeList), closeResources(resourceClosers))
 	}
 	return pipeline, nil
 }
