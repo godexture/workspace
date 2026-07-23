@@ -20,7 +20,7 @@ func TestJobRunsToCompletion(t *testing.T) {
 	writeTestWAV(t, &wav)
 
 	var flac bytes.Buffer
-	job, err := conversion.StartJob(context.Background(), bytes.NewReader(wav.Bytes()), &flac, conversion.Spec{
+	job, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: bytes.NewReader(wav.Bytes())}, &flac, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "flac"},
 		Codec: string(media.CodecFLAC),
 	})
@@ -54,7 +54,7 @@ func TestJobCancel(t *testing.T) {
 	var wav bytes.Buffer
 	writeTestWAV(t, &wav)
 
-	job, err := conversion.StartJob(context.Background(), bytes.NewReader(wav.Bytes()), &bytes.Buffer{}, conversion.Spec{
+	job, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: bytes.NewReader(wav.Bytes())}, &bytes.Buffer{}, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 	})
 	if err != nil {

@@ -44,6 +44,18 @@ func NewRealPlan(n int) (*RealPlan, error) {
 // Size returns the real sample count this plan was built for.
 func (p *RealPlan) Size() int { return p.n }
 
+// Clone creates an independently usable real plan while sharing immutable
+// transform tables. Its scratch workspace is private to the clone.
+func (p *RealPlan) Clone() *RealPlan {
+	return &RealPlan{
+		inner:   p.inner.Clone(),
+		n:       p.n,
+		m:       p.m,
+		unpack:  p.unpack,
+		scratch: make([]complex64, p.m),
+	}
+}
+
 // Bins returns the number of unique complex bins (DC..Nyquist) produced by
 // Forward and consumed by Inverse: n/2 + 1.
 func (p *RealPlan) Bins() int { return p.m + 1 }

@@ -38,6 +38,13 @@ func NewPlan(n int) (*Plan, error) {
 // Size returns the transform length this plan was built for.
 func (p *Plan) Size() int { return p.n }
 
+// Clone creates an independently usable plan while sharing the immutable
+// precomputed tables. It is useful when a caller needs concurrent transforms
+// of the same size without recomputing twiddles or bit-reversal indices.
+func (p *Plan) Clone() *Plan {
+	return &Plan{n: p.n, twiddles: p.twiddles, bitrev: p.bitrev}
+}
+
 // Forward runs an in-place radix-2 decimation-in-time FFT. len(data) must
 // equal p.Size().
 func (p *Plan) Forward(data []complex64) error {
