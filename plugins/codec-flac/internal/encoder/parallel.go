@@ -12,8 +12,8 @@ var outputReady = func() <-chan struct{} {
 }()
 
 // pendingEntry is one slot in Encoder.pendingQueue, in submission order.
-// done is nil for entries produced synchronously (workers <= 1); for
-// parallel entries it is closed once a worker has filled in packets/err.
+// done is nil for entries produced synchronously (pool == nil); for
+// parallel entries it is closed once a pool task has filled in packets/err.
 type pendingEntry struct {
 	packets []*media.Packet
 	err     error
@@ -36,6 +36,27 @@ type frameJob struct {
 	entry       *pendingEntry
 }
 
+// encodeScratch is the per-task working state a submitted job needs. It is
+// pooled per Encoder (via Encoder.scratch) so repeated blocks from the same
+// encoder reuse a writer/windowSet instead of allocating fresh ones on every
+// pool task, even though tasks no longer run on a goroutine dedicated to this
+// encoder.
+type encodeScratch struct {
+	writer  bits.Writer
+	windows windowSet
+}
+
+func (e *Encoder) acquireScratch() *encodeScratch {
+	if v := e.scratch.Get(); v != nil {
+		return v.(*encodeScratch)
+	}
+	return &encodeScratch{windows: newWindowSet(e.config.Apodizations)}
+}
+
+func (e *Encoder) releaseScratch(s *encodeScratch) {
+	e.scratch.Put(s)
+}
+
 func (e *Encoder) OutputReady() <-chan struct{} {
 	if len(e.pendingQueue) == 0 {
 		return nil
@@ -46,12 +67,11 @@ func (e *Encoder) OutputReady() <-chan struct{} {
 	return e.pendingQueue[0].done
 }
 
-// dispatchFullBlock hands a config.BlockSize-length block to the worker
-// pool. It blocks if all workers and the job queue are saturated, which is
-// the intended backpressure: SendFrame simply stops accepting more input
-// until a worker frees up.
+// dispatchFullBlock hands a config.BlockSize-length block to the shared
+// worker pool. Submit blocks if the pool's queue and workers are all
+// saturated, which is the intended backpressure: SendFrame simply stops
+// accepting more input until a worker frees up.
 func (e *Encoder) dispatchFullBlock(block [][]int64) {
-	e.startWorkers()
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
 	job := frameJob{
@@ -64,13 +84,12 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 	}
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
-	e.jobs <- job
+	e.pool.Submit(func() { e.runJob(job) })
 }
 
 // dispatchPartialBlock is Flush's counterpart to dispatchFullBlock: it never
 // splits, matching enqueueBlockSync(..., nil) in the sequential path.
 func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
-	e.startWorkers()
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
 	job := frameJob{
@@ -83,21 +102,7 @@ func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	}
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
-	e.jobs <- job
-}
-
-func (e *Encoder) startWorkers() {
-	if e.jobs != nil || e.jobsClosed {
-		return
-	}
-	e.jobs = make(chan frameJob, 2*e.workers)
-	e.workerWG.Add(e.workers)
-	for range e.workers {
-		go func() {
-			defer e.workerWG.Done()
-			e.runWorker()
-		}()
-	}
+	e.pool.Submit(func() { e.runJob(job) })
 }
 
 func copyBlock(block [][]int64) [][]int64 {
@@ -108,26 +113,21 @@ func copyBlock(block [][]int64) [][]int64 {
 	return buf
 }
 
-// runWorker owns its bits.Writer and windowSet for its whole lifetime, so
-// concurrent workers never contend on encoder state; e.sampleRate,
-// e.bitsPerSample and e.config are read-only by the time any job is
-// dispatched (set once during the first SendFrame, before workers start
-// receiving jobs), and the channel send/receive in dispatch*/runWorker
-// establishes the happens-before relationship for that initialization.
-func (e *Encoder) runWorker() {
-	writer := &bits.Writer{}
-	windows := newWindowSet(e.config.Apodizations)
-	for job := range e.jobs {
-		packets, err := e.encodeJob(job, writer, &windows)
-		job.entry.packets = packets
-		job.entry.err = err
-		close(job.entry.done)
-	}
+// runJob runs on a shared pool worker, not one dedicated to this encoder, so
+// it borrows scratch state for the duration of the call instead of owning it
+// for a whole goroutine's lifetime.
+func (e *Encoder) runJob(job frameJob) {
+	scratch := e.acquireScratch()
+	packets, err := e.encodeJob(job, &scratch.writer, &scratch.windows)
+	e.releaseScratch(scratch)
+	job.entry.packets = packets
+	job.entry.err = err
+	close(job.entry.done)
 }
 
 // encodeJob mirrors enqueueFullBlock+enqueueBlockSync's logic, but as a pure
 // function of its job/writer/windows arguments instead of encoder state, so
-// it is safe to call from multiple worker goroutines concurrently.
+// it is safe to call from multiple pool workers concurrently.
 func (e *Encoder) encodeJob(job frameJob, writer *bits.Writer, windows *windowSet) ([]*media.Packet, error) {
 	if job.split && e.config.BlockSplitDepth > 0 {
 		spans, err := chooseBlockSplit(job.channels, e.bitsPerSample, e.config, windows)

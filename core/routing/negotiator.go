@@ -306,16 +306,30 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		parallelism = runtime.GOMAXPROCS(0)
 	}
 	requests := make([]registry.ResourceRequest, len(plans))
+	needsPool := false
 	for i := range plans {
 		requests[i] = plans[i].resources
+		needsPool = needsPool || requests[i].Parallelism
 	}
-	allocations := allocateResources(requests, parallelism)
+
+	// One pool is shared by every parallel-eligible stage for the whole
+	// conversion, instead of splitting parallelism evenly across stages up
+	// front: capacity then flows to whichever stage currently has runnable
+	// work, rather than sitting idle in a stage with nothing to do.
+	var pool *registry.WorkerPool
+	if needsPool && parallelism > 1 {
+		pool = registry.NewWorkerPool(parallelism)
+		if err := geometry.AddResourceCloser(pool.Close); err != nil {
+			return nil, fmt.Errorf("register resource pool: %w", err)
+		}
+	}
+	grants := grantResources(requests, pool)
 
 	transformNodes := make([]node.Node, len(plans))
 	for i, plan := range plans {
 		transformNodes[i], err = plan.factory(registry.TransformFactoryOptions{
 			Config:    plan.config,
-			Resources: allocations[i],
+			Resources: grants[i],
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", plan.id, err)
@@ -327,7 +341,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 				Role:          plan.role,
 				Plugin:        plan.plugin,
 				Configuration: plan.config,
-				Resources:     allocations[i],
+				Resources:     grants[i],
 				Inputs:        []media.StreamInfo{plan.input},
 				Outputs:       []media.StreamInfo{plan.output},
 				AutoInserted:  plan.autoInserted,

@@ -23,7 +23,7 @@ type DemuxerFactory func(io.Reader, Configuration) (node.Demuxer, error)
 
 type TransformFactoryOptions struct {
 	Config    Configuration
-	Resources ResourceBudget
+	Resources ResourceGrant
 }
 
 type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)

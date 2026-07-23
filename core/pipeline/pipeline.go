@@ -25,18 +25,19 @@ const (
 // single-use: Run may be called exactly once, and always closes every node
 // before returning.
 type Pipeline struct {
-	mu          sync.Mutex
-	state       pipelineState
-	nodes       []node.Node
-	description Description
-	observation ObservationMode
-	edgeMetrics []*edgeMetrics
-	nodeMetrics []*nodeMetrics
-	startedAt   time.Time
-	finishedAt  time.Time
-	cancel      context.CancelFunc
-	done        chan struct{}
-	closeErr    error
+	mu              sync.Mutex
+	state           pipelineState
+	nodes           []node.Node
+	description     Description
+	observation     ObservationMode
+	edgeMetrics     []*edgeMetrics
+	nodeMetrics     []*nodeMetrics
+	resourceClosers []func() error
+	startedAt       time.Time
+	finishedAt      time.Time
+	cancel          context.CancelFunc
+	done            chan struct{}
+	closeErr        error
 }
 
 func New(nodes ...node.Node) (*Pipeline, error) {
@@ -65,19 +66,20 @@ func New(nodes ...node.Node) (*Pipeline, error) {
 	for i := range owned {
 		description.Nodes[i].ID = fmt.Sprintf("node:%d", i)
 	}
-	return newPipeline(owned, description, ObservationOff, nil)
+	return newPipeline(owned, description, ObservationOff, nil, nil)
 }
 
-func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics) (*Pipeline, error) {
+func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics, resourceClosers []func() error) (*Pipeline, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("%w: pipeline has no nodes", ErrInvalidPipeline)
 	}
 	pipeline := &Pipeline{
-		nodes:       append([]node.Node(nil), nodes...),
-		description: description,
-		observation: observation,
-		edgeMetrics: edges,
-		done:        make(chan struct{}),
+		nodes:           append([]node.Node(nil), nodes...),
+		description:     description,
+		observation:     observation,
+		edgeMetrics:     edges,
+		resourceClosers: resourceClosers,
+		done:            make(chan struct{}),
 	}
 	if observation == ObservationMetrics {
 		pipeline.nodeMetrics = make([]*nodeMetrics, len(nodes))
@@ -219,12 +221,16 @@ func (p *Pipeline) Snapshot() Snapshot {
 }
 
 func (p *Pipeline) completeClose() {
-	closeErr := closeNodes(p.nodes)
+	// Resources (e.g. a worker pool shared by several nodes) are closed only
+	// after every node has closed, since a node's own Close may still submit
+	// or await work on a shared resource.
+	closeErr := errors.Join(closeNodes(p.nodes), closeResources(p.resourceClosers))
 
 	p.mu.Lock()
 	p.closeErr = closeErr
 	p.state = pipelineClosed
 	p.nodes = nil
+	p.resourceClosers = nil
 	close(p.done)
 	p.mu.Unlock()
 }

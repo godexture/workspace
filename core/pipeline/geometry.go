@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -28,13 +29,14 @@ const (
 // Geometry owns all added nodes until Builder.Build transfers them to a
 // Pipeline. Close releases nodes when a negotiated geometry is abandoned.
 type Geometry struct {
-	mu       sync.Mutex
-	state    geometryState
-	nodes    []NodeDef
-	nodeIDs  map[string]struct{}
-	edges    []EdgeDef
-	done     chan struct{}
-	closeErr error
+	mu              sync.Mutex
+	state           geometryState
+	nodes           []NodeDef
+	nodeIDs         map[string]struct{}
+	edges           []EdgeDef
+	resourceClosers []func() error
+	done            chan struct{}
+	closeErr        error
 }
 
 func NewGeometry() *Geometry {
@@ -87,6 +89,22 @@ func (g *Geometry) SetNodeDescription(id string, description NodeDescription) er
 		}
 	}
 	return fmt.Errorf("%w: node not found: %s", ErrInvalidPipeline, id)
+}
+
+// AddResourceCloser registers a shared resource (such as a worker pool held
+// by several nodes) to be closed once every node in the eventual Pipeline has
+// closed, or immediately if the geometry is abandoned instead of built.
+func (g *Geometry) AddResourceCloser(closer func() error) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state != geometryOpen {
+		return fmt.Errorf("%w: geometry does not accept resource closers", ErrInvalidPipeline)
+	}
+	if closer == nil {
+		return fmt.Errorf("%w: resource closer must not be nil", ErrInvalidPipeline)
+	}
+	g.resourceClosers = append(g.resourceClosers, closer)
+	return nil
 }
 
 func (g *Geometry) AddEdge(fromNode, fromPort, toNode, toPort string) error {
@@ -159,8 +177,10 @@ func (g *Geometry) Close() error {
 	}
 	g.state = geometryClosing
 	nodes := g.nodes
+	closers := g.resourceClosers
 	g.nodes = nil
 	g.edges = nil
+	g.resourceClosers = nil
 	g.mu.Unlock()
 
 	owned := make([]node.Node, len(nodes))
@@ -168,6 +188,7 @@ func (g *Geometry) Close() error {
 		owned[i] = nodes[i].Node
 	}
 	err := closeNodes(owned)
+	err = errors.Join(err, closeResources(closers))
 
 	g.mu.Lock()
 	g.closeErr = err
@@ -177,17 +198,29 @@ func (g *Geometry) Close() error {
 	return err
 }
 
-func (g *Geometry) take() ([]NodeDef, []EdgeDef, error) {
+func (g *Geometry) take() ([]NodeDef, []EdgeDef, []func() error, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.state != geometryOpen {
-		return nil, nil, fmt.Errorf("%w: geometry is not open", ErrInvalidPipeline)
+		return nil, nil, nil, fmt.Errorf("%w: geometry is not open", ErrInvalidPipeline)
 	}
 	g.state = geometryTransferred
 	nodes := g.nodes
 	edges := g.edges
+	closers := g.resourceClosers
 	g.nodes = nil
 	g.edges = nil
 	g.nodeIDs = nil
-	return nodes, edges, nil
+	g.resourceClosers = nil
+	return nodes, edges, closers, nil
+}
+
+func closeResources(closers []func() error) error {
+	var result error
+	for i := len(closers) - 1; i >= 0; i-- {
+		if err := closers[i](); err != nil {
+			result = errors.Join(result, fmt.Errorf("close resource %d: %w", i, err))
+		}
+	}
+	return result
 }
