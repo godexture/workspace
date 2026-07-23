@@ -9,7 +9,6 @@ package convolve
 
 import (
 	"fmt"
-	"math"
 	"sync"
 
 	"github.com/godexture/core/domain/media"
@@ -17,6 +16,7 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/framequeue"
 	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/dsp/fft"
 )
 
@@ -105,7 +105,10 @@ func (e *Engine) Prepare(resources registry.ResourceGrant) error {
 }
 
 func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {
-	ir := normalizeImpulseResponse(impulse, e.cfg.Normalize)
+	ir := impulse
+	if e.cfg.Normalize {
+		ir = dsp.ClampL1(ir)
+	}
 	partitions := make([][]partition, len(ir))
 	for ch, samples := range ir {
 		parts, err := buildPartitions(e.plan, e.hop, samples, e.pool)
@@ -434,35 +437,6 @@ func transformPartition(plan *fft.RealPlan, hop int, samples []float32, index in
 		return partition{}, err
 	}
 	return partition{spectrum: spectrum}, nil
-}
-
-// normalizeImpulseResponse scales each impulse response channel down,
-// independently, if its L1 norm exceeds 1: that bounds the maximum
-// possible output magnitude for any input within [-1, 1] to at most 1,
-// avoiding worst-case clipping. Channels that are already within bound are
-// left untouched (this never amplifies).
-func normalizeImpulseResponse(ir [][]float32, normalize bool) [][]float32 {
-	if !normalize {
-		return ir
-	}
-	result := make([][]float32, len(ir))
-	for ch, channel := range ir {
-		var l1 float64
-		for _, v := range channel {
-			l1 += math.Abs(float64(v))
-		}
-		if l1 <= 1 {
-			result[ch] = channel
-			continue
-		}
-		scale := float32(1 / l1)
-		scaled := make([]float32, len(channel))
-		for i, v := range channel {
-			scaled[i] = v * scale
-		}
-		result[ch] = scaled
-	}
-	return result
 }
 
 func nextPowerOfTwo(n int) int {
