@@ -36,7 +36,7 @@ func Resolve(input []byte, specJSON string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	geometry, err := conversion.Negotiate(context.Background(), bytes.NewReader(input), io.Discard, spec)
+	geometry, err := conversion.Negotiate(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, io.Discard, spec)
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +53,7 @@ func Start(input []byte, specJSON string) (string, error) {
 		return "", err
 	}
 	output := &bytes.Buffer{}
-	job, err := conversion.StartJob(context.Background(), bytes.NewReader(input), output, spec)
+	job, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, output, spec)
 	if err != nil {
 		return "", err
 	}
