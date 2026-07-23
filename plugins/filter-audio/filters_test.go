@@ -616,6 +616,25 @@ func TestConvolveMatchesDirectConvolution(t *testing.T) {
 	}
 }
 
+func TestConvolvePreparesImpulseWithSharedPool(t *testing.T) {
+	item, err := convolve.New(config.ConvolutionConfig{
+		ImpulseResponse: [][]float32{{1, 0, 0, 0, 0, 0, 0, 0, 0}},
+		WetDryMix:       1,
+		BlockSize:       4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := registry.NewWorkerPool(2)
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := item.Prepare(registry.ResourceGrant{Pool: pool}); err != nil {
+		t.Fatal(err)
+	}
+	input := []float32{0.1, -0.2, 0.3, -0.4}
+	send(t, item, frame(48000, 0, input))
+	assertSamplesTol(t, receive(t, item), input, 1e-4)
+}
+
 func TestConvolveWetDryMixZeroIsDry(t *testing.T) {
 	item, err := convolve.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{0.5, 0.3, -0.2, 0.1}},
