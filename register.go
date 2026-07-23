@@ -22,7 +22,7 @@ func init() {
 				Description:          "MP3 decoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}})),
 		},
 		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
 			output := stream.Clone()
