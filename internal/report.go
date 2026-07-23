@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,6 +47,9 @@ func writePipelineDescription(writer io.Writer, description pipeline.Description
 				return err
 			}
 		}
+	}
+	if err := writePipelineChains(writer, description); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintln(writer, "Pipeline:"); err != nil {
 		return err
@@ -96,37 +100,86 @@ func writeConversionStart(writer io.Writer, description pipeline.Description) er
 	if _, err := fmt.Fprintln(writer, "Starting conversion:"); err != nil {
 		return err
 	}
-	parts := make([]string, 0, len(description.Nodes)+1)
-	for _, edge := range description.Edges {
-		if edge.ProgressSource {
-			if _, err := fmt.Fprintf(writer, "  input[%s]\n", formatStream(edge.Stream)); err != nil {
-				return err
+	return writePipelineChains(writer, description)
+}
+
+func writePipelineChains(writer io.Writer, description pipeline.Description) error {
+	nodes := make(map[string]pipeline.NodeDescription, len(description.Nodes))
+	starts := make([]string, 0)
+	for _, node := range description.Nodes {
+		nodes[node.ID] = node
+		if node.Role == manifest.RoleDemuxer {
+			starts = append(starts, node.ID)
+		}
+	}
+	slices.SortFunc(starts, func(left, right string) int {
+		if left == "demuxer" {
+			return -1
+		}
+		if right == "demuxer" {
+			return 1
+		}
+		return strings.Compare(left, right)
+	})
+	if _, err := fmt.Fprintln(writer, "Streams:"); err != nil {
+		return err
+	}
+	for _, start := range starts {
+		parts := []string{formatPipelineNode(nodes[start])}
+		current := start
+		seen := map[string]bool{start: true}
+		for {
+			edge, found := pipelineNextEdge(description.Edges, current)
+			if !found {
+				break
 			}
-			break
+			if edge.ToPort != "in" {
+				parts = append(parts, edge.ToNode+"."+edge.ToPort)
+				break
+			}
+			if seen[edge.ToNode] {
+				parts = append(parts, edge.ToNode+" (cycle)")
+				break
+			}
+			next, ok := nodes[edge.ToNode]
+			if !ok {
+				parts = append(parts, edge.ToNode)
+				break
+			}
+			parts = append(parts, formatPipelineNode(next))
+			seen[edge.ToNode] = true
+			current = edge.ToNode
 		}
-	}
-	for _, current := range description.Nodes {
-		label := string(current.Role)
-		if label == "" {
-			label = current.ID
+		name := "main"
+		if start != "demuxer" {
+			name = strings.TrimSuffix(strings.TrimPrefix(start, "aux:"), ":demuxer")
 		}
-		if current.Plugin != "" {
-			label += "(" + current.Plugin + ")"
-		}
-		parts = append(parts, label)
-	}
-	for _, current := range description.Nodes {
-		if current.Role == manifest.RoleMuxer && len(current.Inputs) > 0 {
-			parts = append(parts, "output["+formatStream(current.Inputs[0])+"]")
-			break
-		}
-	}
-	for _, part := range parts {
-		if _, err := fmt.Fprintf(writer, "    --> %s\n", part); err != nil {
+		if _, err := fmt.Fprintf(writer, "  %s: %s\n", name, strings.Join(parts, " -> ")); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func pipelineNextEdge(edges []pipeline.EdgeDescription, nodeID string) (pipeline.EdgeDescription, bool) {
+	for _, edge := range edges {
+		if edge.FromNode == nodeID && edge.FromPort == "out" && edge.ToPort == "in" {
+			return edge, true
+		}
+	}
+	for _, edge := range edges {
+		if edge.FromNode == nodeID && edge.FromPort == "out" {
+			return edge, true
+		}
+	}
+	return pipeline.EdgeDescription{}, false
+}
+
+func formatPipelineNode(node pipeline.NodeDescription) string {
+	if node.Plugin == "" {
+		return node.ID
+	}
+	return node.ID + "(" + node.Plugin + ")"
 }
 
 func writeConfiguration(writer io.Writer, configuration registry.Configuration) error {

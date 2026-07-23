@@ -88,7 +88,7 @@ func TestConvertMetricsReportsSuccessfulRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Starting conversion:\n", "    --> ", "Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items=", "Conversion completed successfully."} {
+	for _, expected := range []string{"Starting conversion:\n", "Streams:\n", "main: demuxer(wav) -> decoder(pcm)", "Metrics:", "status: completed", "runtime:", "demuxer:out -> decoder:in", "items=", "Conversion completed successfully."} {
 		if !strings.Contains(stderr, expected) {
 			t.Fatalf("metrics output does not contain %q:\n%s", expected, stderr)
 		}
@@ -114,8 +114,7 @@ func TestConvertPrintsStartAndSuccessWithoutVerbose(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout)
 	}
 	for _, expected := range []string{
-		"Starting conversion:\n  input[#0 audio",
-		"\n    --> demuxer(wav)\n    --> decoder(pcm)\n    --> encoder(pcm)\n    --> muxer(wav)\n    --> output[#0 audio",
+		"Starting conversion:\nStreams:\n  main: demuxer(wav) -> decoder(pcm) -> encoder(pcm) -> muxer(wav)",
 	} {
 		if !strings.Contains(stderr, expected) {
 			t.Fatalf("conversion output does not contain %q:\n%s", expected, stderr)
