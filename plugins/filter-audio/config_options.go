@@ -562,6 +562,45 @@ func (c ReverbConfig) FieldChoices(field string) []string {
 	}
 }
 
+type ConvolutionConfig config.ConvolutionConfig
+
+type ConvolutionConfigOption interface {
+	applyConvolutionConfig(*ConvolutionConfig)
+}
+
+type convolutionConfigOptionFunc func(*ConvolutionConfig)
+
+func (f convolutionConfigOptionFunc) applyConvolutionConfig(c *ConvolutionConfig) {
+	f(c)
+}
+
+func NewConvolutionConfig(options ...ConvolutionConfigOption) ConvolutionConfig {
+	config := ConvolutionConfig(config.DefaultConvolutionConfig)
+	for _, option := range options {
+		option.applyConvolutionConfig(&config)
+	}
+	return config
+}
+
+func (c ConvolutionConfig) ResolveDefault() config.ConvolutionConfig {
+	return config.ConvolutionConfig(config.DefaultConvolutionConfig)
+}
+
+func (c ConvolutionConfig) Resolve() config.ConvolutionConfig {
+	return config.ConvolutionConfig(c)
+}
+
+func (c ConvolutionConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
+func (c ConvolutionConfig) FieldChoices(field string) []string {
+	switch field {
+	default:
+		return nil
+	}
+}
+
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
 		c.Format = v
@@ -604,10 +643,22 @@ func WithLFEMixDB(v float64) RemixConfigOption {
 	})
 }
 
-func WithNormalize(v bool) RemixConfigOption {
-	return remixConfigOptionFunc(func(c *RemixConfig) {
-		c.Normalize = v
-	})
+type NormalizeOption interface {
+	RemixConfigOption
+	ConvolutionConfigOption
+}
+
+type normalizeOpt struct{ v bool }
+
+func (o normalizeOpt) applyRemixConfig(c *RemixConfig) {
+	c.Normalize = o.v
+}
+func (o normalizeOpt) applyConvolutionConfig(c *ConvolutionConfig) {
+	c.Normalize = o.v
+}
+
+func WithNormalize(v bool) NormalizeOption {
+	return normalizeOpt{v}
 }
 
 func WithDecibels(v float64) GainConfigOption {
@@ -895,5 +946,29 @@ func WithRoomSize(v float64) ReverbConfigOption {
 func WithDamping(v float64) ReverbConfigOption {
 	return reverbConfigOptionFunc(func(c *ReverbConfig) {
 		c.Damping = v
+	})
+}
+
+func WithImpulseResponse(v [][]float32) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.ImpulseResponse = v
+	})
+}
+
+func WithImpulseRate(v int) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.ImpulseRate = v
+	})
+}
+
+func WithWetDryMix(v float64) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.WetDryMix = v
+	})
+}
+
+func WithBlockSize(v int) ConvolutionConfigOption {
+	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
+		c.BlockSize = v
 	})
 }
