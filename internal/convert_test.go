@@ -170,8 +170,8 @@ func TestBuildSpecWiresNamedAuxiliaryInput(t *testing.T) {
 	if _, ok := spec.AuxInputs["IR"]; !ok {
 		t.Fatalf("buildSpec() auxiliary inputs = %#v", spec.AuxInputs)
 	}
-	if got := spec.Filters[0].Inputs["ir"]; got != "IR" {
-		t.Fatalf("buildSpec() ir wire = %q, want IR", got)
+	if got, want := spec.Filters[0].Inputs["ir"], (conversion.PortRef{Alias: "IR", Port: "out"}); got != want {
+		t.Fatalf("buildSpec() ir wire = %#v, want %#v", got, want)
 	}
 }
 
@@ -186,7 +186,14 @@ func TestBuildSpecRejectsAmbiguousDefaultFilterAlias(t *testing.T) {
 	}
 }
 
-func TestBuildSpecBuildsAuxiliaryFilterChain(t *testing.T) {
+// TestBuildSpecWiresFilterChainAheadOfAnotherFilter exercises wiring one
+// filter's output into another's non-"in" port through an intermediate
+// filter: "resample" reads the "ir" auxiliary input, and "convolve" reads
+// resample's output on its "ir" port. Unlike the old model, resample is not
+// nested under AuxInputs — it is an ordinary entry in spec.Filters, wired
+// like anything else; the graph is resolved uniformly by
+// conversion.Resolve/routing.NegotiateConversion.
+func TestBuildSpecWiresFilterChainAheadOfAnotherFilter(t *testing.T) {
 	spec, err := buildSpec(convertOptions{
 		filters: []string{"resample=resample:sample-rate=48000", "convolve"},
 		inputs:  []string{"ir=cabinet.wav"},
@@ -198,15 +205,60 @@ func TestBuildSpecBuildsAuxiliaryFilterChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Filters) != 1 || spec.Filters[0].Alias != "convolve" {
-		t.Fatalf("buildSpec() main filters = %#v", spec.Filters)
+	if _, ok := spec.AuxInputs["ir"]; !ok {
+		t.Fatalf("buildSpec() auxiliary inputs = %#v", spec.AuxInputs)
 	}
-	auxiliary := spec.AuxInputs["ir"]
-	if len(auxiliary.Filters) != 1 || auxiliary.Filters[0].Alias != "resample" {
-		t.Fatalf("buildSpec() auxiliary filters = %#v", auxiliary.Filters)
+	if len(spec.Filters) != 2 || spec.Filters[0].Alias != "resample" || spec.Filters[1].Alias != "convolve" {
+		t.Fatalf("buildSpec() filters = %#v", spec.Filters)
 	}
-	if got := spec.Filters[0].Inputs["ir"]; got != "ir" {
-		t.Fatalf("buildSpec() convolve ir source = %q, want ir", got)
+	if got, want := spec.Filters[0].Inputs["in"], (conversion.PortRef{Alias: "ir", Port: "out"}); got != want {
+		t.Fatalf("buildSpec() resample in source = %#v, want %#v", got, want)
+	}
+	if got, want := spec.Filters[1].Inputs["ir"], (conversion.PortRef{Alias: "resample", Port: "out"}); got != want {
+		t.Fatalf("buildSpec() convolve ir source = %#v, want %#v", got, want)
+	}
+}
+
+// TestBuildSpecSplitsMainStreamThroughReverbAndDelayThenMixes exercises the
+// CLI syntax for forking the main stream through two filters and mixing the
+// branches back: "split" is a 1-in/2-out mixer (a tee), "join" is a
+// 2-in/1-out mixer. Neither has a literal "in"/"out" port, so both need
+// explicit wiring — including @in as split's source and @out as join's
+// destination — instead of the declaration-order default chain plain
+// single-port filters (reverb, delay) get for free.
+func TestBuildSpecSplitsMainStreamThroughReverbAndDelayThenMixes(t *testing.T) {
+	spec, err := buildSpec(convertOptions{
+		filters: []string{"split=mixer[in=1,out=2]", "reverb", "delay", "join=mixer[in=2,out=1]"},
+		wires: []string{
+			"split.in0=@in",
+			"reverb.in=split.out0",
+			"delay.in=split.out1",
+			"join.in0=reverb.out",
+			"join.in1=delay.out",
+			"@out.in=join.out0",
+		},
+	}, "output.wav", catalog.Build().Outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Filters) != 4 {
+		t.Fatalf("buildSpec() filters = %#v", spec.Filters)
+	}
+	if got, want := spec.Filters[0].Inputs["in0"], (conversion.PortRef{Alias: conversion.MainInputAlias, Port: "out"}); got != want {
+		t.Fatalf("buildSpec() split.in0 = %#v, want %#v", got, want)
+	}
+	if got, want := spec.Filters[3].Inputs["in0"], (conversion.PortRef{Alias: "reverb", Port: "out"}); got != want {
+		t.Fatalf("buildSpec() join.in0 = %#v, want %#v", got, want)
+	}
+	if spec.Sink == nil {
+		t.Fatal("buildSpec() sink = nil, want join.out0")
+	}
+	if got, want := *spec.Sink, (conversion.PortRef{Alias: "join", Port: "out0"}); got != want {
+		t.Fatalf("buildSpec() sink = %#v, want %#v", got, want)
+	}
+
+	if _, err := conversion.Resolve(spec); err != nil {
+		t.Fatalf("conversion.Resolve() error = %v", err)
 	}
 }
 

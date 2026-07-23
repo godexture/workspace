@@ -32,7 +32,7 @@ func newConvertCommand() *cobra.Command {
 	command.Flags().BoolVarP(&options.force, "force", "f", false, "Overwrite an existing output file")
 	command.Flags().StringArrayVarP(&options.filters, "filter", "e", nil, "Filter specification (name:key=value,...)")
 	command.Flags().StringArrayVarP(&options.inputs, "input", "i", nil, "Named auxiliary input (NAME=PATH)")
-	command.Flags().StringArrayVarP(&options.wires, "wire", "w", nil, "Connect FILTER_ALIAS.PORT to INPUT_ALIAS.out or AUX_FILTER_ALIAS.out")
+	command.Flags().StringArrayVarP(&options.wires, "wire", "w", nil, "Connect FILTER_ALIAS.PORT to SOURCE_ALIAS.PORT (SOURCE may be @in, an --input alias, or another filter's alias); @out.in=SOURCE_ALIAS.PORT sets the pipeline's final output")
 	command.Flags().StringVar(&options.progress, "progress", "auto", "Progress display: auto, always, or never")
 	command.Flags().BoolVar(&options.metrics, "metrics", false, "Report conversion and runtime metrics")
 	command.Flags().BoolVar(&options.dryRun, "dry-run", false, "Resolve and validate the pipeline without converting")
@@ -88,8 +88,13 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 	if spec.Decoder, _, err = parsePluginSpec(options.decoder); err != nil {
 		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
 	}
-	filters := make([]graphFilter, 0, len(options.filters))
-	nodes := make(map[string]graphNode)
+	// aliasIndex tracks every declared filter alias to its position in
+	// spec.Filters, so --wire can look up its destination; aliasSeen also
+	// covers auxiliary input names, since the two namespaces share one
+	// alias space (see conversion.MainInputAlias and routing.MainInputAlias
+	// for the two names reserved out of it).
+	aliasIndex := make(map[string]int, len(options.filters))
+	aliasSeen := make(map[string]bool, len(options.filters)+len(options.inputs))
 	for _, value := range options.filters {
 		alias, filter, parameters, parseErr := parseFilterSpec(value)
 		if parseErr != nil {
@@ -101,11 +106,12 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		if !validGraphAlias(alias) {
 			return conversion.Spec{}, fmt.Errorf("filter: invalid alias %q", alias)
 		}
-		if _, exists := nodes[alias]; exists {
+		if aliasSeen[alias] {
 			return conversion.Spec{}, fmt.Errorf("filter: duplicate alias %q", alias)
 		}
-		nodes[alias] = graphNode{filter: len(filters)}
-		filters = append(filters, graphFilter{spec: conversion.FilterSpec{PluginSpec: *filter, Alias: alias, Parameters: parameters}, wires: make(map[string]string)})
+		aliasSeen[alias] = true
+		aliasIndex[alias] = len(spec.Filters)
+		spec.Filters = append(spec.Filters, conversion.FilterSpec{PluginSpec: *filter, Alias: alias, Parameters: parameters})
 	}
 	for _, value := range options.inputs {
 		name, _, parseErr := parseNamedValue(value)
@@ -115,17 +121,14 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		if !validGraphAlias(name) {
 			return conversion.Spec{}, fmt.Errorf("input: invalid name %q", name)
 		}
-		if existing, exists := nodes[name]; exists {
-			if existing.input {
-				return conversion.Spec{}, fmt.Errorf("input: duplicate name %q", name)
-			}
+		if aliasSeen[name] {
 			return conversion.Spec{}, fmt.Errorf("input: name %q duplicates a filter alias", name)
 		}
+		aliasSeen[name] = true
 		if spec.AuxInputs == nil {
 			spec.AuxInputs = make(map[string]conversion.AuxInputSpec)
 		}
 		spec.AuxInputs[name] = conversion.AuxInputSpec{}
-		nodes[name] = graphNode{input: true}
 	}
 	for _, value := range options.wires {
 		left, source, parseErr := parseNamedValue(value)
@@ -137,44 +140,50 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 			return conversion.Spec{}, fmt.Errorf("wire: invalid destination %q", left)
 		}
 		alias, port := left[:separator], left[separator+1:]
-		target, ok := nodes[alias]
-		if !ok || target.input {
-			return conversion.Spec{}, fmt.Errorf("wire: unknown filter alias %q", alias)
-		}
 		sourceAlias, sourcePort, sourceErr := parseWireSource(source)
 		if sourceErr != nil {
 			return conversion.Spec{}, fmt.Errorf("wire: %w", sourceErr)
 		}
-		if sourcePort != "out" {
-			return conversion.Spec{}, fmt.Errorf("wire: source port %q must be out", sourcePort)
+		ref := conversion.PortRef{Alias: sourceAlias, Port: sourcePort}
+		if alias == outputAlias {
+			if port != "in" {
+				return conversion.Spec{}, fmt.Errorf("wire: %s only has an \"in\" port", outputAlias)
+			}
+			if spec.Sink != nil {
+				return conversion.Spec{}, fmt.Errorf("wire: output is already wired")
+			}
+			spec.Sink = &ref
+			continue
 		}
-		if _, ok := nodes[sourceAlias]; !ok {
-			return conversion.Spec{}, fmt.Errorf("wire: unknown source alias %q", sourceAlias)
+		index, ok := aliasIndex[alias]
+		if !ok {
+			return conversion.Spec{}, fmt.Errorf("wire: unknown filter alias %q", alias)
 		}
-		filter := &filters[target.filter]
-		if _, exists := filter.wires[port]; exists {
+		filter := &spec.Filters[index]
+		if filter.Inputs == nil {
+			filter.Inputs = make(map[string]conversion.PortRef)
+		}
+		if _, exists := filter.Inputs[port]; exists {
 			return conversion.Spec{}, fmt.Errorf("wire: duplicate destination %s", left)
 		}
-		filter.wires[port] = sourceAlias
-	}
-	if err := compileFilterGraph(&spec, filters, nodes); err != nil {
-		return conversion.Spec{}, err
+		filter.Inputs[port] = ref
 	}
 	return spec, nil
 }
 
-type graphNode struct {
-	input  bool
-	filter int
-}
-
-type graphFilter struct {
-	spec  conversion.FilterSpec
-	wires map[string]string
-}
+// outputAlias is the reserved --wire destination for the pipeline's final
+// output port (conversion.Spec.Sink), mirroring conversion.MainInputAlias
+// ("@in") as a --wire source. Everything else about graph wiring — unknown
+// aliases, cycles, ports left unconnected — is validated once, by
+// conversion.Resolve/routing.NegotiateConversion, rather than duplicated
+// here.
+const outputAlias = "@out"
 
 func validGraphAlias(value string) bool {
-	return value != "" && !strings.ContainsAny(value, ".= \t\r\n")
+	if value == "" || value == outputAlias || value == conversion.MainInputAlias {
+		return false
+	}
+	return !strings.ContainsAny(value, ".= \t\r\n")
 }
 
 func parseWireSource(value string) (string, string, error) {
@@ -189,85 +198,6 @@ func parseWireSource(value string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid source %q", value)
 	}
 	return value[:separator], value[separator+1:], nil
-}
-
-func compileFilterGraph(spec *conversion.Spec, filters []graphFilter, nodes map[string]graphNode) error {
-	uses := make(map[string]int)
-	for _, filter := range filters {
-		for _, source := range filter.wires {
-			uses[source]++
-		}
-	}
-	for index := range filters {
-		filter := &filters[index]
-		_, auxiliary := filter.wires["in"]
-		if auxiliary {
-			if len(filter.wires) != 1 {
-				return fmt.Errorf("wire: auxiliary filter %q may only wire its in port", filter.spec.Alias)
-			}
-			if uses[filter.spec.Alias] != 1 {
-				return fmt.Errorf("wire: auxiliary filter %q output must be connected exactly once", filter.spec.Alias)
-			}
-			continue
-		}
-		filter.spec.Inputs = make(map[string]string, len(filter.wires))
-		for port, source := range filter.wires {
-			root, chain, err := resolveAuxiliarySource(source, filters, nodes, nil)
-			if err != nil {
-				return fmt.Errorf("wire: filter %q port %q: %w", filter.spec.Alias, port, err)
-			}
-			if _, already := filter.spec.Inputs[port]; already {
-				return fmt.Errorf("wire: duplicate destination %s.%s", filter.spec.Alias, port)
-			}
-			if _, configured := spec.AuxInputs[root]; !configured {
-				return fmt.Errorf("wire: unknown input %q", root)
-			}
-			if len(chain) > 0 {
-				auxiliary := spec.AuxInputs[root]
-				if len(auxiliary.Filters) != 0 {
-					return fmt.Errorf("wire: auxiliary input %q feeds more than one filter chain", root)
-				}
-				auxiliary.Filters = make([]conversion.FilterSpec, len(chain))
-				for i, chainIndex := range chain {
-					auxiliary.Filters[i] = filters[chainIndex].spec
-				}
-				spec.AuxInputs[root] = auxiliary
-			}
-			filter.spec.Inputs[port] = root
-		}
-		spec.Filters = append(spec.Filters, filter.spec)
-	}
-	for name := range spec.AuxInputs {
-		if uses[name] == 0 {
-			return fmt.Errorf("wire: auxiliary input %q is not connected", name)
-		}
-	}
-	return nil
-}
-
-func resolveAuxiliarySource(source string, filters []graphFilter, nodes map[string]graphNode, visiting map[string]bool) (string, []int, error) {
-	entry := nodes[source]
-	if entry.input {
-		return source, nil, nil
-	}
-	filter := filters[entry.filter]
-	input, ok := filter.wires["in"]
-	if !ok {
-		return "", nil, fmt.Errorf("source %q is a main-stream filter; only auxiliary filter outputs can be wired", source)
-	}
-	if visiting == nil {
-		visiting = make(map[string]bool)
-	}
-	if visiting[source] {
-		return "", nil, fmt.Errorf("auxiliary filter cycle at %q", source)
-	}
-	visiting[source] = true
-	root, chain, err := resolveAuxiliarySource(input, filters, nodes, visiting)
-	delete(visiting, source)
-	if err != nil {
-		return "", nil, err
-	}
-	return root, append(chain, entry.filter), nil
 }
 
 // parseFilterSpec splits an optional "alias=" prefix off a filter
