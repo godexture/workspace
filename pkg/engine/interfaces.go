@@ -43,3 +43,12 @@ type FilterEngine interface {
 	ReceiveFrame() (*media.Frame, error)
 	Flush() error
 }
+
+// MultiFilterEngine adds named inputs while preserving the established main
+// frame API. SendInput receives auxiliary frames and EndInput marks an input
+// EOF; the adapter retains and releases frames around both calls.
+type MultiFilterEngine interface {
+	FilterEngine
+	SendInput(port string, frame *media.Frame) error
+	EndInput(port string) error
+}
