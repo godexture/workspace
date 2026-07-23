@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/godexture/core/domain/media"
@@ -88,4 +89,12 @@ func (c IntConstraint) Preferred(current int) int {
 type SampleFormatConstraint struct {
 	Format        media.SampleFormat
 	BitsPerSample IntConstraint
+}
+
+func IsNilCapability(capability Capability) bool {
+	if capability == nil {
+		return true
+	}
+	value := reflect.ValueOf(capability)
+	return value.Kind() == reflect.Pointer && value.IsNil()
 }
