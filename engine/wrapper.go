@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type outputNotifier interface {
@@ -20,14 +21,23 @@ type engineCloser interface {
 }
 
 type engineLifecycle struct {
-	closer engineCloser
-	once   sync.Once
-	err    error
+	closer   engineCloser
+	preparer registry.Preparer
+	once     sync.Once
+	err      error
 }
 
 func newEngineLifecycle(engine any) engineLifecycle {
 	closer, _ := engine.(engineCloser)
-	return engineLifecycle{closer: closer}
+	preparer, _ := engine.(registry.Preparer)
+	return engineLifecycle{closer: closer, preparer: preparer}
+}
+
+func (l *engineLifecycle) Prepare(resources registry.ResourceGrant) error {
+	if l.preparer == nil {
+		return nil
+	}
+	return l.preparer.Prepare(resources)
 }
 
 func (l *engineLifecycle) Close() error {

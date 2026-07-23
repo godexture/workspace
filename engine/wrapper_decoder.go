@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type DecoderAdapter struct {
@@ -57,6 +58,10 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 
 func (n *DecoderAdapter) Close() error {
 	return n.lifecycle.Close()
+}
+
+func (n *DecoderAdapter) Prepare(resources registry.ResourceGrant) error {
+	return n.lifecycle.Prepare(resources)
 }
 
 func (n *DecoderAdapter) InputPorts() map[string]*node.InPort[*media.Packet] {

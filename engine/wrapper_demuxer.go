@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/domain/metadata"
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type DemuxerAdapter struct {
@@ -39,6 +40,10 @@ func WrapDemuxer(engine DemuxerEngine) node.Demuxer {
 
 func (n *DemuxerAdapter) Close() error {
 	return n.lifecycle.Close()
+}
+
+func (n *DemuxerAdapter) Prepare(resources registry.ResourceGrant) error {
+	return n.lifecycle.Prepare(resources)
 }
 
 type SeekableDemuxerAdapter struct {

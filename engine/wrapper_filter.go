@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type FilterAdapter struct {
@@ -50,6 +51,10 @@ func (n *FilterAdapter) Start(ctx context.Context) error {
 
 func (n *FilterAdapter) Close() error {
 	return n.lifecycle.Close()
+}
+
+func (n *FilterAdapter) Prepare(resources registry.ResourceGrant) error {
+	return n.lifecycle.Prepare(resources)
 }
 
 func (n *FilterAdapter) Process(ctx context.Context) error {
