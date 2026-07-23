@@ -97,6 +97,36 @@ func TestEQConfigValidate(t *testing.T) {
 	}
 }
 
+func TestConvolutionConfigValidate(t *testing.T) {
+	t.Parallel()
+	valid := ConvolutionConfig{ImpulseResponse: [][]float32{{1, 0.5}}, WetDryMix: 1}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (func() ConvolutionConfig { c := valid; c.ImpulseResponse = nil; return c }()).Validate(); err == nil {
+		t.Fatal("want error for empty impulse response")
+	}
+	if err := (func() ConvolutionConfig { c := valid; c.ImpulseResponse = [][]float32{{}}; return c }()).Validate(); err == nil {
+		t.Fatal("want error for empty impulse response channel")
+	}
+	if err := (func() ConvolutionConfig {
+		c := valid
+		c.ImpulseResponse = [][]float32{{1, 0.5}, {1}}
+		return c
+	}()).Validate(); err == nil {
+		t.Fatal("want error for mismatched impulse response channel lengths")
+	}
+	if err := (func() ConvolutionConfig { c := valid; c.ImpulseRate = -1; return c }()).Validate(); err == nil {
+		t.Fatal("want error for negative impulse rate")
+	}
+	if err := (func() ConvolutionConfig { c := valid; c.WetDryMix = 1.5; return c }()).Validate(); err == nil {
+		t.Fatal("want error for wet/dry mix above 1")
+	}
+	if err := (func() ConvolutionConfig { c := valid; c.BlockSize = -1; return c }()).Validate(); err == nil {
+		t.Fatal("want error for negative block size")
+	}
+}
+
 func TestDelayConfigValidate(t *testing.T) {
 	t.Parallel()
 	valid := DelayConfig{DelayMs: 300, Feedback: 0.3, WetLevel: 0.5, DryLevel: 1}
