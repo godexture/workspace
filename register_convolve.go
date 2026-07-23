@@ -26,6 +26,7 @@ func registerConvolveManifest() {
 			"in": registry.StaticRequirements(&manifest.AudioConstraint{}),
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{}),
 		},
+		Resources: registry.ResourceRequest{Parallelism: true},
 	}, Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 		value, err := engine.ResolveConfig[config.ConvolutionConfig, ConvolutionConfig](options.Config)
 		if err != nil {
