@@ -1,143 +1,150 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocalStorage } from "../hooks/useLocalStorage";
 
 import { fetchCatalog, fetchPresets, presetAudioUrl } from "../api/client";
-import type { Catalog, ConversionSpec, Preset } from "../api/types";
+import type { Catalog, PipelineDescription, Preset } from "../api/types";
 import { clientBackend } from "../conversion/backend/clientBackend";
 import { serverBackend } from "../conversion/backend/serverBackend";
 import type { BackendMode, InputSource } from "../conversion/backend/types";
 import { useConversionJob } from "../conversion/useConversionJob";
-import { PipelineView } from "../pipeline/PipelineView";
-import type { PipelineDescription } from "../api/types";
-import { InputPanel } from "../components/InputPanel";
+import { GraphEditor } from "../graph/GraphEditor";
+import { compileGraph, createInitialGraph, type GraphDocument } from "../graph/model";
+import { clearGraph, loadGraph, saveGraph } from "../graph/storage";
+import { ResolvedGraph } from "../graph/ResolvedGraph";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { ResultPanel } from "../components/ResultPanel";
-import { SettingsPanel } from "../components/SettingsPanel";
 import styles from "./App.module.css";
 
-const CLIENT_MAX_UPLOAD_BYTES = 100 << 20; // 100 MiB
-const SERVER_MAX_UPLOAD_BYTES = 1 << 30; // 1 GiB
+const CLIENT_MAX_UPLOAD_BYTES = 100 << 20;
+const SERVER_MAX_UPLOAD_BYTES = 1 << 30;
 const RESOLVE_DEBOUNCE_MS = 350;
 
 export function App() {
     const [catalog, setCatalog] = useState<Catalog | null>(null);
     const [presets, setPresets] = useState<Preset[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
-
     const [mode, setMode] = useLocalStorage<BackendMode>("godec-backend-mode", "server");
+    const [graph, setGraph] = useState<GraphDocument | null>(null);
+    const [files, setFiles] = useState<Map<string, File>>(() => new Map());
     const backend = mode === "server" ? serverBackend : clientBackend;
-    const maxUploadBytes =
-        mode === "server" ? SERVER_MAX_UPLOAD_BYTES : CLIENT_MAX_UPLOAD_BYTES;
-
-    const [input, setInput] = useState<InputSource | null>(null);
-    const [spec, setSpec] = useState<ConversionSpec | null>(null);
+    const maxUploadBytes = mode === "server" ? SERVER_MAX_UPLOAD_BYTES : CLIENT_MAX_UPLOAD_BYTES;
 
     useEffect(() => {
         Promise.all([fetchCatalog(), fetchPresets()])
-            .then(([c, p]) => {
-                setCatalog(c);
-                setPresets(p);
-                const pcm = p.find((pre) => pre.id === "lpcm");
-                if (pcm) {
-                    setInput({ kind: "preset", preset: pcm });
-                }
+            .then(([nextCatalog, nextPresets]) => {
+                setCatalog(nextCatalog);
+                setPresets(nextPresets);
+                const fallback = nextPresets.find((preset) => preset.id === "lpcm");
+                setGraph(loadGraph() ?? createInitialGraph(nextCatalog, fallback));
             })
-            .catch((err: unknown) =>
-                setLoadError(err instanceof Error ? err.message : String(err)),
-            );
+            .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)));
     }, []);
 
+    const compiled = useMemo(
+        () => graph ? compileGraph(graph, presets, files) : { issues: ["Loading pipeline editor…"] },
+        [graph, presets, files],
+    );
     const [resolved, setResolved] = useState<PipelineDescription | null>(null);
     const [resolveError, setResolveError] = useState<string | null>(null);
     const resolveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         if (resolveTimer.current) clearTimeout(resolveTimer.current);
-        if (!input || !spec) {
+        if (!compiled.spec || !compiled.inputs) {
             setResolved(null);
+            setResolveError(null);
             return;
         }
         resolveTimer.current = setTimeout(() => {
-            backend
-                .resolvePipeline(input, spec)
+            backend.resolvePipeline(compiled.inputs!, compiled.spec!)
                 .then((description) => {
                     setResolved(description);
                     setResolveError(null);
                 })
                 .catch((err: unknown) => {
                     setResolved(null);
-                    setResolveError(
-                        err instanceof Error ? err.message : String(err),
-                    );
+                    setResolveError(err instanceof Error ? err.message : String(err));
                 });
         }, RESOLVE_DEBOUNCE_MS);
         return () => {
             if (resolveTimer.current) clearTimeout(resolveTimer.current);
         };
-    }, [backend, input, spec]);
+    }, [backend, compiled.inputs, compiled.spec]);
 
     const job = useConversionJob(backend);
-    const jobReset = job.reset;
-    const jobPhase = job.state.phase;
-
     const [activeJobResolved, setActiveJobResolved] = useState<PipelineDescription | null>(null);
-
+    const mainInput = compiled.mainInput ?? null;
     const [inputSrc, setInputSrc] = useState<string | null>(null);
+
     useEffect(() => {
-        if (!input) {
+        if (!mainInput) {
             setInputSrc(null);
             return;
         }
-        if (input.kind === "preset") {
-            setInputSrc(presetAudioUrl(input.preset.id));
+        if (mainInput.kind === "preset") {
+            setInputSrc(presetAudioUrl(mainInput.preset.id));
             return;
         }
-        const url = URL.createObjectURL(input.file);
+        const url = URL.createObjectURL(mainInput.file);
         setInputSrc(url);
         return () => URL.revokeObjectURL(url);
-    }, [input]);
+    }, [mainInput]);
 
     const outputExtension = useMemo(() => {
-        if (!catalog || !spec) return "";
-        const output = catalog.outputs.find((o) => o.muxer === spec.muxer.name);
-        return output?.extensions[0]?.replace(/^\./, "") ?? spec.muxer.name;
-    }, [catalog, spec]);
+        if (!catalog || !compiled.spec) return "";
+        const output = catalog.outputs.find((value) => value.muxer === compiled.spec!.muxer.name);
+        return output?.extensions[0]?.replace(/^\./, "") ?? compiled.spec.muxer.name;
+    }, [catalog, compiled.spec]);
 
-    if (loadError) {
-        return (
-            <div className={styles.centered}>
-                Unable to connect to server: {loadError}
-            </div>
-        );
+    function updateGraph(next: GraphDocument) {
+        setGraph(next);
+        saveGraph(next);
     }
-    if (!catalog) {
-        return <div className={styles.centered}>Loading...</div>;
+
+    function updateFile(nodeID: string, file: File | null) {
+        setFiles((current) => {
+            const next = new Map(current);
+            if (file) next.set(nodeID, file);
+            else next.delete(nodeID);
+            return next;
+        });
     }
+
+    function resetGraph() {
+        if (!catalog) return;
+        clearGraph();
+        setFiles(new Map());
+        updateGraph(createInitialGraph(catalog, presets.find((preset) => preset.id === "lpcm")));
+    }
+
+    if (loadError) return <div className={styles.centered}>Unable to connect to server: {loadError}</div>;
+    if (!catalog || !graph) return <div className={styles.centered}>Loading...</div>;
 
     return (
         <div className={styles.app}>
             <header className={styles.header}>
                 <h1>GODEC Example — Web Audio Converter</h1>
-                <p className={styles.subtitle}>Powered by Godexture</p>
+                <p className={styles.subtitle}>Build audio pipelines visually with Godexture</p>
             </header>
 
             <main className={styles.grid}>
-                <InputPanel
-                    presets={presets}
-                    input={input}
-                    previewSrc={inputSrc}
-                    onChange={setInput}
-                    maxUploadBytes={maxUploadBytes}
-                />
-                <SettingsPanel
+                <GraphEditor
+                    graph={graph}
+                    files={files}
                     catalog={catalog}
+                    presets={presets}
+                    backend={backend}
                     mode={mode}
+                    maxUploadBytes={maxUploadBytes}
+                    issues={compiled.issues}
+                    onGraphChange={updateGraph}
+                    onFileChange={updateFile}
                     onModeChange={setMode}
-                    onSpecChange={setSpec}
+                    onReset={resetGraph}
                 />
 
                 <section className={styles.pipelinePanel}>
                     <h2>Resolved Pipeline</h2>
-                    <PipelineView
+                    <ResolvedGraph
                         description={resolved}
                         liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
                         error={resolveError}
@@ -147,16 +154,14 @@ export function App() {
                 <div className={styles.resultWrapper}>
                     <ResultPanel
                         job={job.state}
-                        input={input}
+                        input={mainInput}
                         inputSrc={inputSrc}
                         outputExtension={outputExtension}
-                        canStart={Boolean(
-                            input && spec && resolved && !resolveError,
-                        )}
+                        canStart={Boolean(compiled.inputs && compiled.spec && resolved && !resolveError)}
                         onStart={() => {
-                            if (input && spec && resolved) {
+                            if (compiled.inputs && compiled.spec && resolved) {
                                 setActiveJobResolved(resolved);
-                                void job.start(input, spec);
+                                void job.start(compiled.inputs, compiled.spec);
                             }
                         }}
                         onCancel={() => void job.cancel()}

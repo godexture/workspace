@@ -1,0 +1,58 @@
+.canvas {
+    height: 340px;
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) / 1.5);
+    overflow: hidden;
+}
+
+.node {
+    width: 190px;
+    min-height: 78px;
+    position: relative;
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) / 1.5);
+    padding: 0.45rem 0.6rem;
+    background: var(--color-panel);
+}
+
+.role {
+    display: flex;
+    gap: 0.3rem;
+    color: var(--color-muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.role span {
+    border-radius: 99px;
+    padding: 0.02rem 0.25rem;
+    background: var(--color-warning);
+    color: #fff;
+    font-size: 0.58rem;
+}
+
+.status,
+.input,
+.output {
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+}
+
+.input,
+.output {
+    position: relative;
+    min-height: 15px;
+}
+
+.input { margin-left: -0.25rem; }
+.output { margin-right: -0.25rem; text-align: right; }
+.nodeError { color: var(--color-error); font-size: 0.64rem; }
+.state_running { border-color: var(--color-accent); }
+.state_completed { border-color: var(--color-success); }
+.state_failed { border-color: var(--color-error); }
+.progressEdge { stroke: var(--color-accent); }
+.empty,
+.error { color: var(--color-muted); font-size: 0.85rem; }
+.error { color: var(--color-error); }

@@ -1,20 +1,31 @@
 import axios from "axios";
 
 import { apiErrorMessage, http } from "../../api/client";
-import type { ConversionSpec, PipelineDescription, Progress } from "../../api/types";
-import type { ConversionBackend, InputSource } from "./types";
+import type { ConversionSpec, FilterEntry, PipelineDescription, Progress } from "../../api/types";
+import type { ConversionBackend, ConversionInputs, InputSource } from "./types";
 
-function buildFormData(input: InputSource, spec: ConversionSpec): FormData {
+function inputReference(input: InputSource): { kind: "file" } | { kind: "preset"; presetId: string } {
+    return input.kind === "upload"
+        ? { kind: "file" }
+        : { kind: "preset", presetId: input.preset.id };
+}
+
+function buildFormData(inputs: ConversionInputs, spec: ConversionSpec): FormData {
     const form = new FormData();
     form.set("spec", JSON.stringify(spec));
-    if (input.kind === "upload") {
-        form.set("inputs", JSON.stringify({ main: { kind: "file" }, aux: {} }));
-        form.set("main", input.file);
-    } else {
-        form.set("inputs", JSON.stringify({
-            main: { kind: "preset", presetId: input.preset.id },
-            aux: {},
-        }));
+    form.set("inputs", JSON.stringify({
+        main: inputReference(inputs.main),
+        aux: Object.fromEntries(
+            Object.entries(inputs.aux).map(([name, input]) => [name, inputReference(input)]),
+        ),
+    }));
+    if (inputs.main.kind === "upload") {
+        form.set("main", inputs.main.file);
+    }
+    for (const [name, input] of Object.entries(inputs.aux)) {
+        if (input.kind === "upload") {
+            form.set(`aux:${name}`, input.file);
+        }
     }
     return form;
 }
@@ -22,18 +33,27 @@ function buildFormData(input: InputSource, spec: ConversionSpec): FormData {
 export const serverBackend: ConversionBackend = {
     mode: "server",
 
-    async resolvePipeline(input, spec) {
+    async describeFilter(name, parameters = {}) {
         try {
-            const { data } = await http.post<PipelineDescription>("/pipelines/resolve", buildFormData(input, spec));
+            const { data } = await http.post<FilterEntry>("/filters/describe", { name, parameters });
             return data;
         } catch (err) {
             throw new Error(await apiErrorMessage(err));
         }
     },
 
-    async start(input, spec) {
+    async resolvePipeline(inputs, spec) {
         try {
-            const { data } = await http.post<{ id: string }>("/conversions", buildFormData(input, spec));
+            const { data } = await http.post<PipelineDescription>("/pipelines/resolve", buildFormData(inputs, spec));
+            return data;
+        } catch (err) {
+            throw new Error(await apiErrorMessage(err));
+        }
+    },
+
+    async start(inputs, spec) {
+        try {
+            const { data } = await http.post<{ id: string }>("/conversions", buildFormData(inputs, spec));
             return data.id;
         } catch (err) {
             throw new Error(await apiErrorMessage(err));

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ConversionSpec, Progress } from "../api/types";
-import type { ConversionBackend, InputSource } from "./backend/types";
+import type { ConversionBackend, ConversionInputs } from "./backend/types";
 
 export type JobPhase = "idle" | "running" | "completed" | "failed" | "canceled";
 
@@ -53,11 +53,11 @@ export function useConversionJob(backend: ConversionBackend) {
     );
 
     const start = useCallback(
-        async (input: InputSource, spec: ConversionSpec) => {
+        async (inputs: ConversionInputs, spec: ConversionSpec) => {
             reset();
             setState({ ...idleState, phase: "running" });
             try {
-                const jobId = await backend.start(input, spec);
+                const jobId = await backend.start(inputs, spec);
                 setState((prev) => ({ ...prev, jobId }));
                 unsubscribe.current = backend.subscribe(jobId, (progress) => {
                     const phase: JobPhase = !progress.status || progress.status === "running" ? "running" : progress.status;

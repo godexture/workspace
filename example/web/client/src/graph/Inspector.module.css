@@ -1,0 +1,62 @@
+.panel,
+.empty {
+    min-width: 250px;
+    border-left: 1px solid var(--color-border);
+    padding: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    overflow: auto;
+}
+
+.empty {
+    color: var(--color-muted);
+    font-size: 0.85rem;
+}
+
+.field,
+.fileField {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.78rem;
+    color: var(--color-muted);
+}
+
+.fileField input {
+    max-width: 100%;
+}
+
+.fileField small,
+.hint,
+.description {
+    margin: 0;
+    color: var(--color-muted);
+    font-size: 0.73rem;
+}
+
+.panel h3,
+.panel h4 {
+    margin: 0;
+}
+
+.panel h4 {
+    font-size: 0.78rem;
+    color: var(--color-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.plugin {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+@media (max-width: 860px) {
+    .panel,
+    .empty {
+        border-left: none;
+        border-top: 1px solid var(--color-border);
+    }
+}
