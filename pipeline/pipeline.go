@@ -31,6 +31,10 @@ type Pipeline struct {
 	mu              sync.Mutex
 	state           pipelineState
 	nodes           []node.Node
+	prepareNodes    []node.Node
+	preloadNodes    []node.StagedInput
+	runNodes        []node.Node
+	runIndexes      []int
 	description     Description
 	observation     ObservationMode
 	edgeMetrics     []*edgeMetrics
@@ -70,20 +74,28 @@ func New(nodes ...node.Node) (*Pipeline, error) {
 	for i := range owned {
 		description.Nodes[i].ID = fmt.Sprintf("node:%d", i)
 	}
-	return newPipeline(owned, description, ObservationOff, nil, nil)
+	return newPipeline(owned, description, ObservationOff, nil, nil, preparationPlan{run: owned, runIndex: makeIndexes(len(owned))})
 }
 
-func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics, resourceClosers []func() error) (*Pipeline, error) {
+func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics, resourceClosers []func() error, preparation preparationPlan) (*Pipeline, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("%w: pipeline has no nodes", ErrInvalidPipeline)
 	}
 	pipeline := &Pipeline{
 		nodes:           append([]node.Node(nil), nodes...),
+		prepareNodes:    append([]node.Node(nil), preparation.nodes...),
+		preloadNodes:    append([]node.StagedInput(nil), preparation.preloads...),
+		runNodes:        append([]node.Node(nil), preparation.run...),
+		runIndexes:      append([]int(nil), preparation.runIndex...),
 		description:     description,
 		observation:     observation,
 		edgeMetrics:     edges,
 		resourceClosers: resourceClosers,
 		done:            make(chan struct{}),
+	}
+	if len(pipeline.runNodes) == 0 {
+		pipeline.runNodes = append([]node.Node(nil), nodes...)
+		pipeline.runIndexes = makeIndexes(len(nodes))
 	}
 	if observation == ObservationMetrics {
 		pipeline.nodeMetrics = make([]*nodeMetrics, len(nodes))
@@ -96,6 +108,14 @@ func newPipeline(nodes []node.Node, description Description, observation Observa
 		}
 	}
 	return pipeline, nil
+}
+
+func makeIndexes(length int) []int {
+	indexes := make([]int, length)
+	for i := range indexes {
+		indexes[i] = i
+	}
+	return indexes
 }
 
 func isNilNode(value node.Node) bool {
@@ -133,9 +153,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	var runErr error
 	if p.observation == ObservationMetrics {
-		runErr = runNodesObserved(runContext, p.nodes, p.nodeMetrics)
+		runErr = runNodesObservedSelected(runContext, p.runNodes, p.runIndexes, p.nodeMetrics)
 	} else {
-		runErr = runNodes(runContext, p.nodes)
+		runErr = runNodes(runContext, p.runNodes)
 	}
 	cancel()
 	return p.finish(runErr)
@@ -165,6 +185,8 @@ func (p *Pipeline) Prepare(ctx context.Context) error {
 		return fmt.Errorf("%w: cannot prepare pipeline in state %s", ErrInvalidPipeline, state)
 	}
 	nodes := append([]node.Node(nil), p.nodes...)
+	prepareNodes := append([]node.Node(nil), p.prepareNodes...)
+	preloadNodes := append([]node.StagedInput(nil), p.preloadNodes...)
 	description := p.description.Clone()
 	p.mu.Unlock()
 
@@ -183,6 +205,9 @@ func (p *Pipeline) Prepare(ctx context.Context) error {
 		if err := preparer.Prepare(grant); err != nil {
 			return p.finishPrepare(fmt.Errorf("prepare node %d (%T): %w", i, current, err))
 		}
+	}
+	if err := runPreparation(ctx, prepareNodes, preloadNodes); err != nil {
+		return p.finishPrepare(err)
 	}
 
 	p.mu.Lock()
@@ -312,9 +337,25 @@ func (p *Pipeline) completeClose() {
 	p.closeErr = closeErr
 	p.state = pipelineClosed
 	p.nodes = nil
+	p.prepareNodes = nil
+	p.preloadNodes = nil
+	p.runNodes = nil
 	p.resourceClosers = nil
 	close(p.done)
 	p.mu.Unlock()
+}
+
+func runPreparation(ctx context.Context, nodes []node.Node, preloaders []node.StagedInput) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for _, current := range nodes {
+		current := current
+		group.Go(func() error { return current.Start(groupContext) })
+	}
+	for _, current := range preloaders {
+		current := current
+		group.Go(func() error { return current.Preload(groupContext) })
+	}
+	return group.Wait()
 }
 
 func runNodes(ctx context.Context, nodes []node.Node) error {
@@ -334,6 +375,22 @@ func runNodesObserved(ctx context.Context, nodes []node.Node, metrics []*nodeMet
 		current := current
 		metric := metrics[i]
 		group.Go(func() error {
+			metric.start()
+			err := current.Start(groupContext)
+			metric.finish(err)
+			return err
+		})
+	}
+	return group.Wait()
+}
+
+func runNodesObservedSelected(ctx context.Context, nodes []node.Node, indexes []int, metrics []*nodeMetrics) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for i, current := range nodes {
+		current := current
+		index := indexes[i]
+		group.Go(func() error {
+			metric := metrics[index]
 			metric.start()
 			err := current.Start(groupContext)
 			metric.finish(err)
