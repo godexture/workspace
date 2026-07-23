@@ -1,0 +1,34 @@
+.player {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+}
+
+.label {
+    font-weight: 600;
+}
+
+.size {
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.download {
+    align-self: flex-start;
+    font-size: 0.8rem;
+    color: var(--color-accent);
+}
+
+.empty {
+    color: var(--color-muted);
+    font-size: 0.85rem;
+    margin: 0;
+}

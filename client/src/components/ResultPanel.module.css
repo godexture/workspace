@@ -1,0 +1,82 @@
+.panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.status {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+}
+
+.status_running {
+    color: var(--color-accent);
+}
+
+.status_completed {
+    color: var(--color-success);
+}
+
+.status_failed {
+    color: var(--color-error);
+}
+
+.status_canceled {
+    color: var(--color-warning);
+}
+
+.progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.progressBarTrack {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+}
+
+.progressBarFill {
+    height: 100%;
+    background: var(--color-accent);
+    transition: width 0.2s ease;
+}
+
+.progressStats {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+}
+
+.error {
+    color: var(--color-error);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+.comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+@media (max-width: 640px) {
+    .comparison {
+        grid-template-columns: 1fr;
+    }
+}
