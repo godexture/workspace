@@ -155,7 +155,7 @@ type Bundle struct {
 | 型 | フィールド | 説明 |
 |---|-----------|------|
 | `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は registry-assigned `PluginKey` |
-| `TransformManifest` | `BaseManifest`, `InputRequirements`, `Resources`, `TransformFunc` | 変換ノード共通 |
+| `TransformManifest` | `BaseManifest`, port ごとの `InputRequirements`, `Resources` | 変換ノード共通 |
 | `DemuxerManifest` | `BaseManifest`, `Probe manifest.Prober`, `Factory DemuxerFactory` | デマックスプラグイン |
 | `MuxerManifest` | `BaseManifest`, `Factory MuxerFactory` | マックスプラグイン |
 | `DecoderManifest` | `TransformManifest`, `Factory DecoderFactory` | デコーダプラグイン |
@@ -169,16 +169,17 @@ type DemuxerFactory func(r io.Reader, config Configuration) (node.Demuxer, error
 type MuxerFactory   func(w io.Writer, config Configuration) (node.Muxer, error)
 
 type TransformFactoryOptions struct {
-    Config    Configuration
-    Resources ResourceBudget
+    Config Configuration
 }
 
-type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)
-type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error)
-type FilterFactory  func(media.StreamInfo, TransformFactoryOptions) (node.Filter, error)
+type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error)
+type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error)
+type FilterFactory  func(media.StreamInfo, TransformFactoryOptions) (node.Filter, media.StreamInfo, error)
+
+type Preparer interface { Prepare(ResourceGrant) error }
 ```
 
-`ResourceRequest{Parallelism: true}` は transform が並列予算を利用できることを宣言します。`ResourceBudget.Parallelism` は negotiation 後に各 instance へ割り当てられます。
+`ResourceRequest{Parallelism: true}` は transform が並列予算を利用できることを宣言します。Factory は output `StreamInfo` を唯一の根拠として返し、高コストな初期化は optional な `Preparer` が negotiation 後の `ResourceGrant` を受けて行います。
 
 #### インターフェース
 

@@ -114,6 +114,8 @@ godec convert input.wav output.wav \
 
 補助入力は独立した demuxer/decoder/filter 経路で EOF まで処理されてから、main 経路を開始します。現在は main chain の一つの補助ポートへ一度だけ結線する star topology を対象とします。
 
+Node の port phase は eager な `Preload` だけでなく、`Run` も表現できます。複数の run-phase 入力を持つ filter では adapter が各入力内の順序を保ち、engine 呼び出しを直列化します。入力間の時刻整列は filter が PTS を使って決めるため、sidechain compressor のような live co-stream 型も同じ port API で実装できます。
+
 進捗率は progress-source stream の最大メディア時刻を `StreamInfo.Duration` で割った値を優先します。尺が未知なら入力 `ReadSeeker` の論理位置とファイルサイズ、どちらも使えなければ item 数と経過時間を表示します。
 
 ## Pipeline
