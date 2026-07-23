@@ -179,6 +179,8 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, err
 	}
 	plans := make([]transformPlan, 0, 2+len(spec.Filters))
+	filterPorts := make([]map[string]struct{}, 0, len(spec.Filters))
+	filterManifests := make([]registry.FilterManifest, 0, len(spec.Filters))
 	currentStream := inputStream
 
 	decoderManifest := spec.DecoderManifest
@@ -253,6 +255,10 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if err != nil {
 			return nil, fmt.Errorf("resolve filter %d output stream: %w", i, err)
 		}
+		ports := make(map[string]struct{}, len(filterProbe.InputPorts()))
+		for port := range filterProbe.InputPorts() {
+			ports[port] = struct{}{}
+		}
 		if err := filterProbe.Close(); err != nil {
 			return nil, fmt.Errorf("close filter %d profile probe: %w", i, err)
 		}
@@ -278,6 +284,8 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 				return created, nil
 			},
 		})
+		filterPorts = append(filterPorts, ports)
+		filterManifests = append(filterManifests, filterManifest)
 		currentStream = filterOutput
 	}
 
@@ -371,19 +379,35 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			if _, used := usedAux[name]; used {
 				return nil, fmt.Errorf("auxiliary input %q is connected more than once", name)
 			}
-			filter, err := n.filterResolver.ResolveFilter(filterSpec.Config)
-			if err != nil {
-				return nil, fmt.Errorf("resolve filter %d for auxiliary input: %w", index, err)
+			if _, exists := filterPorts[index][port]; !exists {
+				return nil, fmt.Errorf("filter %d has no active input port %q", index, port)
 			}
+			filter := filterManifests[index]
 			requirements, err := filter.Requirements(port, path.output.Codec, filterSpec.Config)
 			if err != nil {
 				return nil, fmt.Errorf("resolve filter %d port %q requirements: %w", index, port, err)
 			}
 			if !manifest.MatchesAny(requirements, path.output) {
-				return nil, fmt.Errorf("auxiliary input %q does not satisfy filter %d port %q", name, index, port)
+				var bridges []transformPlan
+				path.output, bridges, err = n.satisfy(path.output, requirements, &bridgeID)
+				if err != nil {
+					return nil, fmt.Errorf("satisfy auxiliary input %q for filter %d port %q: %w", name, index, port, err)
+				}
+				path.plans = append(path.plans, bridges...)
+				if len(bridges) > 0 {
+					path.tailID = bridges[len(bridges)-1].id
+				}
 			}
 			usedAux[name] = struct{}{}
 			auxEdges = append(auxEdges, pipeline.EdgeDef{FromNode: path.tailID, FromPort: "out", ToNode: fmt.Sprintf("filter:%d", index), ToPort: port, Stream: path.output})
+		}
+		for port := range filterPorts[index] {
+			if port == "in" {
+				continue
+			}
+			if _, connected := filterSpec.Inputs[port]; !connected {
+				return nil, fmt.Errorf("filter %d input port %q requires an auxiliary input", index, port)
+			}
 		}
 	}
 	for _, name := range auxNames {
@@ -621,6 +645,9 @@ func (n *Negotiator) negotiateAuxPaths(ctx context.Context, inputs map[string]Au
 		}}
 		current = output
 		for index, filterSpec := range spec.Filters {
+			if len(filterSpec.Inputs) != 0 {
+				return nil, fmt.Errorf("auxiliary input %q filter %d cannot have auxiliary inputs", name, index)
+			}
 			filter, err := n.filterResolver.ResolveFilter(filterSpec.Config)
 			if err != nil {
 				return nil, fmt.Errorf("resolve auxiliary input %q filter %d: %w", name, index, err)

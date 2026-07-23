@@ -55,10 +55,11 @@ func (m *mockEncoder) OutputPorts() map[string]*node.OutPort[*media.Packet] { re
 
 type mockFilter struct {
 	mockNode
+	inputs map[string]*node.InPort[media.Frame]
 }
 
 func (m *mockFilter) Process(context.Context) error                      { return nil }
-func (m *mockFilter) InputPorts() map[string]*node.InPort[media.Frame]   { return nil }
+func (m *mockFilter) InputPorts() map[string]*node.InPort[media.Frame]   { return m.inputs }
 func (m *mockFilter) OutputPorts() map[string]*node.OutPort[media.Frame] { return nil }
 
 type mockMuxer struct {
@@ -207,7 +208,7 @@ func TestNegotiatorConnectsNamedAuxiliaryInput(t *testing.T) {
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}),
 		}},
 		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
-			return &mockFilter{}, input, nil
+			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, input, nil
 		},
 	}
 	encoderManifest := registry.EncoderManifest{
