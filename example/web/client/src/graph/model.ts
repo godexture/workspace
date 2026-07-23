@@ -212,7 +212,11 @@ export function compileGraph(
     for (const node of graph.nodes) {
         if (node.kind !== "source" || node.primary) continue;
         const source = inputSource(node, presets, files, issues);
-        if (source) aux[node.id] = source;
+        if (!source) {
+            issues.push(`Select an audio file or preset for ${nodeTitle(node)}.`);
+            continue;
+        }
+        aux[node.id] = source;
     }
     if (!mainInput || issues.length > 0) return { issues };
 

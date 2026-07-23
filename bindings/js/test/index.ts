@@ -28,11 +28,11 @@ async function main() {
 
     const spec = { muxer: { name: "wav" } };
 
-    const resolved = await godec.resolvePipeline(input, spec);
+    const resolved = await godec.resolvePipeline({ main: input }, spec);
     console.log(`Resolved pipeline: ${resolved.Nodes.map((n) => n.Plugin).join(" -> ")}`);
 
     console.log("Converting to WAV...");
-    const jobId = await godec.start(input, spec);
+    const jobId = await godec.start({ main: input }, spec);
     let progress = await godec.snapshot(jobId);
     while (progress.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 20));

@@ -7,7 +7,6 @@ import {
     ReactFlow,
     type Connection,
     type Edge,
-    type Node,
     type NodeTypes,
     type NodeChange,
 } from "@xyflow/react";
@@ -40,6 +39,7 @@ interface GraphEditorProps {
     mode: BackendMode;
     maxUploadBytes: number;
     issues: string[];
+    locked: boolean;
     onGraphChange: (graph: GraphDocument) => void;
     onFileChange: (nodeID: string, file: File | null) => void;
     onModeChange: (mode: BackendMode) => void;
@@ -57,6 +57,7 @@ export function GraphEditor({
     mode,
     maxUploadBytes,
     issues,
+    locked,
     onGraphChange,
     onFileChange,
     onModeChange,
@@ -82,6 +83,7 @@ export function GraphEditor({
     } satisfies Edge)), [graph.edges]);
 
     function updateNode(next: GraphNode) {
+        if (locked) return;
         const previous = graph.nodes.find((node) => node.id === next.id);
         if (previous?.kind === "source" && previous.selection?.kind === "upload" && next.kind === "source" && next.selection?.kind !== "upload") {
             onFileChange(next.id, null);
@@ -90,6 +92,7 @@ export function GraphEditor({
     }
 
     function onNodesChange(changes: NodeChange<EditorFlowNode>[]) {
+        if (locked) return;
         let next = graph;
         const removals = changes.filter((change) => change.type === "remove").map((change) => change.id);
         for (const id of removals) {
@@ -114,6 +117,7 @@ export function GraphEditor({
     }
 
     function onConnect(connection: Connection) {
+        if (locked) return;
         if (!connection.source || !connection.sourceHandle || !connection.target || !connection.targetHandle) return;
         if (connection.source === connection.target || createsCycle(graph, connection)) {
             setEditorError("Connections cannot create a cycle.");
@@ -143,12 +147,14 @@ export function GraphEditor({
     }
 
     function addSource() {
+        if (locked) return;
         const node = createSourceNode({ x: 250 + graph.nodes.length * 20, y: 260 });
         onGraphChange({ ...graph, nodes: [...graph.nodes, node] });
         setSelectedID(node.id);
     }
 
     function addFilter() {
+        if (locked) return;
         const descriptor = catalog.filters.find((filter) => filter.name === filterChoice);
         if (!descriptor) return;
         const node = createFilterNode(descriptor, { x: 300 + graph.nodes.length * 20, y: 120 });
@@ -157,6 +163,7 @@ export function GraphEditor({
     }
 
     async function changeFilterParameters(node: GraphNode, parameters: Record<string, string>) {
+        if (locked) return;
         if (node.kind !== "filter") return;
         try {
             const descriptor = await backend.describeFilter(node.descriptor.name, parameters);
@@ -180,6 +187,7 @@ export function GraphEditor({
     }
 
     function upload(node: GraphNode, file: File) {
+        if (locked) return;
         if (node.kind !== "source") return;
         const total = [...files.entries()]
             .filter(([id]) => id !== node.id)
@@ -204,18 +212,18 @@ export function GraphEditor({
                     <p>Connect explicit ports. Use a mixer to split or join streams.</p>
                 </div>
                 <div className={styles.modeToggle}>
-                    <button type="button" className={mode === "server" ? styles.modeActive : styles.mode} onClick={() => onModeChange("server")}>Online</button>
-                    <button type="button" className={mode === "client" ? styles.modeActive : styles.mode} onClick={() => onModeChange("client")}>Offline</button>
+                    <button type="button" disabled={locked} className={mode === "server" ? styles.modeActive : styles.mode} onClick={() => onModeChange("server")}>Online</button>
+                    <button type="button" disabled={locked} className={mode === "client" ? styles.modeActive : styles.mode} onClick={() => onModeChange("client")}>Offline</button>
                 </div>
             </div>
             <div className={styles.toolbar}>
-                <button type="button" onClick={addSource}>Add source</button>
-                <select value={filterChoice} onChange={(event) => setFilterChoice(event.target.value)}>
+                <button type="button" disabled={locked} onClick={addSource}>Add source</button>
+                <select disabled={locked} value={filterChoice} onChange={(event) => setFilterChoice(event.target.value)}>
                     {catalog.filters.map((filter) => <option key={filter.name} value={filter.name}>{filter.name} — {filter.description}</option>)}
                 </select>
-                <button type="button" onClick={addFilter} disabled={!filterChoice}>Add filter</button>
-                <button type="button" onClick={() => onGraphChange(layoutGraph(graph))}>Auto layout</button>
-                <button type="button" onClick={onReset}>Reset</button>
+                <button type="button" onClick={addFilter} disabled={locked || !filterChoice}>Add filter</button>
+                <button type="button" disabled={locked} onClick={() => onGraphChange(layoutGraph(graph))}>Auto layout</button>
+                <button type="button" disabled={locked} onClick={onReset}>Reset</button>
             </div>
             {(editorError || issues.length > 0) && (
                 <div className={styles.issues}>
@@ -231,6 +239,7 @@ export function GraphEditor({
                         nodeTypes={nodeTypes}
                         onNodesChange={onNodesChange}
                         onEdgesChange={(changes) => {
+                            if (locked) return;
                             const removed = new Set(changes.filter((change) => change.type === "remove").map((change) => change.id));
                             if (removed.size > 0) onGraphChange({ ...graph, edges: graph.edges.filter((edge) => !removed.has(edge.id)) });
                         }}
@@ -238,7 +247,10 @@ export function GraphEditor({
                         onNodeClick={(_, node) => setSelectedID(node.id)}
                         onPaneClick={() => setSelectedID(null)}
                         fitView
-                        deleteKeyCode={["Backspace", "Delete"]}
+                        nodesDraggable={!locked}
+                        nodesConnectable={!locked}
+                        elementsSelectable={!locked}
+                        deleteKeyCode={locked ? null : ["Backspace", "Delete"]}
                         proOptions={{ hideAttribution: true }}
                     >
                         <Background gap={18} size={1} />
@@ -246,15 +258,17 @@ export function GraphEditor({
                         <Controls />
                     </ReactFlow>
                 </div>
-                <Inspector
-                    node={selected}
-                    catalog={catalog}
-                    presets={presets}
-                    maxUploadBytes={maxUploadBytes}
-                    onChange={updateNode}
-                    onUpload={upload}
-                    onFilterParametersChange={changeFilterParameters}
-                />
+                <div className={locked ? styles.inspectorLocked : undefined}>
+                    <Inspector
+                        node={selected}
+                        catalog={catalog}
+                        presets={presets}
+                        maxUploadBytes={maxUploadBytes}
+                        onChange={updateNode}
+                        onUpload={upload}
+                        onFilterParametersChange={changeFilterParameters}
+                    />
+                </div>
             </div>
         </section>
     );

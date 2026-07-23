@@ -13,6 +13,11 @@
     gap: 0.75rem;
 }
 
+.inspectorLocked {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
 .heading {
     align-items: flex-start;
     justify-content: space-between;

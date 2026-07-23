@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { Catalog, FilterEntry, Preset } from "../src/api/types";
+import { layoutGraph } from "../src/graph/layout";
 import { compileGraph, createInitialGraph, type GraphDocument } from "../src/graph/model";
 
 const preset: Preset = { id: "lpcm", name: "PCM", filename: "lpcm.wav", contentType: "audio/wav" };
@@ -62,4 +63,60 @@ test("direct fan-out is rejected with guidance to use a mixer", () => {
         edges: [...base.edges, { id: "extra", source: "source-main", sourcePort: "out", target: "gain", targetPort: "in" }],
     };
     expect(compileGraph(graph, [preset], new Map()).issues.join(" ")).toContain("insert a mixer");
+});
+
+test("connected auxiliary sources require an audio selection", () => {
+    const base = createInitialGraph(catalog, preset);
+    const graph: GraphDocument = {
+        ...base,
+        nodes: [
+            base.nodes.find((node) => node.kind === "source")!,
+            { id: "aux", kind: "source", primary: false, selection: null, position: { x: 1, y: 1 } },
+            { id: "join", kind: "filter", descriptor: joiner, values: {}, parameters: {}, position: { x: 2, y: 1 } },
+            base.nodes.find((node) => node.kind === "output")!,
+        ],
+        edges: [
+            { id: "a", source: "source-main", sourcePort: "out", target: "join", targetPort: "in0" },
+            { id: "b", source: "aux", sourcePort: "out", target: "join", targetPort: "in1" },
+            { id: "c", source: "join", sourcePort: "out0", target: "output", targetPort: "in" },
+        ],
+    };
+    expect(compileGraph(graph, [preset], new Map()).issues.join(" ")).toContain("Select an audio file or preset for Audio source");
+});
+
+test("profiles compilation and layout for a 100-node graph", () => {
+    const base = createInitialGraph(catalog, preset);
+    const filters = Array.from({ length: 100 }, (_, index) => ({
+        id: `gain-${index}`,
+        kind: "filter" as const,
+        descriptor: single,
+        values: {},
+        parameters: {},
+        position: { x: index * 10, y: 0 },
+    }));
+    const graph: GraphDocument = {
+        ...base,
+        nodes: [base.nodes[0]!, ...filters, base.nodes[1]!],
+        edges: [
+            { id: "start", source: "source-main", sourcePort: "out", target: filters[0]!.id, targetPort: "in" },
+            ...filters.slice(1).map((filter, index) => ({
+                id: `edge-${index}`,
+                source: filters[index]!.id,
+                sourcePort: "out",
+                target: filter.id,
+                targetPort: "in",
+            })),
+            { id: "end", source: filters.at(-1)!.id, sourcePort: "out", target: "output", targetPort: "in" },
+        ],
+    };
+    const compileStart = performance.now();
+    const compiled = compileGraph(graph, [preset], new Map());
+    const compiledMs = performance.now() - compileStart;
+    const layoutStart = performance.now();
+    const laidOut = layoutGraph(graph);
+    const layoutMs = performance.now() - layoutStart;
+
+    expect(compiled.issues).toEqual([]);
+    expect(laidOut.nodes).toHaveLength(102);
+    console.info(`100-node graph: compile ${compiledMs.toFixed(2)}ms, layout ${layoutMs.toFixed(2)}ms`);
 });
