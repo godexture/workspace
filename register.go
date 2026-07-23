@@ -37,9 +37,9 @@ func init() {
 				Description:          "LPCM/G.711/ADPCM decoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}),
+			}})),
 		},
 		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
 			resolved, err := engine.ResolveConfig[internal.DecoderConfig, DecoderConfig](options.Config)
@@ -67,9 +67,9 @@ func init() {
 				Description:          "LPCM/G.711/ADPCM encoder",
 				ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 			},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{
 				media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM,
-			}}),
+			}})),
 		},
 		Codecs: []media.CodecID{media.CodecLPCM, media.CodecPCMU, media.CodecPCMA, media.CodecMSADPCM, media.CodecIMAADPCM},
 		Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
