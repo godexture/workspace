@@ -136,6 +136,7 @@ export function App() {
                     mode={mode}
                     maxUploadBytes={maxUploadBytes}
                     issues={compiled.issues}
+                    locked={job.state.phase === "running"}
                     onGraphChange={updateGraph}
                     onFileChange={updateFile}
                     onModeChange={setMode}
