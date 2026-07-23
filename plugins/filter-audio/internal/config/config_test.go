@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"testing"
 
 	"github.com/godexture/core/domain/media"
@@ -170,5 +171,48 @@ func TestReverbConfigValidate(t *testing.T) {
 	}
 	if err := (func() ReverbConfig { c := valid; c.DryLevel = -1; return c }()).Validate(); err == nil {
 		t.Fatal("want error for negative dry level")
+	}
+}
+
+func TestMixerConfigValidate(t *testing.T) {
+	t.Parallel()
+	valid := MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: true}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := (MixerConfig{}).Validate(); err == nil {
+		t.Fatal("want error for no outputs")
+	}
+	if err := (MixerConfig{Weights: [][]float64{{}}}).Validate(); err == nil {
+		t.Fatal("want error for no inputs")
+	}
+	if err := (func() MixerConfig {
+		c := valid
+		c.Weights = [][]float64{{1, 1}, {1}}
+		return c
+	}()).Validate(); err == nil {
+		t.Fatal("want error for mismatched weight row lengths")
+	}
+	if err := (func() MixerConfig {
+		c := valid
+		c.Weights = [][]float64{{1, math.NaN()}}
+		return c
+	}()).Validate(); err == nil {
+		t.Fatal("want error for non-finite weight")
+	}
+	if err := (func() MixerConfig {
+		row := make([]float64, MaxMixerPorts+1)
+		return MixerConfig{Weights: [][]float64{row}}
+	}()).Validate(); err == nil {
+		t.Fatal("want error for too many inputs")
+	}
+	if err := (func() MixerConfig {
+		rows := make([][]float64, MaxMixerPorts+1)
+		for i := range rows {
+			rows[i] = []float64{1}
+		}
+		return MixerConfig{Weights: rows}
+	}()).Validate(); err == nil {
+		t.Fatal("want error for too many outputs")
 	}
 }

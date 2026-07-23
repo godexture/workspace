@@ -1,11 +1,15 @@
 package filter
 
 import (
+	"context"
+	"io"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/node"
+	"github.com/godexture/core/pipeline"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
@@ -14,6 +18,7 @@ import (
 	"github.com/godexture/filter-audio/internal/eq"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gate"
+	"github.com/godexture/filter-audio/internal/mixer"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
@@ -545,6 +550,50 @@ func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
 	}
 	if got := formatLoss(media.SampleFormatS16, media.SampleFormatS32, 16, 32); got != 0 {
 		t.Fatalf("S16 to S32 quality loss = %d, want 0", got)
+	}
+}
+
+func TestMixerWrapFilterEndToEnd(t *testing.T) {
+	item, err := mixer.New(config.MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := engine.WrapFilter(item,
+		engine.WithInputs(
+			engine.FilterInput{ID: "in0", Phase: node.InputPhaseRun},
+			engine.FilterInput{ID: "in1", Phase: node.InputPhaseRun},
+		),
+		engine.WithOutputs("out0"),
+	)
+
+	in0 := pipeline.NewChanEdge[media.Frame](2)
+	in1 := pipeline.NewChanEdge[media.Frame](2)
+	out := pipeline.NewChanEdge[media.Frame](2)
+	adapter.InputPorts()["in0"].Connect(in0)
+	adapter.InputPorts()["in1"].Connect(in1)
+	adapter.OutputPorts()["out0"].Connect(out)
+
+	if err := in0.Push(context.Background(), frame(48000, 0, []float32{0.1, 0.2})); err != nil {
+		t.Fatal(err)
+	}
+	if err := in1.Push(context.Background(), frame(48000, 0, []float32{1, 1})); err != nil {
+		t.Fatal(err)
+	}
+	in0.Close()
+	in1.Close()
+
+	if err := adapter.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	got, err := out.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("out Pull() error = %v", err)
+	}
+	assertSamplesTol(t, got, []float32{1.1, 1.2}, 1e-6)
+
+	if _, err := out.Pull(context.Background()); err != io.EOF {
+		t.Fatalf("out Pull() error = %v, want EOF", err)
 	}
 }
 
