@@ -62,11 +62,19 @@ func writeListedRole(writer io.Writer, value catalog.Catalog, role string) error
 	case "decoders":
 		writeEntries(writer, role, value.Decoders)
 	case "filters":
-		writeEntries(writer, role, value.Filters)
+		writeEntries(writer, role, filterPlugins(value.Filters))
 	default:
 		return fmt.Errorf("unknown plugin role %q; use formats, codecs, muxers, demuxers, encoders, decoders, or filters", role)
 	}
 	return nil
+}
+
+func filterPlugins(entries []catalog.FilterEntry) []catalog.PluginEntry {
+	plugins := make([]catalog.PluginEntry, len(entries))
+	for i, entry := range entries {
+		plugins[i] = entry.PluginEntry
+	}
+	return plugins
 }
 
 func writeEntries(writer io.Writer, title string, entries []catalog.PluginEntry) {
