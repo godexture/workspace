@@ -76,6 +76,9 @@ func (n *Negotiator) satisfy(
 		if factoryErr != nil {
 			return current, nil, factoryErr
 		}
+		if outputErr := step.Manifest.ValidateOutputs(outputs); outputErr != nil {
+			return current, nil, errors.Join(outputErr, created.Close())
+		}
 		output := outputs["out"]
 		if !reflect.DeepEqual(output, step.Output) {
 			return current, nil, errors.Join(fmt.Errorf("bridge factory output differs from the resolved bridge step"), created.Close())
