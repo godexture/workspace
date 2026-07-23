@@ -23,25 +23,19 @@ func init() {
 				ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 			},
 			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecMP3}}),
-			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{
-					Type:            stream.Type,
-					MediaAttributes: stream.MediaAttributes,
-				}
-				profile.Codec = media.CodecLPCM
-				if profile.Audio.Format == media.SampleFormatUnknown {
-					profile.Audio.Format = media.SampleFormatF32
-				}
-				if stream.Audio.ChannelCount() == 1 {
-					profile.Audio.ChannelLayout = media.LayoutMono1
-				} else {
-					profile.Audio.ChannelLayout = media.LayoutStereo2_0
-				}
-				return profile, nil
-			},
 		},
-		Factory: func(s media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
-			return engine.WrapDecoder(internal.NewDecoder()), nil
+		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			output := stream.Clone()
+			output.Codec = media.CodecLPCM
+			if output.Audio.Format == media.SampleFormatUnknown {
+				output.Audio.Format = media.SampleFormatF32
+			}
+			if stream.Audio.ChannelCount() == 1 {
+				output.Audio.ChannelLayout = media.LayoutMono1
+			} else {
+				output.Audio.ChannelLayout = media.LayoutStereo2_0
+			}
+			return engine.WrapDecoder(internal.NewDecoder()), output, nil
 		},
 	}); err != nil {
 		panic(err)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/convolve"
@@ -556,6 +557,7 @@ func TestConvolveIdentityImpulseIsPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareConvolve(t, item)
 	input := []float32{0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8}
 	send(t, item, frame(48000, 0, input))
 	assertSamplesTol(t, receive(t, item), input, 1e-4)
@@ -577,6 +579,7 @@ func TestConvolveMatchesDirectConvolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareConvolve(t, item)
 
 	input := make([]float32, 20) // multiple of hop, split across uneven SendFrame calls below
 	for i := range input {
@@ -622,6 +625,7 @@ func TestConvolveWetDryMixZeroIsDry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareConvolve(t, item)
 	input := []float32{0.1, 0.2, 0.3, 0.4}
 	send(t, item, frame(48000, 0, input))
 	assertSamplesTol(t, receive(t, item), input, 1e-4)
@@ -636,6 +640,7 @@ func TestConvolveMonoImpulseBroadcastsToEveryChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareConvolve(t, item)
 	left := []float32{0.1, 0.2, 0.3, 0.4}
 	right := []float32{-0.1, -0.2, -0.3, -0.4}
 	send(t, item, multiFrame(48000, 0, media.LayoutStereo2_0, [][]float32{left, right}))
@@ -658,6 +663,7 @@ func TestConvolvePerChannelImpulseRequiresMatchingChannelCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareConvolve(t, item)
 	input := multiFrame(48000, 0, media.LayoutStereo2_0, [][]float32{{0.1, 0.2, 0.3, 0.4}, {0.1, 0.2, 0.3, 0.4}})
 	if err := item.SendFrame(&input); err == nil {
 		t.Fatal("want error for impulse response channel count mismatch")
@@ -677,6 +683,13 @@ func directConvolution(x, h []float32) []float32 {
 		y[n] = sum
 	}
 	return y
+}
+
+func prepareConvolve(t *testing.T, item *convolve.Engine) {
+	t.Helper()
+	if err := item.Prepare(registry.ResourceGrant{}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertFloatSlice(t *testing.T, got, want []float32) {

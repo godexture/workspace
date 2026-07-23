@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 )
 
 type EncoderAdapter struct {
@@ -41,6 +42,10 @@ func (n *EncoderAdapter) Start(ctx context.Context) error {
 
 func (n *EncoderAdapter) Close() error {
 	return n.lifecycle.Close()
+}
+
+func (n *EncoderAdapter) Prepare(resources registry.ResourceGrant) error {
+	return n.lifecycle.Prepare(resources)
 }
 
 func (n *EncoderAdapter) InputPorts() map[string]*node.InPort[media.Frame] {

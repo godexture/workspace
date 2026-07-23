@@ -138,14 +138,10 @@ func registerBridgeFilter(
 		TransformManifest: registry.TransformManifest{
 			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
 			InputRequirements: registry.StaticRequirements(bridgeAnyAudioCapability{}),
-			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, config registry.Configuration) (media.Profile, error) {
-				stream = transform(stream, config)
-				return media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}, nil
-			},
 		},
 		Bridge: bridge,
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Filter, error) {
-			return &bridgeFilterNode{}, nil
+		Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+			return &bridgeFilterNode{}, transform(stream, options.Config), nil
 		},
 	})
 	if err != nil {

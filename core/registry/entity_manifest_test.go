@@ -65,8 +65,8 @@ func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 						BaseManifest:      BaseManifest{Name: "encoder"},
 						InputRequirements: StaticRequirements(acceptAllCapability{}),
 					},
-					Factory: func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error) {
-						return nil, nil
+					Factory: func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+						return nil, media.StreamInfo{}, nil
 					},
 				}).Validate()
 			},
@@ -80,8 +80,8 @@ func TestManifestValidationRejectsIncompleteContracts(t *testing.T) {
 						BaseManifest:      BaseManifest{Name: "decoder"},
 						InputRequirements: StaticRequirements((*pointerCapability)(nil)),
 					},
-					Factory: func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error) {
-						return nil, nil
+					Factory: func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+						return nil, media.StreamInfo{}, nil
 					},
 				}
 				if err := manifest.Validate(); err != nil {

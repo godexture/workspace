@@ -262,10 +262,27 @@ func speedRelabelRate(rate int, factor float64) int {
 }
 
 func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc, transformStream func(media.StreamInfo, media.CodecID, registry.Configuration) (media.StreamInfo, error)) {
-	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{}), TransformFunc: func(in media.StreamInfo, _ media.CodecID, cfg registry.Configuration) (media.Profile, error) {
-		return transform(in, cfg)
-	}, TransformStreamFunc: transformStream}, Bridge: bridge, Factory: func(_ media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
-		return factory(options.Config)
+	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{})}, Bridge: bridge, Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+		item, err := factory(options.Config)
+		if err != nil {
+			return nil, media.StreamInfo{}, err
+		}
+		if transformStream != nil {
+			output, err := transformStream(in, in.Codec, options.Config)
+			if err != nil {
+				_ = item.Close()
+				return nil, media.StreamInfo{}, err
+			}
+			return item, output, nil
+		}
+		profile, err := transform(in, options.Config)
+		if err != nil {
+			_ = item.Close()
+			return nil, media.StreamInfo{}, err
+		}
+		in.Type = profile.Type
+		in.MediaAttributes = profile.MediaAttributes
+		return item, in, nil
 	}}); err != nil {
 		panic(err)
 	}

@@ -183,9 +183,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			return nil, fmt.Errorf("decoder %q does not accept input codec %q", decoderManifest.Name, currentStream.Codec)
 		}
 	}
-	decoderOutput, err := transformStream(decoderManifest.TransformManifest, currentStream, currentStream.Codec, decodeConfig)
+	decoderProbe, decoderOutput, err := decoderManifest.Factory(currentStream, registry.TransformFactoryOptions{Config: decodeConfig})
 	if err != nil {
 		return nil, fmt.Errorf("resolve decoder output stream: %w", err)
+	}
+	if err := decoderProbe.Close(); err != nil {
+		return nil, fmt.Errorf("close decoder profile probe: %w", err)
 	}
 	decoderInput := currentStream
 	plans = append(plans, transformPlan{
@@ -197,7 +200,15 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		input:     decoderInput,
 		output:    decoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-			return decoderManifest.Factory(decoderInput, options)
+			created, output, factoryErr := decoderManifest.Factory(decoderInput, options)
+			if factoryErr != nil {
+				return nil, factoryErr
+			}
+			if !reflect.DeepEqual(output, decoderOutput) {
+				closeErr := created.Close()
+				return nil, errors.Join(fmt.Errorf("decoder factory output differs from its profile probe"), closeErr)
+			}
+			return created, nil
 		},
 	})
 	currentStream = decoderOutput
@@ -220,9 +231,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			}
 			plans = append(plans, bridgePlans...)
 		}
-		filterOutput, err := transformStream(filterManifest.TransformManifest, currentStream, currentStream.Codec, filterSpec.Config)
+		filterProbe, filterOutput, err := filterManifest.Factory(currentStream, registry.TransformFactoryOptions{Config: filterSpec.Config})
 		if err != nil {
 			return nil, fmt.Errorf("resolve filter %d output stream: %w", i, err)
+		}
+		if err := filterProbe.Close(); err != nil {
+			return nil, fmt.Errorf("close filter %d profile probe: %w", i, err)
 		}
 		filterInput := currentStream
 		resolvedManifest := filterManifest
@@ -235,7 +249,15 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 			input:     filterInput,
 			output:    filterOutput,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-				return resolvedManifest.Factory(filterInput, options)
+				created, output, factoryErr := resolvedManifest.Factory(filterInput, options)
+				if factoryErr != nil {
+					return nil, factoryErr
+				}
+				if !reflect.DeepEqual(output, filterOutput) {
+					closeErr := created.Close()
+					return nil, errors.Join(fmt.Errorf("filter factory output differs from its profile probe"), closeErr)
+				}
+				return created, nil
 			},
 		})
 		currentStream = filterOutput
@@ -267,9 +289,12 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		}
 		plans = append(plans, bridgePlans...)
 	}
-	encoderOutput, err := transformStream(encoderManifest.TransformManifest, currentStream, spec.TargetCodec, encodeConfig)
+	encoderProbe, encoderOutput, err := encoderManifest.Factory(currentStream, spec.TargetCodec, registry.TransformFactoryOptions{Config: encodeConfig})
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder output stream: %w", err)
+	}
+	if err := encoderProbe.Close(); err != nil {
+		return nil, fmt.Errorf("close encoder profile probe: %w", err)
 	}
 	encoderOutput.Codec = spec.TargetCodec
 	encoderInput := currentStream
@@ -282,7 +307,15 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		input:     encoderInput,
 		output:    encoderOutput,
 		factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-			return encoderManifest.Factory(encoderInput, spec.TargetCodec, options)
+			created, output, factoryErr := encoderManifest.Factory(encoderInput, spec.TargetCodec, options)
+			if factoryErr != nil {
+				return nil, factoryErr
+			}
+			if !reflect.DeepEqual(output, encoderOutput) {
+				closeErr := created.Close()
+				return nil, errors.Join(fmt.Errorf("encoder factory output differs from its profile probe"), closeErr)
+			}
+			return created, nil
 		},
 	})
 
@@ -327,10 +360,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 
 	transformNodes := make([]node.Node, len(plans))
 	for i, plan := range plans {
-		transformNodes[i], err = plan.factory(registry.TransformFactoryOptions{
-			Config:    plan.config,
-			Resources: grants[i],
-		})
+		transformNodes[i], err = plan.factory(registry.TransformFactoryOptions{Config: plan.config})
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", plan.id, err)
 		}
@@ -428,15 +458,6 @@ func configurationFor(manifest registry.Manifest, requested registry.Configurati
 	return requested, nil
 }
 
-func transformStream(
-	transform registry.TransformManifest,
-	stream media.StreamInfo,
-	target media.CodecID,
-	config registry.Configuration,
-) (media.StreamInfo, error) {
-	return transform.TransformStream(stream, target, config)
-}
-
 func (n *Negotiator) satisfy(
 	current media.StreamInfo,
 	required []manifest.Capability,
@@ -478,7 +499,15 @@ func (n *Negotiator) satisfy(
 			output:       step.Output,
 			autoInserted: true,
 			factory: func(options registry.TransformFactoryOptions) (node.Node, error) {
-				return step.Manifest.Factory(step.Input, options)
+				created, output, factoryErr := step.Manifest.Factory(step.Input, options)
+				if factoryErr != nil {
+					return nil, factoryErr
+				}
+				if !reflect.DeepEqual(output, step.Output) {
+					closeErr := created.Close()
+					return nil, errors.Join(fmt.Errorf("bridge factory output differs from its profile probe"), closeErr)
+				}
+				return created, nil
 			},
 		})
 	}
