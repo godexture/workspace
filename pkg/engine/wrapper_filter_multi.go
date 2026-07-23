@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/node"
@@ -50,35 +51,153 @@ func WrapMultiFilter(engine MultiFilterEngine, inputs ...FilterInput) node.Filte
 }
 
 func (n *MultiFilterAdapter) Start(ctx context.Context) error {
-	for id, phase := range n.phases {
-		if id != "in" && phase == node.InputPhaseRun {
-			return fmt.Errorf("multi-filter run port %q requires a stream scheduler", id)
-		}
-	}
-	in := n.inputs["in"].Edge()
 	out := n.out.Edge()
-	if in == nil || out == nil {
+	if out == nil {
 		return fmt.Errorf("filter ports not connected")
 	}
-	return runCodecLoop(ctx, in, out,
-		func(frame media.Frame) error { return n.engine.SendFrame(&frame) },
-		func() (media.Frame, error) {
-			frame, err := n.engine.ReceiveFrame()
-			if err != nil {
-				return nil, err
+	runPorts := n.runPorts()
+	if len(runPorts) == 1 {
+		in := n.inputs["in"].Edge()
+		if in == nil {
+			return fmt.Errorf("filter ports not connected")
+		}
+		return runCodecLoop(ctx, in, out,
+			func(frame media.Frame) error { return n.engine.SendFrame(&frame) },
+			func() (media.Frame, error) {
+				frame, err := n.engine.ReceiveFrame()
+				if err != nil {
+					return nil, err
+				}
+				if frame == nil || *frame == nil {
+					return nil, fmt.Errorf("filter returned nil frame")
+				}
+				return *frame, nil
+			},
+			func() error {
+				if err := n.engine.EndInput("in"); err != nil {
+					return err
+				}
+				return n.engine.Flush()
+			},
+		)
+	}
+	return n.runMultiple(ctx, out, runPorts)
+}
+
+func (n *MultiFilterAdapter) runPorts() []string {
+	ports := make([]string, 0, len(n.inputs))
+	for id, phase := range n.phases {
+		if phase == node.InputPhaseRun {
+			ports = append(ports, id)
+		}
+	}
+	sort.Strings(ports)
+	return ports
+}
+
+type multiInputResult struct {
+	port  string
+	frame media.Frame
+	err   error
+}
+
+func (n *MultiFilterAdapter) runMultiple(ctx context.Context, out node.Edge[media.Frame], ports []string) error {
+	defer out.Close()
+	pullContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	inputs := make(chan multiInputResult, len(ports))
+	var pulls sync.WaitGroup
+	for _, port := range ports {
+		edge := n.inputs[port].Edge()
+		if edge == nil {
+			return fmt.Errorf("filter input port %q is not connected", port)
+		}
+		pulls.Add(1)
+		go func(port string, edge node.Edge[media.Frame]) {
+			defer pulls.Done()
+			for {
+				frame, err := edge.Pull(pullContext)
+				select {
+				case inputs <- multiInputResult{port: port, frame: frame, err: err}:
+				case <-pullContext.Done():
+					if err == nil {
+						frame.Release()
+					}
+					return
+				}
+				if err != nil {
+					return
+				}
 			}
-			if frame == nil || *frame == nil {
-				return nil, fmt.Errorf("filter returned nil frame")
+		}(port, edge)
+	}
+	go func() {
+		pulls.Wait()
+		close(inputs)
+	}()
+	defer func() {
+		cancel()
+		for input := range inputs {
+			if input.err == nil {
+				input.frame.Release()
 			}
-			return *frame, nil
-		},
-		func() error {
-			if err := n.engine.EndInput("in"); err != nil {
+		}
+	}()
+
+	open := len(ports)
+	for input := range inputs {
+		if input.err == io.EOF {
+			if err := n.engine.EndInput(input.port); err != nil {
 				return err
 			}
-			return n.engine.Flush()
-		},
-	)
+			open--
+			if open != 0 {
+				continue
+			}
+			if err := n.engine.Flush(); err != nil {
+				return err
+			}
+			return n.drain(ctx, out, true)
+		}
+		if input.err != nil {
+			return input.err
+		}
+
+		var err error
+		if input.port == "in" {
+			err = n.engine.SendFrame(&input.frame)
+		} else {
+			err = n.engine.SendInput(input.port, &input.frame)
+		}
+		input.frame.Release()
+		if err != nil {
+			return err
+		}
+		if err := n.drain(ctx, out, false); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("filter input streams ended without EOF")
+}
+
+func (n *MultiFilterAdapter) drain(ctx context.Context, out node.Edge[media.Frame], final bool) error {
+	for {
+		frame, err := n.engine.ReceiveFrame()
+		if err == ErrEAGAIN || (final && (err == io.EOF || err == ErrEOF)) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if frame == nil || *frame == nil {
+			return fmt.Errorf("filter returned nil frame")
+		}
+		if err := out.Push(ctx, *frame); err != nil {
+			(*frame).Release()
+			return err
+		}
+	}
 }
 
 func (n *MultiFilterAdapter) Preload(ctx context.Context) error {
