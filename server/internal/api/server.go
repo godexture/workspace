@@ -83,7 +83,7 @@ func (s *Server) handleResolve(c echo.Context) error {
 	}
 	defer input.Close()
 
-	geometry, err := conversion.Negotiate(c.Request().Context(), input, io.Discard, spec)
+	geometry, err := conversion.Negotiate(c.Request().Context(), conversion.InputSet{Main: input}, io.Discard, spec)
 	if err != nil {
 		return writeError(c, err)
 	}
