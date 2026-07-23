@@ -97,11 +97,11 @@ conversion, err := pipeline.NewBuilder().Build(
 | `--metrics` | 成功・失敗・キャンセル時に timing、I/O、node、edge、Go runtime 統計を表示する |
 | `--dry-run` | 出力を作らず negotiation と Build を検証し、解決済み構造を標準出力へ表示する |
 | `-i NAME=PATH`, `--input NAME=PATH` | 完了まで先読みする名前付き補助入力を登録する。名前は重複できない |
-| `--wire FILTER_ALIAS.PORT=NAME` | filter の補助ポートを名前付き入力へ結線する。filter alias は `--filter ALIAS=PLUGIN:...`、省略時は plugin 名 |
+| `--wire FILTER_ALIAS.PORT=SOURCE.out` | filter port を input または aux filter の出力へ結線する。filter alias は `--filter ALIAS=PLUGIN:...`、省略時は plugin 名 |
 
 `--dry-run` と `--metrics` は同時指定できません。dry-run 中は progress を開始しません。`auto` が非TTYかつ metrics 無効なら Build 前に `ObservationOff` が選ばれます。
 
-実変換では verbose の有無にかかわらず、開始時に選択入力 stream、node 列、予定出力 stream をインデントした `-->` で結ぶ略図を標準エラーへ表示します。出力の commit まで成功した場合は、metricsなどの報告後に成功メッセージを表示します。
+実変換では verbose の有無にかかわらず、開始時に main と各補助入力の chain を別行で標準エラーへ表示します。出力の commit まで成功した場合は、metricsなどの報告後に成功メッセージを表示します。
 
 たとえば `convolve` に IR 音声を与えるには、raw sample を config に埋めず、補助入力と配線を別々に指定します。
 
@@ -109,10 +109,10 @@ conversion, err := pipeline.NewBuilder().Build(
 godec convert input.wav output.wav \
   -i IR=cabinet.wav \
   --filter 'convolve:wet-dry-mix=1' \
-  --wire convolve.ir=IR
+  --wire convolve.ir=IR.out
 ```
 
-補助入力は独立した demuxer/decoder/filter 経路で EOF まで処理されてから、main 経路を開始します。現在は main chain の一つの補助ポートへ一度だけ結線する star topology を対象とします。
+補助入力は独立した demuxer/decoder/filter 経路で EOF まで処理されてから、main 経路を開始します。必要な port profile は main input profile を参照して negotiation されるため、`convolve.ir` は main と同じ sample rate へ自動 resample されます。補助経路に明示 filter を挿入する場合は `--wire AUX_FILTER.in=INPUT.out` として、その出力を他の filter port へ指定します。たとえば `--wire resample.in=IR.out --wire convolve.ir=resample.out` のように書けます。input alias と filter alias は同じ名前空間で一意です。現在は main chain の一つの補助ポートへ一度だけ結線する star topology を対象とします。
 
 Node の port phase は eager な `Preload` だけでなく、`Run` も表現できます。複数の run-phase 入力を持つ filter では adapter が各入力内の順序を保ち、engine 呼び出しを直列化します。入力間の時刻整列は filter が PTS を使って決めるため、sidechain compressor のような live co-stream 型も同じ port API で実装できます。
 

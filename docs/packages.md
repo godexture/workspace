@@ -242,6 +242,7 @@ import "github.com/godexture/core/routing"
 
 ```go
 type FilterSpec struct {
+    Alias string
     Config registry.Configuration
     Inputs map[string]string // port -> named auxiliary input
 }

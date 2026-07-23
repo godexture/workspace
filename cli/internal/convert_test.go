@@ -97,3 +97,37 @@ func TestBuildSpecRejectsAmbiguousDefaultFilterAlias(t *testing.T) {
 		t.Fatal("buildSpec() accepted an ambiguous filter alias")
 	}
 }
+
+func TestBuildSpecBuildsAuxiliaryFilterChain(t *testing.T) {
+	spec, err := buildSpec(convertOptions{
+		filters: []string{"resample=resample:sample-rate=48000", "convolve"},
+		inputs:  []string{"ir=cabinet.wav"},
+		wires: []string{
+			"resample.in=ir.out",
+			"convolve.ir=resample.out",
+		},
+	}, "output.wav", catalog.Build().Outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Filters) != 1 || spec.Filters[0].Alias != "convolve" {
+		t.Fatalf("buildSpec() main filters = %#v", spec.Filters)
+	}
+	auxiliary := spec.AuxInputs["ir"]
+	if len(auxiliary.Filters) != 1 || auxiliary.Filters[0].Alias != "resample" {
+		t.Fatalf("buildSpec() auxiliary filters = %#v", auxiliary.Filters)
+	}
+	if got := spec.Filters[0].Inputs["ir"]; got != "ir" {
+		t.Fatalf("buildSpec() convolve ir source = %q, want ir", got)
+	}
+}
+
+func TestBuildSpecRejectsInputAndFilterAliasCollision(t *testing.T) {
+	_, err := buildSpec(convertOptions{
+		filters: []string{"ir=resample"},
+		inputs:  []string{"ir=cabinet.wav"},
+	}, "output.wav", catalog.Build().Outputs)
+	if err == nil {
+		t.Fatal("buildSpec() accepted matching input and filter aliases")
+	}
+}

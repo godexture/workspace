@@ -45,6 +45,7 @@ func NewNegotiator(
 }
 
 type FilterSpec struct {
+	Alias  string
 	Config registry.Configuration
 	Inputs map[string]string
 }
@@ -183,6 +184,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	plans := make([]transformPlan, 0, 2+len(spec.Filters))
 	filterPorts := make([]map[string]struct{}, 0, len(spec.Filters))
 	filterManifests := make([]registry.FilterManifest, 0, len(spec.Filters))
+	filterInputs := make([]media.StreamInfo, 0, len(spec.Filters))
 	currentStream := inputStream
 
 	decoderManifest := spec.DecoderManifest
@@ -254,7 +256,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		filterInput := currentStream
 		resolvedManifest := filterManifest
 		plans = append(plans, transformPlan{
-			id:        fmt.Sprintf("filter:%d", i),
+			id:        filterID("", i, filterSpec.Alias),
 			role:      manifest.RoleFilter,
 			plugin:    resolvedManifest.Name,
 			config:    filterSpec.Config,
@@ -265,6 +267,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		})
 		filterPorts = append(filterPorts, ports)
 		filterManifests = append(filterManifests, filterManifest)
+		filterInputs = append(filterInputs, filterInput)
 		currentStream = filterOutput
 	}
 
@@ -351,7 +354,10 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 				return nil, fmt.Errorf("filter %d has no active input port %q", index, port)
 			}
 			filter := filterManifests[index]
-			requirements, err := filter.Requirements(port, path.output.Codec, filterSpec.Config)
+			requirements, err := filter.RequirementsFor(port, map[string]media.StreamInfo{
+				"in": filterInputs[index],
+				port: path.output,
+			}, path.output.Codec, filterSpec.Config)
 			if err != nil {
 				return nil, fmt.Errorf("resolve filter %d port %q requirements: %w", index, port, err)
 			}
@@ -368,7 +374,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 				}
 			}
 			usedAux[name] = struct{}{}
-			auxEdges = append(auxEdges, pipeline.EdgeDef{FromNode: path.tailID, FromPort: "out", ToNode: fmt.Sprintf("filter:%d", index), ToPort: port, Stream: path.output})
+			auxEdges = append(auxEdges, pipeline.EdgeDef{FromNode: path.tailID, FromPort: "out", ToNode: filterID("", index, filterSpec.Alias), ToPort: port, Stream: path.output})
 		}
 		for port := range filterPorts[index] {
 			if port == "in" {
@@ -520,6 +526,17 @@ type auxPath struct {
 	output  media.StreamInfo
 }
 
+func filterID(auxiliary string, index int, alias string) string {
+	name := fmt.Sprintf("%d", index)
+	if alias != "" {
+		name = alias
+	}
+	if auxiliary == "" {
+		return "filter:" + name
+	}
+	return fmt.Sprintf("aux:%s:filter:%s", auxiliary, name)
+}
+
 func (n *Negotiator) negotiateAuxPaths(ctx context.Context, inputs map[string]AuxInputSpec, geometry *pipeline.Geometry, bridgeID *int, ownedNodes *[]node.Node) (map[string]*auxPath, error) {
 	if len(inputs) == 0 {
 		return nil, nil
@@ -629,7 +646,7 @@ func (n *Negotiator) negotiateAuxPaths(ctx context.Context, inputs map[string]Au
 			*ownedNodes = append(*ownedNodes, filterNode)
 			resolved := filter
 			plans = append(plans, transformPlan{
-				id: fmt.Sprintf("aux:%s:filter:%d", name, index), role: manifest.RoleFilter, plugin: resolved.Name, config: filterSpec.Config, resources: resolved.Resources, input: filterInput, output: filterOutput,
+				id: filterID(name, index, filterSpec.Alias), role: manifest.RoleFilter, plugin: resolved.Name, config: filterSpec.Config, resources: resolved.Resources, input: filterInput, output: filterOutput,
 				node: filterNode,
 			})
 			current = filterOutput
