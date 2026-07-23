@@ -173,7 +173,7 @@ func resolveFilters(filters []FilterSpec) ([]routing.FilterSpec, error) {
 		if configErr != nil {
 			return nil, configErr
 		}
-		resolved = append(resolved, routing.FilterSpec{Config: config, Inputs: maps.Clone(filterSpec.Inputs)})
+		resolved = append(resolved, routing.FilterSpec{Alias: filterSpec.Alias, Config: config, Inputs: maps.Clone(filterSpec.Inputs)})
 	}
 	return resolved, nil
 }

@@ -25,11 +25,15 @@ import (
 // shared fixture assets used by core/test.
 func writeTestWAV(t *testing.T, buf *bytes.Buffer) {
 	t.Helper()
-	const sampleRate = 8000
+	writeTestWAVRate(t, buf, 8000)
+}
+
+func writeTestWAVRate(t *testing.T, buf *bytes.Buffer, sampleRate int) {
+	t.Helper()
 	const numSamples = 4000
 	samples := make([]int16, numSamples)
 	for i := range samples {
-		samples[i] = int16(4000 * math.Sin(2*math.Pi*440*float64(i)/sampleRate))
+		samples[i] = int16(4000 * math.Sin(2*math.Pi*440*float64(i)/float64(sampleRate)))
 	}
 	dataSize := uint32(len(samples) * 2)
 
@@ -156,6 +160,34 @@ func TestBuildPreloadsNamedAuxiliaryInput(t *testing.T) {
 	if output.Len() == 0 {
 		t.Fatal("Run() produced no output")
 	}
+}
+
+func TestNegotiateResamplesConvolutionImpulseResponseToMainRate(t *testing.T) {
+	var mainWAV, impulseWAV, output bytes.Buffer
+	writeTestWAVRate(t, &mainWAV, 8000)
+	writeTestWAVRate(t, &impulseWAV, 16000)
+
+	geometry, err := conversion.Negotiate(context.Background(), conversion.InputSet{
+		Main: bytes.NewReader(mainWAV.Bytes()),
+		Aux:  map[string]io.ReadSeeker{"ir": bytes.NewReader(impulseWAV.Bytes())},
+	}, &output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{Name: "convolve"},
+			Inputs:     map[string]string{"ir": "ir"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Negotiate() error = %v", err)
+	}
+	defer geometry.Close()
+
+	for _, node := range geometry.Description().Nodes {
+		if node.Plugin == "resample" && node.AutoInserted && len(node.Outputs) == 1 && node.Outputs[0].Audio.SampleRate == 8000 {
+			return
+		}
+	}
+	t.Fatalf("pipeline did not insert an auxiliary resampler to 8000 Hz: %#v", geometry.Description().Nodes)
 }
 
 func errorHasCode(err error, code conversion.Code) bool {
