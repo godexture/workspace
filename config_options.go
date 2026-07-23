@@ -62,13 +62,6 @@ func (c MuxerConfig) Resolve() internal.MuxerConfig {
 	return internal.MuxerConfig(c)
 }
 
-func (c MuxerConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 func WithForceRF64(v bool) MuxerConfigOption {
 	return muxerConfigOptionFunc(func(c *MuxerConfig) {
 		c.ForceRF64 = v
