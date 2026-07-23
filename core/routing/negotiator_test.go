@@ -256,6 +256,83 @@ func TestNegotiatorConnectsNamedAuxiliaryInput(t *testing.T) {
 	}
 }
 
+func TestNegotiatorBridgesNamedAuxiliaryInput(t *testing.T) {
+	t.Parallel()
+	stream := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}
+	bridgeOutput := stream.Clone()
+	bridgeOutput.Codec = media.CodecLPCM
+	decoderManifest := registry.DecoderManifest{
+		TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
+		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			return &mockDecoder{}, input, nil
+		},
+	}
+	filterManifest := registry.FilterManifest{
+		TransformManifest: registry.TransformManifest{InputRequirements: registry.InputRequirements{
+			"in": registry.StaticRequirements(alwaysCapability{}),
+			"ir": registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecLPCM}}),
+		}},
+		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+			return &mockFilter{inputs: map[string]*node.InPort[media.Frame]{"in": nil, "ir": nil}}, input, nil
+		},
+	}
+	bridgeManifest := registry.FilterManifest{
+		TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
+		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+			return &mockFilter{}, bridgeOutput, nil
+		},
+	}
+	encoderManifest := registry.EncoderManifest{
+		TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
+		Codecs:            []media.CodecID{media.CodecFLAC},
+		Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+			output := input.Clone()
+			output.Codec = target
+			return &mockEncoder{}, output, nil
+		},
+	}
+	mainDemux := &mockDemuxer{streams: []media.StreamInfo{stream}}
+	auxDemux := &mockDemuxer{streams: []media.StreamInfo{stream}}
+	demuxResolver := &mockDemuxerResolver{resolved: registry.DemuxerManifest{Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) { return mainDemux, nil }}}
+	auxDemuxManifest := registry.DemuxerManifest{Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) { return auxDemux, nil }}
+	filterResolver := &mockFilterResolver{resolved: []registry.FilterManifest{filterManifest}}
+	bridgeResolver := &mockBridgeResolver{steps: []resolver.BridgeStep{{
+		Input: stream, Output: bridgeOutput, Manifest: bridgeManifest, Config: dummyConfig{},
+	}}}
+	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{Codecs: []media.CodecID{media.CodecFLAC}, Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) { return &mockMuxer{}, nil }}}
+
+	geometry, err := NewNegotiator(
+		muxResolver,
+		demuxResolver,
+		&mockEncoderResolver{resolved: encoderManifest},
+		&mockDecoderResolver{resolved: decoderManifest},
+		filterResolver,
+		bridgeResolver,
+	).NegotiateConversion(context.Background(), ConversionSpec{
+		Input:       strings.NewReader("main"),
+		Output:      &strings.Builder{},
+		Filters:     []FilterSpec{{Config: auxFilterConfig{}, Inputs: map[string]string{"ir": "IR"}}},
+		TargetCodec: media.CodecFLAC,
+		MuxConfig:   dummyConfig{},
+		AuxInputs: map[string]AuxInputSpec{
+			"IR": {Source: strings.NewReader("aux"), DemuxManifest: auxDemuxManifest},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer geometry.Close()
+	if !bridgeResolver.called {
+		t.Fatal("auxiliary incompatibility did not use the bridge resolver")
+	}
+	for _, edge := range geometry.Edges() {
+		if edge.FromNode == "bridge:0" && edge.ToNode == "filter:0" && edge.ToPort == "ir" && edge.Stream.Codec == media.CodecLPCM {
+			return
+		}
+	}
+	t.Fatalf("bridged auxiliary edge not found: %#v", geometry.Edges())
+}
+
 func TestNegotiator_CustomResolvers(t *testing.T) {
 	t.Parallel()
 	// 1. Set up mock nodes
