@@ -50,7 +50,10 @@ func registerConvolveManifest() {
 		if len(value.ImpulseResponse) != 0 {
 			return engine.WrapFilter(item), in, nil
 		}
-		return engine.WrapMultiFilter(item, engine.FilterInput{ID: "in", Phase: node.InputPhaseRun}, engine.FilterInput{ID: "ir", Phase: node.InputPhasePreload}), in, nil
+		return engine.WrapFilter(item, engine.WithInputs(
+			engine.FilterInput{ID: "in", Phase: node.InputPhaseRun},
+			engine.FilterInput{ID: "ir", Phase: node.InputPhasePreload},
+		)), in, nil
 	}}); err != nil {
 		panic(err)
 	}
