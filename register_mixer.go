@@ -51,15 +51,23 @@ func registerMixer() {
 					},
 					InputRequirements: requirements,
 				},
-				Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+				Factory: func(in media.StreamSet, options registry.TransformFactoryOptions) (node.Filter, media.StreamSet, error) {
 					if _, err := engine.ResolveConfig[config.MixerConfig, MixerConfig](options.Config); err != nil {
-						return nil, media.StreamInfo{}, err
+						return nil, nil, err
 					}
 					item, err := mixer.New(inputs, outputs, uniformWeights(inputs, outputs), false)
 					if err != nil {
-						return nil, media.StreamInfo{}, err
+						return nil, nil, err
 					}
-					return item, in, nil
+					// Every input port shares the same stream shape (the mixer
+					// engine rejects mismatched formats at runtime), so any one
+					// of them describes every output port too.
+					reference := in["in0"]
+					result := make(media.StreamSet, outputs)
+					for o := 0; o < outputs; o++ {
+						result[fmt.Sprintf("out%d", o)] = reference
+					}
+					return item, result, nil
 				},
 			}, nil
 		},
