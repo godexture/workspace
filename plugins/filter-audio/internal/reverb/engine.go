@@ -7,7 +7,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/buffer"
 )
 
 // Freeverb-style algorithmic reverb: per channel, numCombs parallel comb
@@ -127,7 +127,7 @@ type Engine struct {
 	rateSet  bool
 	rate     int
 	networks []*channelNetwork
-	slot     engine.Slot[media.Frame]
+	slot     buffer.Slot[media.Frame]
 }
 
 func New(cfg config.ReverbConfig) (*Engine, error) {
