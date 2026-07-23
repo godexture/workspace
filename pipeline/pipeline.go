@@ -44,6 +44,7 @@ type Pipeline struct {
 	finishedAt      time.Time
 	cancel          context.CancelFunc
 	prepareDone     chan struct{}
+	prepareErr      error
 	done            chan struct{}
 	closeErr        error
 }
@@ -177,8 +178,13 @@ func (p *Pipeline) Prepare(ctx context.Context) error {
 		p.state = pipelinePreparing
 		p.prepareDone = make(chan struct{})
 	case pipelinePreparing:
+		done := p.prepareDone
 		p.mu.Unlock()
-		return fmt.Errorf("%w: pipeline is already preparing", ErrInvalidPipeline)
+		<-done
+		p.mu.Lock()
+		err := p.prepareErr
+		p.mu.Unlock()
+		return err
 	default:
 		state := p.state
 		p.mu.Unlock()
@@ -213,6 +219,7 @@ func (p *Pipeline) Prepare(ctx context.Context) error {
 	p.mu.Lock()
 	if p.state == pipelinePreparing {
 		p.state = pipelinePrepared
+		p.prepareErr = nil
 		close(p.prepareDone)
 		p.prepareDone = nil
 	}
@@ -224,16 +231,17 @@ func (p *Pipeline) finishPrepare(prepareErr error) error {
 	p.mu.Lock()
 	p.state = pipelineClosing
 	p.finishedAt = time.Now()
+	p.mu.Unlock()
+	p.completeClose()
+	p.mu.Lock()
+	result := errors.Join(prepareErr, p.closeErr)
+	p.prepareErr = result
 	if p.prepareDone != nil {
 		close(p.prepareDone)
 		p.prepareDone = nil
 	}
 	p.mu.Unlock()
-	p.completeClose()
-	p.mu.Lock()
-	closeErr := p.closeErr
-	p.mu.Unlock()
-	return errors.Join(prepareErr, closeErr)
+	return result
 }
 
 func (p *Pipeline) Close() error {
