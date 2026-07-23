@@ -99,6 +99,10 @@ func assignManifestID[V Manifest](manifest V, key PluginKey) (V, error) {
 		m.TransformManifest.BaseManifest.key = key
 		return any(m).(V), nil
 
+	case ParameterizedFilterManifest:
+		m.BaseManifest.key = key
+		return any(m).(V), nil
+
 	default:
 		return manifest, fmt.Errorf("invalid manifest type: %T", manifest)
 	}
@@ -116,6 +120,8 @@ func manifestRole[V Manifest]() manifest.NodeType {
 	case DecoderManifest:
 		return manifest.RoleDecoder
 	case FilterManifest:
+		return manifest.RoleFilter
+	case ParameterizedFilterManifest:
 		return manifest.RoleFilter
 	default:
 		panic(fmt.Sprintf("unsupported registry manifest type: %T", value))
@@ -141,6 +147,20 @@ func (r *Registry[V]) Lookup(name string) (V, error) {
 		return zero, fmt.Errorf("plugin not found: %s", name)
 	}
 	return r.Get(key)
+}
+
+// hasName reports whether name is already registered in r. It exists so
+// Bundle.Register can enforce name uniqueness across sibling registries
+// that share a namespace (Filters and ParameterizedFilters both resolve
+// from the same "--filter name..." CLI spelling). A nil receiver (a Bundle
+// that leaves this sibling registry unset, e.g. in isolated tests) safely
+// reports no collision rather than panicking.
+func (r *Registry[V]) hasName(name string) bool {
+	if r == nil {
+		return false
+	}
+	_, exists := r.names.Load(name)
+	return exists
 }
 
 func (r *Registry[V]) Names() []string {

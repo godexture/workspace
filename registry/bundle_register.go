@@ -17,7 +17,16 @@ func (b Bundle) Register(manifest Manifest) error {
 		return b.Decoders.Register(m)
 
 	case FilterManifest:
+		if b.ParameterizedFilters.hasName(m.RegistryName()) {
+			return fmt.Errorf("plugin name already registered: %s", m.RegistryName())
+		}
 		return b.Filters.Register(m)
+
+	case ParameterizedFilterManifest:
+		if b.Filters.hasName(m.RegistryName()) {
+			return fmt.Errorf("plugin name already registered: %s", m.RegistryName())
+		}
+		return b.ParameterizedFilters.Register(m)
 
 	default:
 		return fmt.Errorf("unsupported manifest type: %T", manifest)
