@@ -20,7 +20,7 @@ import (
 
 func TestRegisteredBridgeSatisfiesFLACPCMInput(t *testing.T) {
 	encoder := registeredFLACEncoder(t)
-	requirements, err := encoder.Requirements(media.CodecFLAC, nil)
+	requirements, err := encoder.Requirements("in", media.CodecFLAC, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRegisteredBridgeSatisfiesFLACPCMInput(t *testing.T) {
 	if len(steps) != 1 || steps[0].Manifest.Name != "convert" {
 		t.Fatalf("bridge steps = %#v, want one convert step", steps)
 	}
-	accepted, err := encoder.Accept(steps[0].Output, media.CodecFLAC, nil)
+	accepted, err := encoder.Accept("in", steps[0].Output, media.CodecFLAC, nil)
 	if err != nil || !accepted {
 		t.Fatalf("FLAC requirements accepted = %t, error = %v, output = %#v", accepted, err, steps[0].Output.Audio)
 	}
