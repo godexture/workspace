@@ -33,3 +33,20 @@ func CloneStreams(streams []StreamInfo) []StreamInfo {
 	}
 	return cloned
 }
+
+// StreamSet holds one StreamInfo per named port, for nodes whose ports can
+// carry different stream shapes (e.g. a mixer's independent input/output
+// ports).
+type StreamSet map[string]StreamInfo
+
+// Clone returns an independent copy that shares no state with s.
+func (s StreamSet) Clone() StreamSet {
+	if s == nil {
+		return nil
+	}
+	cloned := make(StreamSet, len(s))
+	for port, stream := range s {
+		cloned[port] = stream.Clone()
+	}
+	return cloned
+}

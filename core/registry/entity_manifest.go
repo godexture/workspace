@@ -58,7 +58,7 @@ type InputRequirements map[string]InputRequirementsFunc
 // ProfileRequirements can refine a port's requirements using the profiles of
 // the streams already connected to the transform. A profile requirement takes
 // precedence over the static requirement for the same port.
-type ProfileRequirementsFunc func(inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error)
+type ProfileRequirementsFunc func(inputs media.StreamSet, target media.CodecID, config Configuration) ([]manifest.Capability, error)
 
 type ProfileRequirements map[string]ProfileRequirementsFunc
 
@@ -129,11 +129,11 @@ func (m TransformManifest) Requirements(port string, target media.CodecID, confi
 	return m.requirements(port, nil, target, config)
 }
 
-func (m TransformManifest) RequirementsFor(port string, inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+func (m TransformManifest) RequirementsFor(port string, inputs media.StreamSet, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
 	return m.requirements(port, inputs, target, config)
 }
 
-func (m TransformManifest) requirements(port string, inputs map[string]media.StreamInfo, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
+func (m TransformManifest) requirements(port string, inputs media.StreamSet, target media.CodecID, config Configuration) ([]manifest.Capability, error) {
 	if profile := m.ProfileRequirements[port]; profile != nil && inputs != nil {
 		requirements, err := profile(inputs, target, config)
 		if err != nil {

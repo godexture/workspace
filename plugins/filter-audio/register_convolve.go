@@ -29,7 +29,7 @@ func registerConvolveManifest() {
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{}),
 		},
 		ProfileRequirements: registry.ProfileRequirements{
-			"ir": func(inputs map[string]media.StreamInfo, _ media.CodecID, _ registry.Configuration) ([]manifest.Capability, error) {
+			"ir": func(inputs media.StreamSet, _ media.CodecID, _ registry.Configuration) ([]manifest.Capability, error) {
 				input, ok := inputs["in"]
 				if !ok || input.Type != media.MediaAudio || input.Audio.SampleRate == 0 {
 					return nil, fmt.Errorf("convolve requires an audio main input with a sample rate")
@@ -38,7 +38,7 @@ func registerConvolveManifest() {
 			},
 		},
 		Resources: registry.ResourceRequest{Parallelism: true},
-	}, Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+	}, Factory: registry.SingleFactory(func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 		value, err := engine.ResolveConfig[config.ConvolutionConfig, ConvolutionConfig](options.Config)
 		if err != nil {
 			return nil, media.StreamInfo{}, err
@@ -54,7 +54,7 @@ func registerConvolveManifest() {
 			engine.FilterInput{ID: "in", Phase: node.InputPhaseRun},
 			engine.FilterInput{ID: "ir", Phase: node.InputPhasePreload},
 		)), in, nil
-	}}); err != nil {
+	})}); err != nil {
 		panic(err)
 	}
 }

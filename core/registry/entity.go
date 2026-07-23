@@ -34,4 +34,20 @@ type Preparer interface {
 type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error)
 type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error)
 
-type FilterFactory func(media.StreamInfo, TransformFactoryOptions) (node.Filter, media.StreamInfo, error)
+// FilterFactory builds a filter node from the resolved stream on each of its
+// input ports, and reports the resolved stream on each of its output ports.
+// Single-port filters normally use SingleFactory instead of implementing
+// this directly.
+type FilterFactory func(media.StreamSet, TransformFactoryOptions) (node.Filter, media.StreamSet, error)
+
+// SingleFactory adapts a conventional single "in"->"out" filter factory to
+// the general per-port FilterFactory signature.
+func SingleFactory(factory func(media.StreamInfo, TransformFactoryOptions) (node.Filter, media.StreamInfo, error)) FilterFactory {
+	return func(inputs media.StreamSet, options TransformFactoryOptions) (node.Filter, media.StreamSet, error) {
+		filter, output, err := factory(inputs["in"], options)
+		if err != nil {
+			return nil, nil, err
+		}
+		return filter, media.StreamSet{"out": output}, nil
+	}
+}

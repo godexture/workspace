@@ -140,9 +140,9 @@ func registerBridgeFilter(
 			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(bridgeAnyAudioCapability{})),
 		},
 		Bridge: registry.SingleInputBridge(bridge),
-		Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+		Factory: registry.SingleFactory(func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			return &bridgeFilterNode{}, transform(stream, options.Config), nil
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatal(err)
