@@ -878,3 +878,51 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 		t.Fatalf("close order = %v, want %v", got, want)
 	}
 }
+
+func TestNegotiatorConstructsEachTransformOnce(t *testing.T) {
+	t.Parallel()
+	stream := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}
+	var decoderCalls, encoderCalls int
+	geometry, err := NewNegotiator(
+		&mockMuxerResolver{resolved: registry.MuxerManifest{
+			Codecs:  []media.CodecID{media.CodecFLAC},
+			Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) { return &mockMuxer{}, nil },
+		}},
+		&mockDemuxerResolver{resolved: registry.DemuxerManifest{
+			Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) {
+				return &mockDemuxer{streams: []media.StreamInfo{stream}}, nil
+			},
+		}},
+		&mockEncoderResolver{resolved: registry.EncoderManifest{
+			TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
+			Codecs:            []media.CodecID{media.CodecFLAC},
+			Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+				encoderCalls++
+				output := input.Clone()
+				output.Codec = target
+				return &mockEncoder{}, output, nil
+			},
+		}},
+		&mockDecoderResolver{resolved: registry.DecoderManifest{
+			TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
+			Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+				decoderCalls++
+				return &mockDecoder{}, input, nil
+			},
+		}},
+		nil,
+		nil,
+	).NegotiateConversion(context.Background(), ConversionSpec{
+		Input:       strings.NewReader("input"),
+		Output:      &strings.Builder{},
+		TargetCodec: media.CodecFLAC,
+		MuxConfig:   dummyConfig{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer geometry.Close()
+	if decoderCalls != 1 || encoderCalls != 1 {
+		t.Fatalf("factory calls = decoder:%d encoder:%d, want one each", decoderCalls, encoderCalls)
+	}
+}
