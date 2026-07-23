@@ -96,6 +96,18 @@ func TestResolveDecodesFilterValues(t *testing.T) {
 	}
 }
 
+func TestResolveDecodesRemixLayout(t *testing.T) {
+	_, err := conversion.Resolve(conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{Name: "remix", Values: map[string]string{"layout": "stereo"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+}
+
 func TestBuildRunsWavToFlac(t *testing.T) {
 	var wav bytes.Buffer
 	writeTestWAV(t, &wav)

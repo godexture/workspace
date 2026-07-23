@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/godexture/core/domain/media"
 	"github.com/spf13/pflag"
 )
 
@@ -17,6 +18,10 @@ type testConfig struct {
 	Delay   time.Duration `name:"delay" help:"Processing delay"`
 	Mode    testMode      `name:"mode" help:"Processing mode"`
 	Tags    []string      `name:"tag" help:"Processing tags"`
+}
+
+type layoutConfig struct {
+	Layout media.ChannelLayout `name:"layout"`
 }
 
 func (testConfig) FieldChoices(field string) []string {
@@ -55,6 +60,16 @@ func TestBindingAppliesOnlyChangedFlags(t *testing.T) {
 	}
 	if !actual.Enabled || actual.Limit != 8 || actual.Delay != time.Second || actual.Mode != "safe" || strings.Join(actual.Tags, ",") != "one,two" {
 		t.Fatalf("Apply() = %#v", actual)
+	}
+}
+
+func TestDecodeStructSupportsTextUnmarshalerFields(t *testing.T) {
+	var config layoutConfig
+	if err := DecodeStruct(&config, map[string]string{"layout": "stereo"}); err != nil {
+		t.Fatal(err)
+	}
+	if config.Layout != media.LayoutStereo2_0 {
+		t.Fatalf("layout = %s, want %s", config.Layout, media.LayoutStereo2_0)
 	}
 }
 
