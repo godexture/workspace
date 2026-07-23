@@ -1,17 +1,9 @@
 {
+    "extends": "./tsconfig.json",
     "compilerOptions": {
-        "target": "ES2023",
-        "lib": ["ES2023"],
-        "module": "ESNext",
-        "skipLibCheck": true,
-
-        "moduleResolution": "bundler",
-        "allowImportingTsExtensions": true,
-        "verbatimModuleSyntax": true,
-        "moduleDetection": "force",
-        "noEmit": true,
-
-        "strict": true
+        "rootDir": "./",
+        "types": ["bun"],
+        "composite": true
     },
-    "include": ["vite.config.ts"]
+    "include": ["./scripts/**/*"]
 }
