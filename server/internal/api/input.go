@@ -2,13 +2,27 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 
+	"github.com/godexture/example-web/internal/jobs"
 	"github.com/godexture/sdk/conversion"
 	"github.com/labstack/echo/v4"
 )
+
+type inputReference struct {
+	Kind     string `json:"kind"`
+	PresetID string `json:"presetId,omitempty"`
+}
+
+type inputManifest struct {
+	Main inputReference            `json:"main"`
+	Aux  map[string]inputReference `json:"aux"`
+}
 
 func (s *Server) parseUpload(c echo.Context) error {
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, s.maxUploadBytes)
@@ -30,20 +44,99 @@ func parseSpec(c echo.Context) (conversion.Spec, error) {
 	return spec, nil
 }
 
-// openPreviewInput opens the request's input (an uploaded file or a preset)
-// for a one-shot, request-scoped read. Used by /pipelines/resolve, whose
-// negotiation never outlives the handler.
-func (s *Server) openPreviewInput(c echo.Context) (io.ReadSeekCloser, error) {
-	if presetID := c.FormValue("presetId"); presetID != "" {
-		preset, ok := findPreset(presetID)
+func parseInputs(c echo.Context, spec conversion.Spec) (inputManifest, error) {
+	var inputs inputManifest
+	raw := c.FormValue("inputs")
+	if raw == "" {
+		return inputs, conversion.NewError(conversion.CodeInvalidSpec, "inputs field is required")
+	}
+	if err := json.Unmarshal([]byte(raw), &inputs); err != nil {
+		return inputs, conversion.NewError(conversion.CodeInvalidSpec, "invalid inputs: "+err.Error())
+	}
+	if inputs.Aux == nil {
+		inputs.Aux = map[string]inputReference{}
+	}
+	if err := validateInputs(inputs, spec); err != nil {
+		return inputs, err
+	}
+	return inputs, nil
+}
+
+func validateInputs(inputs inputManifest, spec conversion.Spec) error {
+	if err := validateInputReference(inputs.Main); err != nil {
+		return conversion.NewError(conversion.CodeInvalidSpec, "main input: "+err.Error())
+	}
+	if len(inputs.Aux) != len(spec.AuxInputs) {
+		return conversion.NewError(conversion.CodeInvalidSpec, "auxiliary inputs do not match the conversion spec")
+	}
+	for name := range spec.AuxInputs {
+		ref, ok := inputs.Aux[name]
 		if !ok {
-			return nil, notFoundPreset(presetID)
+			return conversion.NewError(conversion.CodeInvalidSpec, "auxiliary input "+name+" is required")
+		}
+		if err := validateInputReference(ref); err != nil {
+			return conversion.NewError(conversion.CodeInvalidSpec, "auxiliary input "+name+": "+err.Error())
+		}
+	}
+	for name := range inputs.Aux {
+		if _, ok := spec.AuxInputs[name]; !ok {
+			return conversion.NewError(conversion.CodeInvalidSpec, "auxiliary input "+name+" is not declared by the conversion spec")
+		}
+	}
+	return nil
+}
+
+func validateInputReference(input inputReference) error {
+	switch input.Kind {
+	case "file":
+		if input.PresetID != "" {
+			return fmt.Errorf("file input cannot specify a preset")
+		}
+	case "preset":
+		if input.PresetID == "" {
+			return fmt.Errorf("preset input requires presetId")
+		}
+	default:
+		return fmt.Errorf("kind must be file or preset")
+	}
+	return nil
+}
+
+// openPreviewInputs opens all request-scoped inputs for pipeline negotiation.
+func (s *Server) openPreviewInputs(c echo.Context, spec conversion.Spec) (conversion.InputSet, func(), error) {
+	manifest, err := parseInputs(c, spec)
+	if err != nil {
+		return conversion.InputSet{}, nil, err
+	}
+	main, err := s.openInput(c, manifest.Main, "main")
+	if err != nil {
+		return conversion.InputSet{}, nil, err
+	}
+	closers := []io.Closer{main}
+	aux := make(map[string]io.ReadSeeker, len(manifest.Aux))
+	for _, name := range slices.Sorted(maps.Keys(manifest.Aux)) {
+		input, openErr := s.openInput(c, manifest.Aux[name], "aux:"+name)
+		if openErr != nil {
+			closeInputs(closers)
+			return conversion.InputSet{}, nil, openErr
+		}
+		closers = append(closers, input)
+		aux[name] = input
+	}
+	return conversion.InputSet{Main: main, Aux: aux}, func() { closeInputs(closers) }, nil
+}
+
+func (s *Server) openInput(c echo.Context, input inputReference, field string) (io.ReadSeekCloser, error) {
+	if input.Kind == "preset" {
+		preset, ok := findPreset(input.PresetID)
+		if !ok {
+			return nil, notFoundPreset(input.PresetID)
 		}
 		return os.Open(s.presetPath(preset))
 	}
-	header, err := c.FormFile("file")
+	header, err := c.FormFile(field)
 	if err != nil {
-		return nil, conversion.NewError(conversion.CodeInvalidSpec, "provide either a file upload or a presetId")
+		return nil, conversion.NewError(conversion.CodeInvalidSpec, "file input "+field+" is required")
 	}
 	file, err := header.Open()
 	if err != nil {
@@ -52,37 +145,74 @@ func (s *Server) openPreviewInput(c echo.Context) (io.ReadSeekCloser, error) {
 	return file, nil
 }
 
-// prepareJobInput resolves the request's input into a path a background Job
-// can keep reading after the handler returns. Uploaded files are copied
-// into a store-owned temp file (owned=true, deleted by Store.Remove);
-// presets point directly at the shared asset file (owned=false, never
-// deleted).
-func (s *Server) prepareJobInput(c echo.Context) (path string, owned bool, err error) {
-	if presetID := c.FormValue("presetId"); presetID != "" {
-		preset, ok := findPreset(presetID)
-		if !ok {
-			return "", false, notFoundPreset(presetID)
-		}
-		return s.presetPath(preset), false, nil
-	}
-	header, err := c.FormFile("file")
+// prepareJobInputs copies all uploaded files into the job store while preset
+// paths stay shared. The caller owns and must clean up returned owned paths
+// until Store.Start takes over.
+func (s *Server) prepareJobInputs(c echo.Context, spec conversion.Spec) (jobs.Inputs, error) {
+	manifest, err := parseInputs(c, spec)
 	if err != nil {
-		return "", false, conversion.NewError(conversion.CodeInvalidSpec, "provide either a file upload or a presetId")
+		return jobs.Inputs{}, err
+	}
+	main, err := s.prepareInput(c, manifest.Main, "main")
+	if err != nil {
+		return jobs.Inputs{}, err
+	}
+	inputs := jobs.Inputs{Main: main, Aux: make(map[string]jobs.Input, len(manifest.Aux))}
+	for _, name := range slices.Sorted(maps.Keys(manifest.Aux)) {
+		input, prepareErr := s.prepareInput(c, manifest.Aux[name], "aux:"+name)
+		if prepareErr != nil {
+			removeOwnedInputs(inputs)
+			return jobs.Inputs{}, prepareErr
+		}
+		inputs.Aux[name] = input
+	}
+	return inputs, nil
+}
+
+func (s *Server) prepareInput(c echo.Context, input inputReference, field string) (jobs.Input, error) {
+	if input.Kind == "preset" {
+		preset, ok := findPreset(input.PresetID)
+		if !ok {
+			return jobs.Input{}, notFoundPreset(input.PresetID)
+		}
+		return jobs.Input{Path: s.presetPath(preset)}, nil
+	}
+	header, err := c.FormFile(field)
+	if err != nil {
+		return jobs.Input{}, conversion.NewError(conversion.CodeInvalidSpec, "file input "+field+" is required")
 	}
 	file, err := header.Open()
 	if err != nil {
-		return "", false, err
+		return jobs.Input{}, err
 	}
 	defer file.Close()
 
 	dest, err := s.jobs.CreateInputFile()
 	if err != nil {
-		return "", false, err
+		return jobs.Input{}, err
 	}
+	path := dest.Name()
 	defer dest.Close()
 	if _, err := io.Copy(dest, file); err != nil {
-		_ = os.Remove(dest.Name())
-		return "", false, err
+		_ = os.Remove(path)
+		return jobs.Input{}, err
 	}
-	return dest.Name(), true, nil
+	return jobs.Input{Path: path, Owned: true}, nil
+}
+
+func removeOwnedInputs(inputs jobs.Inputs) {
+	if inputs.Main.Owned {
+		_ = os.Remove(inputs.Main.Path)
+	}
+	for _, input := range inputs.Aux {
+		if input.Owned {
+			_ = os.Remove(input.Path)
+		}
+	}
+}
+
+func closeInputs(closers []io.Closer) {
+	for _, closer := range closers {
+		_ = closer.Close()
+	}
 }
