@@ -1,25 +1,25 @@
 {
     "name": "@godexture/web-demo",
-    "private": true,
     "version": "0.0.1",
+    "private": true,
     "type": "module",
     "scripts": {
-        "prepare-wasm": "bun run scripts/copy-wasm-assets.ts",
+        "build": "bun run prepare-wasm && bunx --bun tsc -p tsconfig.app.json --noEmit && bunx --bun vite build",
         "dev": "bun run prepare-wasm && vite",
-        "build": "bun run prepare-wasm && tsc -b && vite build",
+        "prepare-wasm": "bun run scripts/copy-wasm-assets.ts",
         "preview": "vite preview"
     },
     "dependencies": {
         "@godexture/js": "workspace:*",
-        "axios": "^1.7.0",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0"
+        "axios": "1.18.1"
     },
     "devDependencies": {
-        "@types/react": "^19.2.0",
-        "@types/react-dom": "^19.2.0",
-        "@vitejs/plugin-react": "^5.0.0",
-        "typescript": "^5.9.0",
-        "vite": "^7.1.0"
+        "@types/react": "19.2.8",
+        "@types/react-dom": "19.2.3",
+        "@vitejs/plugin-react": "5.0.0",
+        "react": "19.2.8",
+        "react-dom": "19.2.8",
+        "typescript": "7.0.2",
+        "vite": "7.1.0"
     }
 }

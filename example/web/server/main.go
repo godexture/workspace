@@ -33,7 +33,6 @@ const maxUploadBytes = 1 << 30 // Server mode limit: 1 GiB
 func main() {
 	addr := flag.String("addr", ":8787", "HTTP listen address")
 	assetsDir := flag.String("assets", defaultPath("../../assets"), "Directory containing preset audio files")
-	staticDir := flag.String("static", defaultPath("../client/dist"), "Directory containing the built frontend (served if present)")
 	tempDir := flag.String("temp-dir", "", "Directory for job input/output files (default: a fresh OS temp dir, removed on exit)")
 	flag.Parse()
 
@@ -52,9 +51,6 @@ func main() {
 		log.Fatalf("create job store: %v", err)
 	}
 	e := api.New(store, *assetsDir, maxUploadBytes)
-	if info, err := os.Stat(*staticDir); err == nil && info.IsDir() {
-		e.Static("/", *staticDir)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
