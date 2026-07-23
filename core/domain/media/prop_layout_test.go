@@ -93,6 +93,28 @@ func TestAmbisonicLayoutDoesNotOverflow(t *testing.T) {
 	}
 }
 
+func TestParseChannelLayout(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]ChannelLayout{
+		"mono":   LayoutMono1,
+		"1.0":    LayoutMono1,
+		"stereo": LayoutStereo2_0,
+		"2.0":    LayoutStereo2_0,
+		"quad":   LayoutQuad4_0,
+	} {
+		got, err := ParseChannelLayout(input)
+		if err != nil {
+			t.Fatalf("ParseChannelLayout(%q) error = %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("ParseChannelLayout(%q) = %s, want %s", input, got, want)
+		}
+	}
+	if _, err := ParseChannelLayout("not-a-layout"); err == nil {
+		t.Fatal("ParseChannelLayout() accepted an unknown layout")
+	}
+}
+
 func countChannel(channels []ChannelPosition, want ChannelPosition) int {
 	count := 0
 	for _, channel := range channels {

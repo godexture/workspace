@@ -83,6 +83,40 @@ type ChannelLayout struct {
 	custom string
 }
 
+var namedChannelLayouts = map[string]ChannelLayout{
+	"mono":   LayoutMono1,
+	"1":      LayoutMono1,
+	"1.0":    LayoutMono1,
+	"stereo": LayoutStereo2_0,
+	"2":      LayoutStereo2_0,
+	"2.0":    LayoutStereo2_0,
+	"quad":   LayoutQuad4_0,
+	"4.0":    LayoutQuad4_0,
+	"5.1":    LayoutFront5_1,
+	"7.1":    LayoutSurround7_1,
+}
+
+func ParseChannelLayout(value string) (ChannelLayout, error) {
+	name := strings.ToLower(strings.TrimSpace(value))
+	layout, ok := namedChannelLayouts[name]
+	if !ok {
+		return ChannelLayout{}, fmt.Errorf("unknown channel layout %q; use mono, stereo, quad, 5.1, or 7.1", value)
+	}
+	return layout, nil
+}
+
+func (l *ChannelLayout) UnmarshalText(value []byte) error {
+	if l == nil {
+		return fmt.Errorf("channel layout destination is nil")
+	}
+	parsed, err := ParseChannelLayout(string(value))
+	if err != nil {
+		return err
+	}
+	*l = parsed
+	return nil
+}
+
 func (l ChannelLayout) Mask() ChannelPosition {
 	if l.order == OrderNative {
 		return ChannelPosition(l.value)

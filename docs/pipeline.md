@@ -112,7 +112,7 @@ godec convert input.wav output.wav \
   --wire convolve.ir=IR.out
 ```
 
-補助入力は独立した demuxer/decoder/filter 経路で EOF まで処理されてから、main 経路を開始します。必要な port profile は main input profile を参照して negotiation されるため、`convolve.ir` は main と同じ sample rate へ自動 resample されます。補助経路に明示 filter を挿入する場合は `--wire AUX_FILTER.in=INPUT.out` として、その出力を他の filter port へ指定します。たとえば `--wire resample.in=IR.out --wire convolve.ir=resample.out` のように書けます。input alias と filter alias は同じ名前空間で一意です。現在は main chain の一つの補助ポートへ一度だけ結線する star topology を対象とします。
+補助入力は独立した demuxer/decoder/filter 経路で EOF まで処理されてから、main 経路を開始します。必要な port profile は main input profile を参照して negotiation されるため、`convolve.ir` は main と同じ sample rate へ自動 resample されます。補助経路に明示 filter を挿入する場合は `--wire AUX_FILTER.in=INPUT.out` として、その出力を他の filter port へ指定します。たとえば `--filter remix=remix:layout=stereo --wire remix.in=IR.out --wire convolve.ir=remix.out` とすれば 4-channel IR を stereo へ downmix できます。`remix` の `layout` は `mono`、`stereo`、`quad`、`5.1`、`7.1`（または `1.0`、`2.0`）を指定できます。input alias と filter alias は同じ名前空間で一意です。現在は main chain の一つの補助ポートへ一度だけ結線する star topology を対象とします。
 
 Node の port phase は eager な `Preload` だけでなく、`Run` も表現できます。複数の run-phase 入力を持つ filter では adapter が各入力内の順序を保ち、engine 呼び出しを直列化します。入力間の時刻整列は filter が PTS を使って決めるため、sidechain compressor のような live co-stream 型も同じ port API で実装できます。
 
