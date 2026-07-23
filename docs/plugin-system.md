@@ -153,7 +153,7 @@ type EncoderFactory func(
     input media.StreamInfo,
     target media.CodecID,
     options registry.TransformFactoryOptions,
-) (node.Encoder, error)
+) (node.Encoder, media.StreamInfo, error)
 ```
 
 Filter factory は Decoder と同じ options を受け取り、`media.Frame` を入出力します。
@@ -166,7 +166,7 @@ SDK の Adapter を使うと Engine API を Node に変換できます。
 return engine.WrapDecoder(decoderEngine), nil
 ```
 
-Node は `Start(context.Context) error` と idempotent な `Close() error` を実装します。Engine が resource を所有する場合は `Close() error` を実装してください。Adapter が Pipeline の Close を Engine へ一度だけ転送します。
+Factory は cheap な config 検証と output `StreamInfo` の決定だけを行います。resource 依存または高コストな初期化が必要な node は optional な `registry.Preparer` を実装し、Pipeline が `Start` 前に `Prepare(registry.ResourceGrant)` を一度呼びます。Node 自体は `Start(context.Context) error` と idempotent な `Close() error` を実装します。Engine が resource を所有する場合は `Close() error` を実装してください。Adapter が Pipeline の Close を Engine へ一度だけ転送します。
 
 Worker pool は instance-owned かつ lazy にし、constructor や package `init` で goroutine を開始しないでください。`Flush` は受理済みの仕事を drain し、`Close` は正常・エラー・キャンセルの全経路で resource を解放します。
 

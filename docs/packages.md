@@ -242,12 +242,23 @@ import "github.com/godexture/core/routing"
 ```go
 type FilterSpec struct {
     Config registry.Configuration
+    Inputs map[string]string // port -> named auxiliary input
+}
+
+type AuxInputSpec struct {
+    Source io.ReadSeeker
+    DemuxManifest registry.DemuxerManifest
+    DemuxConfig registry.Configuration
+    DecoderManifest registry.DecoderManifest
+    DecodeConfig registry.Configuration
+    Filters []FilterSpec
 }
 
 type ConversionSpec struct {
     Input, Output ...
     DecodeConfig registry.Configuration
     Filters      []FilterSpec
+    AuxInputs    map[string]AuxInputSpec
     TargetCodec  media.CodecID
     EncodeConfig registry.Configuration
     MuxConfig    registry.Configuration
