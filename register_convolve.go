@@ -1,6 +1,8 @@
 package filter
 
 import (
+	"fmt"
+
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
@@ -25,6 +27,15 @@ func registerConvolveManifest() {
 		InputRequirements: registry.InputRequirements{
 			"in": registry.StaticRequirements(&manifest.AudioConstraint{}),
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{}),
+		},
+		ProfileRequirements: registry.ProfileRequirements{
+			"ir": func(inputs map[string]media.StreamInfo, _ media.CodecID, _ registry.Configuration) ([]manifest.Capability, error) {
+				input, ok := inputs["in"]
+				if !ok || input.Type != media.MediaAudio || input.Audio.SampleRate == 0 {
+					return nil, fmt.Errorf("convolve requires an audio main input with a sample rate")
+				}
+				return []manifest.Capability{&manifest.AudioConstraint{SampleRates: manifest.IntConstraint{Values: []int{input.Audio.SampleRate}}}}, nil
+			},
 		},
 		Resources: registry.ResourceRequest{Parallelism: true},
 	}, Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
