@@ -6,9 +6,10 @@ package mixer
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/config"
+	"github.com/godexture/core/node"
 	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/engine"
@@ -57,24 +58,50 @@ type Engine struct {
 	flushed      bool
 }
 
-func New(cfg config.MixerConfig) (*Engine, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+// NewEngine builds a mixer for exactly n inputs and m outputs.
+// weights[o][i] is the gain applied to input i when producing output o.
+//
+// weights may be nil only for the two shapes with an unambiguous default:
+// m == 1 (every input summed with weight 1) or n == 1 (every output an
+// identical copy of the input, i.e. a tee). Any other combination of n and
+// m requires an explicit matrix. If normalize is true, each output row
+// with an L1 norm above 1 is scaled down to avoid clipping (see
+// pkg/dsp.ClampL1); rows already within bound are left untouched.
+func NewEngine(n, m int, weights [][]float64, normalize bool) (*Engine, error) {
+	if n < 1 {
+		return nil, fmt.Errorf("mixer must have at least one input")
 	}
-	outputs := len(cfg.Weights)
-	inputs := len(cfg.Weights[0])
+	if m < 1 {
+		return nil, fmt.Errorf("mixer must have at least one output")
+	}
+	if weights == nil {
+		weights = defaultWeights(n, m)
+		if weights == nil {
+			return nil, fmt.Errorf("mixer weights are required when n=%d and m=%d (no unambiguous default)", n, m)
+		}
+	}
+	if len(weights) != m {
+		return nil, fmt.Errorf("mixer weights has %d output rows, want %d", len(weights), m)
+	}
+	for o, row := range weights {
+		if len(row) != n {
+			return nil, fmt.Errorf("mixer weights row %d has %d entries, want %d", o, len(row), n)
+		}
+		for i, w := range row {
+			if math.IsNaN(w) || math.IsInf(w, 0) {
+				return nil, fmt.Errorf("mixer weight [%d][%d] must be finite", o, i)
+			}
+		}
+	}
+	if normalize {
+		weights = dsp.ClampL1(weights)
+	}
 
-	inputIDs := portNames("in", inputs)
-	outputIDs := portNames("out", outputs)
-
-	ports := make(map[string]*portState, inputs)
+	inputIDs := portNames("in", n)
+	outputIDs := portNames("out", m)
+	ports := make(map[string]*portState, n)
 	for _, id := range inputIDs {
 		ports[id] = &portState{}
-	}
-
-	weights := cfg.Weights
-	if cfg.Normalize {
-		weights = dsp.ClampL1(weights)
 	}
 
 	return &Engine{
@@ -85,10 +112,41 @@ func New(cfg config.MixerConfig) (*Engine, error) {
 	}, nil
 }
 
-// InputIDs and OutputIDs expose the port names this instance was built
-// with, so the caller can wire WrapFilter's WithInputs/WithOutputs options.
-func (e *Engine) InputIDs() []string  { return e.inputIDs }
-func (e *Engine) OutputIDs() []string { return e.outputIDs }
+// New builds a ready-to-wire node.Filter: same as NewEngine, but already
+// wrapped with n input ports ("in0".."in{n-1}") and m output ports
+// ("out0".."out{m-1}").
+func New(n, m int, weights [][]float64, normalize bool) (node.Filter, error) {
+	eng, err := NewEngine(n, m, weights, normalize)
+	if err != nil {
+		return nil, err
+	}
+	inputs := make([]engine.FilterInput, len(eng.inputIDs))
+	for i, id := range eng.inputIDs {
+		inputs[i] = engine.FilterInput{ID: id, Phase: node.InputPhaseRun}
+	}
+	return engine.WrapFilter(eng, engine.WithInputs(inputs...), engine.WithOutputs(eng.outputIDs...)), nil
+}
+
+// defaultWeights returns the unambiguous weight matrix for the two
+// degenerate shapes (m == 1 or n == 1), or nil if neither applies.
+func defaultWeights(n, m int) [][]float64 {
+	switch {
+	case m == 1:
+		row := make([]float64, n)
+		for i := range row {
+			row[i] = 1
+		}
+		return [][]float64{row}
+	case n == 1:
+		rows := make([][]float64, m)
+		for o := range rows {
+			rows[o] = []float64{1}
+		}
+		return rows
+	default:
+		return nil
+	}
+}
 
 func portNames(prefix string, count int) []string {
 	names := make([]string, count)

@@ -524,38 +524,6 @@ func (c ConvolutionConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-type MixerConfig config.MixerConfig
-
-type MixerConfigOption interface {
-	applyMixerConfig(*MixerConfig)
-}
-
-type mixerConfigOptionFunc func(*MixerConfig)
-
-func (f mixerConfigOptionFunc) applyMixerConfig(c *MixerConfig) {
-	f(c)
-}
-
-func NewMixerConfig(options ...MixerConfigOption) MixerConfig {
-	config := MixerConfig(config.DefaultMixerConfig)
-	for _, option := range options {
-		option.applyMixerConfig(&config)
-	}
-	return config
-}
-
-func (c MixerConfig) ResolveDefault() config.MixerConfig {
-	return config.MixerConfig(config.DefaultMixerConfig)
-}
-
-func (c MixerConfig) Resolve() config.MixerConfig {
-	return config.MixerConfig(c)
-}
-
-func (c MixerConfig) Validate() error {
-	return c.Resolve().Validate()
-}
-
 type GateMode = config.GateMode
 
 const (
@@ -633,7 +601,6 @@ func WithLFEMixDB(v float64) RemixConfigOption {
 type NormalizeOption interface {
 	RemixConfigOption
 	ConvolutionConfigOption
-	MixerConfigOption
 }
 
 type normalizeOpt struct{ v bool }
@@ -642,9 +609,6 @@ func (o normalizeOpt) applyRemixConfig(c *RemixConfig) {
 	c.Normalize = o.v
 }
 func (o normalizeOpt) applyConvolutionConfig(c *ConvolutionConfig) {
-	c.Normalize = o.v
-}
-func (o normalizeOpt) applyMixerConfig(c *MixerConfig) {
 	c.Normalize = o.v
 }
 
@@ -961,11 +925,5 @@ func WithWetDryMix(v float64) ConvolutionConfigOption {
 func WithBlockSize(v int) ConvolutionConfigOption {
 	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
 		c.BlockSize = v
-	})
-}
-
-func WithWeights(v [][]float64) MixerConfigOption {
-	return mixerConfigOptionFunc(func(c *MixerConfig) {
-		c.Weights = v
 	})
 }

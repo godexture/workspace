@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
 )
@@ -45,7 +44,7 @@ func assertClose(t *testing.T, got, want []float32, tol float32) {
 }
 
 func TestMixerSumsTwoInputs(t *testing.T) {
-	e, err := New(config.MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: false})
+	e, err := NewEngine(2, 1, [][]float64{{1, 1}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestMixerSumsTwoInputs(t *testing.T) {
 }
 
 func TestMixerActsAsTee(t *testing.T) {
-	e, err := New(config.MixerConfig{Weights: [][]float64{{1}, {1}}, Normalize: false})
+	e, err := NewEngine(1, 2, [][]float64{{1}, {1}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +111,7 @@ func TestMixerActsAsTee(t *testing.T) {
 }
 
 func TestMixerPadsShorterStreamWithSilence(t *testing.T) {
-	e, err := New(config.MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: false})
+	e, err := NewEngine(2, 1, [][]float64{{1, 1}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,7 @@ func TestMixerPadsShorterStreamWithSilence(t *testing.T) {
 
 func TestMixerNormalize(t *testing.T) {
 	t.Run("clamps combined gain to unity", func(t *testing.T) {
-		e, err := New(config.MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: true})
+		e, err := NewEngine(2, 1, [][]float64{{1, 1}}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +173,7 @@ func TestMixerNormalize(t *testing.T) {
 	})
 
 	t.Run("leaves already-safe weights untouched", func(t *testing.T) {
-		e, err := New(config.MixerConfig{Weights: [][]float64{{0.5, 0.5}}, Normalize: true})
+		e, err := NewEngine(2, 1, [][]float64{{0.5, 0.5}}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +201,7 @@ func TestMixerNormalize(t *testing.T) {
 }
 
 func TestMixerRejectsChannelMismatch(t *testing.T) {
-	e, err := New(config.MixerConfig{Weights: [][]float64{{1, 1}}})
+	e, err := NewEngine(2, 1, [][]float64{{1, 1}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,5 +216,41 @@ func TestMixerRejectsChannelMismatch(t *testing.T) {
 	var wrapped media.Frame = stereoFrame
 	if err := e.SendInput("in1", &wrapped); err == nil {
 		t.Fatal("want error for channel count mismatch")
+	}
+}
+
+func TestMixerDefaultWeights(t *testing.T) {
+	t.Run("m=1 defaults to summing every input", func(t *testing.T) {
+		if _, err := NewEngine(3, 1, nil, false); err != nil {
+			t.Fatalf("NewEngine() error = %v", err)
+		}
+	})
+	t.Run("n=1 defaults to a tee", func(t *testing.T) {
+		if _, err := NewEngine(1, 3, nil, false); err != nil {
+			t.Fatalf("NewEngine() error = %v", err)
+		}
+	})
+	t.Run("n>1 and m>1 requires explicit weights", func(t *testing.T) {
+		if _, err := NewEngine(2, 2, nil, false); err == nil {
+			t.Fatal("want error for ambiguous default weights")
+		}
+	})
+}
+
+func TestNewEngineValidatesShape(t *testing.T) {
+	if _, err := NewEngine(0, 1, nil, false); err == nil {
+		t.Fatal("want error for zero inputs")
+	}
+	if _, err := NewEngine(1, 0, nil, false); err == nil {
+		t.Fatal("want error for zero outputs")
+	}
+	if _, err := NewEngine(2, 1, [][]float64{{1, 1}, {1, 1}}, false); err == nil {
+		t.Fatal("want error for wrong number of weight rows")
+	}
+	if _, err := NewEngine(2, 1, [][]float64{{1}}, false); err == nil {
+		t.Fatal("want error for wrong row length")
+	}
+	if _, err := NewEngine(2, 1, [][]float64{{1, math.NaN()}}, false); err == nil {
+		t.Fatal("want error for non-finite weight")
 	}
 }
