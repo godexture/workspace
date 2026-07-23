@@ -49,6 +49,12 @@ type Engine struct {
 
 	partitions [][]partition // [irChannel][partition]; len 1 when broadcasting to every input channel
 	tailHops   int           // extra silent hops owed on Flush to drain the impulse response tail
+	irRate     int
+	irLayout   media.ChannelLayout
+	irPTS      media.Pts
+	irSamples  int64
+	irFrames   int
+	ir         [][]float32
 
 	rateSet  bool
 	rate     int
@@ -87,25 +93,36 @@ func (e *Engine) Prepare(_ registry.ResourceGrant) error {
 	if err != nil {
 		return err
 	}
-	ir := normalizeImpulseResponse(e.cfg.ImpulseResponse, e.cfg.Normalize)
+	e.plan = plan
+	e.bins = plan.Bins()
+	if len(e.cfg.ImpulseResponse) == 0 {
+		return nil
+	}
+	return e.buildImpulse(e.cfg.ImpulseResponse, e.cfg.ImpulseRate)
+}
+
+func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {
+	ir := normalizeImpulseResponse(impulse, e.cfg.Normalize)
 	partitions := make([][]partition, len(ir))
 	for ch, samples := range ir {
-		parts, err := buildPartitions(plan, e.hop, samples)
+		parts, err := buildPartitions(e.plan, e.hop, samples)
 		if err != nil {
 			return err
 		}
 		partitions[ch] = parts
 	}
-	e.plan = plan
-	e.bins = plan.Bins()
 	e.partitions = partitions
 	e.tailHops = len(partitions[0]) - 1
+	e.irRate = rate
 	return nil
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.plan == nil {
 		return fmt.Errorf("convolve is not prepared")
+	}
+	if len(e.partitions) == 0 {
+		return fmt.Errorf("convolve has no impulse response")
 	}
 	if e.flushed {
 		return fmt.Errorf("convolve received a frame after flush")
@@ -122,6 +139,59 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	}
 	e.totalInput += int64(block.Samples())
 	return e.processHops()
+}
+
+func (e *Engine) SendInput(port string, frame *media.Frame) error {
+	if port != "ir" {
+		return fmt.Errorf("convolve has no auxiliary input port %q", port)
+	}
+	if e.plan == nil {
+		return fmt.Errorf("convolve is not prepared")
+	}
+	if len(e.cfg.ImpulseResponse) != 0 {
+		return fmt.Errorf("convolve impulse response is already configured")
+	}
+	block, err := audio.Decode(frame)
+	if err != nil {
+		return err
+	}
+	if e.irFrames == 0 {
+		e.irRate = block.Rate
+		e.irLayout = block.Layout
+		e.irPTS = block.PTS
+		e.ir = make([][]float32, len(block.Channels))
+	} else if block.Rate != e.irRate || block.Layout != e.irLayout || block.PTS != e.irPTS+media.Pts(e.irSamples) {
+		return fmt.Errorf("convolution impulse response format changed within stream")
+	}
+	if len(block.Channels) != len(e.ir) {
+		return fmt.Errorf("convolution impulse response channel count changed within stream")
+	}
+	for channel, samples := range block.Channels {
+		e.ir[channel] = append(e.ir[channel], samples...)
+	}
+	e.irSamples += int64(block.Samples())
+	e.irFrames++
+	return nil
+}
+
+func (e *Engine) EndInput(port string) error {
+	switch port {
+	case "in":
+		return nil
+	case "ir":
+		if len(e.cfg.ImpulseResponse) != 0 {
+			return fmt.Errorf("convolve impulse response is already configured")
+		}
+		if e.irFrames == 0 || e.irSamples == 0 {
+			return fmt.Errorf("convolution impulse response input is empty")
+		}
+		if len(e.partitions) != 0 {
+			return fmt.Errorf("convolution impulse response is already complete")
+		}
+		return e.buildImpulse(e.ir, e.irRate)
+	default:
+		return fmt.Errorf("convolve has no input port %q", port)
+	}
 }
 
 func (e *Engine) ReceiveFrame() (*media.Frame, error) {
@@ -163,8 +233,8 @@ func (e *Engine) ensureChannels(block audio.Block) error {
 	if e.rateSet {
 		return e.validateInput(block)
 	}
-	if e.cfg.ImpulseRate != 0 && e.cfg.ImpulseRate != block.Rate {
-		return fmt.Errorf("convolution impulse response rate %d does not match input rate %d; resample the impulse response before use", e.cfg.ImpulseRate, block.Rate)
+	if e.irRate != 0 && e.irRate != block.Rate {
+		return fmt.Errorf("convolution impulse response rate %d does not match input rate %d; resample the impulse response before use", e.irRate, block.Rate)
 	}
 	n := len(block.Channels)
 	if len(e.partitions) != 1 && len(e.partitions) != n {

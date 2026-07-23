@@ -103,8 +103,8 @@ func TestConvolutionConfigValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if err := (func() ConvolutionConfig { c := valid; c.ImpulseResponse = nil; return c }()).Validate(); err == nil {
-		t.Fatal("want error for empty impulse response")
+	if err := (func() ConvolutionConfig { c := valid; c.ImpulseResponse = nil; return c }()).Validate(); err != nil {
+		t.Fatalf("port-fed impulse response config rejected: %v", err)
 	}
 	if err := (func() ConvolutionConfig { c := valid; c.ImpulseResponse = [][]float32{{}}; return c }()).Validate(); err == nil {
 		t.Fatal("want error for empty impulse response channel")
