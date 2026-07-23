@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 
 import { fetchCatalog, fetchPresets, presetAudioUrl } from "../api/client";
 import type { Catalog, ConversionSpec, Preset } from "../api/types";
@@ -22,24 +23,28 @@ export function App() {
     const [presets, setPresets] = useState<Preset[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
 
-    useEffect(() => {
-        Promise.all([fetchCatalog(), fetchPresets()])
-            .then(([c, p]) => {
-                setCatalog(c);
-                setPresets(p);
-            })
-            .catch((err: unknown) =>
-                setLoadError(err instanceof Error ? err.message : String(err)),
-            );
-    }, []);
-
-    const [mode, setMode] = useState<BackendMode>("server");
+    const [mode, setMode] = useLocalStorage<BackendMode>("godec-backend-mode", "server");
     const backend = mode === "server" ? serverBackend : clientBackend;
     const maxUploadBytes =
         mode === "server" ? SERVER_MAX_UPLOAD_BYTES : CLIENT_MAX_UPLOAD_BYTES;
 
     const [input, setInput] = useState<InputSource | null>(null);
     const [spec, setSpec] = useState<ConversionSpec | null>(null);
+
+    useEffect(() => {
+        Promise.all([fetchCatalog(), fetchPresets()])
+            .then(([c, p]) => {
+                setCatalog(c);
+                setPresets(p);
+                const pcm = p.find((pre) => pre.id === "lpcm");
+                if (pcm) {
+                    setInput({ kind: "preset", preset: pcm });
+                }
+            })
+            .catch((err: unknown) =>
+                setLoadError(err instanceof Error ? err.message : String(err)),
+            );
+    }, []);
 
     const [resolved, setResolved] = useState<PipelineDescription | null>(null);
     const [resolveError, setResolveError] = useState<string | null>(null);
@@ -74,15 +79,7 @@ export function App() {
     const jobReset = job.reset;
     const jobPhase = job.state.phase;
 
-    // Clear a previous run's terminal state (progress/result/error) once
-    // the user changes what they're about to convert, so stale per-node
-    // badges and an old result don't linger next to a different pipeline
-    // preview. A still-running job is left alone -- it keeps going
-    // regardless of later edits, so don't yank its display mid-flight.
-    useEffect(() => {
-        if (jobPhase !== "running") jobReset();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [input, spec, jobReset]);
+    const [activeJobResolved, setActiveJobResolved] = useState<PipelineDescription | null>(null);
 
     const [inputSrc, setInputSrc] = useState<string | null>(null);
     useEffect(() => {
@@ -142,7 +139,7 @@ export function App() {
                     <h2>Resolved Pipeline</h2>
                     <PipelineView
                         description={resolved}
-                        liveNodes={job.state.progress?.nodes}
+                        liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
                         error={resolveError}
                     />
                 </section>
@@ -156,9 +153,12 @@ export function App() {
                         canStart={Boolean(
                             input && spec && resolved && !resolveError,
                         )}
-                        onStart={() =>
-                            input && spec && void job.start(input, spec)
-                        }
+                        onStart={() => {
+                            if (input && spec && resolved) {
+                                setActiveJobResolved(resolved);
+                                void job.start(input, spec);
+                            }
+                        }}
                         onCancel={() => void job.cancel()}
                     />
                 </div>
