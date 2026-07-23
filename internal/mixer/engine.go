@@ -6,11 +6,11 @@ package mixer
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -72,8 +72,13 @@ func New(cfg config.MixerConfig) (*Engine, error) {
 		ports[id] = &portState{}
 	}
 
+	weights := cfg.Weights
+	if cfg.Normalize {
+		weights = dsp.ClampL1(weights)
+	}
+
 	return &Engine{
-		weights:   normalizeWeights(cfg.Weights, cfg.Normalize),
+		weights:   weights,
 		inputIDs:  inputIDs,
 		outputIDs: outputIDs,
 		ports:     ports,
@@ -91,35 +96,6 @@ func portNames(prefix string, count int) []string {
 		names[i] = fmt.Sprintf("%s%d", prefix, i)
 	}
 	return names
-}
-
-// normalizeWeights scales each output row down, independently, if its L1
-// norm exceeds 1: that bounds the maximum possible output magnitude for
-// any inputs within [-1, 1] to at most 1, avoiding worst-case clipping.
-// Rows that are already within bound are left untouched (this never
-// amplifies). Mirrors convolve's impulse-response normalization.
-func normalizeWeights(weights [][]float64, normalize bool) [][]float64 {
-	if !normalize {
-		return weights
-	}
-	result := make([][]float64, len(weights))
-	for m, row := range weights {
-		var l1 float64
-		for _, w := range row {
-			l1 += math.Abs(w)
-		}
-		if l1 <= 1 {
-			result[m] = row
-			continue
-		}
-		scale := 1 / l1
-		scaled := make([]float64, len(row))
-		for n, w := range row {
-			scaled[n] = w * scale
-		}
-		result[m] = scaled
-	}
-	return result
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error { return e.SendInput(e.inputIDs[0], frame) }
