@@ -175,7 +175,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, fmt.Errorf("configure decoder %s: %w", decoderManifest.Name, err)
 	}
 	if spec.DecoderManifest.Name != "" {
-		accepted, err := decoderManifest.Accept(currentStream, currentStream.Codec, decodeConfig)
+		accepted, err := decoderManifest.Accept("in", currentStream, currentStream.Codec, decodeConfig)
 		if err != nil {
 			return nil, fmt.Errorf("check decoder %s: %w", decoderManifest.Name, err)
 		}
@@ -218,7 +218,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		if err != nil {
 			return nil, fmt.Errorf("resolve filter %d: %w", i, err)
 		}
-		requirements, requirementErr := filterManifest.Requirements(currentStream.Codec, filterSpec.Config)
+		requirements, requirementErr := filterManifest.Requirements("in", currentStream.Codec, filterSpec.Config)
 		if requirementErr != nil {
 			return nil, fmt.Errorf("resolve filter %d requirements: %w", i, requirementErr)
 		}
@@ -276,7 +276,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 	if err != nil {
 		return nil, fmt.Errorf("configure encoder %s: %w", encoderManifest.Name, err)
 	}
-	requirements, err := encoderManifest.Requirements(spec.TargetCodec, encodeConfig)
+	requirements, err := encoderManifest.Requirements("in", spec.TargetCodec, encodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("resolve encoder %s requirements: %w", encoderManifest.Name, err)
 	}

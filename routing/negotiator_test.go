@@ -165,9 +165,9 @@ func TestNegotiatorRejectsExplicitIncompatibleDecoder(t *testing.T) {
 	decoder := registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest: registry.BaseManifest{Name: "pcm"},
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{
 				Codecs: []media.CodecID{media.CodecLPCM},
-			}),
+			})),
 		},
 	}
 	negotiator := NewNegotiator(&mockMuxerResolver{}, &mockDemuxerResolver{}, &mockEncoderResolver{}, &mockDecoderResolver{}, nil, nil)
@@ -222,7 +222,7 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	encRes := &mockEncoderResolver{
 		resolved: registry.EncoderManifest{
 			TransformManifest: registry.TransformManifest{
-				InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+				InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 			},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 				output := inStream.Clone()
@@ -332,7 +332,7 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	// Encoder Transform passes it through
 	encRes := &mockEncoderResolver{
 		resolved: registry.EncoderManifest{
-			TransformManifest: registry.TransformManifest{InputRequirements: registry.StaticRequirements(alwaysCapability{})},
+			TransformManifest: registry.TransformManifest{InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{}))},
 			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 				output := inStream.Clone()
 				output.Codec = targetCodec
@@ -411,7 +411,7 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 	bridgeManifest := registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest:      registry.BaseManifest{Name: "bridge-format"},
-			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 		},
 		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			bridgeInput = input
@@ -439,12 +439,12 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 	var encoderInput media.StreamInfo
 	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
-			InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{
 				Codecs: []media.CodecID{media.CodecLPCM},
 				SampleFormats: []manifest.SampleFormatConstraint{{
 					Format: media.SampleFormatF32,
 				}},
-			}),
+			})),
 		},
 		Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 			encoderInput = input
@@ -541,7 +541,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	filterManifest := func(parallel bool, sampleRateDelta int) registry.FilterManifest {
 		return registry.FilterManifest{
 			TransformManifest: registry.TransformManifest{
-				InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+				InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 				Resources:         registry.ResourceRequest{Parallelism: parallel},
 			},
 			Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
@@ -557,7 +557,7 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	}}
 	encoderRes := &mockEncoderResolver{resolved: registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
-			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 			Resources:         registry.ResourceRequest{Parallelism: true},
 		},
 		Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
@@ -648,7 +648,7 @@ func TestNegotiatorResolvesCompletePlanBeforeCreatingTransforms(t *testing.T) {
 	}}
 	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
-			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 		},
 		Factory: func(stream media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 			output := stream.Clone()
@@ -707,7 +707,7 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 	factoryErr := errors.New("encoder factory")
 	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
-			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
 		},
 		Factory: func(media.StreamInfo, media.CodecID, registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 			return nil, media.StreamInfo{}, factoryErr
