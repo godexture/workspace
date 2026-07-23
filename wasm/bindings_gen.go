@@ -23,18 +23,73 @@ func recoverFunc(fn func(js.Value, []js.Value) interface{}) js.Func {
 }
 
 func init() {
-	js.Global().Set("convert", recoverFunc(wasmConvert))
+	js.Global().Set("catalog", recoverFunc(wasmCatalog))
+	js.Global().Set("resolve", recoverFunc(wasmResolve))
+	js.Global().Set("start", recoverFunc(wasmStart))
+	js.Global().Set("snapshot", recoverFunc(wasmSnapshot))
+	js.Global().Set("cancel", recoverFunc(wasmCancel))
+	js.Global().Set("result", recoverFunc(wasmResult))
 }
 
-func wasmConvert(_ js.Value, args []js.Value) interface{} {
+func wasmCatalog(_ js.Value, args []js.Value) interface{} {
+	result, err := Catalog()
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
+func wasmResolve(_ js.Value, args []js.Value) interface{} {
 	input := func() []byte {
 		length := args[0].Length()
 		result := make([]byte, length)
 		js.CopyBytesToGo(result, args[0])
 		return result
 	}()
-	format := args[1].String()
-	result, err := Convert(input, format)
+	specJSON := args[1].String()
+	result, err := Resolve(input, specJSON)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
+func wasmStart(_ js.Value, args []js.Value) interface{} {
+	input := func() []byte {
+		length := args[0].Length()
+		result := make([]byte, length)
+		js.CopyBytesToGo(result, args[0])
+		return result
+	}()
+	specJSON := args[1].String()
+	result, err := Start(input, specJSON)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
+func wasmSnapshot(_ js.Value, args []js.Value) interface{} {
+	jobID := args[0].String()
+	result, err := Snapshot(jobID)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
+func wasmCancel(_ js.Value, args []js.Value) interface{} {
+	jobID := args[0].String()
+	err := Cancel(jobID)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return nil
+}
+
+func wasmResult(_ js.Value, args []js.Value) interface{} {
+	jobID := args[0].String()
+	result, err := Result(jobID)
 	if err != nil {
 		return map[string]interface{}{ErrorFieldName: err.Error()}
 	}
