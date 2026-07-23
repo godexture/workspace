@@ -75,6 +75,31 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 			body.WriteString("\tdefault:\n\t\treturn nil\n\t}\n}\n\n")
 		}
 	}
+
+	generateEnums(body, targets, packageName)
+}
+
+func generateEnums(body *bytes.Buffer, targets []*types.Target, packageName string) {
+	seenEnums := make(map[string]bool)
+	for _, t := range targets {
+		if t.PackageName == packageName {
+			continue
+		}
+		for _, enum := range t.Enums {
+			if seenEnums[enum.TypeName] {
+				continue
+			}
+			seenEnums[enum.TypeName] = true
+			fmt.Fprintf(body, "type %s = %s.%s\n\n", enum.TypeName, t.PackageName, enum.TypeName)
+			if len(enum.ConstNames) > 0 {
+				fmt.Fprintf(body, "const (\n")
+				for _, name := range enum.ConstNames {
+					fmt.Fprintf(body, "\t%s = %s.%s\n", name, t.PackageName, name)
+				}
+				fmt.Fprintf(body, ")\n\n")
+			}
+		}
+	}
 }
 
 func quoted(values []string) string {
