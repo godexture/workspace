@@ -74,6 +74,19 @@ func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, pool *registr
 	return decoder
 }
 
+func (d *Decoder) Prepare(resources registry.ResourceGrant) error {
+	if d.closed {
+		return errors.New("flac decoder is closed")
+	}
+	if len(d.pendingQueue) != 0 {
+		return errors.New("flac decoder cannot change resources after processing starts")
+	}
+	if d.pool == nil {
+		d.pool = resources.Pool
+	}
+	return nil
+}
+
 func buildStreamInfo(sampleRate, channels, bitsPerSample int) streaminfo.StreamInfo {
 	info := streaminfo.StreamInfo{
 		MinBlockSize:  16,

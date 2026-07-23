@@ -64,6 +64,19 @@ func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, pool *registr
 	}
 }
 
+func (e *Encoder) Prepare(resources registry.ResourceGrant) error {
+	if e.closed {
+		return errors.New("flac encoder is closed")
+	}
+	if len(e.pendingQueue) != 0 || e.buffered != 0 {
+		return errors.New("flac encoder cannot change resources after processing starts")
+	}
+	if e.pool == nil {
+		e.pool = resources.Pool
+	}
+	return nil
+}
+
 func (e *Encoder) SendFrame(frame *media.Frame) error {
 	if frame == nil || *frame == nil {
 		return errors.New("flac encoder received nil frame")
