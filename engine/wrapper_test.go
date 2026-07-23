@@ -69,6 +69,74 @@ func (f *fakeMultiFilterEngine) Flush() error {
 	return nil
 }
 
+// fakeTeeEngine copies every frame it receives to two named outputs,
+// verifying WithOutputs/MultiOutputEngine routing independently of the
+// input side (a single run-phase "in" port here needs no AuxInputEngine).
+type fakeTeeEngine struct {
+	pending []teeOutput
+}
+
+type teeOutput struct {
+	port  string
+	frame media.Frame
+}
+
+func (f *fakeTeeEngine) SendFrame(frame *media.Frame) error {
+	f.pending = append(f.pending, teeOutput{port: "out0", frame: *frame}, teeOutput{port: "out1", frame: *frame})
+	(*frame).Retain()
+	return nil
+}
+
+func (f *fakeTeeEngine) ReceiveFrame() (*media.Frame, error) {
+	panic("ReceiveFrame should not be called when more than one output is declared")
+}
+
+func (f *fakeTeeEngine) ReceiveOutput() (string, *media.Frame, error) {
+	if len(f.pending) == 0 {
+		return "", nil, ErrEAGAIN
+	}
+	next := f.pending[0]
+	f.pending = f.pending[1:]
+	return next.port, &next.frame, nil
+}
+
+func (f *fakeTeeEngine) Flush() error { return nil }
+
+func TestFilterAdapterRoutesMultipleOutputs(t *testing.T) {
+	t.Parallel()
+	engine := &fakeTeeEngine{}
+	adapter := WrapFilter(engine, WithOutputs("out0", "out1"))
+
+	in := pipeline.NewChanEdge[media.Frame](1)
+	out0 := pipeline.NewChanEdge[media.Frame](1)
+	out1 := pipeline.NewChanEdge[media.Frame](1)
+	adapter.InputPorts()["in"].Connect(in)
+	adapter.OutputPorts()["out0"].Connect(out0)
+	adapter.OutputPorts()["out1"].Connect(out1)
+
+	frame := &trackedFrame{}
+	if err := in.Push(context.Background(), frame); err != nil {
+		t.Fatal(err)
+	}
+	in.Close()
+
+	if err := adapter.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	got0, err := out0.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("out0 Pull() error = %v", err)
+	}
+	got1, err := out1.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("out1 Pull() error = %v", err)
+	}
+	if got0 != media.Frame(frame) || got1 != media.Frame(frame) {
+		t.Fatalf("both outputs should receive the same retained frame")
+	}
+}
+
 func (f *fakeEncoderEngine) SendFrame(frame *media.Frame) error {
 	if f.sent != nil {
 		close(f.sent)
@@ -218,10 +286,10 @@ func TestEncoderAdapter_CloseAfterContextCancellation(t *testing.T) {
 func TestMultiFilterAdapterSchedulesMultipleRunInputs(t *testing.T) {
 	t.Parallel()
 	engine := &fakeMultiFilterEngine{received: make(map[string]int), ended: make(map[string]int)}
-	adapter := WrapMultiFilter(engine,
+	adapter := WrapFilter(engine, WithInputs(
 		FilterInput{ID: "in", Phase: node.InputPhaseRun},
 		FilterInput{ID: "sidechain", Phase: node.InputPhaseRun},
-	)
+	))
 	main := pipeline.NewChanEdge[media.Frame](1)
 	sidechain := pipeline.NewChanEdge[media.Frame](1)
 	out := pipeline.NewChanEdge[media.Frame](1)
