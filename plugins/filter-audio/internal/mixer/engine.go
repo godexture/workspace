@@ -29,12 +29,12 @@ type outputItem struct {
 }
 
 // Engine mixes its input ports into its output ports using a fixed weight
-// matrix: out[m] = sum_n weights[m][n] * in[n]. Every port shares the same
+// matrix: out[o] = sum_i weights[o][i] * in[i]. Every port shares the same
 // sample rate, format, bit depth, and channel count — reconciling channel
 // layouts across ports is the existing remix filter's job, not this one's.
 //
 // Ports advance independently and are aligned by each port's own first
-// received frame, not by absolute PTS: sample i of every port is the i-th
+// received frame, not by absolute PTS: sample k of every port is the k-th
 // sample that port has produced, counting from when it started. A port
 // that ends before the others contributes silence for the remainder, so
 // mixing continues until every port has ended and every buffered sample
@@ -58,34 +58,35 @@ type Engine struct {
 	flushed      bool
 }
 
-// NewEngine builds a mixer for exactly n inputs and m outputs.
-// weights[o][i] is the gain applied to input i when producing output o.
+// NewEngine builds a mixer for exactly the given number of inputs and
+// outputs. weights[o][i] is the gain applied to input i when producing
+// output o.
 //
 // weights may be nil only for the two shapes with an unambiguous default:
-// m == 1 (every input summed with weight 1) or n == 1 (every output an
-// identical copy of the input, i.e. a tee). Any other combination of n and
-// m requires an explicit matrix. If normalize is true, each output row
-// with an L1 norm above 1 is scaled down to avoid clipping (see
+// outputs == 1 (every input summed with weight 1) or inputs == 1 (every
+// output an identical copy of the input, i.e. a tee). Any other
+// combination requires an explicit matrix. If normalize is true, each
+// output row with an L1 norm above 1 is scaled down to avoid clipping (see
 // pkg/dsp.ClampL1); rows already within bound are left untouched.
-func NewEngine(n, m int, weights [][]float64, normalize bool) (*Engine, error) {
-	if n < 1 {
+func NewEngine(inputs, outputs int, weights [][]float64, normalize bool) (*Engine, error) {
+	if inputs < 1 {
 		return nil, fmt.Errorf("mixer must have at least one input")
 	}
-	if m < 1 {
+	if outputs < 1 {
 		return nil, fmt.Errorf("mixer must have at least one output")
 	}
 	if weights == nil {
-		weights = defaultWeights(n, m)
+		weights = defaultWeights(inputs, outputs)
 		if weights == nil {
-			return nil, fmt.Errorf("mixer weights are required when n=%d and m=%d (no unambiguous default)", n, m)
+			return nil, fmt.Errorf("mixer weights are required when inputs=%d and outputs=%d (no unambiguous default)", inputs, outputs)
 		}
 	}
-	if len(weights) != m {
-		return nil, fmt.Errorf("mixer weights has %d output rows, want %d", len(weights), m)
+	if len(weights) != outputs {
+		return nil, fmt.Errorf("mixer weights has %d output rows, want %d", len(weights), outputs)
 	}
 	for o, row := range weights {
-		if len(row) != n {
-			return nil, fmt.Errorf("mixer weights row %d has %d entries, want %d", o, len(row), n)
+		if len(row) != inputs {
+			return nil, fmt.Errorf("mixer weights row %d has %d entries, want %d", o, len(row), inputs)
 		}
 		for i, w := range row {
 			if math.IsNaN(w) || math.IsInf(w, 0) {
@@ -97,9 +98,9 @@ func NewEngine(n, m int, weights [][]float64, normalize bool) (*Engine, error) {
 		weights = dsp.ClampL1(weights)
 	}
 
-	inputIDs := portNames("in", n)
-	outputIDs := portNames("out", m)
-	ports := make(map[string]*portState, n)
+	inputIDs := portNames("in", inputs)
+	outputIDs := portNames("out", outputs)
+	ports := make(map[string]*portState, inputs)
 	for _, id := range inputIDs {
 		ports[id] = &portState{}
 	}
@@ -113,32 +114,33 @@ func NewEngine(n, m int, weights [][]float64, normalize bool) (*Engine, error) {
 }
 
 // New builds a ready-to-wire node.Filter: same as NewEngine, but already
-// wrapped with n input ports ("in0".."in{n-1}") and m output ports
-// ("out0".."out{m-1}").
-func New(n, m int, weights [][]float64, normalize bool) (node.Filter, error) {
-	eng, err := NewEngine(n, m, weights, normalize)
+// wrapped with the given number of input ports ("in0".."in{inputs-1}") and
+// output ports ("out0".."out{outputs-1}").
+func New(inputs, outputs int, weights [][]float64, normalize bool) (node.Filter, error) {
+	eng, err := NewEngine(inputs, outputs, weights, normalize)
 	if err != nil {
 		return nil, err
 	}
-	inputs := make([]engine.FilterInput, len(eng.inputIDs))
+	filterInputs := make([]engine.FilterInput, len(eng.inputIDs))
 	for i, id := range eng.inputIDs {
-		inputs[i] = engine.FilterInput{ID: id, Phase: node.InputPhaseRun}
+		filterInputs[i] = engine.FilterInput{ID: id, Phase: node.InputPhaseRun}
 	}
-	return engine.WrapFilter(eng, engine.WithInputs(inputs...), engine.WithOutputs(eng.outputIDs...)), nil
+	return engine.WrapFilter(eng, engine.WithInputs(filterInputs...), engine.WithOutputs(eng.outputIDs...)), nil
 }
 
 // defaultWeights returns the unambiguous weight matrix for the two
-// degenerate shapes (m == 1 or n == 1), or nil if neither applies.
-func defaultWeights(n, m int) [][]float64 {
+// degenerate shapes (outputs == 1 or inputs == 1), or nil if neither
+// applies.
+func defaultWeights(inputs, outputs int) [][]float64 {
 	switch {
-	case m == 1:
-		row := make([]float64, n)
+	case outputs == 1:
+		row := make([]float64, inputs)
 		for i := range row {
 			row[i] = 1
 		}
 		return [][]float64{row}
-	case n == 1:
-		rows := make([][]float64, m)
+	case inputs == 1:
+		rows := make([][]float64, outputs)
 		for o := range rows {
 			rows[o] = []float64{1}
 		}
@@ -253,25 +255,25 @@ func (e *Engine) mixAvailable() error {
 		}
 
 		outputs := make([]audio.Channels, len(e.outputIDs))
-		for m := range outputs {
-			outputs[m] = make(audio.Channels, e.channels)
-			for c := range outputs[m] {
-				outputs[m][c] = make([]float32, length)
+		for o := range outputs {
+			outputs[o] = make(audio.Channels, e.channels)
+			for c := range outputs[o] {
+				outputs[o][c] = make([]float32, length)
 			}
 		}
-		for n, id := range e.inputIDs {
+		for i, id := range e.inputIDs {
 			state := e.ports[id]
 			hasPending := pendingLen(state) > 0
-			for m := range e.outputIDs {
-				w := float32(e.weights[m][n])
+			for o := range e.outputIDs {
+				w := float32(e.weights[o][i])
 				if w == 0 || !hasPending {
 					continue
 				}
 				for c := 0; c < e.channels; c++ {
-					dst := outputs[m][c]
+					dst := outputs[o][c]
 					src := state.pending[c]
-					for i := 0; i < length; i++ {
-						dst[i] += w * src[i]
+					for k := 0; k < length; k++ {
+						dst[k] += w * src[k]
 					}
 				}
 			}
@@ -283,8 +285,8 @@ func (e *Engine) mixAvailable() error {
 		}
 
 		pts := e.basePTS + media.Pts(e.totalEmitted)
-		for m, id := range e.outputIDs {
-			if err := e.pushOutput(id, outputs[m], pts); err != nil {
+		for o, id := range e.outputIDs {
+			if err := e.pushOutput(id, outputs[o], pts); err != nil {
 				return err
 			}
 		}
