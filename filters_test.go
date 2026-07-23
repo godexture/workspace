@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
 	"github.com/godexture/core/pipeline"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/compressor"
@@ -554,17 +553,10 @@ func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
 }
 
 func TestMixerWrapFilterEndToEnd(t *testing.T) {
-	item, err := mixer.New(config.MixerConfig{Weights: [][]float64{{1, 1}}, Normalize: false})
+	adapter, err := mixer.New(2, 1, [][]float64{{1, 1}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter := engine.WrapFilter(item,
-		engine.WithInputs(
-			engine.FilterInput{ID: "in0", Phase: node.InputPhaseRun},
-			engine.FilterInput{ID: "in1", Phase: node.InputPhaseRun},
-		),
-		engine.WithOutputs("out0"),
-	)
 
 	in0 := pipeline.NewChanEdge[media.Frame](2)
 	in1 := pipeline.NewChanEdge[media.Frame](2)
