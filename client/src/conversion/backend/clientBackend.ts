@@ -3,7 +3,7 @@ import axios from "axios";
 import { Godexture } from "@godexture/js";
 
 import { apiErrorMessage, presetAudioUrl } from "../../api/client";
-import type { ConversionBackend, InputSource } from "./types";
+import type { ConversionBackend, ConversionInputs, InputSource } from "./types";
 
 // worker.js/wasm_exec.js/main.wasm are copied here by `bun run prepare-wasm`
 // (see scripts/copy-wasm-assets.ts) so they're served unhashed, side by
@@ -34,17 +34,29 @@ async function readInput(input: InputSource): Promise<Uint8Array> {
     }
 }
 
+async function readInputs(inputs: ConversionInputs): Promise<{ main: Uint8Array; aux: Record<string, Uint8Array> }> {
+    const entries = await Promise.all(
+        Object.entries(inputs.aux).map(async ([name, input]) => [name, await readInput(input)] as const),
+    );
+    return { main: await readInput(inputs.main), aux: Object.fromEntries(entries) };
+}
+
 export const clientBackend: ConversionBackend = {
     mode: "client",
 
-    async resolvePipeline(input, spec) {
-        const [godec, bytes] = await Promise.all([getClient(), readInput(input)]);
-        return godec.resolvePipeline({ main: bytes }, spec);
+    async describeFilter(name, parameters = {}) {
+        const godec = await getClient();
+        return godec.describeFilter(name, parameters);
     },
 
-    async start(input, spec) {
-        const [godec, bytes] = await Promise.all([getClient(), readInput(input)]);
-        return godec.start({ main: bytes }, spec);
+    async resolvePipeline(inputs, spec) {
+        const [godec, bytes] = await Promise.all([getClient(), readInputs(inputs)]);
+        return godec.resolvePipeline(bytes, spec);
+    },
+
+    async start(inputs, spec) {
+        const [godec, bytes] = await Promise.all([getClient(), readInputs(inputs)]);
+        return godec.start(bytes, spec);
     },
 
     subscribe(jobId, onProgress) {

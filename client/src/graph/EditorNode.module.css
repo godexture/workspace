@@ -1,0 +1,57 @@
+.node {
+    width: 210px;
+    min-height: 82px;
+    position: relative;
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) / 1.5);
+    background: var(--color-panel);
+    padding: 0.6rem 0.75rem;
+    box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+}
+
+.selected {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+
+.source { border-left: 4px solid #8b5cf6; }
+.filter { border-left: 4px solid var(--color-accent); }
+.output { border-left: 4px solid var(--color-success); }
+
+.header {
+    color: var(--color-muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.detail {
+    margin-top: 0.18rem;
+    overflow: hidden;
+    color: var(--color-muted);
+    font-size: 0.72rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.input,
+.output {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 17px;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+.input { justify-content: flex-start; margin-left: -0.3rem; }
+.output { justify-content: flex-end; margin-right: -0.3rem; }
+
+.input :global(.react-flow__handle),
+.output :global(.react-flow__handle) {
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--color-panel);
+    background: var(--color-accent);
+}
