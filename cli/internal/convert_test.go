@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/godexture/sdk/catalog"
+	"github.com/godexture/sdk/conversion"
 )
 
 func TestParsePluginSpecParsesNameAndValues(t *testing.T) {
@@ -67,6 +68,49 @@ func TestParseFilterSpecParametersWithoutColon(t *testing.T) {
 	}
 	if parameters["in"] != "2" || parameters["out"] != "1" {
 		t.Fatalf("parseFilterSpec() parameters = %#v", parameters)
+	}
+}
+
+// TestBuildSpecResolvesParameterizedMixerFilter exercises the full
+// "mixer[in=2,out=1]" CLI path end to end: buildSpec parses the bracket
+// segment into FilterSpec.Parameters, and conversion.Resolve looks "mixer"
+// up in the parameterized registry, resolves MixerParameters from those
+// values, and uses it to build the concrete FilterManifest before
+// resolving MixerConfig.
+func TestBuildSpecResolvesParameterizedMixerFilter(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	spec, err := buildSpec(convertOptions{
+		filters: []string{"mixer[in=2,out=1]"},
+	}, "output.wav", outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Filters) != 1 || spec.Filters[0].Name != "mixer" {
+		t.Fatalf("buildSpec() filters = %#v", spec.Filters)
+	}
+	if spec.Filters[0].Parameters["in"] != "2" || spec.Filters[0].Parameters["out"] != "1" {
+		t.Fatalf("buildSpec() parameters = %#v", spec.Filters[0].Parameters)
+	}
+
+	resolved, err := conversion.Resolve(spec)
+	if err != nil {
+		t.Fatalf("conversion.Resolve() error = %v", err)
+	}
+	if len(resolved.Filters) != 1 {
+		t.Fatalf("resolved filters = %#v", resolved.Filters)
+	}
+}
+
+func TestBuildSpecRejectsParametersOnNonParameterizedFilter(t *testing.T) {
+	outputs := catalog.Build().Outputs
+	spec, err := buildSpec(convertOptions{
+		filters: []string{"gain[foo=bar]"},
+	}, "output.wav", outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conversion.Resolve(spec); err == nil {
+		t.Fatal("conversion.Resolve() accepted parameters on a non-parameterized filter")
 	}
 }
 

@@ -524,6 +524,70 @@ func (c ConvolutionConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
+type MixerParameters config.MixerParameters
+
+type MixerParametersOption interface {
+	applyMixerParameters(*MixerParameters)
+}
+
+type mixerParametersOptionFunc func(*MixerParameters)
+
+func (f mixerParametersOptionFunc) applyMixerParameters(c *MixerParameters) {
+	f(c)
+}
+
+func NewMixerParameters(options ...MixerParametersOption) MixerParameters {
+	config := MixerParameters(config.DefaultMixerParameters)
+	for _, option := range options {
+		option.applyMixerParameters(&config)
+	}
+	return config
+}
+
+func (c MixerParameters) ResolveDefault() config.MixerParameters {
+	return config.MixerParameters(config.DefaultMixerParameters)
+}
+
+func (c MixerParameters) Resolve() config.MixerParameters {
+	return config.MixerParameters(c)
+}
+
+func (c MixerParameters) Validate() error {
+	return c.Resolve().Validate()
+}
+
+type MixerConfig config.MixerConfig
+
+type MixerConfigOption interface {
+	applyMixerConfig(*MixerConfig)
+}
+
+type mixerConfigOptionFunc func(*MixerConfig)
+
+func (f mixerConfigOptionFunc) applyMixerConfig(c *MixerConfig) {
+	f(c)
+}
+
+func NewMixerConfig(options ...MixerConfigOption) MixerConfig {
+	config := MixerConfig(config.DefaultMixerConfig)
+	for _, option := range options {
+		option.applyMixerConfig(&config)
+	}
+	return config
+}
+
+func (c MixerConfig) ResolveDefault() config.MixerConfig {
+	return config.MixerConfig(config.DefaultMixerConfig)
+}
+
+func (c MixerConfig) Resolve() config.MixerConfig {
+	return config.MixerConfig(c)
+}
+
+func (c MixerConfig) Validate() error {
+	return c.Resolve().Validate()
+}
+
 type GateMode = config.GateMode
 
 const (
@@ -925,5 +989,17 @@ func WithWetDryMix(v float64) ConvolutionConfigOption {
 func WithBlockSize(v int) ConvolutionConfigOption {
 	return convolutionConfigOptionFunc(func(c *ConvolutionConfig) {
 		c.BlockSize = v
+	})
+}
+
+func WithInputs(v int) MixerParametersOption {
+	return mixerParametersOptionFunc(func(c *MixerParameters) {
+		c.Inputs = v
+	})
+}
+
+func WithOutputs(v int) MixerParametersOption {
+	return mixerParametersOptionFunc(func(c *MixerParameters) {
+		c.Outputs = v
 	})
 }
