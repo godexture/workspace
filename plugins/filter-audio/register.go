@@ -262,7 +262,7 @@ func speedRelabelRate(rate int, factor float64) int {
 }
 
 func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc, transformStream func(media.StreamInfo, media.CodecID, registry.Configuration) (media.StreamInfo, error)) {
-	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{})}, Bridge: bridge, Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{}))}, Bridge: registry.SingleInputBridge(bridge), Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 		item, err := factory(options.Config)
 		if err != nil {
 			return nil, media.StreamInfo{}, err

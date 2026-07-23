@@ -54,7 +54,7 @@ func decoderManifest(name string, config registry.Configuration, requirements re
 	return registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
-			InputRequirements: requirements,
+			InputRequirements: registry.SingleInputRequirements(requirements),
 		},
 		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
 			return nil, media.StreamInfo{}, nil

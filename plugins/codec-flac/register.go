@@ -55,7 +55,7 @@ func init() {
 					Description:          "FLAC decoder",
 					ConfigurationFactory: registry.NewConfigurationFactory(NewDecoderConfig),
 				},
-				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}}),
+				InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{Codecs: []media.CodecID{media.CodecFLAC}})),
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},
@@ -85,7 +85,7 @@ func init() {
 					Description:          "FLAC encoder",
 					ConfigurationFactory: registry.NewConfigurationFactory(NewEncoderConfig),
 				},
-				InputRequirements: registry.StaticRequirements(&manifest.AudioConstraint{
+				InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{
 					Codecs: []media.CodecID{media.CodecLPCM},
 					// Max is the FLAC Subset format limit: the largest rate a frame
 					// header can still encode explicitly (10Hz-unit field, 16 bits).
@@ -98,7 +98,7 @@ func init() {
 						{Format: media.SampleFormatS24, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 24}},
 						{Format: media.SampleFormatS32, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 32}},
 					},
-				}),
+				})),
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
 				},

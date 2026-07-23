@@ -137,9 +137,9 @@ func registerBridgeFilter(
 	err := filters.Register(registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
-			InputRequirements: registry.StaticRequirements(bridgeAnyAudioCapability{}),
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(bridgeAnyAudioCapability{})),
 		},
-		Bridge: bridge,
+		Bridge: registry.SingleInputBridge(bridge),
 		Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			return &bridgeFilterNode{}, transform(stream, options.Config), nil
 		},

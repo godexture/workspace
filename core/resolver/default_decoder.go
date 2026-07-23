@@ -28,7 +28,7 @@ func (r *DefaultDecoderResolver) ResolveDecoder(stream media.StreamInfo, opts ..
 	var acceptErr error
 
 	for manifest := range r.registry.Enumerate() {
-		accepted, err := manifest.Accept(stream, stream.Codec, nil)
+		accepted, err := manifest.Accept("in", stream, stream.Codec, nil)
 		if err != nil {
 			acceptErr = errors.Join(acceptErr, fmt.Errorf("check decoder %s: %w", manifest.Name, err))
 			continue
