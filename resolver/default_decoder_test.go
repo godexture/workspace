@@ -56,6 +56,8 @@ func decoderManifest(name string, config registry.Configuration, requirements re
 			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
 			InputRequirements: requirements,
 		},
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) { return nil, nil },
+		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			return nil, media.StreamInfo{}, nil
+		},
 	}
 }

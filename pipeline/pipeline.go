@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/godexture/core/node"
+	"github.com/godexture/core/registry"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -16,6 +17,8 @@ type pipelineState uint8
 
 const (
 	pipelineReady pipelineState = iota
+	pipelinePreparing
+	pipelinePrepared
 	pipelineRunning
 	pipelineClosing
 	pipelineClosed
@@ -36,6 +39,7 @@ type Pipeline struct {
 	startedAt       time.Time
 	finishedAt      time.Time
 	cancel          context.CancelFunc
+	prepareDone     chan struct{}
 	done            chan struct{}
 	closeErr        error
 }
@@ -111,9 +115,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("%w: run context is nil", ErrInvalidPipeline)
 	}
+	if err := p.Prepare(ctx); err != nil {
+		return err
+	}
 
 	p.mu.Lock()
-	if p.state != pipelineReady {
+	if p.state != pipelinePrepared {
 		state := p.state
 		p.mu.Unlock()
 		return fmt.Errorf("%w: cannot run pipeline in state %s", ErrInvalidPipeline, state)
@@ -134,13 +141,88 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	return p.finish(runErr)
 }
 
+// Prepare performs resource-dependent node setup. It is safe to call more
+// than once; Run calls it automatically when needed.
+func (p *Pipeline) Prepare(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("%w: prepare context is nil", ErrInvalidPipeline)
+	}
+
+	p.mu.Lock()
+	switch p.state {
+	case pipelinePrepared, pipelineRunning:
+		p.mu.Unlock()
+		return nil
+	case pipelineReady:
+		p.state = pipelinePreparing
+		p.prepareDone = make(chan struct{})
+	case pipelinePreparing:
+		p.mu.Unlock()
+		return fmt.Errorf("%w: pipeline is already preparing", ErrInvalidPipeline)
+	default:
+		state := p.state
+		p.mu.Unlock()
+		return fmt.Errorf("%w: cannot prepare pipeline in state %s", ErrInvalidPipeline, state)
+	}
+	nodes := append([]node.Node(nil), p.nodes...)
+	description := p.description.Clone()
+	p.mu.Unlock()
+
+	for i, current := range nodes {
+		if err := ctx.Err(); err != nil {
+			return p.finishPrepare(err)
+		}
+		preparer, ok := current.(registry.Preparer)
+		if !ok {
+			continue
+		}
+		var grant registry.ResourceGrant
+		if i < len(description.Nodes) {
+			grant = description.Nodes[i].Resources
+		}
+		if err := preparer.Prepare(grant); err != nil {
+			return p.finishPrepare(fmt.Errorf("prepare node %d (%T): %w", i, current, err))
+		}
+	}
+
+	p.mu.Lock()
+	if p.state == pipelinePreparing {
+		p.state = pipelinePrepared
+		close(p.prepareDone)
+		p.prepareDone = nil
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *Pipeline) finishPrepare(prepareErr error) error {
+	p.mu.Lock()
+	p.state = pipelineClosing
+	p.finishedAt = time.Now()
+	if p.prepareDone != nil {
+		close(p.prepareDone)
+		p.prepareDone = nil
+	}
+	p.mu.Unlock()
+	p.completeClose()
+	p.mu.Lock()
+	closeErr := p.closeErr
+	p.mu.Unlock()
+	return errors.Join(prepareErr, closeErr)
+}
+
 func (p *Pipeline) Close() error {
 	p.mu.Lock()
 	switch p.state {
-	case pipelineReady:
+	case pipelineReady, pipelinePrepared:
 		p.state = pipelineClosing
 		p.mu.Unlock()
 		p.completeClose()
+	case pipelinePreparing:
+		done := p.prepareDone
+		p.mu.Unlock()
+		<-done
+		return p.Close()
 	case pipelineRunning:
 		cancel := p.cancel
 		done := p.done
@@ -275,6 +357,10 @@ func (s pipelineState) String() string {
 	switch s {
 	case pipelineReady:
 		return "ready"
+	case pipelinePreparing:
+		return "preparing"
+	case pipelinePrepared:
+		return "prepared"
 	case pipelineRunning:
 		return "running"
 	case pipelineClosing:

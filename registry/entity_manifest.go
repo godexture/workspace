@@ -48,13 +48,6 @@ type TransformManifest struct {
 	BaseManifest
 	InputRequirements InputRequirementsFunc
 	Resources         ResourceRequest
-	// TransformFunc resolves the output profile for this transform. target is
-	// the desired codec (the input codec for decoders) and cfg is the node
-	// configuration that will be used to construct the transform.
-	TransformFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error)
-	// TransformStreamFunc may update stream properties outside Profile, such as
-	// duration. When set, it is authoritative for TransformStream.
-	TransformStreamFunc func(in media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error)
 }
 
 type InputRequirementsFunc func(target media.CodecID, config Configuration) ([]manifest.Capability, error)
@@ -109,26 +102,6 @@ type FilterManifest struct {
 	TransformManifest
 	Bridge  BridgeFunc
 	Factory FilterFactory
-}
-
-func (m TransformManifest) Transform(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.Profile, error) {
-	return m.TransformFunc(stream, target, cfg)
-}
-
-func (m TransformManifest) TransformStream(stream media.StreamInfo, target media.CodecID, cfg Configuration) (media.StreamInfo, error) {
-	if m.TransformStreamFunc != nil {
-		return m.TransformStreamFunc(stream, target, cfg)
-	}
-	if m.TransformFunc == nil {
-		return stream, nil
-	}
-	profile, err := m.Transform(stream, target, cfg)
-	if err != nil {
-		return media.StreamInfo{}, err
-	}
-	stream.Type = profile.Type
-	stream.MediaAttributes = profile.MediaAttributes
-	return stream, nil
 }
 
 func (m TransformManifest) Requirements(target media.CodecID, config Configuration) ([]manifest.Capability, error) {

@@ -214,8 +214,8 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	}
 	decRes := &mockDecoderResolver{
 		resolved: registry.DecoderManifest{
-			Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
-				return dec, nil
+			Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+				return dec, stream, nil
 			},
 		},
 	}
@@ -224,8 +224,10 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 			TransformManifest: registry.TransformManifest{
 				InputRequirements: registry.StaticRequirements(alwaysCapability{}),
 			},
-			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
-				return enc, nil
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+				output := inStream.Clone()
+				output.Codec = targetCodec
+				return enc, output, nil
 			},
 		},
 	}
@@ -316,18 +318,13 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	// Decoder Transform converts MSADPCM to LPCM and sets the format to S16
 	decRes := &mockDecoderResolver{
 		resolved: registry.DecoderManifest{
-			TransformManifest: registry.TransformManifest{
-				TransformFunc: func(s media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					if s.Codec == media.CodecMSADPCM {
-						p.Codec = media.CodecLPCM
-						p.Audio.Format = media.SampleFormatS16
-					}
-					return p, nil
-				},
-			},
-			Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
-				return dec, nil
+			Factory: func(stream media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+				output := stream
+				if stream.Codec == media.CodecMSADPCM {
+					output.Codec = media.CodecLPCM
+					output.Audio.Format = media.SampleFormatS16
+				}
+				return dec, output, nil
 			},
 		},
 	}
@@ -335,16 +332,11 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 	// Encoder Transform passes it through
 	encRes := &mockEncoderResolver{
 		resolved: registry.EncoderManifest{
-			TransformManifest: registry.TransformManifest{
-				InputRequirements: registry.StaticRequirements(alwaysCapability{}),
-				TransformFunc: func(s media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
-					p := media.Profile{Type: s.Type, MediaAttributes: s.MediaAttributes}
-					p.Codec = target
-					return p, nil
-				},
-			},
-			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
-				return enc, nil
+			TransformManifest: registry.TransformManifest{InputRequirements: registry.StaticRequirements(alwaysCapability{})},
+			Factory: func(inStream media.StreamInfo, targetCodec media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+				output := inStream.Clone()
+				output.Codec = targetCodec
+				return enc, output, nil
 			},
 		},
 	}
@@ -409,36 +401,33 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 		Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) { return demux, nil },
 	}}
 	decoderResolver := &mockDecoderResolver{resolved: registry.DecoderManifest{
-		TransformManifest: registry.TransformManifest{
-			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Codec = media.CodecLPCM
-				return profile, nil
-			},
+		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			output := stream
+			output.Codec = media.CodecLPCM
+			return decoder, output, nil
 		},
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) { return decoder, nil },
 	}}
 	var bridgeInput media.StreamInfo
 	bridgeManifest := registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{
 			BaseManifest:      registry.BaseManifest{Name: "bridge-format"},
 			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
-			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Audio.Format = media.SampleFormatF32
-				profile.Audio.BitsPerSample = 32
-				return profile, nil
-			},
 		},
-		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, error) {
+		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 			bridgeInput = input
-			return bridgeFilter, nil
+			output := input.Clone()
+			output.Audio.Format = media.SampleFormatF32
+			output.Audio.BitsPerSample = 32
+			return bridgeFilter, output, nil
 		},
 	}
 	decoderOutput := streamIn
 	decoderOutput.Codec = media.CodecLPCM
-	bridgeOutput, err := bridgeManifest.TransformStream(decoderOutput, decoderOutput.Codec, struct{}{})
+	bridgeProbe, bridgeOutput, err := bridgeManifest.Factory(decoderOutput, registry.TransformFactoryOptions{Config: struct{}{}})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bridgeProbe.Close(); err != nil {
 		t.Fatal(err)
 	}
 	bridgeResolver := &mockBridgeResolver{steps: []resolver.BridgeStep{{
@@ -457,9 +446,11 @@ func TestNegotiatorInsertsBridgeFilters(t *testing.T) {
 				}},
 			}),
 		},
-		Factory: func(input media.StreamInfo, _ media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, error) {
+		Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
 			encoderInput = input
-			return encoder, nil
+			output := input.Clone()
+			output.Codec = target
+			return encoder, output, nil
 		},
 	}}
 	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
@@ -536,21 +527,14 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		},
 	}}
 
-	var allocations []*registry.WorkerPool
-	var inputs []media.StreamInfo
 	decoderRes := &mockDecoderResolver{resolved: registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
 			Resources: registry.ResourceRequest{Parallelism: true},
-			TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Codec = media.CodecLPCM
-				return profile, nil
-			},
 		},
-		Factory: func(input media.StreamInfo, options registry.TransformFactoryOptions) (node.Decoder, error) {
-			inputs = append(inputs, input)
-			allocations = append(allocations, options.Resources.Pool)
-			return &mockDecoder{}, nil
+		Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			output := input.Clone()
+			output.Codec = media.CodecLPCM
+			return &mockDecoder{}, output, nil
 		},
 	}}
 
@@ -559,16 +543,11 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 			TransformManifest: registry.TransformManifest{
 				InputRequirements: registry.StaticRequirements(alwaysCapability{}),
 				Resources:         registry.ResourceRequest{Parallelism: parallel},
-				TransformFunc: func(stream media.StreamInfo, _ media.CodecID, _ registry.Configuration) (media.Profile, error) {
-					profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-					profile.Audio.SampleRate += sampleRateDelta
-					return profile, nil
-				},
 			},
-			Factory: func(input media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, error) {
-				inputs = append(inputs, input)
-				allocations = append(allocations, options.Resources.Pool)
-				return &mockFilter{}, nil
+			Factory: func(input media.StreamInfo, _ registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+				output := input.Clone()
+				output.Audio.SampleRate += sampleRateDelta
+				return &mockFilter{}, output, nil
 			},
 		}
 	}
@@ -580,16 +559,11 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		TransformManifest: registry.TransformManifest{
 			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
 			Resources:         registry.ResourceRequest{Parallelism: true},
-			TransformFunc: func(stream media.StreamInfo, target media.CodecID, _ registry.Configuration) (media.Profile, error) {
-				profile := media.Profile{Type: stream.Type, MediaAttributes: stream.MediaAttributes}
-				profile.Codec = target
-				return profile, nil
-			},
 		},
-		Factory: func(input media.StreamInfo, _ media.CodecID, options registry.TransformFactoryOptions) (node.Encoder, error) {
-			inputs = append(inputs, input)
-			allocations = append(allocations, options.Resources.Pool)
-			return &mockEncoder{}, nil
+		Factory: func(input media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+			output := input.Clone()
+			output.Codec = target
+			return &mockEncoder{}, output, nil
 		},
 	}}
 
@@ -606,26 +580,6 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// decoder, filter0, and encoder requested Parallelism; filter1 did not.
-	// Every requesting stage must share the exact same pool instead of each
-	// getting its own exclusive slice of the budget.
-	if allocations[0] == nil || allocations[1] == nil || allocations[3] == nil {
-		t.Fatalf("parallel-eligible stages got no pool: %v", allocations)
-	}
-	if allocations[0] != allocations[1] || allocations[0] != allocations[3] {
-		t.Fatalf("parallel-eligible stages did not share the same pool: %v", allocations)
-	}
-	if allocations[2] != nil {
-		t.Fatalf("non-parallel filter got a pool: %v", allocations[2])
-	}
-	if got, want := []int{
-		inputs[0].Audio.SampleRate,
-		inputs[1].Audio.SampleRate,
-		inputs[2].Audio.SampleRate,
-		inputs[3].Audio.SampleRate,
-	}, []int{44100, 44100, 44101, 44103}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("factory input sample rates = %v, want %v", got, want)
-	}
 	nodes := geometry.Nodes()
 	edges := geometry.Edges()
 	if len(nodes) != 6 || len(edges) != 5 {
@@ -633,6 +587,15 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	}
 	if nodes[2].ID != "filter:0" || nodes[3].ID != "filter:1" {
 		t.Fatalf("filters are not ordered in geometry: %#v", nodes)
+	}
+	if nodes[1].Description.Resources.Pool == nil || nodes[2].Description.Resources.Pool == nil || nodes[4].Description.Resources.Pool == nil {
+		t.Fatal("parallel-eligible stages got no pool")
+	}
+	if nodes[1].Description.Resources.Pool != nodes[2].Description.Resources.Pool || nodes[1].Description.Resources.Pool != nodes[4].Description.Resources.Pool {
+		t.Fatal("parallel-eligible stages did not share the same pool")
+	}
+	if nodes[3].Description.Resources.Pool != nil {
+		t.Fatal("non-parallel filter got a pool")
 	}
 	if got := mux.addedStreams[0].Audio.SampleRate; got != 44103 {
 		t.Fatalf("muxer sample rate = %d, want 44103", got)
@@ -649,17 +612,6 @@ func TestNegotiator_AllocatesResourcesAcrossOrderedFilters(t *testing.T) {
 	for i, want := range wantRoles {
 		if got := description.Nodes[i].Role; got != want {
 			t.Fatalf("description node %d role = %q, want %q", i, got, want)
-		}
-	}
-	got := []*registry.WorkerPool{
-		description.Nodes[1].Resources.Pool,
-		description.Nodes[2].Resources.Pool,
-		description.Nodes[3].Resources.Pool,
-		description.Nodes[4].Resources.Pool,
-	}
-	for i := range got {
-		if got[i] != allocations[i] {
-			t.Fatalf("description node %d pool = %v, want %v (mismatch with pool actually passed to its factory)", i+1, got[i], allocations[i])
 		}
 	}
 	if !description.Edges[0].ProgressSource {
@@ -687,16 +639,21 @@ func TestNegotiatorResolvesCompletePlanBeforeCreatingTransforms(t *testing.T) {
 			return demux, nil
 		},
 	}}
-	var decoderFactoryCalled bool
+	var decoderFactoryCalled, decoderProbeClosed bool
 	decoderResolver := &mockDecoderResolver{resolved: registry.DecoderManifest{
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) {
+		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
 			decoderFactoryCalled = true
-			return &mockDecoder{}, nil
+			return &mockDecoder{mockNode: mockNode{onClose: func() { decoderProbeClosed = true }}}, stream, nil
 		},
 	}}
 	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
 		TransformManifest: registry.TransformManifest{
 			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
+		},
+		Factory: func(stream media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+			output := stream.Clone()
+			output.Codec = target
+			return &mockEncoder{}, output, nil
 		},
 	}}
 	muxResolver := &mockMuxerResolver{err: errors.New("mux resolution")}
@@ -711,8 +668,11 @@ func TestNegotiatorResolvesCompletePlanBeforeCreatingTransforms(t *testing.T) {
 	if !errors.Is(err, muxResolver.err) {
 		t.Fatalf("NegotiateConversion() error = %v", err)
 	}
-	if decoderFactoryCalled {
-		t.Fatal("decoder was constructed before the full plan resolved")
+	if !decoderFactoryCalled {
+		t.Fatal("decoder factory was not called to resolve its output profile")
+	}
+	if !decoderProbeClosed {
+		t.Fatal("decoder profile probe was not closed")
 	}
 	if !demuxClosed {
 		t.Fatal("demuxer was not closed after negotiation failed")
@@ -740,8 +700,8 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 		},
 	}}
 	decoderResolver := &mockDecoderResolver{resolved: registry.DecoderManifest{
-		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, error) {
-			return decoder, nil
+		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			return decoder, stream, nil
 		},
 	}}
 	factoryErr := errors.New("encoder factory")
@@ -749,8 +709,8 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 		TransformManifest: registry.TransformManifest{
 			InputRequirements: registry.StaticRequirements(alwaysCapability{}),
 		},
-		Factory: func(media.StreamInfo, media.CodecID, registry.TransformFactoryOptions) (node.Encoder, error) {
-			return nil, factoryErr
+		Factory: func(media.StreamInfo, media.CodecID, registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+			return nil, media.StreamInfo{}, factoryErr
 		},
 	}}
 	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
