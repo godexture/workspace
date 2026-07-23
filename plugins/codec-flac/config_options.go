@@ -84,12 +84,34 @@ func (c DecoderConfig) Resolve() config.DecoderConfig {
 	return config.DecoderConfig(c)
 }
 
-func (c DecoderConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
+type StereoMode = config.StereoMode
+
+const (
+	StereoIndependent = config.StereoIndependent
+	StereoAdaptive    = config.StereoAdaptive
+	StereoExhaustive  = config.StereoExhaustive
+)
+
+type OrderSearchMode = config.OrderSearchMode
+
+const (
+	OrderSearchEstimated  = config.OrderSearchEstimated
+	OrderSearchExhaustive = config.OrderSearchExhaustive
+)
+
+type RiceCostMode = config.RiceCostMode
+
+const (
+	RiceCostEstimated = config.RiceCostEstimated
+	RiceCostExact     = config.RiceCostExact
+)
+
+type BlockSplitMode = config.BlockSplitMode
+
+const (
+	BlockSplitEstimated = config.BlockSplitEstimated
+	BlockSplitExact     = config.BlockSplitExact
+)
 
 func WithBlockSize(v int) EncoderConfigOption {
 	return encoderConfigOptionFunc(func(c *EncoderConfig) {

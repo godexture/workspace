@@ -4,7 +4,6 @@ package pcm
 
 import (
 	binary "encoding/binary"
-
 	internal "github.com/godexture/codec-pcm/internal"
 	media "github.com/godexture/core/domain/media"
 	params "github.com/godexture/format-wav/params"

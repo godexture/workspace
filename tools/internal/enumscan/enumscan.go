@@ -64,6 +64,15 @@ func LoadPackage(dir, excludeFile string) (files []*ast.File, filePaths map[*ast
 // order, to package-level consts of the named type typeName within
 // packageName.
 func StringConstants(files []*ast.File, packageName, typeName string) []string {
+	_, values := StringEnumConstants(files, packageName, typeName)
+	return values
+}
+
+// StringEnumConstants returns the identifier names and literal string values
+// assigned, in declaration order, to package-level consts of the named type
+// typeName within packageName.
+func StringEnumConstants(files []*ast.File, packageName, typeName string) ([]string, []string) {
+	var names []string
 	var values []string
 	for _, file := range files {
 		if file.Name.Name != packageName {
@@ -84,11 +93,12 @@ func StringConstants(files []*ast.File, packageName, typeName string) []string {
 				if !ok || !literalOK || declaredType.Name != typeName || literal.Kind != token.STRING {
 					continue
 				}
+				names = append(names, spec.Names[0].Name)
 				values = append(values, strings.Trim(literal.Value, "\""))
 			}
 		}
 	}
-	return values
+	return names, values
 }
 
 // DiscoverStringEnums finds every `type X string` declaration in packageName

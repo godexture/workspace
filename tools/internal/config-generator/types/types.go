@@ -15,6 +15,12 @@ type Target struct {
 	ImportPath   string
 	HasValidate  bool
 	FieldChoices map[string][]string
+	Enums        []EnumInfo
+}
+
+type EnumInfo struct {
+	TypeName   string
+	ConstNames []string
 }
 
 type FieldInfo struct {

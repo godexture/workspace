@@ -3,10 +3,9 @@
 package filter
 
 import (
-	time "time"
-
 	media "github.com/godexture/core/domain/media"
 	config "github.com/godexture/filter-audio/internal/config"
+	time "time"
 )
 
 type FormatConfig config.FormatConfig
@@ -41,13 +40,6 @@ func (c FormatConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c FormatConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type ResampleConfig config.ResampleConfig
 
 type ResampleConfigOption interface {
@@ -78,13 +70,6 @@ func (c ResampleConfig) Resolve() config.ResampleConfig {
 
 func (c ResampleConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c ResampleConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type RemixConfig config.RemixConfig
@@ -119,13 +104,6 @@ func (c RemixConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c RemixConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type GainConfig config.GainConfig
 
 type GainConfigOption interface {
@@ -156,13 +134,6 @@ func (c GainConfig) Resolve() config.GainConfig {
 
 func (c GainConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c GainConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type NormalizeConfig config.NormalizeConfig
@@ -197,13 +168,6 @@ func (c NormalizeConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c NormalizeConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type FadeConfig config.FadeConfig
 
 type FadeConfigOption interface {
@@ -236,13 +200,6 @@ func (c FadeConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c FadeConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type DCOffsetConfig config.DCOffsetConfig
 
 type DCOffsetConfigOption interface {
@@ -273,13 +230,6 @@ func (c DCOffsetConfig) Resolve() config.DCOffsetConfig {
 
 func (c DCOffsetConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c DCOffsetConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type GateConfig config.GateConfig
@@ -437,13 +387,6 @@ func (c CompressorConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c CompressorConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type EQConfig config.EQConfig
 
 type EQConfigOption interface {
@@ -517,13 +460,6 @@ func (c DelayConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c DelayConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type ReverbConfig config.ReverbConfig
 
 type ReverbConfigOption interface {
@@ -554,13 +490,6 @@ func (c ReverbConfig) Resolve() config.ReverbConfig {
 
 func (c ReverbConfig) Validate() error {
 	return c.Resolve().Validate()
-}
-
-func (c ReverbConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
 }
 
 type ConvolutionConfig config.ConvolutionConfig
@@ -595,13 +524,6 @@ func (c ConvolutionConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c ConvolutionConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
-
 type MixerConfig config.MixerConfig
 
 type MixerConfigOption interface {
@@ -634,12 +556,37 @@ func (c MixerConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c MixerConfig) FieldChoices(field string) []string {
-	switch field {
-	default:
-		return nil
-	}
-}
+type GateMode = config.GateMode
+
+const (
+	GateModeHard    = config.GateModeHard
+	GateModeLowpass = config.GateModeLowpass
+)
+
+type TrimMode = config.TrimMode
+
+const (
+	TrimModeBoth  = config.TrimModeBoth
+	TrimModeStart = config.TrimModeStart
+	TrimModeEnd   = config.TrimModeEnd
+)
+
+type SpeedMode = config.SpeedMode
+
+const (
+	SpeedModeInterpolate = config.SpeedModeInterpolate
+	SpeedModeRelabel     = config.SpeedModeRelabel
+)
+
+type EQType = config.EQType
+
+const (
+	EQTypePeaking   = config.EQTypePeaking
+	EQTypeLowShelf  = config.EQTypeLowShelf
+	EQTypeHighShelf = config.EQTypeHighShelf
+	EQTypeLowPass   = config.EQTypeLowPass
+	EQTypeHighPass  = config.EQTypeHighPass
+)
 
 func WithFormat(v media.SampleFormat) FormatConfigOption {
 	return formatConfigOptionFunc(func(c *FormatConfig) {
