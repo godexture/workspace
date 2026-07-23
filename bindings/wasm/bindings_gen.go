@@ -99,4 +99,3 @@ func wasmResult(_ js.Value, args []js.Value) interface{} {
 		return arr
 	}()
 }
-
