@@ -8,12 +8,12 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/linear"
 	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/buffer"
 )
 
 type Engine struct {
 	config config.SpeedConfig
-	slot   engine.Slot[media.Frame]
+	slot   buffer.Slot[media.Frame]
 
 	initialized   bool
 	inputRate     int

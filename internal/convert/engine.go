@@ -6,12 +6,12 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/buffer"
 )
 
 type Engine struct {
 	config config.FormatConfig
-	slot   engine.Slot[media.Frame]
+	slot   buffer.Slot[media.Frame]
 }
 
 func New(config config.FormatConfig) (*Engine, error) {

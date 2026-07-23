@@ -3,9 +3,10 @@
 package filter
 
 import (
+	time "time"
+
 	media "github.com/godexture/core/domain/media"
 	config "github.com/godexture/filter-audio/internal/config"
-	time "time"
 )
 
 type FormatConfig config.FormatConfig

@@ -7,7 +7,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/buffer"
 )
 
 // Engine is a feedback delay line: each channel gets its own circular buffer
@@ -22,7 +22,7 @@ type Engine struct {
 	delaySamples int
 	buffers      [][]float32
 	writeIndex   int
-	slot         engine.Slot[media.Frame]
+	slot         buffer.Slot[media.Frame]
 }
 
 func New(cfg config.DelayConfig) (*Engine, error) {

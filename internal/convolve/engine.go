@@ -14,8 +14,8 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/framequeue"
 	"github.com/godexture/sdk/audio"
+	"github.com/godexture/sdk/buffer"
 	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/dsp/fft"
 )
@@ -69,7 +69,7 @@ type Engine struct {
 	totalInput  int64
 	hopsEmitted int64
 
-	queue   framequeue.Multi
+	queue   buffer.Queue[media.Frame]
 	flushed bool
 }
 
