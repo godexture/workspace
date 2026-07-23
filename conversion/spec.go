@@ -21,8 +21,9 @@ type PluginSpec struct {
 
 type FilterSpec struct {
 	PluginSpec
-	Alias  string            `json:"alias,omitempty"`
-	Inputs map[string]string `json:"inputs,omitempty"`
+	Alias      string            `json:"alias,omitempty"`
+	Inputs     map[string]string `json:"inputs,omitempty"`
+	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
 type AuxInputSpec struct {
@@ -165,9 +166,9 @@ func resolveFilters(filters []FilterSpec) ([]routing.FilterSpec, error) {
 		if filterSpec.Name == "" {
 			return nil, invalidSpec(fmt.Sprintf("filter %d name is required", i))
 		}
-		filter, lookupErr := godec.DefaultFilterRegistry.Lookup(filterSpec.Name)
+		filter, lookupErr := resolveFilterManifest(filterSpec)
 		if lookupErr != nil {
-			return nil, wrapError(CodeInvalidSpec, fmt.Sprintf("filter %q", filterSpec.Name), lookupErr)
+			return nil, lookupErr
 		}
 		config, configErr := configure("filter", filter, filterSpec.Values)
 		if configErr != nil {
@@ -176,6 +177,37 @@ func resolveFilters(filters []FilterSpec) ([]routing.FilterSpec, error) {
 		resolved = append(resolved, routing.FilterSpec{Alias: filterSpec.Alias, Config: config, Inputs: maps.Clone(filterSpec.Inputs)})
 	}
 	return resolved, nil
+}
+
+// resolveFilterManifest looks the filter up by name, trying the ordinary
+// (static) registry first and the parameterized registry second. A
+// parameterized filter's Parameters are decoded and used to build its
+// concrete FilterManifest for this one invocation before the filter's
+// regular per-instance Values are ever touched — the manifest that
+// produces (in particular its ConfigurationFactory) may depend on those
+// Parameters, e.g. a mixer's input/output port count.
+func resolveFilterManifest(filterSpec FilterSpec) (registry.FilterManifest, error) {
+	manifest, err := godec.DefaultFilterRegistry.Lookup(filterSpec.Name)
+	if err == nil {
+		if filterSpec.Parameters != nil {
+			return registry.FilterManifest{}, invalidSpec(fmt.Sprintf("filter %q does not accept parameters", filterSpec.Name))
+		}
+		return manifest, nil
+	}
+
+	parameterized, paramErr := godec.DefaultParameterizedFilterRegistry.Lookup(filterSpec.Name)
+	if paramErr != nil {
+		return registry.FilterManifest{}, wrapError(CodeInvalidSpec, fmt.Sprintf("filter %q", filterSpec.Name), err)
+	}
+	parameters, configErr := configure("filter parameters", parameterized, filterSpec.Parameters)
+	if configErr != nil {
+		return registry.FilterManifest{}, configErr
+	}
+	manifest, err = parameterized.NewManifest(parameters)
+	if err != nil {
+		return registry.FilterManifest{}, wrapError(CodeInvalidSpec, fmt.Sprintf("filter %q", filterSpec.Name), err)
+	}
+	return manifest, nil
 }
 
 func Negotiate(ctx context.Context, inputs InputSet, output io.Writer, spec Spec) (*pipeline.Geometry, error) {
