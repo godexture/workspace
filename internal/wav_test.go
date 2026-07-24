@@ -1078,9 +1078,9 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 				t.Fatalf("ReceiveFrame() error = %v", err)
 			}
 
-			audioFrame, ok := (*frame).(*media.AudioFrame)
+			audioFrame, ok := frame.(*media.AudioFrame)
 			if !ok {
-				t.Fatalf("decoded frame type = %T, want *media.AudioFrame", *frame)
+				t.Fatalf("decoded frame type = %T, want *media.AudioFrame", frame)
 			}
 			decodedFrames++
 			decodedSamples += audioFrame.Samples
