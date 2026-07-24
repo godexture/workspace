@@ -80,19 +80,19 @@ func TestCompressorConfigValidate(t *testing.T) {
 	}
 }
 
-func TestEQConfigValidate(t *testing.T) {
+func TestEqualizerConfigValidate(t *testing.T) {
 	t.Parallel()
-	valid := EQConfig{Type: EQTypePeaking, FrequencyHz: 1000, Q: 0.707}
+	valid := EqualizerConfig{Type: EqualizerTypePeaking, FrequencyHz: 1000, Q: 0.707}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if err := (func() EQConfig { c := valid; c.Type = "bogus"; return c }()).Validate(); err == nil {
+	if err := (func() EqualizerConfig { c := valid; c.Type = "bogus"; return c }()).Validate(); err == nil {
 		t.Fatal("want error for invalid type")
 	}
-	if err := (func() EQConfig { c := valid; c.FrequencyHz = 0; return c }()).Validate(); err == nil {
+	if err := (func() EqualizerConfig { c := valid; c.FrequencyHz = 0; return c }()).Validate(); err == nil {
 		t.Fatal("want error for non-positive frequency")
 	}
-	if err := (func() EQConfig { c := valid; c.Q = 0; return c }()).Validate(); err == nil {
+	if err := (func() EqualizerConfig { c := valid; c.Q = 0; return c }()).Validate(); err == nil {
 		t.Fatal("want error for non-positive Q")
 	}
 }

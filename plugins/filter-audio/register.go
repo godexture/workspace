@@ -13,14 +13,14 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/convert"
 	"github.com/godexture/filter-audio/internal/dcoffset"
-	"github.com/godexture/filter-audio/internal/eq"
+	"github.com/godexture/filter-audio/internal/equalizer"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gain"
 	"github.com/godexture/filter-audio/internal/gate"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
-	"github.com/godexture/filter-audio/internal/speed"
+	"github.com/godexture/filter-audio/internal/retime"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/engine"
 )
@@ -146,7 +146,7 @@ func registerFade() {
 	}, nil, nil)
 }
 func registerDCOffset() {
-	register(registry.NewConfigurationFactory(NewDCOffsetConfig), "dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewDCOffsetConfig), "remove-dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.DCOffsetConfig, DCOffsetConfig](cfg)
 		if err != nil {
 			return nil, err
@@ -190,7 +190,7 @@ func registerTrim() {
 }
 
 func registerSpeed() {
-	register(registry.NewConfigurationFactory(NewSpeedConfig), "speed", "Change playback speed (pitch shifts with speed)", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+	register(registry.NewConfigurationFactory(NewSpeedConfig), "retime", "Change playback retime (pitch shifts with retime)", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
 		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
 		if err != nil {
 			return media.Profile{}, err
@@ -205,7 +205,7 @@ func registerSpeed() {
 		if err != nil {
 			return nil, err
 		}
-		item, err := speed.New(value)
+		item, err := retime.New(value)
 		if err != nil {
 			return nil, err
 		}
@@ -240,12 +240,12 @@ func registerCompressor() {
 }
 
 func registerEQ() {
-	register(registry.NewConfigurationFactory(NewEQConfig), "eq", "Apply a single-band parametric, shelf, or pass biquad filter", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.EQConfig, EQConfig](cfg)
+	register(registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band parametric, shelf, or pass biquad filter", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[config.EqualizerConfig, EqualizerConfig](cfg)
 		if err != nil {
 			return nil, err
 		}
-		item, err := eq.New(value)
+		item, err := equalizer.New(value)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +262,7 @@ func speedRelabelRate(rate int, factor float64) int {
 }
 
 func register(newConfig registry.ConfigurationFactory, name, description string, transform func(media.StreamInfo, registry.Configuration) (media.Profile, error), factory func(registry.Configuration) (node.Filter, error), bridge registry.BridgeFunc, transformStream func(media.StreamInfo, media.CodecID, registry.Configuration) (media.StreamInfo, error)) {
-	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{}))}, Bridge: registry.SingleInputBridge(bridge), Factory: func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
+	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{BaseManifest: registry.BaseManifest{Name: name, Description: description, ConfigurationFactory: newConfig}, InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(&manifest.AudioConstraint{}))}, OutputPorts: []string{"out"}, Bridge: registry.SingleInputBridge(bridge), Factory: registry.SingleFactory(func(in media.StreamInfo, options registry.TransformFactoryOptions) (node.Filter, media.StreamInfo, error) {
 		item, err := factory(options.Config)
 		if err != nil {
 			return nil, media.StreamInfo{}, err
@@ -283,7 +283,7 @@ func register(newConfig registry.ConfigurationFactory, name, description string,
 		in.Type = profile.Type
 		in.MediaAttributes = profile.MediaAttributes
 		return item, in, nil
-	}}); err != nil {
+	})}); err != nil {
 		panic(err)
 	}
 }

@@ -2,7 +2,6 @@ package id3v2
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -277,7 +276,7 @@ func (e *encoder) addAttachedPictureFrame(thumbnail metadata.Thumbnail) {
 
 	mimeType := strings.TrimSpace(thumbnail.MIMEType)
 	if mimeType == "" {
-		mimeType = http.DetectContentType(thumbnail.Data)
+		mimeType = metadata.DetectImageMIME(thumbnail.Data)
 	}
 
 	pictureType := byte(thumbnail.PictureType)

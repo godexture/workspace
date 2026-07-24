@@ -22,17 +22,20 @@ execSync(
 
 // The generated worker.js always fetches its wasm module as 'main.wasm'
 // relative to its own URL, so the build output must use that name.
+// TinyGo selects the js/wasm (syscall/js) target via -target, not via the
+// GOOS/GOARCH env vars used by the standard Go toolchain.
 console.log("Building WASM...");
-execSync("go build -o ../js/dist/main.wasm .", {
+execSync("tinygo build -target wasm -o ../js/dist/main.wasm .", {
     cwd: path.join(__dirname, "../../wasm"),
-    env: { ...process.env, GOOS: "js", GOARCH: "wasm" },
     stdio: "inherit",
 });
 
+// TinyGo ships its own wasm_exec.js tailored to its runtime; it is not
+// interchangeable with the standard Go distribution's copy.
 console.log("Copying wasm_exec.js...");
-const goroot = execSync("go env GOROOT").toString().trim();
+const tinygoroot = execSync("tinygo env TINYGOROOT").toString().trim();
 fs.copyFileSync(
-    path.join(goroot, "lib/wasm/wasm_exec.js"),
+    path.join(tinygoroot, "targets/wasm_exec.js"),
     path.join(distDir, "wasm_exec.js"),
 );
 

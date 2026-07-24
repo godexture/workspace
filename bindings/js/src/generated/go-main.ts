@@ -77,21 +77,34 @@ export class GoMain {
   }
 
   /**
-   * Resolve negotiates a pipeline for input against the JSON-encoded spec
-   * without building or running it, returning the resolved node/edge topology
-   * as JSON. Used to preview a pipeline before starting a conversion.
+   * DescribeFilter resolves a filter's editable configuration and port topology
+   * for the given structural parameters.
    */
-  resolve(input: Uint8Array, specJSON: string): Promise<string> {
-    return this.call<string>("resolve", [input, specJSON]);
+  describeFilter(name: string, parameters: {[key: string]: string}): Promise<string> {
+    return this.call<string>("describeFilter", [name, parameters]);
   }
 
   /**
-   * Start negotiates, builds, and begins a conversion in the background,
-   * returning a job ID. Poll Snapshot for progress and call Result once the
-   * job has finished.
+   * Resolve negotiates a pipeline for inputs against the JSON-encoded spec
+   * without building or running it, returning the resolved node/edge topology
+   * as JSON. Used to preview a pipeline before starting a conversion.
    */
-  start(input: Uint8Array, specJSON: string): Promise<string> {
-    return this.call<string>("start", [input, specJSON]);
+  resolve(mainInput: Uint8Array, auxInputs: {[key: string]: Uint8Array}, specJSON: string): Promise<string> {
+    return this.call<string>("resolve", [mainInput, auxInputs, specJSON]);
+  }
+
+  /**
+   * Start negotiates, builds, and begins a conversion in the background under
+   * jobID (chosen by the caller, since Start's own return value only reaches
+   * JS once the conversion is done -- see reportProgress). onProgress is
+   * invoked with a JSON-encoded Progress a few times a second until the job
+   * finishes, and once more with the final outcome.
+   */
+  start(jobID: string, mainInput: Uint8Array, auxInputs: {[key: string]: Uint8Array}, specJSON: string, onProgress: (arg0: string) => void): Promise<string> {
+    const onProgressId = this.registerCallback(onProgress as (...args: unknown[]) => void);
+    return this.call<string>("start", [jobID, mainInput, auxInputs, specJSON, onProgressId]).finally(() => {
+      this.callbacks.delete(onProgressId);
+    });
   }
 
   /**

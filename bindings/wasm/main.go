@@ -3,12 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/conversion"
@@ -28,15 +28,25 @@ func Catalog() (string, error) {
 	return marshal(catalog.Build())
 }
 
-// Resolve negotiates a pipeline for input against the JSON-encoded spec
+// DescribeFilter resolves a filter's editable configuration and port topology
+// for the given structural parameters.
+func DescribeFilter(name string, parameters map[string]string) (string, error) {
+	entry, err := catalog.DescribeFilter(name, parameters)
+	if err != nil {
+		return "", err
+	}
+	return marshal(entry)
+}
+
+// Resolve negotiates a pipeline for inputs against the JSON-encoded spec
 // without building or running it, returning the resolved node/edge topology
 // as JSON. Used to preview a pipeline before starting a conversion.
-func Resolve(input []byte, specJSON string) (string, error) {
+func Resolve(mainInput []byte, auxInputs map[string][]byte, specJSON string) (string, error) {
 	spec, err := unmarshalSpec(specJSON)
 	if err != nil {
 		return "", err
 	}
-	geometry, err := conversion.Negotiate(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, io.Discard, spec)
+	geometry, err := conversion.Negotiate(context.Background(), inputSet(mainInput, auxInputs), io.Discard, spec)
 	if err != nil {
 		return "", err
 	}
@@ -44,20 +54,69 @@ func Resolve(input []byte, specJSON string) (string, error) {
 	return marshal(geometry.Description())
 }
 
-// Start negotiates, builds, and begins a conversion in the background,
-// returning a job ID. Poll Snapshot for progress and call Result once the
-// job has finished.
-func Start(input []byte, specJSON string) (string, error) {
+// Start negotiates, builds, and begins a conversion in the background under
+// jobID (chosen by the caller, since Start's own return value only reaches
+// JS once the conversion is done -- see reportProgress). onProgress is
+// invoked with a JSON-encoded Progress a few times a second until the job
+// finishes, and once more with the final outcome.
+func Start(jobID string, mainInput []byte, auxInputs map[string][]byte, specJSON string, onProgress func(string)) (string, error) {
 	spec, err := unmarshalSpec(specJSON)
 	if err != nil {
 		return "", err
 	}
 	output := &bytes.Buffer{}
-	job, err := conversion.StartJob(context.Background(), conversion.InputSet{Main: bytes.NewReader(input)}, output, spec)
+	job, err := conversion.StartJob(context.Background(), inputSet(mainInput, auxInputs), output, spec)
 	if err != nil {
 		return "", err
 	}
-	return jobs.add(&jobEntry{job: job, output: output}), nil
+	if err := jobs.add(jobID, &jobEntry{job: job, output: output}); err != nil {
+		job.Close()
+		return "", err
+	}
+	go reportProgress(job, onProgress)
+	return jobID, nil
+}
+
+// reportProgress pushes progress snapshots to onProgress until job finishes.
+// Goroutines on js/wasm are scheduled cooperatively with no real
+// preemption, so a CPU-bound conversion never hands control back to the JS
+// event loop on its own -- control only returns once every goroutine is
+// blocked on something JS-mediated. A time.Sleep/time.Ticker here would
+// never fire mid-conversion for the same reason (its timer callback can't
+// run until JS regains control), so this instead spins on runtime.Gosched,
+// which is a purely internal scheduler yield: it interleaves with the
+// pipeline's own goroutines (which yield constantly at their channel
+// hand-offs) without needing a JS round-trip.
+func reportProgress(job *conversion.Job, onProgress func(string)) {
+	const interval = 200 * time.Millisecond
+	last := time.Now()
+	for {
+		select {
+		case <-job.Done():
+			pushSnapshot(job, onProgress)
+			return
+		default:
+		}
+		if time.Since(last) >= interval {
+			pushSnapshot(job, onProgress)
+			last = time.Now()
+		}
+		runtime.Gosched()
+	}
+}
+
+func pushSnapshot(job *conversion.Job, onProgress func(string)) {
+	if data, err := marshal(job.Snapshot()); err == nil {
+		onProgress(data)
+	}
+}
+
+func inputSet(mainInput []byte, auxInputs map[string][]byte) conversion.InputSet {
+	aux := make(map[string]io.ReadSeeker, len(auxInputs))
+	for name, input := range auxInputs {
+		aux[name] = bytes.NewReader(input)
+	}
+	return conversion.InputSet{Main: bytes.NewReader(mainInput), Aux: aux}
 }
 
 // Snapshot reports a job's current progress and outcome as JSON.
@@ -107,12 +166,14 @@ type jobStore struct {
 	byID map[string]*jobEntry
 }
 
-func (s *jobStore) add(entry *jobEntry) string {
-	id := newJobID()
+func (s *jobStore) add(id string, entry *jobEntry) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.byID[id]; exists {
+		return fmt.Errorf("job %q already exists", id)
+	}
 	s.byID[id] = entry
-	s.mu.Unlock()
-	return id
+	return nil
 }
 
 func (s *jobStore) get(id string) (*jobEntry, error) {
@@ -129,12 +190,6 @@ func (s *jobStore) remove(id string) {
 	s.mu.Lock()
 	delete(s.byID, id)
 	s.mu.Unlock()
-}
-
-func newJobID() string {
-	buf := make([]byte, 8)
-	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
 }
 
 func marshal(value any) (string, error) {

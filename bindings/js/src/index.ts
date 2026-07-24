@@ -15,6 +15,12 @@ export interface PluginEntry {
     fields: PluginField[];
 }
 
+export interface FilterEntry extends PluginEntry {
+    parameters: PluginField[];
+    inputs: string[];
+    outputs: string[];
+}
+
 export interface OutputFormat {
     muxer: string;
     extensions: string[];
@@ -25,7 +31,7 @@ export interface OutputFormat {
 export interface Catalog {
     demuxers: PluginEntry[];
     decoders: PluginEntry[];
-    filters: PluginEntry[];
+    filters: FilterEntry[];
     encoders: PluginEntry[];
     muxers: PluginEntry[];
     outputs: OutputFormat[];
@@ -36,12 +42,28 @@ export interface PluginSpec {
     values?: Record<string, string>;
 }
 
-export type FilterSpec = PluginSpec;
+export interface PortRef {
+    alias: string;
+    port?: string;
+}
+
+export interface FilterSpec extends PluginSpec {
+    alias?: string;
+    inputs?: Record<string, PortRef>;
+    parameters?: Record<string, string>;
+}
+
+export interface AuxInputSpec {
+    demuxer?: PluginSpec;
+    decoder?: PluginSpec;
+}
 
 export interface ConversionSpec {
     demuxer?: PluginSpec;
     decoder?: PluginSpec;
     filters?: FilterSpec[];
+    auxInputs?: Record<string, AuxInputSpec>;
+    sink?: PortRef;
     codec?: string;
     encoder?: PluginSpec;
     muxer: PluginSpec;
@@ -91,6 +113,7 @@ export interface PipelineEdge {
     FromPort: string;
     ToNode: string;
     ToPort: string;
+    Stream: StreamInfo;
     ProgressSource: boolean;
 }
 
@@ -99,9 +122,17 @@ export interface PipelineDescription {
     Edges: PipelineEdge[];
 }
 
+export interface InputSet {
+    main: Uint8Array;
+    aux?: Record<string, Uint8Array>;
+}
+
 // Godexture wraps the worker-mode WASM bindings with a typed, JSON-free API.
-// Every call runs in a Web Worker so it never blocks the calling thread;
-// long-running conversions are polled via snapshot() rather than callbacks.
+// Every call runs in a Web Worker so it never blocks the calling thread.
+// start()'s own promise doesn't resolve until the conversion finishes
+// (goroutines on js/wasm are scheduled cooperatively, so the worker can't
+// hand control back to JS mid-run); its onProgress callback is the only way
+// to observe progress before then.
 export class Godexture {
     private goMain?: GoMain;
 
@@ -130,14 +161,34 @@ export class Godexture {
         return JSON.parse(await this.main().catalog());
     }
 
-    /** Negotiates a pipeline for input against spec without running it. */
-    async resolvePipeline(input: Uint8Array, spec: ConversionSpec): Promise<PipelineDescription> {
-        return JSON.parse(await this.main().resolve(input, JSON.stringify(spec)));
+    async describeFilter(
+        name: string,
+        parameters: Record<string, string> = {},
+    ): Promise<FilterEntry> {
+        return JSON.parse(await this.main().describeFilter(name, parameters));
     }
 
-    /** Begins a conversion in the background and returns a job ID. */
-    async start(input: Uint8Array, spec: ConversionSpec): Promise<string> {
-        return this.main().start(input, JSON.stringify(spec));
+    /** Negotiates a pipeline for input against spec without running it. */
+    async resolvePipeline(inputs: InputSet, spec: ConversionSpec): Promise<PipelineDescription> {
+        return JSON.parse(await this.main().resolve(inputs.main, inputs.aux ?? {}, JSON.stringify(spec)));
+    }
+
+    /**
+     * Begins a conversion in the background under jobId (chosen by the
+     * caller) and returns it once the conversion finishes. onProgress is
+     * called with live updates in the meantime -- it's the only way to
+     * observe progress before then, since the returned promise itself
+     * doesn't resolve until the job is done.
+     */
+    async start(
+        jobId: string,
+        inputs: InputSet,
+        spec: ConversionSpec,
+        onProgress: (progress: Progress) => void,
+    ): Promise<string> {
+        return this.main().start(jobId, inputs.main, inputs.aux ?? {}, JSON.stringify(spec), (data) => {
+            onProgress(JSON.parse(data));
+        });
     }
 
     /** Polls a job's current progress and outcome. */

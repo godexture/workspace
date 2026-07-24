@@ -1,34 +1,28 @@
 .player {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: var(--space-2);
 }
 
 .header {
     display: flex;
-    justify-content: space-between;
     align-items: baseline;
-    font-size: 0.85rem;
+    justify-content: space-between;
+    font-size: 0.76rem;
 }
 
 .label {
+    color: var(--color-muted);
     font-weight: 600;
 }
 
 .size {
-    color: var(--color-muted);
+    color: var(--color-dim);
     font-family: var(--font-mono);
-    font-size: 0.75rem;
-}
-
-.download {
-    align-self: flex-start;
-    font-size: 0.8rem;
-    color: var(--color-accent);
+    font-size: 0.68rem;
 }
 
 .empty {
-    color: var(--color-muted);
-    font-size: 0.85rem;
-    margin: 0;
+    color: var(--color-dim);
+    font-size: 0.76rem;
 }

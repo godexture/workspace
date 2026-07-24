@@ -2,7 +2,7 @@
 
 package config
 
-func (v EQType) Valid() bool {
+func (v EqualizerType) Valid() bool {
 	switch v {
 	case "peaking", "lowshelf", "highshelf", "lowpass", "highpass":
 		return true

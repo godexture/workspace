@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/media"
@@ -19,17 +18,30 @@ type PluginSpec struct {
 	Values map[string]string `json:"values,omitempty"`
 }
 
-type FilterSpec struct {
-	PluginSpec
-	Alias      string            `json:"alias,omitempty"`
-	Inputs     map[string]string `json:"inputs,omitempty"`
-	Parameters map[string]string `json:"parameters,omitempty"`
+// PortRef names one port of one graph node: a filter alias, an auxiliary
+// input name, or MainInputAlias. An empty Port defaults to "out".
+type PortRef struct {
+	Alias string `json:"alias"`
+	Port  string `json:"port,omitempty"`
 }
 
+// MainInputAlias is the reserved source alias for the main input's decoded
+// stream (see routing.MainInputAlias).
+const MainInputAlias = routing.MainInputAlias
+
+type FilterSpec struct {
+	PluginSpec
+	Alias      string             `json:"alias,omitempty"`
+	Inputs     map[string]PortRef `json:"inputs,omitempty"`
+	Parameters map[string]string  `json:"parameters,omitempty"`
+}
+
+// AuxInputSpec is a named additional source, demuxed and decoded like the
+// main input. It has no filter chain of its own — any processing on the way
+// to a consumer is just an ordinary FilterSpec wired from this alias.
 type AuxInputSpec struct {
-	Demuxer *PluginSpec  `json:"demuxer,omitempty"`
-	Decoder *PluginSpec  `json:"decoder,omitempty"`
-	Filters []FilterSpec `json:"filters,omitempty"`
+	Demuxer *PluginSpec `json:"demuxer,omitempty"`
+	Decoder *PluginSpec `json:"decoder,omitempty"`
 }
 
 type InputSet struct {
@@ -38,14 +50,18 @@ type InputSet struct {
 }
 
 type Spec struct {
-	Demuxer     *PluginSpec             `json:"demuxer,omitempty"`
-	Decoder     *PluginSpec             `json:"decoder,omitempty"`
-	Filters     []FilterSpec            `json:"filters,omitempty"`
-	AuxInputs   map[string]AuxInputSpec `json:"auxInputs,omitempty"`
-	Codec       string                  `json:"codec,omitempty"`
-	Encoder     *PluginSpec             `json:"encoder,omitempty"`
-	Muxer       PluginSpec              `json:"muxer"`
-	Parallelism int                     `json:"parallelism,omitempty"`
+	Demuxer   *PluginSpec             `json:"demuxer,omitempty"`
+	Decoder   *PluginSpec             `json:"decoder,omitempty"`
+	Filters   []FilterSpec            `json:"filters,omitempty"`
+	AuxInputs map[string]AuxInputSpec `json:"auxInputs,omitempty"`
+	// Sink names the port that feeds the encoder. nil resolves to the
+	// default: the last filter's "out" port, or (with no filters) the main
+	// input directly.
+	Sink        *PortRef    `json:"sink,omitempty"`
+	Codec       string      `json:"codec,omitempty"`
+	Encoder     *PluginSpec `json:"encoder,omitempty"`
+	Muxer       PluginSpec  `json:"muxer"`
+	Parallelism int         `json:"parallelism,omitempty"`
 }
 
 type Resolved struct {
@@ -55,6 +71,7 @@ type Resolved struct {
 	DecodeConfig registry.Configuration
 	Filters      []routing.FilterSpec
 	AuxInputs    map[string]resolvedAuxInput
+	Sink         *routing.PortRef
 	Encoder      registry.EncoderManifest
 	EncodeConfig registry.Configuration
 	Muxer        registry.MuxerManifest
@@ -68,7 +85,6 @@ type resolvedAuxInput struct {
 	DemuxConfig  registry.Configuration
 	Decoder      registry.DecoderManifest
 	DecodeConfig registry.Configuration
-	Filters      []routing.FilterSpec
 }
 
 func Resolve(spec Spec) (Resolved, error) {
@@ -143,17 +159,18 @@ func Resolve(spec Spec) (Resolved, error) {
 		if err != nil {
 			return Resolved{}, err
 		}
-		auxFilters, err := resolveFilters(aux.Filters)
-		if err != nil {
-			return Resolved{}, err
-		}
-		auxInputs[name] = resolvedAuxInput{Demuxer: demuxer, DemuxConfig: demuxConfig, Decoder: decoder, DecodeConfig: decodeConfig, Filters: auxFilters}
+		auxInputs[name] = resolvedAuxInput{Demuxer: demuxer, DemuxConfig: demuxConfig, Decoder: decoder, DecodeConfig: decodeConfig}
+	}
+
+	var sink *routing.PortRef
+	if spec.Sink != nil {
+		sink = &routing.PortRef{Alias: spec.Sink.Alias, Port: spec.Sink.Port}
 	}
 
 	return Resolved{
 		Demuxer: demuxer, DemuxConfig: demuxConfig,
 		Decoder: decoder, DecodeConfig: decodeConfig,
-		Filters: filters, AuxInputs: auxInputs,
+		Filters: filters, AuxInputs: auxInputs, Sink: sink,
 		Encoder: encoder, EncodeConfig: encodeConfig,
 		Muxer: muxer, MuxConfig: muxConfig, Codec: codec,
 		Resources: registry.ResourceBudget{Parallelism: spec.Parallelism},
@@ -174,7 +191,14 @@ func resolveFilters(filters []FilterSpec) ([]routing.FilterSpec, error) {
 		if configErr != nil {
 			return nil, configErr
 		}
-		resolved = append(resolved, routing.FilterSpec{Alias: filterSpec.Alias, Config: config, Inputs: maps.Clone(filterSpec.Inputs)})
+		var inputs map[string]routing.PortRef
+		if filterSpec.Inputs != nil {
+			inputs = make(map[string]routing.PortRef, len(filterSpec.Inputs))
+			for port, ref := range filterSpec.Inputs {
+				inputs[port] = routing.PortRef{Alias: ref.Alias, Port: ref.Port}
+			}
+		}
+		resolved = append(resolved, routing.FilterSpec{Alias: filterSpec.Alias, Config: config, Inputs: inputs, Manifest: filter})
 	}
 	return resolved, nil
 }
@@ -224,7 +248,7 @@ func Negotiate(ctx context.Context, inputs InputSet, output io.Writer, spec Spec
 			return nil, invalidSpec(fmt.Sprintf("auxiliary input %q is nil", name))
 		}
 		configured := resolved.AuxInputs[name]
-		aux[name] = routing.AuxInputSpec{Source: source, DemuxManifest: configured.Demuxer, DemuxConfig: configured.DemuxConfig, DecoderManifest: configured.Decoder, DecodeConfig: configured.DecodeConfig, Filters: configured.Filters}
+		aux[name] = routing.AuxInputSpec{Source: source, DemuxManifest: configured.Demuxer, DemuxConfig: configured.DemuxConfig, DecoderManifest: configured.Decoder, DecodeConfig: configured.DecodeConfig}
 	}
 	for name := range resolved.AuxInputs {
 		if _, ok := inputs.Aux[name]; !ok {
@@ -237,6 +261,7 @@ func Negotiate(ctx context.Context, inputs InputSet, output io.Writer, spec Spec
 		DecoderManifest: resolved.Decoder, DecodeConfig: resolved.DecodeConfig,
 		Filters:         resolved.Filters,
 		AuxInputs:       aux,
+		Sink:            resolved.Sink,
 		EncoderManifest: resolved.Encoder, TargetCodec: resolved.Codec, EncodeConfig: resolved.EncodeConfig,
 		MuxManifest: resolved.Muxer, MuxConfig: resolved.MuxConfig,
 		Resources: resolved.Resources,

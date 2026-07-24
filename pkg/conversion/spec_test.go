@@ -158,9 +158,66 @@ func TestBuildPreloadsNamedAuxiliaryInput(t *testing.T) {
 	}, &output, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 		Filters: []conversion.FilterSpec{{
-			PluginSpec: conversion.PluginSpec{Name: "convolve", Values: map[string]string{"wet-dry-mix": "1"}},
-			Inputs:     map[string]string{"ir": "IR"},
+			PluginSpec: conversion.PluginSpec{Name: "convolver", Values: map[string]string{"wet-dry-mix": "1"}},
+			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "IR"}},
 		}},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output.Len() == 0 {
+		t.Fatal("Run() produced no output")
+	}
+}
+
+// TestBuildSplitsStreamThroughReverbAndDelayThenMixes exercises the graph
+// negotiator's fan-out/fan-in support: "split" (a 1-in/2-out mixer, i.e. a
+// tee) forks the main stream, "reverb" and "delay" each process one branch,
+// and "join" (a 2-in/1-out mixer) mixes them back into the single stream the
+// encoder reads. Since a mixer's ports are always "in0".."out0".. rather
+// than the conventional "in"/"out", split's "in0" and join's output both
+// need explicit wiring (join.out0 via Spec.Sink) instead of the declaration-
+// order default chain that plain single-port filters get for free.
+func TestBuildSplitsStreamThroughReverbAndDelayThenMixes(t *testing.T) {
+	var mainWAV, output bytes.Buffer
+	writeTestWAV(t, &mainWAV)
+
+	built, err := conversion.Build(context.Background(), conversion.InputSet{
+		Main: bytes.NewReader(mainWAV.Bytes()),
+	}, &output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{
+			{
+				PluginSpec: conversion.PluginSpec{Name: "mixer"},
+				Alias:      "split",
+				Parameters: map[string]string{"in": "1", "out": "2"},
+				Inputs:     map[string]conversion.PortRef{"in0": {Alias: conversion.MainInputAlias}},
+			},
+			{
+				PluginSpec: conversion.PluginSpec{Name: "reverb"},
+				Alias:      "reverb",
+				Inputs:     map[string]conversion.PortRef{"in": {Alias: "split", Port: "out0"}},
+			},
+			{
+				PluginSpec: conversion.PluginSpec{Name: "delay"},
+				Alias:      "delay",
+				Inputs:     map[string]conversion.PortRef{"in": {Alias: "split", Port: "out1"}},
+			},
+			{
+				PluginSpec: conversion.PluginSpec{Name: "mixer"},
+				Alias:      "join",
+				Parameters: map[string]string{"in": "2", "out": "1"},
+				Inputs: map[string]conversion.PortRef{
+					"in0": {Alias: "reverb"},
+					"in1": {Alias: "delay"},
+				},
+			},
+		},
+		Sink: &conversion.PortRef{Alias: "join", Port: "out0"},
 	}, pipeline.ObservationOff)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -185,8 +242,8 @@ func TestNegotiateResamplesConvolutionImpulseResponseToMainRate(t *testing.T) {
 	}, &output, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 		Filters: []conversion.FilterSpec{{
-			PluginSpec: conversion.PluginSpec{Name: "convolve"},
-			Inputs:     map[string]string{"ir": "ir"},
+			PluginSpec: conversion.PluginSpec{Name: "convolver"},
+			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "ir"}},
 		}},
 	})
 	if err != nil {

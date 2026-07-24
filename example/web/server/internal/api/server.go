@@ -6,7 +6,6 @@ package api
 import (
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/godexture/example-web/internal/jobs"
 	"github.com/godexture/sdk/catalog"
@@ -41,6 +40,7 @@ func New(jobStore *jobs.Store, assetsDir string, maxUploadBytes int64) *echo.Ech
 
 	api := e.Group("/api")
 	api.GET("/catalog", s.handleCatalog)
+	api.POST("/filters/describe", s.handleDescribeFilter)
 	api.GET("/presets", s.handlePresets)
 	api.GET("/presets/:id/audio", s.handlePresetAudio)
 	api.POST("/pipelines/resolve", s.handleResolve)
@@ -54,6 +54,21 @@ func New(jobStore *jobs.Store, assetsDir string, maxUploadBytes int64) *echo.Ech
 
 func (s *Server) handleCatalog(c echo.Context) error {
 	return writeJSON(c, http.StatusOK, s.catalog)
+}
+
+func (s *Server) handleDescribeFilter(c echo.Context) error {
+	var request struct {
+		Name       string            `json:"name"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := c.Bind(&request); err != nil {
+		return writeError(c, conversion.NewError(conversion.CodeInvalidSpec, "invalid filter description request: "+err.Error()))
+	}
+	entry, err := catalog.DescribeFilter(request.Name, request.Parameters)
+	if err != nil {
+		return writeError(c, conversion.NewError(conversion.CodeInvalidSpec, err.Error()))
+	}
+	return writeJSON(c, http.StatusOK, entry)
 }
 
 func (s *Server) handlePresets(c echo.Context) error {
@@ -77,13 +92,13 @@ func (s *Server) handleResolve(c echo.Context) error {
 	if err != nil {
 		return writeError(c, err)
 	}
-	input, err := s.openPreviewInput(c)
+	inputs, closeInputs, err := s.openPreviewInputs(c, spec)
 	if err != nil {
 		return writeError(c, err)
 	}
-	defer input.Close()
+	defer closeInputs()
 
-	geometry, err := conversion.Negotiate(c.Request().Context(), conversion.InputSet{Main: input}, io.Discard, spec)
+	geometry, err := conversion.Negotiate(c.Request().Context(), inputs, io.Discard, spec)
 	if err != nil {
 		return writeError(c, err)
 	}
@@ -100,16 +115,14 @@ func (s *Server) handleCreateConversion(c echo.Context) error {
 	if err != nil {
 		return writeError(c, err)
 	}
-	path, owned, err := s.prepareJobInput(c)
+	inputs, err := s.prepareJobInputs(c, spec)
 	if err != nil {
 		return writeError(c, err)
 	}
 
-	job, err := s.jobs.Start(path, owned, spec)
+	job, err := s.jobs.Start(inputs, spec)
 	if err != nil {
-		if owned {
-			_ = os.Remove(path)
-		}
+		removeOwnedInputs(inputs)
 		return writeError(c, err)
 	}
 	return writeJSON(c, http.StatusCreated, map[string]string{"id": job.ID})

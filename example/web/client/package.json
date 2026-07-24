@@ -5,12 +5,15 @@
     "type": "module",
     "scripts": {
         "build": "bun run prepare-wasm && bunx --bun tsc -p tsconfig.app.json --noEmit && bunx --bun vite build",
+        "test": "bun test test",
         "dev": "bun run prepare-wasm && vite",
         "prepare-wasm": "bun run scripts/copy-wasm-assets.ts",
         "preview": "vite preview"
     },
     "dependencies": {
+        "@dagrejs/dagre": "^3.0.0",
         "@godexture/js": "workspace:*",
+        "@xyflow/react": "^12.11.2",
         "axios": "1.18.1"
     },
     "devDependencies": {
