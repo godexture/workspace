@@ -1,6 +1,24 @@
 package media
 
-import "github.com/godexture/sdk/pool"
+import (
+	"sync"
+
+	"github.com/godexture/sdk/pool"
+)
+
+// audioFramePool reuses *AudioFrame objects the way packetPool reuses
+// *Packet (see factory_packet.go): freeFunc is bound once per pooled object,
+// not per NewAudioFrame call, so repeated frame construction doesn't pay for
+// a fresh struct, planes slice, and closure on every call.
+var audioFramePool sync.Pool
+
+func init() {
+	audioFramePool.New = func() any {
+		frame := &AudioFrame{}
+		frame.freeFunc = frame.free
+		return frame
+	}
+}
 
 type AudioFrameOption func(*AudioFrame)
 
@@ -24,14 +42,18 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 	b := pool.Get(totalBytes)
 	(*b) = (*b)[:totalBytes]
 
-	frame := &AudioFrame{
-		Format:        format,
-		BitsPerSample: defaultBitsPerSample(format),
-		Layout:        layout,
-		SampleRate:    sampleRate,
-		Samples:       samples,
-		baseData:      b,
-		planes:        make([][]byte, channels),
+	frame := audioFramePool.Get().(*AudioFrame)
+	frame.baseData = b
+	frame.Format = format
+	frame.BitsPerSample = defaultBitsPerSample(format)
+	frame.Layout = layout
+	frame.SampleRate = sampleRate
+	frame.Samples = samples
+	frame.pts = 0
+	if cap(frame.planes) < channels {
+		frame.planes = make([][]byte, channels)
+	} else {
+		frame.planes = frame.planes[:channels]
 	}
 	frame.refCount.Store(1)
 
@@ -50,11 +72,27 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 		opt(frame)
 	}
 
-	frame.Init(func() {
-		pool.Put(b)
-	})
-
 	return frame
+}
+
+// free returns the frame's byte payload to the buffer pool and the frame
+// itself to audioFramePool. It is bound to freeFunc once per pooled object
+// (see audioFramePool.New), so it always reads this call's current field
+// values rather than values captured at bind time.
+func (f *AudioFrame) free() {
+	pool.Put(f.baseData)
+	f.baseData = nil
+	f.Format = SampleFormatUnknown
+	f.BitsPerSample = 0
+	f.Layout = ChannelLayout{}
+	f.SampleRate = 0
+	f.Samples = 0
+	f.pts = 0
+	for i := range f.planes {
+		f.planes[i] = nil
+	}
+	f.planes = f.planes[:0]
+	audioFramePool.Put(f)
 }
 
 func defaultBitsPerSample(format SampleFormat) int {
