@@ -25,11 +25,20 @@ type pendingEntry struct {
 }
 
 type frameJob struct {
+	d      *Decoder
 	data   []byte
 	pts    media.Pts
 	info   streaminfo.StreamInfo
 	strict bool
 	entry  *pendingEntry
+}
+
+// Run lets frameJob be submitted to a WorkerPool directly (see
+// registry.Task), avoiding the extra closure allocation a func() wrapper
+// would need on top of the job struct that must already be heap-allocated to
+// outlive SendPacket.
+func (job *frameJob) Run() {
+	job.d.runJob(*job)
 }
 
 // runJob runs on a shared pool worker, not one dedicated to this decoder, so
