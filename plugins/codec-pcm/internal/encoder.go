@@ -38,6 +38,13 @@ type Encoder struct {
 
 	imaState *imaadpcm.EncodeState
 	adpcm    params.ADPCM
+
+	// ljScratch/s16Scratch are reused across SendFrame calls by
+	// leftJustifyPCM/convertF32ToS16 instead of allocating a fresh []byte
+	// per frame. Each call's output is fully copied out (into a *media.Packet
+	// or e.buf) before the next SendFrame runs, so reuse is safe.
+	ljScratch  []byte
+	s16Scratch []byte
 }
 
 func adpcmParametersFromStream(stream media.StreamInfo, target media.CodecID) (params.ADPCM, bool, error) {
@@ -94,10 +101,10 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 		return errors.New("codec-pcm encoder expected *media.AudioFrame")
 	}
 
-	data := leftJustifyPCM(af.Planes()[0], af.Format, af.BitsPerSample)
+	data := leftJustifyPCM(&e.ljScratch, af.Planes()[0], af.Format, af.BitsPerSample)
 	if e.config.CodecID != media.CodecLPCM {
 		if af.Format == media.SampleFormatF32 {
-			data = convertF32ToS16(data)
+			data = convertF32ToS16(&e.s16Scratch, data)
 		} else if af.Format != media.SampleFormatS16 {
 			return fmt.Errorf("unsupported sample format for pcm encoder: %v", af.Format)
 		}
@@ -230,13 +237,17 @@ func (e *Encoder) resolveADPCMParameters(channels int) (params.ADPCM, error) {
 // leftJustifyPCM shifts samples that occupy only the low BitsPerSample bits of
 // their container format (e.g. 24-bit FLAC output carried in S24/S32 frames)
 // up to full scale, which is what raw LPCM byte streams are expected to hold.
-func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) []byte {
+// scratch is reused (grown as needed) across calls instead of allocating a
+// fresh output buffer every time; *scratch is left untouched when data is
+// returned unchanged (the no-shift-needed path), so callers must not assume
+// the result aliases *scratch.
+func leftJustifyPCM(scratch *[]byte, data []byte, format media.SampleFormat, bitsPerSample int) []byte {
 	containerBits := format.BytesPerSample() * 8
 	if bitsPerSample <= 0 || bitsPerSample >= containerBits {
 		return data
 	}
 	shift := uint(containerBits - bitsPerSample)
-	out := make([]byte, len(data))
+	out := growBytes(*scratch, len(data))
 	switch format {
 	case media.SampleFormatS16:
 		leftJustifyS16(out, data, shift)
@@ -252,12 +263,16 @@ func leftJustifyPCM(data []byte, format media.SampleFormat, bitsPerSample int) [
 	default:
 		return data
 	}
+	*scratch = out
 	return out
 }
 
-func convertF32ToS16(f32Data []byte) []byte {
+// convertF32ToS16 reuses scratch (grown as needed) across calls instead of
+// allocating a fresh output buffer every time.
+func convertF32ToS16(scratch *[]byte, f32Data []byte) []byte {
 	samples := len(f32Data) / 4
-	s16Data := make([]byte, samples*2)
+	s16Data := growBytes(*scratch, samples*2)
+	*scratch = s16Data
 	source := dsp.AsSamples[float32](f32Data)
 	destination := dsp.AsSamples[int16](s16Data)
 	if source != nil && destination != nil {
@@ -283,4 +298,13 @@ func convertF32ToS16(f32Data []byte) []byte {
 		binary.LittleEndian.PutUint16(s16Data[i*2:i*2+2], uint16(s16Val))
 	}
 	return s16Data
+}
+
+// growBytes returns dst resliced to length n if it already has the capacity,
+// or a fresh []byte of length n otherwise.
+func growBytes(dst []byte, n int) []byte {
+	if cap(dst) < n {
+		return make([]byte, n)
+	}
+	return dst[:n]
 }
