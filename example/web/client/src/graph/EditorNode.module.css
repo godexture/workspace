@@ -1,57 +1,73 @@
 .node {
-    width: 210px;
-    min-height: 82px;
-    position: relative;
+    --kind-color: var(--color-accent);
+
+    width: 168px;
     border: 1px solid var(--color-border);
-    border-radius: calc(var(--radius) / 1.5);
+    border-radius: var(--radius);
     background: var(--color-panel);
-    padding: 0.6rem 0.75rem;
-    box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+    overflow: hidden;
 }
+
+.kindSource { --kind-color: var(--color-source); }
+.kindFilter { --kind-color: var(--color-filter); }
+.kindOutput { --kind-color: var(--color-output); }
 
 .selected {
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 28%, transparent);
+    box-shadow: 0 0 0 2px var(--kind-color);
 }
-
-.source { border-left: 4px solid #8b5cf6; }
-.filter { border-left: 4px solid var(--color-accent); }
-.output { border-left: 4px solid var(--color-success); }
 
 .header {
-    color: var(--color-muted);
-    font-size: 0.62rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.detail {
-    margin-top: 0.18rem;
     overflow: hidden;
-    color: var(--color-muted);
-    font-size: 0.72rem;
+    padding: var(--space-3) var(--space-4);
+    background: var(--kind-color);
+    color: #fff;
+    font-size: 0.76rem;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.input,
-.output {
+.ports {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+}
+
+.portColumn {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.22rem;
+}
+
+.portIn,
+.portOut {
     position: relative;
     display: flex;
     align-items: center;
-    min-height: 17px;
+    min-height: 16px;
+    gap: 0.3rem;
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.66rem;
 }
 
-.input { justify-content: flex-start; margin-left: -0.3rem; }
-.output { justify-content: flex-end; margin-right: -0.3rem; }
+.portIn { margin-left: -0.35rem; }
+.portOut { justify-content: flex-end; margin-right: -0.35rem; }
 
-.input :global(.react-flow__handle),
-.output :global(.react-flow__handle) {
+.portIn span,
+.portOut span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.portIn :global(.react-flow__handle),
+.portOut :global(.react-flow__handle) {
     width: 8px;
     height: 8px;
-    border: 1px solid var(--color-panel);
-    background: var(--color-accent);
+    border: 1.6px solid var(--kind-color);
+    border-radius: 50%;
+    background: var(--color-panel);
 }

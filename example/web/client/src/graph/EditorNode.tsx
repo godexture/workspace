@@ -9,41 +9,40 @@ export interface EditorNodeData extends Record<string, unknown> {
 
 export type EditorFlowNode = Node<EditorNodeData, "editor">;
 
+const KIND_CLASS: Record<GraphNode["kind"], string> = {
+    source: styles.kindSource,
+    filter: styles.kindFilter,
+    output: styles.kindOutput,
+};
+
 export function EditorNode({ data, selected }: NodeProps<EditorFlowNode>) {
     const { node } = data;
-    const className = [
-        styles.node,
-        node.kind === "source" ? styles.source : "",
-        node.kind === "filter" ? styles.filter : "",
-        node.kind === "output" ? styles.output : "",
-        selected ? styles.selected : "",
-    ].filter(Boolean).join(" ");
+    const className = [styles.node, KIND_CLASS[node.kind], selected ? styles.selected : ""].join(" ");
+    const inputs = inputPorts(node);
+    const outputs = outputPorts(node);
     return (
         <div className={className}>
-            <div className={styles.header}>{node.kind === "filter" ? "Filter" : node.kind === "source" ? "Input" : "Result"}</div>
-            <strong>{nodeTitle(node)}</strong>
-            <div className={styles.detail}>{detail(node)}</div>
-            {inputPorts(node).map((port) => (
-                <div className={styles.input} key={port}>
-                    <Handle type="target" position={Position.Left} id={port} />
-                    {port}
+            <div className={styles.header}>{nodeTitle(node)}</div>
+            {(inputs.length > 0 || outputs.length > 0) && (
+                <div className={styles.ports}>
+                    <div className={styles.portColumn}>
+                        {inputs.map((port) => (
+                            <div className={styles.portIn} key={port}>
+                                <Handle type="target" position={Position.Left} id={port} />
+                                <span title={port}>{port}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className={styles.portColumn}>
+                        {outputs.map((port) => (
+                            <div className={styles.portOut} key={port}>
+                                <span title={port}>{port}</span>
+                                <Handle type="source" position={Position.Right} id={port} />
+                            </div>
+                        ))}
+                    </div>
                 </div>
-            ))}
-            {outputPorts(node).map((port) => (
-                <div className={styles.output} key={port}>
-                    {port}
-                    <Handle type="source" position={Position.Right} id={port} />
-                </div>
-            ))}
+            )}
         </div>
     );
-}
-
-function detail(node: GraphNode): string {
-    if (node.kind === "source") {
-        if (!node.selection) return "Select audio";
-        return node.selection.kind === "preset" ? `Preset: ${node.selection.presetId}` : node.selection.name;
-    }
-    if (node.kind === "filter") return node.descriptor.description;
-    return node.codec || "Select format";
 }

@@ -1,5 +1,5 @@
 import dagre from "@dagrejs/dagre";
-import { Background, Controls, ReactFlow, Handle, Position, type Edge, type Node, type NodeProps, type NodeTypes } from "@xyflow/react";
+import { Background, Controls, ReactFlow, Handle, MarkerType, Position, type Edge, type Node, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { useMemo } from "react";
 
 import type { NodeStatus, PipelineDescription, PipelineNode } from "../api/types";
@@ -38,7 +38,7 @@ export function ResolvedGraph({ description, liveNodes, error }: ResolvedGraphPr
                 elementsSelectable={false}
                 proOptions={{ hideAttribution: true }}
             >
-                <Background gap={18} size={1} />
+                <Background gap={18} size={1} color="var(--color-border)" />
                 <Controls showInteractive={false} />
             </ReactFlow>
         </div>
@@ -57,7 +57,7 @@ function createFlow(description: PipelineDescription | null, liveNodes?: NodeSta
     const graph = new dagre.graphlib.Graph();
     graph.setDefaultEdgeLabel(() => ({}));
     graph.setGraph({ rankdir: "LR", ranksep: 85, nodesep: 42, marginx: 26, marginy: 26 });
-    for (const node of description.Nodes) graph.setNode(node.ID, { width: 190, height: 86 });
+    for (const node of description.Nodes) graph.setNode(node.ID, { width: 168, height: 78 });
     for (const edge of description.Edges) graph.setEdge(edge.FromNode, edge.ToNode);
     dagre.layout(graph);
     const nodes = description.Nodes.map((node) => {
@@ -65,7 +65,7 @@ function createFlow(description: PipelineDescription | null, liveNodes?: NodeSta
         return {
             id: node.ID,
             type: "resolved",
-            position: { x: position.x - 95, y: position.y - 43 },
+            position: { x: position.x - 84, y: position.y - 39 },
             data: {
                 node,
                 status: status.get(node.ID),
@@ -80,7 +80,8 @@ function createFlow(description: PipelineDescription | null, liveNodes?: NodeSta
         sourceHandle: edge.FromPort,
         target: edge.ToNode,
         targetHandle: edge.ToPort,
-        label: `${edge.FromPort} → ${edge.ToPort}`,
+        type: "smoothstep",
+        markerEnd: { type: MarkerType.ArrowClosed },
         animated: edge.ProgressSource,
         className: edge.ProgressSource ? styles.progressEdge : undefined,
     }));
@@ -89,17 +90,38 @@ function createFlow(description: PipelineDescription | null, liveNodes?: NodeSta
 
 function ResolvedNode({ data }: NodeProps<ResolvedFlowNode>) {
     const state = data.status?.state;
+    const className = [styles.node, state ? styles[`state_${state}`] : ""].filter(Boolean).join(" ");
     return (
-        <div className={[styles.node, state ? styles[`state_${state}`] : ""].join(" ")}>
+        <div className={className}>
+            <div className={styles.header}>
+                <span className={styles.title}>{data.node.Plugin}</span>
+                {data.status && data.status.state !== "unobserved" && <span className={styles.state}>{data.status.state}</span>}
+            </div>
             <div className={styles.role}>
                 {data.node.Role}
-                {data.node.AutoInserted && <span>Auto</span>}
+                {data.node.AutoInserted && <span className={styles.auto}>Auto</span>}
             </div>
-            <strong>{data.node.Plugin}</strong>
-            {data.status && data.status.state !== "unobserved" && <div className={styles.status}>{data.status.state}</div>}
             {data.status?.error && <div className={styles.nodeError}>{data.status.error}</div>}
-            {data.inputs.map((port) => <div className={styles.input} key={port}><Handle type="target" position={Position.Left} id={port} />{port}</div>)}
-            {data.outputs.map((port) => <div className={styles.output} key={port}>{port}<Handle type="source" position={Position.Right} id={port} /></div>)}
+            {(data.inputs.length > 0 || data.outputs.length > 0) && (
+                <div className={styles.ports}>
+                    <div className={styles.portColumn}>
+                        {data.inputs.map((port) => (
+                            <div className={styles.portIn} key={port}>
+                                <Handle type="target" position={Position.Left} id={port} />
+                                <span title={port}>{port}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className={styles.portColumn}>
+                        {data.outputs.map((port) => (
+                            <div className={styles.portOut} key={port}>
+                                <span title={port}>{port}</span>
+                                <Handle type="source" position={Position.Right} id={port} />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

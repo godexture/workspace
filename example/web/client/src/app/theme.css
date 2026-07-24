@@ -1,33 +1,54 @@
 :root {
-    color-scheme: light dark;
+    color-scheme: dark;
 
-    --color-bg: #f5f6f8;
-    --color-panel: #ffffff;
-    --color-border: #dde1e6;
-    --color-text: #1b1f24;
-    --color-muted: #667085;
-    --color-accent: #3660f0;
+    --color-bg: #101114;
+    --color-panel: #17181c;
+    --color-raised: #1f2126;
+    --color-border: #2a2c32;
+    --color-border-strong: #3a3d45;
+    --color-text: #e2e4e9;
+    --color-muted: #888d97;
+    --color-dim: #5b5f68;
+    --color-accent: #5b7cdb;
     --color-accent-contrast: #ffffff;
-    --color-success: #16a34a;
-    --color-warning: #d97706;
-    --color-error: #dc2626;
+    --color-success: #3fa568;
+    --color-warning: #d9922e;
+    --color-error: #e2685f;
+
+    --color-source: #8b7ae0;
+    --color-filter: var(--color-accent);
+    --color-output: var(--color-success);
 
     --font-sans: system-ui, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
     --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
 
-    --radius: 10px;
-    --spacing: 1rem;
+    --space-1: 2px;
+    --space-2: 4px;
+    --space-3: 6px;
+    --space-4: 8px;
+    --space-5: 12px;
+    --space-6: 16px;
+    --space-7: 20px;
+
+    --radius-sm: 2px;
+    --radius: 3px;
+    --radius-lg: 4px;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
     :root {
-        --color-bg: #14161a;
-        --color-panel: #1c1f26;
-        --color-border: #2b2f38;
-        --color-text: #e7e9ee;
-        --color-muted: #9aa2b1;
-        --color-accent: #6d8bff;
-        --color-accent-contrast: #0d1117;
+        color-scheme: light;
+
+        --color-bg: #eceef1;
+        --color-panel: #f5f6f8;
+        --color-raised: #ffffff;
+        --color-border: #d6d9de;
+        --color-border-strong: #b9bec6;
+        --color-text: #1b1f24;
+        --color-muted: #676c76;
+        --color-dim: #9298a2;
+        --color-accent: #3a5fd9;
+        --color-accent-contrast: #ffffff;
     }
 }
 
@@ -46,58 +67,42 @@ body {
     background: var(--color-bg);
     color: var(--color-text);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
 }
 
 button {
     font: inherit;
     color: inherit;
-    background: var(--color-panel);
-    border: 1px solid var(--color-border);
-    border-radius: calc(var(--radius) / 2);
-    padding: 0.45rem 0.9rem;
     cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-    border-color: var(--color-accent);
-}
-
-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-button.primary {
-    background: var(--color-accent);
-    color: var(--color-accent-contrast);
-    border-color: var(--color-accent);
 }
 
 input,
 select {
     font: inherit;
     color: inherit;
-    background: var(--color-bg);
+    background: var(--color-raised);
     border: 1px solid var(--color-border);
-    border-radius: calc(var(--radius) / 3);
-    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
 }
 
-input:focus,
-select:focus,
-button:focus {
-    outline: 2px solid var(--color-accent);
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+    outline: 1px solid var(--color-accent);
     outline-offset: 1px;
 }
 
 h1,
 h2,
-h3 {
+h3,
+h4,
+p {
     margin: 0;
 }
 
 audio {
+    height: 28px;
     width: 100%;
 }

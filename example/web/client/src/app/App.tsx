@@ -12,6 +12,7 @@ import { clearGraph, loadGraph, saveGraph } from "../graph/storage";
 import { ResolvedGraph } from "../graph/ResolvedGraph";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { ResultPanel } from "../components/ResultPanel";
+import { Panel } from "../ui";
 import styles from "./App.module.css";
 
 const CLIENT_MAX_UPLOAD_BYTES = 100 << 20;
@@ -126,7 +127,7 @@ export function App() {
                 <p className={styles.subtitle}>Build audio pipelines visually with Godexture</p>
             </header>
 
-            <main className={styles.grid}>
+            <main className={styles.main}>
                 <GraphEditor
                     graph={graph}
                     files={files}
@@ -143,31 +144,28 @@ export function App() {
                     onReset={resetGraph}
                 />
 
-                <section className={styles.pipelinePanel}>
-                    <h2>Resolved Pipeline</h2>
+                <Panel title="Resolved Pipeline">
                     <ResolvedGraph
                         description={resolved}
                         liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
                         error={resolveError}
                     />
-                </section>
+                </Panel>
 
-                <div className={styles.resultWrapper}>
-                    <ResultPanel
-                        job={job.state}
-                        input={mainInput}
-                        inputSrc={inputSrc}
-                        outputExtension={outputExtension}
-                        canStart={Boolean(compiled.inputs && compiled.spec && resolved && !resolveError)}
-                        onStart={() => {
-                            if (compiled.inputs && compiled.spec && resolved) {
-                                setActiveJobResolved(resolved);
-                                void job.start(compiled.inputs, compiled.spec);
-                            }
-                        }}
-                        onCancel={() => void job.cancel()}
-                    />
-                </div>
+                <ResultPanel
+                    job={job.state}
+                    input={mainInput}
+                    inputSrc={inputSrc}
+                    outputExtension={outputExtension}
+                    canStart={Boolean(compiled.inputs && compiled.spec && resolved && !resolveError)}
+                    onStart={() => {
+                        if (compiled.inputs && compiled.spec && resolved) {
+                            setActiveJobResolved(resolved);
+                            void job.start(compiled.inputs, compiled.spec);
+                        }
+                    }}
+                    onCancel={() => void job.cancel()}
+                />
             </main>
         </div>
     );

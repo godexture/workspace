@@ -1,4 +1,5 @@
 import type { PluginField } from "../api/types";
+import { Field } from "../ui";
 import styles from "./FieldInputs.module.css";
 
 interface FieldInputsProps {
@@ -16,14 +17,13 @@ export function FieldInputs({ fields, values, onChange }: FieldInputsProps) {
     return (
         <div className={styles.grid}>
             {fields.map((field) => (
-                <label key={field.name} className={styles.field} title={field.help}>
-                    <span className={styles.label}>{field.name}</span>
+                <Field key={field.name} label={field.name} hint={field.help}>
                     <FieldControl
                         field={field}
                         value={values[field.name] ?? ""}
                         onChange={(value) => onChange(field.name, value)}
                     />
-                </label>
+                </Field>
             ))}
         </div>
     );

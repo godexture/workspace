@@ -1,0 +1,60 @@
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 26px;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-raised);
+    color: var(--color-text);
+    font-size: 0.76rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+.button:hover:not(:disabled) {
+    border-color: var(--color-border-strong);
+    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-raised));
+}
+
+.button:active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 16%, var(--color-raised));
+}
+
+.button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-contrast);
+}
+
+.primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 85%, black 15%);
+    border-color: color-mix(in srgb, var(--color-accent) 85%, black 15%);
+}
+
+.ghost {
+    background: transparent;
+    border-color: transparent;
+}
+
+.ghost:hover:not(:disabled) {
+    background: var(--color-raised);
+    border-color: var(--color-border);
+}
+
+.danger {
+    border-color: var(--color-error);
+    color: var(--color-error);
+}
+
+.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-error) 12%, var(--color-raised));
+}

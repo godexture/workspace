@@ -1,78 +1,48 @@
-.panel {
-    background: var(--color-panel);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
 .controls {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: var(--space-3);
 }
 
 .status {
-    font-size: 0.8rem;
+    padding: 2px var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-raised);
     color: var(--color-muted);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
-.status_running {
-    color: var(--color-accent);
-}
-
-.status_completed {
-    color: var(--color-success);
-}
-
-.status_failed {
-    color: var(--color-error);
-}
-
-.status_canceled {
-    color: var(--color-warning);
-}
+.status_running { color: var(--color-accent); }
+.status_completed { color: var(--color-success); }
+.status_failed { color: var(--color-error); }
+.status_canceled { color: var(--color-warning); }
 
 .progress {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-}
-
-.progressBarTrack {
-    height: 8px;
-    border-radius: 999px;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    overflow: hidden;
-}
-
-.progressBarFill {
-    height: 100%;
-    background: var(--color-accent);
-    transition: width 0.2s ease;
+    gap: var(--space-2);
 }
 
 .progressStats {
     display: flex;
-    gap: 0.75rem;
-    font-size: 0.75rem;
+    gap: var(--space-4);
     color: var(--color-muted);
     font-family: var(--font-mono);
+    font-size: 0.7rem;
 }
 
 .error {
     color: var(--color-error);
-    font-size: 0.85rem;
-    margin: 0;
+    font-size: 0.8rem;
 }
 
 .comparison {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    gap: var(--space-5);
 }
 
 @media (max-width: 640px) {
