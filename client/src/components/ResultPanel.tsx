@@ -1,6 +1,7 @@
 import { AudioPlayer } from "../audio/AudioPlayer";
 import type { InputSource } from "../conversion/backend/types";
 import type { JobState } from "../conversion/useConversionJob";
+import { Button, Meter, Panel } from "../ui";
 import styles from "./ResultPanel.module.css";
 
 interface ResultPanelProps {
@@ -33,40 +34,26 @@ export function ResultPanel({
     const progress = job.progress;
 
     return (
-        <section className={styles.panel}>
-            <h2>Conversion</h2>
-
+        <Panel
+            title="Conversion"
+            actions={<span className={statusClass(job.phase, styles)}>{PHASE_LABEL[job.phase]}</span>}
+        >
             <div className={styles.controls}>
-                <button
-                    type="button"
-                    className="primary"
+                <Button
+                    variant="primary"
                     onClick={onStart}
                     disabled={!canStart || job.phase === "running"}
                 >
                     Convert
-                </button>
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    disabled={job.phase !== "running"}
-                >
+                </Button>
+                <Button onClick={onCancel} disabled={job.phase !== "running"}>
                     Cancel
-                </button>
-                <span className={statusClass(job.phase, styles)}>
-                    {PHASE_LABEL[job.phase]}
-                </span>
+                </Button>
             </div>
 
             {progress && (
                 <div className={styles.progress}>
-                    <div className={styles.progressBarTrack}>
-                        <div
-                            className={styles.progressBarFill}
-                            style={{
-                                width: `${Math.max(0, Math.min(100, progress.percent))}%`,
-                            }}
-                        />
-                    </div>
+                    <Meter percent={progress.percent} />
                     <div className={styles.progressStats}>
                         {progress.percent >= 0 ? (
                             <span>{progress.percent.toFixed(1)}%</span>
@@ -98,7 +85,7 @@ export function ResultPanel({
                     }
                 />
             </div>
-        </section>
+        </Panel>
     );
 }
 

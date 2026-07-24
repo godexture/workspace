@@ -78,7 +78,7 @@ export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): Graph
                 kind: "source",
                 primary: true,
                 selection: mainPreset ? { kind: "preset", presetId: mainPreset.id } : null,
-                position: { x: 60, y: 180 },
+                position: { x: 60, y: 40 },
             },
             {
                 id: OUTPUT_NODE_ID,
@@ -87,7 +87,7 @@ export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): Graph
                 muxerValues: {},
                 codec: output?.defaultCodec ?? "",
                 encoderValues: {},
-                position: { x: 620, y: 180 },
+                position: { x: 60, y: 260 },
             },
         ],
         edges: [

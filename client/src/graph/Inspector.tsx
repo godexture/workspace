@@ -1,5 +1,6 @@
 import type { Catalog, FilterEntry, PluginEntry, Preset } from "../api/types";
 import { FieldInputs } from "../components/FieldInputs";
+import { Button, Field } from "../ui";
 import { canDeleteNode, type GraphNode, type SourceData } from "./model";
 import styles from "./Inspector.module.css";
 
@@ -31,8 +32,7 @@ export function Inspector({
         return (
             <aside className={styles.panel}>
                 <h3>{node.primary ? "Main audio source" : "Audio source"}</h3>
-                <label className={styles.field}>
-                    <span>Preset</span>
+                <Field label="Preset">
                     <select
                         value={node.selection?.kind === "preset" ? node.selection.presetId : ""}
                         onChange={(event) => onChange({
@@ -43,9 +43,8 @@ export function Inspector({
                         <option value="">Select a preset</option>
                         {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
                     </select>
-                </label>
-                <label className={styles.fileField}>
-                    <span>Upload audio</span>
+                </Field>
+                <Field label="Upload audio">
                     <input
                         type="file"
                         accept="audio/wav,audio/x-wav,audio/flac,audio/mpeg,.wav,.flac,.mp3"
@@ -54,8 +53,8 @@ export function Inspector({
                             if (file) onUpload(node, file);
                         }}
                     />
-                    <small>All source files together: {formatLimit(maxUploadBytes)}</small>
-                </label>
+                    <small className={styles.hint}>All source files together: {formatLimit(maxUploadBytes)}</small>
+                </Field>
                 {node.selection?.kind === "upload" && <p className={styles.hint}>{node.selection.name}</p>}
                 <PluginSelector
                     label="Demuxer"
@@ -105,8 +104,7 @@ export function Inspector({
     return (
         <aside className={styles.panel}>
             <h3>Output</h3>
-            <label className={styles.field}>
-                <span>Format</span>
+            <Field label="Format">
                 <select
                     value={node.muxer}
                     onChange={(event) => {
@@ -123,10 +121,9 @@ export function Inspector({
                 >
                     {catalog.outputs.map((output) => <option key={output.muxer} value={output.muxer}>{output.muxer.toUpperCase()}</option>)}
                 </select>
-            </label>
+            </Field>
             {selectedOutput && (
-                <label className={styles.field}>
-                    <span>Codec</span>
+                <Field label="Codec">
                     <select
                         value={node.codec}
                         onChange={(event) => {
@@ -136,7 +133,7 @@ export function Inspector({
                     >
                         {selectedOutput.codecs.map((codec) => <option key={codec} value={codec}>{codec}</option>)}
                     </select>
-                </label>
+                </Field>
             )}
             <PluginSelector
                 label="Encoder"
@@ -157,7 +154,7 @@ export function Inspector({
 
 function DeleteButton({ node, onDelete }: { node: GraphNode; onDelete: (node: GraphNode) => void }) {
     if (!canDeleteNode(node)) return null;
-    return <button type="button" className={styles.delete} onClick={() => onDelete(node)}>Delete node</button>;
+    return <Button variant="danger" className={styles.delete} onClick={() => onDelete(node)}>Delete node</Button>;
 }
 
 function PluginSelector({
@@ -176,8 +173,7 @@ function PluginSelector({
     const selected = value ? entries.find((entry) => entry.name === value.name) : undefined;
     return (
         <section className={styles.plugin}>
-            <label className={styles.field}>
-                <span>{label}</span>
+            <Field label={label}>
                 <select
                     value={value?.name ?? ""}
                     onChange={(event) => onChange(event.target.value ? { name: event.target.value, values: {} } : undefined)}
@@ -185,7 +181,7 @@ function PluginSelector({
                     {allowAuto && <option value="">Auto</option>}
                     {entries.map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
                 </select>
-            </label>
+            </Field>
             {selected && <FieldInputs fields={selected.fields} values={value?.values ?? {}} onChange={(name, next) => onChange({ name: selected.name, values: { ...value?.values, [name]: next } })} />}
         </section>
     );
