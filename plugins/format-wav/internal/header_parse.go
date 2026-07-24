@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -145,60 +144,8 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 			}
 
 		case wavTagLIST:
-			if chunkSize < 4 {
-				if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-					return wavHeader{}, err
-				}
-				break
-			}
-			var listType [4]byte
-			if _, err := io.ReadFull(r, listType[:]); err != nil {
+			if err := parseLISTChunk(r, chunkSize, listMeta); err != nil {
 				return wavHeader{}, err
-			}
-			if string(listType[:]) == wavTagINFO {
-				remaining := int64(chunkSize) - 4
-				for remaining >= 8 {
-					var subID [4]byte
-					if _, err := io.ReadFull(r, subID[:]); err != nil {
-						return wavHeader{}, err
-					}
-					var subSize uint32
-					if err := binary.Read(r, binary.LittleEndian, &subSize); err != nil {
-						return wavHeader{}, err
-					}
-					remaining -= 8
-
-					if int64(subSize) > remaining {
-						break
-					}
-
-					valBuf := make([]byte, subSize)
-					if _, err := io.ReadFull(r, valBuf); err != nil {
-						return wavHeader{}, err
-					}
-					remaining -= int64(subSize)
-
-					if subSize%2 == 1 {
-						if remaining > 0 {
-							if _, err := r.Seek(1, io.SeekCurrent); err != nil {
-								return wavHeader{}, err
-							}
-							remaining--
-						}
-					}
-
-					valStr := string(bytes.TrimRight(valBuf, "\x00"))
-					mapWavInfoTag(listMeta, string(subID[:]), valStr)
-				}
-				if remaining > 0 {
-					if _, err := r.Seek(remaining, io.SeekCurrent); err != nil {
-						return wavHeader{}, err
-					}
-				}
-			} else {
-				if _, err := r.Seek(int64(chunkSize)-4, io.SeekCurrent); err != nil {
-					return wavHeader{}, err
-				}
 			}
 
 		case wavTagID3, wavTagID3Upper:
