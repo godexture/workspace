@@ -37,10 +37,15 @@ type Decoder struct {
 	// Parallel path (pool != nil): jobs are submitted as tasks to a worker
 	// pool shared with every other parallel-eligible stage in the
 	// conversion. Each task borrows a scratch decodeWorkspace from scratch
-	// so concurrent tasks never contend.
+	// so concurrent tasks never contend. mu/waitCh implement the
+	// completion-notification side of that (see markReady/waitForEntry in
+	// parallel.go): every pending entry that needs to block a waiter shares
+	// this one lazily-created channel instead of owning its own.
 	pool    *registry.WorkerPool
 	scratch sync.Pool
 	closed  bool
+	mu      sync.Mutex
+	waitCh  chan struct{}
 }
 
 // NewDecoder builds a decoder. pool may be nil, in which case packets are
@@ -114,9 +119,8 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	entry := &pendingEntry{done: make(chan struct{})}
 	if d.pool == nil {
-		entry.done = nil
+		entry := &pendingEntry{ready: true}
 		decodeJob(frameJob{
 			data:   pkt.Data(),
 			pts:    pkt.PTS,
@@ -127,6 +131,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		d.pendingQueue = append(d.pendingQueue, entry)
 		return nil
 	}
+	entry := &pendingEntry{}
 	d.pendingQueue = append(d.pendingQueue, entry)
 	job := &frameJob{
 		d:      d,
@@ -162,9 +167,7 @@ func (d *Decoder) ReceiveFrame() (media.Frame, error) {
 		return nil, errors.New("flac decoder requires STREAMINFO metadata or audio attributes")
 	}
 	entry := d.pendingQueue[0]
-	if entry.done != nil {
-		<-entry.done
-	}
+	d.waitForEntry(entry)
 	d.pendingQueue[0] = nil
 	d.pendingQueue = d.pendingQueue[1:]
 	if len(d.pendingQueue) == 0 {
@@ -205,11 +208,9 @@ func (d *Decoder) Close() error {
 		if entry != nil {
 			// Wait for this decoder's own outstanding task, if any, so its
 			// frame exists before being released. This never waits on other
-			// stages' work: the pool is shared, but each entry.done only
-			// depends on the single task that produces it.
-			if entry.done != nil {
-				<-entry.done
-			}
+			// stages' work: the pool is shared, but waitForEntry only
+			// depends on this entry's own ready flag.
+			d.waitForEntry(entry)
 			if entry.audio != nil {
 				entry.audio.Release()
 				entry.audio = nil
