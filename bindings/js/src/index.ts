@@ -128,8 +128,11 @@ export interface InputSet {
 }
 
 // Godexture wraps the worker-mode WASM bindings with a typed, JSON-free API.
-// Every call runs in a Web Worker so it never blocks the calling thread;
-// long-running conversions are polled via snapshot() rather than callbacks.
+// Every call runs in a Web Worker so it never blocks the calling thread.
+// start()'s own promise doesn't resolve until the conversion finishes
+// (goroutines on js/wasm are scheduled cooperatively, so the worker can't
+// hand control back to JS mid-run); its onProgress callback is the only way
+// to observe progress before then.
 export class Godexture {
     private goMain?: GoMain;
 
@@ -170,9 +173,22 @@ export class Godexture {
         return JSON.parse(await this.main().resolve(inputs.main, inputs.aux ?? {}, JSON.stringify(spec)));
     }
 
-    /** Begins a conversion in the background and returns a job ID. */
-    async start(inputs: InputSet, spec: ConversionSpec): Promise<string> {
-        return this.main().start(inputs.main, inputs.aux ?? {}, JSON.stringify(spec));
+    /**
+     * Begins a conversion in the background under jobId (chosen by the
+     * caller) and returns it once the conversion finishes. onProgress is
+     * called with live updates in the meantime -- it's the only way to
+     * observe progress before then, since the returned promise itself
+     * doesn't resolve until the job is done.
+     */
+    async start(
+        jobId: string,
+        inputs: InputSet,
+        spec: ConversionSpec,
+        onProgress: (progress: Progress) => void,
+    ): Promise<string> {
+        return this.main().start(jobId, inputs.main, inputs.aux ?? {}, JSON.stringify(spec), (data) => {
+            onProgress(JSON.parse(data));
+        });
     }
 
     /** Polls a job's current progress and outcome. */

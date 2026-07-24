@@ -23,7 +23,7 @@ execSync(
 // The generated worker.js always fetches its wasm module as 'main.wasm'
 // relative to its own URL, so the build output must use that name.
 console.log("Building WASM...");
-execSync("go build -o ../js/dist/main.wasm .", {
+execSync("tinygo build -o ../js/dist/main.wasm .", {
     cwd: path.join(__dirname, "../../wasm"),
     env: { ...process.env, GOOS: "js", GOARCH: "wasm" },
     stdio: "inherit",

@@ -185,10 +185,9 @@ function nodeIdentifier(node: GraphNode): string {
 }
 
 // Filter names as shown in the catalog don't always read well capitalized
-// (e.g. "eq"); override those here rather than guessing from the raw name.
+// override those here rather than guessing from the raw name.
 const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
-    eq: "EQ",
-    "dc-offset": "DC Offset",
+    "remove-dc-offset": "Remove DC Offset",
 };
 
 export function displayName(name: string): string {
@@ -196,7 +195,10 @@ export function displayName(name: string): string {
 }
 
 function capitalize(text: string): string {
-    return text.length > 0 ? text[0]!.toUpperCase() + text.slice(1) : text;
+    return text
+        .split("-")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
 }
 
 export function canDeleteNode(node: GraphNode): boolean {

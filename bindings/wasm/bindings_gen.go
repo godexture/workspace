@@ -88,28 +88,34 @@ func wasmResolve(_ js.Value, args []js.Value) interface{} {
 }
 
 func wasmStart(_ js.Value, args []js.Value) interface{} {
+	jobID := args[0].String()
 	mainInput := func() []byte {
-		length := args[0].Length()
+		length := args[1].Length()
 		result := make([]byte, length)
-		js.CopyBytesToGo(result, args[0])
+		js.CopyBytesToGo(result, args[1])
 		return result
 	}()
 	auxInputs := func() map[string][]byte {
 		result := make(map[string][]byte)
-		keys := js.Global().Get("Object").Call("keys", args[1])
+		keys := js.Global().Get("Object").Call("keys", args[2])
 		for i := 0; i < keys.Length(); i++ {
 			key := keys.Index(i).String()
 			result[key] = func() []byte {
-		length := args[1].Get(key).Length()
+		length := args[2].Get(key).Length()
 		result := make([]byte, length)
-		js.CopyBytesToGo(result, args[1].Get(key))
+		js.CopyBytesToGo(result, args[2].Get(key))
 		return result
 	}()
 		}
 		return result
 	}()
-	specJSON := args[2].String()
-	result, err := Start(mainInput, auxInputs, specJSON)
+	specJSON := args[3].String()
+	onProgress := func(arg0 string) {
+		cbArgs := js.Global().Get("Array").New()
+		cbArgs.Call("push", arg0)
+		js.Global().Call("invokeCallback", args[4].Int(), cbArgs)
+	}
+	result, err := Start(jobID, mainInput, auxInputs, specJSON, onProgress)
 	if err != nil {
 		return map[string]interface{}{ErrorFieldName: err.Error()}
 	}
@@ -146,3 +152,4 @@ func wasmResult(_ js.Value, args []js.Value) interface{} {
 		return arr
 	}()
 }
+

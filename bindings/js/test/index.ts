@@ -32,14 +32,16 @@ async function main() {
     console.log(`Resolved pipeline: ${resolved.Nodes.map((n) => n.Plugin).join(" -> ")}`);
 
     console.log("Converting to WAV...");
-    const jobId = await godec.start({ main: input }, spec);
-    let progress = await godec.snapshot(jobId);
-    while (progress.status === "running") {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        progress = await godec.snapshot(jobId);
-    }
-    if (progress.status !== "completed") {
-        throw new Error(`job did not complete: status=${progress.status}`);
+    const jobId = crypto.randomUUID();
+    let progressCalls = 0;
+    let lastProgress: Awaited<ReturnType<typeof godec.snapshot>> | undefined;
+    await godec.start(jobId, { main: input }, spec, (progress) => {
+        progressCalls++;
+        lastProgress = progress;
+    });
+    console.log(`Received ${progressCalls} progress update(s)`);
+    if (lastProgress?.status !== "completed") {
+        throw new Error(`job did not complete: status=${lastProgress?.status}`);
     }
     const output = await godec.result(jobId);
     godec.terminate();
