@@ -25,7 +25,7 @@ func TestDescribeFilterReturnsParameterizedTopology(t *testing.T) {
 }
 
 func TestResolveAcceptsAuxiliaryInputs(t *testing.T) {
-	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolve","inputs":{"ir":{"alias":"ir"}}}]}`
+	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolver","inputs":{"ir":{"alias":"ir"}}}]}`
 	resolved, err := Resolve(testWAV(), map[string][]byte{"ir": testWAV()}, spec)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
