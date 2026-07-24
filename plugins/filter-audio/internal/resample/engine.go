@@ -42,6 +42,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		return err
 	}
 	if e.inputRate == e.config.SampleRate {
+		e.totalInput += int64(block.Samples())
 		input := (*frame).(*media.AudioFrame)
 		input.Retain()
 		return e.slot.Push(input)
