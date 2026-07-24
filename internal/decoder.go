@@ -103,7 +103,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	return d.slot.Push(pkt)
 }
 
-func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
+func (d *Decoder) ReceiveFrame() (media.Frame, error) {
 	pkt, err := d.slot.Receive()
 	if err != nil {
 		return nil, err
@@ -154,8 +154,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 	)
 	copy(f.Planes()[0], data)
 
-	var frame media.Frame = f
-	return &frame, nil
+	return f, nil
 }
 
 func (d *Decoder) resolveADPCMParameters() (params.ADPCM, error) {
