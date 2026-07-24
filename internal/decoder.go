@@ -70,7 +70,7 @@ func (d *Decoder) SendPacket(packet *media.Packet) error {
 	return nil
 }
 
-func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
+func (d *Decoder) ReceiveFrame() (media.Frame, error) {
 	if d.lastErr != nil {
 		return nil, d.lastErr
 	}
@@ -107,7 +107,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 				d.lastErr = err
 				return nil, d.lastErr
 			}
-			return &audioFrame, nil
+			return audioFrame, nil
 		}
 		return nil, engine.ErrEAGAIN
 	}
