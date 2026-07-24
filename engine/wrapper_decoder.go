@@ -45,10 +45,10 @@ func (n *DecoderAdapter) Start(ctx context.Context) error {
 		if err != nil {
 			return nil, err
 		}
-		if f == nil || *f == nil {
+		if f == nil {
 			return nil, fmt.Errorf("decoder returned nil frame")
 		}
-		return *f, nil
+		return f, nil
 	}
 	if notifier, ok := n.engine.(outputNotifier); ok {
 		return runAsyncCodecLoop(ctx, in, out, send, receive, n.engine.Flush, notifier)

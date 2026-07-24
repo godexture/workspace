@@ -34,7 +34,7 @@ type EncoderEngine interface {
 
 type DecoderEngine interface {
 	SendPacket(pkt *media.Packet) error
-	ReceiveFrame() (*media.Frame, error)
+	ReceiveFrame() (media.Frame, error)
 	Flush() error
 }
 
@@ -47,7 +47,7 @@ type DecoderEngine interface {
 // needs to know about them.
 type FilterEngine interface {
 	SendFrame(frame *media.Frame) error
-	ReceiveFrame() (*media.Frame, error)
+	ReceiveFrame() (media.Frame, error)
 	Flush() error
 }
 
@@ -66,5 +66,5 @@ type AuxInputEngine interface {
 // port. ReceiveOutput behaves like ReceiveFrame but also names which
 // output port the frame belongs to.
 type MultiOutputEngine interface {
-	ReceiveOutput() (port string, frame *media.Frame, err error)
+	ReceiveOutput() (port string, frame media.Frame, err error)
 }

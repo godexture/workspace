@@ -53,7 +53,7 @@ func (f *fakeMultiFilterEngine) SendInput(port string, _ *media.Frame) error {
 	return nil
 }
 
-func (*fakeMultiFilterEngine) ReceiveFrame() (*media.Frame, error) { return nil, ErrEAGAIN }
+func (*fakeMultiFilterEngine) ReceiveFrame() (media.Frame, error) { return nil, ErrEAGAIN }
 
 func (f *fakeMultiFilterEngine) EndInput(port string) error {
 	f.mu.Lock()
@@ -87,17 +87,17 @@ func (f *fakeTeeEngine) SendFrame(frame *media.Frame) error {
 	return nil
 }
 
-func (f *fakeTeeEngine) ReceiveFrame() (*media.Frame, error) {
+func (f *fakeTeeEngine) ReceiveFrame() (media.Frame, error) {
 	panic("ReceiveFrame should not be called when more than one output is declared")
 }
 
-func (f *fakeTeeEngine) ReceiveOutput() (string, *media.Frame, error) {
+func (f *fakeTeeEngine) ReceiveOutput() (string, media.Frame, error) {
 	if len(f.pending) == 0 {
 		return "", nil, ErrEAGAIN
 	}
 	next := f.pending[0]
 	f.pending = f.pending[1:]
-	return next.port, &next.frame, nil
+	return next.port, next.frame, nil
 }
 
 func (f *fakeTeeEngine) Flush() error { return nil }

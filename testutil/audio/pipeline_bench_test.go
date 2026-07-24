@@ -54,7 +54,7 @@ func (d *syntheticDecoder) SendPacket(packet *media.Packet) error {
 	return nil
 }
 
-func (d *syntheticDecoder) ReceiveFrame() (*media.Frame, error) {
+func (d *syntheticDecoder) ReceiveFrame() (media.Frame, error) {
 	if d.pending == nil {
 		if d.flushed {
 			return nil, engine.ErrEOF
@@ -65,8 +65,7 @@ func (d *syntheticDecoder) ReceiveFrame() (*media.Frame, error) {
 		media.WithAudioBitsPerSample(d.attrs.EffectiveBitsPerSample()))
 	copy(frame.Planes()[0], d.pending.Data())
 	d.pending = nil
-	var wrapped media.Frame = frame
-	return &wrapped, nil
+	return frame, nil
 }
 
 func (d *syntheticDecoder) Flush() error {

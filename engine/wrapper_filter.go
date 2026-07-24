@@ -149,10 +149,10 @@ func (n *FilterAdapter) runSimple(ctx context.Context, inputID string) error {
 			if err != nil {
 				return nil, err
 			}
-			if frame == nil || *frame == nil {
+			if frame == nil {
 				return nil, fmt.Errorf("filter returned nil frame")
 			}
-			return *frame, nil
+			return frame, nil
 		},
 		n.engine.Flush,
 	)
@@ -298,11 +298,11 @@ func (n *FilterAdapter) drain(ctx context.Context, outEdges map[string]node.Edge
 			if err != nil {
 				return err
 			}
-			if frame == nil || *frame == nil {
+			if frame == nil {
 				return fmt.Errorf("filter returned nil frame")
 			}
-			if err := edge.Push(ctx, *frame); err != nil {
-				(*frame).Release()
+			if err := edge.Push(ctx, frame); err != nil {
+				frame.Release()
 				return err
 			}
 		}
@@ -320,15 +320,15 @@ func (n *FilterAdapter) drain(ctx context.Context, outEdges map[string]node.Edge
 		if err != nil {
 			return err
 		}
-		if frame == nil || *frame == nil {
+		if frame == nil {
 			return fmt.Errorf("filter returned nil frame")
 		}
 		edge, ok := outEdges[port]
 		if !ok {
 			return fmt.Errorf("filter produced output for unknown port %q", port)
 		}
-		if err := edge.Push(ctx, *frame); err != nil {
-			(*frame).Release()
+		if err := edge.Push(ctx, frame); err != nil {
+			frame.Release()
 			return err
 		}
 	}
