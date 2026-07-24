@@ -31,8 +31,11 @@ type pendingEntry struct {
 // frames/samples were already emitted — not on the (expensive, possibly
 // out-of-order) encode itself.
 type frameJob struct {
-	e           *Encoder
-	channels    [][]int64
+	e        *Encoder
+	channels [][]int64
+	// blockCopy is channels' pooled backing storage (see acquireBlockCopy),
+	// returned to e.blockPool in runJob once encodeJob is done reading it.
+	blockCopy   *blockCopy
 	pts         media.Pts
 	frameNumber uint64
 	sampleBase  uint64
@@ -126,9 +129,11 @@ func (e *Encoder) OutputReady() <-chan struct{} {
 func (e *Encoder) dispatchFullBlock(block [][]int64) {
 	entry := &pendingEntry{}
 	e.pendingQueue = append(e.pendingQueue, entry)
+	bc := e.acquireBlockCopy(block)
 	job := &frameJob{
 		e:           e,
-		channels:    copyBlock(block),
+		channels:    bc.channels,
+		blockCopy:   bc,
 		pts:         e.bufferPTS,
 		frameNumber: e.frameNumber,
 		sampleBase:  e.sampleNumber,
@@ -145,9 +150,11 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	entry := &pendingEntry{}
 	e.pendingQueue = append(e.pendingQueue, entry)
+	bc := e.acquireBlockCopy(block)
 	job := &frameJob{
 		e:           e,
-		channels:    copyBlock(block),
+		channels:    bc.channels,
+		blockCopy:   bc,
 		pts:         pts,
 		frameNumber: e.frameNumber,
 		sampleBase:  e.sampleNumber,
@@ -159,12 +166,46 @@ func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	e.pool.Submit(job)
 }
 
-func copyBlock(block [][]int64) [][]int64 {
-	buf := make([][]int64, len(block))
-	for ch := range block {
-		buf[ch] = append([]int64(nil), block[ch]...)
+// blockCopy is a job's private, pool-recycled copy of the block it was
+// dispatched with (see acquireBlockCopy): the encoder's own e.buffer keeps
+// being written to and reused as soon as dispatch returns, so async jobs
+// need an independent copy rather than a view into it.
+type blockCopy struct {
+	channels [][]int64
+}
+
+// acquireBlockCopy returns a blockCopy holding an independent copy of
+// block's samples, reusing a pooled one (grown as needed) instead of
+// allocating fresh channel slices on every dispatch.
+func (e *Encoder) acquireBlockCopy(block [][]int64) *blockCopy {
+	var bc *blockCopy
+	if v := e.blockPool.Get(); v != nil {
+		bc = v.(*blockCopy)
+	} else {
+		bc = &blockCopy{}
 	}
-	return buf
+	if cap(bc.channels) < len(block) {
+		grown := make([][]int64, len(block))
+		copy(grown, bc.channels)
+		bc.channels = grown
+	} else {
+		bc.channels = bc.channels[:len(block)]
+	}
+	for ch := range block {
+		dst := bc.channels[ch]
+		if cap(dst) < len(block[ch]) {
+			dst = make([]int64, len(block[ch]))
+		} else {
+			dst = dst[:len(block[ch])]
+		}
+		copy(dst, block[ch])
+		bc.channels[ch] = dst
+	}
+	return bc
+}
+
+func (e *Encoder) releaseBlockCopy(bc *blockCopy) {
+	e.blockPool.Put(bc)
 }
 
 // runJob runs on a shared pool worker, not one dedicated to this encoder, so
@@ -174,6 +215,7 @@ func (e *Encoder) runJob(job frameJob) {
 	scratch := e.acquireScratch()
 	packets, err := e.encodeJob(job, &scratch.writer, &scratch.windows)
 	e.releaseScratch(scratch)
+	e.releaseBlockCopy(job.blockCopy)
 	job.entry.packets = packets
 	job.entry.err = err
 	e.markReady(job.entry)

@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/pool"
 )
 
 type Decoder struct {
@@ -133,13 +134,18 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	}
 	entry := &pendingEntry{}
 	d.pendingQueue = append(d.pendingQueue, entry)
+	src := pkt.Data()
+	dataBuf := pool.Get(len(src))
+	*dataBuf = (*dataBuf)[:len(src)]
+	copy(*dataBuf, src)
 	job := &frameJob{
-		d:      d,
-		data:   append([]byte(nil), pkt.Data()...),
-		pts:    pkt.PTS,
-		info:   d.info,
-		strict: d.cfg.Strict,
-		entry:  entry,
+		d:       d,
+		data:    *dataBuf,
+		dataBuf: dataBuf,
+		pts:     pkt.PTS,
+		info:    d.info,
+		strict:  d.cfg.Strict,
+		entry:   entry,
 	}
 	d.pool.Submit(job)
 	return nil

@@ -45,11 +45,12 @@ type Encoder struct {
 	// borrows a scratch bits.Writer/windowSet from scratch so concurrent
 	// tasks never contend. Parallelism never changes the encoded bytes; only
 	// scheduling changes.
-	pool    *registry.WorkerPool
-	scratch sync.Pool
-	closed  bool
-	mu      sync.Mutex
-	waitCh  chan struct{}
+	pool      *registry.WorkerPool
+	scratch   sync.Pool
+	blockPool sync.Pool
+	closed    bool
+	mu        sync.Mutex
+	waitCh    chan struct{}
 }
 
 // NewEncoder builds an encoder. pool may be nil, in which case blocks are
