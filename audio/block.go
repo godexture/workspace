@@ -66,7 +66,7 @@ func (b Block) Clone() Block {
 // more than one frame concurrently (e.g. a filter with multiple input ports
 // pulled on separate goroutines) needs one Scratch per concurrent caller.
 type Scratch struct {
-	channels    [][]float32
+	channels    Channels
 	interleaved []float32
 }
 
@@ -92,19 +92,21 @@ func DecodeInto(frame *media.Frame, scratch *Scratch) (Block, error) {
 	if channels == 0 || audioFrame.Samples < 0 || audioFrame.SampleRate <= 0 {
 		return Block{}, fmt.Errorf("invalid audio frame properties")
 	}
+	if cap(scratch.channels) < channels {
+		grown := make(Channels, channels)
+		copy(grown, scratch.channels)
+		scratch.channels = grown
+	} else {
+		scratch.channels = scratch.channels[:channels]
+	}
 	result := Block{
 		Source:   audioFrame,
-		Channels: make(Channels, channels),
+		Channels: scratch.channels,
 		Layout:   audioFrame.Layout,
 		Rate:     audioFrame.SampleRate,
 		Format:   audioFrame.Format,
 		Bits:     audioFrame.BitsPerSample,
 		PTS:      audioFrame.Pts(),
-	}
-	if len(scratch.channels) < channels {
-		grown := make([][]float32, channels)
-		copy(grown, scratch.channels)
-		scratch.channels = grown
 	}
 	if audioFrame.Format.IsPlanar() {
 		planes := audioFrame.Planes()
@@ -112,14 +114,13 @@ func DecodeInto(frame *media.Frame, scratch *Scratch) (Block, error) {
 			return Block{}, fmt.Errorf("planar audio has %d planes, want %d", len(planes), channels)
 		}
 		for channel := range result.Channels {
-			decoded, err := mediapcm.ToFloat32(scratch.channels[channel], planes[channel], audioFrame.Format, audioFrame.BitsPerSample)
+			decoded, err := mediapcm.ToFloat32(result.Channels[channel], planes[channel], audioFrame.Format, audioFrame.BitsPerSample)
 			if err != nil {
 				return Block{}, fmt.Errorf("decode channel %d: %w", channel, err)
 			}
 			if len(decoded) != audioFrame.Samples {
 				return Block{}, fmt.Errorf("channel %d has %d samples, want %d", channel, len(decoded), audioFrame.Samples)
 			}
-			scratch.channels[channel] = decoded
 			result.Channels[channel] = decoded
 		}
 		return result, nil
@@ -138,7 +139,7 @@ func DecodeInto(frame *media.Frame, scratch *Scratch) (Block, error) {
 		return Block{}, fmt.Errorf("packed audio has %d samples, want %d", len(interleaved), channels*audioFrame.Samples)
 	}
 	for channel := range result.Channels {
-		dst := scratch.channels[channel]
+		dst := result.Channels[channel]
 		if cap(dst) < audioFrame.Samples {
 			dst = make([]float32, audioFrame.Samples)
 		} else {
@@ -147,7 +148,6 @@ func DecodeInto(frame *media.Frame, scratch *Scratch) (Block, error) {
 		for sample := range dst {
 			dst[sample] = interleaved[sample*channels+channel]
 		}
-		scratch.channels[channel] = dst
 		result.Channels[channel] = dst
 	}
 	return result, nil
