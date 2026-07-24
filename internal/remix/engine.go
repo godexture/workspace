@@ -11,8 +11,9 @@ import (
 )
 
 type Engine struct {
-	config config.RemixConfig
-	slot   buffer.Slot[media.Frame]
+	config  config.RemixConfig
+	slot    buffer.Slot[media.Frame]
+	scratch audio.Scratch
 }
 
 func New(config config.RemixConfig) (*Engine, error) {
@@ -23,7 +24,7 @@ func New(config config.RemixConfig) (*Engine, error) {
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -35,7 +36,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := audio.Encode(output, block.Format, block.Bits)
+	encoded, err := audio.EncodeInto(output, block.Format, block.Bits, &e.scratch)
 	if err != nil {
 		return err
 	}

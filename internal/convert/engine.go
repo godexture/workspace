@@ -10,8 +10,9 @@ import (
 )
 
 type Engine struct {
-	config config.FormatConfig
-	slot   buffer.Slot[media.Frame]
+	config  config.FormatConfig
+	slot    buffer.Slot[media.Frame]
+	scratch audio.Scratch
 }
 
 func New(config config.FormatConfig) (*Engine, error) {
@@ -34,11 +35,11 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		input.Retain()
 		return e.slot.Push(input)
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
-	output, err := audio.Encode(block, e.config.Format, e.config.BitsPerSample)
+	output, err := audio.EncodeInto(block, e.config.Format, e.config.BitsPerSample, &e.scratch)
 	if err != nil {
 		return err
 	}

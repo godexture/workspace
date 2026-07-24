@@ -19,6 +19,7 @@ type Engine struct {
 	peak    float32
 	factor  float32
 	flushed bool
+	scratch audio.Scratch
 }
 
 func New(config config.NormalizeConfig) (*Engine, error) {
@@ -32,7 +33,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.flushed {
 		return fmt.Errorf("normalize received a frame after flush")
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func (e *Engine) ReceiveFrame() (*media.Frame, error) {
 			values[i] *= e.factor
 		}
 	}
-	frame, err := audio.Encode(block, e.format, e.bits)
+	frame, err := audio.EncodeInto(block, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return nil, err
 	}
