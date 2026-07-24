@@ -3,6 +3,14 @@
     pointer-events: none;
 }
 
+.inspector {
+    display: flex;
+    width: 320px;
+    min-width: 0;
+    min-height: 0;
+    flex: 0 0 320px;
+}
+
 .filterSelect {
     min-width: min(280px, 100%);
     flex: 1;
@@ -21,7 +29,8 @@
 .workspace {
     display: flex;
     gap: var(--space-4);
-    min-height: 460px;
+    height: clamp(440px, 58vh, 560px);
+    min-height: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     overflow: hidden;
@@ -70,6 +79,7 @@
 }
 
 @media (max-width: 860px) {
-    .workspace { flex-direction: column; min-height: 600px; }
-    .canvas { min-height: 420px; }
+    .workspace { flex-direction: column; height: min(760px, 80vh); }
+    .canvas { min-height: 0; flex: 0 0 420px; }
+    .inspector { width: 100%; flex: 1 1 0; }
 }

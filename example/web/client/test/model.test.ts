@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import type { Catalog, FilterEntry, Preset } from "../src/api/types";
+import type { Catalog, FilterEntry, PluginEntry, Preset } from "../src/api/types";
 import { layoutGraph } from "../src/graph/layout";
-import { compileGraph, createInitialGraph, type GraphDocument } from "../src/graph/model";
+import { compileGraph, createInitialGraph, encoderForCodec, type GraphDocument } from "../src/graph/model";
 
 const preset: Preset = { id: "lpcm", name: "PCM", filename: "lpcm.wav", contentType: "audio/wav" };
 const catalog: Catalog = {
@@ -22,11 +22,27 @@ const joiner: FilterEntry = {
     role: "filter", name: "mixer", description: "Join", fields: [], parameters: [], inputs: ["in0", "in1"], outputs: ["out0"],
 };
 
+const flacEncoder: PluginEntry = {
+    role: "encoder", name: "flac", description: "FLAC encoder",
+    fields: [{ name: "block-size", type: "int", help: "FLAC block size", default: "4096" }],
+};
+
 test("initial source-to-output graph compiles to an explicit sink", () => {
     const result = compileGraph(createInitialGraph(catalog, preset), [preset], new Map());
     expect(result.issues).toEqual([]);
     expect(result.spec?.sink).toEqual({ alias: "@in", port: "out" });
     expect(result.inputs?.main).toEqual({ kind: "preset", preset });
+});
+
+test("output defaults and persisted graphs resolve the FLAC encoder", () => {
+    const flacCatalog: Catalog = {
+        ...catalog,
+        encoders: [flacEncoder],
+        outputs: [{ muxer: "flac", extensions: [".flac"], codecs: ["flac"], defaultCodec: "flac" }],
+    };
+    const output = createInitialGraph(flacCatalog, preset).nodes.find((node) => node.kind === "output");
+    expect(output?.encoderName).toBe("flac");
+    expect(encoderForCodec(flacCatalog, "flac")?.fields).toEqual(flacEncoder.fields);
 });
 
 test("mixer branches and joins compile in topological order", () => {

@@ -24,6 +24,7 @@ import {
     canDeleteNode,
     createFilterNode,
     createSourceNode,
+    displayName,
     edgeID,
     inputPorts,
     outputPorts,
@@ -49,6 +50,10 @@ interface GraphEditorProps {
     onFileChange: (nodeID: string, file: File | null) => void;
     onModeChange: (mode: BackendMode) => void;
     onReset: () => void;
+    onUndo: () => void;
+    onRedo: () => void;
+    canUndo: boolean;
+    canRedo: boolean;
 }
 
 const nodeTypes = { editor: EditorNode } as NodeTypes;
@@ -57,10 +62,10 @@ const SOURCE_CHOICE = "source";
 
 function nodeChoices(catalog: Catalog): { value: string; label: string }[] {
     return [
-        { value: SOURCE_CHOICE, label: "source — Audio input" },
+        { value: SOURCE_CHOICE, label: "Source: Audio input" },
         ...catalog.filters.map((filter) => ({
             value: filter.name,
-            label: `${filter.name} — ${filter.description}`,
+            label: `${displayName(filter.name)}: ${filter.description}`,
         })),
     ];
 }
@@ -91,6 +96,10 @@ export function GraphEditor({
     onFileChange,
     onModeChange,
     onReset,
+    onUndo,
+    onRedo,
+    canUndo,
+    canRedo,
 }: GraphEditorProps) {
     const [selectedID, setSelectedID] = useState<string | null>(null);
     const [nodeChoice, setNodeChoice] = useState(SOURCE_CHOICE);
@@ -184,12 +193,36 @@ export function GraphEditor({
             const node = next.nodes.find((value) => value.id === id);
             if (!node || !canDeleteNode(node)) continue;
             if (node.kind === "source") onFileChange(id, null);
+
+            const incoming = next.edges.filter((edge) => edge.target === id);
+            const outgoing = next.edges.filter((edge) => edge.source === id);
+            const bridge: GraphEdge[] =
+                incoming.length === 1 && outgoing.length === 1
+                    ? [
+                          {
+                              id: edgeID(
+                                  incoming[0].source,
+                                  incoming[0].sourcePort,
+                                  outgoing[0].target,
+                                  outgoing[0].targetPort,
+                              ),
+                              source: incoming[0].source,
+                              sourcePort: incoming[0].sourcePort,
+                              target: outgoing[0].target,
+                              targetPort: outgoing[0].targetPort,
+                          },
+                      ]
+                    : [];
+
             next = {
                 ...next,
                 nodes: next.nodes.filter((value) => value.id !== id),
-                edges: next.edges.filter(
-                    (edge) => edge.source !== id && edge.target !== id,
-                ),
+                edges: [
+                    ...next.edges.filter(
+                        (edge) => edge.source !== id && edge.target !== id,
+                    ),
+                    ...bridge,
+                ],
             };
             if (selectedID === id) setSelectedID(null);
         }
@@ -257,26 +290,80 @@ export function GraphEditor({
         setEditorError(null);
     }
 
-    function addNode() {
+    function insertNode() {
         if (locked) return;
-        if (nodeChoice === SOURCE_CHOICE) {
-            const node = createSourceNode({
-                x: 320,
-                y: 40 + graph.nodes.length * 24,
-            });
-            onGraphChange({ ...graph, nodes: [...graph.nodes, node] });
-            setSelectedID(node.id);
-            return;
+        const descriptor =
+            nodeChoice === SOURCE_CHOICE
+                ? null
+                : catalog.filters.find((filter) => filter.name === nodeChoice);
+        if (nodeChoice !== SOURCE_CHOICE && !descriptor) return;
+
+        const target =
+            selected ??
+            graph.nodes.find((current) => current.kind === "output");
+        const targetPort = target ? inputPorts(target)[0] : undefined;
+        const incoming =
+            target && targetPort
+                ? graph.edges.find(
+                      (edge) =>
+                          edge.target === target.id &&
+                          edge.targetPort === targetPort,
+                  )
+                : undefined;
+        const incomingSource = incoming
+            ? graph.nodes.find((current) => current.id === incoming.source)
+            : undefined;
+
+        const position = target
+            ? incomingSource
+                ? {
+                      x: (incomingSource.position.x + target.position.x) / 2,
+                      y: (incomingSource.position.y + target.position.y) / 2,
+                  }
+                : { x: target.position.x - 220, y: target.position.y }
+            : { x: 60, y: 40 + graph.nodes.length * 24 };
+
+        const node = descriptor
+            ? createFilterNode(descriptor, position)
+            : createSourceNode(position);
+
+        let edges = graph.edges;
+        if (incoming && target && targetPort) {
+            edges = edges.filter((edge) => edge.id !== incoming.id);
+            const outPort = outputPorts(node)[0];
+            if (outPort) {
+                edges = [
+                    ...edges,
+                    {
+                        id: edgeID(node.id, outPort, target.id, targetPort),
+                        source: node.id,
+                        sourcePort: outPort,
+                        target: target.id,
+                        targetPort,
+                    },
+                ];
+            }
+            const inPort = inputPorts(node)[0];
+            if (inPort) {
+                edges = [
+                    ...edges,
+                    {
+                        id: edgeID(
+                            incoming.source,
+                            incoming.sourcePort,
+                            node.id,
+                            inPort,
+                        ),
+                        source: incoming.source,
+                        sourcePort: incoming.sourcePort,
+                        target: node.id,
+                        targetPort: inPort,
+                    },
+                ];
+            }
         }
-        const descriptor = catalog.filters.find(
-            (filter) => filter.name === nodeChoice,
-        );
-        if (!descriptor) return;
-        const node = createFilterNode(descriptor, {
-            x: 60,
-            y: 140 + graph.nodes.length * 24,
-        });
-        onGraphChange({ ...graph, nodes: [...graph.nodes, node] });
+
+        onGraphChange({ ...graph, nodes: [...graph.nodes, node], edges });
         setSelectedID(node.id);
     }
 
@@ -357,8 +444,8 @@ export function GraphEditor({
                     disabled={locked}
                     onChange={onModeChange}
                     options={[
-                        { value: "server", label: "Online" },
-                        { value: "client", label: "Offline" },
+                        { value: "server", label: "Online (Server)" },
+                        { value: "client", label: "Offline (WASM)" },
                     ]}
                 />
             }
@@ -379,13 +466,19 @@ export function GraphEditor({
                     </select>
                     <Button
                         variant="primary"
-                        onClick={addNode}
+                        onClick={insertNode}
                         disabled={locked || !nodeChoice}
                     >
-                        Add node
+                        Insert node
                     </Button>
                 </ToolbarGroup>
                 <ToolbarGroup>
+                    <Button disabled={locked || !canUndo} onClick={onUndo}>
+                        Undo
+                    </Button>
+                    <Button disabled={locked || !canRedo} onClick={onRedo}>
+                        Redo
+                    </Button>
                     <Button
                         disabled={locked}
                         onClick={() => onGraphChange(layoutGraph(graph))}
@@ -436,6 +529,7 @@ export function GraphEditor({
                         onNodeClick={(_, node) => setSelectedID(node.id)}
                         onPaneClick={() => setSelectedID(null)}
                         fitView
+                        panOnScroll
                         nodesDraggable={!locked}
                         nodesConnectable={!locked}
                         elementsSelectable={!locked}
@@ -450,7 +544,9 @@ export function GraphEditor({
                         <Controls showInteractive={false} />
                     </ReactFlow>
                 </div>
-                <div className={locked ? styles.inspectorLocked : undefined}>
+                <div
+                    className={`${styles.inspector}${locked ? ` ${styles.inspectorLocked}` : ""}`}
+                >
                     <Inspector
                         node={selected}
                         catalog={catalog}

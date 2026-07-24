@@ -3,10 +3,14 @@ import type {
     ConversionSpec,
     FilterEntry,
     FilterSpec,
+    PluginEntry,
     PluginSpec,
     Preset,
 } from "../api/types";
-import type { ConversionInputs, InputSource } from "../conversion/backend/types";
+import type {
+    ConversionInputs,
+    InputSource,
+} from "../conversion/backend/types";
 
 export const MAIN_NODE_ID = "source-main";
 export const OUTPUT_NODE_ID = "output";
@@ -68,8 +72,12 @@ export interface GraphCompileResult {
     mainInput?: InputSource;
 }
 
-export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): GraphDocument {
+export function createInitialGraph(
+    catalog: Catalog,
+    mainPreset?: Preset,
+): GraphDocument {
     const output = catalog.outputs[0];
+    const codec = output?.defaultCodec ?? "";
     return {
         version: GRAPH_VERSION,
         nodes: [
@@ -77,7 +85,9 @@ export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): Graph
                 id: MAIN_NODE_ID,
                 kind: "source",
                 primary: true,
-                selection: mainPreset ? { kind: "preset", presetId: mainPreset.id } : null,
+                selection: mainPreset
+                    ? { kind: "preset", presetId: mainPreset.id }
+                    : null,
                 position: { x: 60, y: 40 },
             },
             {
@@ -85,7 +95,8 @@ export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): Graph
                 kind: "output",
                 muxer: output?.muxer ?? "",
                 muxerValues: {},
-                codec: output?.defaultCodec ?? "",
+                codec,
+                encoderName: encoderForCodec(catalog, codec)?.name,
                 encoderValues: {},
                 position: { x: 60, y: 260 },
             },
@@ -102,7 +113,20 @@ export function createInitialGraph(catalog: Catalog, mainPreset?: Preset): Graph
     };
 }
 
-export function createSourceNode(position: { x: number; y: number }): GraphNode {
+export function encoderForCodec(
+    catalog: Catalog,
+    codec: string,
+    encoderName?: string,
+): PluginEntry | undefined {
+    return catalog.encoders.find(
+        (entry) => entry.name === (encoderName ?? codec),
+    );
+}
+
+export function createSourceNode(position: {
+    x: number;
+    y: number;
+}): GraphNode {
     return {
         id: nextNodeID(),
         kind: "source",
@@ -126,7 +150,12 @@ export function createFilterNode(
     };
 }
 
-export function edgeID(source: string, sourcePort: string, target: string, targetPort: string): string {
+export function edgeID(
+    source: string,
+    sourcePort: string,
+    target: string,
+    targetPort: string,
+): string {
     return `${source}:${sourcePort}->${target}:${targetPort}`;
 }
 
@@ -143,9 +172,31 @@ export function outputPorts(node: GraphNode): string[] {
 }
 
 export function nodeTitle(node: GraphNode): string {
-    if (node.kind === "source") return node.primary ? "Main audio" : "Audio source";
-    if (node.kind === "filter") return node.descriptor.name;
+    if (node.kind === "source")
+        return node.primary ? "Main audio" : "Audio source";
+    if (node.kind === "filter") return displayName(node.descriptor.name);
     return node.muxer ? `${node.muxer.toUpperCase()} output` : "Output";
+}
+
+// Identifier used in issue/error text: the catalog's own spelling, not the
+// prettified display name (so messages match what's in the catalog).
+function nodeIdentifier(node: GraphNode): string {
+    return node.kind === "filter" ? node.descriptor.name : nodeTitle(node);
+}
+
+// Filter names as shown in the catalog don't always read well capitalized
+// (e.g. "eq"); override those here rather than guessing from the raw name.
+const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
+    eq: "EQ",
+    "dc-offset": "DC Offset",
+};
+
+export function displayName(name: string): string {
+    return DISPLAY_NAME_OVERRIDES[name] ?? capitalize(name);
+}
+
+function capitalize(text: string): string {
+    return text.length > 0 ? text[0]!.toUpperCase() + text.slice(1) : text;
 }
 
 export function canDeleteNode(node: GraphNode): boolean {
@@ -159,8 +210,13 @@ export function compileGraph(
 ): GraphCompileResult {
     const issues: string[] = [];
     const byID = new Map(graph.nodes.map((node) => [node.id, node]));
-    const main = graph.nodes.find((node): node is GraphNode & SourceData => node.kind === "source" && node.primary);
-    const output = graph.nodes.find((node): node is GraphNode & OutputData => node.kind === "output");
+    const main = graph.nodes.find(
+        (node): node is GraphNode & SourceData =>
+            node.kind === "source" && node.primary,
+    );
+    const output = graph.nodes.find(
+        (node): node is GraphNode & OutputData => node.kind === "output",
+    );
     if (!main) issues.push("A main audio source is required.");
     if (!output) issues.push("An output node is required.");
 
@@ -173,7 +229,10 @@ export function compileGraph(
             issues.push("A connection refers to a removed node.");
             continue;
         }
-        if (!outputPorts(source).includes(edge.sourcePort) || !inputPorts(target).includes(edge.targetPort)) {
+        if (
+            !outputPorts(source).includes(edge.sourcePort) ||
+            !inputPorts(target).includes(edge.targetPort)
+        ) {
             issues.push("A connection refers to a removed port.");
             continue;
         }
@@ -184,28 +243,43 @@ export function compileGraph(
     }
 
     for (const [key, edges] of outgoing) {
-        if (edges.length > 1) issues.push(`Output ${displayPort(key)} has more than one connection; insert a mixer to branch it.`);
+        if (edges.length > 1)
+            issues.push(
+                `Output ${displayPort(key)} has more than one connection; insert a mixer to branch it.`,
+            );
     }
     for (const [key, edges] of incoming) {
-        if (edges.length > 1) issues.push(`Input ${displayPort(key)} has more than one connection.`);
+        if (edges.length > 1)
+            issues.push(
+                `Input ${displayPort(key)} has more than one connection.`,
+            );
     }
     for (const node of graph.nodes) {
         for (const port of inputPorts(node)) {
             const count = incoming.get(`${node.id}\u0000${port}`)?.length ?? 0;
-            if (count === 0) issues.push(`${nodeTitle(node)}.${port} is not connected.`);
+            if (count === 0)
+                issues.push(
+                    `${nodeIdentifier(node)}.${port} is not connected.`,
+                );
         }
         if (node.kind === "source" && !node.primary) {
             const count = outgoing.get(`${node.id}\u0000out`)?.length ?? 0;
-            if (count === 0) issues.push(`${nodeTitle(node)} is not connected.`);
+            if (count === 0)
+                issues.push(`${nodeIdentifier(node)} is not connected.`);
         }
     }
-    if (!main?.selection) issues.push("Select an audio file or preset for the main source.");
-    if (!output?.muxer || !output.codec) issues.push("Select an output format and codec.");
+    if (!main?.selection)
+        issues.push("Select an audio file or preset for the main source.");
+    if (!output?.muxer || !output.codec)
+        issues.push("Select an output format and codec.");
 
-    const filters = graph.nodes.filter((node): node is GraphNode & FilterData => node.kind === "filter");
+    const filters = graph.nodes.filter(
+        (node): node is GraphNode & FilterData => node.kind === "filter",
+    );
     const filterOrder = topologicalFilterOrder(filters, graph.edges, byID);
     if (!filterOrder) issues.push("The filter graph contains a cycle.");
-    if (issues.length > 0 || !main || !output || !filterOrder) return { issues };
+    if (issues.length > 0 || !main || !output || !filterOrder)
+        return { issues };
 
     const mainInput = inputSource(main, presets, files, issues);
     const aux: Record<string, InputSource> = {};
@@ -213,7 +287,9 @@ export function compileGraph(
         if (node.kind !== "source" || node.primary) continue;
         const source = inputSource(node, presets, files, issues);
         if (!source) {
-            issues.push(`Select an audio file or preset for ${nodeTitle(node)}.`);
+            issues.push(
+                `Select an audio file or preset for ${nodeIdentifier(node)}.`,
+            );
             continue;
         }
         aux[node.id] = source;
@@ -225,10 +301,12 @@ export function compileGraph(
         alias: node.id,
         values: nonEmpty(node.values),
         parameters: nonEmpty(node.parameters),
-        inputs: Object.fromEntries(node.descriptor.inputs.map((port) => {
-            const edge = incoming.get(`${node.id}\u0000${port}`)![0];
-            return [port, sourceRef(edge.source, edge.sourcePort, byID)];
-        })),
+        inputs: Object.fromEntries(
+            node.descriptor.inputs.map((port) => {
+                const edge = incoming.get(`${node.id}\u0000${port}`)![0];
+                return [port, sourceRef(edge.source, edge.sourcePort, byID)];
+            }),
+        ),
     }));
     const sinkEdge = incoming.get(`${output.id}\u0000in`)![0];
     const spec: ConversionSpec = {
@@ -237,14 +315,23 @@ export function compileGraph(
         filters: specs,
         auxInputs: Object.fromEntries(
             graph.nodes
-                .filter((node): node is GraphNode & SourceData => node.kind === "source" && !node.primary)
-                .map((node) => [node.id, { demuxer: node.demuxer, decoder: node.decoder }]),
+                .filter(
+                    (node): node is GraphNode & SourceData =>
+                        node.kind === "source" && !node.primary,
+                )
+                .map((node) => [
+                    node.id,
+                    { demuxer: node.demuxer, decoder: node.decoder },
+                ]),
         ),
         sink: sourceRef(sinkEdge.source, sinkEdge.sourcePort, byID),
         muxer: { name: output.muxer, values: nonEmpty(output.muxerValues) },
         codec: output.codec,
         encoder: output.encoderName
-            ? { name: output.encoderName, values: nonEmpty(output.encoderValues) }
+            ? {
+                  name: output.encoderName,
+                  values: nonEmpty(output.encoderValues),
+              }
             : undefined,
     };
     return { issues, spec, inputs: { main: mainInput, aux }, mainInput };
@@ -257,14 +344,19 @@ function topologicalFilterOrder(
 ): (GraphNode & FilterData)[] | null {
     const filterIDs = new Set(filters.map((node) => node.id));
     const inDegree = new Map(filters.map((node) => [node.id, 0]));
-    const dependents = new Map(filters.map((node) => [node.id, [] as string[]]));
+    const dependents = new Map(
+        filters.map((node) => [node.id, [] as string[]]),
+    );
     for (const edge of edges) {
-        if (!filterIDs.has(edge.source) || !filterIDs.has(edge.target)) continue;
+        if (!filterIDs.has(edge.source) || !filterIDs.has(edge.target))
+            continue;
         if (!byID.has(edge.source) || !byID.has(edge.target)) continue;
         inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
         dependents.get(edge.source)?.push(edge.target);
     }
-    const ready = filters.filter((node) => inDegree.get(node.id) === 0).map((node) => node.id);
+    const ready = filters
+        .filter((node) => inDegree.get(node.id) === 0)
+        .map((node) => node.id);
     const ordered: (GraphNode & FilterData)[] = [];
     while (ready.length > 0) {
         const id = ready.shift()!;
@@ -291,25 +383,36 @@ function inputSource(
     if (selection.kind === "preset") {
         const preset = presets.find((value) => value.id === selection.presetId);
         if (!preset) {
-            issues.push(`${nodeTitle(node)} references an unavailable preset.`);
+            issues.push(
+                `${nodeIdentifier(node)} references an unavailable preset.`,
+            );
             return null;
         }
         return { kind: "preset", preset };
     }
     const file = files.get(node.id);
     if (!file) {
-        issues.push(`Reselect the uploaded file for ${nodeTitle(node)}.`);
+        issues.push(`Reselect the uploaded file for ${nodeIdentifier(node)}.`);
         return null;
     }
     return { kind: "upload", file };
 }
 
-function sourceRef(sourceID: string, port: string, byID: ReadonlyMap<string, GraphNode>) {
+function sourceRef(
+    sourceID: string,
+    port: string,
+    byID: ReadonlyMap<string, GraphNode>,
+) {
     const source = byID.get(sourceID);
-    return { alias: source?.kind === "source" && source.primary ? "@in" : sourceID, port };
+    return {
+        alias: source?.kind === "source" && source.primary ? "@in" : sourceID,
+        port,
+    };
 }
 
-function nonEmpty(values: Record<string, string>): Record<string, string> | undefined {
+function nonEmpty(
+    values: Record<string, string>,
+): Record<string, string> | undefined {
     return Object.keys(values).length > 0 ? values : undefined;
 }
 

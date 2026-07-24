@@ -10,6 +10,8 @@ import { GraphEditor } from "../graph/GraphEditor";
 import { compileGraph, createInitialGraph, type GraphDocument } from "../graph/model";
 import { clearGraph, loadGraph, saveGraph } from "../graph/storage";
 import { ResolvedGraph } from "../graph/ResolvedGraph";
+import { useHistory } from "../hooks/useHistory";
+import { useKeyboardShortcuts, type ShortcutBinding } from "../hooks/useKeyboardShortcuts";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { ResultPanel } from "../components/ResultPanel";
 import { Panel } from "../ui";
@@ -24,7 +26,8 @@ export function App() {
     const [presets, setPresets] = useState<Preset[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [mode, setMode] = useLocalStorage<BackendMode>("godec-backend-mode", "server");
-    const [graph, setGraph] = useState<GraphDocument | null>(null);
+    const history = useHistory<GraphDocument | null>(null);
+    const graph = history.value;
     const [files, setFiles] = useState<Map<string, File>>(() => new Map());
     const backend = mode === "server" ? serverBackend : clientBackend;
     const maxUploadBytes = mode === "server" ? SERVER_MAX_UPLOAD_BYTES : CLIENT_MAX_UPLOAD_BYTES;
@@ -35,10 +38,10 @@ export function App() {
                 setCatalog(nextCatalog);
                 setPresets(nextPresets);
                 const fallback = nextPresets.find((preset) => preset.id === "lpcm");
-                setGraph(loadGraph() ?? createInitialGraph(nextCatalog, fallback));
+                history.reset(loadGraph() ?? createInitialGraph(nextCatalog, fallback));
             })
             .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)));
-    }, []);
+    }, [history.reset]);
 
     const compiled = useMemo(
         () => graph ? compileGraph(graph, presets, files) : { issues: ["Loading pipeline editor…"] },
@@ -72,9 +75,17 @@ export function App() {
     }, [backend, compiled.inputs, compiled.spec]);
 
     const job = useConversionJob(backend);
+    const locked = job.state.phase === "running";
     const [activeJobResolved, setActiveJobResolved] = useState<PipelineDescription | null>(null);
     const mainInput = compiled.mainInput ?? null;
     const [inputSrc, setInputSrc] = useState<string | null>(null);
+
+    const shortcuts = useMemo<ShortcutBinding[]>(() => [
+        { key: "z", mod: true, handler: history.undo },
+        { key: "z", mod: true, shift: true, handler: history.redo },
+        { key: "y", mod: true, handler: history.redo },
+    ], [history.undo, history.redo]);
+    useKeyboardShortcuts(shortcuts, !locked);
 
     useEffect(() => {
         if (!mainInput) {
@@ -97,7 +108,7 @@ export function App() {
     }, [catalog, compiled.spec]);
 
     function updateGraph(next: GraphDocument) {
-        setGraph(next);
+        history.set(next);
         saveGraph(next);
     }
 
@@ -137,11 +148,15 @@ export function App() {
                     mode={mode}
                     maxUploadBytes={maxUploadBytes}
                     issues={compiled.issues}
-                    locked={job.state.phase === "running"}
+                    locked={locked}
                     onGraphChange={updateGraph}
                     onFileChange={updateFile}
                     onModeChange={setMode}
                     onReset={resetGraph}
+                    onUndo={history.undo}
+                    onRedo={history.redo}
+                    canUndo={history.canUndo}
+                    canRedo={history.canRedo}
                 />
 
                 <Panel title="Resolved Pipeline">
