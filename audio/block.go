@@ -56,7 +56,25 @@ func (b Block) Clone() Block {
 	return clone
 }
 
+// Scratch holds reusable per-channel and interleave buffers for repeated
+// DecodeInto/EncodeInto calls made by the same caller, so steady-state frame
+// processing reuses last frame's backing arrays instead of allocating a
+// fresh []float32 per channel per frame. A Block returned by DecodeInto
+// aliases its Scratch's buffers, so the caller must be done with it (mutate
+// it in place and/or hand it to EncodeInto) before decoding another frame
+// into the same Scratch. Not safe for concurrent use: a caller that decodes
+// more than one frame concurrently (e.g. a filter with multiple input ports
+// pulled on separate goroutines) needs one Scratch per concurrent caller.
+type Scratch struct {
+	channels    [][]float32
+	interleaved []float32
+}
+
 func Decode(frame *media.Frame) (Block, error) {
+	return DecodeInto(frame, &Scratch{})
+}
+
+func DecodeInto(frame *media.Frame, scratch *Scratch) (Block, error) {
 	if frame == nil || *frame == nil {
 		return Block{}, fmt.Errorf("audio filter received nil frame")
 	}
@@ -83,19 +101,25 @@ func Decode(frame *media.Frame) (Block, error) {
 		Bits:     audioFrame.BitsPerSample,
 		PTS:      audioFrame.Pts(),
 	}
+	if len(scratch.channels) < channels {
+		grown := make([][]float32, channels)
+		copy(grown, scratch.channels)
+		scratch.channels = grown
+	}
 	if audioFrame.Format.IsPlanar() {
 		planes := audioFrame.Planes()
 		if len(planes) != channels {
 			return Block{}, fmt.Errorf("planar audio has %d planes, want %d", len(planes), channels)
 		}
 		for channel := range result.Channels {
-			decoded, err := mediapcm.ToFloat32(nil, planes[channel], audioFrame.Format, audioFrame.BitsPerSample)
+			decoded, err := mediapcm.ToFloat32(scratch.channels[channel], planes[channel], audioFrame.Format, audioFrame.BitsPerSample)
 			if err != nil {
 				return Block{}, fmt.Errorf("decode channel %d: %w", channel, err)
 			}
 			if len(decoded) != audioFrame.Samples {
 				return Block{}, fmt.Errorf("channel %d has %d samples, want %d", channel, len(decoded), audioFrame.Samples)
 			}
+			scratch.channels[channel] = decoded
 			result.Channels[channel] = decoded
 		}
 		return result, nil
@@ -105,23 +129,35 @@ func Decode(frame *media.Frame) (Block, error) {
 	if len(planes) == 0 {
 		return Block{}, fmt.Errorf("packed audio has no data plane")
 	}
-	interleaved, err := mediapcm.ToFloat32(nil, planes[0], audioFrame.Format, audioFrame.BitsPerSample)
+	interleaved, err := mediapcm.ToFloat32(scratch.interleaved, planes[0], audioFrame.Format, audioFrame.BitsPerSample)
 	if err != nil {
 		return Block{}, err
 	}
+	scratch.interleaved = interleaved
 	if len(interleaved) != channels*audioFrame.Samples {
 		return Block{}, fmt.Errorf("packed audio has %d samples, want %d", len(interleaved), channels*audioFrame.Samples)
 	}
 	for channel := range result.Channels {
-		result.Channels[channel] = make([]float32, audioFrame.Samples)
-		for sample := range result.Channels[channel] {
-			result.Channels[channel][sample] = interleaved[sample*channels+channel]
+		dst := scratch.channels[channel]
+		if cap(dst) < audioFrame.Samples {
+			dst = make([]float32, audioFrame.Samples)
+		} else {
+			dst = dst[:audioFrame.Samples]
 		}
+		for sample := range dst {
+			dst[sample] = interleaved[sample*channels+channel]
+		}
+		scratch.channels[channel] = dst
+		result.Channels[channel] = dst
 	}
 	return result, nil
 }
 
 func Encode(block Block, format media.SampleFormat, bitsPerSample int) (*media.AudioFrame, error) {
+	return EncodeInto(block, format, bitsPerSample, &Scratch{})
+}
+
+func EncodeInto(block Block, format media.SampleFormat, bitsPerSample int, scratch *Scratch) (*media.AudioFrame, error) {
 	if err := mediapcm.ValidateFormat(format); err != nil {
 		return nil, err
 	}
@@ -153,12 +189,19 @@ func Encode(block Block, format media.SampleFormat, bitsPerSample int) (*media.A
 		return frame, nil
 	}
 
-	interleaved := make([]float32, samples*channels)
+	needed := samples * channels
+	interleaved := scratch.interleaved
+	if cap(interleaved) < needed {
+		interleaved = make([]float32, needed)
+	} else {
+		interleaved = interleaved[:needed]
+	}
 	for sample := 0; sample < samples; sample++ {
 		for channel := range block.Channels {
 			interleaved[sample*channels+channel] = block.Channels[channel][sample]
 		}
 	}
+	scratch.interleaved = interleaved
 	if err := mediapcm.FromFloat32(frame.Planes()[0], interleaved, format, bitsPerSample); err != nil {
 		frame.Release()
 		return nil, err
