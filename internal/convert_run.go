@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/godexture/core/pipeline"
@@ -14,6 +15,18 @@ import (
 )
 
 func runConvert(command *cobra.Command, inputPath, outputPath string, options convertOptions) (resultErr error) {
+	if pprofPath := os.Getenv("GODEC_PPROF"); pprofPath != "" {
+		f, err := os.Create(pprofPath)
+		if err != nil {
+			return fmt.Errorf("failed to create pprof file: %w", err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return fmt.Errorf("failed to start pprof: %w", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
 	if options.dryRun && options.metrics {
 		return errors.New("--dry-run and --metrics cannot be used together")
 	}
