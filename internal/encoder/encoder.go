@@ -48,6 +48,8 @@ type Encoder struct {
 	pool    *registry.WorkerPool
 	scratch sync.Pool
 	closed  bool
+	mu      sync.Mutex
+	waitCh  chan struct{}
 }
 
 // NewEncoder builds an encoder. pool may be nil, in which case blocks are
@@ -108,8 +110,8 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 }
 
 // ReceivePacket drains pendingQueue in submission order. Entries produced by
-// the parallel path may still be in flight (entry.done != nil), in which
-// case this blocks on that specific entry until a worker finishes it.
+// the parallel path may still be in flight (entry.ready == false), in which
+// case waitForEntry blocks on that specific entry until a worker finishes it.
 //
 // It deliberately never returns ErrEAGAIN just because the head isn't ready
 // yet: callers may wire this encoder into a pipeline with fan-out (e.g. a
@@ -126,10 +128,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
 	for len(e.pendingQueue) > 0 {
 		head := e.pendingQueue[0]
-		if head.done != nil {
-			<-head.done
-			head.done = nil
-		}
+		e.waitForEntry(head)
 		if head.err != nil {
 			e.popPendingEntry()
 			return nil, head.err
@@ -177,7 +176,7 @@ func (e *Encoder) Flush() error {
 	}
 	e.flushed = true
 	sum := e.MD5()
-	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
 			media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
 		}),
@@ -201,11 +200,9 @@ func (e *Encoder) Close() error {
 		if entry != nil {
 			// Wait for this encoder's own outstanding task, if any, so its
 			// packets exist before being released. This never waits on other
-			// stages' work: the pool is shared, but each entry.done only
-			// depends on the single task that produces it.
-			if entry.done != nil {
-				<-entry.done
-			}
+			// stages' work: the pool is shared, but waitForEntry only
+			// depends on this entry's own ready flag.
+			e.waitForEntry(entry)
 			releasePackets(entry.packets)
 			entry.packets = nil
 		}
@@ -309,7 +306,7 @@ func (e *Encoder) enqueueBlockSync(block [][]int64, pts media.Pts, analysis *fra
 		return err
 	}
 	pkt := newFramePacket(e.writer.DetachBytes(), pts)
-	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{pkt}})
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{pkt}})
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
 	return nil

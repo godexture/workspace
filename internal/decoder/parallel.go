@@ -15,13 +15,17 @@ var decoderOutputReady = func() <-chan struct{} {
 	return ready
 }()
 
+// pendingEntry's completion is tracked with a plain bool (ready) instead of
+// a per-entry channel: every entry that ever needs to block a waiter shares
+// the same Decoder-level waitCh (see markReady/waitForEntry), so completion
+// signaling costs one channel per contended wait instead of one per packet.
 type pendingEntry struct {
 	header frame.Header
 	audio  *media.AudioFrame
 	pts    media.Pts
 	md5    []byte
 	err    error
-	done   chan struct{}
+	ready  bool
 }
 
 type frameJob struct {
@@ -48,6 +52,7 @@ func (d *Decoder) runJob(job frameJob) {
 	workspace := d.acquireWorkspace()
 	decodeJob(job, workspace)
 	d.releaseWorkspace(workspace)
+	d.markReady(job.entry)
 }
 
 func (d *Decoder) acquireWorkspace() *decodeWorkspace {
@@ -74,17 +79,54 @@ func decodeJob(job frameJob, workspace *decodeWorkspace) {
 		}
 	}
 	job.entry.err = err
-	if job.entry.done != nil {
-		close(job.entry.done)
+}
+
+// markReady marks entry as complete and wakes anyone currently blocked in
+// OutputReady or waitForEntry. Safe to call from a pool worker goroutine
+// (that's its only caller: runJob, after decodeJob finishes on the worker).
+func (d *Decoder) markReady(entry *pendingEntry) {
+	d.mu.Lock()
+	entry.ready = true
+	if d.waitCh != nil {
+		close(d.waitCh)
+		d.waitCh = nil
+	}
+	d.mu.Unlock()
+}
+
+// waitChanLocked returns the channel that closes the next time any pending
+// entry completes, creating it on first use. d.mu must be held.
+func (d *Decoder) waitChanLocked() <-chan struct{} {
+	if d.waitCh == nil {
+		d.waitCh = make(chan struct{})
+	}
+	return d.waitCh
+}
+
+// waitForEntry blocks until entry.ready, regardless of whether entry is
+// still the queue head. Used by Close, which must wait out every pending
+// entry's task before releasing it, not just the head's.
+func (d *Decoder) waitForEntry(entry *pendingEntry) {
+	for {
+		d.mu.Lock()
+		if entry.ready {
+			d.mu.Unlock()
+			return
+		}
+		ch := d.waitChanLocked()
+		d.mu.Unlock()
+		<-ch
 	}
 }
 
 func (d *Decoder) OutputReady() <-chan struct{} {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if len(d.pendingQueue) > 0 {
-		if d.pendingQueue[0].done == nil {
+		if d.pendingQueue[0].ready {
 			return decoderOutputReady
 		}
-		return d.pendingQueue[0].done
+		return d.waitChanLocked()
 	}
 	if d.flushed {
 		return decoderOutputReady
