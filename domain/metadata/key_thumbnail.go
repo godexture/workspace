@@ -3,6 +3,8 @@ package metadata
 import (
 	"bytes"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 type PictureType uint8
@@ -47,4 +49,14 @@ func (t *Thumbnail) FillImageProperties() (*Thumbnail, error) {
 	}
 
 	return t, nil
+}
+
+// DetectImageMIME reports the MIME type of image data by decoding it, or
+// "application/octet-stream" if no registered image decoder recognizes it.
+func DetectImageMIME(data []byte) string {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return "application/octet-stream"
+	}
+	return "image/" + format
 }
