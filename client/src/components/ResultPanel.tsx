@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AudioPlayer } from "../audio/AudioPlayer";
 import type { InputSource } from "../conversion/backend/types";
 import type { JobState } from "../conversion/useConversionJob";
@@ -12,6 +13,8 @@ interface ResultPanelProps {
     canStart: boolean;
     onStart: () => void;
     onCancel: () => void;
+    childrenTitle?: string;
+    children?: ReactNode;
 }
 
 const PHASE_LABEL: Record<JobState["phase"], string> = {
@@ -30,6 +33,8 @@ export function ResultPanel({
     canStart,
     onStart,
     onCancel,
+    childrenTitle,
+    children,
 }: ResultPanelProps) {
     const progress = job.progress;
 
@@ -85,6 +90,15 @@ export function ResultPanel({
                     }
                 />
             </div>
+
+            {children && (
+                <div className={styles.extraSection}>
+                    {childrenTitle && (
+                        <h3 className={styles.extraTitle}>{childrenTitle}</h3>
+                    )}
+                    {children}
+                </div>
+            )}
         </Panel>
     );
 }
