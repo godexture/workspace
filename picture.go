@@ -3,8 +3,6 @@ package vorbiscomment
 import (
 	"encoding/binary"
 	"errors"
-	_ "image/png"
-	"net/http"
 
 	"github.com/godexture/core/domain/metadata"
 )
@@ -66,7 +64,7 @@ func ParsePicture(payload []byte) (metadata.Thumbnail, error) {
 func MarshalPicture(thumb metadata.Thumbnail) []byte {
 	mimeType := thumb.MIMEType
 	if mimeType == "" {
-		mimeType = http.DetectContentType(thumb.Data)
+		mimeType = metadata.DetectImageMIME(thumb.Data)
 	}
 	data := make([]byte, 0, len(thumb.Data)+64+len(mimeType)+len(thumb.Description))
 	data = binary.BigEndian.AppendUint32(data, uint32(thumb.PictureType))
