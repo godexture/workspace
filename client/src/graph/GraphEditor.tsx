@@ -3,7 +3,6 @@ import "@xyflow/react/dist/style.css";
 import {
     Background,
     Controls,
-    MiniMap,
     ReactFlow,
     type Connection,
     type Edge,
@@ -93,9 +92,21 @@ export function GraphEditor({
 
     function onNodesChange(changes: NodeChange<EditorFlowNode>[]) {
         if (locked) return;
-        let next = graph;
         const removals = changes.filter((change) => change.type === "remove").map((change) => change.id);
-        for (const id of removals) {
+        let next = deleteNodes(graph, removals);
+        for (const change of changes) {
+            if (change.type !== "position" || !change.position) continue;
+            next = {
+                ...next,
+                nodes: next.nodes.map((node) => node.id === change.id ? { ...node, position: change.position! } : node),
+            };
+        }
+        if (next !== graph) onGraphChange(next);
+    }
+
+    function deleteNodes(current: GraphDocument, ids: Iterable<string>): GraphDocument {
+        let next = current;
+        for (const id of ids) {
             const node = next.nodes.find((value) => value.id === id);
             if (!node || !canDeleteNode(node)) continue;
             if (node.kind === "source") onFileChange(id, null);
@@ -106,14 +117,7 @@ export function GraphEditor({
             };
             if (selectedID === id) setSelectedID(null);
         }
-        for (const change of changes) {
-            if (change.type !== "position" || !change.position) continue;
-            next = {
-                ...next,
-                nodes: next.nodes.map((node) => node.id === change.id ? { ...node, position: change.position! } : node),
-            };
-        }
-        if (next !== graph) onGraphChange(next);
+        return next;
     }
 
     function onConnect(connection: Connection) {
@@ -254,7 +258,6 @@ export function GraphEditor({
                         proOptions={{ hideAttribution: true }}
                     >
                         <Background gap={18} size={1} />
-                        <MiniMap pannable zoomable />
                         <Controls />
                     </ReactFlow>
                 </div>
@@ -267,6 +270,11 @@ export function GraphEditor({
                         onChange={updateNode}
                         onUpload={upload}
                         onFilterParametersChange={changeFilterParameters}
+                        onDelete={(node) => {
+                            if (locked) return;
+                            const next = deleteNodes(graph, [node.id]);
+                            if (next !== graph) onGraphChange(next);
+                        }}
                     />
                 </div>
             </div>
