@@ -317,12 +317,11 @@ func (d *signalingDecoder) SendPacket(*media.Packet) error {
 	return nil
 }
 
-func (d *signalingDecoder) ReceiveFrame() (*media.Frame, error) {
+func (d *signalingDecoder) ReceiveFrame() (media.Frame, error) {
 	if d.pending {
 		d.pending = false
 		frame := media.NewAudioFrame(media.SampleFormatS16, media.LayoutMono1, 48000, 1)
-		var wrapped media.Frame = frame
-		return &wrapped, nil
+		return frame, nil
 	}
 	if d.flushed {
 		return nil, engine.ErrEOF

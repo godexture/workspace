@@ -61,12 +61,8 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	return e.slot.Push(encoded)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.slot.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.slot.Receive()
 }
 
 func (e *Engine) Flush() error {

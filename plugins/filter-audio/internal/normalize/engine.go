@@ -50,7 +50,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	return e.blocks.Append(block)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
 	if !e.flushed {
 		return nil, engine.ErrEAGAIN
 	}
@@ -70,8 +70,7 @@ func (e *Engine) ReceiveFrame() (*media.Frame, error) {
 	if err != nil {
 		return nil, err
 	}
-	var output media.Frame = frame
-	return &output, nil
+	return frame, nil
 }
 
 func (e *Engine) Flush() error {

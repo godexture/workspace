@@ -676,14 +676,14 @@ type EncoderEngine interface {
 // デコーダ
 type DecoderEngine interface {
     SendPacket(pkt *media.Packet) error
-    ReceiveFrame() (*media.Frame, error)
+    ReceiveFrame() (media.Frame, error)
     Flush() error
 }
 
 // フィルタ
 type FilterEngine interface {
     SendFrame(frame *media.Frame) error
-    ReceiveFrame() (*media.Frame, error)
+    ReceiveFrame() (media.Frame, error)
     Flush() error
 }
 ```

@@ -19,9 +19,9 @@ func monoFrame(rate int, pts media.Pts, values []float32) *media.Frame {
 	return &result
 }
 
-func decodeMono(t *testing.T, frame *media.Frame) []float32 {
+func decodeMono(t *testing.T, frame media.Frame) []float32 {
 	t.Helper()
-	block, err := audio.Decode(frame)
+	block, err := audio.Decode(&frame)
 	if err != nil {
 		t.Fatal(err)
 	}
