@@ -218,7 +218,7 @@ func TestResolvePipelinePreview(t *testing.T) {
 
 func TestResolvePipelinePreviewWithAuxiliaryUpload(t *testing.T) {
 	server, _ := newTestServer(t)
-	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolve","inputs":{"ir":{"alias":"ir"}}}]}`
+	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolver","inputs":{"ir":{"alias":"ir"}}}]}`
 	contentType, body := multipartInputs(t, spec, inputManifest{
 		Main: inputReference{Kind: "file"},
 		Aux:  map[string]inputReference{"ir": {Kind: "file"}},

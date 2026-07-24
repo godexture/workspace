@@ -117,7 +117,7 @@ func TestStoreRemovesEveryOwnedInput(t *testing.T) {
 	}, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 		Filters: []conversion.FilterSpec{{
-			PluginSpec: conversion.PluginSpec{Name: "convolve"},
+			PluginSpec: conversion.PluginSpec{Name: "convolver"},
 			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "ir"}},
 		}},
 		AuxInputs: map[string]conversion.AuxInputSpec{"ir": {}},
