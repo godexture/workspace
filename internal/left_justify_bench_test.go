@@ -20,10 +20,11 @@ func BenchmarkLeftJustifyPCM(b *testing.B) {
 	for _, test := range tests {
 		b.Run(test.name, func(b *testing.B) {
 			data := make([]byte, test.size)
+			var scratch []byte
 			b.ReportAllocs()
 			b.SetBytes(int64(test.size))
 			for b.Loop() {
-				_ = leftJustifyPCM(data, test.format, test.bitsPerSample)
+				_ = leftJustifyPCM(&scratch, data, test.format, test.bitsPerSample)
 			}
 		})
 	}
