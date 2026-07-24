@@ -301,26 +301,28 @@ export function GraphEditor({
         const target =
             selected ??
             graph.nodes.find((current) => current.kind === "output");
-        const targetPort = target ? inputPorts(target)[0] : undefined;
-        const incoming =
-            target && targetPort
-                ? graph.edges.find(
-                      (edge) =>
-                          edge.target === target.id &&
-                          edge.targetPort === targetPort,
+        // A terminal node (no outputs, e.g. the output node) has nothing to insert after, so insert before it instead.
+        const after = target ? outputPorts(target).length > 0 : false;
+        const anchorPort = target ? (after ? outputPorts(target)[0] : inputPorts(target)[0]) : undefined;
+        const spliced =
+            target && anchorPort
+                ? graph.edges.find((edge) =>
+                      after
+                          ? edge.source === target.id && edge.sourcePort === anchorPort
+                          : edge.target === target.id && edge.targetPort === anchorPort,
                   )
                 : undefined;
-        const incomingSource = incoming
-            ? graph.nodes.find((current) => current.id === incoming.source)
+        const neighbor = spliced
+            ? graph.nodes.find((current) => current.id === (after ? spliced.target : spliced.source))
             : undefined;
 
         const position = target
-            ? incomingSource
+            ? neighbor
                 ? {
-                      x: (incomingSource.position.x + target.position.x) / 2,
-                      y: (incomingSource.position.y + target.position.y) / 2,
+                      x: (target.position.x + neighbor.position.x) / 2,
+                      y: (target.position.y + neighbor.position.y) / 2,
                   }
-                : { x: target.position.x - 220, y: target.position.y }
+                : { x: target.position.x + (after ? 220 : -220), y: target.position.y }
             : { x: 60, y: 40 + graph.nodes.length * 24 };
 
         const node = descriptor
@@ -328,38 +330,16 @@ export function GraphEditor({
             : createSourceNode(position);
 
         let edges = graph.edges;
-        if (incoming && target && targetPort) {
-            edges = edges.filter((edge) => edge.id !== incoming.id);
-            const outPort = outputPorts(node)[0];
-            if (outPort) {
-                edges = [
-                    ...edges,
-                    {
-                        id: edgeID(node.id, outPort, target.id, targetPort),
-                        source: node.id,
-                        sourcePort: outPort,
-                        target: target.id,
-                        targetPort,
-                    },
-                ];
-            }
+        if (spliced && target && anchorPort) {
+            edges = edges.filter((edge) => edge.id !== spliced.id);
             const inPort = inputPorts(node)[0];
-            if (inPort) {
-                edges = [
-                    ...edges,
-                    {
-                        id: edgeID(
-                            incoming.source,
-                            incoming.sourcePort,
-                            node.id,
-                            inPort,
-                        ),
-                        source: incoming.source,
-                        sourcePort: incoming.sourcePort,
-                        target: node.id,
-                        targetPort: inPort,
-                    },
-                ];
+            const outPort = outputPorts(node)[0];
+            if (after) {
+                if (inPort) edges = [...edges, connectPorts(target.id, anchorPort, node.id, inPort)];
+                if (outPort) edges = [...edges, connectPorts(node.id, outPort, spliced.target, spliced.targetPort)];
+            } else {
+                if (outPort) edges = [...edges, connectPorts(node.id, outPort, target.id, anchorPort)];
+                if (inPort) edges = [...edges, connectPorts(spliced.source, spliced.sourcePort, node.id, inPort)];
             }
         }
 
@@ -565,6 +545,10 @@ export function GraphEditor({
             </div>
         </Panel>
     );
+}
+
+function connectPorts(source: string, sourcePort: string, target: string, targetPort: string): GraphEdge {
+    return { id: edgeID(source, sourcePort, target, targetPort), source, sourcePort, target, targetPort };
 }
 
 function createsCycle(graph: GraphDocument, connection: Connection): boolean {
