@@ -47,12 +47,8 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	return nil
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.slot.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.slot.Receive()
 }
 func (e *Engine) Flush() error { e.slot.Flush(); return nil }
 func (e *Engine) Close() error { e.slot.Close(); return nil }

@@ -311,7 +311,7 @@ func (e *Engine) pushOutput(port string, channels audio.Channels, pts media.Pts)
 	return nil
 }
 
-func (e *Engine) ReceiveOutput() (string, *media.Frame, error) {
+func (e *Engine) ReceiveOutput() (string, media.Frame, error) {
 	if len(e.pending) == 0 {
 		if e.flushed {
 			return "", nil, engine.ErrEOF
@@ -320,10 +320,10 @@ func (e *Engine) ReceiveOutput() (string, *media.Frame, error) {
 	}
 	item := e.pending[0]
 	e.pending = e.pending[1:]
-	return item.port, &item.frame, nil
+	return item.port, item.frame, nil
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
 	_, frame, err := e.ReceiveOutput()
 	return frame, err
 }

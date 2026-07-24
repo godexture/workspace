@@ -638,12 +638,12 @@ func TestConvolveMatchesDirectConvolution(t *testing.T) {
 		if err != nil {
 			break
 		}
-		block, err := audio.Decode(output)
+		block, err := audio.Decode(&output)
 		if err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, block.Channels[0]...)
-		(*output).Release()
+		output.Release()
 	}
 
 	want := directConvolution(input, ir)
@@ -813,7 +813,7 @@ func receive(t *testing.T, item engine.FilterEngine) media.Frame {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return *output
+	return output
 }
 
 func assertSamples(t *testing.T, output media.Frame, want []float32) {

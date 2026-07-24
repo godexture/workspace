@@ -200,12 +200,8 @@ func (e *Engine) EndInput(port string) error {
 	}
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.queue.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.queue.Receive()
 }
 
 func (e *Engine) Flush() error {

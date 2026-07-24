@@ -117,7 +117,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	return nil
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
 	if e.replay {
 		block, ok, err := e.tail.Next()
 		if err != nil {
@@ -145,13 +145,12 @@ func (e *Engine) ReceiveFrame() (*media.Frame, error) {
 	return nil, engine.ErrEAGAIN
 }
 
-func (e *Engine) encode(block audio.Block) (*media.Frame, error) {
+func (e *Engine) encode(block audio.Block) (media.Frame, error) {
 	frame, err := audio.EncodeInto(block, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return nil, err
 	}
-	var output media.Frame = frame
-	return &output, nil
+	return frame, nil
 }
 func (e *Engine) Flush() error { e.flushed = true; return nil }
 func (e *Engine) Close() error {
