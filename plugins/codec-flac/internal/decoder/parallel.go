@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/pool"
 )
 
 var decoderOutputReady = func() <-chan struct{} {
@@ -31,10 +32,16 @@ type pendingEntry struct {
 type frameJob struct {
 	d      *Decoder
 	data   []byte
-	pts    media.Pts
-	info   streaminfo.StreamInfo
-	strict bool
-	entry  *pendingEntry
+	// dataBuf is the pool.Get-backed storage for data, non-nil for jobs
+	// dispatched to the worker pool (see SendPacket). It's returned to the
+	// pool once decodeJob is done reading it, in runJob. nil for jobs run
+	// synchronously in SendPacket, which read pkt.Data() directly and never
+	// need their own copy.
+	dataBuf *[]byte
+	pts     media.Pts
+	info    streaminfo.StreamInfo
+	strict  bool
+	entry   *pendingEntry
 }
 
 // Run lets frameJob be submitted to a WorkerPool directly (see
@@ -52,6 +59,9 @@ func (d *Decoder) runJob(job frameJob) {
 	workspace := d.acquireWorkspace()
 	decodeJob(job, workspace)
 	d.releaseWorkspace(workspace)
+	if job.dataBuf != nil {
+		pool.Put(job.dataBuf)
+	}
 	d.markReady(job.entry)
 }
 
