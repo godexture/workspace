@@ -128,14 +128,15 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		return nil
 	}
 	d.pendingQueue = append(d.pendingQueue, entry)
-	job := frameJob{
+	job := &frameJob{
+		d:      d,
 		data:   append([]byte(nil), pkt.Data()...),
 		pts:    pkt.PTS,
 		info:   d.info,
 		strict: d.cfg.Strict,
 		entry:  entry,
 	}
-	d.pool.Submit(func() { d.runJob(job) })
+	d.pool.Submit(job)
 	return nil
 }
 

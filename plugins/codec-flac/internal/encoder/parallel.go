@@ -28,12 +28,21 @@ type pendingEntry struct {
 // frames/samples were already emitted — not on the (expensive, possibly
 // out-of-order) encode itself.
 type frameJob struct {
+	e           *Encoder
 	channels    [][]int64
 	pts         media.Pts
 	frameNumber uint64
 	sampleBase  uint64
 	split       bool
 	entry       *pendingEntry
+}
+
+// Run lets frameJob be submitted to a WorkerPool directly (see
+// registry.Task), avoiding the extra closure allocation a func() wrapper
+// would need on top of the job struct that must already be heap-allocated to
+// outlive dispatchFullBlock/dispatchPartialBlock.
+func (job *frameJob) Run() {
+	job.e.runJob(*job)
 }
 
 // encodeScratch is the per-task working state a submitted job needs. It is
@@ -74,7 +83,8 @@ func (e *Encoder) OutputReady() <-chan struct{} {
 func (e *Encoder) dispatchFullBlock(block [][]int64) {
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
-	job := frameJob{
+	job := &frameJob{
+		e:           e,
 		channels:    copyBlock(block),
 		pts:         e.bufferPTS,
 		frameNumber: e.frameNumber,
@@ -84,7 +94,7 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 	}
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
-	e.pool.Submit(func() { e.runJob(job) })
+	e.pool.Submit(job)
 }
 
 // dispatchPartialBlock is Flush's counterpart to dispatchFullBlock: it never
@@ -92,7 +102,8 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	entry := &pendingEntry{done: make(chan struct{})}
 	e.pendingQueue = append(e.pendingQueue, entry)
-	job := frameJob{
+	job := &frameJob{
+		e:           e,
 		channels:    copyBlock(block),
 		pts:         pts,
 		frameNumber: e.frameNumber,
@@ -102,7 +113,7 @@ func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	}
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
-	e.pool.Submit(func() { e.runJob(job) })
+	e.pool.Submit(job)
 }
 
 func copyBlock(block [][]int64) [][]int64 {

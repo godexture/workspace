@@ -381,6 +381,39 @@ func (e *Engine) pushBlock(channels audio.Channels) error {
 	return e.queue.Push(frame)
 }
 
+// partitionError collects the first error from concurrent partition tasks.
+type partitionError struct {
+	sync.Mutex
+	value error
+}
+
+// partitionTask forward-transforms one partition on a shared WorkerPool
+// worker. It implements registry.Task directly so it can be submitted
+// without an extra closure allocation on top of the task struct itself.
+type partitionTask struct {
+	plan    *fft.RealPlan
+	hop     int
+	samples []float32
+	index   int
+	result  []partition
+	group   *sync.WaitGroup
+	errs    *partitionError
+}
+
+func (t *partitionTask) Run() {
+	defer t.group.Done()
+	part, err := transformPartition(t.plan.Clone(), t.hop, t.samples, t.index)
+	if err != nil {
+		t.errs.Lock()
+		if t.errs.value == nil {
+			t.errs.value = err
+		}
+		t.errs.Unlock()
+		return
+	}
+	t.result[t.index] = part
+}
+
 // buildPartitions splits samples into hop-length segments (the last one
 // zero-padded), and forward-transforms each into a spectrum ready for the
 // frequency-domain delay line.
@@ -399,30 +432,22 @@ func buildPartitions(plan *fft.RealPlan, hop int, samples []float32, pool *regis
 	}
 
 	var group sync.WaitGroup
-	var errors struct {
-		sync.Mutex
-		value error
-	}
+	errs := &partitionError{}
 	for i := range result {
-		index := i
 		group.Add(1)
-		pool.Submit(func() {
-			defer group.Done()
-			part, err := transformPartition(plan.Clone(), hop, samples, index)
-			if err != nil {
-				errors.Lock()
-				if errors.value == nil {
-					errors.value = err
-				}
-				errors.Unlock()
-				return
-			}
-			result[index] = part
+		pool.Submit(&partitionTask{
+			plan:    plan,
+			hop:     hop,
+			samples: samples,
+			index:   i,
+			result:  result,
+			group:   &group,
+			errs:    errs,
 		})
 	}
 	group.Wait()
-	if errors.value != nil {
-		return nil, errors.value
+	if errs.value != nil {
+		return nil, errs.value
 	}
 	return result, nil
 }

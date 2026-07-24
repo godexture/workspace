@@ -342,7 +342,7 @@ func TestDecoder_CloseReleasesPendingWithoutFlush(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	pool.Submit(func() { close(done) })
+	pool.Submit(registry.TaskFunc(func() { close(done) }))
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
