@@ -4,12 +4,13 @@ import {
     Background,
     Controls,
     ReactFlow,
+    applyNodeChanges,
     type Connection,
     type Edge,
     type NodeTypes,
     type NodeChange,
 } from "@xyflow/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { Catalog, FilterEntry, Preset } from "../api/types";
 import type { BackendMode, ConversionBackend } from "../conversion/backend/types";
@@ -47,6 +48,15 @@ interface GraphEditorProps {
 
 const nodeTypes = { editor: EditorNode } as NodeTypes;
 
+function toFlowNodes(graph: GraphDocument): EditorFlowNode[] {
+    return graph.nodes.map((node) => ({
+        id: node.id,
+        type: "editor",
+        position: node.position,
+        data: { node },
+    } satisfies EditorFlowNode));
+}
+
 export function GraphEditor({
     graph,
     files,
@@ -65,13 +75,9 @@ export function GraphEditor({
     const [selectedID, setSelectedID] = useState<string | null>(null);
     const [filterChoice, setFilterChoice] = useState(catalog.filters[0]?.name ?? "");
     const [editorError, setEditorError] = useState<string | null>(null);
+    const [flowNodes, setFlowNodes] = useState<EditorFlowNode[]>(() => toFlowNodes(graph));
     const selected = graph.nodes.find((node) => node.id === selectedID) ?? null;
-    const flowNodes = useMemo(() => graph.nodes.map((node) => ({
-        id: node.id,
-        type: "editor",
-        position: node.position,
-        data: { node },
-    } satisfies EditorFlowNode)), [graph.nodes]);
+    useEffect(() => setFlowNodes(toFlowNodes(graph)), [graph.nodes]);
     const flowEdges = useMemo(() => graph.edges.map((edge) => ({
         id: edge.id,
         source: edge.source,
@@ -92,16 +98,25 @@ export function GraphEditor({
 
     function onNodesChange(changes: NodeChange<EditorFlowNode>[]) {
         if (locked) return;
-        const removals = changes.filter((change) => change.type === "remove").map((change) => change.id);
-        let next = deleteNodes(graph, removals);
-        for (const change of changes) {
-            if (change.type !== "position" || !change.position) continue;
-            next = {
-                ...next,
-                nodes: next.nodes.map((node) => node.id === change.id ? { ...node, position: change.position! } : node),
-            };
-        }
+        const accepted = changes.filter((change) => {
+            if (change.type !== "remove") return true;
+            const node = graph.nodes.find((current) => current.id === change.id);
+            return Boolean(node && canDeleteNode(node));
+        });
+        setFlowNodes((current) => applyNodeChanges(accepted, current));
+        const removals = accepted.filter((change) => change.type === "remove").map((change) => change.id);
+        const next = deleteNodes(graph, removals);
         if (next !== graph) onGraphChange(next);
+    }
+
+    function saveNodePosition(id: string, position: { x: number; y: number }) {
+        if (locked || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+        const current = graph.nodes.find((node) => node.id === id);
+        if (!current || (current.position.x === position.x && current.position.y === position.y)) return;
+        onGraphChange({
+            ...graph,
+            nodes: graph.nodes.map((node) => node.id === id ? { ...node, position } : node),
+        });
     }
 
     function deleteNodes(current: GraphDocument, ids: Iterable<string>): GraphDocument {
@@ -248,6 +263,7 @@ export function GraphEditor({
                             if (removed.size > 0) onGraphChange({ ...graph, edges: graph.edges.filter((edge) => !removed.has(edge.id)) });
                         }}
                         onConnect={onConnect}
+                        onNodeDragStop={(_, node) => saveNodePosition(node.id, node.position)}
                         onNodeClick={(_, node) => setSelectedID(node.id)}
                         onPaneClick={() => setSelectedID(null)}
                         fitView
