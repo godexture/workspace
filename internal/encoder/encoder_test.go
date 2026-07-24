@@ -353,7 +353,7 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReceiveFrame(first) error = %v", err)
 	}
-	firstAudio := (*first).(*media.AudioFrame)
+	firstAudio := first.(*media.AudioFrame)
 	firstPCM := append([]byte(nil), firstAudio.Planes()[0]...)
 	if err := dec.SendPacket(secondPacket); err != nil {
 		t.Fatalf("decoder SendPacket(second) error = %v", err)
@@ -366,7 +366,7 @@ func TestDecoderWorkspaceDoesNotMutateReturnedFrames(t *testing.T) {
 	if !bytes.Equal(firstAudio.Planes()[0], firstPCM) {
 		t.Fatal("first returned frame was mutated while decoding the second frame")
 	}
-	secondAudio := (*second).(*media.AudioFrame)
+	secondAudio := second.(*media.AudioFrame)
 	if bytes.Equal(firstAudio.Planes()[0], secondAudio.Planes()[0]) {
 		t.Fatal("test frames unexpectedly contain identical PCM")
 	}

@@ -236,13 +236,13 @@ func assertDecodeAppendixDExample1(t *testing.T, data []byte, stream media.Strea
 	if err != nil {
 		t.Fatalf("ReceiveFrame() error = %v", err)
 	}
-	if frame == nil || *frame == nil {
+	if frame == nil {
 		t.Fatal("expected decoded frame")
 	}
 
-	audioFrame, ok := (*frame).(*media.AudioFrame)
+	audioFrame, ok := frame.(*media.AudioFrame)
 	if !ok {
-		t.Fatalf("expected *media.AudioFrame, got %T", *frame)
+		t.Fatalf("expected *media.AudioFrame, got %T", frame)
 	}
 	if audioFrame.Format != media.SampleFormatS16 {
 		t.Fatalf("format = %s, want %s", audioFrame.Format, media.SampleFormatS16)
@@ -383,7 +383,7 @@ func decodeRepeatedPackets(t *testing.T, parallelism int) [][]byte {
 		if err != nil {
 			t.Fatalf("ReceiveFrame() error = %v", err)
 		}
-		audio := (*decoded).(*media.AudioFrame)
+		audio := decoded.(*media.AudioFrame)
 		frames = append(frames, append([]byte(nil), audio.Planes()[0]...))
 	}
 }

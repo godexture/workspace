@@ -140,7 +140,7 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	return nil
 }
 
-func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
+func (d *Decoder) ReceiveFrame() (media.Frame, error) {
 	if d.configErr != nil {
 		return nil, d.configErr
 	}
@@ -183,8 +183,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		}
 		d.md5.WritePacked(pcm)
 	}
-	var frame media.Frame = entry.audio
-	return &frame, nil
+	return entry.audio, nil
 }
 
 func (d *Decoder) Flush() error {
