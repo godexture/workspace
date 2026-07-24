@@ -1,4 +1,4 @@
-package speed
+package retime
 
 import (
 	"fmt"
@@ -124,10 +124,10 @@ func (e *Engine) initialize(block audio.Block) {
 
 func (e *Engine) validateInput(block audio.Block) error {
 	if block.Rate != e.inputRate || block.Layout != e.layout || block.Format != e.format || block.Bits != e.bits {
-		return fmt.Errorf("speed input format changed within stream")
+		return fmt.Errorf("retime input format changed within stream")
 	}
 	if block.PTS != e.baseInputPTS+media.Pts(e.totalInput) {
-		return fmt.Errorf("speed input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
+		return fmt.Errorf("retime input PTS discontinuity: got %d, want %d", block.PTS, e.baseInputPTS+media.Pts(e.totalInput))
 	}
 	return nil
 }

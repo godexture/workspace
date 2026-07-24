@@ -387,39 +387,39 @@ func (c CompressorConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-type EQConfig config.EQConfig
+type EqualizerConfig config.EqualizerConfig
 
-type EQConfigOption interface {
-	applyEQConfig(*EQConfig)
+type EqualizerConfigOption interface {
+	applyEqualizerConfig(*EqualizerConfig)
 }
 
-type eQConfigOptionFunc func(*EQConfig)
+type equalizerConfigOptionFunc func(*EqualizerConfig)
 
-func (f eQConfigOptionFunc) applyEQConfig(c *EQConfig) {
+func (f equalizerConfigOptionFunc) applyEqualizerConfig(c *EqualizerConfig) {
 	f(c)
 }
 
-func NewEQConfig(options ...EQConfigOption) EQConfig {
-	config := EQConfig(config.DefaultEQConfig)
+func NewEqualizerConfig(options ...EqualizerConfigOption) EqualizerConfig {
+	config := EqualizerConfig(config.DefaultEqualizerConfig)
 	for _, option := range options {
-		option.applyEQConfig(&config)
+		option.applyEqualizerConfig(&config)
 	}
 	return config
 }
 
-func (c EQConfig) ResolveDefault() config.EQConfig {
-	return config.EQConfig(config.DefaultEQConfig)
+func (c EqualizerConfig) ResolveDefault() config.EqualizerConfig {
+	return config.EqualizerConfig(config.DefaultEqualizerConfig)
 }
 
-func (c EQConfig) Resolve() config.EQConfig {
-	return config.EQConfig(c)
+func (c EqualizerConfig) Resolve() config.EqualizerConfig {
+	return config.EqualizerConfig(c)
 }
 
-func (c EQConfig) Validate() error {
+func (c EqualizerConfig) Validate() error {
 	return c.Resolve().Validate()
 }
 
-func (c EQConfig) FieldChoices(field string) []string {
+func (c EqualizerConfig) FieldChoices(field string) []string {
 	switch field {
 	case "Type":
 		return []string{"peaking", "lowshelf", "highshelf", "lowpass", "highpass"}
@@ -610,14 +610,14 @@ const (
 	SpeedModeRelabel     = config.SpeedModeRelabel
 )
 
-type EQType = config.EQType
+type EqualizerType = config.EqualizerType
 
 const (
-	EQTypePeaking   = config.EQTypePeaking
-	EQTypeLowShelf  = config.EQTypeLowShelf
-	EQTypeHighShelf = config.EQTypeHighShelf
-	EQTypeLowPass   = config.EQTypeLowPass
-	EQTypeHighPass  = config.EQTypeHighPass
+	EqualizerTypePeaking   = config.EqualizerTypePeaking
+	EqualizerTypeLowShelf  = config.EqualizerTypeLowShelf
+	EqualizerTypeHighShelf = config.EqualizerTypeHighShelf
+	EqualizerTypeLowPass   = config.EqualizerTypeLowPass
+	EqualizerTypeHighPass  = config.EqualizerTypeHighPass
 )
 
 func WithFormat(v media.SampleFormat) FormatConfigOption {
@@ -884,26 +884,26 @@ func WithMakeupGainDB(v float64) CompressorConfigOption {
 	})
 }
 
-func WithType(v EQType) EQConfigOption {
-	return eQConfigOptionFunc(func(c *EQConfig) {
+func WithType(v EqualizerType) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.Type = v
 	})
 }
 
-func WithFrequencyHz(v float64) EQConfigOption {
-	return eQConfigOptionFunc(func(c *EQConfig) {
+func WithFrequencyHz(v float64) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.FrequencyHz = v
 	})
 }
 
-func WithGainDB(v float64) EQConfigOption {
-	return eQConfigOptionFunc(func(c *EQConfig) {
+func WithGainDB(v float64) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.GainDB = v
 	})
 }
 
-func WithQ(v float64) EQConfigOption {
-	return eQConfigOptionFunc(func(c *EQConfig) {
+func WithQ(v float64) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.Q = v
 	})
 }

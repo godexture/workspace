@@ -9,7 +9,7 @@ import (
 // inputRate to targetRate, labeling emitted blocks with outputRate. The
 // distinction between targetRate and outputRate lets callers reuse the same
 // interpolation math for both true sample-rate conversion (resample, where
-// outputRate == targetRate) and playback-speed changes (speed, where
+// outputRate == targetRate) and playback-retime changes (retime, where
 // outputRate stays pinned to inputRate while targetRate is virtual).
 type Resampler struct {
 	inputRate, targetRate, outputRate int
