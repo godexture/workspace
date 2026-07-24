@@ -5,7 +5,6 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     background: var(--color-panel);
-    overflow: hidden;
 }
 
 .kindSource { --kind-color: var(--color-source); }
@@ -18,6 +17,7 @@
 
 .header {
     overflow: hidden;
+    border-radius: var(--radius) var(--radius) 0 0;
     padding: var(--space-3) var(--space-4);
     background: var(--kind-color);
     color: #fff;
@@ -53,8 +53,8 @@
     font-size: 0.66rem;
 }
 
-.portIn { margin-left: -0.35rem; }
-.portOut { justify-content: flex-end; margin-right: -0.35rem; }
+.portIn { margin-left: -9px; padding-left: 10px; }
+.portOut { justify-content: flex-end; margin-right: -9px; padding-right: 10px; }
 
 .portIn span,
 .portOut span {
@@ -67,7 +67,15 @@
 .portOut :global(.react-flow__handle) {
     width: 8px;
     height: 8px;
-    border: 1.6px solid var(--kind-color);
-    border-radius: 50%;
+    min-width: 8px;
+    min-height: 8px;
+    box-sizing: border-box;
+    border: 1.4px solid var(--kind-color);
+    border-radius: 0;
     background: var(--color-panel);
+    transform: translate(0, -50%);
+}
+
+.portOut :global(.react-flow__handle) {
+    background: var(--kind-color);
 }
