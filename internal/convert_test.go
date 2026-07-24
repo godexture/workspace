@@ -160,7 +160,7 @@ func TestBuildSpecAppliesCodecValuesWithoutOverridingEncoderSelection(t *testing
 func TestBuildSpecWiresNamedAuxiliaryInput(t *testing.T) {
 	outputs := catalog.Build().Outputs
 	spec, err := buildSpec(convertOptions{
-		filters: []string{"reverb=convolve:wet-dry-mix=1"},
+		filters: []string{"reverb=convolver:wet-dry-mix=1"},
 		inputs:  []string{"IR=cabinet.wav"},
 		wires:   []string{"reverb.ir=IR"},
 	}, "output.wav", outputs)
@@ -188,18 +188,18 @@ func TestBuildSpecRejectsAmbiguousDefaultFilterAlias(t *testing.T) {
 
 // TestBuildSpecWiresFilterChainAheadOfAnotherFilter exercises wiring one
 // filter's output into another's non-"in" port through an intermediate
-// filter: "resample" reads the "ir" auxiliary input, and "convolve" reads
+// filter: "resample" reads the "ir" auxiliary input, and "convolver" reads
 // resample's output on its "ir" port. Unlike the old model, resample is not
-// nested under AuxInputs — it is an ordinary entry in spec.Filters, wired
+// nested under AuxInputs  Eit is an ordinary entry in spec.Filters, wired
 // like anything else; the graph is resolved uniformly by
 // conversion.Resolve/routing.NegotiateConversion.
 func TestBuildSpecWiresFilterChainAheadOfAnotherFilter(t *testing.T) {
 	spec, err := buildSpec(convertOptions{
-		filters: []string{"resample=resample:sample-rate=48000", "convolve"},
+		filters: []string{"resample=resample:sample-rate=48000", "convolver"},
 		inputs:  []string{"ir=cabinet.wav"},
 		wires: []string{
 			"resample.in=ir.out",
-			"convolve.ir=resample.out",
+			"convolver.ir=resample.out",
 		},
 	}, "output.wav", catalog.Build().Outputs)
 	if err != nil {
@@ -208,14 +208,14 @@ func TestBuildSpecWiresFilterChainAheadOfAnotherFilter(t *testing.T) {
 	if _, ok := spec.AuxInputs["ir"]; !ok {
 		t.Fatalf("buildSpec() auxiliary inputs = %#v", spec.AuxInputs)
 	}
-	if len(spec.Filters) != 2 || spec.Filters[0].Alias != "resample" || spec.Filters[1].Alias != "convolve" {
+	if len(spec.Filters) != 2 || spec.Filters[0].Alias != "resample" || spec.Filters[1].Alias != "convolver" {
 		t.Fatalf("buildSpec() filters = %#v", spec.Filters)
 	}
 	if got, want := spec.Filters[0].Inputs["in"], (conversion.PortRef{Alias: "ir", Port: "out"}); got != want {
 		t.Fatalf("buildSpec() resample in source = %#v, want %#v", got, want)
 	}
 	if got, want := spec.Filters[1].Inputs["ir"], (conversion.PortRef{Alias: "resample", Port: "out"}); got != want {
-		t.Fatalf("buildSpec() convolve ir source = %#v, want %#v", got, want)
+		t.Fatalf("buildSpec() convolver ir source = %#v, want %#v", got, want)
 	}
 }
 
@@ -223,8 +223,8 @@ func TestBuildSpecWiresFilterChainAheadOfAnotherFilter(t *testing.T) {
 // CLI syntax for forking the main stream through two filters and mixing the
 // branches back: "split" is a 1-in/2-out mixer (a tee), "join" is a
 // 2-in/1-out mixer. Neither has a literal "in"/"out" port, so both need
-// explicit wiring — including @in as split's source and @out as join's
-// destination — instead of the declaration-order default chain plain
+// explicit wiring  Eincluding @in as split's source and @out as join's
+// destination  Einstead of the declaration-order default chain plain
 // single-port filters (reverb, delay) get for free.
 func TestBuildSpecSplitsMainStreamThroughReverbAndDelayThenMixes(t *testing.T) {
 	spec, err := buildSpec(convertOptions{

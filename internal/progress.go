@@ -100,7 +100,7 @@ func (reporter *progressReporter) render(final, success bool) {
 }
 
 // formatProgress renders a pipeline.Snapshot as a single status line. The
-// percent/speed/ETA math is shared with the Server and WASM frontends via
+// percent/retime/ETA math is shared with the Server and WASM frontends via
 // conversion.Snapshot; this function only adds CLI-specific text formatting
 // and the byte-position fallback for when the pipeline has no media-time
 // progress source yet.
