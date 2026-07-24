@@ -53,6 +53,12 @@
     gap: 0.4rem;
 }
 
+.delete {
+    margin-top: auto;
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+}
+
 @media (max-width: 860px) {
     .panel,
     .empty {

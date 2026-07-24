@@ -1,6 +1,6 @@
 import type { Catalog, FilterEntry, PluginEntry, Preset } from "../api/types";
 import { FieldInputs } from "../components/FieldInputs";
-import type { GraphNode, SourceData } from "./model";
+import { canDeleteNode, type GraphNode, type SourceData } from "./model";
 import styles from "./Inspector.module.css";
 
 interface InspectorProps {
@@ -11,6 +11,7 @@ interface InspectorProps {
     onChange: (node: GraphNode) => void;
     onUpload: (node: GraphNode & SourceData, file: File) => void;
     onFilterParametersChange: (node: GraphNode, parameters: Record<string, string>) => void;
+    onDelete: (node: GraphNode) => void;
 }
 
 export function Inspector({
@@ -21,6 +22,7 @@ export function Inspector({
     onChange,
     onUpload,
     onFilterParametersChange,
+    onDelete,
 }: InspectorProps) {
     if (!node) {
         return <aside className={styles.empty}>Select a node to configure it.</aside>;
@@ -67,6 +69,7 @@ export function Inspector({
                     value={node.decoder}
                     onChange={(decoder) => onChange({ ...node, decoder })}
                 />
+                <DeleteButton node={node} onDelete={onDelete} />
             </aside>
         );
     }
@@ -93,6 +96,7 @@ export function Inspector({
                         onChange={(name, value) => onChange({ ...node, values: { ...node.values, [name]: value } })}
                     />
                 </section>
+                <DeleteButton node={node} onDelete={onDelete} />
             </aside>
         );
     }
@@ -149,6 +153,11 @@ export function Inspector({
             {encoder && <FieldInputs fields={encoder.fields} values={node.encoderValues} onChange={(name, value) => onChange({ ...node, encoderValues: { ...node.encoderValues, [name]: value } })} />}
         </aside>
     );
+}
+
+function DeleteButton({ node, onDelete }: { node: GraphNode; onDelete: (node: GraphNode) => void }) {
+    if (!canDeleteNode(node)) return null;
+    return <button type="button" className={styles.delete} onClick={() => onDelete(node)}>Delete node</button>;
 }
 
 function PluginSelector({

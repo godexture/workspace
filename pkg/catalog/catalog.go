@@ -116,7 +116,7 @@ func filterEntries(registries registry.Bundle) []FilterEntry {
 	result := make([]FilterEntry, 0)
 	if registries.Filters != nil {
 		for value := range registries.Filters.Enumerate() {
-			entry, err := filterEntry(value, nil)
+			entry, err := filterEntry(value, []Field{})
 			if err == nil {
 				result = append(result, entry)
 			}
@@ -158,7 +158,7 @@ func filterEntry(value registry.FilterManifest, parameters []Field) (FilterEntry
 	slices.Sort(inputs)
 	return FilterEntry{
 		PluginEntry: base,
-		Parameters:  slices.Clone(parameters),
+		Parameters:  parameters,
 		Inputs:      inputs,
 		Outputs:     slices.Clone(value.OutputPorts),
 	}, nil
@@ -176,7 +176,7 @@ func DescribeFilterFrom(registries registry.Bundle, name string, parameters map[
 			if len(parameters) != 0 {
 				return FilterEntry{}, fmt.Errorf("filter %q does not accept parameters", name)
 			}
-			return filterEntry(value, nil)
+			return filterEntry(value, []Field{})
 		}
 	}
 	if registries.ParameterizedFilters == nil {
