@@ -158,7 +158,7 @@ func TestBuildPreloadsNamedAuxiliaryInput(t *testing.T) {
 	}, &output, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 		Filters: []conversion.FilterSpec{{
-			PluginSpec: conversion.PluginSpec{Name: "convolve", Values: map[string]string{"wet-dry-mix": "1"}},
+			PluginSpec: conversion.PluginSpec{Name: "convolver", Values: map[string]string{"wet-dry-mix": "1"}},
 			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "IR"}},
 		}},
 	}, pipeline.ObservationOff)
@@ -242,7 +242,7 @@ func TestNegotiateResamplesConvolutionImpulseResponseToMainRate(t *testing.T) {
 	}, &output, conversion.Spec{
 		Muxer: conversion.PluginSpec{Name: "wav"},
 		Filters: []conversion.FilterSpec{{
-			PluginSpec: conversion.PluginSpec{Name: "convolve"},
+			PluginSpec: conversion.PluginSpec{Name: "convolver"},
 			Inputs:     map[string]conversion.PortRef{"ir": {Alias: "ir"}},
 		}},
 	})

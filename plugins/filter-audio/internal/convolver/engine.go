@@ -1,11 +1,11 @@
-// Package convolve implements uniform partitioned FFT convolution: the
+// Package convolver implements uniform partitioned FFT convolution: the
 // impulse response is split into hop-sized partitions, each convolved in
 // the frequency domain with the matching hop of recent input and summed
 // via a frequency-domain delay line (FDL). Added latency equals one hop,
 // independent of impulse response length, because the FDL lets partitions
 // further back in the impulse response contribute to later hops without
 // widening the transform used per hop.
-package convolve
+package convolver
 
 import (
 	"fmt"
@@ -125,13 +125,13 @@ func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.plan == nil {
-		return fmt.Errorf("convolve is not prepared")
+		return fmt.Errorf("convolver is not prepared")
 	}
 	if len(e.partitions) == 0 {
-		return fmt.Errorf("convolve has no impulse response")
+		return fmt.Errorf("convolver has no impulse response")
 	}
 	if e.flushed {
-		return fmt.Errorf("convolve received a frame after flush")
+		return fmt.Errorf("convolver received a frame after flush")
 	}
 	block, err := audio.Decode(frame)
 	if err != nil {
@@ -149,13 +149,13 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 
 func (e *Engine) SendInput(port string, frame *media.Frame) error {
 	if port != "ir" {
-		return fmt.Errorf("convolve has no auxiliary input port %q", port)
+		return fmt.Errorf("convolver has no auxiliary input port %q", port)
 	}
 	if e.plan == nil {
-		return fmt.Errorf("convolve is not prepared")
+		return fmt.Errorf("convolver is not prepared")
 	}
 	if len(e.cfg.ImpulseResponse) != 0 {
-		return fmt.Errorf("convolve impulse response is already configured")
+		return fmt.Errorf("convolver impulse response is already configured")
 	}
 	block, err := audio.Decode(frame)
 	if err != nil {
@@ -186,7 +186,7 @@ func (e *Engine) EndInput(port string) error {
 		return nil
 	case "ir":
 		if len(e.cfg.ImpulseResponse) != 0 {
-			return fmt.Errorf("convolve impulse response is already configured")
+			return fmt.Errorf("convolver impulse response is already configured")
 		}
 		if e.irFrames == 0 || e.irSamples == 0 {
 			return fmt.Errorf("convolution impulse response input is empty")
@@ -196,7 +196,7 @@ func (e *Engine) EndInput(port string) error {
 		}
 		return e.buildImpulse(e.ir, e.irRate)
 	default:
-		return fmt.Errorf("convolve has no input port %q", port)
+		return fmt.Errorf("convolver has no input port %q", port)
 	}
 }
 
@@ -274,13 +274,13 @@ func (e *Engine) ensureChannels(block audio.Block) error {
 
 func (e *Engine) validateInput(block audio.Block) error {
 	if block.Rate != e.rate || block.Format != e.format || block.Bits != e.bits || block.Layout != e.layout {
-		return fmt.Errorf("convolve input format changed within stream")
+		return fmt.Errorf("convolver input format changed within stream")
 	}
 	if len(block.Channels) != len(e.channels) {
-		return fmt.Errorf("convolve input channel count changed within stream")
+		return fmt.Errorf("convolver input channel count changed within stream")
 	}
 	if block.PTS != e.basePTS+media.Pts(e.totalInput) {
-		return fmt.Errorf("convolve input PTS discontinuity: got %d, want %d", block.PTS, e.basePTS+media.Pts(e.totalInput))
+		return fmt.Errorf("convolver input PTS discontinuity: got %d, want %d", block.PTS, e.basePTS+media.Pts(e.totalInput))
 	}
 	return nil
 }

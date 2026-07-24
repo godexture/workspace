@@ -1,4 +1,4 @@
-package eq
+package equalizer
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ type channelState struct {
 }
 
 type Engine struct {
-	cfg     config.EQConfig
+	cfg     config.EqualizerConfig
 	coeffs  biquad
 	state   []channelState
 	rateSet bool
@@ -29,7 +29,7 @@ type Engine struct {
 	slot    buffer.Slot[media.Frame]
 }
 
-func New(cfg config.EQConfig) (*Engine, error) {
+func New(cfg config.EqualizerConfig) (*Engine, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func New(cfg config.EQConfig) (*Engine, error) {
 func (e *Engine) ensureCoefficients(rate int) error {
 	if e.rateSet {
 		if e.rate != rate {
-			return fmt.Errorf("eq input sample rate changed within stream")
+			return fmt.Errorf("equalizer input sample rate changed within stream")
 		}
 		return nil
 	}
@@ -51,11 +51,11 @@ func (e *Engine) ensureCoefficients(rate int) error {
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
 	if frame == nil || *frame == nil {
-		return fmt.Errorf("eq received nil frame")
+		return fmt.Errorf("equalizer received nil frame")
 	}
 	input, ok := (*frame).(*media.AudioFrame)
 	if !ok {
-		return fmt.Errorf("eq expected *media.AudioFrame, got %T", *frame)
+		return fmt.Errorf("equalizer expected *media.AudioFrame, got %T", *frame)
 	}
 	block, err := audio.Decode(frame)
 	if err != nil {
@@ -95,9 +95,9 @@ func (e *Engine) Flush() error { e.slot.Flush(); return nil }
 func (e *Engine) Close() error { e.slot.Close(); return nil }
 
 // computeBiquad derives normalized (a0 == 1) Direct Form I coefficients using
-// the RBJ Audio EQ Cookbook formulas, parameterized directly by Q (including
+// the RBJ Audio Equalizer Cookbook formulas, parameterized directly by Q (including
 // for the shelving shapes, rather than the cookbook's alternate slope form).
-func computeBiquad(cfg config.EQConfig, rate int) biquad {
+func computeBiquad(cfg config.EqualizerConfig, rate int) biquad {
 	w0 := 2 * math.Pi * cfg.FrequencyHz / float64(rate)
 	cosW0, sinW0 := math.Cos(w0), math.Sin(w0)
 	alpha := sinW0 / (2 * cfg.Q)
@@ -105,7 +105,7 @@ func computeBiquad(cfg config.EQConfig, rate int) biquad {
 
 	var b0, b1, b2, a0, a1, a2 float64
 	switch cfg.Type {
-	case config.EQTypeLowShelf:
+	case config.EqualizerTypeLowShelf:
 		sqrtA := math.Sqrt(a)
 		b0 = a * ((a + 1) - (a-1)*cosW0 + 2*sqrtA*alpha)
 		b1 = 2 * a * ((a - 1) - (a+1)*cosW0)
@@ -113,7 +113,7 @@ func computeBiquad(cfg config.EQConfig, rate int) biquad {
 		a0 = (a + 1) + (a-1)*cosW0 + 2*sqrtA*alpha
 		a1 = -2 * ((a - 1) + (a+1)*cosW0)
 		a2 = (a + 1) + (a-1)*cosW0 - 2*sqrtA*alpha
-	case config.EQTypeHighShelf:
+	case config.EqualizerTypeHighShelf:
 		sqrtA := math.Sqrt(a)
 		b0 = a * ((a + 1) + (a-1)*cosW0 + 2*sqrtA*alpha)
 		b1 = -2 * a * ((a - 1) + (a+1)*cosW0)
@@ -121,21 +121,21 @@ func computeBiquad(cfg config.EQConfig, rate int) biquad {
 		a0 = (a + 1) - (a-1)*cosW0 + 2*sqrtA*alpha
 		a1 = 2 * ((a - 1) - (a+1)*cosW0)
 		a2 = (a + 1) - (a-1)*cosW0 - 2*sqrtA*alpha
-	case config.EQTypeLowPass:
+	case config.EqualizerTypeLowPass:
 		b0 = (1 - cosW0) / 2
 		b1 = 1 - cosW0
 		b2 = (1 - cosW0) / 2
 		a0 = 1 + alpha
 		a1 = -2 * cosW0
 		a2 = 1 - alpha
-	case config.EQTypeHighPass:
+	case config.EqualizerTypeHighPass:
 		b0 = (1 + cosW0) / 2
 		b1 = -(1 + cosW0)
 		b2 = (1 + cosW0) / 2
 		a0 = 1 + alpha
 		a1 = -2 * cosW0
 		a2 = 1 - alpha
-	default: // EQTypePeaking
+	default: // EqualizerTypePeaking
 		b0 = 1 + alpha*a
 		b1 = -2 * cosW0
 		b2 = 1 - alpha*a

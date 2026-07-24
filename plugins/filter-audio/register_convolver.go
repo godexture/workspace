@@ -9,7 +9,7 @@ import (
 	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/convolve"
+	"github.com/godexture/filter-audio/internal/convolver"
 	"github.com/godexture/sdk/engine"
 )
 
@@ -23,7 +23,7 @@ func registerConvolve() {
 
 func registerConvolveManifest() {
 	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{
-		BaseManifest: registry.BaseManifest{Name: "convolve", Description: "Apply FFT convolution against an impulse response", ConfigurationFactory: registry.NewConfigurationFactory(NewConvolutionConfig)},
+		BaseManifest: registry.BaseManifest{Name: "convolver", Description: "Apply FFT convolution against an impulse response", ConfigurationFactory: registry.NewConfigurationFactory(NewConvolutionConfig)},
 		InputRequirements: registry.InputRequirements{
 			"in": registry.StaticRequirements(&manifest.AudioConstraint{}),
 			"ir": registry.StaticRequirements(&manifest.AudioConstraint{}),
@@ -32,7 +32,7 @@ func registerConvolveManifest() {
 			"ir": func(inputs media.StreamSet, _ media.CodecID, _ registry.Configuration) ([]manifest.Capability, error) {
 				input, ok := inputs["in"]
 				if !ok || input.Type != media.MediaAudio || input.Audio.SampleRate == 0 {
-					return nil, fmt.Errorf("convolve requires an audio main input with a sample rate")
+					return nil, fmt.Errorf("convolver requires an audio main input with a sample rate")
 				}
 				return []manifest.Capability{&manifest.AudioConstraint{SampleRates: manifest.IntConstraint{Values: []int{input.Audio.SampleRate}}}}, nil
 			},
@@ -43,7 +43,7 @@ func registerConvolveManifest() {
 		if err != nil {
 			return nil, media.StreamInfo{}, err
 		}
-		item, err := convolve.New(value)
+		item, err := convolver.New(value)
 		if err != nil {
 			return nil, media.StreamInfo{}, err
 		}

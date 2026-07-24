@@ -12,9 +12,9 @@ import (
 	"github.com/godexture/core/registry"
 	"github.com/godexture/filter-audio/internal/compressor"
 	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/convolve"
+	"github.com/godexture/filter-audio/internal/convolver"
 	"github.com/godexture/filter-audio/internal/delay"
-	"github.com/godexture/filter-audio/internal/eq"
+	"github.com/godexture/filter-audio/internal/equalizer"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gate"
 	"github.com/godexture/filter-audio/internal/mixer"
@@ -22,7 +22,7 @@ import (
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
 	"github.com/godexture/filter-audio/internal/reverb"
-	"github.com/godexture/filter-audio/internal/speed"
+	"github.com/godexture/filter-audio/internal/retime"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
@@ -43,7 +43,7 @@ func TestResampleLinearInterpolation(t *testing.T) {
 }
 
 func TestSpeedDoublesRateShortensOutput(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeInterpolate})
+	item, err := retime.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestSpeedDoublesRateShortensOutput(t *testing.T) {
 }
 
 func TestSpeedHalvesRateLengthensOutput(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeInterpolate})
+	item, err := retime.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSpeedHalvesRateLengthensOutput(t *testing.T) {
 }
 
 func TestSpeedFactorOnePassesThrough(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 1, Mode: config.SpeedModeInterpolate})
+	item, err := retime.New(config.SpeedConfig{Factor: 1, Mode: config.SpeedModeInterpolate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSpeedFactorOnePassesThrough(t *testing.T) {
 }
 
 func TestSpeedRelabelDoublesRateLossless(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeRelabel})
+	item, err := retime.New(config.SpeedConfig{Factor: 2, Mode: config.SpeedModeRelabel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSpeedRelabelDoublesRateLossless(t *testing.T) {
 }
 
 func TestSpeedRelabelHalvesRateLossless(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeRelabel})
+	item, err := retime.New(config.SpeedConfig{Factor: 0.5, Mode: config.SpeedModeRelabel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestSpeedRelabelHalvesRateLossless(t *testing.T) {
 }
 
 func TestSpeedRelabelPTSAdvancesBySampleCount(t *testing.T) {
-	item, err := speed.New(config.SpeedConfig{Factor: 100, Mode: config.SpeedModeRelabel})
+	item, err := retime.New(config.SpeedConfig{Factor: 100, Mode: config.SpeedModeRelabel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestCompressorPassesSignalBelowThresholdUnchanged(t *testing.T) {
 }
 
 func TestEQPeakingZeroGainIsIdentity(t *testing.T) {
-	item, err := eq.New(config.EQConfig{Type: config.EQTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476})
+	item, err := equalizer.New(config.EqualizerConfig{Type: config.EqualizerTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +590,7 @@ func TestMixerWrapFilterEndToEnd(t *testing.T) {
 }
 
 func TestConvolveIdentityImpulseIsPassthrough(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{1}},
 		WetDryMix:       1,
 		BlockSize:       8,
@@ -611,7 +611,7 @@ func TestConvolveIdentityImpulseIsPassthrough(t *testing.T) {
 func TestConvolveMatchesDirectConvolution(t *testing.T) {
 	const hop = 4
 	ir := []float32{0.5, 0.3, -0.2, 0.1, 0.05, -0.05, 0.02, 0.01, -0.01} // len 9 = 2*hop+1 -> 3 partitions
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{ir},
 		WetDryMix:       1,
 		Normalize:       false,
@@ -658,7 +658,7 @@ func TestConvolveMatchesDirectConvolution(t *testing.T) {
 }
 
 func TestConvolvePreparesImpulseWithSharedPool(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{1, 0, 0, 0, 0, 0, 0, 0, 0}},
 		WetDryMix:       1,
 		BlockSize:       4,
@@ -677,7 +677,7 @@ func TestConvolvePreparesImpulseWithSharedPool(t *testing.T) {
 }
 
 func TestConvolveWetDryMixZeroIsDry(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{0.5, 0.3, -0.2, 0.1}},
 		WetDryMix:       0,
 		BlockSize:       4,
@@ -692,7 +692,7 @@ func TestConvolveWetDryMixZeroIsDry(t *testing.T) {
 }
 
 func TestConvolveMonoImpulseBroadcastsToEveryChannel(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{1}},
 		WetDryMix:       1,
 		BlockSize:       4,
@@ -715,7 +715,7 @@ func TestConvolveMonoImpulseBroadcastsToEveryChannel(t *testing.T) {
 }
 
 func TestConvolveUsesPortImpulseResponse(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{WetDryMix: 1, BlockSize: 4})
+	item, err := convolver.New(config.ConvolutionConfig{WetDryMix: 1, BlockSize: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +734,7 @@ func TestConvolveUsesPortImpulseResponse(t *testing.T) {
 }
 
 func TestConvolvePerChannelImpulseRequiresMatchingChannelCount(t *testing.T) {
-	item, err := convolve.New(config.ConvolutionConfig{
+	item, err := convolver.New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{{1}, {1}, {1}}, // 3 channels, input below has 2
 		WetDryMix:       1,
 		BlockSize:       4,
@@ -764,7 +764,7 @@ func directConvolution(x, h []float32) []float32 {
 	return y
 }
 
-func prepareConvolve(t *testing.T, item *convolve.Engine) {
+func prepareConvolve(t *testing.T, item *convolver.Engine) {
 	t.Helper()
 	if err := item.Prepare(registry.ResourceGrant{}); err != nil {
 		t.Fatal(err)

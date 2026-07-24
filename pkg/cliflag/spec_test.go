@@ -7,11 +7,11 @@ import (
 
 func TestParseSpecPlain(t *testing.T) {
 	t.Parallel()
-	got, err := ParseSpec("eq:type=peaking,frequency-hz=1000")
+	got, err := ParseSpec("equalizer:type=peaking,frequency-hz=1000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Spec{Name: "eq", Values: map[string]string{"type": "peaking", "frequency-hz": "1000"}}
+	want := Spec{Name: "equalizer", Values: map[string]string{"type": "peaking", "frequency-hz": "1000"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseSpec() = %#v, want %#v", got, want)
 	}
@@ -79,7 +79,7 @@ func TestParseSpecEmptyBrackets(t *testing.T) {
 
 func TestParseSpecNoParametersHasNilParameters(t *testing.T) {
 	t.Parallel()
-	got, err := ParseSpec("eq:type=peaking")
+	got, err := ParseSpec("equalizer:type=peaking")
 	if err != nil {
 		t.Fatal(err)
 	}
