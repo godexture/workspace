@@ -2,13 +2,28 @@ package registry
 
 import "sync"
 
+// Task is a unit of work submitted to a WorkerPool. Callers that already hold
+// a heap-allocated job struct (as every current caller does, since the job
+// must outlive the submitting call to be picked up by another goroutine) can
+// implement Run directly on it to submit the job itself, avoiding the extra
+// closure allocation that wrapping it in a func() would cost.
+type Task interface {
+	Run()
+}
+
+// TaskFunc adapts a plain func() to a Task, for callers where an extra
+// closure allocation per submission isn't a concern (tests, cold paths).
+type TaskFunc func()
+
+func (f TaskFunc) Run() { f() }
+
 // WorkerPool is a bounded set of goroutines shared by every pipeline stage in
 // a single conversion run that requested Parallelism. Capacity flows to
 // whichever stage currently has runnable work: Submit blocks once the queue
 // and all workers are busy, so a stage sitting idle never holds capacity that
 // a busy stage could use instead.
 type WorkerPool struct {
-	tasks     chan func()
+	tasks     chan Task
 	wg        sync.WaitGroup
 	size      int
 	closeOnce sync.Once
@@ -20,13 +35,13 @@ func NewWorkerPool(size int) *WorkerPool {
 	if size < 1 {
 		size = 1
 	}
-	pool := &WorkerPool{tasks: make(chan func(), 2*size), size: size}
+	pool := &WorkerPool{tasks: make(chan Task, 2*size), size: size}
 	pool.wg.Add(size)
 	for range size {
 		go func() {
 			defer pool.wg.Done()
 			for task := range pool.tasks {
-				task()
+				task.Run()
 			}
 		}()
 	}
@@ -35,7 +50,7 @@ func NewWorkerPool(size int) *WorkerPool {
 
 // Submit runs task on a pool worker, blocking until a worker or queue slot is
 // free.
-func (p *WorkerPool) Submit(task func()) {
+func (p *WorkerPool) Submit(task Task) {
 	p.tasks <- task
 }
 
