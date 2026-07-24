@@ -48,3 +48,16 @@ func TestDescribeParameterizedMixerTopology(t *testing.T) {
 		t.Fatalf("mixer parameter fields = %v", entry.Parameters)
 	}
 }
+
+func TestDescribeStaticFilterHasEmptyParameterList(t *testing.T) {
+	entry, err := catalog.DescribeFilter("gain", nil)
+	if err != nil {
+		t.Fatalf("DescribeFilter() error = %v", err)
+	}
+	if entry.Parameters == nil {
+		t.Fatal("static filter parameters must be an empty list, not nil")
+	}
+	if len(entry.Parameters) != 0 {
+		t.Fatalf("static filter parameters = %v", entry.Parameters)
+	}
+}
