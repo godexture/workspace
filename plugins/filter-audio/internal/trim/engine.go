@@ -32,6 +32,7 @@ type Engine struct {
 	pending                       *audio.Block
 	threshold                     float32
 	trimLeading, trimTrailing     bool
+	scratch                       audio.Scratch
 }
 
 func New(config config.TrimConfig) (*Engine, error) {
@@ -68,7 +69,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.replay || e.pending != nil {
 		return fmt.Errorf("trim has unconsumed output")
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -145,7 +146,7 @@ func (e *Engine) ReceiveFrame() (*media.Frame, error) {
 }
 
 func (e *Engine) encode(block audio.Block) (*media.Frame, error) {
-	frame, err := audio.Encode(block, e.format, e.bits)
+	frame, err := audio.EncodeInto(block, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@ type Engine struct {
 	rate         int
 	envelopeDB   float32
 	slot         buffer.Slot[media.Frame]
+	scratch      audio.Scratch
 }
 
 func New(cfg config.CompressorConfig) (*Engine, error) {
@@ -60,7 +61,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if !ok {
 		return fmt.Errorf("compressor expected *media.AudioFrame, got %T", *frame)
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -92,7 +93,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 			values[i] *= gain
 		}
 	}
-	output, err := audio.Encode(block, input.Format, input.BitsPerSample)
+	output, err := audio.EncodeInto(block, input.Format, input.BitsPerSample, &e.scratch)
 	if err != nil {
 		return err
 	}

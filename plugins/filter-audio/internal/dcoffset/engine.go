@@ -10,10 +10,11 @@ import (
 )
 
 type Engine struct {
-	pole  float32
-	lastX []float32
-	lastY []float32
-	slot  buffer.Slot[media.Frame]
+	pole    float32
+	lastX   []float32
+	lastY   []float32
+	slot    buffer.Slot[media.Frame]
+	scratch audio.Scratch
 }
 
 func New(config config.DCOffsetConfig) (*Engine, error) {
@@ -31,7 +32,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if !ok {
 		return fmt.Errorf("DC offset filter expected *media.AudioFrame, got %T", *frame)
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 			values[i] = output
 		}
 	}
-	output, err := audio.Encode(block, input.Format, input.BitsPerSample)
+	output, err := audio.EncodeInto(block, input.Format, input.BitsPerSample, &e.scratch)
 	if err != nil {
 		return err
 	}
