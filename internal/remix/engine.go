@@ -11,9 +11,10 @@ import (
 )
 
 type Engine struct {
-	config  config.RemixConfig
-	slot    buffer.Slot[media.Frame]
-	scratch audio.Scratch
+	config      config.RemixConfig
+	slot        buffer.Slot[media.Frame]
+	scratch     audio.Scratch
+	mixChannels audio.Channels
 }
 
 func New(config config.RemixConfig) (*Engine, error) {
@@ -32,7 +33,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		block.Source.Retain()
 		return e.slot.Push(block.Source)
 	}
-	output, err := Mix(block, e.config)
+	output, err := MixInto(block, e.config, &e.mixChannels)
 	if err != nil {
 		return err
 	}
@@ -53,18 +54,47 @@ func (e *Engine) ReceiveFrame() (media.Frame, error) {
 func (e *Engine) Flush() error { e.slot.Flush(); return nil }
 func (e *Engine) Close() error { e.slot.Close(); return nil }
 
+// Mix downmixes/upmixes input to config.Layout, always allocating fresh
+// output channel buffers. See MixInto for a version that reuses a
+// caller-owned scratch buffer across repeated calls.
 func Mix(input audio.Block, config config.RemixConfig) (audio.Block, error) {
+	var dst audio.Channels
+	return MixInto(input, config, &dst)
+}
+
+// MixInto behaves like Mix but reuses dst's backing channel buffers across
+// calls (grown as needed) instead of allocating fresh ones every time. dst
+// must not be read after being passed here until the next call sharing it
+// has completed (mixing accumulates into it via +=, so stale reused buffers
+// are zeroed first).
+func MixInto(input audio.Block, config config.RemixConfig, dst *audio.Channels) (audio.Block, error) {
 	if input.Layout.IsAmbisonic() || config.Layout.IsAmbisonic() {
 		return audio.Block{}, fmt.Errorf("remix does not support non-identity ambisonic layouts")
 	}
+	channels := config.Layout.ChannelCount()
+	samples := input.Samples()
+	if cap(*dst) < channels {
+		grown := make(audio.Channels, channels)
+		copy(grown, *dst)
+		*dst = grown
+	} else {
+		*dst = (*dst)[:channels]
+	}
+	for channel := range *dst {
+		buf := (*dst)[channel]
+		if cap(buf) < samples {
+			buf = make([]float32, samples)
+		} else {
+			buf = buf[:samples]
+			clear(buf)
+		}
+		(*dst)[channel] = buf
+	}
 	output := audio.Block{
-		Channels: make([][]float32, config.Layout.ChannelCount()),
+		Channels: *dst,
 		Layout:   config.Layout,
 		Rate:     input.Rate,
 		PTS:      input.PTS,
-	}
-	for channel := range output.Channels {
-		output.Channels[channel] = make([]float32, input.Samples())
 	}
 	if input.Layout.IsUnspecified() || config.Layout.IsUnspecified() {
 		for target := range output.Channels {
