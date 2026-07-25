@@ -5,19 +5,19 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime/pprof"
 	"time"
 
 	"github.com/godexture/core/pipeline"
 	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/sdk/profiling"
 	"github.com/spf13/cobra"
 )
 
 func runConvert(command *cobra.Command, inputPath, outputPath string, options convertOptions) (resultErr error) {
 	if pprofPath := os.Getenv("GODEC_PPROF"); pprofPath != "" {
-		if err := rejectProfilePathCollision(pprofPath, inputPath, outputPath); err != nil {
+		if err := profiling.RejectPathCollision(pprofPath, inputPath, outputPath); err != nil {
 			return err
 		}
 		f, err := os.Create(pprofPath)
@@ -189,23 +189,3 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	return nil
 }
 
-// rejectProfilePathCollision guards against GODEC_PPROF aliasing the main
-// input or output path: os.Create(pprofPath) runs before the input is opened
-// or the output is prepared, so an aliased path would silently truncate one
-// of them (bypassing prepareOutput's overwrite confirmation entirely).
-func rejectProfilePathCollision(pprofPath, inputPath, outputPath string) error {
-	resolvedProfile, err := filepath.Abs(pprofPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve pprof path %q: %w", pprofPath, err)
-	}
-	for _, path := range []string{inputPath, outputPath} {
-		resolved, err := filepath.Abs(path)
-		if err != nil {
-			return fmt.Errorf("failed to resolve path %q: %w", path, err)
-		}
-		if resolvedProfile == resolved {
-			return fmt.Errorf("GODEC_PPROF path %q must not match the input or output path", pprofPath)
-		}
-	}
-	return nil
-}
