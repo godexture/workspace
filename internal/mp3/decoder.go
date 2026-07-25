@@ -72,9 +72,10 @@ func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, domain
 	}
 
 	if frameSize == 0 {
+		freeFormatBytes := d.FreeFormatBytes
 		d.Init()
 		var frameFound bool
-		byteIndex, frameSize, d.FreeFormatBytes, frameFound = scan.Frame(mp3Data, d.FreeFormatBytes)
+		byteIndex, frameSize, d.FreeFormatBytes, frameFound = scan.Frame(mp3Data, freeFormatBytes)
 		if !frameFound || byteIndex+frameSize > mp3DataLength {
 			return 0, domain.FrameInfo{FrameBytes: byteIndex}, nil
 		}
