@@ -11,11 +11,15 @@ import (
 	"github.com/godexture/core/pipeline"
 	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/sdk/profiling"
 	"github.com/spf13/cobra"
 )
 
 func runConvert(command *cobra.Command, inputPath, outputPath string, options convertOptions) (resultErr error) {
 	if pprofPath := os.Getenv("GODEC_PPROF"); pprofPath != "" {
+		if err := profiling.RejectPathCollision(pprofPath, inputPath, outputPath); err != nil {
+			return err
+		}
 		f, err := os.Create(pprofPath)
 		if err != nil {
 			return fmt.Errorf("failed to create pprof file: %w", err)
@@ -184,3 +188,4 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	}
 	return nil
 }
+
