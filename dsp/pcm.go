@@ -11,6 +11,7 @@ type PCMKind uint8
 const (
 	PCMUnknown PCMKind = iota
 	PCMU8
+	PCMS8
 	PCMS16
 	PCMS24
 	PCMS32
@@ -20,7 +21,7 @@ const (
 
 func (k PCMKind) BytesPerSample() int {
 	switch k {
-	case PCMU8:
+	case PCMU8, PCMS8:
 		return 1
 	case PCMS16:
 		return 2
@@ -65,6 +66,11 @@ func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]fl
 		midpoint := scale
 		for i, value := range src {
 			dst[i] = (float32(value) - midpoint) / scale
+		}
+	case PCMS8:
+		scale := float32(signedHalfRange(bitsPerSample))
+		for i, value := range src {
+			dst[i] = float32(int8(value)) / scale
 		}
 	case PCMS16:
 		scale := float32(signedHalfRange(bitsPerSample))
@@ -123,6 +129,10 @@ func FromFloat32(dst []byte, src []float32, kind PCMKind, bitsPerSample int) err
 				value = max
 			}
 			dst[i] = byte(value)
+		}
+	case PCMS8:
+		for i, sample := range src {
+			dst[i] = byte(int8(scaleSignedSample(sample, bitsPerSample)))
 		}
 	case PCMS16:
 		for i, sample := range src {
