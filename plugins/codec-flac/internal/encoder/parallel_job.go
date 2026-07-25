@@ -17,12 +17,7 @@ type blockCopy struct {
 // block's samples, reusing a pooled one (grown as needed) instead of
 // allocating fresh channel slices on every dispatch.
 func (e *Encoder) acquireBlockCopy(block [][]int64) *blockCopy {
-	var bc *blockCopy
-	if v := e.blockPool.Get(); v != nil {
-		bc = v.(*blockCopy)
-	} else {
-		bc = &blockCopy{}
-	}
+	bc := e.blockPool.Get()
 	if cap(bc.channels) < len(block) {
 		grown := make([][]int64, len(block))
 		copy(grown, bc.channels)
