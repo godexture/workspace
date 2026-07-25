@@ -12,6 +12,9 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if pkt == nil {
 		return errors.New("flac decoder requires a non-nil packet")
 	}
+	if d.closed {
+		return errors.New("flac decoder is closed")
+	}
 	if d.flushed {
 		return engine.ErrEOF
 	}

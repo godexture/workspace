@@ -58,7 +58,7 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 		}
 	} else if d.vbriHeader != nil && len(d.vbriHeader.TOC) > 0 && d.duration > 0 {
 		totalFrames := float64(d.vbriHeader.Frames)
-		if totalFrames > 0 {
+		if totalFrames > 0 && d.vbriHeader.FramesPerEntry > 0 {
 			durationPerEntry := (float64(d.vbriHeader.FramesPerEntry) / totalFrames) * float64(d.duration)
 			t := float64(offset)
 			entryIndex := int(t / durationPerEntry)
@@ -116,16 +116,23 @@ func (d *Demuxer) getBitrateBasedOffset(offset time.Duration) (int64, error) {
 		return 0, errors.New("mp3 demuxer: unable to seek, unknown bitrate")
 	}
 	byteOffset := int64(offset.Seconds() * float64(d.bitRate) / 8.0)
+	if byteOffset < 0 {
+		byteOffset = 0
+	}
 	return d.firstFrameOffset + byteOffset, nil
 }
-func getFileSize(r io.ReadSeeker) (int64, error) {
+func getFileSize(r io.ReadSeeker) (size int64, err error) {
 	current, err := r.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return 0, err
 	}
-	defer r.Seek(current, io.SeekStart)
+	defer func() {
+		if _, restoreErr := r.Seek(current, io.SeekStart); err == nil {
+			err = restoreErr
+		}
+	}()
 
-	size, err := r.Seek(0, io.SeekEnd)
+	size, err = r.Seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, err
 	}

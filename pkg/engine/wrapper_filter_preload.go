@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -33,7 +34,7 @@ func (n *FilterAdapter) Preload(ctx context.Context) error {
 		}
 		for {
 			frame, err := edge.Pull(ctx)
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				if err := aux.EndInput(id); err != nil {
 					return err
 				}

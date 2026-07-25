@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -178,7 +179,7 @@ func (n *FilterAdapter) drain(ctx context.Context, outEdges map[string]node.Edge
 		}
 		for {
 			frame, err := n.engine.ReceiveFrame()
-			if err == ErrEAGAIN || (final && (err == io.EOF || err == ErrEOF)) {
+			if errors.Is(err, ErrEAGAIN) || (final && (errors.Is(err, io.EOF) || errors.Is(err, ErrEOF))) {
 				return nil
 			}
 			if err != nil {
@@ -200,7 +201,7 @@ func (n *FilterAdapter) drain(ctx context.Context, outEdges map[string]node.Edge
 	}
 	for {
 		port, frame, err := multi.ReceiveOutput()
-		if err == ErrEAGAIN || (final && (err == io.EOF || err == ErrEOF)) {
+		if errors.Is(err, ErrEAGAIN) || (final && (errors.Is(err, io.EOF) || errors.Is(err, ErrEOF))) {
 			return nil
 		}
 		if err != nil {

@@ -135,9 +135,8 @@ func decodeBlockSize(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (in
 		return int(v) + 1, nil
 	case 8, 9, 10, 11, 12, 13, 14, 15:
 		return 256 << (code - 8), nil
-	default:
-		return int(info.MaxBlockSize), nil
 	}
+	return 0, errors.New("invalid FLAC block size code")
 }
 func decodeSampleRate(r *bits.Reader, code uint8, info streaminfo.StreamInfo) (int, error) {
 	switch code {
@@ -196,9 +195,8 @@ func decodeBitsPerSample(code uint8, info streaminfo.StreamInfo) (int, error) {
 		return 32, nil
 	case 3:
 		return 0, errors.New("reserved FLAC bit depth code")
-	default:
-		return info.BitsPerSample, nil
 	}
+	return 0, errors.New("invalid FLAC bit depth code")
 }
 func decodeChannelCount(assignment uint8) (int, error) {
 	if assignment <= 7 {
