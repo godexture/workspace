@@ -1,4 +1,4 @@
-﻿package encoder
+package encoder
 
 import (
 	"math"
@@ -61,12 +61,6 @@ var riceMethods = []struct {
 	{1, 5, 30},
 }
 
-func init() {
-	riceWorkspacePool.Init(func() *riceWorkspace {
-		return &riceWorkspace{}
-	})
-}
-
 func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode config.RiceCostMode) (riceCoding, bool) {
 	workspace := riceWorkspacePool.Get()
 	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, mode, workspace)
@@ -91,12 +85,6 @@ func releaseRiceCoding(coding *riceCoding) {
 	clear(coding.partitions)
 	ricePartitionPool.Put(coding.partitions[:0])
 	coding.partitions = nil
-}
-
-func init() {
-	riceWorkspacePool.Init(func() *riceWorkspace {
-		return &riceWorkspace{}
-	})
 }
 
 func chooseRiceCodingWithWorkspace(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode config.RiceCostMode, workspace *riceWorkspace) (riceCoding, bool) {
