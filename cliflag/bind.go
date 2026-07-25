@@ -87,10 +87,7 @@ func (b *Binding) Apply(target any) error {
 		if flag == nil || !flag.Changed {
 			continue
 		}
-		if err := setField(copy.Field(field.index), field.value.values()); err != nil {
-			return fmt.Errorf("--%s: %w", flag.Name, err)
-		}
-		if err := validateChoice(copy, field); err != nil {
+		if err := applyField(copy, field, field.value.values()); err != nil {
 			return fmt.Errorf("--%s: %w", flag.Name, err)
 		}
 	}

@@ -67,6 +67,13 @@ type presetApplier interface {
 	ApplyPreset(int)
 }
 
+func applyField(target reflect.Value, field field, values []string) error {
+	if err := setField(target.Field(field.index), values); err != nil {
+		return err
+	}
+	return validateChoice(target, field)
+}
+
 func DescribeStruct(prototype any) ([]FieldDescription, error) {
 	value, typeOf, err := structValue(prototype)
 	if err != nil {
