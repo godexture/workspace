@@ -6,6 +6,7 @@ import (
 	"github.com/godexture/codec-mp3/internal/mp3/layer3"
 
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/format-mp3/scan"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/buffer"
 )
@@ -73,7 +74,7 @@ func (d *Decoder) DecodeFrame(mp3Data []byte, pcmSamples []float32) (int, domain
 	if frameSize == 0 {
 		d.Init()
 		var frameFound bool
-		byteIndex, frameSize, d.FreeFormatBytes, frameFound = FindFrame(mp3Data, d.FreeFormatBytes)
+		byteIndex, frameSize, d.FreeFormatBytes, frameFound = scan.Frame(mp3Data, d.FreeFormatBytes)
 		if !frameFound || byteIndex+frameSize > mp3DataLength {
 			return 0, domain.FrameInfo{FrameBytes: byteIndex}, nil
 		}
