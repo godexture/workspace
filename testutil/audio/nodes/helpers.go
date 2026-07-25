@@ -10,7 +10,7 @@ import (
 	"github.com/godexture/sdk/testutil/audio/pcm"
 )
 
-const pcmFramesPerChunk = 4096
+const PcmFramesPerChunk = 4096
 
 func pushFrame(ctx context.Context, edge node.Edge[media.Frame], frame media.Frame) error {
 	if err := edge.Push(ctx, frame); err != nil {
