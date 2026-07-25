@@ -1,20 +1,22 @@
 package media
 
 import (
-	"sync"
-
 	"github.com/godexture/core/domain/time"
 	"github.com/godexture/sdk/pool"
 )
 
-var packetPool sync.Pool
+// New is assigned in init rather than the var declaration: see the
+// analogous comment on audioFramePool in factory_frame_audio.go for why
+// (free refers to packetPool, so inlining here would create an
+// initialization cycle).
+var packetPool pool.Typed[*Packet]
 
 func init() {
-	packetPool.New = func() any {
+	packetPool.Init(func() *Packet {
 		packet := &Packet{}
 		packet.freeFunc = packet.free
 		return packet
-	}
+	})
 }
 
 type PacketOption func(*Packet)
@@ -57,7 +59,7 @@ func NewPacketEvent(kind PacketKind, streamIndex int, parameters []CodecParamete
 }
 
 func newPacket(data *[]byte, opts ...PacketOption) *Packet {
-	pkt := packetPool.Get().(*Packet)
+	pkt := packetPool.Get()
 	pkt.reset(data)
 	pkt.refCount.Store(1)
 
