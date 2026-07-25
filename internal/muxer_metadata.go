@@ -39,6 +39,9 @@ func metaRawBlocks(meta metadata.Bundle) [][]byte {
 }
 
 func writeMetadataBlockHeader(w io.Writer, last bool, blockType byte, length int) error {
+	if length < 0 || length > 0xFFFFFF {
+		return fmt.Errorf("flac muxer metadata block length %d exceeds 24-bit field", length)
+	}
 	header := [4]byte{blockType, byte(length >> 16), byte(length >> 8), byte(length)}
 	if last {
 		header[0] |= 0x80
