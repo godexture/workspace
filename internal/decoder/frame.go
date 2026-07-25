@@ -7,9 +7,11 @@ import (
 
 	"github.com/godexture/codec-flac/internal/flac"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/media/pcm"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
+	"github.com/godexture/sdk/dsp"
 	"github.com/godexture/sdk/hash"
 )
 
@@ -121,18 +123,7 @@ func buildAudioFrame(decoded *flac.Frame, pts media.Pts) (*media.AudioFrame, err
 		media.WithAudioBitsPerSample(decoded.Header.BitsPerSample),
 		media.WithAudioPts(pts),
 	)
-	plane := frame.Planes()[0]
-
-	switch format {
-	case media.SampleFormatS8:
-		interleaveS8(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
-	case media.SampleFormatS16:
-		interleaveS16(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
-	case media.SampleFormatS24:
-		interleaveS24(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
-	case media.SampleFormatS32:
-		interleaveS32(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
-	default:
+	if err := dsp.FromInt64(frame.Planes()[0], decoded.Samples, pcm.SampleKind(format), decoded.Header.BlockSize, decoded.Header.Channels); err != nil {
 		return nil, fmt.Errorf("unsupported FLAC output format: %s", format)
 	}
 	return frame, nil

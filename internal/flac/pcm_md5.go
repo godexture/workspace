@@ -3,6 +3,8 @@ package flac
 import (
 	"crypto/md5"
 	"hash"
+
+	"github.com/godexture/sdk/dsp"
 )
 
 type PCMMD5 struct {
@@ -29,6 +31,12 @@ func (m *PCMMD5) Sum() [16]byte {
 	return sum
 }
 
+// pcmMD5Kinds maps a container byte width to the pkg/dsp integer PCM kind
+// that packs it. FLAC's STREAMINFO MD5 is always over its native signed
+// samples regardless of bit depth, so this uses the signed kind at every
+// width (U8's WAV-style bias never applies here).
+var pcmMD5Kinds = map[int]dsp.PCMKind{1: dsp.PCMS8, 2: dsp.PCMS16, 3: dsp.PCMS24, 4: dsp.PCMS32}
+
 // PackPCMMD5 serializes planar PCM samples using FLAC's STREAMINFO MD5 form.
 func PackPCMMD5(scratch []byte, samples [][]int64, bitsPerSample int) []byte {
 	if len(samples) == 0 || len(samples[0]) == 0 {
@@ -39,59 +47,7 @@ func PackPCMMD5(scratch []byte, samples [][]int64, bitsPerSample int) []byte {
 	if cap(scratch) < needed+4 {
 		scratch = make([]byte, needed+4)
 	}
-	data := scratch[:needed+4]
-	switch width {
-	case 1:
-		packPCMMD5Width1(data, samples)
-	case 2:
-		packPCMMD5Width2(data, samples)
-	case 3:
-		packPCMMD5Width3(data, samples)
-	default:
-		packPCMMD5Width4(data, samples)
-	}
-	return data[:needed]
-}
-
-func packPCMMD5Width1(data []byte, samples [][]int64) {
-	offset := 0
-	for sample := range samples[0] {
-		for channel := range samples {
-			data[offset] = byte(samples[channel][sample])
-			offset++
-		}
-	}
-}
-
-func packPCMMD5Width2(data []byte, samples [][]int64) {
-	offset := 0
-	for sample := range samples[0] {
-		for channel := range samples {
-			value := uint32(samples[channel][sample])
-			data[offset], data[offset+1] = byte(value), byte(value>>8)
-			offset += 2
-		}
-	}
-}
-
-func packPCMMD5Width3(data []byte, samples [][]int64) {
-	offset := 0
-	for sample := range samples[0] {
-		for channel := range samples {
-			value := uint32(samples[channel][sample])
-			data[offset], data[offset+1], data[offset+2] = byte(value), byte(value>>8), byte(value>>16)
-			offset += 3
-		}
-	}
-}
-
-func packPCMMD5Width4(data []byte, samples [][]int64) {
-	offset := 0
-	for sample := range samples[0] {
-		for channel := range samples {
-			value := uint32(samples[channel][sample])
-			data[offset], data[offset+1], data[offset+2], data[offset+3] = byte(value), byte(value>>8), byte(value>>16), byte(value>>24)
-			offset += 4
-		}
-	}
+	data := scratch[:needed]
+	_ = dsp.FromInt64(data, samples, pcmMD5Kinds[width], len(samples[0]), len(samples))
+	return data
 }
