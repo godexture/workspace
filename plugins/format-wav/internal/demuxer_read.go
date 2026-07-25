@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/core/domain/media"
 	mp3header "github.com/godexture/format-mp3/header"
+	"github.com/godexture/format-mp3/scan"
 )
 
 func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
@@ -105,7 +106,7 @@ func (d *Demuxer) readMP3Packet() (*media.Packet, int, error) {
 	}
 	probe = probe[:n]
 
-	offset, frameBytes, freeFormatBytes, found := findMP3Frame(probe, d.mp3FreeFormatBytes)
+	offset, frameBytes, freeFormatBytes, found := scan.Frame(probe, d.mp3FreeFormatBytes)
 	if !found {
 		if d.bytesRead+uint64(n) >= d.header.dataSize {
 			return nil, 0, io.EOF
@@ -140,70 +141,4 @@ func (d *Demuxer) readMP3Packet() (*media.Packet, int, error) {
 	d.samplePos += uint64(header.FrameSamples())
 
 	return packet, 0, nil
-}
-
-func findMP3Frame(data []byte, freeFormatBytes int) (offset int, frameBytes int, newFreeFormatBytes int, found bool) {
-	for i := 0; i+4 <= len(data); i++ {
-		h, err := mp3header.ParseHeader(data[i : i+4])
-		if err != nil || !h.IsValid() {
-			continue
-		}
-
-		currentFreeFormatBytes := freeFormatBytes
-		frameBytes = h.FrameBytes(currentFreeFormatBytes)
-		frameAndPadding := frameBytes + h.Padding()
-
-		for step := 4; frameBytes == 0 && step < 2304 && i+2*step <= len(data)-4; step++ {
-			nextHeader, err := mp3header.ParseHeader(data[i+step : i+step+4])
-			if err != nil || !h.Compare(nextHeader) {
-				continue
-			}
-
-			foundFrameBytes := step - h.Padding()
-			nextFrameBytes := foundFrameBytes + nextHeader.Padding()
-			if i+step+nextFrameBytes+4 > len(data) {
-				continue
-			}
-
-			nextHeader2, err := mp3header.ParseHeader(data[i+step+nextFrameBytes : i+step+nextFrameBytes+4])
-			if err != nil || !h.Compare(nextHeader2) {
-				continue
-			}
-
-			frameAndPadding = step
-			frameBytes = foundFrameBytes
-			currentFreeFormatBytes = foundFrameBytes
-		}
-
-		if frameBytes == 0 || i+frameAndPadding > len(data) {
-			continue
-		}
-
-		if matchMP3Frames(data[i:], h, currentFreeFormatBytes) || i+frameAndPadding == len(data) {
-			return i, frameAndPadding, currentFreeFormatBytes, true
-		}
-	}
-
-	return len(data), 0, 0, false
-}
-
-func matchMP3Frames(data []byte, first mp3header.Header, freeFormatBytes int) bool {
-	byteIndex := 0
-	matchCount := 0
-	current := first
-
-	for ; matchCount < 10; matchCount++ {
-		byteIndex += current.FrameBytes(freeFormatBytes) + current.Padding()
-		if byteIndex+4 > len(data) {
-			return matchCount > 0
-		}
-
-		next, err := mp3header.ParseHeader(data[byteIndex : byteIndex+4])
-		if err != nil || !first.Compare(next) {
-			return matchCount > 0
-		}
-		current = next
-	}
-
-	return true
 }
