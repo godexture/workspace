@@ -71,6 +71,14 @@ type Engine struct {
 
 	queue   buffer.Queue[media.Frame]
 	flushed bool
+
+	// scratch is safe to share between the "in" and "ir" ports: node.Filter's
+	// adapter (pkg/engine.FilterAdapter) pulls each input port on its own
+	// goroutine, but always invokes SendFrame/SendInput/ReceiveFrame from a
+	// single consumer goroutine, and Preload (which drains "ir") always
+	// finishes before Start (which drains "in") begins -- so this Engine's
+	// own methods are never called concurrently with each other.
+	scratch audio.Scratch
 }
 
 func New(cfg config.ConvolutionConfig) (*Engine, error) {
@@ -133,7 +141,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if e.flushed {
 		return fmt.Errorf("convolver received a frame after flush")
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -157,7 +165,7 @@ func (e *Engine) SendInput(port string, frame *media.Frame) error {
 	if len(e.cfg.ImpulseResponse) != 0 {
 		return fmt.Errorf("convolver impulse response is already configured")
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -200,12 +208,8 @@ func (e *Engine) EndInput(port string) error {
 	}
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.queue.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.queue.Receive()
 }
 
 func (e *Engine) Flush() error {
@@ -374,11 +378,44 @@ func (e *Engine) pushBlock(channels audio.Channels) error {
 		PTS:      e.basePTS + media.Pts(e.hopsEmitted)*media.Pts(e.hop),
 	}
 	e.hopsEmitted++
-	frame, err := audio.Encode(block, e.format, e.bits)
+	frame, err := audio.EncodeInto(block, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return err
 	}
 	return e.queue.Push(frame)
+}
+
+// partitionError collects the first error from concurrent partition tasks.
+type partitionError struct {
+	sync.Mutex
+	value error
+}
+
+// partitionTask forward-transforms one partition on a shared WorkerPool
+// worker. It implements registry.Task directly so it can be submitted
+// without an extra closure allocation on top of the task struct itself.
+type partitionTask struct {
+	plan    *fft.RealPlan
+	hop     int
+	samples []float32
+	index   int
+	result  []partition
+	group   *sync.WaitGroup
+	errs    *partitionError
+}
+
+func (t *partitionTask) Run() {
+	defer t.group.Done()
+	part, err := transformPartition(t.plan.Clone(), t.hop, t.samples, t.index)
+	if err != nil {
+		t.errs.Lock()
+		if t.errs.value == nil {
+			t.errs.value = err
+		}
+		t.errs.Unlock()
+		return
+	}
+	t.result[t.index] = part
 }
 
 // buildPartitions splits samples into hop-length segments (the last one
@@ -399,30 +436,22 @@ func buildPartitions(plan *fft.RealPlan, hop int, samples []float32, pool *regis
 	}
 
 	var group sync.WaitGroup
-	var errors struct {
-		sync.Mutex
-		value error
-	}
+	errs := &partitionError{}
 	for i := range result {
-		index := i
 		group.Add(1)
-		pool.Submit(func() {
-			defer group.Done()
-			part, err := transformPartition(plan.Clone(), hop, samples, index)
-			if err != nil {
-				errors.Lock()
-				if errors.value == nil {
-					errors.value = err
-				}
-				errors.Unlock()
-				return
-			}
-			result[index] = part
+		pool.Submit(&partitionTask{
+			plan:    plan,
+			hop:     hop,
+			samples: samples,
+			index:   i,
+			result:  result,
+			group:   &group,
+			errs:    errs,
 		})
 	}
 	group.Wait()
-	if errors.value != nil {
-		return nil, errors.value
+	if errs.value != nil {
+		return nil, errs.value
 	}
 	return result, nil
 }

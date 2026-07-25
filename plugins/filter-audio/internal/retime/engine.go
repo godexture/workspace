@@ -25,6 +25,7 @@ type Engine struct {
 	outputRate    int
 	outputBasePTS media.Pts
 	resampler     *linear.Resampler
+	scratch       audio.Scratch
 }
 
 func New(config config.SpeedConfig) (*Engine, error) {
@@ -35,7 +36,7 @@ func New(config config.SpeedConfig) (*Engine, error) {
 }
 
 func (e *Engine) SendFrame(frame *media.Frame) error {
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -55,7 +56,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 		output.Rate = e.outputRate
 		output.PTS = e.outputBasePTS + media.Pts(e.totalInput)
 		e.totalInput += int64(block.Samples())
-		encoded, err := audio.Encode(output, e.format, e.bits)
+		encoded, err := audio.EncodeInto(output, e.format, e.bits, &e.scratch)
 		if err != nil {
 			return err
 		}
@@ -67,19 +68,15 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if output.Samples() == 0 {
 		return nil
 	}
-	encoded, err := audio.Encode(output, e.format, e.bits)
+	encoded, err := audio.EncodeInto(output, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return err
 	}
 	return e.slot.Push(encoded)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.slot.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.slot.Receive()
 }
 
 func (e *Engine) Flush() error {
@@ -88,7 +85,7 @@ func (e *Engine) Flush() error {
 		return nil
 	}
 	if output, ok := e.resampler.Finish(); ok {
-		encoded, err := audio.Encode(output, e.format, e.bits)
+		encoded, err := audio.EncodeInto(output, e.format, e.bits, &e.scratch)
 		if err != nil {
 			return err
 		}

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"math"
 	stdbits "math/bits"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/sdk/bits"
+	"github.com/godexture/sdk/pool"
 )
 
 type subframeKind uint8
@@ -32,7 +32,7 @@ type subframeCandidate struct {
 	valid      bool
 }
 
-var residualBufferPool sync.Pool
+var residualBufferPool pool.Typed[[]int64]
 
 func EncodeSubframeCandidate(w *bits.Writer, samples []int64, bitsPerSample int, best subframeCandidate) error {
 	if len(samples) == 0 {
@@ -425,7 +425,7 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 }
 
 func getResidualBuffer(length int) []int64 {
-	buffer, _ := residualBufferPool.Get().([]int64)
+	buffer := residualBufferPool.Get()
 	if cap(buffer) < length {
 		return make([]int64, length)
 	}

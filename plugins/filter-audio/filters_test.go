@@ -52,10 +52,10 @@ func TestSpeedDoublesRateShortensOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, 4})
 	if output.(*media.AudioFrame).SampleRate != 4 {
 		t.Fatalf("SampleRate = %d, want 4 (unchanged)", output.(*media.AudioFrame).SampleRate)
 	}
+	assertSamples(t, output, []float32{0, 4})
 	assertEOF(t, item)
 }
 
@@ -80,10 +80,10 @@ func TestSpeedFactorOnePassesThrough(t *testing.T) {
 	}
 	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if output.(*media.AudioFrame).SampleRate != 4 {
 		t.Fatalf("SampleRate = %d, want 4 (unchanged)", output.(*media.AudioFrame).SampleRate)
 	}
+	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -97,10 +97,10 @@ func TestSpeedRelabelDoublesRateLossless(t *testing.T) {
 	}
 	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if output.(*media.AudioFrame).SampleRate != 8 {
 		t.Fatalf("SampleRate = %d, want 8", output.(*media.AudioFrame).SampleRate)
 	}
+	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +114,10 @@ func TestSpeedRelabelHalvesRateLossless(t *testing.T) {
 	}
 	send(t, item, frame(4, 0, []float32{0, 2, 4, 6}))
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if output.(*media.AudioFrame).SampleRate != 2 {
 		t.Fatalf("SampleRate = %d, want 2", output.(*media.AudioFrame).SampleRate)
 	}
+	assertSamples(t, output, []float32{0, 2, 4, 6})
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -191,10 +191,10 @@ func TestFadeAppliesBothEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, .5, 1, .5})
 	if output.(*media.AudioFrame).Pts() != 10 {
 		t.Fatalf("PTS = %d, want 10", output.(*media.AudioFrame).Pts())
 	}
+	assertSamples(t, output, []float32{0, .5, 1, .5})
 	assertEOF(t, item)
 }
 
@@ -208,10 +208,10 @@ func TestTrimKeepsOnlyAudibleRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := receive(t, item)
-	assertSamples(t, output, []float32{.1})
 	if output.(*media.AudioFrame).Pts() != 11 {
 		t.Fatalf("PTS = %d, want 11", output.(*media.AudioFrame).Pts())
 	}
+	assertSamples(t, output, []float32{.1})
 	assertEOF(t, item)
 }
 
@@ -225,10 +225,10 @@ func TestTrimModeStartKeepsTrailingSilence(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := receive(t, item)
-	assertSamples(t, output, []float32{.1, 0, 0})
 	if output.(*media.AudioFrame).Pts() != 11 {
 		t.Fatalf("PTS = %d, want 11", output.(*media.AudioFrame).Pts())
 	}
+	assertSamples(t, output, []float32{.1, 0, 0})
 	assertEOF(t, item)
 }
 
@@ -242,10 +242,10 @@ func TestTrimModeEndKeepsLeadingSilence(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := receive(t, item)
-	assertSamples(t, output, []float32{0, .1})
 	if output.(*media.AudioFrame).Pts() != 10 {
 		t.Fatalf("PTS = %d, want 10", output.(*media.AudioFrame).Pts())
 	}
+	assertSamples(t, output, []float32{0, .1})
 	assertEOF(t, item)
 }
 
@@ -638,12 +638,12 @@ func TestConvolveMatchesDirectConvolution(t *testing.T) {
 		if err != nil {
 			break
 		}
-		block, err := audio.Decode(output)
+		block, err := audio.Decode(&output)
 		if err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, block.Channels[0]...)
-		(*output).Release()
+		output.Release()
 	}
 
 	want := directConvolution(input, ir)
@@ -813,7 +813,7 @@ func receive(t *testing.T, item engine.FilterEngine) media.Frame {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return *output
+	return output
 }
 
 func assertSamples(t *testing.T, output media.Frame, want []float32) {

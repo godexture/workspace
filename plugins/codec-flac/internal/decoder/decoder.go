@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -13,6 +12,8 @@ import (
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/parallel"
+	"github.com/godexture/sdk/pool"
 )
 
 type Decoder struct {
@@ -37,10 +38,13 @@ type Decoder struct {
 	// Parallel path (pool != nil): jobs are submitted as tasks to a worker
 	// pool shared with every other parallel-eligible stage in the
 	// conversion. Each task borrows a scratch decodeWorkspace from scratch
-	// so concurrent tasks never contend.
+	// so concurrent tasks never contend. gate implements the
+	// completion-notification side of that (see markReady/waitForEntry in
+	// parallel.go).
 	pool    *registry.WorkerPool
-	scratch sync.Pool
+	scratch pool.Typed[*decodeWorkspace]
 	closed  bool
+	gate    parallel.Gate
 }
 
 // NewDecoder builds a decoder. pool may be nil, in which case packets are
@@ -49,6 +53,7 @@ type Decoder struct {
 // is responsible for closing it once every stage sharing it has finished).
 func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, pool *registry.WorkerPool) *Decoder {
 	decoder := &Decoder{cfg: cfg, pool: pool}
+	decoder.scratch.Init(func() *decodeWorkspace { return &decodeWorkspace{} })
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
@@ -114,9 +119,8 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 	if d.flushed {
 		return engine.ErrEOF
 	}
-	entry := &pendingEntry{done: make(chan struct{})}
 	if d.pool == nil {
-		entry.done = nil
+		entry := &pendingEntry{ready: true}
 		decodeJob(frameJob{
 			data:   pkt.Data(),
 			pts:    pkt.PTS,
@@ -127,19 +131,26 @@ func (d *Decoder) SendPacket(pkt *media.Packet) error {
 		d.pendingQueue = append(d.pendingQueue, entry)
 		return nil
 	}
+	entry := &pendingEntry{}
 	d.pendingQueue = append(d.pendingQueue, entry)
-	job := frameJob{
-		data:   append([]byte(nil), pkt.Data()...),
-		pts:    pkt.PTS,
-		info:   d.info,
-		strict: d.cfg.Strict,
-		entry:  entry,
+	src := pkt.Data()
+	dataBuf := pool.Get(len(src))
+	*dataBuf = (*dataBuf)[:len(src)]
+	copy(*dataBuf, src)
+	job := &frameJob{
+		d:       d,
+		data:    *dataBuf,
+		dataBuf: dataBuf,
+		pts:     pkt.PTS,
+		info:    d.info,
+		strict:  d.cfg.Strict,
+		entry:   entry,
 	}
-	d.pool.Submit(func() { d.runJob(job) })
+	d.pool.Submit(job)
 	return nil
 }
 
-func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
+func (d *Decoder) ReceiveFrame() (media.Frame, error) {
 	if d.configErr != nil {
 		return nil, d.configErr
 	}
@@ -161,9 +172,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		return nil, errors.New("flac decoder requires STREAMINFO metadata or audio attributes")
 	}
 	entry := d.pendingQueue[0]
-	if entry.done != nil {
-		<-entry.done
-	}
+	d.waitForEntry(entry)
 	d.pendingQueue[0] = nil
 	d.pendingQueue = d.pendingQueue[1:]
 	if len(d.pendingQueue) == 0 {
@@ -182,8 +191,7 @@ func (d *Decoder) ReceiveFrame() (*media.Frame, error) {
 		}
 		d.md5.WritePacked(pcm)
 	}
-	var frame media.Frame = entry.audio
-	return &frame, nil
+	return entry.audio, nil
 }
 
 func (d *Decoder) Flush() error {
@@ -205,11 +213,9 @@ func (d *Decoder) Close() error {
 		if entry != nil {
 			// Wait for this decoder's own outstanding task, if any, so its
 			// frame exists before being released. This never waits on other
-			// stages' work: the pool is shared, but each entry.done only
-			// depends on the single task that produces it.
-			if entry.done != nil {
-				<-entry.done
-			}
+			// stages' work: the pool is shared, but waitForEntry only
+			// depends on this entry's own ready flag.
+			d.waitForEntry(entry)
 			if entry.audio != nil {
 				entry.audio.Release()
 				entry.audio = nil

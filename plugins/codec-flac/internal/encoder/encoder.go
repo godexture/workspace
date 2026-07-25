@@ -3,7 +3,6 @@ package encoder
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -12,6 +11,8 @@ import (
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/parallel"
+	"github.com/godexture/sdk/pool"
 )
 
 type Encoder struct {
@@ -44,10 +45,13 @@ type Encoder struct {
 	// every other parallel-eligible stage in the conversion. Each task
 	// borrows a scratch bits.Writer/windowSet from scratch so concurrent
 	// tasks never contend. Parallelism never changes the encoded bytes; only
-	// scheduling changes.
-	pool    *registry.WorkerPool
-	scratch sync.Pool
-	closed  bool
+	// scheduling changes. gate implements the completion-notification side
+	// of that (see markReady/waitForEntry in parallel.go).
+	pool      *registry.WorkerPool
+	scratch   pool.Typed[*encodeScratch]
+	blockPool pool.Typed[*blockCopy]
+	closed    bool
+	gate      parallel.Gate
 }
 
 // NewEncoder builds an encoder. pool may be nil, in which case blocks are
@@ -56,12 +60,20 @@ type Encoder struct {
 // is responsible for closing it once every stage sharing it has finished).
 func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, pool *registry.WorkerPool) *Encoder {
 	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
-	return &Encoder{
+	encoder := &Encoder{
 		config:  cfg,
 		windows: newWindowSet(cfg.Apodizations),
 		md5:     flac.NewPCMMD5(),
 		pool:    pool,
 	}
+
+	encoder.scratch.Init(func() *encodeScratch {
+		return &encodeScratch{windows: newWindowSet(encoder.config.Apodizations)}
+	})
+
+	encoder.blockPool.Init(func() *blockCopy { return &blockCopy{} })
+
+	return encoder
 }
 
 func (e *Encoder) Prepare(resources registry.ResourceGrant) error {
@@ -108,8 +120,8 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 }
 
 // ReceivePacket drains pendingQueue in submission order. Entries produced by
-// the parallel path may still be in flight (entry.done != nil), in which
-// case this blocks on that specific entry until a worker finishes it.
+// the parallel path may still be in flight (entry.ready == false), in which
+// case waitForEntry blocks on that specific entry until a worker finishes it.
 //
 // It deliberately never returns ErrEAGAIN just because the head isn't ready
 // yet: callers may wire this encoder into a pipeline with fan-out (e.g. a
@@ -126,10 +138,7 @@ func (e *Encoder) SendFrame(frame *media.Frame) error {
 func (e *Encoder) ReceivePacket() (*media.Packet, error) {
 	for len(e.pendingQueue) > 0 {
 		head := e.pendingQueue[0]
-		if head.done != nil {
-			<-head.done
-			head.done = nil
-		}
+		e.waitForEntry(head)
 		if head.err != nil {
 			e.popPendingEntry()
 			return nil, head.err
@@ -177,7 +186,7 @@ func (e *Encoder) Flush() error {
 	}
 	e.flushed = true
 	sum := e.MD5()
-	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
 			media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
 		}),
@@ -201,11 +210,9 @@ func (e *Encoder) Close() error {
 		if entry != nil {
 			// Wait for this encoder's own outstanding task, if any, so its
 			// packets exist before being released. This never waits on other
-			// stages' work: the pool is shared, but each entry.done only
-			// depends on the single task that produces it.
-			if entry.done != nil {
-				<-entry.done
-			}
+			// stages' work: the pool is shared, but waitForEntry only
+			// depends on this entry's own ready flag.
+			e.waitForEntry(entry)
 			releasePackets(entry.packets)
 			entry.packets = nil
 		}
@@ -309,7 +316,7 @@ func (e *Encoder) enqueueBlockSync(block [][]int64, pts media.Pts, analysis *fra
 		return err
 	}
 	pkt := newFramePacket(e.writer.DetachBytes(), pts)
-	e.pendingQueue = append(e.pendingQueue, &pendingEntry{packets: []*media.Packet{pkt}})
+	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{pkt}})
 	e.frameNumber++
 	e.sampleNumber += uint64(len(block[0]))
 	return nil

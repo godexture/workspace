@@ -10,6 +10,7 @@ import (
 
 	"github.com/godexture/filter-audio"
 	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/sdk/profiling"
 	"github.com/godexture/sdk/timer"
 
 	godec "github.com/godexture/core"
@@ -42,7 +43,11 @@ func main() {
 	inputPath := os.Args[1]
 	outputPath := os.Args[2]
 
-	if profilePath := os.Getenv("GODEC_CPUPROFILE"); profilePath != "" {
+	if profilePath := os.Getenv("GODEC_PPROF"); profilePath != "" {
+		if err := profiling.RejectPathCollision(profilePath, inputPath, outputPath); err != nil {
+			fmt.Printf("Failed to validate profile path: %v\n", err)
+			return
+		}
 		profileFile, err := os.Create(profilePath)
 		if err != nil {
 			fmt.Printf("Failed to create profile: %v\n", err)

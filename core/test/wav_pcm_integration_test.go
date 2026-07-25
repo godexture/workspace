@@ -125,7 +125,7 @@ func drainDecoderToMux(decoder engine.DecoderEngine, encoder engine.EncoderEngin
 			return err
 		}
 
-		if err := encoder.SendFrame(frame); err != nil {
+		if err := encoder.SendFrame(&frame); err != nil {
 			return err
 		}
 		if err := drainEncoderToMux(encoder, muxer); err != nil {

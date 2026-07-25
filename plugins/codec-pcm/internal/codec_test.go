@@ -37,7 +37,7 @@ func TestDecoderEncoderRoundtrip(t *testing.T) {
 		t.Fatalf("ReceiveFrame() error = %v", err)
 	}
 
-	if err := enc.SendFrame(frame); err != nil {
+	if err := enc.SendFrame(&frame); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
 		t.Fatalf("ReceiveFrame() error = %v", err)
 	}
 
-	af, ok := (*frame).(*media.AudioFrame)
+	af, ok := frame.(*media.AudioFrame)
 	if !ok {
 		t.Fatalf("expected audio frame")
 	}
@@ -91,7 +91,7 @@ func TestDecoderEncoder24BitRoundtrip(t *testing.T) {
 		t.Fatalf("expected 3 samples, got %v", af.Samples)
 	}
 
-	if err := enc.SendFrame(frame); err != nil {
+	if err := enc.SendFrame(&frame); err != nil {
 		t.Fatalf("SendFrame() error = %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestG711Roundtrip(t *testing.T) {
 				t.Fatalf("ReceiveFrame() error = %v", err)
 			}
 
-			if err := enc.SendFrame(frame); err != nil {
+			if err := enc.SendFrame(&frame); err != nil {
 				t.Fatalf("SendFrame() error = %v", err)
 			}
 
@@ -202,7 +202,7 @@ func TestG711Endianness(t *testing.T) {
 	pktLE.MediaType = media.MediaAudio
 	_ = decLE.SendPacket(pktLE)
 	frameLE, _ := decLE.ReceiveFrame()
-	dataLE := (*frameLE).(*media.AudioFrame).Planes()[0]
+	dataLE := frameLE.(*media.AudioFrame).Planes()[0]
 
 	// Decode with Big Endian
 	cfgBE := DefaultDecoderConfig
@@ -214,7 +214,7 @@ func TestG711Endianness(t *testing.T) {
 	pktBE.MediaType = media.MediaAudio
 	_ = decBE.SendPacket(pktBE)
 	frameBE, _ := decBE.ReceiveFrame()
-	dataBE := (*frameBE).(*media.AudioFrame).Planes()[0]
+	dataBE := frameBE.(*media.AudioFrame).Planes()[0]
 
 	if len(dataLE) != len(dataBE) {
 		t.Fatalf("decoded lengths mismatch")
@@ -228,7 +228,7 @@ func TestG711Endianness(t *testing.T) {
 
 	// Now test encoder with BigEndian
 	encBE, _ := NewEncoder(media.StreamInfo{}, media.CodecPCMU, EncoderConfig{CodecID: media.CodecPCMU, byteOrder: binary.BigEndian})
-	_ = encBE.SendFrame(frameBE)
+	_ = encBE.SendFrame(&frameBE)
 	outPktBE, _ := encBE.ReceivePacket()
 	if !bytes.Equal(outPktBE.Data(), in) {
 		t.Errorf("BigEndian encode mismatch: got %x want %x", outPktBE.Data(), in)
@@ -302,7 +302,8 @@ func TestLeftJustifyPCM(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := leftJustifyPCM(tt.in, tt.format, tt.bitsPerSample)
+			var scratch []byte
+			got := leftJustifyPCM(&scratch, tt.in, tt.format, tt.bitsPerSample)
 			if !bytes.Equal(got, tt.want) {
 				t.Errorf("leftJustifyPCM() = %x, want %x", got, tt.want)
 			}

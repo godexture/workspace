@@ -128,6 +128,7 @@ type Engine struct {
 	rate     int
 	networks []*channelNetwork
 	slot     buffer.Slot[media.Frame]
+	scratch  audio.Scratch
 }
 
 func New(cfg config.ReverbConfig) (*Engine, error) {
@@ -163,7 +164,7 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 	if !ok {
 		return fmt.Errorf("reverb expected *media.AudioFrame, got %T", *frame)
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -185,19 +186,15 @@ func (e *Engine) SendFrame(frame *media.Frame) error {
 			values[i] = x*dry + wetSample*wet
 		}
 	}
-	output, err := audio.Encode(block, input.Format, input.BitsPerSample)
+	output, err := audio.EncodeInto(block, input.Format, input.BitsPerSample, &e.scratch)
 	if err != nil {
 		return err
 	}
 	return e.slot.Push(output)
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
-	frame, err := e.slot.Receive()
-	if err != nil {
-		return nil, err
-	}
-	return &frame, nil
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
+	return e.slot.Receive()
 }
 func (e *Engine) Flush() error { e.slot.Flush(); return nil }
 func (e *Engine) Close() error { e.slot.Close(); return nil }

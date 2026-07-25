@@ -159,14 +159,6 @@ export function App() {
                     canRedo={history.canRedo}
                 />
 
-                <Panel title="Resolved Pipeline">
-                    <ResolvedGraph
-                        description={resolved}
-                        liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
-                        error={resolveError}
-                    />
-                </Panel>
-
                 <ResultPanel
                     job={job.state}
                     input={mainInput}
@@ -180,7 +172,14 @@ export function App() {
                         }
                     }}
                     onCancel={() => void job.cancel()}
-                />
+                    childrenTitle="Resolved Pipeline"
+                >
+                    <ResolvedGraph
+                        description={resolved}
+                        liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
+                        error={resolveError}
+                    />
+                </ResultPanel>
             </main>
         </div>
     );

@@ -56,6 +56,13 @@ type Engine struct {
 	totalEmitted int64
 	pending      []outputItem
 	flushed      bool
+
+	// scratch is safe to share across every input port: node.Filter's
+	// adapter (pkg/engine.FilterAdapter.runGeneral) pulls each port on its
+	// own goroutine but always invokes SendInput/ReceiveOutput from a single
+	// consumer goroutine, so this Engine's own methods are never called
+	// concurrently with each other.
+	scratch audio.Scratch
 }
 
 // NewEngine builds a mixer for exactly the given number of inputs and
@@ -168,7 +175,7 @@ func (e *Engine) SendInput(port string, frame *media.Frame) error {
 	if state.ended {
 		return fmt.Errorf("mixer received a frame on port %q after it ended", port)
 	}
-	block, err := audio.Decode(frame)
+	block, err := audio.DecodeInto(frame, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -303,7 +310,7 @@ func (e *Engine) pushOutput(port string, channels audio.Channels, pts media.Pts)
 		Bits:     e.bits,
 		PTS:      pts,
 	}
-	frame, err := audio.Encode(block, e.format, e.bits)
+	frame, err := audio.EncodeInto(block, e.format, e.bits, &e.scratch)
 	if err != nil {
 		return err
 	}
@@ -311,7 +318,7 @@ func (e *Engine) pushOutput(port string, channels audio.Channels, pts media.Pts)
 	return nil
 }
 
-func (e *Engine) ReceiveOutput() (string, *media.Frame, error) {
+func (e *Engine) ReceiveOutput() (string, media.Frame, error) {
 	if len(e.pending) == 0 {
 		if e.flushed {
 			return "", nil, engine.ErrEOF
@@ -320,10 +327,10 @@ func (e *Engine) ReceiveOutput() (string, *media.Frame, error) {
 	}
 	item := e.pending[0]
 	e.pending = e.pending[1:]
-	return item.port, &item.frame, nil
+	return item.port, item.frame, nil
 }
 
-func (e *Engine) ReceiveFrame() (*media.Frame, error) {
+func (e *Engine) ReceiveFrame() (media.Frame, error) {
 	_, frame, err := e.ReceiveOutput()
 	return frame, err
 }
