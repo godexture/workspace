@@ -106,8 +106,10 @@ func (b *Binding) ChangedFlags() []string {
 			names = append(names, flag.Name)
 		}
 	}
-	if b.preset != nil && b.flags.Lookup(b.presetFlag).Changed {
-		names = append(names, b.presetFlag)
+	if b.preset != nil {
+		if flag := b.flags.Lookup(b.presetFlag); flag != nil && flag.Changed {
+			names = append(names, b.presetFlag)
+		}
 	}
 	return names
 }
