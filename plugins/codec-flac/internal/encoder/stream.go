@@ -5,20 +5,34 @@ import (
 	"fmt"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/domain/media/pcm"
+	"github.com/godexture/sdk/dsp"
 )
 
-// bitDepthRange is the valid [min, max] significant-bit-count FLAC accepts
-// for input carried in a given container format: min is one more than the
-// next-smaller container's max (so 12-bit audio must be declared S16, never
-// S24), and max is the container's own full width.
-type bitDepthRange struct{ min, max int }
-
-var flacBitDepthRanges = map[media.SampleFormat]bitDepthRange{
-	media.SampleFormatS8:  {min: 4, max: 8},
-	media.SampleFormatS16: {min: 4, max: 16},
-	media.SampleFormatS24: {min: 17, max: 24},
-	media.SampleFormatS32: {min: 17, max: 32},
+// FormatSupport describes one FLAC-supported input container: MinBits is
+// one more than the next-smaller container's MaxBits (so 12-bit audio must
+// be declared S16, never S24), and MaxBits is the container's own full
+// width. register.go's capability declaration is derived from
+// SupportedFormats so the two can never drift apart.
+type FormatSupport struct {
+	Format           media.SampleFormat
+	MinBits, MaxBits int
 }
+
+var SupportedFormats = []FormatSupport{
+	{Format: media.SampleFormatS8, MinBits: 4, MaxBits: 8},
+	{Format: media.SampleFormatS16, MinBits: 4, MaxBits: 16},
+	{Format: media.SampleFormatS24, MinBits: 17, MaxBits: 24},
+	{Format: media.SampleFormatS32, MinBits: 17, MaxBits: 32},
+}
+
+var formatRanges = func() map[media.SampleFormat]FormatSupport {
+	ranges := make(map[media.SampleFormat]FormatSupport, len(SupportedFormats))
+	for _, f := range SupportedFormats {
+		ranges[f.Format] = f
+	}
+	return ranges
+}()
 
 func (e *Encoder) configureStream(sampleRate, channels, bitsPerSample int) error {
 	if e.config.StreamableSubset && e.config.BlockSize > streamableMaxBlockSize(sampleRate) {
@@ -86,12 +100,12 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 	if bitsPerSample <= 0 {
 		bitsPerSample = format.BitsPerSample()
 	}
-	bounds, ok := flacBitDepthRanges[format]
+	bounds, ok := formatRanges[format]
 	if !ok {
 		return 0, 0, 0, fmt.Errorf("unsupported FLAC input format: %s", frame.Format)
 	}
-	if bitsPerSample < bounds.min || bitsPerSample > bounds.max {
-		return 0, 0, 0, fmt.Errorf("%s FLAC input requires %d..%d bits per sample, got %d", format, bounds.min, bounds.max, bitsPerSample)
+	if bitsPerSample < bounds.MinBits || bitsPerSample > bounds.MaxBits {
+		return 0, 0, 0, fmt.Errorf("%s FLAC input requires %d..%d bits per sample, got %d", format, bounds.MinBits, bounds.MaxBits, bitsPerSample)
 	}
 	channels := frame.Layout.ChannelCount()
 	if channels < 1 || channels > 8 {
@@ -126,20 +140,8 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 		e.buffer[ch] = e.buffer[ch][:writeStart+frame.Samples]
 	}
 
-	var err error
-	switch format {
-	case media.SampleFormatS8:
-		err = deinterleaveS8(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
-	case media.SampleFormatS16:
-		err = deinterleaveS16(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
-	case media.SampleFormatS24:
-		err = deinterleaveS24(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
-	case media.SampleFormatS32:
-		err = deinterleaveS32(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
-	default:
-		err = fmt.Errorf("unsupported FLAC input format: %s", format)
-	}
-	if err != nil {
+	kind := pcm.SampleKind(format)
+	if err := dsp.ToInt64(e.buffer, plane, kind, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample); err != nil {
 		for channel := range e.buffer {
 			e.buffer[channel] = e.buffer[channel][:writeStart]
 		}
