@@ -56,8 +56,8 @@ func (n *ffmpegPCMSourceNode) Start(ctx context.Context) error {
 		return err
 	}
 
-	raw := make([]byte, pcmFramesPerChunk*channels*4)
-	pcmData := make([]float32, pcmFramesPerChunk*channels)
+	raw := make([]byte, PcmFramesPerChunk*channels*4)
+	pcmData := make([]float32, PcmFramesPerChunk*channels)
 	for {
 		read, readErr := io.ReadFull(stdout, raw)
 		if read > 0 {
