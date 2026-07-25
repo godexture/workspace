@@ -3,7 +3,6 @@ package encoder
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -12,6 +11,8 @@ import (
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/parallel"
+	"github.com/godexture/sdk/pool"
 )
 
 type Encoder struct {
@@ -44,13 +45,13 @@ type Encoder struct {
 	// every other parallel-eligible stage in the conversion. Each task
 	// borrows a scratch bits.Writer/windowSet from scratch so concurrent
 	// tasks never contend. Parallelism never changes the encoded bytes; only
-	// scheduling changes.
+	// scheduling changes. gate implements the completion-notification side
+	// of that (see markReady/waitForEntry in parallel.go).
 	pool      *registry.WorkerPool
-	scratch   sync.Pool
-	blockPool sync.Pool
+	scratch   pool.Typed[*encodeScratch]
+	blockPool pool.Typed[*blockCopy]
 	closed    bool
-	mu        sync.Mutex
-	waitCh    chan struct{}
+	gate      parallel.Gate
 }
 
 // NewEncoder builds an encoder. pool may be nil, in which case blocks are
@@ -59,12 +60,20 @@ type Encoder struct {
 // is responsible for closing it once every stage sharing it has finished).
 func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, pool *registry.WorkerPool) *Encoder {
 	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
-	return &Encoder{
+	encoder := &Encoder{
 		config:  cfg,
 		windows: newWindowSet(cfg.Apodizations),
 		md5:     flac.NewPCMMD5(),
 		pool:    pool,
 	}
+
+	encoder.scratch.Init(func() *encodeScratch {
+		return &encodeScratch{windows: newWindowSet(encoder.config.Apodizations)}
+	})
+
+	encoder.blockPool.Init(func() *blockCopy { return &blockCopy{} })
+
+	return encoder
 }
 
 func (e *Encoder) Prepare(resources registry.ResourceGrant) error {
