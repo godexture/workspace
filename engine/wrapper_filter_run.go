@@ -135,7 +135,7 @@ func (n *FilterAdapter) runGeneral(ctx context.Context, runPorts []string) error
 
 	open := len(runPorts)
 	for input := range inputs {
-		if input.err == io.EOF {
+		if errors.Is(input.err, io.EOF) {
 			if !singleRun {
 				if err := aux.EndInput(input.port); err != nil {
 					return err
