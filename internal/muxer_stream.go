@@ -51,6 +51,9 @@ func streamInfoBlockSize(blockSize int) uint16 {
 	if blockSize < 16 {
 		return 16
 	}
+	if blockSize > 65535 {
+		return 65535
+	}
 	return uint16(blockSize)
 }
 

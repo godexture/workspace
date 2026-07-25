@@ -21,7 +21,7 @@ func metadataBlocks(meta metadata.Bundle) ([]metadataBlock, error) {
 			return nil, errors.New("flac muxer metadata block is shorter than its header")
 		}
 		blockType := raw[0] & 0x7f
-		if blockType == streaminfo.MetadataTypeStreamInfo || blockType > 6 {
+		if blockType == streaminfo.MetadataTypeStreamInfo || blockType > streaminfo.MetadataTypePicture {
 			return nil, fmt.Errorf("flac muxer cannot write metadata block type %d", blockType)
 		}
 		length := int(raw[1])<<16 | int(raw[2])<<8 | int(raw[3])
