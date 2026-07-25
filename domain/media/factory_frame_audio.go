@@ -48,7 +48,7 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 	frame := audioFramePool.Get()
 	frame.baseData = b
 	frame.Format = format
-	frame.BitsPerSample = defaultBitsPerSample(format)
+	frame.BitsPerSample = format.BitsPerSample()
 	frame.Layout = layout
 	frame.SampleRate = sampleRate
 	frame.Samples = samples
@@ -96,23 +96,4 @@ func (f *AudioFrame) free() {
 	}
 	f.planes = f.planes[:0]
 	audioFramePool.Put(f)
-}
-
-func defaultBitsPerSample(format SampleFormat) int {
-	switch format.Packed() {
-	case SampleFormatU8:
-		return 8
-	case SampleFormatS16:
-		return 16
-	case SampleFormatS24:
-		return 24
-	case SampleFormatS32:
-		return 32
-	case SampleFormatF32:
-		return 32
-	case SampleFormatF64:
-		return 64
-	default:
-		return 0
-	}
 }

@@ -35,7 +35,7 @@ func EffectiveBitsPerSample(format SampleFormat, bitsPerSample int) int {
 	if bitsPerSample != 0 {
 		return bitsPerSample
 	}
-	return format.BytesPerSample() << 3
+	return format.BitsPerSample()
 }
 
 // CodecParameters is an opaque codec configuration payload.
