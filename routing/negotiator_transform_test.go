@@ -81,6 +81,7 @@ func TestNegotiator_CustomResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to negotiate conversion: %v", err)
 	}
+	defer geo.Close()
 
 	// 5. Assertions
 	if !demuxRes.called {
@@ -185,10 +186,11 @@ func TestNegotiator_AppliesTransforms(t *testing.T) {
 		MuxConfig:   dummyConfig{},
 	}
 
-	_, err := neg.NegotiateConversion(context.Background(), spec)
+	geo, err := neg.NegotiateConversion(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("failed to negotiate conversion: %v", err)
 	}
+	defer geo.Close()
 
 	if len(mux.addedStreams) != 1 {
 		t.Fatalf("expected 1 stream added to muxer, got %d", len(mux.addedStreams))
