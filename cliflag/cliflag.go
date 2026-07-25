@@ -46,12 +46,13 @@ func StructValues(target any) ([]FieldValue, error) {
 }
 
 type field struct {
-	index  int
-	goName string
-	name   string
-	help   string
-	typeOf reflect.Type
-	value  *flagValue
+	index    int
+	goName   string
+	name     string
+	flagName string
+	help     string
+	typeOf   reflect.Type
+	value    *flagValue
 }
 
 type choiceProvider interface {
