@@ -2,7 +2,6 @@ package encoder
 
 import (
 	"errors"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -11,6 +10,8 @@ import (
 	"github.com/godexture/format-flac/streaminfo"
 	"github.com/godexture/sdk/bits"
 	"github.com/godexture/sdk/engine"
+	"github.com/godexture/sdk/parallel"
+	"github.com/godexture/sdk/pool"
 )
 
 type Encoder struct {
@@ -43,27 +44,31 @@ type Encoder struct {
 	// every other parallel-eligible stage in the conversion. Each task
 	// borrows a scratch bits.Writer/windowSet from scratch so concurrent
 	// tasks never contend. Parallelism never changes the encoded bytes; only
-	// scheduling changes.
+	// scheduling changes. gate implements the completion-notification side
+	// of that (see markReady/waitForEntry in parallel.go), matching the
+	// sibling decoder package.
 	pool      *registry.WorkerPool
-	scratch   sync.Pool
-	blockPool sync.Pool
+	scratch   pool.Typed[*encodeScratch]
+	blockPool pool.Typed[*blockCopy]
 	closed    bool
-	mu        sync.Mutex
-	waitCh    chan struct{}
+	gate      parallel.Gate
 }
 
 // NewEncoder builds an encoder. pool may be nil, in which case blocks are
 // encoded synchronously; otherwise it must be a pool this encoder is allowed
 // to submit work to for its entire lifetime (the caller retains ownership and
 // is responsible for closing it once every stage sharing it has finished).
-func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, pool *registry.WorkerPool) *Encoder {
+func NewEncoder(stream media.StreamInfo, cfg config.EncoderConfig, workers *registry.WorkerPool) *Encoder {
 	cfg = config.MergeEncoderConfigForFactory(cfg, stream)
-	return &Encoder{
+	e := &Encoder{
 		config:  cfg,
 		windows: newWindowSet(cfg.Apodizations),
 		md5:     flac.NewPCMMD5(),
-		pool:    pool,
+		pool:    workers,
 	}
+	e.scratch.Init(func() *encodeScratch { return &encodeScratch{windows: newWindowSet(cfg.Apodizations)} })
+	e.blockPool.Init(func() *blockCopy { return &blockCopy{} })
+	return e
 }
 
 func (e *Encoder) Prepare(resources registry.ResourceGrant) error {
@@ -176,13 +181,13 @@ func (e *Encoder) Flush() error {
 	}
 	e.flushed = true
 	sum := e.MD5()
-	e.mu.Lock()
+	e.gate.Lock()
 	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
 			media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
 		}),
 	}})
-	e.mu.Unlock()
+	e.gate.Unlock()
 	return nil
 }
 
