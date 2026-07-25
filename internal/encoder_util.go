@@ -26,12 +26,14 @@ func leftJustifyPCM(scratch *[]byte, data []byte, format media.SampleFormat, bit
 	case media.SampleFormatS16:
 		leftJustifyS16(out, data, shift)
 	case media.SampleFormatS24:
-		for i := 0; i+3 <= len(data); i += 3 {
+		aligned := len(data) - len(data)%3
+		for i := 0; i < aligned; i += 3 {
 			v := (uint32(data[i]) | uint32(data[i+1])<<8 | uint32(data[i+2])<<16) << shift
 			out[i] = byte(v)
 			out[i+1] = byte(v >> 8)
 			out[i+2] = byte(v >> 16)
 		}
+		copy(out[aligned:], data[aligned:])
 	case media.SampleFormatS32:
 		leftJustifyS32(out, data, shift)
 	default:
