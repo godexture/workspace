@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -101,7 +100,7 @@ func (d *Demuxer) Seek(offset time.Duration) error {
 		return fmt.Errorf("mp3 seek: %w", err)
 	}
 
-	d.br = bufio.NewReader(d.r)
+	d.br.Reset(d.r)
 	d.id3Skipped = true
 	d.synced = false
 

@@ -31,6 +31,7 @@ type Demuxer struct {
 	vbriHeader       *header.VBRIHeader
 	duration         time.Duration
 	timebase         mediatime.Rational
+	freeFormatBytes  int
 }
 
 func NewDemuxer(r io.ReadSeeker, _ DemuxerConfig) (*Demuxer, error) {
@@ -55,7 +56,7 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
 		return nil, metadata.Bundle{}, err
 	}
-	br := bufio.NewReader(d.r)
+	br := bufio.NewReaderSize(d.r, scanWindowBytes)
 	id3SkippedBytes, err := SkipID3v2(br)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 skip id3: %w", err)
@@ -63,10 +64,11 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 
 	d.firstFrameOffset = int64(id3SkippedBytes)
 
-	frameHeader, frameData, err := nextFrameHeader(br)
+	frameHeader, frameData, freeFormatBytes, err := nextFrameHeader(br, 0)
 	if err != nil {
 		return nil, metadata.Bundle{}, fmt.Errorf("mp3 analyze: %w", err)
 	}
+	d.freeFormatBytes = freeFormatBytes
 
 	d.bitRate = frameHeader.BitRate
 	d.timebase = mediatime.NewRational(1, int64(frameHeader.SampleRate))
@@ -126,7 +128,8 @@ func (d *Demuxer) Analyze() ([]media.StreamInfo, metadata.Bundle, error) {
 	if _, err := d.r.Seek(0, io.SeekStart); err != nil {
 		return nil, metadata.Bundle{}, err
 	}
-	d.br = bufio.NewReader(d.r)
+	br.Reset(d.r)
+	d.br = br
 	d.id3Skipped = false
 	d.synced = false
 
@@ -152,12 +155,12 @@ func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {
 	var err error
 	if d.synced {
 		var ok bool
-		frameHeader, packet, ok, err = readFramePacket(d.br)
+		frameHeader, packet, ok, err = readFramePacket(d.br, d.freeFormatBytes)
 		if err == nil && !ok {
-			frameHeader, packet, err = nextFramePacket(d.br)
+			frameHeader, packet, d.freeFormatBytes, err = nextFramePacket(d.br, d.freeFormatBytes)
 		}
 	} else {
-		frameHeader, packet, err = nextFramePacket(d.br)
+		frameHeader, packet, d.freeFormatBytes, err = nextFramePacket(d.br, d.freeFormatBytes)
 	}
 	if err != nil {
 		if err == io.EOF {
