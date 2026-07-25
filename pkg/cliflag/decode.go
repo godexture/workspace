@@ -41,10 +41,7 @@ func DecodeStruct(target any, values map[string]string) error {
 		if !ok {
 			return fmt.Errorf("unknown configuration field %q", name)
 		}
-		if err := setField(copy.Field(field.index), []string{raw}); err != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
-		if err := validateChoice(copy, field); err != nil {
+		if err := applyField(copy, field, []string{raw}); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
