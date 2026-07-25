@@ -48,7 +48,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 		}
 		releaseSubframeCandidates(candidates)
 		releaseResidualBuffers(scratch)
-		return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+		return 0, nil, nil, nil, errNoChannelAssignment
 	}
 
 	leftCandidate := bestSubframe(left, bitsPerSample, options, frameWindows, &windows.lpc)
