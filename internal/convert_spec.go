@@ -17,9 +17,12 @@ import (
 // encoder is resolved for it (CLI has no separate flag to pick an encoder
 // plugin by name).
 func buildSpec(options convertOptions, outputPath string, outputs []catalog.OutputFormat) (conversion.Spec, error) {
-	format, _, err := parsePluginSpec(options.format)
+	format, formatParameters, err := parsePluginSpec(options.format)
 	if err != nil {
 		return conversion.Spec{}, fmt.Errorf("format: %w", err)
+	}
+	if err := rejectPluginParameters("format", formatParameters); err != nil {
+		return conversion.Spec{}, err
 	}
 	if format == nil {
 		name, inferErr := inferMuxerName(outputs, outputPath)
@@ -29,9 +32,12 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		format = &conversion.PluginSpec{Name: name}
 	}
 
-	codec, _, err := parsePluginSpec(options.codec)
+	codec, codecParameters, err := parsePluginSpec(options.codec)
 	if err != nil {
 		return conversion.Spec{}, fmt.Errorf("codec: %w", err)
+	}
+	if err := rejectPluginParameters("codec", codecParameters); err != nil {
+		return conversion.Spec{}, err
 	}
 
 	spec := conversion.Spec{Muxer: *format, Parallelism: options.jobs}
@@ -39,11 +45,19 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		spec.Codec = codec.Name
 		spec.Encoder = &conversion.PluginSpec{Values: codec.Values}
 	}
-	if spec.Demuxer, _, err = parsePluginSpec(options.demuxer); err != nil {
+	var demuxerParameters map[string]string
+	if spec.Demuxer, demuxerParameters, err = parsePluginSpec(options.demuxer); err != nil {
 		return conversion.Spec{}, fmt.Errorf("demuxer: %w", err)
 	}
-	if spec.Decoder, _, err = parsePluginSpec(options.decoder); err != nil {
+	if err := rejectPluginParameters("demuxer", demuxerParameters); err != nil {
+		return conversion.Spec{}, err
+	}
+	var decoderParameters map[string]string
+	if spec.Decoder, decoderParameters, err = parsePluginSpec(options.decoder); err != nil {
 		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
+	}
+	if err := rejectPluginParameters("decoder", decoderParameters); err != nil {
+		return conversion.Spec{}, err
 	}
 	// aliasIndex tracks every declared filter alias to its position in
 	// spec.Filters, so --wire can look up its destination; aliasSeen also
@@ -204,6 +218,13 @@ func parsePluginSpec(value string) (*conversion.PluginSpec, map[string]string, e
 		return nil, nil, err
 	}
 	return &conversion.PluginSpec{Name: spec.Name, Values: spec.Values}, spec.Parameters, nil
+}
+
+func rejectPluginParameters(role string, parameters map[string]string) error {
+	if len(parameters) != 0 {
+		return fmt.Errorf("%s does not accept parameters", role)
+	}
+	return nil
 }
 
 func inferMuxerName(outputs []catalog.OutputFormat, output string) (string, error) {
