@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/godexture/codec-flac/internal/config"
@@ -32,12 +33,19 @@ func BenchmarkParallelDecodeThroughput(b *testing.B) {
 		b.Run(parallelismName(parallelism), func(b *testing.B) {
 			pool := registry.NewWorkerPool(parallelism)
 			defer pool.Close()
+			const packets = 64
+			// Packets are pre-built once and reused across iterations: SendPacket
+			// only reads pkt.Data() (copying it into a pooled buffer), never
+			// mutates or releases it, and every iteration's decoder fully drains
+			// (Flush + ReceiveFrame to EOF) before the packets are reused again.
+			pkts := make([]*media.Packet, packets)
+			for i := range pkts {
+				pkts[i] = media.NewPacketFromData(append([]byte(nil), frameData...))
+			}
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				decoder := NewDecoder(stream, config.DefaultDecoderConfig, pool)
-				const packets = 64
-				for range packets {
-					pkt := media.NewPacketFromData(append([]byte(nil), frameData...))
+				for _, pkt := range pkts {
 					if err := decoder.SendPacket(pkt); err != nil {
 						b.Fatal(err)
 					}
@@ -66,12 +74,5 @@ func BenchmarkParallelDecodeThroughput(b *testing.B) {
 }
 
 func parallelismName(n int) string {
-	switch n {
-	case 1:
-		return "Parallelism=1"
-	case 4:
-		return "Parallelism=4"
-	default:
-		return "Parallelism=16"
-	}
+	return fmt.Sprintf("Parallelism=%d", n)
 }

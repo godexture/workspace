@@ -66,10 +66,7 @@ func (d *Decoder) runJob(job frameJob) {
 }
 
 func (d *Decoder) acquireWorkspace() *decodeWorkspace {
-	if v := d.scratch.Get(); v != nil {
-		return v.(*decodeWorkspace)
-	}
-	return &decodeWorkspace{}
+	return d.scratch.Get()
 }
 
 func (d *Decoder) releaseWorkspace(workspace *decodeWorkspace) {
@@ -95,48 +92,24 @@ func decodeJob(job frameJob, workspace *decodeWorkspace) {
 // OutputReady or waitForEntry. Safe to call from a pool worker goroutine
 // (that's its only caller: runJob, after decodeJob finishes on the worker).
 func (d *Decoder) markReady(entry *pendingEntry) {
-	d.mu.Lock()
-	entry.ready = true
-	if d.waitCh != nil {
-		close(d.waitCh)
-		d.waitCh = nil
-	}
-	d.mu.Unlock()
-}
-
-// waitChanLocked returns the channel that closes the next time any pending
-// entry completes, creating it on first use. d.mu must be held.
-func (d *Decoder) waitChanLocked() <-chan struct{} {
-	if d.waitCh == nil {
-		d.waitCh = make(chan struct{})
-	}
-	return d.waitCh
+	d.gate.MarkReady(func() { entry.ready = true })
 }
 
 // waitForEntry blocks until entry.ready, regardless of whether entry is
 // still the queue head. Used by Close, which must wait out every pending
 // entry's task before releasing it, not just the head's.
 func (d *Decoder) waitForEntry(entry *pendingEntry) {
-	for {
-		d.mu.Lock()
-		if entry.ready {
-			d.mu.Unlock()
-			return
-		}
-		ch := d.waitChanLocked()
-		d.mu.Unlock()
-		<-ch
-	}
+	d.gate.Wait(func() bool { return entry.ready })
 }
 
 func (d *Decoder) OutputReady() <-chan struct{} {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.gate.Lock()
+	defer d.gate.Unlock()
 	if len(d.pendingQueue) > 0 {
 		if d.pendingQueue[0].ready {
 			return decoderOutputReady
 		}
-		return d.waitChanLocked()
+		return d.gate.ChanLocked()
 	}
 	if d.flushed {
 		return decoderOutputReady

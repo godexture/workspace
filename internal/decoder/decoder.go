@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/codec-flac/internal/flac"
@@ -12,6 +11,8 @@ import (
 	"github.com/godexture/core/registry"
 	"github.com/godexture/format-flac/frame"
 	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/sdk/parallel"
+	"github.com/godexture/sdk/pool"
 )
 
 type Decoder struct {
@@ -36,15 +37,13 @@ type Decoder struct {
 	// Parallel path (pool != nil): jobs are submitted as tasks to a worker
 	// pool shared with every other parallel-eligible stage in the
 	// conversion. Each task borrows a scratch decodeWorkspace from scratch
-	// so concurrent tasks never contend. mu/waitCh implement the
+	// so concurrent tasks never contend. gate implements the
 	// completion-notification side of that (see markReady/waitForEntry in
-	// parallel.go): every pending entry that needs to block a waiter shares
-	// this one lazily-created channel instead of owning its own.
+	// parallel.go).
 	pool    *registry.WorkerPool
-	scratch sync.Pool
+	scratch pool.Typed[*decodeWorkspace]
 	closed  bool
-	mu      sync.Mutex
-	waitCh  chan struct{}
+	gate    parallel.Gate
 }
 
 // NewDecoder builds a decoder. pool may be nil, in which case packets are
@@ -53,6 +52,7 @@ type Decoder struct {
 // is responsible for closing it once every stage sharing it has finished).
 func NewDecoder(stream media.StreamInfo, cfg config.DecoderConfig, pool *registry.WorkerPool) *Decoder {
 	decoder := &Decoder{cfg: cfg, pool: pool}
+	decoder.scratch.Init(func() *decodeWorkspace { return &decodeWorkspace{} })
 
 	hasRawStreamInfo := false
 	if raw, ok := stream.Metadata.GetRaw(streaminfo.MetadataKey); ok && len(raw) > 0 {
