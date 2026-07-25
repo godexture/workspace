@@ -94,6 +94,8 @@ func MixInto(input audio.Block, config config.RemixConfig, dst *audio.Channels) 
 		Channels: *dst,
 		Layout:   config.Layout,
 		Rate:     input.Rate,
+		Format:   input.Format,
+		Bits:     input.Bits,
 		PTS:      input.PTS,
 	}
 	if input.Layout.IsUnspecified() || config.Layout.IsUnspecified() {
