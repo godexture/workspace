@@ -39,20 +39,14 @@ func (e *encoder) addUserURLFrame(description string, value string) {
 }
 
 func (e *encoder) addCommentFrame(value string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return
-	}
-	encByte, valBytes := encodeText(value, e.opts.Encoding, e.opts.Version)
-	payload := []byte{encByte}
-	payload = append(payload, []byte(commentLanguage)...)
-	payload = append(payload, e.getTerminator(encByte)...)
-	payload = append(payload, valBytes...)
-	mappedID := e.mapFrameID("COMM")
-	e.frames = append(e.frames, e.buildFrame(mappedID, payload))
+	e.addLanguageTextFrame("COMM", value)
 }
 
 func (e *encoder) addLyricsFrame(value string) {
+	e.addLanguageTextFrame("USLT", value)
+}
+
+func (e *encoder) addLanguageTextFrame(frameID, value string) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return
@@ -62,6 +56,6 @@ func (e *encoder) addLyricsFrame(value string) {
 	payload = append(payload, []byte(commentLanguage)...)
 	payload = append(payload, e.getTerminator(encByte)...)
 	payload = append(payload, valBytes...)
-	mappedID := e.mapFrameID("USLT")
+	mappedID := e.mapFrameID(frameID)
 	e.frames = append(e.frames, e.buildFrame(mappedID, payload))
 }
