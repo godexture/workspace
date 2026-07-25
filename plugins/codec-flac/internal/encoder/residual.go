@@ -4,10 +4,10 @@ import (
 	"errors"
 	"math"
 	stdbits "math/bits"
-	"sync"
 
 	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/sdk/bits"
+	"github.com/godexture/sdk/pool"
 )
 
 type ricePartition struct {
@@ -41,8 +41,14 @@ type riceWorkspace struct {
 	levels    [16]int
 }
 
-var riceWorkspacePool = sync.Pool{New: func() any { return &riceWorkspace{} }}
-var ricePartitionPool sync.Pool
+var riceWorkspacePool = pool.Typed[*riceWorkspace]{}
+var ricePartitionPool pool.Typed[[]ricePartition]
+
+func init() {
+	riceWorkspacePool.Init(func() *riceWorkspace {
+		return &riceWorkspace{}
+	})
+}
 
 func chooseRiceCoding(residual []int64) (riceCoding, bool) {
 	return chooseRiceCodingForBlock(residual, len(residual), 0, 15, config.RiceCostEstimated)
@@ -58,10 +64,10 @@ var riceMethods = []struct {
 }
 
 func chooseRiceCodingForBlock(residual []int64, blockSize, predictorOrder, maxPartitionOrder int, mode config.RiceCostMode) (riceCoding, bool) {
-	workspace := riceWorkspacePool.Get().(*riceWorkspace)
+	workspace := riceWorkspacePool.Get()
 	coding, ok := chooseRiceCodingWithWorkspace(residual, blockSize, predictorOrder, maxPartitionOrder, mode, workspace)
 	if ok {
-		partitions, _ := ricePartitionPool.Get().([]ricePartition)
+		partitions := ricePartitionPool.Get()
 		if cap(partitions) < len(coding.partitions) {
 			partitions = make([]ricePartition, len(coding.partitions))
 		} else {

@@ -62,10 +62,7 @@ type encodeScratch struct {
 }
 
 func (e *Encoder) acquireScratch() *encodeScratch {
-	if v := e.scratch.Get(); v != nil {
-		return v.(*encodeScratch)
-	}
-	return &encodeScratch{windows: newWindowSet(e.config.Apodizations)}
+	return e.scratch.Get()
 }
 
 func (e *Encoder) releaseScratch(s *encodeScratch) {
@@ -76,50 +73,26 @@ func (e *Encoder) releaseScratch(s *encodeScratch) {
 // OutputReady or waitForEntry. Safe to call from a pool worker goroutine
 // (that's its only caller: runJob, after encodeJob finishes on the worker).
 func (e *Encoder) markReady(entry *pendingEntry) {
-	e.mu.Lock()
-	entry.ready = true
-	if e.waitCh != nil {
-		close(e.waitCh)
-		e.waitCh = nil
-	}
-	e.mu.Unlock()
-}
-
-// waitChanLocked returns the channel that closes the next time any pending
-// entry completes, creating it on first use. e.mu must be held.
-func (e *Encoder) waitChanLocked() <-chan struct{} {
-	if e.waitCh == nil {
-		e.waitCh = make(chan struct{})
-	}
-	return e.waitCh
+	e.gate.MarkReady(func() { entry.ready = true })
 }
 
 // waitForEntry blocks until entry.ready, regardless of whether entry is
 // still the queue head. Used by ReceivePacket (see its docs for why it must
 // always wait out the head rather than returning ErrEAGAIN) and Close.
 func (e *Encoder) waitForEntry(entry *pendingEntry) {
-	for {
-		e.mu.Lock()
-		if entry.ready {
-			e.mu.Unlock()
-			return
-		}
-		ch := e.waitChanLocked()
-		e.mu.Unlock()
-		<-ch
-	}
+	e.gate.Wait(func() bool { return entry.ready })
 }
 
 func (e *Encoder) OutputReady() <-chan struct{} {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.gate.Lock()
+	defer e.gate.Unlock()
 	if len(e.pendingQueue) == 0 {
 		return nil
 	}
 	if e.pendingQueue[0].ready {
 		return outputReady
 	}
-	return e.waitChanLocked()
+	return e.gate.ChanLocked()
 }
 
 // dispatchFullBlock hands a config.BlockSize-length block to the shared
@@ -178,12 +151,7 @@ type blockCopy struct {
 // block's samples, reusing a pooled one (grown as needed) instead of
 // allocating fresh channel slices on every dispatch.
 func (e *Encoder) acquireBlockCopy(block [][]int64) *blockCopy {
-	var bc *blockCopy
-	if v := e.blockPool.Get(); v != nil {
-		bc = v.(*blockCopy)
-	} else {
-		bc = &blockCopy{}
-	}
+	bc := e.blockPool.Get()
 	if cap(bc.channels) < len(block) {
 		grown := make([][]int64, len(block))
 		copy(grown, bc.channels)
