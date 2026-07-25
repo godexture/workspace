@@ -107,6 +107,9 @@ func (d *Demuxer) readMP3Packet() (*media.Packet, int, error) {
 
 	offset, frameBytes, freeFormatBytes, found := findMP3Frame(probe, d.mp3FreeFormatBytes)
 	if !found {
+		if d.bytesRead+uint64(n) >= d.header.dataSize {
+			return nil, 0, io.EOF
+		}
 		return nil, 0, errors.New("wav mp3 data does not contain a complete mp3 frame")
 	}
 	if offset+frameBytes > len(probe) {
@@ -176,7 +179,7 @@ func findMP3Frame(data []byte, freeFormatBytes int) (offset int, frameBytes int,
 			continue
 		}
 
-		if matchMP3Frames(data[i:], h, currentFreeFormatBytes) || (i == 0 && frameAndPadding == len(data)) {
+		if matchMP3Frames(data[i:], h, currentFreeFormatBytes) || i+frameAndPadding == len(data) {
 			return i, frameAndPadding, currentFreeFormatBytes, true
 		}
 	}
@@ -197,7 +200,7 @@ func matchMP3Frames(data []byte, first mp3header.Header, freeFormatBytes int) bo
 
 		next, err := mp3header.ParseHeader(data[byteIndex : byteIndex+4])
 		if err != nil || !first.Compare(next) {
-			return false
+			return matchCount > 0
 		}
 		current = next
 	}

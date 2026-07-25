@@ -62,6 +62,9 @@ func (e *encoder) addRawAttachedPictureFrame(payload []byte) {
 			e.addAttachedPictureFrame(thumb)
 			return
 		}
+		// An APIC payload cannot be emitted under PIC without converting its
+		// MIME and description fields to the ID3v2.2 layout.
+		return
 	}
 	mappedID := e.mapFrameID("APIC")
 	e.frames = append(e.frames, e.buildFrame(mappedID, payload))
