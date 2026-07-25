@@ -4,9 +4,20 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/config"
 	"github.com/godexture/core/domain/media"
 )
+
+// bitDepthRange is the valid [min, max] significant-bit-count FLAC accepts
+// for input carried in a given container format: min is one more than the
+// next-smaller container's max (so 12-bit audio must be declared S16, never
+// S24), and max is the container's own full width.
+type bitDepthRange struct{ min, max int }
+
+var flacBitDepthRanges = map[media.SampleFormat]bitDepthRange{
+	media.SampleFormatS16: {min: 4, max: 16},
+	media.SampleFormatS24: {min: 17, max: 24},
+	media.SampleFormatS32: {min: 17, max: 32},
+}
 
 func (e *Encoder) configureStream(sampleRate, channels, bitsPerSample int) error {
 	if e.config.StreamableSubset && e.config.BlockSize > streamableMaxBlockSize(sampleRate) {
@@ -72,19 +83,14 @@ func (e *Encoder) audioFrameParameters(frame *media.AudioFrame) (int, int, int, 
 		bitsPerSample = frame.BitsPerSample
 	}
 	if bitsPerSample <= 0 {
-		bitsPerSample = config.BitDepthFromSampleFormat(format)
+		bitsPerSample = format.BitsPerSample()
 	}
-	if format == media.SampleFormatS16 && (bitsPerSample < 4 || bitsPerSample > 16) {
-		return 0, 0, 0, fmt.Errorf("S16 FLAC input requires 4..16 bits per sample, got %d", bitsPerSample)
-	}
-	if format == media.SampleFormatS24 && (bitsPerSample < 17 || bitsPerSample > 24) {
-		return 0, 0, 0, fmt.Errorf("S24 FLAC input requires 17..24 bits per sample, got %d", bitsPerSample)
-	}
-	if format == media.SampleFormatS32 && (bitsPerSample < 17 || bitsPerSample > 32) {
-		return 0, 0, 0, fmt.Errorf("S32 FLAC input requires 17..32 bits per sample, got %d", bitsPerSample)
-	}
-	if format != media.SampleFormatS16 && format != media.SampleFormatS24 && format != media.SampleFormatS32 {
+	bounds, ok := flacBitDepthRanges[format]
+	if !ok {
 		return 0, 0, 0, fmt.Errorf("unsupported FLAC input format: %s", frame.Format)
+	}
+	if bitsPerSample < bounds.min || bitsPerSample > bounds.max {
+		return 0, 0, 0, fmt.Errorf("%s FLAC input requires %d..%d bits per sample, got %d", format, bounds.min, bounds.max, bitsPerSample)
 	}
 	channels := frame.Layout.ChannelCount()
 	if channels < 1 || channels > 8 {

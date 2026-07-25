@@ -153,9 +153,6 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 	}
 	if cfg.bitsPerSample == 0 {
 		cfg.bitsPerSample = stream.Audio.EffectiveBitsPerSample()
-		if cfg.bitsPerSample == 0 {
-			cfg.bitsPerSample = BitDepthFromSampleFormat(stream.Audio.Format)
-		}
 	}
 
 	if cfg.MaxFixedOrder > DefaultEncoderMaxFixedOrder {
@@ -172,19 +169,4 @@ func MergeEncoderConfigForFactory(cfg EncoderConfig, stream media.StreamInfo) En
 	}
 
 	return cfg
-}
-
-func BitDepthFromSampleFormat(format media.SampleFormat) int {
-	switch format.Packed() {
-	case media.SampleFormatU8:
-		return 8
-	case media.SampleFormatS16:
-		return 16
-	case media.SampleFormatS24:
-		return 24
-	case media.SampleFormatS32:
-		return 32
-	default:
-		return 0
-	}
 }
