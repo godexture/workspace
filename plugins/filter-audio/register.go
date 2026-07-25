@@ -25,7 +25,7 @@ func init() {
 	registerDCOffset()
 	registerGate()
 	registerTrim()
-	registerSpeed()
+	registerRetime()
 	registerCompressor()
 	registerEQ()
 }

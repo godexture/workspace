@@ -55,11 +55,12 @@ func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uin
 		pad = 1
 	}
 
-	useExtensible := channels >= 3 || bitsPerSample > 16
+	isADPCM := attr.Codec == media.CodecMSADPCM || attr.Codec == media.CodecIMAADPCM
+	useExtensible := !isADPCM && (channels >= 3 || bitsPerSample > 16)
 	if !useExtensible {
 		defaultLayout := layoutFromChannelCount(channels)
 		if layout.Mask() != defaultLayout.Mask() {
-			useExtensible = true
+			useExtensible = !isADPCM
 		}
 	}
 

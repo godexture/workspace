@@ -102,8 +102,8 @@ func registerTrim() {
 	})
 }
 
-func registerSpeed() {
-	register(registry.NewConfigurationFactory(NewSpeedConfig), "retime", "Change playback retime (pitch shifts with retime)", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
+func registerRetime() {
+	register(registry.NewConfigurationFactory(NewSpeedConfig), "retime", "Change playback speed with optional pitch-preserving retime", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
 		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
 		if err != nil {
 			return media.Profile{}, err

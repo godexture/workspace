@@ -41,7 +41,7 @@ func runSnapshotDemuxDecode(ctx context.Context, cfg SnapshotConfig, stream medi
 	}
 	defer demux.close()
 	decoder := engine.WrapDecoder(cfg.Decode(stream))
-	chunker := nodes.NewAudioChunk(4096) // pcmFramesPerChunk is 4096
+	chunker := nodes.NewAudioChunk(nodes.PcmFramesPerChunk)
 	expected := newPCMSource(cfg.MediaPath, cfg.Expected, floatPCMAttributes(stream.Audio))
 	compare := nodes.NewFrameCompare(cfg.Opts, false)
 	if err := link(demux.node, "out", decoder, "in"); err != nil {
@@ -66,28 +66,31 @@ func runSnapshotEncodeMux(ctx context.Context, tester testing.TB, tempDir string
 	}
 	outputPath := output.Name()
 	defer os.Remove(outputPath)
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = output.Close()
+		}
+	}()
 	source := newPCMSource(cfg.MediaPath, cfg.Expected, stream.Audio)
 	encoder := engine.WrapEncoder(cfg.Encode())
 	muxer, err := wrapMux(cfg.Mux, output, stream)
 	if err != nil {
-		output.Close()
 		return err
 	}
 	if err := link(source, "out", encoder, "in"); err != nil {
-		output.Close()
 		return err
 	}
 	if err := link(encoder, "out", muxer, "in"); err != nil {
-		output.Close()
 		return err
 	}
 	if err := runNodes(ctx, source, encoder, muxer); err != nil {
-		output.Close()
 		return err
 	}
 	if err := output.Close(); err != nil {
 		return err
 	}
+	closeOnError = false
 	if cfg.Tester != nil {
 		cfg.Tester(tester, outputPath)
 	}

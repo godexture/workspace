@@ -30,9 +30,11 @@ func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding
 		if flags.Lookup(name) != nil {
 			return nil, fmt.Errorf("flag %q already exists", name)
 		}
+		field.flagName = name
 		defaultValue := formatValue(value.Field(field.index))
 		field.value = &flagValue{typeOf: field.typeOf, raw: defaultValue}
 		flags.Var(field.value, name, helpWithDefault(field.help, defaultValue))
+		// helpWithDefault already renders the actual default; suppress pflag's duplicate suffix.
 		flags.Lookup(name).DefValue = "0"
 	}
 	if _, ok := prototype.(presetApplier); ok {
@@ -47,6 +49,7 @@ func BindStruct(flags *pflag.FlagSet, namespace string, prototype any) (*Binding
 		*binding.preset = -1
 		binding.presetFlag = name
 		flags.IntVar(binding.preset, name, -1, helpWithDefault("Configuration preset", "-1"))
+		// helpWithDefault already renders the actual default; suppress pflag's duplicate suffix.
 		flags.Lookup(name).DefValue = "0"
 	}
 	return binding, nil
@@ -80,7 +83,7 @@ func (b *Binding) Apply(target any) error {
 		}
 	}
 	for _, field := range b.fields {
-		flag := b.flags.Lookup(flagName(b.flags, field.value))
+		flag := b.flags.Lookup(field.flagName)
 		if flag == nil || !flag.Changed {
 			continue
 		}
@@ -101,7 +104,7 @@ func (b *Binding) Apply(target any) error {
 func (b *Binding) ChangedFlags() []string {
 	names := make([]string, 0, len(b.fields))
 	for _, field := range b.fields {
-		flag := b.flags.Lookup(flagName(b.flags, field.value))
+		flag := b.flags.Lookup(field.flagName)
 		if flag != nil && flag.Changed {
 			names = append(names, flag.Name)
 		}
@@ -135,14 +138,4 @@ func (v *flagValue) values() []string {
 		return slices.Clone(v.repeated)
 	}
 	return []string{v.raw}
-}
-
-func flagName(flags *pflag.FlagSet, value *flagValue) string {
-	var result string
-	flags.VisitAll(func(flag *pflag.Flag) {
-		if flag.Value == value {
-			result = flag.Name
-		}
-	})
-	return result
 }
