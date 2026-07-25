@@ -176,11 +176,13 @@ func (e *Encoder) Flush() error {
 	}
 	e.flushed = true
 	sum := e.MD5()
+	e.mu.Lock()
 	e.pendingQueue = append(e.pendingQueue, &pendingEntry{ready: true, packets: []*media.Packet{
 		media.NewPacketEvent(media.PacketKindStreamEnd, 0, []media.CodecParameters{
 			media.NewCodecParameters[streaminfo.PCMMD5Parameters](sum[:]),
 		}),
 	}})
+	e.mu.Unlock()
 	return nil
 }
 

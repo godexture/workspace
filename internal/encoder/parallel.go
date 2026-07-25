@@ -128,7 +128,9 @@ func (e *Encoder) OutputReady() <-chan struct{} {
 // accepting more input until a worker frees up.
 func (e *Encoder) dispatchFullBlock(block [][]int64) {
 	entry := &pendingEntry{}
+	e.mu.Lock()
 	e.pendingQueue = append(e.pendingQueue, entry)
+	e.mu.Unlock()
 	bc := e.acquireBlockCopy(block)
 	job := &frameJob{
 		e:           e,
@@ -149,7 +151,9 @@ func (e *Encoder) dispatchFullBlock(block [][]int64) {
 // splits, matching enqueueBlockSync(..., nil) in the sequential path.
 func (e *Encoder) dispatchPartialBlock(block [][]int64, pts media.Pts) {
 	entry := &pendingEntry{}
+	e.mu.Lock()
 	e.pendingQueue = append(e.pendingQueue, entry)
+	e.mu.Unlock()
 	bc := e.acquireBlockCopy(block)
 	job := &frameJob{
 		e:           e,
