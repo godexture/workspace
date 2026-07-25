@@ -130,6 +130,9 @@ func Validate(info StreamInfo) error {
 // SampleFormat maps a FLAC bit depth to the PCM sample format used to
 // represent decoded samples.
 func SampleFormat(bitsPerSample int) media.SampleFormat {
+	if bitsPerSample <= 8 {
+		return media.SampleFormatS8
+	}
 	if bitsPerSample <= 16 {
 		return media.SampleFormatS16
 	}
