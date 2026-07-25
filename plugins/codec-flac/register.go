@@ -93,7 +93,9 @@ func init() {
 					// (the default) require an explicit per-frame sample-rate code.
 					SampleRates: manifest.IntConstraint{Min: 1, Max: 655350},
 					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
+					// Kept in sync with flacBitDepthRanges in internal/encoder/stream.go.
 					SampleFormats: []manifest.SampleFormatConstraint{
+						{Format: media.SampleFormatS8, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 8}},
 						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
 						{Format: media.SampleFormatS24, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 24}},
 						{Format: media.SampleFormatS32, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 32}},

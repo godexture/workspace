@@ -9,6 +9,7 @@ const (
 
 	// Interleaved
 	SampleFormatU8  SampleFormat = "u8"  // Unsigned 8-bit
+	SampleFormatS8  SampleFormat = "s8"  // Signed 8-bit
 	SampleFormatS16 SampleFormat = "s16" // Signed 16-bit
 	SampleFormatS24 SampleFormat = "s24" // Signed 24-bit
 	SampleFormatS32 SampleFormat = "s32" // Signed 32-bit
@@ -17,6 +18,7 @@ const (
 
 	// Planar
 	SampleFormatU8P  SampleFormat = "u8p"  // Unsigned 8-bit
+	SampleFormatS8P  SampleFormat = "s8p"  // Signed 8-bit
 	SampleFormatS16P SampleFormat = "s16p" // Signed 16-bit
 	SampleFormatS24P SampleFormat = "s24p" // Signed 24-bit
 	SampleFormatS32P SampleFormat = "s32p" // Signed 32-bit
@@ -25,7 +27,7 @@ const (
 )
 
 func (f SampleFormat) IsPlanar() bool {
-	return f == SampleFormatU8P || f == SampleFormatS16P || f == SampleFormatS24P || f == SampleFormatS32P || f == SampleFormatF32P || f == SampleFormatF64P
+	return f == SampleFormatU8P || f == SampleFormatS8P || f == SampleFormatS16P || f == SampleFormatS24P || f == SampleFormatS32P || f == SampleFormatF32P || f == SampleFormatF64P
 }
 
 func (f SampleFormat) IsFloat() bool {
@@ -40,7 +42,7 @@ func (f SampleFormat) Packed() SampleFormat { return SampleFormat(strings.TrimSu
 
 func (f SampleFormat) BytesPerSample() int {
 	switch f {
-	case SampleFormatU8, SampleFormatU8P:
+	case SampleFormatU8, SampleFormatU8P, SampleFormatS8, SampleFormatS8P:
 		return 1
 	case SampleFormatS16, SampleFormatS16P:
 		return 2

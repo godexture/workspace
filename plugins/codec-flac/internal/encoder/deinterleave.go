@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+func deinterleaveS8(buffer [][]int64, plane []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
+	for sample := 0; sample < samples; sample++ {
+		for ch := 0; ch < channels; ch++ {
+			offset := sample*channels + ch
+			value := int64(int8(plane[offset]))
+			if value < minValue || value > maxValue {
+				return fmt.Errorf("FLAC sample %d outside %d-bit range", value, bitsPerSample)
+			}
+			buffer[ch][writeStart+sample] = value
+		}
+	}
+	return nil
+}
+
 func deinterleaveS16(buffer [][]int64, plane []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
 	for sample := 0; sample < samples; sample++ {
 		for ch := 0; ch < channels; ch++ {

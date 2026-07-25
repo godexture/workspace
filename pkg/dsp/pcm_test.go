@@ -14,6 +14,7 @@ func TestPCMFloat32RoundTrip(t *testing.T) {
 		tol  float32
 	}{
 		{"u8", PCMU8, 8, 1.0 / 127},
+		{"s8", PCMS8, 8, 1.0 / 127},
 		{"s16", PCMS16, 16, 1.0 / 32767},
 		{"s24", PCMS24, 20, 1.0 / 524287},
 		{"s32", PCMS32, 32, 1.0 / 2147483647},

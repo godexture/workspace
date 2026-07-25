@@ -43,6 +43,10 @@ func CreateAudioFrame(pcm []float32, attrs media.AudioAttributes) (*media.Frame,
 			value := signedPCMValue(val, bitsPerSample) + scale
 			plane[i] = byte(value)
 		}
+	case media.SampleFormatS8:
+		for i, val := range pcm {
+			plane[i] = byte(int8(signedPCMValue(val, bitsPerSample)))
+		}
 	case media.SampleFormatS16:
 		for i, val := range pcm {
 			value := signedPCMValue(val, bitsPerSample)

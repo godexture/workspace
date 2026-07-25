@@ -19,6 +19,8 @@ func sampleKind(format media.SampleFormat) dsp.PCMKind {
 	switch format.Packed() {
 	case media.SampleFormatU8:
 		return dsp.PCMU8
+	case media.SampleFormatS8:
+		return dsp.PCMS8
 	case media.SampleFormatS16:
 		return dsp.PCMS16
 	case media.SampleFormatS24:

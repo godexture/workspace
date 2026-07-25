@@ -124,6 +124,8 @@ func buildAudioFrame(decoded *flac.Frame, pts media.Pts) (*media.AudioFrame, err
 	plane := frame.Planes()[0]
 
 	switch format {
+	case media.SampleFormatS8:
+		interleaveS8(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
 	case media.SampleFormatS16:
 		interleaveS16(plane, decoded.Samples, decoded.Header.BlockSize, decoded.Header.Channels)
 	case media.SampleFormatS24:

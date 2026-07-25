@@ -98,6 +98,107 @@ func TestEncoder_S16StereoRoundtrip(t *testing.T) {
 	assertSamplesEqual(t, decoded, want)
 }
 
+func TestEncoder_S8MonoRoundtrip(t *testing.T) {
+	t.Parallel()
+	cfg := config.DefaultEncoderConfig
+	cfg.BlockSize = 16
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
+
+	input := []byte{0x80, 0xc0, 0x00, 0x40, 0x7f} // -128, -64, 0, 64, 127
+	frame := makeAudioFrameS8(t, media.LayoutMono1, 8000, 5, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	pkt, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket() error = %v", err)
+	}
+	if pkt.PTS != 5 || pkt.DTS != 5 {
+		t.Fatalf("packet timestamps = (%d, %d), want (5, 5)", pkt.PTS, pkt.DTS)
+	}
+
+	decoded := decodePacketSamples(t, pkt, streamInfoFor(5, 8000, 1, 8))
+	want := [][]int64{{-128, -64, 0, 64, 127}}
+	assertSamplesEqual(t, decoded, want)
+}
+
+func TestEncoder_S8ComputesNativeSignedMD5(t *testing.T) {
+	t.Parallel()
+	cfg := config.DefaultEncoderConfig
+	cfg.BlockSize = 16
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
+
+	input := []byte{0x80, 0xc0, 0x00, 0x40, 0x7f} // -128, -64, 0, 64, 127
+	frame := makeAudioFrameS8(t, media.LayoutMono1, 8000, 0, input)
+	var wrapped media.Frame = frame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	receivePacket(t, enc).Release() // audio packet, not under test here
+
+	// S8's wire bytes are already FLAC's native signed representation, so
+	// STREAMINFO's MD5 covers them as-is (unlike WAV-style unsigned U8).
+	want := md5.Sum(input)
+	assertMD5EndPacket(t, receivePacket(t, enc), want)
+}
+
+func TestEncoder_S8FullDecodeRoundtrip(t *testing.T) {
+	t.Parallel()
+	cfg := config.DefaultEncoderConfig
+	cfg.BlockSize = 16
+	enc := NewEncoder(media.StreamInfo{}, cfg, nil)
+
+	input := []byte{0x80, 0xc0, 0x00, 0x40, 0x7f} // -128, -64, 0, 64, 127
+	audioFrame := makeAudioFrameS8(t, media.LayoutMono1, 8000, 0, input)
+	var wrapped media.Frame = audioFrame
+	if err := enc.SendFrame(&wrapped); err != nil {
+		t.Fatalf("SendFrame() error = %v", err)
+	}
+	if err := enc.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	pkt, err := enc.ReceivePacket()
+	if err != nil {
+		t.Fatalf("ReceivePacket() error = %v", err)
+	}
+
+	decStream := media.StreamInfo{
+		MediaAttributes: media.MediaAttributes{
+			Audio: media.AudioAttributes{
+				SampleRate:    8000,
+				BitsPerSample: 8,
+				ChannelLayout: media.LayoutMono1,
+			},
+		},
+	}
+	dec := decoder.NewDecoder(decStream, config.DefaultDecoderConfig, nil)
+	if err := dec.SendPacket(pkt); err != nil {
+		t.Fatalf("SendPacket() error = %v", err)
+	}
+	decodedFrame, err := dec.ReceiveFrame()
+	if err != nil {
+		t.Fatalf("ReceiveFrame() error = %v", err)
+	}
+	decodedAudio, ok := decodedFrame.(*media.AudioFrame)
+	if !ok {
+		t.Fatalf("expected *media.AudioFrame, got %T", decodedFrame)
+	}
+	if decodedAudio.Format != media.SampleFormatS8 {
+		t.Fatalf("format = %s, want %s", decodedAudio.Format, media.SampleFormatS8)
+	}
+	if got := decodedAudio.Planes()[0]; !bytes.Equal(got, input) {
+		t.Fatalf("decoded PCM = % x, want % x", got, input)
+	}
+}
+
 func TestEncoder_FlushEmitsFinalPartialBlock(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultEncoderConfig
@@ -876,6 +977,17 @@ func decodePacketSamples(t *testing.T, pkt *media.Packet, info streaminfo.Stream
 		t.Fatalf("DecodeFrame() error = %v", err)
 	}
 	return decoded.Samples
+}
+
+func makeAudioFrameS8(t *testing.T, layout media.ChannelLayout, sampleRate int, pts media.Pts, values []byte) *media.AudioFrame {
+	t.Helper()
+	channels := layout.ChannelCount()
+	if len(values)%channels != 0 {
+		t.Fatalf("values length %d is not divisible by channel count %d", len(values), channels)
+	}
+	frame := media.NewAudioFrame(media.SampleFormatS8, layout, sampleRate, len(values)/channels, media.WithAudioPts(pts))
+	copy(frame.Planes()[0], values)
+	return frame
 }
 
 func makeAudioFrameS16(t *testing.T, layout media.ChannelLayout, sampleRate int, pts media.Pts, values []int16) *media.AudioFrame {

@@ -2,6 +2,15 @@ package decoder
 
 import "encoding/binary"
 
+func interleaveS8(plane []byte, samples [][]int64, blockSize, channels int) {
+	for sample := 0; sample < blockSize; sample++ {
+		for channel := 0; channel < channels; channel++ {
+			offset := sample*channels + channel
+			plane[offset] = byte(int8(samples[channel][sample]))
+		}
+	}
+}
+
 func interleaveS16(plane []byte, samples [][]int64, blockSize, channels int) {
 	for sample := 0; sample < blockSize; sample++ {
 		for channel := 0; channel < channels; channel++ {
