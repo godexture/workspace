@@ -234,6 +234,7 @@ func (r *Reader) SkipToByte() {
 // dequantization hot path). It is not decomposed into Bit, since doing so
 // would change the performance characteristics MP3 currently relies on.
 func (r *Reader) Bits32(width uint8) uint32 {
+	assertf(width <= 32, "bits: Bits32 width out of range: %d", width)
 	bitOffset := r.position & 7
 	shiftLeft := int32(width) + bitOffset
 	byteIndex := int(r.position >> 3)
