@@ -124,6 +124,39 @@ func TestMuxerKeepsInitialStreamInfoForNonSeekableOutput(t *testing.T) {
 	}
 }
 
+func TestMuxerInfersS24BitsPerSampleWithoutStreamInfo(t *testing.T) {
+	t.Parallel()
+	var output nonSeekBuffer
+	muxer := NewMuxer(&output, MuxerConfig{})
+	if _, err := muxer.AddStream(media.StreamInfo{
+		Type: media.MediaAudio,
+		MediaAttributes: media.MediaAttributes{
+			Codec: media.CodecFLAC,
+			Audio: media.AudioAttributes{
+				SampleRate:    44100,
+				Format:        media.SampleFormatS24,
+				ChannelLayout: media.LayoutStereo2_0,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+	if err := muxer.WriteHeader(); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+	if err := muxer.WriteTrailer(); err != nil {
+		t.Fatalf("WriteTrailer() error = %v", err)
+	}
+
+	info, err := streaminfo.Parse(output.Bytes()[8 : 8+streaminfo.Length])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.BitsPerSample != 24 {
+		t.Fatalf("BitsPerSample = %d, want 24", info.BitsPerSample)
+	}
+}
+
 func TestMuxerExcludesFinalShortBlockFromMinimum(t *testing.T) {
 	t.Parallel()
 	file, err := os.CreateTemp(t.TempDir(), "stream-*.flac")
