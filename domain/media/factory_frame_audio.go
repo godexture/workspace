@@ -1,8 +1,6 @@
 package media
 
 import (
-	"sync"
-
 	"github.com/godexture/sdk/pool"
 )
 
@@ -10,14 +8,19 @@ import (
 // *Packet (see factory_packet.go): freeFunc is bound once per pooled object,
 // not per NewAudioFrame call, so repeated frame construction doesn't pay for
 // a fresh struct, planes slice, and closure on every call.
-var audioFramePool sync.Pool
+//
+// New is assigned in init rather than the var declaration: free's body
+// refers to audioFramePool, so inlining the closure into the initializer
+// would make audioFramePool's own initializer depend on free, which depends
+// back on audioFramePool -- an initialization cycle the compiler rejects.
+var audioFramePool pool.Typed[*AudioFrame]
 
 func init() {
-	audioFramePool.New = func() any {
+	audioFramePool.Init(func() *AudioFrame {
 		frame := &AudioFrame{}
 		frame.freeFunc = frame.free
 		return frame
-	}
+	})
 }
 
 type AudioFrameOption func(*AudioFrame)
@@ -42,7 +45,7 @@ func NewAudioFrame(format SampleFormat, layout ChannelLayout, sampleRate, sample
 	b := pool.Get(totalBytes)
 	(*b) = (*b)[:totalBytes]
 
-	frame := audioFramePool.Get().(*AudioFrame)
+	frame := audioFramePool.Get()
 	frame.baseData = b
 	frame.Format = format
 	frame.BitsPerSample = defaultBitsPerSample(format)
