@@ -42,7 +42,7 @@ func main() {
 	inputPath := os.Args[1]
 	outputPath := os.Args[2]
 
-	if profilePath := os.Getenv("GODEC_CPUPROFILE"); profilePath != "" {
+	if profilePath := os.Getenv("GODEC_PPROF"); profilePath != "" {
 		profileFile, err := os.Create(profilePath)
 		if err != nil {
 			fmt.Printf("Failed to create profile: %v\n", err)

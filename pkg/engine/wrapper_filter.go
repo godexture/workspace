@@ -325,6 +325,7 @@ func (n *FilterAdapter) drain(ctx context.Context, outEdges map[string]node.Edge
 		}
 		edge, ok := outEdges[port]
 		if !ok {
+			frame.Release()
 			return fmt.Errorf("filter produced output for unknown port %q", port)
 		}
 		if err := edge.Push(ctx, frame); err != nil {
