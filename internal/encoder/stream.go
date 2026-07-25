@@ -14,6 +14,7 @@ import (
 type bitDepthRange struct{ min, max int }
 
 var flacBitDepthRanges = map[media.SampleFormat]bitDepthRange{
+	media.SampleFormatS8:  {min: 4, max: 8},
 	media.SampleFormatS16: {min: 4, max: 16},
 	media.SampleFormatS24: {min: 17, max: 24},
 	media.SampleFormatS32: {min: 17, max: 32},
@@ -127,6 +128,8 @@ func (e *Encoder) appendAudioFrame(frame *media.AudioFrame) error {
 
 	var err error
 	switch format {
+	case media.SampleFormatS8:
+		err = deinterleaveS8(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
 	case media.SampleFormatS16:
 		err = deinterleaveS16(e.buffer, plane, writeStart, frame.Samples, channels, minValue, maxValue, e.bitsPerSample)
 	case media.SampleFormatS24:
