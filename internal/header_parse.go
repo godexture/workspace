@@ -31,6 +31,7 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 	id3Meta := metadata.NewBundle()
 
 	var header wavHeader
+parseChunks:
 	for {
 		var chunkID [4]byte
 		if _, err := io.ReadFull(r, chunkID[:]); err != nil {
@@ -74,6 +75,9 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 		case wavTagFmt:
 			if chunkSize < 16 {
 				return wavHeader{}, errors.New("wav fmt chunk too small")
+			}
+			if chunkSize > 10*1024*1024 {
+				return wavHeader{}, errors.New("wav fmt chunk too large")
 			}
 
 			buf := make([]byte, chunkSize)
@@ -136,7 +140,7 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 			}
 
 			if header.dataSize == 0xFFFFFFFFFFFFFFFF || header.dataSize == 0xFFFFFFFF {
-				break
+				break parseChunks
 			}
 
 			if _, err := r.Seek(int64(header.dataSize), io.SeekCurrent); err != nil {
@@ -200,7 +204,10 @@ func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {
 
 		if actualSize%2 == 1 {
 			if _, err := r.Seek(1, io.SeekCurrent); err != nil {
-				// ignore EOF error during padding seek
+				// A truncated final chunk may omit its optional padding byte.
+				if !errors.Is(err, io.EOF) {
+					return wavHeader{}, fmt.Errorf("skip chunk padding: %w", err)
+				}
 			}
 		}
 	}
