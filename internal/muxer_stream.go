@@ -82,12 +82,8 @@ func buildStreamInfo(stream media.StreamInfo) (streaminfo.StreamInfo, error) {
 	}
 	if bitsPerSample == 0 {
 		switch attr.Format.Packed() {
-		case media.SampleFormatS16:
-			bitsPerSample = 16
-		case media.SampleFormatS24:
-			bitsPerSample = 24
-		case media.SampleFormatS32:
-			bitsPerSample = 32
+		case media.SampleFormatS16, media.SampleFormatS24, media.SampleFormatS32:
+			bitsPerSample = attr.Format.Packed().BitsPerSample()
 		default:
 			return streaminfo.StreamInfo{}, fmt.Errorf("flac muxer unsupported sample format: %s", attr.Format)
 		}
