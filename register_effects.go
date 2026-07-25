@@ -110,6 +110,6 @@ func registerCompressor() {
 	registerSimple[config.CompressorConfig, CompressorConfig](registry.NewConfigurationFactory(NewCompressorConfig), "compressor", "Reduce dynamic range above a threshold", compressor.New)
 }
 
-func registerEQ() {
+func registerEqualizer() {
 	registerSimple[config.EqualizerConfig, EqualizerConfig](registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band parametric, shelf, or pass biquad filter", equalizer.New)
 }

@@ -27,7 +27,7 @@ func init() {
 	registerTrim()
 	registerRetime()
 	registerCompressor()
-	registerEQ()
+	registerEqualizer()
 }
 
 func registerConvert() {

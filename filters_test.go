@@ -325,7 +325,7 @@ func TestCompressorPassesSignalBelowThresholdUnchanged(t *testing.T) {
 	assertEOF(t, item)
 }
 
-func TestEQPeakingZeroGainIsIdentity(t *testing.T) {
+func TestEqualizerPeakingZeroGainIsIdentity(t *testing.T) {
 	item, err := equalizer.New(config.EqualizerConfig{Type: config.EqualizerTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476})
 	if err != nil {
 		t.Fatal(err)
