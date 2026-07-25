@@ -11,6 +11,7 @@ type PCMKind uint8
 const (
 	PCMUnknown PCMKind = iota
 	PCMU8
+	PCMS8
 	PCMS16
 	PCMS24
 	PCMS32
@@ -20,7 +21,7 @@ const (
 
 func (k PCMKind) BytesPerSample() int {
 	switch k {
-	case PCMU8:
+	case PCMU8, PCMS8:
 		return 1
 	case PCMS16:
 		return 2
@@ -33,6 +34,11 @@ func (k PCMKind) BytesPerSample() int {
 	default:
 		return 0
 	}
+}
+
+// BitsPerSample returns the storage width of one sample in bits.
+func (k PCMKind) BitsPerSample() int {
+	return k.BytesPerSample() * 8
 }
 
 func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]float32, error) {
@@ -60,6 +66,11 @@ func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]fl
 		midpoint := scale
 		for i, value := range src {
 			dst[i] = (float32(value) - midpoint) / scale
+		}
+	case PCMS8:
+		scale := float32(signedHalfRange(bitsPerSample))
+		for i, value := range src {
+			dst[i] = float32(int8(value)) / scale
 		}
 	case PCMS16:
 		scale := float32(signedHalfRange(bitsPerSample))
@@ -119,6 +130,10 @@ func FromFloat32(dst []byte, src []float32, kind PCMKind, bitsPerSample int) err
 			}
 			dst[i] = byte(value)
 		}
+	case PCMS8:
+		for i, sample := range src {
+			dst[i] = byte(int8(scaleSignedSample(sample, bitsPerSample)))
+		}
 	case PCMS16:
 		for i, sample := range src {
 			binary.LittleEndian.PutUint16(dst[i*2:], uint16(int16(scaleSignedSample(sample, bitsPerSample))))
@@ -149,9 +164,9 @@ func FromFloat32(dst []byte, src []float32, kind PCMKind, bitsPerSample int) err
 
 func resolveBits(kind PCMKind, bitsPerSample int) (int, error) {
 	if kind == PCMF32 || kind == PCMF64 {
-		return kind.BytesPerSample() * 8, nil
+		return kind.BitsPerSample(), nil
 	}
-	containerBits := kind.BytesPerSample() * 8
+	containerBits := kind.BitsPerSample()
 	if bitsPerSample == 0 {
 		return containerBits, nil
 	}

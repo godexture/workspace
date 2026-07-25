@@ -9,7 +9,7 @@ func TestPooledAudioFrameResetsState(t *testing.T) {
 	next := NewAudioFrame(SampleFormatF32P, LayoutMono1, 44100, 2)
 	defer next.Release()
 	if next.SampleRate != 44100 || next.Samples != 2 || next.Layout != LayoutMono1 ||
-		next.pts != 0 || next.BitsPerSample != defaultBitsPerSample(SampleFormatF32P) {
+		next.pts != 0 || next.BitsPerSample != SampleFormatF32P.BitsPerSample() {
 		t.Fatalf("pooled audio frame retained state: %+v", next)
 	}
 	if len(next.Planes()) != 1 || len(next.Planes()[0]) != 2*4 {

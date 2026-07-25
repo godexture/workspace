@@ -37,7 +37,7 @@ func (n *slicePCMSourceNode) Start(ctx context.Context) error {
 	if channels <= 0 || len(n.pcm)%channels != 0 {
 		return fmt.Errorf("invalid PCM source channel alignment")
 	}
-	chunkSamples := pcmFramesPerChunk * channels
+	chunkSamples := PcmFramesPerChunk * channels
 	for offset := 0; offset < len(n.pcm); offset += chunkSamples {
 		end := min(offset+chunkSamples, len(n.pcm))
 		frame, err := pcm.CreateAudioFrame(n.pcm[offset:end], n.attrs)

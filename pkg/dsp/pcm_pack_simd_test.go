@@ -1,17 +1,15 @@
 //go:build goexperiment.simd && amd64
 
-package decoder
+package dsp
 
 import (
 	"math/rand/v2"
 	"slices"
 	"testing"
-
-	"github.com/godexture/sdk/dsp"
 )
 
-func TestInterleaveS32StereoSIMD(t *testing.T) {
-	if !dsp.HasAVX2 {
+func TestPackS32StereoSIMD(t *testing.T) {
+	if !HasAVX2 {
 		t.Skip("AVX2 unavailable")
 	}
 	for _, blockSize := range []int{0, 1, 2, 3, 4, 5, 7, 8, 9, 4096, 4099} {
@@ -27,32 +25,32 @@ func TestInterleaveS32StereoSIMD(t *testing.T) {
 				right[i] = int64(rand.Int32())
 			}
 		}
-		assertInterleaveS32Equal(t, left, right, false)
+		assertPackS32Equal(t, left, right, false)
 	}
 }
 
-func TestInterleaveS32StereoSIMDMisaligned(t *testing.T) {
-	if !dsp.HasAVX2 {
+func TestPackS32StereoSIMDMisaligned(t *testing.T) {
+	if !HasAVX2 {
 		t.Skip("AVX2 unavailable")
 	}
-	assertInterleaveS32Equal(t, []int64{1, 2, 3, 4}, []int64{5, 6, 7, 8}, true)
+	assertPackS32Equal(t, []int64{1, 2, 3, 4}, []int64{5, 6, 7, 8}, true)
 }
 
-func TestInterleaveS32DispatchesMonoToScalar(t *testing.T) {
-	if !dsp.HasAVX2 {
+func TestPackS32DispatchesMonoToScalar(t *testing.T) {
+	if !HasAVX2 {
 		t.Skip("AVX2 unavailable")
 	}
 	samples := [][]int64{{1, 2, 3, 4}}
 	want := make([]byte, 16)
 	got := make([]byte, 16)
-	interleaveS32Scalar(want, samples, 4, 1)
-	interleaveS32(got, samples, 4, 1)
+	packS32Scalar(want, samples, 4, 1)
+	packS32(got, samples, 4, 1)
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
-func assertInterleaveS32Equal(t *testing.T, left, right []int64, misaligned bool) {
+func assertPackS32Equal(t *testing.T, left, right []int64, misaligned bool) {
 	t.Helper()
 	offset := 0
 	if misaligned {
@@ -62,8 +60,8 @@ func assertInterleaveS32Equal(t *testing.T, left, right []int64, misaligned bool
 	gotStorage := make([]byte, offset+len(left)*8)
 	want := wantStorage[offset:]
 	got := gotStorage[offset:]
-	interleaveS32Scalar(want, [][]int64{left, right}, len(left), 2)
-	interleaveS32StereoSIMD(got, left, right, len(left))
+	packS32Scalar(want, [][]int64{left, right}, len(left), 2)
+	packS32StereoSIMD(got, left, right, len(left))
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

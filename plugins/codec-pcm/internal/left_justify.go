@@ -8,6 +8,7 @@ func leftJustifyS16(destination, source []byte, shift uint) {
 		value := int16(binary.LittleEndian.Uint16(source[i:i+2])) << shift
 		binary.LittleEndian.PutUint16(destination[i:i+2], uint16(value))
 	}
+	copy(destination[length-length%2:], source[length-length%2:])
 }
 
 func leftJustifyS32(destination, source []byte, shift uint) {
@@ -16,4 +17,5 @@ func leftJustifyS32(destination, source []byte, shift uint) {
 		value := int32(binary.LittleEndian.Uint32(source[i:i+4])) << shift
 		binary.LittleEndian.PutUint32(destination[i:i+4], uint32(value))
 	}
+	copy(destination[length-length%4:], source[length-length%4:])
 }

@@ -2,18 +2,19 @@ package internal
 
 import (
 	"bufio"
-	"errors"
 	"io"
 
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/format-mp3/scan"
 	"github.com/godexture/metadata-id3/id3v2"
 )
 
-var (
-	ErrNoSyncWord = errors.New("no mp3 sync word found")
-	ErrEOF        = io.EOF
-)
+// scanWindowBytes is how much unread data nextFrame peeks at a time while
+// resynchronizing. It must exceed scan.MaxLookback so every candidate
+// evaluated within a window is either matched or conclusively rejected
+// before the window is advanced.
+const scanWindowBytes = 8192
 
 type FrameHeader struct {
 	Version     int
@@ -34,8 +35,8 @@ func SkipID3v2(r *bufio.Reader) (int, error) {
 
 type Header = header.Header
 
-func nextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
-	return nextFrame(br,
+func nextFrameHeader(br *bufio.Reader, freeFormatBytes int) (FrameHeader, []byte, int, error) {
+	return nextFrame(br, freeFormatBytes,
 		func(size int) ([]byte, []byte) {
 			data := make([]byte, size)
 			return data, data
@@ -44,8 +45,8 @@ func nextFrameHeader(br *bufio.Reader) (FrameHeader, []byte, error) {
 	)
 }
 
-func nextFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, error) {
-	return nextFrame(br,
+func nextFramePacket(br *bufio.Reader, freeFormatBytes int) (FrameHeader, *media.Packet, int, error) {
+	return nextFrame(br, freeFormatBytes,
 		func(size int) (*media.Packet, []byte) {
 			packet := media.NewPacket(size)
 			return packet, packet.Data()
@@ -54,7 +55,10 @@ func nextFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, error) {
 	)
 }
 
-func readFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, bool, error) {
+// readFramePacket reads the frame that starts at the reader's current
+// position without resynchronizing, trusting that the caller is already
+// frame-aligned (e.g. right after a previously decoded frame).
+func readFramePacket(br *bufio.Reader, freeFormatBytes int) (FrameHeader, *media.Packet, bool, error) {
 	headerBytes, err := br.Peek(4)
 	if err != nil {
 		return FrameHeader{}, nil, false, err
@@ -64,7 +68,7 @@ func readFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, bool, error)
 	if !currentHeader.IsValid() {
 		return FrameHeader{}, nil, false, nil
 	}
-	totalSize := currentHeader.FrameBytes(0) + currentHeader.Padding()
+	totalSize := currentHeader.FrameBytes(freeFormatBytes) + currentHeader.Padding()
 	if totalSize <= 4 {
 		return FrameHeader{}, nil, false, nil
 	}
@@ -79,78 +83,62 @@ func readFramePacket(br *bufio.Reader) (FrameHeader, *media.Packet, bool, error)
 	return makeFrameHeader(currentHeader, totalSize), packet, true, nil
 }
 
+// nextFrame resynchronizes by scanning forward for the next valid frame,
+// verifying it against a following frame header before accepting it.
+//
+// freeFormatBytes carries a frame size previously resolved for a
+// free-format stream (0 if unknown); nextFrame returns the value to thread
+// into the next call.
 func nextFrame[T any](
 	br *bufio.Reader,
+	freeFormatBytes int,
 	allocate func(int) (T, []byte),
 	release func(T),
-) (FrameHeader, T, error) {
+) (FrameHeader, T, int, error) {
 	var zero T
+
 	for {
-		// Read 1 byte at a time until we see 0xFF
-		currentByte, err := br.ReadByte()
-		if err != nil {
-			return FrameHeader{}, zero, err
+		window, peekErr := br.Peek(scanWindowBytes)
+		if len(window) == 0 {
+			if peekErr != nil {
+				return FrameHeader{}, zero, freeFormatBytes, peekErr
+			}
+			return FrameHeader{}, zero, freeFormatBytes, io.EOF
 		}
 
-		if currentByte == 0xFF {
-			peekedBytes, err := br.Peek(3)
-			if err != nil {
-				if err == io.EOF {
-					return FrameHeader{}, zero, io.EOF
-				}
-				return FrameHeader{}, zero, err
-			}
-
-			// Parse header
+		offset, frameSize, newFreeFormatBytes, found := scan.Frame(window, freeFormatBytes)
+		if found {
 			var currentHeader Header
-			currentHeader[0] = 0xFF
-			copy(currentHeader[1:], peekedBytes[:3])
+			copy(currentHeader[:], window[offset:offset+4])
 
-			if currentHeader.IsValid() {
-				// Calculate Frame Size
-				frameBytes := currentHeader.FrameBytes(0)
-				totalSize := frameBytes + currentHeader.Padding()
-				if totalSize <= 4 {
-					continue
-				}
-
-				// Verify sync word by checking the next frame's header if possible
-				verificationBytesCount := totalSize + 3
-				nextFramePeekedBytes, err := br.Peek(verificationBytesCount)
-
-				if err == nil {
-					var nextHeader Header
-					copy(nextHeader[:], nextFramePeekedBytes[totalSize-1:totalSize+3])
-					if !currentHeader.Compare(nextHeader) {
-						// False sync word! Continue searching.
-						continue
-					}
-				} else {
-					_, err2 := br.Peek(totalSize - 1)
-					if err2 != nil {
-						// Not enough data for a full frame, continue searching
-						continue
-					}
-				}
-
-				// Consume the 3 peeked bytes
-				_, _ = br.Discard(3)
-
-				// Read the rest of the frame data
-				result, frameData := allocate(totalSize)
-				frameData[0] = currentHeader[0]
-				frameData[1] = currentHeader[1]
-				frameData[2] = currentHeader[2]
-				frameData[3] = currentHeader[3]
-
-				_, err = io.ReadFull(br, frameData[4:])
-				if err != nil {
-					release(result)
-					return FrameHeader{}, zero, err
-				}
-
-				return makeFrameHeader(currentHeader, totalSize), result, nil
+			if _, err := br.Discard(offset); err != nil {
+				return FrameHeader{}, zero, freeFormatBytes, err
 			}
+
+			result, frameData := allocate(frameSize)
+			if _, err := io.ReadFull(br, frameData); err != nil {
+				release(result)
+				return FrameHeader{}, zero, freeFormatBytes, err
+			}
+
+			return makeFrameHeader(currentHeader, frameSize), result, newFreeFormatBytes, nil
+		}
+
+		if peekErr != nil {
+			// The window already holds everything left in the stream and
+			// still contains no frame.
+			if _, err := br.Discard(len(window)); err != nil {
+				return FrameHeader{}, zero, freeFormatBytes, err
+			}
+			return FrameHeader{}, zero, freeFormatBytes, io.EOF
+		}
+
+		// The window was inconclusive but full. Everything before the last
+		// scan.MaxLookback bytes had enough trailing context for Frame to
+		// reach a final verdict, so it's safe to drop and retry with more
+		// data appended past it.
+		if _, err := br.Discard(len(window) - scan.MaxLookback); err != nil {
+			return FrameHeader{}, zero, freeFormatBytes, err
 		}
 	}
 }

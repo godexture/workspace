@@ -12,6 +12,20 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
+// sampleFormatConstraints builds the encoder capability's accepted sample
+// formats from encoder.SupportedFormats, so this list and the encoder's own
+// runtime validation can never drift apart.
+func sampleFormatConstraints() []manifest.SampleFormatConstraint {
+	constraints := make([]manifest.SampleFormatConstraint, len(encoder.SupportedFormats))
+	for i, f := range encoder.SupportedFormats {
+		constraints[i] = manifest.SampleFormatConstraint{
+			Format:        f.Format,
+			BitsPerSample: manifest.IntConstraint{Min: f.MinBits, Max: f.MaxBits},
+		}
+	}
+	return constraints
+}
+
 func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig, options ...EngineOption) (engine.DecoderEngine, error) {
 	resolved, err := engine.ResolveConfig[config.DecoderConfig, DecoderConfig](cfg)
 	if err != nil {
@@ -91,13 +105,9 @@ func init() {
 					// header can still encode explicitly (10Hz-unit field, 16 bits).
 					// The raw STREAMINFO field allows up to 2^20-1, but Subset streams
 					// (the default) require an explicit per-frame sample-rate code.
-					SampleRates: manifest.IntConstraint{Min: 1, Max: 655350},
-					Channels:    manifest.IntConstraint{Min: 1, Max: 8},
-					SampleFormats: []manifest.SampleFormatConstraint{
-						{Format: media.SampleFormatS16, BitsPerSample: manifest.IntConstraint{Min: 4, Max: 16}},
-						{Format: media.SampleFormatS24, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 24}},
-						{Format: media.SampleFormatS32, BitsPerSample: manifest.IntConstraint{Min: 17, Max: 32}},
-					},
+					SampleRates:   manifest.IntConstraint{Min: 1, Max: 655350},
+					Channels:      manifest.IntConstraint{Min: 1, Max: 8},
+					SampleFormats: sampleFormatConstraints(),
 				})),
 				Resources: registry.ResourceRequest{
 					Parallelism: true,
