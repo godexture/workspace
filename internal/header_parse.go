@@ -153,43 +153,31 @@ parseChunks:
 			}
 
 		case wavTagID3, wavTagID3Upper:
-			if chunkSize > 10*1024*1024 {
-				if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-					return wavHeader{}, err
-				}
-				break
-			}
-			id3Buf := make([]byte, chunkSize)
-			if _, err := io.ReadFull(r, id3Buf); err != nil {
+			id3Buf, err := readWAVChunkPayload(r, chunkSize)
+			if err != nil {
 				return wavHeader{}, err
 			}
-			parseAndMergeID3(id3Meta, id3Buf)
+			if id3Buf != nil {
+				parseAndMergeID3(id3Meta, id3Buf)
+			}
 
 		case wavTagCue:
-			if chunkSize > 10*1024*1024 {
-				if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-					return wavHeader{}, err
-				}
-				break
-			}
-			cueBuf := make([]byte, chunkSize)
-			if _, err := io.ReadFull(r, cueBuf); err != nil {
+			cueBuf, err := readWAVChunkPayload(r, chunkSize)
+			if err != nil {
 				return wavHeader{}, err
 			}
-			meta.AddRaw(wavTagCue, cueBuf)
+			if cueBuf != nil {
+				meta.AddRaw(wavTagCue, cueBuf)
+			}
 
 		case wavTagSmpl:
-			if chunkSize > 10*1024*1024 {
-				if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
-					return wavHeader{}, err
-				}
-				break
-			}
-			smplBuf := make([]byte, chunkSize)
-			if _, err := io.ReadFull(r, smplBuf); err != nil {
+			smplBuf, err := readWAVChunkPayload(r, chunkSize)
+			if err != nil {
 				return wavHeader{}, err
 			}
-			meta.AddRaw(wavTagSmpl, smplBuf)
+			if smplBuf != nil {
+				meta.AddRaw(wavTagSmpl, smplBuf)
+			}
 
 		default:
 			if _, err := r.Seek(int64(chunkSize), io.SeekCurrent); err != nil {
@@ -226,4 +214,19 @@ parseChunks:
 	meta.Merge(id3Meta)
 
 	return header, nil
+}
+
+func readWAVChunkPayload(r io.ReadSeeker, size uint32) ([]byte, error) {
+	const maxChunkSize = 10 * 1024 * 1024
+	if size > maxChunkSize {
+		if _, err := r.Seek(int64(size), io.SeekCurrent); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	data := make([]byte, size)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
