@@ -90,7 +90,7 @@ func encodeBlockSize(size int) (encodedField, error) {
 	if size >= 1 && size <= 256 {
 		return encodedField{code: 6, extra: uint16(size - 1), bits: 8}, nil
 	}
-	if size <= 65535 {
+	if size >= 1 && size <= 65535 {
 		return encodedField{code: 7, extra: uint16(size - 1), bits: 16}, nil
 	}
 	return encodedField{}, fmt.Errorf("invalid FLAC block size: %d", size)
