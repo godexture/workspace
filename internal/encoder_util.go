@@ -16,7 +16,7 @@ import (
 // returned unchanged (the no-shift-needed path), so callers must not assume
 // the result aliases *scratch.
 func leftJustifyPCM(scratch *[]byte, data []byte, format media.SampleFormat, bitsPerSample int) []byte {
-	containerBits := format.BytesPerSample() * 8
+	containerBits := format.BitsPerSample()
 	if bitsPerSample <= 0 || bitsPerSample >= containerBits {
 		return data
 	}
