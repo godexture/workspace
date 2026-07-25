@@ -1105,7 +1105,7 @@ func TestWAVAnalyzeUnsupportedFormatTag(t *testing.T) {
 	}
 }
 
-func buildWAVWithFormatTag(t *testing.T, audioFormat uint16, bitsPerSample uint16, channels uint16, sampleRate uint32, blockAlign uint16, payload []byte) []byte {
+func buildWAVWithFormatTag(t testing.TB, audioFormat uint16, bitsPerSample uint16, channels uint16, sampleRate uint32, blockAlign uint16, payload []byte) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer
