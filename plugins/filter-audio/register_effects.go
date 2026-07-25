@@ -19,70 +19,38 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func registerGain() {
-	register(registry.NewConfigurationFactory(NewGainConfig), "gain", "Adjust audio gain", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.GainConfig, GainConfig](cfg)
+// registerSimple registers a filter whose factory does nothing beyond
+// resolving its configuration, constructing the engine, and wrapping it —
+// the shape shared by every effect below that neither overrides the stream
+// transform nor needs a bridge.
+func registerSimple[T any, C engine.Wrapper[T], E engine.FilterEngine](newConfig registry.ConfigurationFactory, name, description string, newEngine func(T) (E, error)) {
+	register(newConfig, name, description, identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
+		value, err := engine.ResolveConfig[T, C](cfg)
 		if err != nil {
 			return nil, err
 		}
-		item, err := gain.New(value)
+		item, err := newEngine(value)
 		if err != nil {
 			return nil, err
 		}
 		return engine.WrapFilter(item), nil
 	}, nil, nil)
+}
+
+func registerGain() {
+	registerSimple[config.GainConfig, GainConfig](registry.NewConfigurationFactory(NewGainConfig), "gain", "Adjust audio gain", gain.New)
 }
 func registerNormalize() {
-	register(registry.NewConfigurationFactory(NewNormalizeConfig), "normalize", "Normalize peak level", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.NormalizeConfig, NormalizeConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := normalize.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.NormalizeConfig, NormalizeConfig](registry.NewConfigurationFactory(NewNormalizeConfig), "normalize", "Normalize peak level", normalize.New)
 }
 func registerFade() {
-	register(registry.NewConfigurationFactory(NewFadeConfig), "fade", "Apply fade in and fade out", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.FadeConfig, FadeConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := fade.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.FadeConfig, FadeConfig](registry.NewConfigurationFactory(NewFadeConfig), "fade", "Apply fade in and fade out", fade.New)
 }
 func registerDCOffset() {
-	register(registry.NewConfigurationFactory(NewDCOffsetConfig), "remove-dc-offset", "Remove DC offset", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.DCOffsetConfig, DCOffsetConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := dcoffset.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.DCOffsetConfig, DCOffsetConfig](registry.NewConfigurationFactory(NewDCOffsetConfig), "remove-dc-offset", "Remove DC offset", dcoffset.New)
 }
 func registerGate() {
-	register(registry.NewConfigurationFactory(NewGateConfig), "gate", "Silence samples below a threshold (hard cut or Buchla-style low-pass gate)", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.GateConfig, GateConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := gate.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.GateConfig, GateConfig](registry.NewConfigurationFactory(NewGateConfig), "gate", "Silence samples below a threshold (hard cut or Buchla-style low-pass gate)", gate.New)
 }
 
 func registerTrim() {
@@ -139,29 +107,9 @@ func registerRetime() {
 }
 
 func registerCompressor() {
-	register(registry.NewConfigurationFactory(NewCompressorConfig), "compressor", "Reduce dynamic range above a threshold", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.CompressorConfig, CompressorConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := compressor.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.CompressorConfig, CompressorConfig](registry.NewConfigurationFactory(NewCompressorConfig), "compressor", "Reduce dynamic range above a threshold", compressor.New)
 }
 
 func registerEQ() {
-	register(registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band parametric, shelf, or pass biquad filter", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
-		value, err := engine.ResolveConfig[config.EqualizerConfig, EqualizerConfig](cfg)
-		if err != nil {
-			return nil, err
-		}
-		item, err := equalizer.New(value)
-		if err != nil {
-			return nil, err
-		}
-		return engine.WrapFilter(item), nil
-	}, nil, nil)
+	registerSimple[config.EqualizerConfig, EqualizerConfig](registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band parametric, shelf, or pass biquad filter", equalizer.New)
 }
