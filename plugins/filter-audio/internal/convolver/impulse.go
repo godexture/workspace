@@ -1,6 +1,7 @@
 package convolver
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/godexture/core/registry"
@@ -10,6 +11,14 @@ import (
 
 func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {
 	ir := impulse
+	if len(ir) == 0 {
+		return fmt.Errorf("convolution impulse response has no channels")
+	}
+	for ch, samples := range ir {
+		if len(samples) == 0 {
+			return fmt.Errorf("convolution impulse response channel %d is empty", ch)
+		}
+	}
 	if e.cfg.Normalize {
 		ir = dsp.ClampL1(ir)
 	}
