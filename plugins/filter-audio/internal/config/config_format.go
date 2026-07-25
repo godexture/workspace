@@ -22,7 +22,7 @@ func (c FormatConfig) Validate() error {
 	if err := mediapcm.ValidateFormat(c.Format); err != nil {
 		return err
 	}
-	if c.BitsPerSample < 0 || c.BitsPerSample > c.Format.BytesPerSample()*8 {
+	if c.BitsPerSample < 0 || c.BitsPerSample > c.Format.BitsPerSample() {
 		return fmt.Errorf("invalid bits per sample: %d", c.BitsPerSample)
 	}
 	return nil

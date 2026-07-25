@@ -35,6 +35,11 @@ func (k PCMKind) BytesPerSample() int {
 	}
 }
 
+// BitsPerSample returns the storage width of one sample in bits.
+func (k PCMKind) BitsPerSample() int {
+	return k.BytesPerSample() * 8
+}
+
 func ToFloat32(dst []float32, src []byte, kind PCMKind, bitsPerSample int) ([]float32, error) {
 	bytesPerSample := kind.BytesPerSample()
 	if bytesPerSample == 0 {
@@ -149,9 +154,9 @@ func FromFloat32(dst []byte, src []float32, kind PCMKind, bitsPerSample int) err
 
 func resolveBits(kind PCMKind, bitsPerSample int) (int, error) {
 	if kind == PCMF32 || kind == PCMF64 {
-		return kind.BytesPerSample() * 8, nil
+		return kind.BitsPerSample(), nil
 	}
-	containerBits := kind.BytesPerSample() * 8
+	containerBits := kind.BitsPerSample()
 	if bitsPerSample == 0 {
 		return containerBits, nil
 	}

@@ -24,8 +24,17 @@ const (
 	SampleFormatF64P SampleFormat = "f64p" // Double 64-bit
 )
 
-func (f SampleFormat) IsPlanar() bool       { return strings.HasSuffix(string(f), "p") }
-func (f SampleFormat) IsPacked() bool       { return !f.IsPlanar() }
+func (f SampleFormat) IsPlanar() bool {
+	return f == SampleFormatU8P || f == SampleFormatS16P || f == SampleFormatS24P || f == SampleFormatS32P || f == SampleFormatF32P || f == SampleFormatF64P
+}
+
+func (f SampleFormat) IsFloat() bool {
+	return f == SampleFormatF32 || f == SampleFormatF64 || f == SampleFormatF32P || f == SampleFormatF64P
+}
+
+func (f SampleFormat) IsPacked() bool  { return !f.IsPlanar() }
+func (f SampleFormat) IsInteger() bool { return !f.IsFloat() }
+
 func (f SampleFormat) Planar() SampleFormat { return f.Packed() + "p" }
 func (f SampleFormat) Packed() SampleFormat { return SampleFormat(strings.TrimSuffix(string(f), "p")) }
 
@@ -44,4 +53,10 @@ func (f SampleFormat) BytesPerSample() int {
 	default:
 		return 0
 	}
+}
+
+// BitsPerSample returns the storage width of one sample in bits (e.g. 24
+// for SampleFormatS24), regardless of packed/planar layout.
+func (f SampleFormat) BitsPerSample() int {
+	return f.BytesPerSample() * 8
 }
