@@ -74,15 +74,15 @@ func Resolve(spec Spec) (Resolved, error) {
 		if name == "" {
 			return Resolved{}, invalidSpec("auxiliary input name is required")
 		}
-		demuxer, demuxConfig, err := resolveOptional("auxiliary demuxer", aux.Demuxer, godec.DefaultDemuxerRegistry)
+		auxDemuxer, auxDemuxConfig, err := resolveOptional("auxiliary demuxer", aux.Demuxer, godec.DefaultDemuxerRegistry)
 		if err != nil {
 			return Resolved{}, err
 		}
-		decoder, decodeConfig, err := resolveOptional("auxiliary decoder", aux.Decoder, godec.DefaultDecoderRegistry)
+		auxDecoder, auxDecodeConfig, err := resolveOptional("auxiliary decoder", aux.Decoder, godec.DefaultDecoderRegistry)
 		if err != nil {
 			return Resolved{}, err
 		}
-		auxInputs[name] = resolvedAuxInput{Demuxer: demuxer, DemuxConfig: demuxConfig, Decoder: decoder, DecodeConfig: decodeConfig}
+		auxInputs[name] = resolvedAuxInput{Demuxer: auxDemuxer, DemuxConfig: auxDemuxConfig, Decoder: auxDecoder, DecodeConfig: auxDecodeConfig}
 	}
 
 	var sink *routing.PortRef

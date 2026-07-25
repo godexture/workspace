@@ -46,7 +46,14 @@ func supportedType(typeOf reflect.Type) bool {
 	if reflect.PointerTo(typeOf).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
 		return true
 	}
-	if typeOf == reflect.TypeFor[time.Duration]() || typeOf.Kind() == reflect.Bool || typeOf.Kind() == reflect.String || typeOf.Kind() >= reflect.Int && typeOf.Kind() <= reflect.Float64 || typeOf.Kind() >= reflect.Uint && typeOf.Kind() <= reflect.Uint64 {
+	if typeOf == reflect.TypeFor[time.Duration]() {
+		return true
+	}
+	switch typeOf.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
 		return true
 	}
 	return typeOf.Kind() == reflect.Slice && typeOf.Elem().Kind() == reflect.String
