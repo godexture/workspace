@@ -1,10 +1,12 @@
 package encoder
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/godexture/codec-flac/internal/config"
 )
+
+var errNoChannelAssignment = errors.New("no valid FLAC channel assignment")
 
 func assignmentForChannels(assignment uint8, channels int) uint8 {
 	if assignment != 0 {
@@ -23,7 +25,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 			candidates[ch] = bestSubframe(samples[ch], bitsPerSample, options, frameWindows, &windows.lpc)
 			if !candidates[ch].valid {
 				releaseSubframeCandidates(candidates)
-				return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+				return 0, nil, nil, nil, errNoChannelAssignment
 			}
 		}
 		return 0, samples, candidates, nil, nil
@@ -54,15 +56,26 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 	midCandidate := bestSubframe(mid, bitsPerSample, options, frameWindows, &windows.lpc)
 	sideCandidate := bestSubframe(side, bitsPerSample+1, options, frameWindows, &windows.lpc)
 
-	assignments := []struct {
+	assignments := make([]struct {
 		assignment uint8
-		channels   [][]int64
 		candidates []subframeCandidate
-	}{
-		{0, [][]int64{left, right}, []subframeCandidate{leftCandidate, rightCandidate}},
-		{8, [][]int64{left, side}, []subframeCandidate{leftCandidate, sideCandidate}},
-		{9, [][]int64{side, right}, []subframeCandidate{sideCandidate, rightCandidate}},
-		{10, [][]int64{mid, side}, []subframeCandidate{midCandidate, sideCandidate}},
+	}, 0, 4)
+	for _, assignment := range []uint8{0, 8, 9, 10} {
+		var candidates []subframeCandidate
+		switch assignment {
+		case 0:
+			candidates = []subframeCandidate{leftCandidate, rightCandidate}
+		case 8:
+			candidates = []subframeCandidate{leftCandidate, sideCandidate}
+		case 9:
+			candidates = []subframeCandidate{sideCandidate, rightCandidate}
+		case 10:
+			candidates = []subframeCandidate{midCandidate, sideCandidate}
+		}
+		assignments = append(assignments, struct {
+			assignment uint8
+			candidates []subframeCandidate
+		}{assignment, candidates})
 	}
 	best := uint64(^uint64(0))
 	bestIndex := -1
@@ -81,7 +94,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 		releaseSubframeCandidate(&midCandidate)
 		releaseSubframeCandidate(&sideCandidate)
 		releaseResidualBuffers(scratch)
-		return 0, nil, nil, nil, fmt.Errorf("no valid FLAC channel assignment")
+		return 0, nil, nil, nil, errNoChannelAssignment
 	}
 	chosen := assignments[bestIndex]
 	switch bestIndex {
@@ -98,7 +111,7 @@ func chooseChannelAssignment(samples [][]int64, bitsPerSample int, options confi
 		releaseSubframeCandidate(&leftCandidate)
 		releaseSubframeCandidate(&rightCandidate)
 	}
-	return chosen.assignment, chosen.channels, chosen.candidates, scratch, nil
+	return chosen.assignment, assignmentChannels(chosen.assignment, left, right, mid, side), chosen.candidates, scratch, nil
 }
 
 func assignmentChannels(assignment uint8, left, right, mid, side []int64) [][]int64 {

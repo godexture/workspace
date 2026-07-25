@@ -65,7 +65,7 @@ func bestFixedOrder(samples []int64, maxOrder int) (int, []int64) {
 }
 
 func getResidualBuffer(length int) []int64 {
-	buffer, _ := residualBufferPool.Get().([]int64)
+	buffer := residualBufferPool.Get()
 	if cap(buffer) < length {
 		return make([]int64, length)
 	}
@@ -81,7 +81,6 @@ func releaseSubframeCandidate(candidate *subframeCandidate) {
 }
 
 func releaseResidualBuffer(buffer []int64) {
-	clear(buffer)
 	residualBufferPool.Put(buffer[:0])
 }
 

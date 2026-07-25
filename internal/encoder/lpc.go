@@ -121,16 +121,16 @@ func lpcCoefficientSets(samples []int64, maxOrder, precision int, mode config.Or
 }
 
 func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, int, bool) {
-	var max_coeff float64
+	var maxCoeff float64
 	for _, coefficient := range coefficients {
-		if magnitude := math.Abs(coefficient); magnitude > max_coeff {
-			max_coeff = magnitude
+		if magnitude := math.Abs(coefficient); magnitude > maxCoeff {
+			maxCoeff = magnitude
 		}
 	}
-	if max_coeff <= 0 || math.IsInf(max_coeff, 0) || math.IsNaN(max_coeff) {
+	if maxCoeff <= 0 || math.IsInf(maxCoeff, 0) || math.IsNaN(maxCoeff) {
 		return nil, 0, false
 	}
-	_, exponent := math.Frexp(max_coeff)
+	_, exponent := math.Frexp(maxCoeff)
 	shift := precision - 1 - exponent
 	if shift > 15 {
 		shift = 15
@@ -138,18 +138,18 @@ func quantizeLPCCoefficients(coefficients []float64, precision int) ([]int64, in
 	if shift < 0 {
 		shift = 0
 	}
-	min := -(int64(1) << uint(precision-1))
-	max := (int64(1) << uint(precision-1)) - 1
+	minValue := -(int64(1) << uint(precision-1))
+	maxValue := (int64(1) << uint(precision-1)) - 1
 	quantized := make([]int64, len(coefficients))
 	scale := math.Ldexp(1, shift)
 	carry := 0.0
 	for i, coefficient := range coefficients {
 		value := coefficient*scale + carry
 		rounded := math.Round(value)
-		if rounded > float64(max) {
-			rounded = float64(max)
-		} else if rounded < float64(min) {
-			rounded = float64(min)
+		if rounded > float64(maxValue) {
+			rounded = float64(maxValue)
+		} else if rounded < float64(minValue) {
+			rounded = float64(minValue)
 		}
 		carry = value - rounded
 		quantized[i] = int64(rounded)
