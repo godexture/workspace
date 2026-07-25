@@ -76,7 +76,7 @@ func preferredBits(target manifest.SampleFormatConstraint, current int) (int, bo
 		}
 		return 0, false
 	}
-	bits := target.Format.BytesPerSample() * 8
+	bits := target.Format.BitsPerSample()
 	if constraint.Min != 0 && bits < constraint.Min {
 		bits = constraint.Min
 	}
