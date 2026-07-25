@@ -30,12 +30,17 @@ func (f SampleFormat) IsPlanar() bool {
 	return f == SampleFormatU8P || f == SampleFormatS8P || f == SampleFormatS16P || f == SampleFormatS24P || f == SampleFormatS32P || f == SampleFormatF32P || f == SampleFormatF64P
 }
 
+func (f SampleFormat) IsPacked() bool {
+	return f == SampleFormatU8 || f == SampleFormatS8 || f == SampleFormatS16 || f == SampleFormatS24 || f == SampleFormatS32 || f == SampleFormatF32 || f == SampleFormatF64
+}
+
+func (f SampleFormat) IsInteger() bool {
+	return f == SampleFormatU8 || f == SampleFormatS8 || f == SampleFormatS16 || f == SampleFormatS24 || f == SampleFormatS32 || f == SampleFormatU8P || f == SampleFormatS8P || f == SampleFormatS16P || f == SampleFormatS24P || f == SampleFormatS32P
+}
+
 func (f SampleFormat) IsFloat() bool {
 	return f == SampleFormatF32 || f == SampleFormatF64 || f == SampleFormatF32P || f == SampleFormatF64P
 }
-
-func (f SampleFormat) IsPacked() bool  { return !f.IsPlanar() }
-func (f SampleFormat) IsInteger() bool { return !f.IsFloat() }
 
 func (f SampleFormat) Planar() SampleFormat { return f.Packed() + "p" }
 func (f SampleFormat) Packed() SampleFormat { return SampleFormat(strings.TrimSuffix(string(f), "p")) }
