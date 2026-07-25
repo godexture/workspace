@@ -54,7 +54,7 @@ type Encoder struct {
 	gate      parallel.Gate
 }
 
-// NewEncoder builds an encoder. pool may be nil, in which case blocks are
+// NewEncoder builds an encoder. workers may be nil, in which case blocks are
 // encoded synchronously; otherwise it must be a pool this encoder is allowed
 // to submit work to for its entire lifetime (the caller retains ownership and
 // is responsible for closing it once every stage sharing it has finished).

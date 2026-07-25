@@ -84,6 +84,8 @@ func buildStreamInfo(stream media.StreamInfo) (streaminfo.StreamInfo, error) {
 		switch attr.Format.Packed() {
 		case media.SampleFormatS16:
 			bitsPerSample = 16
+		case media.SampleFormatS24:
+			bitsPerSample = 24
 		case media.SampleFormatS32:
 			bitsPerSample = 32
 		default:
