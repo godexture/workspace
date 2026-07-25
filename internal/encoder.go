@@ -248,6 +248,15 @@ func leftJustifyPCM(scratch *[]byte, data []byte, format media.SampleFormat, bit
 	}
 	shift := uint(containerBits - bitsPerSample)
 	out := growBytes(*scratch, len(data))
+	// growBytes reuses the backing array across calls without zeroing it, and
+	// the per-format loops below only advance in full bytesPerSample strides;
+	// zero the trailing partial-sample remainder so it can't leak stale bytes
+	// from a previous call.
+	if bytesPerSample := format.BytesPerSample(); bytesPerSample > 0 {
+		if remainder := len(data) % bytesPerSample; remainder != 0 {
+			clear(out[len(data)-remainder:])
+		}
+	}
 	switch format {
 	case media.SampleFormatS16:
 		leftJustifyS16(out, data, shift)
