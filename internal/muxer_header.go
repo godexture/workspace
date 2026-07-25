@@ -227,20 +227,12 @@ func wavFormatForMediaAttributes(attr media.MediaAttributes) (audioFormat uint16
 	case media.CodecIMAADPCM:
 		return wavAudioIMAADPCM, 4, nil
 	case media.CodecLPCM, "":
-		switch attr.Audio.Format.Packed() {
-		case media.SampleFormatU8:
-			return wavAudioPCM, 8, nil
-		case media.SampleFormatS16:
-			return wavAudioPCM, 16, nil
-		case media.SampleFormatS24:
-			return wavAudioPCM, 24, nil
-		case media.SampleFormatS32:
-			return wavAudioPCM, 32, nil
-		case media.SampleFormatF32:
-			return wavAudioIEEEFloat, 32, nil
-		case media.SampleFormatF64:
-			return wavAudioIEEEFloat, 64, nil
-		default:
+		format := attr.Audio.Format.Packed()
+		if format.IsInteger() {
+			return wavAudioPCM, uint16(format.BitsPerSample()), nil
+		} else if format.IsFloat() {
+			return wavAudioIEEEFloat, uint16(format.BitsPerSample()), nil
+		} else {
 			return 0, 0, fmt.Errorf("unsupported wav sample format: %s", attr.Audio.Format)
 		}
 	default:
