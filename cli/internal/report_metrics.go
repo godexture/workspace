@@ -135,6 +135,15 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(divisor), "KMGTPE"[exponent])
 }
 
+func formatElapsed(duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+
+	t := time.Unix(0, 0).UTC().Add(duration)
+	return t.Format("15:04:05.0000")
+}
+
 func formatMetricDuration(duration time.Duration) string {
 	return duration.Round(time.Millisecond).String()
 }
