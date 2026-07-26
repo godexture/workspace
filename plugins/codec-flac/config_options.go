@@ -84,6 +84,10 @@ func (c DecoderConfig) Resolve() config.DecoderConfig {
 	return config.DecoderConfig(c)
 }
 
+func (c DecoderConfig) Validate() error {
+	return nil
+}
+
 type StereoMode = config.StereoMode
 
 const (

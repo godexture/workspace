@@ -60,7 +60,6 @@ type field struct {
 	typeOf         reflect.Type
 	dependsOn      *FieldDependency
 	dependsOnIndex int
-	checks         []string
 	value          *flagValue
 }
 
@@ -116,18 +115,6 @@ func DescribeStruct(prototype any) ([]FieldDescription, error) {
 	return descriptions, nil
 }
 
-// CheckFields runs the check-tag numeric validations directly against target.
-func CheckFields(target any) error {
-	value, typeOf, err := structValue(target)
-	if err != nil {
-		return err
-	}
-	fields, err := fieldsFor(typeOf)
-	if err != nil {
-		return err
-	}
-	return validateChecks(value, fields)
-}
 
 func descriptionDefault(value reflect.Value) string {
 	if value.Kind() == reflect.Slice && value.Len() == 0 {

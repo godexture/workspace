@@ -3,8 +3,10 @@
 package filter
 
 import (
+	fmt "fmt"
 	media "github.com/godexture/core/domain/media"
 	config "github.com/godexture/filter-audio/internal/config"
+	math "math"
 	time "time"
 )
 
@@ -37,6 +39,9 @@ func (c FormatConfig) Resolve() config.FormatConfig {
 }
 
 func (c FormatConfig) Validate() error {
+	if !(c.BitsPerSample >= 0) {
+		return fmt.Errorf("%s must be non-negative", "bits-per-sample")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -69,6 +74,9 @@ func (c ResampleConfig) Resolve() config.ResampleConfig {
 }
 
 func (c ResampleConfig) Validate() error {
+	if !(c.SampleRate > 0) {
+		return fmt.Errorf("%s must be positive", "sample-rate")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -101,6 +109,12 @@ func (c RemixConfig) Resolve() config.RemixConfig {
 }
 
 func (c RemixConfig) Validate() error {
+	if math.IsNaN(float64(c.CenterMixDB)) || math.IsInf(float64(c.CenterMixDB), 0) {
+		return fmt.Errorf("%s must be finite", "center-mix-db")
+	}
+	if math.IsNaN(float64(c.SurroundMixDB)) || math.IsInf(float64(c.SurroundMixDB), 0) {
+		return fmt.Errorf("%s must be finite", "surround-mix-db")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -133,6 +147,9 @@ func (c GainConfig) Resolve() config.GainConfig {
 }
 
 func (c GainConfig) Validate() error {
+	if math.IsNaN(float64(c.Decibels)) || math.IsInf(float64(c.Decibels), 0) {
+		return fmt.Errorf("%s must be finite", "decibels")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -165,6 +182,9 @@ func (c NormalizeConfig) Resolve() config.NormalizeConfig {
 }
 
 func (c NormalizeConfig) Validate() error {
+	if math.IsNaN(float64(c.TargetPeakDBFS)) || math.IsInf(float64(c.TargetPeakDBFS), 0) {
+		return fmt.Errorf("%s must be finite", "target-peak-dbfs")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -197,6 +217,12 @@ func (c FadeConfig) Resolve() config.FadeConfig {
 }
 
 func (c FadeConfig) Validate() error {
+	if !(c.FadeIn >= 0) {
+		return fmt.Errorf("%s must be non-negative", "fade-in")
+	}
+	if !(c.FadeOut >= 0) {
+		return fmt.Errorf("%s must be non-negative", "fade-out")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -261,6 +287,49 @@ func (c GateConfig) Resolve() config.GateConfig {
 }
 
 func (c GateConfig) Validate() error {
+	if math.IsNaN(float64(c.ThresholdDBFS)) || math.IsInf(float64(c.ThresholdDBFS), 0) {
+		return fmt.Errorf("%s must be finite", "threshold-dbfs")
+	}
+	if string(c.GateMode) == "lowpass" {
+		if !(c.RangeDB >= 0) {
+			return fmt.Errorf("%s must be non-negative", "range-db")
+		}
+		if math.IsNaN(float64(c.RangeDB)) || math.IsInf(float64(c.RangeDB), 0) {
+			return fmt.Errorf("%s must be finite", "range-db")
+		}
+	}
+	if string(c.GateMode) == "lowpass" {
+		if !(c.AttackMs >= 0) {
+			return fmt.Errorf("%s must be non-negative", "attack-ms")
+		}
+		if math.IsNaN(float64(c.AttackMs)) || math.IsInf(float64(c.AttackMs), 0) {
+			return fmt.Errorf("%s must be finite", "attack-ms")
+		}
+	}
+	if string(c.GateMode) == "lowpass" {
+		if !(c.ReleaseMs >= 0) {
+			return fmt.Errorf("%s must be non-negative", "release-ms")
+		}
+		if math.IsNaN(float64(c.ReleaseMs)) || math.IsInf(float64(c.ReleaseMs), 0) {
+			return fmt.Errorf("%s must be finite", "release-ms")
+		}
+	}
+	if string(c.GateMode) == "lowpass" {
+		if !(c.OpenFrequencyHz > 0) {
+			return fmt.Errorf("%s must be positive", "open-frequency-hz")
+		}
+		if math.IsNaN(float64(c.OpenFrequencyHz)) || math.IsInf(float64(c.OpenFrequencyHz), 0) {
+			return fmt.Errorf("%s must be finite", "open-frequency-hz")
+		}
+	}
+	if string(c.GateMode) == "lowpass" {
+		if !(c.CloseFrequencyHz > 0) {
+			return fmt.Errorf("%s must be positive", "close-frequency-hz")
+		}
+		if math.IsNaN(float64(c.CloseFrequencyHz)) || math.IsInf(float64(c.CloseFrequencyHz), 0) {
+			return fmt.Errorf("%s must be finite", "close-frequency-hz")
+		}
+	}
 	return c.Resolve().Validate()
 }
 
@@ -302,6 +371,9 @@ func (c TrimConfig) Resolve() config.TrimConfig {
 }
 
 func (c TrimConfig) Validate() error {
+	if math.IsNaN(float64(c.ThresholdDBFS)) || math.IsInf(float64(c.ThresholdDBFS), 0) {
+		return fmt.Errorf("%s must be finite", "threshold-dbfs")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -343,6 +415,12 @@ func (c SpeedConfig) Resolve() config.SpeedConfig {
 }
 
 func (c SpeedConfig) Validate() error {
+	if !(c.Factor > 0) {
+		return fmt.Errorf("%s must be positive", "factor")
+	}
+	if math.IsNaN(float64(c.Factor)) || math.IsInf(float64(c.Factor), 0) {
+		return fmt.Errorf("%s must be finite", "factor")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -384,6 +462,33 @@ func (c CompressorConfig) Resolve() config.CompressorConfig {
 }
 
 func (c CompressorConfig) Validate() error {
+	if math.IsNaN(float64(c.ThresholdDBFS)) || math.IsInf(float64(c.ThresholdDBFS), 0) {
+		return fmt.Errorf("%s must be finite", "threshold-dbfs")
+	}
+	if math.IsNaN(float64(c.Ratio)) || math.IsInf(float64(c.Ratio), 0) {
+		return fmt.Errorf("%s must be finite", "ratio")
+	}
+	if !(c.AttackMs >= 0) {
+		return fmt.Errorf("%s must be non-negative", "attack-ms")
+	}
+	if math.IsNaN(float64(c.AttackMs)) || math.IsInf(float64(c.AttackMs), 0) {
+		return fmt.Errorf("%s must be finite", "attack-ms")
+	}
+	if !(c.ReleaseMs >= 0) {
+		return fmt.Errorf("%s must be non-negative", "release-ms")
+	}
+	if math.IsNaN(float64(c.ReleaseMs)) || math.IsInf(float64(c.ReleaseMs), 0) {
+		return fmt.Errorf("%s must be finite", "release-ms")
+	}
+	if !(c.KneeDB >= 0) {
+		return fmt.Errorf("%s must be non-negative", "knee-db")
+	}
+	if math.IsNaN(float64(c.KneeDB)) || math.IsInf(float64(c.KneeDB), 0) {
+		return fmt.Errorf("%s must be finite", "knee-db")
+	}
+	if math.IsNaN(float64(c.MakeupGainDB)) || math.IsInf(float64(c.MakeupGainDB), 0) {
+		return fmt.Errorf("%s must be finite", "makeup-gain-db")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -416,6 +521,54 @@ func (c EqualizerConfig) Resolve() config.EqualizerConfig {
 }
 
 func (c EqualizerConfig) Validate() error {
+	if string(c.EqualizerMode) == "single" {
+	}
+	if string(c.EqualizerMode) == "single" {
+		if !(c.FrequencyHz > 0) {
+			return fmt.Errorf("%s must be positive", "frequency-hz")
+		}
+		if math.IsNaN(float64(c.FrequencyHz)) || math.IsInf(float64(c.FrequencyHz), 0) {
+			return fmt.Errorf("%s must be finite", "frequency-hz")
+		}
+	}
+	if string(c.EqualizerMode) == "single" {
+		if math.IsNaN(float64(c.GainDB)) || math.IsInf(float64(c.GainDB), 0) {
+			return fmt.Errorf("%s must be finite", "gain-db")
+		}
+	}
+	if string(c.EqualizerMode) == "single" {
+		if !(c.Q > 0) {
+			return fmt.Errorf("%s must be positive", "q")
+		}
+		if math.IsNaN(float64(c.Q)) || math.IsInf(float64(c.Q), 0) {
+			return fmt.Errorf("%s must be finite", "q")
+		}
+	}
+	if string(c.EqualizerMode) == "multiband" {
+		if !(c.Bands > 0) {
+			return fmt.Errorf("%s must be positive", "bands")
+		}
+	}
+	if string(c.EqualizerMode) == "multiband" {
+		if !(c.LowHz > 0) {
+			return fmt.Errorf("%s must be positive", "low-hz")
+		}
+		if math.IsNaN(float64(c.LowHz)) || math.IsInf(float64(c.LowHz), 0) {
+			return fmt.Errorf("%s must be finite", "low-hz")
+		}
+	}
+	if string(c.EqualizerMode) == "multiband" {
+		if !(c.HighHz > 0) {
+			return fmt.Errorf("%s must be positive", "high-hz")
+		}
+		if math.IsNaN(float64(c.HighHz)) || math.IsInf(float64(c.HighHz), 0) {
+			return fmt.Errorf("%s must be finite", "high-hz")
+		}
+	}
+	if string(c.EqualizerMode) == "multiband" {
+	}
+	if string(c.EqualizerMode) == "multiband" {
+	}
 	return c.Resolve().Validate()
 }
 
@@ -459,6 +612,30 @@ func (c DelayConfig) Resolve() config.DelayConfig {
 }
 
 func (c DelayConfig) Validate() error {
+	if !(c.DelayMs > 0) {
+		return fmt.Errorf("%s must be positive", "delay-ms")
+	}
+	if math.IsNaN(float64(c.DelayMs)) || math.IsInf(float64(c.DelayMs), 0) {
+		return fmt.Errorf("%s must be finite", "delay-ms")
+	}
+	if !(c.Feedback >= 0) {
+		return fmt.Errorf("%s must be non-negative", "feedback")
+	}
+	if math.IsNaN(float64(c.Feedback)) || math.IsInf(float64(c.Feedback), 0) {
+		return fmt.Errorf("%s must be finite", "feedback")
+	}
+	if !(c.WetLevel >= 0) {
+		return fmt.Errorf("%s must be non-negative", "wet-level")
+	}
+	if math.IsNaN(float64(c.WetLevel)) || math.IsInf(float64(c.WetLevel), 0) {
+		return fmt.Errorf("%s must be finite", "wet-level")
+	}
+	if !(c.DryLevel >= 0) {
+		return fmt.Errorf("%s must be non-negative", "dry-level")
+	}
+	if math.IsNaN(float64(c.DryLevel)) || math.IsInf(float64(c.DryLevel), 0) {
+		return fmt.Errorf("%s must be finite", "dry-level")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -491,6 +668,30 @@ func (c ReverbConfig) Resolve() config.ReverbConfig {
 }
 
 func (c ReverbConfig) Validate() error {
+	if !(c.RoomSize >= 0) {
+		return fmt.Errorf("%s must be non-negative", "room-size")
+	}
+	if math.IsNaN(float64(c.RoomSize)) || math.IsInf(float64(c.RoomSize), 0) {
+		return fmt.Errorf("%s must be finite", "room-size")
+	}
+	if !(c.Damping >= 0) {
+		return fmt.Errorf("%s must be non-negative", "damping")
+	}
+	if math.IsNaN(float64(c.Damping)) || math.IsInf(float64(c.Damping), 0) {
+		return fmt.Errorf("%s must be finite", "damping")
+	}
+	if !(c.WetLevel >= 0) {
+		return fmt.Errorf("%s must be non-negative", "wet-level")
+	}
+	if math.IsNaN(float64(c.WetLevel)) || math.IsInf(float64(c.WetLevel), 0) {
+		return fmt.Errorf("%s must be finite", "wet-level")
+	}
+	if !(c.DryLevel >= 0) {
+		return fmt.Errorf("%s must be non-negative", "dry-level")
+	}
+	if math.IsNaN(float64(c.DryLevel)) || math.IsInf(float64(c.DryLevel), 0) {
+		return fmt.Errorf("%s must be finite", "dry-level")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -523,6 +724,15 @@ func (c ConvolutionConfig) Resolve() config.ConvolutionConfig {
 }
 
 func (c ConvolutionConfig) Validate() error {
+	if !(c.WetDryMix >= 0) {
+		return fmt.Errorf("%s must be non-negative", "wet-dry-mix")
+	}
+	if math.IsNaN(float64(c.WetDryMix)) || math.IsInf(float64(c.WetDryMix), 0) {
+		return fmt.Errorf("%s must be finite", "wet-dry-mix")
+	}
+	if !(c.BlockSize >= 0) {
+		return fmt.Errorf("%s must be non-negative", "block-size")
+	}
 	return c.Resolve().Validate()
 }
 
@@ -555,6 +765,12 @@ func (c MixerParameters) Resolve() config.MixerParameters {
 }
 
 func (c MixerParameters) Validate() error {
+	if !(c.Inputs > 0) {
+		return fmt.Errorf("%s must be positive", "in")
+	}
+	if !(c.Outputs > 0) {
+		return fmt.Errorf("%s must be positive", "out")
+	}
 	return c.Resolve().Validate()
 }
 

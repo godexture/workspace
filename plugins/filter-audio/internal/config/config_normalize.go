@@ -1,9 +1,11 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type NormalizeConfig struct {
-	TargetPeakDBFS     float64 `name:"target-peak-dbfs" help:"Target peak level"`
+	TargetPeakDBFS     float64 `name:"target-peak-dbfs" check:"finite" help:"Target peak level"`
 	AllowAmplification bool    `name:"allow-amplification" help:"Allow gain above unity"`
 	MemoryLimitBytes   int64   `name:"memory-limit-bytes" help:"Maximum buffered memory"`
 	TempDir            string  `name:"temp-dir" help:"Temporary directory"`
@@ -16,7 +18,7 @@ var DefaultNormalizeConfig = NormalizeConfig{
 }
 
 func (c NormalizeConfig) Validate() error {
-	if !finite(c.TargetPeakDBFS) || c.TargetPeakDBFS > 0 {
+	if c.TargetPeakDBFS > 0 {
 		return fmt.Errorf("target peak must be finite and no greater than 0 dBFS")
 	}
 	return validateMemoryLimit(c.MemoryLimitBytes)
