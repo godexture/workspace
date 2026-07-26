@@ -6,6 +6,7 @@ export interface PluginField {
     help: string;
     default: string;
     choices?: string[];
+    dependsOn?: { field: string; values: string[] };
 }
 
 export interface PluginEntry {
