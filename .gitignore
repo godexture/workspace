@@ -2,3 +2,5 @@ node_modules/
 dist/
 client/public/wasm/
 *.tsbuildinfo
+*.exe
+*.exe~
