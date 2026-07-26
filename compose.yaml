@@ -1,10 +1,12 @@
 # Preview stack for the production server image (server/Dockerfile).
+# Run from this file's own directory (the repo root, whether this repo is
+# cloned standalone or checked out as the example/web submodule):
 #
-#   docker compose -f example/web/compose.yaml up --build
+#   docker compose up --build
 #
 # The client is build-only (see client/Dockerfile) and isn't served by
-# anything here -- build it directly instead (from the repo root):
-#   docker build -f example/web/client/Dockerfile .
+# anything here -- build it directly instead:
+#   docker build -f client/Dockerfile ./client
 #
 # For day-to-day development, run the client and server directly from
 # source instead (see Makefile) -- no Docker involved.
@@ -12,7 +14,7 @@
 services:
     server:
         build:
-            context: ../..
-            dockerfile: example/web/server/Dockerfile
+            context: ./server
+            dockerfile: Dockerfile
         ports:
             - "8787:8787"
