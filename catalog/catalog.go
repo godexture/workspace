@@ -11,27 +11,6 @@ import (
 	"github.com/godexture/sdk/cliflag"
 )
 
-type Field struct {
-	Name      string           `json:"name"`
-	Type      string           `json:"type"`
-	Help      string           `json:"help"`
-	Default   string           `json:"default"`
-	Choices   []string         `json:"choices,omitempty"`
-	DependsOn *FieldDependency `json:"dependsOn,omitempty"`
-}
-
-type FieldDependency struct {
-	Field  string   `json:"field"`
-	Values []string `json:"values"`
-}
-
-type PluginEntry struct {
-	Role        string  `json:"role"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Fields      []Field `json:"fields"`
-}
-
 // FilterEntry describes a filter's editable configuration and port topology.
 // Parameters are resolved before Fields for parameterized filters because they
 // may decide which ports and configuration type the concrete filter has.
@@ -72,54 +51,6 @@ func BuildFrom(registries registry.Bundle) Catalog {
 	}
 	result.Outputs = outputFormats(registries)
 	return result
-}
-
-func entries[V registry.Manifest](role manifest.NodeType, values *registry.Registry[V]) []PluginEntry {
-	if values == nil {
-		return []PluginEntry{}
-	}
-	result := make([]PluginEntry, 0, len(values.Names()))
-	for value := range values.Enumerate() {
-		entry, err := pluginEntry(role, value)
-		if err == nil {
-			result = append(result, entry)
-		}
-	}
-	return result
-}
-
-func pluginEntry(role manifest.NodeType, value registry.Manifest) (PluginEntry, error) {
-	fields, err := fields(value)
-	if err != nil {
-		return PluginEntry{}, err
-	}
-	return PluginEntry{
-		Role: string(role), Name: value.RegistryName(),
-		Description: description(value), Fields: fields,
-	}, nil
-}
-
-func fields(value registry.Manifest) ([]Field, error) {
-	config, err := value.NewConfiguration()
-	if err != nil {
-		return nil, err
-	}
-	described, err := cliflag.DescribeStruct(config)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Field, len(described))
-	for i, field := range described {
-		var dependsOn *FieldDependency
-		if field.DependsOn != nil {
-			dependsOn = &FieldDependency{Field: field.DependsOn.Field, Values: slices.Clone(field.DependsOn.Values)}
-		}
-		result[i] = Field{
-			Name: field.Name, Type: field.Type, Help: field.Help,
-			Default: field.Default, Choices: slices.Clone(field.Choices), DependsOn: dependsOn,
-		}
-	}
-	return result, nil
 }
 
 func filterEntries(registries registry.Bundle) []FilterEntry {
@@ -212,23 +143,6 @@ func DescribeFilterFrom(registries registry.Bundle, name string, parameters map[
 		return FilterEntry{}, err
 	}
 	return filterEntry(resolved, parameterFields)
-}
-
-func description(value registry.Manifest) string {
-	switch value := value.(type) {
-	case registry.MuxerManifest:
-		return value.Description
-	case registry.DemuxerManifest:
-		return value.Description
-	case registry.EncoderManifest:
-		return value.Description
-	case registry.DecoderManifest:
-		return value.Description
-	case registry.FilterManifest:
-		return value.Description
-	default:
-		return ""
-	}
 }
 
 func outputFormats(registries registry.Bundle) []OutputFormat {
