@@ -104,10 +104,13 @@ func preferredBits(target manifest.SampleFormatConstraint, current int) (int, bo
 
 func formatLoss(from, to media.SampleFormat, fromBits, toBits int) uint32 {
 	if isFloat(from) && !isFloat(to) {
+		if toBits < fromBits {
+			return uint32(fromBits-toBits) + 1
+		}
 		return 1
 	}
 	if !isFloat(from) && !isFloat(to) && toBits < fromBits {
-		return 1
+		return uint32(fromBits - toBits)
 	}
 	return 0
 }

@@ -529,11 +529,22 @@ func TestReverbLowSampleRateDoesNotPanic(t *testing.T) {
 
 func TestFormatLossAccountsForIntegerPrecisionReduction(t *testing.T) {
 	t.Parallel()
-	if got := formatLoss(media.SampleFormatS32, media.SampleFormatS16, 32, 16); got != 1 {
-		t.Fatalf("S32 to S16 quality loss = %d, want 1", got)
+	if got := formatLoss(media.SampleFormatS32, media.SampleFormatS16, 32, 16); got != 16 {
+		t.Fatalf("S32 to S16 quality loss = %d, want 16", got)
 	}
 	if got := formatLoss(media.SampleFormatS16, media.SampleFormatS32, 16, 32); got != 0 {
 		t.Fatalf("S16 to S32 quality loss = %d, want 0", got)
+	}
+}
+
+func TestFormatLossPrefersWidestIntegerContainerForFloatSource(t *testing.T) {
+	t.Parallel()
+	s8 := formatLoss(media.SampleFormatF32, media.SampleFormatS8, 32, 8)
+	s16 := formatLoss(media.SampleFormatF32, media.SampleFormatS16, 32, 16)
+	s24 := formatLoss(media.SampleFormatF32, media.SampleFormatS24, 32, 24)
+	s32 := formatLoss(media.SampleFormatF32, media.SampleFormatS32, 32, 32)
+	if !(s32 < s24 && s24 < s16 && s16 < s8) {
+		t.Fatalf("expected loss to strictly increase as bit depth drops: s32=%d s24=%d s16=%d s8=%d", s32, s24, s16, s8)
 	}
 }
 
