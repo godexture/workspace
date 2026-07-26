@@ -91,9 +91,6 @@ func (b *Binding) Apply(target any) error {
 			return fmt.Errorf("--%s: %w", flag.Name, err)
 		}
 	}
-	if err := validateChecks(copy, b.fields); err != nil {
-		return err
-	}
 	if err := validate(copy); err != nil {
 		return err
 	}

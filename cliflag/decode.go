@@ -45,9 +45,6 @@ func DecodeStruct(target any, values map[string]string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	if err := validateChecks(copy, fields); err != nil {
-		return err
-	}
 	if err := validate(copy); err != nil {
 		return err
 	}

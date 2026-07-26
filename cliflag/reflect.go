@@ -34,14 +34,10 @@ func fieldsFor(typeOf reflect.Type) ([]field, error) {
 		if err != nil {
 			return nil, err
 		}
-		checks, err := parseChecks(structField)
-		if err != nil {
-			return nil, err
-		}
 		indexByName[tag] = len(fields)
 		fields = append(fields, field{
 			index: index, goName: structField.Name, name: tag, help: structField.Tag.Get("help"),
-			typeOf: structField.Type, dependsOn: dependsOn, checks: checks,
+			typeOf: structField.Type, dependsOn: dependsOn,
 		})
 	}
 	for index := range fields {
