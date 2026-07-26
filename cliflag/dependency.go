@@ -12,11 +12,17 @@ func parseDependency(structField reflect.StructField) (*FieldDependency, error) 
 		return nil, nil
 	}
 	parts := strings.SplitN(tag, "=", 2)
-	if len(parts) != 2 {
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 		return nil, fmt.Errorf("invalid depends-on tag format on field %s", structField.Name)
+	}
+	values := strings.Split(parts[1], ",")
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("invalid depends-on tag format on field %s", structField.Name)
+		}
 	}
 	return &FieldDependency{
 		Field:  parts[0],
-		Values: strings.Split(parts[1], ","),
+		Values: values,
 	}, nil
 }
