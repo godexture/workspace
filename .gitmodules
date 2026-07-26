@@ -45,7 +45,7 @@
 	url = https://github.com/godexture/metadata-vorbiscomment.git
 [submodule "example/go"]
 	path = example/go
-	url = https://github.com/godexture/example.git
+	url = https://github.com/godexture/example-go.git
 [submodule "example/web"]
 	path = example/web
 	url = https://github.com/godexture/example-web.git
