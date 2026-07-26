@@ -1,0 +1,4 @@
+github.com/godexture/core v0.1.0 h1:2QMjby16zYOmhplaY0qRIxdUxQZetK9IdStaKEC3bBI=
+github.com/godexture/core v0.1.0/go.mod h1:yt6zGJFtFFh/LyD2sDKAKZDpbRi//lDeaJbpHdDNtyA=
+github.com/godexture/sdk v0.1.0 h1:xqF269mTJ3D7NMeUMC+aSUUUjjU91DQUK4WLnu8/1hE=
+github.com/godexture/sdk v0.1.0/go.mod h1:wt2jWG+IbH+A44NwTxokO65vCywNhvryR/vjcnlvMtQ=
