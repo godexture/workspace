@@ -12,17 +12,7 @@ import (
 )
 
 func init() {
-	register(registry.NewConfigurationFactory(NewSpeedConfig), "retime", "Change playback speed with optional pitch-preserving retime", func(in media.StreamInfo, cfg registry.Configuration) (media.Profile, error) {
-		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
-		if err != nil {
-			return media.Profile{}, err
-		}
-		profile := copyProfile(in)
-		if value.Mode == SpeedModeRelabel {
-			profile.Audio.SampleRate = speedRelabelRate(in.Audio.SampleRate, value.Factor)
-		}
-		return profile, nil
-	}, func(cfg registry.Configuration) (node.Filter, error) {
+	register(registry.NewConfigurationFactory(NewSpeedConfig), "retime", "Change playback speed with optional pitch-preserving retime", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.SpeedConfig, SpeedConfig](cfg)
 		if err != nil {
 			return nil, err

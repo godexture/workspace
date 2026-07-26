@@ -16,8 +16,12 @@ func bridgeFormat(current media.StreamInfo, required []manifest.Capability) ([]r
 				continue
 			}
 			if target.Format != current.Audio.Format || bits != currentBits {
+				formatConfig, err := NewFormatConfig(WithFormat(target.Format), WithBitsPerSample(bits))
+				if err != nil {
+					return nil, err
+				}
 				result = append(result, registry.ConversionCandidate{
-					Config: NewFormatConfig(WithFormat(target.Format), WithBitsPerSample(bits)),
+					Config: formatConfig,
 					Cost:   registry.ConversionCost{QualityLoss: formatLoss(current.Audio.Format, target.Format, currentBits, bits), Work: 1},
 				})
 			}
@@ -31,7 +35,11 @@ func bridgeRate(current media.StreamInfo, required []manifest.Capability) ([]reg
 	for _, constraint := range audioConstraints(required) {
 		for _, rate := range constraint.SampleRates.Candidates(current.Audio.SampleRate) {
 			if rate != current.Audio.SampleRate {
-				result = append(result, registry.ConversionCandidate{Config: NewResampleConfig(WithSampleRate(rate)), Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
+				resampleConfig, err := NewResampleConfig(WithSampleRate(rate))
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, registry.ConversionCandidate{Config: resampleConfig, Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
 			}
 		}
 	}
@@ -43,12 +51,20 @@ func bridgeLayout(current media.StreamInfo, required []manifest.Capability) ([]r
 	for _, constraint := range audioConstraints(required) {
 		for _, layout := range constraint.Layouts {
 			if layout != current.Audio.ChannelLayout {
-				result = append(result, registry.ConversionCandidate{Config: NewRemixConfig(WithLayout(layout)), Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
+				remixConfig, err := NewRemixConfig(WithLayout(layout))
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, registry.ConversionCandidate{Config: remixConfig, Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
 			}
 		}
 		for _, channels := range constraint.Channels.Candidates(current.Audio.ChannelCount()) {
 			if channels != current.Audio.ChannelCount() {
-				result = append(result, registry.ConversionCandidate{Config: NewRemixConfig(WithLayout(layoutForChannels(channels))), Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
+				remixConfig, err := NewRemixConfig(WithLayout(layoutForChannels(channels)))
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, registry.ConversionCandidate{Config: remixConfig, Cost: registry.ConversionCost{QualityLoss: 1, Work: 2}})
 			}
 		}
 	}

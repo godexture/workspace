@@ -14,11 +14,17 @@ type ReverbConfig struct {
 var DefaultReverbConfig = ReverbConfig{RoomSize: 0.5, Damping: 0.5, WetLevel: 0.3, DryLevel: 1}
 
 func (c ReverbConfig) Validate() error {
-	if c.RoomSize > 1 {
+	if !finite(c.RoomSize) || c.RoomSize < 0 || c.RoomSize > 1 {
 		return fmt.Errorf("reverb room size must be within [0, 1]")
 	}
-	if c.Damping > 1 {
+	if !finite(c.Damping) || c.Damping < 0 || c.Damping > 1 {
 		return fmt.Errorf("reverb damping must be within [0, 1]")
+	}
+	if !finite(c.WetLevel) || c.WetLevel < 0 {
+		return fmt.Errorf("reverb wet level must be finite and non-negative")
+	}
+	if !finite(c.DryLevel) || c.DryLevel < 0 {
+		return fmt.Errorf("reverb dry level must be finite and non-negative")
 	}
 	return nil
 }
