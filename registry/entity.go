@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/internal/clone"
 	"github.com/godexture/core/node"
 )
 
@@ -70,17 +71,11 @@ func (f staticConfigurationFactory) Default() Configuration {
 	return f.clone()
 }
 
-// clone returns a fresh copy of f.config, so repeated calls to New or
-// Default never hand out a shared, mutable instance — matching the
-// option-pattern factory's guarantee.
+// clone returns a fresh, deep copy of f.config, so repeated calls to New or
+// Default never hand out shared mutable state (slices, maps, or nested
+// pointers) — matching the option-pattern factory's guarantee.
 func (f staticConfigurationFactory) clone() Configuration {
-	value := reflect.ValueOf(f.config)
-	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() {
-		return f.config
-	}
-	clone := reflect.New(value.Type().Elem())
-	clone.Elem().Set(value.Elem())
-	return clone.Interface()
+	return clone.Any(f.config)
 }
 
 // StaticConfigurationFactory wraps an already-constructed Configuration
