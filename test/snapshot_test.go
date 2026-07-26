@@ -35,10 +35,10 @@ func TestSnapshots(t *testing.T) {
 				Expected:  snapshot,
 				Opts:      compareOption,
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-					return mp3format.NewDemuxerEngine(r, mp3format.NewDemuxerConfig())
+					return mp3format.NewDemuxerEngine(r, mp3format.MustNewDemuxerConfig())
 				},
 				Decode: func(_ media.StreamInfo) engine.DecoderEngine {
-					return mp3codec.NewDecoderEngine(mp3codec.NewDecoderConfig())
+					return mp3codec.NewDecoderEngine(mp3codec.MustNewDecoderConfig())
 				},
 			})
 		})
