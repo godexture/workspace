@@ -82,18 +82,41 @@ func TestCompressorConfigValidate(t *testing.T) {
 
 func TestEqualizerConfigValidate(t *testing.T) {
 	t.Parallel()
-	valid := EqualizerConfig{Type: EqualizerTypePeaking, FrequencyHz: 1000, Q: 0.707}
+	valid := DefaultEqualizerConfig
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
 	if err := (func() EqualizerConfig { c := valid; c.Type = "bogus"; return c }()).Validate(); err == nil {
 		t.Fatal("want error for invalid type")
 	}
-	if err := (func() EqualizerConfig { c := valid; c.FrequencyHz = 0; return c }()).Validate(); err == nil {
+	if err := (func() EqualizerConfig { c := valid; c.FrequencyHz = -5; return c }()).Validate(); err == nil {
 		t.Fatal("want error for non-positive frequency")
 	}
 	if err := (func() EqualizerConfig { c := valid; c.Q = 0; return c }()).Validate(); err == nil {
 		t.Fatal("want error for non-positive Q")
+	}
+	multiband := valid
+	multiband.EqualizerMode = EqualizerModeMultiband
+	if err := multiband.Validate(); err != nil {
+		t.Fatalf("multiband Validate() error = %v", err)
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.Gains = "0"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for gains/band count mismatch")
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.LowHz = c.HighHz; return c }()).Validate(); err == nil {
+		t.Fatal("want error for invalid automatic range")
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.ManualBands = "100,0"; c.Gains = "0,0"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for non-positive manual frequency")
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.EqualizerMode = "bogus"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for invalid mode")
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.ManualBands = "100,abc"; c.Gains = "0,0"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for malformed manual bands")
+	}
+	if err := (func() EqualizerConfig { c := multiband; c.Gains = "0,abc"; return c }()).Validate(); err == nil {
+		t.Fatal("want error for malformed gains")
 	}
 }
 

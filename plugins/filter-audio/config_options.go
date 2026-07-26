@@ -421,6 +421,8 @@ func (c EqualizerConfig) Validate() error {
 
 func (c EqualizerConfig) FieldChoices(field string) []string {
 	switch field {
+	case "EqualizerMode":
+		return []string{"single", "multiband"}
 	case "Type":
 		return []string{"peaking", "lowshelf", "highshelf", "lowpass", "highpass"}
 	default:
@@ -608,6 +610,13 @@ type SpeedMode = config.SpeedMode
 const (
 	SpeedModeInterpolate = config.SpeedModeInterpolate
 	SpeedModeRelabel     = config.SpeedModeRelabel
+)
+
+type EqualizerMode = config.EqualizerMode
+
+const (
+	EqualizerModeSingle    = config.EqualizerModeSingle
+	EqualizerModeMultiband = config.EqualizerModeMultiband
 )
 
 type EqualizerType = config.EqualizerType
@@ -884,6 +893,12 @@ func WithMakeupGainDB(v float64) CompressorConfigOption {
 	})
 }
 
+func WithEqualizerMode(v EqualizerMode) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.EqualizerMode = v
+	})
+}
+
 func WithType(v EqualizerType) EqualizerConfigOption {
 	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.Type = v
@@ -905,6 +920,36 @@ func WithGainDB(v float64) EqualizerConfigOption {
 func WithQ(v float64) EqualizerConfigOption {
 	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
 		c.Q = v
+	})
+}
+
+func WithBands(v int) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.Bands = v
+	})
+}
+
+func WithLowHz(v float64) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.LowHz = v
+	})
+}
+
+func WithHighHz(v float64) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.HighHz = v
+	})
+}
+
+func WithManualBands(v string) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.ManualBands = v
+	})
+}
+
+func WithGains(v string) EqualizerConfigOption {
+	return equalizerConfigOptionFunc(func(c *EqualizerConfig) {
+		c.Gains = v
 	})
 }
 
