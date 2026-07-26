@@ -637,7 +637,7 @@ func EnumerateMapValues[T any, K comparable, V any](m *Map[K, V]) iter.Seq[T]
 
 ## `github.com/godexture/sdk` — SDK ユーティリティ
 
-**場所:** `packages/pkg/`
+**場所:** `packages/sdk/`
 
 ### パッケージ `engine`
 

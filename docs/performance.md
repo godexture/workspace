@@ -33,7 +33,7 @@ FLAC のフィールドの大半は 32 bit 以下なので、`Bits64` と signed
 | median | 147,384 ns/op | 128,273 ns/op | 13.05% |
 | mean | 148,354.9 ns/op | 129,158.8 ns/op | 12.91% |
 
-通常ビルドと SIMD ビルドの双方で、`pkg/...`、FLAC decoder/encoder、
+通常ビルドと SIMD ビルドの双方で、`sdk/...`、FLAC decoder/encoder、
 FLAC frame の対象テストを通過した。
 
 MP3 の `BenchmarkDecodeFile` も 30 ペアで測定したが、中央値 -0.09%、平均

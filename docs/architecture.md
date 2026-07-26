@@ -23,7 +23,7 @@ core/
 ├── pipeline/    Geometry、Builder、Pipeline、ChanEdge
 └── factory/     custom Registry / Resolver を組み立てる Provider
 
-pkg/
+sdk/
 └── engine/      plugin 向け Engine API と Node Adapter
 
 plugins/

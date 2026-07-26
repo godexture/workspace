@@ -252,7 +252,7 @@ go mod tidy
 | `cli` が未実装 | コマンドライン実装が必要 |
 | `VideoAttributes` が未実装 | ビデオ処理サポートは将来予定 |
 | `domain/time/rescale.go` が空 | タイムスタンプのリスケールが未実装 |
-| `pkg/bits/reader.go` が空 | ビットリーダーが未実装 |
+| `sdk/bits/reader.go` が空 | ビットリーダーが未実装 |
 | Muxer `AddStream` の `time.Rational` 引数が未使用 | タイムベース設定が未実装 |
 | `manifest.AudioConstraint.Diagnose` は bool を返すが設計と矛盾 | インターフェースと実装が不一致 |
 | WAV Muxer がメモリにパケットを蓄積する | 大容量ファイルでメモリ問題が発生する可能性 |
