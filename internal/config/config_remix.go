@@ -9,8 +9,8 @@ import (
 
 type RemixConfig struct {
 	Layout        media.ChannelLayout `name:"layout" help:"Target channel layout"`
-	CenterMixDB   float64             `name:"center-mix-db" help:"Center channel mix level"`
-	SurroundMixDB float64             `name:"surround-mix-db" help:"Surround channel mix level"`
+	CenterMixDB   float64             `name:"center-mix-db" check:"finite" help:"Center channel mix level"`
+	SurroundMixDB float64             `name:"surround-mix-db" check:"finite" help:"Surround channel mix level"`
 	LFEMixDB      float64             `name:"lfe-mix-db" help:"LFE channel mix level"`
 	Normalize     bool                `name:"normalize" help:"Normalize remix levels"`
 }
@@ -29,7 +29,7 @@ func (c RemixConfig) Validate() error {
 	if err := c.Layout.Validate(); err != nil {
 		return fmt.Errorf("invalid target layout: %w", err)
 	}
-	if !finite(c.CenterMixDB) || !finite(c.SurroundMixDB) || (!math.IsInf(c.LFEMixDB, -1) && !finite(c.LFEMixDB)) {
+	if !math.IsInf(c.LFEMixDB, -1) && !finite(c.LFEMixDB) {
 		return fmt.Errorf("mix levels must be finite or negative infinity for LFE")
 	}
 	return nil

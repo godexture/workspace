@@ -1,27 +1,19 @@
 package config
 
-import "fmt"
-
 // MixerParameters chooses a mixer's port topology: Inputs input ports
 // ("in0".."in{Inputs-1}") and Outputs output ports ("out0".."out{Outputs-1}").
 // It is resolved once per invocation, before MixerConfig is even decoded,
-// since a mixer's actual port set — and therefore what InputRequirements
-// its manifest declares — depends on these values. See
+// since a mixer's actual port set  Eand therefore what InputRequirements
+// its manifest declares  Edepends on these values. See
 // registry.ParameterizedFilterManifest.
 type MixerParameters struct {
-	Inputs  int `name:"in" help:"Number of input ports"`
-	Outputs int `name:"out" help:"Number of output ports"`
+	Inputs  int `name:"in" check:"positive" help:"Number of input ports"`
+	Outputs int `name:"out" check:"positive" help:"Number of output ports"`
 }
 
 var DefaultMixerParameters = MixerParameters{Inputs: 1, Outputs: 1}
 
 func (p MixerParameters) Validate() error {
-	if p.Inputs < 1 {
-		return fmt.Errorf("mixer must have at least one input")
-	}
-	if p.Outputs < 1 {
-		return fmt.Errorf("mixer must have at least one output")
-	}
 	return nil
 }
 

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/godexture/sdk/cliflag"
 )
 
 type EqualizerType string
@@ -52,9 +50,6 @@ var DefaultEqualizerConfig = EqualizerConfig{
 }
 
 func (c EqualizerConfig) Validate() error {
-	if err := cliflag.CheckFields(&c); err != nil {
-		return err
-	}
 	if !c.EqualizerMode.Valid() {
 		return fmt.Errorf("invalid equalizer mode: %q", c.EqualizerMode)
 	}
