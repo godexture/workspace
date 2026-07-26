@@ -6,3 +6,5 @@ build/
 .eslintcache
 .prettiercache
 *.tsbuildinfo
+*.exe
+*.exe~
