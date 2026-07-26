@@ -208,7 +208,7 @@ Capability の `Match()` 実装:
 stream.Type == media.MediaAudio && stream.MediaAttributes.Codec == c.codec
 ```
 
-TransformFunc (Decoder 用):
+Decoder Factory が返す output stream:
 - `CodecPCMU`/`CodecPCMA` の場合: SampleRate を 8000 に、Format を S16 に、Layout を Mono1 に固定
 - それ以外: StreamInfo の属性をそのまま引き継ぐ
 

@@ -33,6 +33,9 @@ go.work.sum
 # env file
 .env
 
+# JS workspace (root package.json links bindings/js and example/web/web)
+node_modules/
+
 # Editor/IDE
 # .idea/
 # .vscode/

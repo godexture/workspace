@@ -155,7 +155,7 @@ type Bundle struct {
 | 型 | フィールド | 説明 |
 |---|-----------|------|
 | `BaseManifest` | `Name string`, `Description string` | 全マニフェストの基底。`ID()` は registry-assigned `PluginKey` |
-| `TransformManifest` | `BaseManifest`, `InputRequirements`, `Resources`, `TransformFunc` | 変換ノード共通 |
+| `TransformManifest` | `BaseManifest`, port ごとの `InputRequirements`, `Resources` | 変換ノード共通 |
 | `DemuxerManifest` | `BaseManifest`, `Probe manifest.Prober`, `Factory DemuxerFactory` | デマックスプラグイン |
 | `MuxerManifest` | `BaseManifest`, `Factory MuxerFactory` | マックスプラグイン |
 | `DecoderManifest` | `TransformManifest`, `Factory DecoderFactory` | デコーダプラグイン |
@@ -169,16 +169,17 @@ type DemuxerFactory func(r io.Reader, config Configuration) (node.Demuxer, error
 type MuxerFactory   func(w io.Writer, config Configuration) (node.Muxer, error)
 
 type TransformFactoryOptions struct {
-    Config    Configuration
-    Resources ResourceBudget
+    Config Configuration
 }
 
-type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, error)
-type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, error)
-type FilterFactory  func(media.StreamInfo, TransformFactoryOptions) (node.Filter, error)
+type EncoderFactory func(media.StreamInfo, media.CodecID, TransformFactoryOptions) (node.Encoder, media.StreamInfo, error)
+type DecoderFactory func(media.StreamInfo, TransformFactoryOptions) (node.Decoder, media.StreamInfo, error)
+type FilterFactory  func(media.StreamInfo, TransformFactoryOptions) (node.Filter, media.StreamInfo, error)
+
+type Preparer interface { Prepare(ResourceGrant) error }
 ```
 
-`ResourceRequest{Parallelism: true}` は transform が並列予算を利用できることを宣言します。`ResourceBudget.Parallelism` は negotiation 後に各 instance へ割り当てられます。
+`ResourceRequest{Parallelism: true}` は transform が並列予算を利用できることを宣言します。Factory は output `StreamInfo` を唯一の根拠として返し、高コストな初期化は optional な `Preparer` が negotiation 後の `ResourceGrant` を受けて行います。
 
 #### インターフェース
 
@@ -241,13 +242,25 @@ import "github.com/godexture/core/routing"
 
 ```go
 type FilterSpec struct {
+    Alias string
     Config registry.Configuration
+    Inputs map[string]string // port -> named auxiliary input
+}
+
+type AuxInputSpec struct {
+    Source io.ReadSeeker
+    DemuxManifest registry.DemuxerManifest
+    DemuxConfig registry.Configuration
+    DecoderManifest registry.DecoderManifest
+    DecodeConfig registry.Configuration
+    Filters []FilterSpec
 }
 
 type ConversionSpec struct {
     Input, Output ...
     DecodeConfig registry.Configuration
     Filters      []FilterSpec
+    AuxInputs    map[string]AuxInputSpec
     TargetCodec  media.CodecID
     EncodeConfig registry.Configuration
     MuxConfig    registry.Configuration
@@ -374,7 +387,6 @@ func WithDts(dts Dts) PacketOption
 type Frame interface {
     Retainer
     Pts() Pts
-    Metadata() *metadata.Bundle
 }
 
 type AudioFrame struct {
@@ -388,7 +400,6 @@ type AudioFrame struct {
 
 func (f *AudioFrame) Pts() Pts
 func (f *AudioFrame) Planes() [][]byte
-func (f *AudioFrame) Metadata() *metadata.Bundle
 
 // ジェネリックプレーン取得 (unsafe ポインタ経由)
 func Plane[T SampleType](f *AudioFrame, planeIndex int) []T
@@ -498,34 +509,39 @@ type ErrorHandler interface {
 import "github.com/godexture/core/domain/metadata"
 ```
 
-型安全なキー/値ストアです。
+型安全なキー/値ストアです。`StreamInfo.Metadata` / `Muxer.SetMetadata` / `Demuxer.Metadata`
+を通じてストリーム単位のタグ情報 (タイトル・アーティスト名など) を運びます。`AudioFrame` は
+これを保持しません — フレーム単位のメタデータは現状未実装です。
 
 ```go
 type Bundle struct { ... }
 
 func NewBundle() *Bundle
-func (b *Bundle) Set(key any, value any)
 func (b *Bundle) Clear()
+func (b *Bundle) Merge(other *Bundle)
+func (b *Bundle) Clone() *Bundle
 
-// 型パラメータで取得 (型不一致時は TypeError を返す)
-func Get[T any](b *Bundle, key any) (T, error)
+// single キーは上書き、multiple キーは追記
+func (b *Bundle) Set(value single)
+func (b *Bundle) PushBack(value multiple)
+func (b *Bundle) PushFront(value multiple)
 
-var ErrNotFound = errors.New("metadata: key not found")
-
-type TypeError struct {
-    Key      any
-    Expected string
-    Actual   string
-}
+// 型パラメータで取得 (未設定ならゼロ値)
+func Get[T single](b *Bundle) T
+func Enumerate[T multiple](b *Bundle) []T
 ```
 
-#### 定義済みキー型
+#### 定義済みキー型 (抜粋)
 
 ```go
-type KeySilence struct{}     // bool: このフレームが無音かどうか
-type KeyVolume struct{}      // float64: 音量
-type KeyIsKeyFrame struct{}  // bool: キーフレームかどうか
+type KeyTitle string        // タイトル
+type KeyArtist string        // アーティスト (multiple)
+type KeyAlbum string          // アルバム名
+type KeyTrackNumber int64     // トラック番号
+type KeyThumbnail []Thumbnail // サムネイル画像 (multiple)
 ```
+
+全キーは `core/domain/metadata/keys.go` を参照してください。
 
 ---
 
@@ -660,14 +676,14 @@ type EncoderEngine interface {
 // デコーダ
 type DecoderEngine interface {
     SendPacket(pkt *media.Packet) error
-    ReceiveFrame() (*media.Frame, error)
+    ReceiveFrame() (media.Frame, error)
     Flush() error
 }
 
 // フィルタ
 type FilterEngine interface {
     SendFrame(frame *media.Frame) error
-    ReceiveFrame() (*media.Frame, error)
+    ReceiveFrame() (media.Frame, error)
     Flush() error
 }
 ```

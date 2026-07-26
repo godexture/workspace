@@ -1,0 +1,28 @@
+# The example/web Docker builds use this repo root as their build context
+# (go.work and the bun workspace root both live here), so this keeps that
+# context transfer fast by dropping build artifacts and unrelated local
+# clutter that individual Dockerfiles never COPY anyway.
+
+.git
+.claude
+.vscode
+.pprof
+
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+
+**/*.exe
+**/*.test
+**/*.dll
+**/*.so
+**/*.dylib
+**/*.out
+**/coverage.*
+**/*.coverprofile
+**/profile.cov
+
+/test.wav
+/out.flac
+
+example/web/client/public/wasm

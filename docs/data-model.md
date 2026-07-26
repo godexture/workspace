@@ -40,9 +40,8 @@
 │  │ - StreamIndex │       │ - Layout: ChannelLayout          │   │
 │  │ - PTS, DTS    │       │ - SampleRate: int                │   │
 │  │ - Timebase    │       │ - Samples: int                   │   │
-│  │ - data *[]byte│       │ - meta: *metadata.Bundle         │   │
-│  └──────────────┘       │ - planes: [][]byte               │   │
-│                         └──────────────────────────────────┘   │
+│  │ - data *[]byte│       │ - planes: [][]byte               │   │
+│  └──────────────┘       └──────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -153,7 +152,6 @@ pkt.Release()  // refCount が 0 になると pool に返却
 type Frame interface {
     Retainer
     Pts() Pts
-    Metadata() *metadata.Bundle
 }
 ```
 
@@ -166,7 +164,6 @@ type AudioFrame struct {
     Layout     ChannelLayout
     SampleRate int            // ex: 48000
     Samples    int            // サンプル数 (フレームあたり)
-    meta       *metadata.Bundle
     planes     [][]byte       // チャネル/プレーン別のスライス
 }
 ```
@@ -255,34 +252,35 @@ layout.ChannelCount() // → (order+1)^2 = 4
 
 ## `metadata.Bundle` — タグ情報
 
-フレームやストリームに付随する型安全なキー/値ストアです。
+`StreamInfo.Metadata` / `Muxer.SetMetadata` / `Demuxer.Metadata` を通じてやり取りされる、
+ストリームに付随する型安全なキー/値ストアです（タイトルやアーティスト名などのタグ情報)。
+`AudioFrame` はこれを保持しません — フレーム単位のメタデータは現状未実装です。
 
 ```go
 bundle := metadata.NewBundle()
 
-// 書き込み
-bundle.Set(metadata.KeySilence{}, true)
-bundle.Set(metadata.KeyVolume{}, 0.85)
+// 書き込み (single 値は上書き、multiple 値は PushBack/PushFront で追記)
+bundle.Set(metadata.KeyTitle("Song Title"))
+bundle.PushBack(metadata.KeyArtist("Artist Name"))
 
-// 型安全な読み込み
-vol, err := metadata.Get[float64](bundle, metadata.KeyVolume{})
-if errors.Is(err, metadata.ErrNotFound) {
-    // キーが存在しない
-}
-
-// フレーム処理後のリセット
-bundle.Clear()
+// 型安全な読み込み (未設定ならゼロ値)
+title := metadata.Get[metadata.KeyTitle](bundle)
+artists := metadata.Enumerate[metadata.KeyArtist](bundle)
 ```
 
-### 標準キー
+### 標準キー (抜粋)
 
 | キー型 | 値型 | 説明 |
 |-------|------|------|
-| `metadata.KeySilence{}` | `bool` | 無音フラグ |
-| `metadata.KeyVolume{}` | `float64` | 音量レベル (0.0〜1.0) |
-| `metadata.KeyIsKeyFrame{}` | `bool` | キーフレームかどうか |
+| `metadata.KeyTitle` | `string` | タイトル |
+| `metadata.KeyArtist` | `string` | アーティスト (複数可) |
+| `metadata.KeyAlbum` | `string` | アルバム名 |
+| `metadata.KeyTrackNumber` | `int64` | トラック番号 |
+| `metadata.KeyThumbnail` | `[]Thumbnail` | サムネイル画像 (複数可) |
 
-> キー型はポインタではなく **値型の空構造体** を使う慣習です。  
+全キーは [`core/domain/metadata/keys.go`](../core/domain/metadata/keys.go) を参照してください。
+
+> キー型はポインタではなく **値型** を使う慣習です。  
 > これにより型安全性が保証され、文字列キーとの衝突を避けられます。
 
 ---

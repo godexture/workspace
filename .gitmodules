@@ -16,12 +16,6 @@
 [submodule "bindings"]
 	path = bindings
 	url = https://github.com/godexture/bindings.git
-[submodule "example/go"]
-	path = example/go
-	url = https://github.com/godexture/example.git
-[submodule "example/assets"]
-	path = example/assets
-	url = https://github.com/godexture/assets.git
 [submodule "plugins/codec-flac"]
 	path = plugins/codec-flac
 	url = https://github.com/godexture/codec-flac.git
@@ -49,3 +43,12 @@
 [submodule "plugins/metadata-vorbiscomment"]
 	path = plugins/metadata-vorbiscomment
 	url = https://github.com/godexture/metadata-vorbiscomment.git
+[submodule "example/go"]
+	path = example/go
+	url = https://github.com/godexture/example.git
+[submodule "example/web"]
+	path = example/web
+	url = https://github.com/godexture/example-web.git
+[submodule "example/assets"]
+	path = example/assets
+	url = https://github.com/godexture/assets.git

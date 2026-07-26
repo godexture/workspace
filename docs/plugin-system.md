@@ -35,7 +35,7 @@ type DecoderConfig struct {
     Strict bool
 }
 
-if err := godec.Register(NewDecoderConfig(), decoderManifest); err != nil {
+if err := godec.Register(MustNewDecoderConfig(), decoderManifest); err != nil {
     panic(err)
 }
 ```
@@ -63,31 +63,31 @@ Config に ID 用メソッドを実装する必要はありません。Config �
 ```go
 TransformManifest: registry.TransformManifest{
     BaseManifest: registry.BaseManifest{Name: "my-decoder"},
-    InputRequirements: registry.StaticRequirements(myCapability{}),
+    InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(myCapability{})),
     Resources: registry.ResourceRequest{
         Parallelism: true,
     },
-    TransformFunc: transformProfile,
 }
 ```
 
-Negotiator は decoder、明示された全 filter、encoder の topology を確定してから、pipeline 全体の budget を公平に配分します。Plugin は factory options から自分の割り当てだけを受け取ります。
+Negotiator は decoder、明示された全 filter、encoder の topology を確定してから、pipeline 全体の budget を配分します。Factory は semantic config と input stream から実際の output stream を返し、resource grant は Factory ではなく `registry.Preparer.Prepare` で受け取ります。
 
 ```go
 Factory: func(
     stream media.StreamInfo,
     options registry.TransformFactoryOptions,
-) (node.Decoder, error) {
+) (node.Decoder, media.StreamInfo, error) {
     config, err := engine.ResolveConfig[internalConfig, DecoderConfig](options.Config)
     if err != nil {
-        return nil, err
+        return nil, media.StreamInfo{}, err
     }
-    implementation := newDecoder(config, options.Resources.Parallelism)
-    return engine.WrapDecoder(implementation), nil
+    output := stream.Clone()
+    output.Codec = media.CodecLPCM
+    return engine.WrapDecoder(newDecoder(config)), output, nil
 }
 ```
 
-非対応 transform には zero budget が渡ります。並列対応 transform に渡る `Parallelism` は 1 以上です。1 の場合は worker goroutine を作らず同期実行することを推奨します。
+並列対応 node は `Prepare(registry.ResourceGrant)` で shared worker pool を受け取ります。pool が nil の場合は同期実行することを推奨します。
 
 ## Decoder plugin の例
 
@@ -105,40 +105,26 @@ func (c flacCapability) Diagnose(stream media.StreamInfo) error {
 }
 
 func init() {
-    if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
+    if err := godec.Register(MustNewDecoderConfig(), registry.DecoderManifest{
         TransformManifest: registry.TransformManifest{
             BaseManifest: registry.BaseManifest{
                 Name:        "my-flac-decoder",
                 Description: "FLAC decoder",
             },
-            InputRequirements: registry.StaticRequirements(flacCapability{}),
+            InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(flacCapability{})),
             Resources: registry.ResourceRequest{Parallelism: true},
-            TransformFunc: func(
-                stream media.StreamInfo,
-                _ media.CodecID,
-                _ registry.Configuration,
-            ) (media.Profile, error) {
-                profile := media.Profile{
-                    Type:            stream.Type,
-                    MediaAttributes: stream.MediaAttributes,
-                }
-                profile.Codec = media.CodecLPCM
-                return profile, nil
-            },
         },
         Factory: func(
             stream media.StreamInfo,
             options registry.TransformFactoryOptions,
-        ) (node.Decoder, error) {
+        ) (node.Decoder, media.StreamInfo, error) {
             resolved, err := engine.ResolveConfig[internalConfig, DecoderConfig](options.Config)
             if err != nil {
-                return nil, err
+                return nil, media.StreamInfo{}, err
             }
-            return engine.WrapDecoder(newDecoder(
-                stream,
-                resolved,
-                options.Resources.Parallelism,
-            )), nil
+            output := stream.Clone()
+            output.Codec = media.CodecLPCM
+            return engine.WrapDecoder(newDecoder(stream, resolved)), output, nil
         },
     }); err != nil {
         panic(err)
@@ -153,7 +139,7 @@ type EncoderFactory func(
     input media.StreamInfo,
     target media.CodecID,
     options registry.TransformFactoryOptions,
-) (node.Encoder, error)
+) (node.Encoder, media.StreamInfo, error)
 ```
 
 Filter factory は Decoder と同じ options を受け取り、`media.Frame` を入出力します。
@@ -163,10 +149,10 @@ Filter factory は Decoder と同じ options を受け取り、`media.Frame` を
 SDK の Adapter を使うと Engine API を Node に変換できます。
 
 ```go
-return engine.WrapDecoder(decoderEngine), nil
+return engine.WrapDecoder(decoderEngine)
 ```
 
-Node は `Start(context.Context) error` と idempotent な `Close() error` を実装します。Engine が resource を所有する場合は `Close() error` を実装してください。Adapter が Pipeline の Close を Engine へ一度だけ転送します。
+Factory は cheap な config 検証と output `StreamInfo` の決定だけを行います。resource 依存または高コストな初期化が必要な node は optional な `registry.Preparer` を実装し、Pipeline が `Start` 前に `Prepare(registry.ResourceGrant)` を一度呼びます。Node 自体は `Start(context.Context) error` と idempotent な `Close() error` を実装します。Engine が resource を所有する場合は `Close() error` を実装してください。Adapter が Pipeline の Close を Engine へ一度だけ転送します。
 
 Worker pool は instance-owned かつ lazy にし、constructor や package `init` で goroutine を開始しないでください。`Flush` は受理済みの仕事を drain し、`Close` は正常・エラー・キャンセルの全経路で resource を解放します。
 
@@ -191,14 +177,14 @@ Filter は config で明示し、指定順に topology へ入ります。
 geometry, err := negotiator.NegotiateConversion(ctx, routing.ConversionSpec{
     Input:       input,
     Output:      output,
-    DecodeConfig: mycodec.NewDecoderConfig(),
+    DecodeConfig: mycodec.MustNewDecoderConfig(),
     Filters: []routing.FilterSpec{
         {Config: resample.NewConfig()},
         {Config: normalize.NewConfig()},
     },
     TargetCodec: media.CodecFLAC,
-    EncodeConfig: mycodec.NewEncoderConfig(),
-    MuxConfig:    flacformat.NewMuxerConfig(),
+    EncodeConfig: mycodec.MustNewEncoderConfig(),
+    MuxConfig:    flacformat.MustNewMuxerConfig(),
     Resources: registry.ResourceBudget{
         Parallelism: runtime.GOMAXPROCS(0),
     },
