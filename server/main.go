@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/godexture/example-web/internal/api"
-	"github.com/godexture/example-web/internal/jobs"
+	"github.com/godexture/web/internal/api"
+	"github.com/godexture/web/internal/jobs"
 
 	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-mp3"

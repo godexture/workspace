@@ -1,4 +1,4 @@
-module github.com/godexture/example-web
+module github.com/godexture/web
 
 go 1.26.4
 

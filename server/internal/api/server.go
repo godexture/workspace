@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/godexture/example-web/internal/jobs"
+	"github.com/godexture/web/internal/jobs"
 	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/conversion"
 	"github.com/labstack/echo/v4"
