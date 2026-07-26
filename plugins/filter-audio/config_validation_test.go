@@ -71,7 +71,7 @@ func TestCompressorConfigValidate(t *testing.T) {
 
 func TestEqualizerConfigValidate(t *testing.T) {
 	t.Parallel()
-	valid := filter.NewEqualizerConfig()
+	valid := filter.MustNewEqualizerConfig()
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}

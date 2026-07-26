@@ -30,10 +30,10 @@ func BenchmarkDecodeConformance(b *testing.B) {
 			cfg := testutil.DecodeConfig{
 				MediaPath: benchmark.path,
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-					return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig(flacFormat.WithStrict(true)))
+					return flacFormat.NewDemuxerEngine(r, flacFormat.MustNewDemuxerConfig(flacFormat.WithStrict(true)))
 				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
-					dec, err := flacCodec.NewDecoderEngine(stream, flacCodec.NewDecoderConfig())
+					dec, err := flacCodec.NewDecoderEngine(stream, flacCodec.MustNewDecoderConfig())
 					if err != nil {
 						b.Fatal(err)
 					}

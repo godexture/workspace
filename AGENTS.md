@@ -40,3 +40,4 @@
 - 全モジュールのテスト: `.\test-runner.exe --simd` (at the workspace root)
     - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
     
+- 全 generator の実行 `.\generate.exe` (at the workspace root)

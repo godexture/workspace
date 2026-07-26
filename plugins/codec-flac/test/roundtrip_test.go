@@ -27,25 +27,25 @@ func TestRoundtrip(t *testing.T) {
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
 			Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-				return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig(flacFormat.WithStrict(true)))
+				return flacFormat.NewDemuxerEngine(r, flacFormat.MustNewDemuxerConfig(flacFormat.WithStrict(true)))
 			},
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
 				streamInfo.Metadata = *metadata.NewBundle()
-				dec, err := flacCodec.NewDecoderEngine(streamInfo, flacCodec.NewDecoderConfig(flacCodec.WithStrict(true)))
+				dec, err := flacCodec.NewDecoderEngine(streamInfo, flacCodec.MustNewDecoderConfig(flacCodec.WithStrict(true)))
 				if err != nil {
 					t.Fatal(err)
 				}
 				return dec
 			},
 			Encode: func() engine.EncoderEngine {
-				encoder, err := flacCodec.NewEncoderEngine(flacCodec.NewEncoderConfig())
+				encoder, err := flacCodec.NewEncoderEngine(flacCodec.MustNewEncoderConfig())
 				if err != nil {
 					t.Fatal(err)
 				}
 				return encoder
 			},
 			Mux: func(w io.Writer) engine.MuxerEngine {
-				mux, err := flacFormat.NewMuxerEngine(w, flacFormat.NewMuxerConfig())
+				mux, err := flacFormat.NewMuxerEngine(w, flacFormat.MustNewMuxerConfig())
 				if err != nil {
 					t.Fatal(err)
 				}

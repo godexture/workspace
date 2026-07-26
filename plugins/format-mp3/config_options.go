@@ -18,10 +18,21 @@ func (f demuxerConfigOptionFunc) applyDemuxerConfig(c *DemuxerConfig) {
 	f(c)
 }
 
-func NewDemuxerConfig(options ...DemuxerConfigOption) DemuxerConfig {
+func NewDemuxerConfig(options ...DemuxerConfigOption) (DemuxerConfig, error) {
 	config := DemuxerConfig(DemuxerConfig{})
 	for _, option := range options {
 		option.applyDemuxerConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewDemuxerConfig(options ...DemuxerConfigOption) DemuxerConfig {
+	config, err := NewDemuxerConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -50,10 +61,21 @@ func (f muxerConfigOptionFunc) applyMuxerConfig(c *MuxerConfig) {
 	f(c)
 }
 
-func NewMuxerConfig(options ...MuxerConfigOption) MuxerConfig {
+func NewMuxerConfig(options ...MuxerConfigOption) (MuxerConfig, error) {
 	config := MuxerConfig(MuxerConfig{})
 	for _, option := range options {
 		option.applyMuxerConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewMuxerConfig(options ...MuxerConfigOption) MuxerConfig {
+	config, err := NewMuxerConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }

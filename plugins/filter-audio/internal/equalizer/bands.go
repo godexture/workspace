@@ -71,5 +71,8 @@ func bandQ(pairs []pair, index int) float64 {
 	}
 	bandwidth := math.Log2(highEdge / lowEdge)
 	p := math.Pow(2, bandwidth)
+	if p <= 1 {
+		return math.Sqrt2
+	}
 	return math.Sqrt(p) / (p - 1)
 }

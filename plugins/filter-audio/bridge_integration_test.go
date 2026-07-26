@@ -56,7 +56,7 @@ func TestAutomaticBridgeConvertsWAVFloatToFLAC(t *testing.T) {
 		Input:       bytes.NewReader(input),
 		Output:      &output,
 		TargetCodec: media.CodecFLAC,
-		MuxConfig:   formatFlac.NewMuxerConfig(),
+		MuxConfig:   formatFlac.MustNewMuxerConfig(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestAutomaticBridgeConvertsWAVFloatToFLAC(t *testing.T) {
 func makeFloatWAV(t *testing.T, samples []float32) []byte {
 	t.Helper()
 	var result bytes.Buffer
-	muxer, err := formatWav.NewMuxerEngine(&result, formatWav.NewMuxerConfig())
+	muxer, err := formatWav.NewMuxerEngine(&result, formatWav.MustNewMuxerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

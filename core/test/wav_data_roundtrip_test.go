@@ -37,7 +37,7 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig), wavpkg.NewDemuxerConfig())
+			demux, err := wavpkg.NewDemuxerEngine(bytes.NewReader(orig), wavpkg.MustNewDemuxerConfig())
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}
@@ -52,7 +52,7 @@ func TestWaveFilesInDataRoundtrip(t *testing.T) {
 
 			f := testutil.NewBuffer(nil)
 
-			muxer, err := wavpkg.NewMuxerEngine(f, wavpkg.NewMuxerConfig())
+			muxer, err := wavpkg.NewMuxerEngine(f, wavpkg.MustNewMuxerConfig())
 			if err != nil {
 				t.Fatalf("NewMuxerEngine: %v", err)
 			}

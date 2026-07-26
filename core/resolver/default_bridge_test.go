@@ -136,7 +136,7 @@ func registerBridgeFilter(
 	t.Helper()
 	err := filters.Register(registry.FilterManifest{
 		TransformManifest: registry.TransformManifest{
-			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
+			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: registry.StaticConfigurationFactory(config)},
 			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(bridgeAnyAudioCapability{})),
 		},
 		OutputPorts: []string{"out"},

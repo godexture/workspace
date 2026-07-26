@@ -51,9 +51,15 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 		}
 
 		constructorName := "New" + configName
-		fmt.Fprintf(body, "func %s(options ...%s) %s {\n", constructorName, optName, configName)
+		fmt.Fprintf(body, "func %s(options ...%s) (%s, error) {\n", constructorName, optName, configName)
 		fmt.Fprintf(body, "\tconfig := %s(%s)\n", configName, initExpr)
 		fmt.Fprintf(body, "\tfor _, option := range options {\n\t\toption.apply%s(&config)\n\t}\n", configName)
+		fmt.Fprintf(body, "\tif err := config.Validate(); err != nil {\n\t\treturn config, err\n\t}\n")
+		fmt.Fprintf(body, "\treturn config, nil\n}\n\n")
+
+		fmt.Fprintf(body, "func Must%s(options ...%s) %s {\n", constructorName, optName, configName)
+		fmt.Fprintf(body, "\tconfig, err := %s(options...)\n", constructorName)
+		fmt.Fprintf(body, "\tif err != nil {\n\t\tpanic(err)\n\t}\n")
 		fmt.Fprintf(body, "\treturn config\n}\n\n")
 
 		fmt.Fprintf(body, "func (c %s) ResolveDefault() %s {\n\treturn %s(%s)\n}\n\n", configName, t.ResolvedType, t.ResolvedType, initExpr)
@@ -98,9 +104,8 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 		if field.Tag == nil {
 			continue
 		}
-		tagStr := strings.Trim(field.Tag.Value, "`")
-		structTag := reflect.StructTag(tagStr)
-		
+		structTag := fieldTag(field)
+
 		checkTag, checkOk := structTag.Lookup("check")
 		dependsOnTag, dependsOk := structTag.Lookup("depends-on")
 		
@@ -162,12 +167,17 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 	}
 }
 
+func fieldTag(field *ast.Field) reflect.StructTag {
+	if field.Tag == nil {
+		return ""
+	}
+	return reflect.StructTag(strings.Trim(field.Tag.Value, "`"))
+}
+
 func findGoFieldNameByTagName(structType *ast.StructType, tagName string) string {
 	for _, field := range structType.Fields.List {
-		if field.Tag != nil && len(field.Names) == 1 {
-			tagStr := strings.Trim(field.Tag.Value, "`")
-			structTag := reflect.StructTag(tagStr)
-			if nameTag, ok := structTag.Lookup("name"); ok && nameTag == tagName {
+		if len(field.Names) == 1 {
+			if nameTag, ok := fieldTag(field).Lookup("name"); ok && nameTag == tagName {
 				return field.Names[0].Name
 			}
 		}
@@ -176,12 +186,8 @@ func findGoFieldNameByTagName(structType *ast.StructType, tagName string) string
 }
 
 func getCliFieldName(field *ast.Field, fallback string) string {
-	if field.Tag != nil {
-		tagStr := strings.Trim(field.Tag.Value, "`")
-		structTag := reflect.StructTag(tagStr)
-		if nameTag, ok := structTag.Lookup("name"); ok {
-			return nameTag
-		}
+	if nameTag, ok := fieldTag(field).Lookup("name"); ok {
+		return nameTag
 	}
 	return fallback
 }

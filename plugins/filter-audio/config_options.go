@@ -22,10 +22,21 @@ func (f formatConfigOptionFunc) applyFormatConfig(c *FormatConfig) {
 	f(c)
 }
 
-func NewFormatConfig(options ...FormatConfigOption) FormatConfig {
+func NewFormatConfig(options ...FormatConfigOption) (FormatConfig, error) {
 	config := FormatConfig(config.DefaultFormatConfig)
 	for _, option := range options {
 		option.applyFormatConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewFormatConfig(options ...FormatConfigOption) FormatConfig {
+	config, err := NewFormatConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -57,10 +68,21 @@ func (f resampleConfigOptionFunc) applyResampleConfig(c *ResampleConfig) {
 	f(c)
 }
 
-func NewResampleConfig(options ...ResampleConfigOption) ResampleConfig {
+func NewResampleConfig(options ...ResampleConfigOption) (ResampleConfig, error) {
 	config := ResampleConfig(config.DefaultResampleConfig)
 	for _, option := range options {
 		option.applyResampleConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewResampleConfig(options ...ResampleConfigOption) ResampleConfig {
+	config, err := NewResampleConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -92,10 +114,21 @@ func (f remixConfigOptionFunc) applyRemixConfig(c *RemixConfig) {
 	f(c)
 }
 
-func NewRemixConfig(options ...RemixConfigOption) RemixConfig {
+func NewRemixConfig(options ...RemixConfigOption) (RemixConfig, error) {
 	config := RemixConfig(config.DefaultRemixConfig)
 	for _, option := range options {
 		option.applyRemixConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewRemixConfig(options ...RemixConfigOption) RemixConfig {
+	config, err := NewRemixConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -130,10 +163,21 @@ func (f gainConfigOptionFunc) applyGainConfig(c *GainConfig) {
 	f(c)
 }
 
-func NewGainConfig(options ...GainConfigOption) GainConfig {
+func NewGainConfig(options ...GainConfigOption) (GainConfig, error) {
 	config := GainConfig(config.DefaultGainConfig)
 	for _, option := range options {
 		option.applyGainConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewGainConfig(options ...GainConfigOption) GainConfig {
+	config, err := NewGainConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -165,10 +209,21 @@ func (f normalizeConfigOptionFunc) applyNormalizeConfig(c *NormalizeConfig) {
 	f(c)
 }
 
-func NewNormalizeConfig(options ...NormalizeConfigOption) NormalizeConfig {
+func NewNormalizeConfig(options ...NormalizeConfigOption) (NormalizeConfig, error) {
 	config := NormalizeConfig(config.DefaultNormalizeConfig)
 	for _, option := range options {
 		option.applyNormalizeConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewNormalizeConfig(options ...NormalizeConfigOption) NormalizeConfig {
+	config, err := NewNormalizeConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -200,10 +255,21 @@ func (f fadeConfigOptionFunc) applyFadeConfig(c *FadeConfig) {
 	f(c)
 }
 
-func NewFadeConfig(options ...FadeConfigOption) FadeConfig {
+func NewFadeConfig(options ...FadeConfigOption) (FadeConfig, error) {
 	config := FadeConfig(config.DefaultFadeConfig)
 	for _, option := range options {
 		option.applyFadeConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewFadeConfig(options ...FadeConfigOption) FadeConfig {
+	config, err := NewFadeConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -238,10 +304,21 @@ func (f dCOffsetConfigOptionFunc) applyDCOffsetConfig(c *DCOffsetConfig) {
 	f(c)
 }
 
-func NewDCOffsetConfig(options ...DCOffsetConfigOption) DCOffsetConfig {
+func NewDCOffsetConfig(options ...DCOffsetConfigOption) (DCOffsetConfig, error) {
 	config := DCOffsetConfig(config.DefaultDCOffsetConfig)
 	for _, option := range options {
 		option.applyDCOffsetConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewDCOffsetConfig(options ...DCOffsetConfigOption) DCOffsetConfig {
+	config, err := NewDCOffsetConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -270,10 +347,21 @@ func (f gateConfigOptionFunc) applyGateConfig(c *GateConfig) {
 	f(c)
 }
 
-func NewGateConfig(options ...GateConfigOption) GateConfig {
+func NewGateConfig(options ...GateConfigOption) (GateConfig, error) {
 	config := GateConfig(config.DefaultGateConfig)
 	for _, option := range options {
 		option.applyGateConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewGateConfig(options ...GateConfigOption) GateConfig {
+	config, err := NewGateConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -354,10 +442,21 @@ func (f trimConfigOptionFunc) applyTrimConfig(c *TrimConfig) {
 	f(c)
 }
 
-func NewTrimConfig(options ...TrimConfigOption) TrimConfig {
+func NewTrimConfig(options ...TrimConfigOption) (TrimConfig, error) {
 	config := TrimConfig(config.DefaultTrimConfig)
 	for _, option := range options {
 		option.applyTrimConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewTrimConfig(options ...TrimConfigOption) TrimConfig {
+	config, err := NewTrimConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -398,10 +497,21 @@ func (f speedConfigOptionFunc) applySpeedConfig(c *SpeedConfig) {
 	f(c)
 }
 
-func NewSpeedConfig(options ...SpeedConfigOption) SpeedConfig {
+func NewSpeedConfig(options ...SpeedConfigOption) (SpeedConfig, error) {
 	config := SpeedConfig(config.DefaultSpeedConfig)
 	for _, option := range options {
 		option.applySpeedConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewSpeedConfig(options ...SpeedConfigOption) SpeedConfig {
+	config, err := NewSpeedConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -445,10 +555,21 @@ func (f compressorConfigOptionFunc) applyCompressorConfig(c *CompressorConfig) {
 	f(c)
 }
 
-func NewCompressorConfig(options ...CompressorConfigOption) CompressorConfig {
+func NewCompressorConfig(options ...CompressorConfigOption) (CompressorConfig, error) {
 	config := CompressorConfig(config.DefaultCompressorConfig)
 	for _, option := range options {
 		option.applyCompressorConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewCompressorConfig(options ...CompressorConfigOption) CompressorConfig {
+	config, err := NewCompressorConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -504,10 +625,21 @@ func (f equalizerConfigOptionFunc) applyEqualizerConfig(c *EqualizerConfig) {
 	f(c)
 }
 
-func NewEqualizerConfig(options ...EqualizerConfigOption) EqualizerConfig {
+func NewEqualizerConfig(options ...EqualizerConfigOption) (EqualizerConfig, error) {
 	config := EqualizerConfig(config.DefaultEqualizerConfig)
 	for _, option := range options {
 		option.applyEqualizerConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewEqualizerConfig(options ...EqualizerConfigOption) EqualizerConfig {
+	config, err := NewEqualizerConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -595,10 +727,21 @@ func (f delayConfigOptionFunc) applyDelayConfig(c *DelayConfig) {
 	f(c)
 }
 
-func NewDelayConfig(options ...DelayConfigOption) DelayConfig {
+func NewDelayConfig(options ...DelayConfigOption) (DelayConfig, error) {
 	config := DelayConfig(config.DefaultDelayConfig)
 	for _, option := range options {
 		option.applyDelayConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewDelayConfig(options ...DelayConfigOption) DelayConfig {
+	config, err := NewDelayConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -651,10 +794,21 @@ func (f reverbConfigOptionFunc) applyReverbConfig(c *ReverbConfig) {
 	f(c)
 }
 
-func NewReverbConfig(options ...ReverbConfigOption) ReverbConfig {
+func NewReverbConfig(options ...ReverbConfigOption) (ReverbConfig, error) {
 	config := ReverbConfig(config.DefaultReverbConfig)
 	for _, option := range options {
 		option.applyReverbConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewReverbConfig(options ...ReverbConfigOption) ReverbConfig {
+	config, err := NewReverbConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -707,10 +861,21 @@ func (f convolutionConfigOptionFunc) applyConvolutionConfig(c *ConvolutionConfig
 	f(c)
 }
 
-func NewConvolutionConfig(options ...ConvolutionConfigOption) ConvolutionConfig {
+func NewConvolutionConfig(options ...ConvolutionConfigOption) (ConvolutionConfig, error) {
 	config := ConvolutionConfig(config.DefaultConvolutionConfig)
 	for _, option := range options {
 		option.applyConvolutionConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewConvolutionConfig(options ...ConvolutionConfigOption) ConvolutionConfig {
+	config, err := NewConvolutionConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -748,10 +913,21 @@ func (f mixerParametersOptionFunc) applyMixerParameters(c *MixerParameters) {
 	f(c)
 }
 
-func NewMixerParameters(options ...MixerParametersOption) MixerParameters {
+func NewMixerParameters(options ...MixerParametersOption) (MixerParameters, error) {
 	config := MixerParameters(config.DefaultMixerParameters)
 	for _, option := range options {
 		option.applyMixerParameters(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewMixerParameters(options ...MixerParametersOption) MixerParameters {
+	config, err := NewMixerParameters(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -786,10 +962,21 @@ func (f mixerConfigOptionFunc) applyMixerConfig(c *MixerConfig) {
 	f(c)
 }
 
-func NewMixerConfig(options ...MixerConfigOption) MixerConfig {
+func NewMixerConfig(options ...MixerConfigOption) (MixerConfig, error) {
 	config := MixerConfig(config.DefaultMixerConfig)
 	for _, option := range options {
 		option.applyMixerConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewMixerConfig(options ...MixerConfigOption) MixerConfig {
+	config, err := NewMixerConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }

@@ -35,7 +35,7 @@ type DecoderConfig struct {
     Strict bool
 }
 
-if err := godec.Register(NewDecoderConfig(), decoderManifest); err != nil {
+if err := godec.Register(MustNewDecoderConfig(), decoderManifest); err != nil {
     panic(err)
 }
 ```
@@ -105,7 +105,7 @@ func (c flacCapability) Diagnose(stream media.StreamInfo) error {
 }
 
 func init() {
-    if err := godec.Register(NewDecoderConfig(), registry.DecoderManifest{
+    if err := godec.Register(MustNewDecoderConfig(), registry.DecoderManifest{
         TransformManifest: registry.TransformManifest{
             BaseManifest: registry.BaseManifest{
                 Name:        "my-flac-decoder",
@@ -177,14 +177,14 @@ Filter は config で明示し、指定順に topology へ入ります。
 geometry, err := negotiator.NegotiateConversion(ctx, routing.ConversionSpec{
     Input:       input,
     Output:      output,
-    DecodeConfig: mycodec.NewDecoderConfig(),
+    DecodeConfig: mycodec.MustNewDecoderConfig(),
     Filters: []routing.FilterSpec{
         {Config: resample.NewConfig()},
         {Config: normalize.NewConfig()},
     },
     TargetCodec: media.CodecFLAC,
-    EncodeConfig: mycodec.NewEncoderConfig(),
-    MuxConfig:    flacformat.NewMuxerConfig(),
+    EncodeConfig: mycodec.MustNewEncoderConfig(),
+    MuxConfig:    flacformat.MustNewMuxerConfig(),
     Resources: registry.ResourceBudget{
         Parallelism: runtime.GOMAXPROCS(0),
     },

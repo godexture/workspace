@@ -21,10 +21,10 @@ func TestRoundtrip(t *testing.T) {
 			testutil.RunRoundtripTests(t, testutil.RoundtripConfig{
 				MediaPath: dataPath,
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-					return mp3format.NewDemuxerEngine(r, mp3format.NewDemuxerConfig())
+					return mp3format.NewDemuxerEngine(r, mp3format.MustNewDemuxerConfig())
 				},
 				Mux: func(w io.Writer) engine.MuxerEngine {
-					mux, err := mp3format.NewMuxerEngine(w, mp3format.NewMuxerConfig())
+					mux, err := mp3format.NewMuxerEngine(w, mp3format.MustNewMuxerConfig())
 					if err != nil {
 						t.Fatal(err)
 					}

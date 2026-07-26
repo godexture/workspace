@@ -59,7 +59,7 @@ func TestBindingAppliesOnlyChangedFlags(t *testing.T) {
 	if err := binding.Apply(&actual); err != nil {
 		t.Fatal(err)
 	}
-	if !actual.Enabled || actual.Limit != 8 || actual.Delay != time.Second || actual.Mode != "safe" || strings.Join(actual.Tags, ",") != "one,two" {
+	if !actual.Enabled || actual.Limit != 8 || actual.Delay != time.Second || actual.Mode != "safe" || actual.Dependent != 1 || strings.Join(actual.Tags, ",") != "one,two" {
 		t.Fatalf("Apply() = %#v", actual)
 	}
 }

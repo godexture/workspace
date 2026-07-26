@@ -53,7 +53,7 @@ func TestDefaultDecoderResolverAcceptsValidCandidateAfterRequirementError(t *tes
 func decoderManifest(name string, config registry.Configuration, requirements registry.InputRequirementsFunc) registry.DecoderManifest {
 	return registry.DecoderManifest{
 		TransformManifest: registry.TransformManifest{
-			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: func() registry.Configuration { return config }},
+			BaseManifest:      registry.BaseManifest{Name: name, ConfigurationFactory: registry.StaticConfigurationFactory(config)},
 			InputRequirements: registry.SingleInputRequirements(requirements),
 		},
 		Factory: func(media.StreamInfo, registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
