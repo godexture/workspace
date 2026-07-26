@@ -21,10 +21,21 @@ func (f encoderConfigOptionFunc) applyEncoderConfig(c *EncoderConfig) {
 	f(c)
 }
 
-func NewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
+func NewEncoderConfig(options ...EncoderConfigOption) (EncoderConfig, error) {
 	config := EncoderConfig(internal.DefaultEncoderConfig)
 	for _, option := range options {
 		option.applyEncoderConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewEncoderConfig(options ...EncoderConfigOption) EncoderConfig {
+	config, err := NewEncoderConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -53,10 +64,21 @@ func (f decoderConfigOptionFunc) applyDecoderConfig(c *DecoderConfig) {
 	f(c)
 }
 
-func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
+func NewDecoderConfig(options ...DecoderConfigOption) (DecoderConfig, error) {
 	config := DecoderConfig(internal.DefaultDecoderConfig)
 	for _, option := range options {
 		option.applyDecoderConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
+	config, err := NewDecoderConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
