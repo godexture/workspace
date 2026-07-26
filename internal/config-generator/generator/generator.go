@@ -45,18 +45,17 @@ func Generate(output, packageName string, targets []*types.Target) {
 	// filter imports used in the generated file
 	finalImports := make(map[string]string)
 	
+	for _, name := range []string{"fmt", "math"} {
+		if _, ok := usedImports[name]; !ok {
+			usedImports[name] = name
+		}
+	}
+
 	bodyStr := body.String()
 	for name, path := range usedImports {
 		if strings.Contains(bodyStr, name+".") {
 			finalImports[name] = path
 		}
-	}
-	
-	if strings.Contains(bodyStr, "fmt.") {
-		finalImports["fmt"] = "fmt"
-	}
-	if strings.Contains(bodyStr, "math.") {
-		finalImports["math"] = "math"
 	}
 
 	if len(finalImports) > 0 {
