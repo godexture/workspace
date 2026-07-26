@@ -37,7 +37,7 @@
     - 例外的に、複合語にした方が明確だと判断した場合は、複合語を用いてよい
 
 ## Tools
-- 全モジュールのテスト: `.\test-runner.exe --simd` (at the workspace root)
+- 全モジュールのテスト: `./test-runner.exe --simd` (at the workspace root)
     - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
     
-- 全 generator の実行 `.\generate.exe` (at the workspace root)
+- 全 generator の実行 `./generate.exe` (at the workspace root)

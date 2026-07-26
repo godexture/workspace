@@ -120,19 +120,17 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 				depValues := strings.Split(parts[1], ",")
 				
 				depGoField := findGoFieldNameByTagName(t.StructType, depField)
-				if depGoField != "" {
-					fmt.Fprintf(body, "\tif ")
-					for i, val := range depValues {
-						if i > 0 {
-							fmt.Fprintf(body, " || ")
-						}
-						fmt.Fprintf(body, "string(c.%s) == %q", depGoField, val)
-					}
-					fmt.Fprintf(body, " {\n")
-				} else {
-					titleField := strings.ToUpper(depField[:1]) + depField[1:]
-					fmt.Fprintf(body, "\tif string(c.%s) == %q {\n", titleField, parts[1])
+				if depGoField == "" {
+					depGoField = strings.ToUpper(depField[:1]) + depField[1:]
 				}
+				fmt.Fprintf(body, "\tif ")
+				for i, val := range depValues {
+					if i > 0 {
+						fmt.Fprintf(body, " || ")
+					}
+					fmt.Fprintf(body, "string(c.%s) == %q", depGoField, val)
+				}
+				fmt.Fprintf(body, " {\n")
 			}
 		}
 		
