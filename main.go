@@ -84,12 +84,12 @@ func main() {
 		TargetCodec: targetCodec,
 		Filters: []routing.FilterSpec{
 			{
-				Config: filter.NewResampleConfig(
+				Config: filter.MustNewResampleConfig(
 					filter.WithSampleRate(48000),
 				),
 			},
 		},
-		MuxConfig: flacFormat.NewMuxerConfig(),
+		MuxConfig: flacFormat.MustNewMuxerConfig(),
 	}
 
 	geometry, err := negotiator.NegotiateConversion(context.Background(), spec)
