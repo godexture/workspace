@@ -1,3 +1,51 @@
 [submodule "plugins/codec-flac/test/testdata/conformance"]
 	path = plugins/codec-flac/test/testdata/conformance
 	url = https://github.com/ietf-wg-cellar/flac-test-files.git
+[submodule "core"]
+	path = core
+	url = https://github.com/godexture/core.git
+[submodule "cli"]
+	path = cli
+	url = https://github.com/godexture/cli.git
+[submodule "pkg"]
+	path = pkg
+	url = https://github.com/godexture/sdk.git
+[submodule "tools"]
+	path = tools
+	url = https://github.com/godexture/tools.git
+[submodule "bindings"]
+	path = bindings
+	url = https://github.com/godexture/bindings.git
+[submodule "example/go"]
+	path = example/go
+	url = https://github.com/godexture/example.git
+[submodule "example/assets"]
+	path = example/assets
+	url = https://github.com/godexture/assets.git
+[submodule "plugins/codec-flac"]
+	path = plugins/codec-flac
+	url = https://github.com/godexture/codec-flac.git
+[submodule "plugins/codec-mp3"]
+	path = plugins/codec-mp3
+	url = https://github.com/godexture/codec-mp3.git
+[submodule "plugins/codec-pcm"]
+	path = plugins/codec-pcm
+	url = https://github.com/godexture/codec-pcm.git
+[submodule "plugins/filter-audio"]
+	path = plugins/filter-audio
+	url = https://github.com/godexture/filter-audio.git
+[submodule "plugins/format-flac"]
+	path = plugins/format-flac
+	url = https://github.com/godexture/format-flac.git
+[submodule "plugins/format-mp3"]
+	path = plugins/format-mp3
+	url = https://github.com/godexture/format-mp3.git
+[submodule "plugins/format-wav"]
+	path = plugins/format-wav
+	url = https://github.com/godexture/format-wav.git
+[submodule "plugins/metadata-id3"]
+	path = plugins/metadata-id3
+	url = https://github.com/godexture/metadata-id3.git
+[submodule "plugins/metadata-vorbiscomment"]
+	path = plugins/metadata-vorbiscomment
+	url = https://github.com/godexture/metadata-vorbiscomment.git
