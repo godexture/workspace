@@ -9,10 +9,6 @@ import (
 )
 
 func init() {
-	registerDelay()
-}
-
-func registerDelay() {
 	register(registry.NewConfigurationFactory(NewDelayConfig), "delay", "Apply a feedback delay (echo)", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.DelayConfig, DelayConfig](cfg)
 		if err != nil {

@@ -9,10 +9,6 @@ import (
 )
 
 func init() {
-	registerReverb()
-}
-
-func registerReverb() {
 	register(registry.NewConfigurationFactory(NewReverbConfig), "reverb", "Apply a Freeverb-style algorithmic reverb", identityTransform, func(cfg registry.Configuration) (node.Filter, error) {
 		value, err := engine.ResolveConfig[config.ReverbConfig, ReverbConfig](cfg)
 		if err != nil {
