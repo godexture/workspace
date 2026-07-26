@@ -32,7 +32,7 @@ const maxUploadBytes = 1 << 30 // Server mode limit: 1 GiB
 
 func main() {
 	addr := flag.String("addr", ":8787", "HTTP listen address")
-	assetsDir := flag.String("assets", defaultPath("../../assets"), "Directory containing preset audio files")
+	assetsDir := flag.String("assets", defaultPath("../assets"), "Directory containing preset audio files")
 	tempDir := flag.String("temp-dir", "", "Directory for job input/output files (default: a fresh OS temp dir, removed on exit)")
 	flag.Parse()
 
