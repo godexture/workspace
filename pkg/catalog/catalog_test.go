@@ -61,3 +61,27 @@ func TestDescribeStaticFilterHasEmptyParameterList(t *testing.T) {
 		t.Fatalf("static filter parameters = %v", entry.Parameters)
 	}
 }
+
+func TestDescribeFilterEqualizerFieldDependencies(t *testing.T) {
+	entry, err := catalog.DescribeFilter("equalizer", nil)
+	if err != nil {
+		t.Fatalf("DescribeFilter() error = %v", err)
+	}
+	fields := make(map[string]catalog.Field, len(entry.Fields))
+	for _, field := range entry.Fields {
+		fields[field.Name] = field
+	}
+	for _, name := range []string{"type", "frequency-hz", "gain-db", "q"} {
+		assertDependency(t, fields[name], "mode", "single")
+	}
+	for _, name := range []string{"bands", "low-hz", "high-hz", "manual-bands", "gains"} {
+		assertDependency(t, fields[name], "mode", "multiband")
+	}
+}
+
+func assertDependency(t *testing.T, field catalog.Field, name, value string) {
+	t.Helper()
+	if field.DependsOn == nil || field.DependsOn.Field != name || !slices.Equal(field.DependsOn.Values, []string{value}) {
+		t.Fatalf("field %q dependency = %#v", field.Name, field.DependsOn)
+	}
+}

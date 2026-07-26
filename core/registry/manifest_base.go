@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"reflect"
 )
 
 type BaseManifest struct {
@@ -15,11 +16,31 @@ func (m BaseManifest) ID() PluginKey { return m.key }
 
 func (m BaseManifest) RegistryName() string { return m.Name }
 
+func (m BaseManifest) ConfigurationType() reflect.Type {
+	if m.ConfigurationFactory == nil {
+		return nil
+	}
+	return m.ConfigurationFactory.ConfigurationType()
+}
+
+// Default returns the manifest's default configuration without validating
+// it, so callers that plan to apply further values (e.g. decoding CLI/spec
+// input) can start from it before validation happens once, at the end.
+func (m BaseManifest) Default() Configuration {
+	if m.ConfigurationFactory == nil {
+		return nil
+	}
+	return m.ConfigurationFactory.Default()
+}
+
 func (m BaseManifest) NewConfiguration() (Configuration, error) {
 	if m.ConfigurationFactory == nil {
 		return nil, fmt.Errorf("manifest %q has no configuration factory", m.Name)
 	}
-	config := m.ConfigurationFactory()
+	config, err := m.ConfigurationFactory.New()
+	if err != nil {
+		return nil, err
+	}
 	configType, err := configurationType(config)
 	if err != nil {
 		return nil, err

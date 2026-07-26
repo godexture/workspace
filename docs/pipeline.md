@@ -168,7 +168,7 @@ geometry, err := godec.NewNegotiator().NegotiateConversion(ctx, routing.Conversi
     Input:       input,
     Output:      output,
     TargetCodec: media.CodecFLAC,
-    MuxConfig:   flacformat.NewMuxerConfig(),
+    MuxConfig:   flacformat.MustNewMuxerConfig(),
 })
 if err != nil {
     return err

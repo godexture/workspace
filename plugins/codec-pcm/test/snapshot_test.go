@@ -30,10 +30,10 @@ func TestSnapshots(t *testing.T) {
 					MediaAttributes: media.MediaAttributes{Codec: profile.Codec, CodecParameters: profile.CodecParameters, Audio: profile.Attrs},
 				},
 				Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-					return wavFormat.NewDemuxerEngine(r, wavFormat.NewDemuxerConfig())
+					return wavFormat.NewDemuxerEngine(r, wavFormat.MustNewDemuxerConfig())
 				},
 				Decode: func(stream media.StreamInfo) engine.DecoderEngine {
-					decoder, err := pcmCodec.NewDecoderEngine(stream, pcmCodec.NewDecoderConfig())
+					decoder, err := pcmCodec.NewDecoderEngine(stream, pcmCodec.MustNewDecoderConfig())
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -42,13 +42,13 @@ func TestSnapshots(t *testing.T) {
 				Encode: func() engine.EncoderEngine {
 					return pcmCodec.NewEncoderEngine(
 						media.StreamInfo{},
-						pcmCodec.NewEncoderConfig(
+						pcmCodec.MustNewEncoderConfig(
 							pcmCodec.WithCodecID(profile.Codec),
 							pcmCodec.WithADPCM(profile.ADPCM),
 						))
 				},
 				Mux: func(w io.Writer) engine.MuxerEngine {
-					mux, err := wavFormat.NewMuxerEngine(w, wavFormat.NewMuxerConfig())
+					mux, err := wavFormat.NewMuxerEngine(w, wavFormat.MustNewMuxerConfig())
 					if err != nil {
 						t.Fatal(err)
 					}

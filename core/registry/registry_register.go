@@ -5,11 +5,7 @@ import (
 )
 
 func (r *Registry[V]) Register(manifest V) error {
-	config, err := manifest.NewConfiguration()
-	if err != nil {
-		return fmt.Errorf("create configuration: %w", err)
-	}
-	key, err := pluginKey(r.role, config)
+	key, err := pluginKeyFromType(r.role, manifest.ConfigurationType())
 	if err != nil {
 		return fmt.Errorf("derive plugin key: %w", err)
 	}

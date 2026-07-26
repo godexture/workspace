@@ -13,6 +13,7 @@ import (
 func fieldsFor(typeOf reflect.Type) ([]field, error) {
 	fields := make([]field, 0, typeOf.NumField())
 	seen := map[string]struct{}{}
+	indexByName := map[string]int{}
 	for index := range typeOf.NumField() {
 		structField := typeOf.Field(index)
 		tag, exists := structField.Tag.Lookup("name")
@@ -29,7 +30,32 @@ func fieldsFor(typeOf reflect.Type) ([]field, error) {
 			return nil, fmt.Errorf("duplicate cli field %q", tag)
 		}
 		seen[tag] = struct{}{}
-		fields = append(fields, field{index: index, goName: structField.Name, name: tag, help: structField.Tag.Get("help"), typeOf: structField.Type})
+		dependsOn, err := parseDependency(structField)
+		if err != nil {
+			return nil, err
+		}
+		indexByName[tag] = len(fields)
+		fields = append(fields, field{
+			index: index, goName: structField.Name, name: tag, help: structField.Tag.Get("help"),
+			typeOf: structField.Type, dependsOn: dependsOn,
+		})
+	}
+	for index := range fields {
+		field := &fields[index]
+		if field.dependsOn == nil {
+			continue
+		}
+		if field.dependsOn.Field == field.name {
+			return nil, fmt.Errorf("field %s cannot depend on itself", field.goName)
+		}
+		target, ok := indexByName[field.dependsOn.Field]
+		if !ok {
+			return nil, fmt.Errorf("field %s depends on unknown field %q", field.goName, field.dependsOn.Field)
+		}
+		if fields[target].typeOf.Kind() == reflect.Slice {
+			return nil, fmt.Errorf("field %s cannot depend on slice-typed field %q", field.goName, field.dependsOn.Field)
+		}
+		field.dependsOnIndex = fields[target].index
 	}
 	return fields, nil
 }

@@ -1,4 +1,4 @@
-package generator
+﻿package generator
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/format"
 	"go/token"
+	"reflect"
 	"strings"
 
 	"github.com/godexture/tools/internal/config-generator/types"
@@ -50,16 +51,30 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 		}
 
 		constructorName := "New" + configName
-		fmt.Fprintf(body, "func %s(options ...%s) %s {\n", constructorName, optName, configName)
+		fmt.Fprintf(body, "func %s(options ...%s) (%s, error) {\n", constructorName, optName, configName)
 		fmt.Fprintf(body, "\tconfig := %s(%s)\n", configName, initExpr)
 		fmt.Fprintf(body, "\tfor _, option := range options {\n\t\toption.apply%s(&config)\n\t}\n", configName)
+		fmt.Fprintf(body, "\tif err := config.Validate(); err != nil {\n\t\treturn config, err\n\t}\n")
+		fmt.Fprintf(body, "\treturn config, nil\n}\n\n")
+
+		fmt.Fprintf(body, "func Must%s(options ...%s) %s {\n", constructorName, optName, configName)
+		fmt.Fprintf(body, "\tconfig, err := %s(options...)\n", constructorName)
+		fmt.Fprintf(body, "\tif err != nil {\n\t\tpanic(err)\n\t}\n")
 		fmt.Fprintf(body, "\treturn config\n}\n\n")
 
 		fmt.Fprintf(body, "func (c %s) ResolveDefault() %s {\n\treturn %s(%s)\n}\n\n", configName, t.ResolvedType, t.ResolvedType, initExpr)
 		fmt.Fprintf(body, "func (c %s) Resolve() %s {\n\treturn %s(c)\n}\n\n", configName, t.ResolvedType, t.ResolvedType)
+		
+		// Always generate Validate() method
+		fmt.Fprintf(body, "func (c %s) Validate() error {\n", configName)
+		generateValidationBody(body, t)
 		if t.HasValidate {
-			fmt.Fprintf(body, "func (c %s) Validate() error {\n\treturn c.Resolve().Validate()\n}\n\n", configName)
+			fmt.Fprintf(body, "\treturn c.Resolve().Validate()\n")
+		} else {
+			fmt.Fprintf(body, "\treturn nil\n")
 		}
+		fmt.Fprintf(body, "}\n\n")
+
 		if len(t.FieldChoices) > 0 {
 			fmt.Fprintf(body, "func (c %s) FieldChoices(field string) []string {\n\tswitch field {\n", configName)
 			for _, field := range t.StructType.Fields.List {
@@ -77,6 +92,102 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 	}
 
 	generateEnums(body, targets, packageName)
+}
+
+func generateValidationBody(body *bytes.Buffer, t *types.Target) {
+	for _, field := range t.StructType.Fields.List {
+		if len(field.Names) != 1 || !ast.IsExported(field.Names[0].Name) {
+			continue
+		}
+		fieldName := field.Names[0].Name
+		
+		if field.Tag == nil {
+			continue
+		}
+		structTag := fieldTag(field)
+
+		checkTag, checkOk := structTag.Lookup("check")
+		dependsOnTag, dependsOk := structTag.Lookup("depends-on")
+		
+		if !checkOk && !dependsOk {
+			continue
+		}
+		
+		if dependsOk {
+			parts := strings.SplitN(dependsOnTag, "=", 2)
+			if len(parts) == 2 {
+				depField := parts[0]
+				depValues := strings.Split(parts[1], ",")
+				
+				depGoField := findGoFieldNameByTagName(t.StructType, depField)
+				if depGoField == "" {
+					depGoField = strings.ToUpper(depField[:1]) + depField[1:]
+				}
+				fmt.Fprintf(body, "\tif ")
+				for i, val := range depValues {
+					if i > 0 {
+						fmt.Fprintf(body, " || ")
+					}
+					fmt.Fprintf(body, "string(c.%s) == %q", depGoField, val)
+				}
+				fmt.Fprintf(body, " {\n")
+			}
+		}
+		
+		indent := "\t"
+		if dependsOk {
+			indent = "\t\t"
+		}
+		
+		if checkOk {
+			checks := strings.Split(checkTag, ",")
+			for _, check := range checks {
+				switch check {
+				case "finite":
+					fmt.Fprintf(body, "%sif math.IsNaN(float64(c.%s)) || math.IsInf(float64(c.%s), 0) {\n", indent, fieldName, fieldName)
+					fmt.Fprintf(body, "%s\treturn fmt.Errorf(\"%%s must be finite\", %q)\n", indent, getCliFieldName(field, fieldName))
+					fmt.Fprintf(body, "%s}\n", indent)
+				case "positive":
+					fmt.Fprintf(body, "%sif !(c.%s > 0) {\n", indent, fieldName)
+					fmt.Fprintf(body, "%s\treturn fmt.Errorf(\"%%s must be positive\", %q)\n", indent, getCliFieldName(field, fieldName))
+					fmt.Fprintf(body, "%s}\n", indent)
+				case "nonnegative":
+					fmt.Fprintf(body, "%sif !(c.%s >= 0) {\n", indent, fieldName)
+					fmt.Fprintf(body, "%s\treturn fmt.Errorf(\"%%s must be non-negative\", %q)\n", indent, getCliFieldName(field, fieldName))
+					fmt.Fprintf(body, "%s}\n", indent)
+				}
+			}
+		}
+		
+		if dependsOk {
+			fmt.Fprintf(body, "\t}\n")
+		}
+	}
+}
+
+func fieldTag(field *ast.Field) reflect.StructTag {
+	if field.Tag == nil {
+		return ""
+	}
+	return reflect.StructTag(strings.Trim(field.Tag.Value, "`"))
+}
+
+func findGoFieldNameByTagName(structType *ast.StructType, tagName string) string {
+	for _, field := range structType.Fields.List {
+		if len(field.Names) == 1 {
+			if nameTag, ok := fieldTag(field).Lookup("name"); ok && nameTag == tagName {
+				return field.Names[0].Name
+			}
+		}
+	}
+	return ""
+}
+
+func getCliFieldName(field *ast.Field, fallback string) string {
+	if nameTag, ok := fieldTag(field).Lookup("name"); ok {
+		return nameTag
+	}
+	return fallback
 }
 
 func generateEnums(body *bytes.Buffer, targets []*types.Target, packageName string) {

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"reflect"
 	"sync"
 
 	"github.com/godexture/core/domain/manifest"
@@ -10,7 +11,9 @@ import (
 type Manifest interface {
 	ID() PluginKey
 	RegistryName() string
+	ConfigurationType() reflect.Type
 	NewConfiguration() (Configuration, error)
+	Default() Configuration
 }
 
 type Registry[V Manifest] struct {

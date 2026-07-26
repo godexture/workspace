@@ -1049,7 +1049,7 @@ func TestWAVMP3PacketizationDecodes(t *testing.T) {
 		t.Fatalf("codec = %s, want %s", streams[0].MediaAttributes.Codec, media.CodecMP3)
 	}
 
-	decoder := mp3codec.NewDecoderEngine(mp3codec.NewDecoderConfig())
+	decoder := mp3codec.NewDecoderEngine(mp3codec.MustNewDecoderConfig())
 	decodedFrames := 0
 	decodedSamples := 0
 

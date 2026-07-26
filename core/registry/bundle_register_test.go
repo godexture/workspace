@@ -2,6 +2,7 @@ package registry
 
 import (
 	"io"
+	"reflect"
 	"testing"
 
 	"github.com/godexture/core/domain/manifest"
@@ -28,7 +29,7 @@ func TestBundleRegisterRoutesByManifestType(t *testing.T) {
 	}
 
 	muxerManifest := MuxerManifest{
-		BaseManifest: BaseManifest{Name: "muxer", ConfigurationFactory: func() Configuration { return testConfig{} }},
+		BaseManifest: BaseManifest{Name: "muxer", ConfigurationFactory: StaticConfigurationFactory(testConfig{})},
 		Extensions:   []string{".mux"},
 		Codecs:       []media.CodecID{media.CodecFLAC},
 		DefaultCodec: media.CodecFLAC,
@@ -54,7 +55,7 @@ func TestBundleRegisterRoutesByManifestType(t *testing.T) {
 	}
 
 	demuxerManifest := DemuxerManifest{
-		BaseManifest: BaseManifest{Name: "demuxer", ConfigurationFactory: func() Configuration { return testConfig{} }},
+		BaseManifest: BaseManifest{Name: "demuxer", ConfigurationFactory: StaticConfigurationFactory(testConfig{})},
 		Probe:        func(io.Reader) manifest.ProbeScore { return manifest.ProbeExactSignature },
 		Factory:      func(io.Reader, Configuration) (node.Demuxer, error) { return nil, nil },
 	}
@@ -86,7 +87,11 @@ func (unknownManifest) ID() PluginKey {
 
 func (unknownManifest) RegistryName() string { return "unknown" }
 
+func (unknownManifest) ConfigurationType() reflect.Type { return reflect.TypeOf(testConfig{}) }
+
 func (unknownManifest) NewConfiguration() (Configuration, error) { return testConfig{}, nil }
+
+func (unknownManifest) Default() Configuration { return testConfig{} }
 
 func TestBundleRegisterRejectsUnknownManifest(t *testing.T) {
 	t.Parallel()

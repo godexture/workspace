@@ -17,11 +17,17 @@ type Binding struct {
 }
 
 type FieldDescription struct {
-	Name    string
-	Type    string
-	Help    string
-	Default string
-	Choices []string
+	Name      string
+	Type      string
+	Help      string
+	Default   string
+	Choices   []string
+	DependsOn *FieldDependency
+}
+
+type FieldDependency struct {
+	Field  string
+	Values []string
 }
 
 type FieldValue struct {
@@ -46,13 +52,15 @@ func StructValues(target any) ([]FieldValue, error) {
 }
 
 type field struct {
-	index    int
-	goName   string
-	name     string
-	flagName string
-	help     string
-	typeOf   reflect.Type
-	value    *flagValue
+	index          int
+	goName         string
+	name           string
+	flagName       string
+	help           string
+	typeOf         reflect.Type
+	dependsOn      *FieldDependency
+	dependsOnIndex int
+	value          *flagValue
 }
 
 type choiceProvider interface {
@@ -96,15 +104,17 @@ func DescribeStruct(prototype any) ([]FieldDescription, error) {
 			choices = slices.Clone(provider.FieldChoices(field.goName))
 		}
 		descriptions = append(descriptions, FieldDescription{
-			Name:    field.name,
-			Type:    descriptionType(field.typeOf, choices),
-			Help:    field.help,
-			Default: descriptionDefault(value.Field(field.index)),
-			Choices: choices,
+			Name:      field.name,
+			Type:      descriptionType(field.typeOf, choices),
+			Help:      field.help,
+			Default:   descriptionDefault(value.Field(field.index)),
+			Choices:   choices,
+			DependsOn: field.dependsOn,
 		})
 	}
 	return descriptions, nil
 }
+
 
 func descriptionDefault(value reflect.Value) string {
 	if value.Kind() == reflect.Slice && value.Len() == 0 {

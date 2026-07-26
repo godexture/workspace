@@ -13,17 +13,13 @@ import (
 	"github.com/godexture/sdk/engine"
 )
 
-func init() {
-	registerMixer()
-}
-
-// registerMixer registers "mixer" as a parameterized filter: --in/--out
+// init registers "mixer" as a parameterized filter: --in/--out
 // (MixerParameters) fix the port topology before MixerConfig is even
 // resolved, since InputRequirements below depends on how many input ports
 // there are. The CLI-registered mixer always mixes every input with equal
 // weight (1/Inputs); arbitrary per-input weighting is a Go-API-only
 // concern reached via mixer.New directly, not through this registration.
-func registerMixer() {
+func init() {
 	if err := godec.Register(registry.ParameterizedFilterManifest{
 		BaseManifest: registry.BaseManifest{
 			Name:                 "mixer",

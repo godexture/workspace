@@ -18,10 +18,21 @@ func (f decoderConfigOptionFunc) applyDecoderConfig(c *DecoderConfig) {
 	f(c)
 }
 
-func NewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
+func NewDecoderConfig(options ...DecoderConfigOption) (DecoderConfig, error) {
 	config := DecoderConfig(domain.DefaultDecoderConfig)
 	for _, option := range options {
 		option.applyDecoderConfig(&config)
+	}
+	if err := config.Validate(); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+func MustNewDecoderConfig(options ...DecoderConfigOption) DecoderConfig {
+	config, err := NewDecoderConfig(options...)
+	if err != nil {
+		panic(err)
 	}
 	return config
 }
@@ -32,4 +43,8 @@ func (c DecoderConfig) ResolveDefault() domain.DecoderConfig {
 
 func (c DecoderConfig) Resolve() domain.DecoderConfig {
 	return domain.DecoderConfig(c)
+}
+
+func (c DecoderConfig) Validate() error {
+	return nil
 }

@@ -14,14 +14,6 @@ import (
 )
 
 func init() {
-	registerConvolve()
-}
-
-func registerConvolve() {
-	registerConvolveManifest()
-}
-
-func registerConvolveManifest() {
 	if err := godec.Register(registry.FilterManifest{TransformManifest: registry.TransformManifest{
 		BaseManifest: registry.BaseManifest{Name: "convolver", Description: "Apply FFT convolution against an impulse response", ConfigurationFactory: registry.NewConfigurationFactory(NewConvolutionConfig)},
 		InputRequirements: registry.InputRequirements{

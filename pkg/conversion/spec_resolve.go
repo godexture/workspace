@@ -158,10 +158,7 @@ func resolveFilterManifest(filterSpec FilterSpec) (registry.FilterManifest, erro
 }
 
 func configure(role string, value registry.Manifest, values map[string]string) (registry.Configuration, error) {
-	config, err := value.NewConfiguration()
-	if err != nil {
-		return nil, wrapError(CodeInvalidSpec, fmt.Sprintf("configure %s %q", role, value.RegistryName()), err)
-	}
+	config := value.Default()
 	if err := cliflag.DecodeStruct(config, values); err != nil {
 		return nil, wrapError(CodeInvalidSpec, fmt.Sprintf("configure %s %q", role, value.RegistryName()), err)
 	}

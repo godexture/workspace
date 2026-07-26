@@ -13,11 +13,12 @@ import (
 type testMode string
 
 type testConfig struct {
-	Enabled bool          `name:"enabled" help:"Enable processing"`
-	Limit   int           `name:"limit" help:"Processing limit"`
-	Delay   time.Duration `name:"delay" help:"Processing delay"`
-	Mode    testMode      `name:"mode" help:"Processing mode"`
-	Tags    []string      `name:"tag" help:"Processing tags"`
+	Enabled   bool          `name:"enabled" help:"Enable processing"`
+	Limit     int           `name:"limit" help:"Processing limit"`
+	Delay     time.Duration `name:"delay" help:"Processing delay"`
+	Mode      testMode      `name:"mode" help:"Processing mode"`
+	Tags      []string      `name:"tag" help:"Processing tags"`
+	Dependent int           `name:"dependent" depends-on:"mode=safe" check:"positive"`
 }
 
 type layoutConfig struct {
@@ -46,7 +47,7 @@ func (e testError) Error() string { return string(e) }
 
 func TestBindingAppliesOnlyChangedFlags(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	prototype := &testConfig{Enabled: true, Limit: 5, Delay: time.Second, Mode: "safe"}
+	prototype := &testConfig{Enabled: true, Limit: 5, Delay: time.Second, Mode: "safe", Dependent: 1}
 	binding, err := BindStruct(flags, "encoder.flac", prototype)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +59,7 @@ func TestBindingAppliesOnlyChangedFlags(t *testing.T) {
 	if err := binding.Apply(&actual); err != nil {
 		t.Fatal(err)
 	}
-	if !actual.Enabled || actual.Limit != 8 || actual.Delay != time.Second || actual.Mode != "safe" || strings.Join(actual.Tags, ",") != "one,two" {
+	if !actual.Enabled || actual.Limit != 8 || actual.Delay != time.Second || actual.Mode != "safe" || actual.Dependent != 1 || strings.Join(actual.Tags, ",") != "one,two" {
 		t.Fatalf("Apply() = %#v", actual)
 	}
 }
@@ -93,8 +94,7 @@ func TestBindingRejectsInvalidChoiceWithoutMutatingTarget(t *testing.T) {
 
 func TestBindingShowsZeroValueDefaults(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	_, err := BindStruct(flags, "", &testConfig{})
-	if err != nil {
+	if _, err := BindStruct(flags, "", &testConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	if usage := flags.Lookup("enabled").Usage; !strings.Contains(usage, "[false]") {
@@ -107,8 +107,7 @@ func TestBindingShowsZeroValueDefaults(t *testing.T) {
 
 func TestBindingOwnsEveryDefaultDisplay(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	_, err := BindStruct(flags, "", &testConfig{Limit: 5})
-	if err != nil {
+	if _, err := BindStruct(flags, "", &testConfig{Limit: 5}); err != nil {
 		t.Fatal(err)
 	}
 	flag := flags.Lookup("limit")
@@ -125,12 +124,16 @@ func TestDescribeStruct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(descriptions) != 5 {
+	if len(descriptions) != 6 {
 		t.Fatalf("len(DescribeStruct()) = %d", len(descriptions))
 	}
 	mode := descriptions[3]
 	if mode.Name != "mode" || mode.Type != "enum" || mode.Default != "safe" || !slices.Equal(mode.Choices, []string{"fast", "safe"}) {
 		t.Fatalf("mode description = %#v", mode)
+	}
+	dependent := descriptions[5]
+	if dependent.DependsOn == nil || dependent.DependsOn.Field != "mode" || !slices.Equal(dependent.DependsOn.Values, []string{"safe"}) {
+		t.Fatalf("dependent description = %#v", dependent)
 	}
 }
 

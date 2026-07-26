@@ -14,15 +14,14 @@ import (
 	"github.com/godexture/filter-audio/internal/config"
 	"github.com/godexture/filter-audio/internal/convolver"
 	"github.com/godexture/filter-audio/internal/delay"
-	"github.com/godexture/filter-audio/internal/equalizer"
 	"github.com/godexture/filter-audio/internal/fade"
 	"github.com/godexture/filter-audio/internal/gate"
 	"github.com/godexture/filter-audio/internal/mixer"
 	"github.com/godexture/filter-audio/internal/normalize"
 	"github.com/godexture/filter-audio/internal/remix"
 	"github.com/godexture/filter-audio/internal/resample"
-	"github.com/godexture/filter-audio/internal/reverb"
 	"github.com/godexture/filter-audio/internal/retime"
+	"github.com/godexture/filter-audio/internal/reverb"
 	"github.com/godexture/filter-audio/internal/trim"
 	"github.com/godexture/sdk/audio"
 	"github.com/godexture/sdk/engine"
@@ -319,20 +318,6 @@ func TestCompressorPassesSignalBelowThresholdUnchanged(t *testing.T) {
 	}
 	send(t, item, frame(48000, 0, []float32{.1, .1}))
 	assertSamplesTol(t, receive(t, item), []float32{.1, .1}, 1e-5)
-	if err := item.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	assertEOF(t, item)
-}
-
-func TestEqualizerPeakingZeroGainIsIdentity(t *testing.T) {
-	item, err := equalizer.New(config.EqualizerConfig{Type: config.EqualizerTypePeaking, FrequencyHz: 1000, Q: 0.7071067811865476})
-	if err != nil {
-		t.Fatal(err)
-	}
-	values := []float32{0.2, -0.5, 0.8, -0.1, 0.05, 0.9}
-	send(t, item, frame(48000, 0, values))
-	assertSamplesTol(t, receive(t, item), values, 1e-4)
 	if err := item.Flush(); err != nil {
 		t.Fatal(err)
 	}

@@ -13,10 +13,12 @@ interface FieldInputsProps {
 // hand-written form per plugin. Values always round-trip as strings, since
 // that is the wire format the Go side (cliflag.DecodeStruct) expects.
 export function FieldInputs({ fields, values, onChange }: FieldInputsProps) {
-    if (fields.length === 0) return null;
+    const byName = new Map(fields.map((field) => [field.name, field]));
+    const visible = fields.filter((field) => isFieldVisible(field, values, byName));
+    if (visible.length === 0) return null;
     return (
         <div className={styles.grid}>
-            {fields.map((field) => (
+            {visible.map((field) => (
                 <Field key={field.name} label={field.name} hint={field.help}>
                     <FieldControl
                         field={field}
@@ -27,6 +29,17 @@ export function FieldInputs({ fields, values, onChange }: FieldInputsProps) {
             ))}
         </div>
     );
+}
+
+function isFieldVisible(
+    field: PluginField,
+    values: Record<string, string>,
+    byName: Map<string, PluginField>,
+): boolean {
+    if (!field.dependsOn) return true;
+    const controller = byName.get(field.dependsOn.field);
+    const current = values[field.dependsOn.field] ?? controller?.default ?? "";
+    return field.dependsOn.values.includes(current);
 }
 
 function FieldControl({
