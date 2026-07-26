@@ -1,4 +1,4 @@
-package godec
+package core
 
 import (
 	"github.com/godexture/core/factory"
