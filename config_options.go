@@ -37,6 +37,10 @@ func (c EncoderConfig) Resolve() internal.EncoderConfig {
 	return internal.EncoderConfig(c)
 }
 
+func (c EncoderConfig) Validate() error {
+	return nil
+}
+
 type DecoderConfig internal.DecoderConfig
 
 type DecoderConfigOption interface {
@@ -63,6 +67,10 @@ func (c DecoderConfig) ResolveDefault() internal.DecoderConfig {
 
 func (c DecoderConfig) Resolve() internal.DecoderConfig {
 	return internal.DecoderConfig(c)
+}
+
+func (c DecoderConfig) Validate() error {
+	return nil
 }
 
 func WithCodecID(v media.CodecID) EncoderConfigOption {
