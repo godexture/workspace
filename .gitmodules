@@ -48,7 +48,7 @@
 	url = https://github.com/godexture/example-go.git
 [submodule "example/web"]
 	path = example/web
-	url = https://github.com/godexture/example-web.git
+	url = https://github.com/godexture/web.git
 [submodule "example/assets"]
 	path = example/assets
 	url = https://github.com/godexture/assets.git
