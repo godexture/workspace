@@ -10,6 +10,14 @@ func (v EqualizerType) Valid() bool {
 	return false
 }
 
+func (v EqualizerMode) Valid() bool {
+	switch v {
+	case "single", "multiband":
+		return true
+	}
+	return false
+}
+
 func (v GateMode) Valid() bool {
 	switch v {
 	case "hard", "lowpass":

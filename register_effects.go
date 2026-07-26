@@ -111,5 +111,5 @@ func registerCompressor() {
 }
 
 func registerEqualizer() {
-	registerSimple[config.EqualizerConfig, EqualizerConfig](registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band parametric, shelf, or pass biquad filter", equalizer.New)
+	registerSimple[config.EqualizerConfig, EqualizerConfig](registry.NewConfigurationFactory(NewEqualizerConfig), "equalizer", "Apply a single-band or multiband parametric/shelf/pass equalizer", equalizer.New)
 }
