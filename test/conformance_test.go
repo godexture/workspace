@@ -26,24 +26,24 @@ func TestSnapshot(t *testing.T) {
 			MediaPath: path,
 			Opts:      config.RoundtripCompareOptions,
 			Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-				return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig())
+				return flacFormat.NewDemuxerEngine(r, flacFormat.MustNewDemuxerConfig())
 			},
 			Decode: func(streamInfo media.StreamInfo) engine.DecoderEngine {
-				dec, err := flacCodec.NewDecoderEngine(streamInfo, flacCodec.NewDecoderConfig())
+				dec, err := flacCodec.NewDecoderEngine(streamInfo, flacCodec.MustNewDecoderConfig())
 				if err != nil {
 					t.Fatal(err)
 				}
 				return dec
 			},
 			Encode: func() engine.EncoderEngine {
-				encoder, err := flacCodec.NewEncoderEngine(flacCodec.NewEncoderConfig())
+				encoder, err := flacCodec.NewEncoderEngine(flacCodec.MustNewEncoderConfig())
 				if err != nil {
 					t.Fatal(err)
 				}
 				return encoder
 			},
 			Mux: func(w io.Writer) engine.MuxerEngine {
-				mux, err := flacFormat.NewMuxerEngine(w, flacFormat.NewMuxerConfig())
+				mux, err := flacFormat.NewMuxerEngine(w, flacFormat.MustNewMuxerConfig())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -89,10 +89,10 @@ func decodeConformanceVector(t *testing.T, path string) error {
 	return testutil.RunDecode(t.Context(), testutil.DecodeConfig{
 		MediaPath: path,
 		Demux: func(r io.ReadSeeker) (engine.DemuxerEngine, error) {
-			return flacFormat.NewDemuxerEngine(r, flacFormat.NewDemuxerConfig())
+			return flacFormat.NewDemuxerEngine(r, flacFormat.MustNewDemuxerConfig())
 		},
 		Decode: func(stream media.StreamInfo) engine.DecoderEngine {
-			dec, err := flacCodec.NewDecoderEngine(stream, flacCodec.NewDecoderConfig())
+			dec, err := flacCodec.NewDecoderEngine(stream, flacCodec.MustNewDecoderConfig())
 			if err != nil {
 				t.Fatal(err)
 			}
