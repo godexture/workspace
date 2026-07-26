@@ -38,6 +38,17 @@ func pluginKey(role manifest.NodeType, config Configuration) (PluginKey, error) 
 	return PluginKey{role: role, configType: configType}, nil
 }
 
+// pluginKeyFromType derives a PluginKey from a configuration's static type
+// alone, without requiring a constructed (and validated) value. It is used
+// at registration time, where only the configuration's identity matters.
+func pluginKeyFromType(role manifest.NodeType, configType reflect.Type) (PluginKey, error) {
+	configType, err := validateConfigurationType(configType)
+	if err != nil {
+		return PluginKey{}, err
+	}
+	return PluginKey{role: role, configType: configType}, nil
+}
+
 func configurationType(config Configuration) (reflect.Type, error) {
 	if config == nil {
 		return nil, fmt.Errorf("plugin configuration must not be nil")
@@ -47,6 +58,13 @@ func configurationType(config Configuration) (reflect.Type, error) {
 	configValue := reflect.ValueOf(config)
 	if configValue.Kind() == reflect.Pointer && configValue.IsNil() {
 		return nil, fmt.Errorf("plugin configuration must not be a typed nil pointer: %s", configType)
+	}
+	return validateConfigurationType(configType)
+}
+
+func validateConfigurationType(configType reflect.Type) (reflect.Type, error) {
+	if configType == nil {
+		return nil, fmt.Errorf("plugin configuration must not be nil")
 	}
 	for configType.Kind() == reflect.Pointer {
 		configType = configType.Elem()

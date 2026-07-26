@@ -113,7 +113,7 @@ func TestRegistryLooksUpNamesAndCreatesFreshConfigurations(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry[MuxerManifest]()
 	manifest := testMuxerManifest("alpha", alphaConfig{})
-	manifest.ConfigurationFactory = func() Configuration { return &alphaConfig{} }
+	manifest.ConfigurationFactory = StaticConfigurationFactory(&alphaConfig{})
 	if err := registry.Register(manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestRegistryLooksUpNamesAndCreatesFreshConfigurations(t *testing.T) {
 
 func testMuxerManifest(name string, config Configuration) MuxerManifest {
 	return MuxerManifest{
-		BaseManifest: BaseManifest{Name: name, ConfigurationFactory: func() Configuration { return config }},
+		BaseManifest: BaseManifest{Name: name, ConfigurationFactory: StaticConfigurationFactory(config)},
 		Extensions:   []string{".mux"},
 		Codecs:       []media.CodecID{media.CodecFLAC},
 		DefaultCodec: media.CodecFLAC,

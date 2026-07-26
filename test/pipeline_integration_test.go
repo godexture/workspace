@@ -40,7 +40,7 @@ func TestPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("ReadFile(%s): %v", path, err)
 			}
 
-			demuxEngine, err := wav.NewDemuxerEngine(bytes.NewReader(input), wav.NewDemuxerConfig())
+			demuxEngine, err := wav.NewDemuxerEngine(bytes.NewReader(input), wav.MustNewDemuxerConfig())
 			if err != nil {
 				t.Fatalf("NewDemuxerEngine: %v", err)
 			}
@@ -53,15 +53,15 @@ func TestPipeline_WavPcmRoundtrip(t *testing.T) {
 				t.Fatalf("no streams found in %s", e.Name())
 			}
 
-			decEngine, err := pcm.NewDecoderEngine(streams[0], pcm.NewDecoderConfig())
+			decEngine, err := pcm.NewDecoderEngine(streams[0], pcm.MustNewDecoderConfig())
 			if err != nil {
 				t.Fatalf("NewDecoderEngine: %v", err)
 			}
-			encEngine := pcm.NewEncoderEngine(streams[0], pcm.NewEncoderConfig())
+			encEngine := pcm.NewEncoderEngine(streams[0], pcm.MustNewEncoderConfig())
 
 			f := testutil.NewBuffer(nil)
 
-			muxEngine, err := wav.NewMuxerEngine(f, wav.NewMuxerConfig())
+			muxEngine, err := wav.NewMuxerEngine(f, wav.MustNewMuxerConfig())
 			if err != nil {
 				t.Fatalf("NewMuxerEngine: %v", err)
 			}
