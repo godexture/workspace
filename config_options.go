@@ -33,3 +33,7 @@ func (c DecoderConfig) ResolveDefault() domain.DecoderConfig {
 func (c DecoderConfig) Resolve() domain.DecoderConfig {
 	return domain.DecoderConfig(c)
 }
+
+func (c DecoderConfig) Validate() error {
+	return nil
+}
