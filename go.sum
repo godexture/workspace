@@ -1,8 +1,8 @@
-github.com/godexture/core v0.1.0 h1:2QMjby16zYOmhplaY0qRIxdUxQZetK9IdStaKEC3bBI=
-github.com/godexture/core v0.1.0/go.mod h1:yt6zGJFtFFh/LyD2sDKAKZDpbRi//lDeaJbpHdDNtyA=
-github.com/godexture/metadata-id3 v0.1.0 h1:p1r79X3Oh4gqougfVtxvDWHe8RsHTf2L37cH78droiU=
-github.com/godexture/metadata-id3 v0.1.0/go.mod h1:OSOn1UNRK9F1XvTg+kJ3dEQDPLU36ilDxU5GzT4Al7k=
-github.com/godexture/sdk v0.1.0 h1:xqF269mTJ3D7NMeUMC+aSUUUjjU91DQUK4WLnu8/1hE=
-github.com/godexture/sdk v0.1.0/go.mod h1:wt2jWG+IbH+A44NwTxokO65vCywNhvryR/vjcnlvMtQ=
+github.com/godexture/core v0.0.0 h1:fozCrR3S19NwVHkZcReN9RsOOB1Az8/oOh/PEnmOqiE=
+github.com/godexture/core v0.0.0/go.mod h1:yt6zGJFtFFh/LyD2sDKAKZDpbRi//lDeaJbpHdDNtyA=
+github.com/godexture/metadata-id3 v0.0.0 h1:3H4mOs6b70ALIXCEuJvC8qxtWDqddRuI99GBvgNvun8=
+github.com/godexture/metadata-id3 v0.0.0/go.mod h1:7LxG0+Uo6i40RxgJooLKnv4WkF5E2ornRnpIhqgKRzM=
+github.com/godexture/sdk v0.0.0 h1:m2F/PU5bH9jcu48yxgmrrX290rfChiMyYhH/Rjy8EQk=
+github.com/godexture/sdk v0.0.0/go.mod h1:wt2jWG+IbH+A44NwTxokO65vCywNhvryR/vjcnlvMtQ=
 golang.org/x/sync v0.21.0 h1:HLII4xRRTtCRkxYp4HNFF0Js/Og6q2i++KXbg0gHCwM=
 golang.org/x/sync v0.21.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
