@@ -112,28 +112,32 @@ func incrementVersion(v, bumpType string) string {
 }
 
 func main() {
-	var workPath string
-	var goCommand string
-	var ghRelease bool
-	var commit bool
-
-	flags := pflag.NewFlagSet(filepath.Base(os.Args[0]), pflag.ExitOnError)
-	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
-	flags.StringVar(&goCommand, "go", "go", "go command to run")
-	flags.BoolVar(&ghRelease, "gh-release", false, "actually perform github release (commit, push, tag, gh release create)")
-	flags.BoolVar(&commit, "commit", false, "commit the version bump changes (git add & git commit)")
-
-	if err := flags.Parse(os.Args[1:]); err != nil {
-		cli.Fatal(err)
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: release <subcommand> [args]")
+		fmt.Println("Subcommands:")
+		fmt.Println("  commit <patch|minor|major|vX.Y.Z>  Bump versions in go.mod and commit")
+		fmt.Println("  push                               Push commits in all submodules")
+		fmt.Println("  gh-release <vX.Y.Z>                Create GitHub release in all submodules")
+		fmt.Println("  sync                               Sync dependencies to @latest")
+		os.Exit(1)
 	}
 
-	args := flags.Args()
+	subcommand := os.Args[1]
+
+	var workPath string
+	var goCommand string
+
+	commonFlags := pflag.NewFlagSet(subcommand, pflag.ExitOnError)
+	commonFlags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
+	commonFlags.StringVar(&goCommand, "go", "go", "go command to run")
+	commonFlags.Parse(os.Args[2:])
+
+	args := commonFlags.Args()
 
 	goWork, err := workspace.ResolveGoWork(goCommand, workPath)
 	if err != nil {
 		cli.Fatal(err)
 	}
-	workspaceRoot := filepath.Dir(goWork)
 
 	modules, err := workspace.WorkspaceModules(goCommand, goWork)
 	if err != nil {
@@ -143,13 +147,15 @@ func main() {
 		cli.Fatalf("no modules found in %s", goWork)
 	}
 
-	var targetVersion string
-	var isExplicitBump bool
-
-	if len(args) > 0 {
+	switch subcommand {
+	case "commit":
+		if len(args) < 1 {
+			cli.Fatalf("commit subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
+		}
 		arg := args[0]
+		
+		var targetVersion string
 		if arg == "patch" || arg == "minor" || arg == "major" {
-			isExplicitBump = true
 			var maxV string
 			for _, abs := range modules {
 				vers := getGodextureDepVersions(abs)
@@ -168,13 +174,12 @@ func main() {
 			targetVersion = incrementVersion(maxV, arg)
 			fmt.Printf("Calculated new version: %s (from max %s)\n", targetVersion, maxV)
 		} else if strings.HasPrefix(arg, "v") {
-			isExplicitBump = true
 			targetVersion = arg
 			fmt.Printf("Using explicit version: %s\n", targetVersion)
+		} else {
+			cli.Fatalf("invalid version argument: %s", arg)
 		}
-	}
 
-	if isExplicitBump {
 		for rel, abs := range modules {
 			deps := getGodextureDeps(abs)
 			if len(deps) == 0 {
@@ -190,56 +195,57 @@ func main() {
 					cli.Fatalf("go mod edit failed in %s: %v", rel, err)
 				}
 			}
-		}
 
-		if commit || ghRelease {
-			fmt.Println("==> Running git commit...")
-			cmd := exec.Command("git", "add", ".")
-			cmd.Dir = workspaceRoot
+			fmt.Printf("==> Committing changes in %s\n", abs)
+			cmd := exec.Command("git", "add", "go.mod")
+			cmd.Dir = abs
+			cmd.Run()
+			
+			cmd = exec.Command("git", "add", "go.sum")
+			cmd.Dir = abs
+			cmd.Run()
+
+			cmd = exec.Command("git", "commit", "-m", "chore: bump dependencies to "+targetVersion)
+			cmd.Dir = abs
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				cli.Fatalf("git add failed: %v", err)
-			}
-
-			cmd = exec.Command("git", "commit", "-m", "chore: release "+targetVersion)
-			cmd.Dir = workspaceRoot
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				cli.Fatalf("git commit failed: %v", err)
+				fmt.Printf("Warning: git commit failed in %s (maybe no changes?): %v\n", abs, err)
 			}
 		}
 
-		if ghRelease {
-			fmt.Println("==> Running git push...")
+	case "push":
+		for _, abs := range modules {
+			fmt.Printf("==> Pushing changes in %s\n", abs)
 			cmd := exec.Command("git", "push")
-			cmd.Dir = workspaceRoot
+			cmd.Dir = abs
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				cli.Fatalf("git push failed: %v", err)
-			}
-
-			fmt.Println("==> Creating tags and GitHub releases...")
-			for rel := range modules {
-				tag := targetVersion
-				if rel != "." {
-					tag = filepath.ToSlash(rel) + "/" + targetVersion
-				}
-				
-				fmt.Printf("==> Creating release for %s\n", tag)
-				cmd = exec.Command("gh", "release", "create", tag, "--generate-notes")
-				cmd.Dir = workspaceRoot
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					cli.Fatalf("gh release create failed for %s: %v", tag, err)
-				}
+				fmt.Printf("Warning: git push failed in %s: %v\n", abs, err)
 			}
 		}
 
-	} else {
+	case "gh-release":
+		if len(args) < 1 {
+			cli.Fatalf("gh-release subcommand requires a version argument (vX.Y.Z)")
+		}
+		targetVersion := args[0]
+		if !strings.HasPrefix(targetVersion, "v") {
+			cli.Fatalf("invalid version argument: %s", targetVersion)
+		}
+		for _, abs := range modules {
+			fmt.Printf("==> Creating GitHub release for %s in %s\n", targetVersion, abs)
+			cmd := exec.Command("gh", "release", "create", targetVersion, "--generate-notes")
+			cmd.Dir = abs
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Warning: gh release create failed in %s: %v\n", abs, err)
+			}
+		}
+
+	case "sync":
 		for rel, abs := range modules {
 			var toUpdate []string
 			if len(args) > 0 {
@@ -274,6 +280,9 @@ func main() {
 				cli.Fatalf("go mod tidy failed in %s: %v", rel, err)
 			}
 		}
+
+	default:
+		cli.Fatalf("unknown subcommand: %s", subcommand)
 	}
 
 	fmt.Println("All done.")
