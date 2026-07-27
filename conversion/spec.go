@@ -6,7 +6,9 @@ import (
 	"io"
 
 	godec "github.com/godexture/core"
+	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/node"
 	"github.com/godexture/core/pipeline"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/core/routing"
@@ -63,6 +65,23 @@ type Spec struct {
 	Parallelism int         `json:"parallelism,omitempty"`
 }
 
+// PlaybackSpec describes the input and filter graph for a decoded-frame
+// playback pipeline. It deliberately has no encoder or muxer settings.
+type PlaybackSpec struct {
+	Demuxer     *PluginSpec             `json:"demuxer,omitempty"`
+	Decoder     *PluginSpec             `json:"decoder,omitempty"`
+	Filters     []FilterSpec            `json:"filters,omitempty"`
+	AuxInputs   map[string]AuxInputSpec `json:"auxInputs,omitempty"`
+	Sink        *PortRef                `json:"sink,omitempty"`
+	Parallelism int                     `json:"parallelism,omitempty"`
+}
+
+type PlaybackSink struct {
+	Name         string
+	Requirements []manifest.Capability
+	Factory      func(media.StreamInfo) (node.Sink, error)
+}
+
 type Resolved struct {
 	Demuxer      registry.DemuxerManifest
 	DemuxConfig  registry.Configuration
@@ -94,18 +113,9 @@ func Negotiate(ctx context.Context, inputs InputSet, output io.Writer, spec Spec
 	if err != nil {
 		return nil, err
 	}
-	aux := make(map[string]routing.AuxInputSpec, len(inputs.Aux))
-	for name, source := range inputs.Aux {
-		if source == nil {
-			return nil, invalidSpec(fmt.Sprintf("auxiliary input %q is nil", name))
-		}
-		configured := resolved.AuxInputs[name]
-		aux[name] = routing.AuxInputSpec{Source: source, DemuxManifest: configured.Demuxer, DemuxConfig: configured.DemuxConfig, DecoderManifest: configured.Decoder, DecodeConfig: configured.DecodeConfig}
-	}
-	for name := range resolved.AuxInputs {
-		if _, ok := inputs.Aux[name]; !ok {
-			return nil, invalidSpec(fmt.Sprintf("auxiliary input %q source is required", name))
-		}
+	aux, err := resolveAuxiliaryInputs(inputs, resolved.AuxInputs)
+	if err != nil {
+		return nil, err
 	}
 	geometry, err := godec.NewNegotiator().NegotiateConversion(ctx, routing.ConversionSpec{
 		Input: inputs.Main, Output: output,
@@ -124,6 +134,38 @@ func Negotiate(ctx context.Context, inputs InputSet, output io.Writer, spec Spec
 	return geometry, nil
 }
 
+func NegotiatePlayback(ctx context.Context, inputs InputSet, spec PlaybackSpec, sink PlaybackSink) (*pipeline.Geometry, error) {
+	if inputs.Main == nil {
+		return nil, invalidSpec("main input is required")
+	}
+	if len(sink.Requirements) == 0 {
+		return nil, invalidSpec("playback sink requirements are required")
+	}
+	if sink.Factory == nil {
+		return nil, invalidSpec("playback sink factory is required")
+	}
+	resolved, err := resolveInput(spec)
+	if err != nil {
+		return nil, err
+	}
+	aux, err := resolveAuxiliaryInputs(inputs, resolved.AuxInputs)
+	if err != nil {
+		return nil, err
+	}
+	geometry, err := godec.NewNegotiator().NegotiatePlayback(ctx, routing.PlaybackSpec{
+		Input:         inputs.Main,
+		DemuxManifest: resolved.Demuxer, DemuxConfig: resolved.DemuxConfig,
+		DecoderManifest: resolved.Decoder, DecodeConfig: resolved.DecodeConfig,
+		Filters: resolved.Filters, AuxInputs: aux, Sink: resolved.Sink,
+		SinkRequirements: sink.Requirements, SinkFactory: sink.Factory, SinkName: sink.Name,
+		Resources: resolved.Resources,
+	})
+	if err != nil {
+		return nil, wrapError(CodeNegotiationFailed, "negotiate playback pipeline", err)
+	}
+	return geometry, nil
+}
+
 func Build(ctx context.Context, inputs InputSet, output io.Writer, spec Spec, observation pipeline.ObservationMode) (*pipeline.Pipeline, error) {
 	geometry, err := Negotiate(ctx, inputs, output, spec)
 	if err != nil {
@@ -135,4 +177,34 @@ func Build(ctx context.Context, inputs InputSet, output io.Writer, spec Spec, ob
 		return nil, wrapError(CodeBuildFailed, "build pipeline", err)
 	}
 	return built, nil
+}
+
+func BuildPlayback(ctx context.Context, inputs InputSet, spec PlaybackSpec, sink PlaybackSink, observation pipeline.ObservationMode) (*pipeline.Pipeline, error) {
+	geometry, err := NegotiatePlayback(ctx, inputs, spec, sink)
+	if err != nil {
+		return nil, err
+	}
+	built, err := godec.NewBuilder().Build(geometry, pipeline.WithObservation(observation))
+	if err != nil {
+		_ = geometry.Close()
+		return nil, wrapError(CodeBuildFailed, "build playback pipeline", err)
+	}
+	return built, nil
+}
+
+func resolveAuxiliaryInputs(inputs InputSet, configured map[string]resolvedAuxInput) (map[string]routing.AuxInputSpec, error) {
+	aux := make(map[string]routing.AuxInputSpec, len(inputs.Aux))
+	for name, source := range inputs.Aux {
+		if source == nil {
+			return nil, invalidSpec(fmt.Sprintf("auxiliary input %q is nil", name))
+		}
+		value := configured[name]
+		aux[name] = routing.AuxInputSpec{Source: source, DemuxManifest: value.Demuxer, DemuxConfig: value.DemuxConfig, DecoderManifest: value.Decoder, DecodeConfig: value.DecodeConfig}
+	}
+	for name := range configured {
+		if _, ok := inputs.Aux[name]; !ok {
+			return nil, invalidSpec(fmt.Sprintf("auxiliary input %q source is required", name))
+		}
+	}
+	return aux, nil
 }

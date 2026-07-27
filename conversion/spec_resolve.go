@@ -11,9 +11,6 @@ import (
 )
 
 func Resolve(spec Spec) (Resolved, error) {
-	if spec.Parallelism < 0 {
-		return Resolved{}, invalidSpec("parallelism must not be negative")
-	}
 	if spec.Muxer.Name == "" {
 		return Resolved{}, invalidSpec("muxer name is required")
 	}
@@ -56,46 +53,77 @@ func Resolve(spec Spec) (Resolved, error) {
 		return Resolved{}, err
 	}
 
-	demuxer, demuxConfig, err := resolveOptional("demuxer", spec.Demuxer, godec.DefaultDemuxerRegistry)
-	if err != nil {
-		return Resolved{}, err
-	}
-	decoder, decodeConfig, err := resolveOptional("decoder", spec.Decoder, godec.DefaultDecoderRegistry)
+	input, err := resolveInput(playbackSpec(spec))
 	if err != nil {
 		return Resolved{}, err
 	}
 
+	return Resolved{
+		Demuxer: input.Demuxer, DemuxConfig: input.DemuxConfig,
+		Decoder: input.Decoder, DecodeConfig: input.DecodeConfig,
+		Filters: input.Filters, AuxInputs: input.AuxInputs, Sink: input.Sink,
+		Encoder: encoder, EncodeConfig: encodeConfig,
+		Muxer: muxer, MuxConfig: muxConfig, Codec: codec,
+		Resources: input.Resources,
+	}, nil
+}
+
+type resolvedInput struct {
+	Demuxer      registry.DemuxerManifest
+	DemuxConfig  registry.Configuration
+	Decoder      registry.DecoderManifest
+	DecodeConfig registry.Configuration
+	Filters      []routing.FilterSpec
+	AuxInputs    map[string]resolvedAuxInput
+	Sink         *routing.PortRef
+	Resources    registry.ResourceBudget
+}
+
+func playbackSpec(spec Spec) PlaybackSpec {
+	return PlaybackSpec{
+		Demuxer: spec.Demuxer, Decoder: spec.Decoder, Filters: spec.Filters,
+		AuxInputs: spec.AuxInputs, Sink: spec.Sink, Parallelism: spec.Parallelism,
+	}
+}
+
+func resolveInput(spec PlaybackSpec) (resolvedInput, error) {
+	if spec.Parallelism < 0 {
+		return resolvedInput{}, invalidSpec("parallelism must not be negative")
+	}
+	demuxer, demuxConfig, err := resolveOptional("demuxer", spec.Demuxer, godec.DefaultDemuxerRegistry)
+	if err != nil {
+		return resolvedInput{}, err
+	}
+	decoder, decodeConfig, err := resolveOptional("decoder", spec.Decoder, godec.DefaultDecoderRegistry)
+	if err != nil {
+		return resolvedInput{}, err
+	}
 	filters, err := resolveFilters(spec.Filters)
 	if err != nil {
-		return Resolved{}, err
+		return resolvedInput{}, err
 	}
 	auxInputs := make(map[string]resolvedAuxInput, len(spec.AuxInputs))
 	for name, aux := range spec.AuxInputs {
 		if name == "" {
-			return Resolved{}, invalidSpec("auxiliary input name is required")
+			return resolvedInput{}, invalidSpec("auxiliary input name is required")
 		}
 		auxDemuxer, auxDemuxConfig, err := resolveOptional("auxiliary demuxer", aux.Demuxer, godec.DefaultDemuxerRegistry)
 		if err != nil {
-			return Resolved{}, err
+			return resolvedInput{}, err
 		}
 		auxDecoder, auxDecodeConfig, err := resolveOptional("auxiliary decoder", aux.Decoder, godec.DefaultDecoderRegistry)
 		if err != nil {
-			return Resolved{}, err
+			return resolvedInput{}, err
 		}
 		auxInputs[name] = resolvedAuxInput{Demuxer: auxDemuxer, DemuxConfig: auxDemuxConfig, Decoder: auxDecoder, DecodeConfig: auxDecodeConfig}
 	}
-
 	var sink *routing.PortRef
 	if spec.Sink != nil {
 		sink = &routing.PortRef{Alias: spec.Sink.Alias, Port: spec.Sink.Port}
 	}
-
-	return Resolved{
-		Demuxer: demuxer, DemuxConfig: demuxConfig,
-		Decoder: decoder, DecodeConfig: decodeConfig,
+	return resolvedInput{
+		Demuxer: demuxer, DemuxConfig: demuxConfig, Decoder: decoder, DecodeConfig: decodeConfig,
 		Filters: filters, AuxInputs: auxInputs, Sink: sink,
-		Encoder: encoder, EncodeConfig: encodeConfig,
-		Muxer: muxer, MuxConfig: muxConfig, Codec: codec,
 		Resources: registry.ResourceBudget{Parallelism: spec.Parallelism},
 	}, nil
 }

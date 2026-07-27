@@ -21,12 +21,13 @@ type FieldDependency struct {
 	Values []string `json:"values"`
 }
 
+// fields describes a manifest's configuration fields for the catalog. It
+// reads value.Default() rather than NewConfiguration() because a default
+// config isn't necessarily valid on its own (e.g. remix has no sensible
+// default target channel layout) -- describing its shape shouldn't depend
+// on it passing the same Validate() a real conversion would require.
 func fields(value registry.Manifest) ([]Field, error) {
-	config, err := value.NewConfiguration()
-	if err != nil {
-		return nil, err
-	}
-	described, err := cliflag.DescribeStruct(config)
+	described, err := cliflag.DescribeStruct(value.Default())
 	if err != nil {
 		return nil, err
 	}
