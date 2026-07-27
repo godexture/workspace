@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { apiErrorMessage, http } from "../../api/client";
-import type { ConversionSpec, FilterEntry, PipelineDescription, Progress } from "../../api/types";
+import type { ConfigurationResolution, ConversionSpec, FilterEntry, PipelineDescription, Progress } from "../../api/types";
 import type { ConversionBackend, ConversionInputs, InputSource } from "./types";
 
 function inputReference(input: InputSource): { kind: "file" } | { kind: "preset"; presetId: string } {
@@ -36,6 +36,15 @@ export const serverBackend: ConversionBackend = {
     async describeFilter(name, parameters = {}) {
         try {
             const { data } = await http.post<FilterEntry>("/filters/describe", { name, parameters });
+            return data;
+        } catch (err) {
+            throw new Error(await apiErrorMessage(err));
+        }
+    },
+
+    async resolveConfiguration(request) {
+        try {
+            const { data } = await http.post<ConfigurationResolution>("/configurations/resolve", request);
             return data;
         } catch (err) {
             throw new Error(await apiErrorMessage(err));

@@ -80,6 +80,11 @@ export const clientBackend: ConversionBackend = {
         return godec.describeFilter(name, parameters);
     },
 
+    async resolveConfiguration(request) {
+        const godec = await getClient();
+        return godec.resolveConfiguration(request);
+    },
+
     async resolvePipeline(inputs, spec) {
         const [godec, bytes] = await Promise.all([getClient(), readInputs(inputs)]);
         return godec.resolvePipeline(bytes, spec);

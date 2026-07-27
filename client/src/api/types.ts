@@ -1,5 +1,10 @@
 export type {
     Catalog,
+    ConfigurationField,
+    ConfigurationRequest,
+    ConfigurationResolution,
+    ConfigurationSlot,
+    ConfigurationValueSource,
     PluginEntry,
     PluginField,
     FilterEntry,

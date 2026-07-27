@@ -1,4 +1,4 @@
-import type { ConversionSpec, FilterEntry, PipelineDescription, Preset, Progress } from "../../api/types";
+import type { ConfigurationRequest, ConfigurationResolution, ConversionSpec, FilterEntry, PipelineDescription, Preset, Progress } from "../../api/types";
 
 export type InputSource = { kind: "upload"; file: File } | { kind: "preset"; preset: Preset };
 
@@ -19,6 +19,7 @@ export type BackendMode = "server" | "client";
 export interface ConversionBackend {
     readonly mode: BackendMode;
     describeFilter(name: string, parameters?: Record<string, string>): Promise<FilterEntry>;
+    resolveConfiguration(request: ConfigurationRequest): Promise<ConfigurationResolution>;
     resolvePipeline(inputs: ConversionInputs, spec: ConversionSpec): Promise<PipelineDescription>;
     start(inputs: ConversionInputs, spec: ConversionSpec): Promise<string>;
     /** Calls onProgress until the job leaves the "running" state. Returns an unsubscribe function. */

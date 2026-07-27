@@ -1,29 +1,55 @@
 import type { PluginField } from "../api/types";
 import { Field } from "../ui";
+import { type ConfigurationTarget, useResolution } from "./resolution";
+import { Sliders } from "./Sliders";
 import styles from "./FieldInputs.module.css";
 
 interface FieldInputsProps {
+    configuration?: ConfigurationTarget;
     fields: PluginField[];
     values: Record<string, string>;
-    onChange: (name: string, value: string) => void;
+    onChange: (values: Record<string, string>) => void;
 }
 
 // FieldInputs renders one control per catalog PluginField, generically
 // covering every plugin config (filters, encoders, muxers, ...) without a
 // hand-written form per plugin. Values always round-trip as strings, since
 // that is the wire format the Go side (cliflag.DecodeStruct) expects.
-export function FieldInputs({ fields, values, onChange }: FieldInputsProps) {
+export function FieldInputs({ configuration, fields, values, onChange }: FieldInputsProps) {
     const byName = new Map(fields.map((field) => [field.name, field]));
     const visible = fields.filter((field) => isFieldVisible(field, values, byName));
+    const resolved = useResolution(configuration, values, onChange);
+    const dynamic = new Map(resolved.resolution?.fields.map((field) => [field.name, field]) ?? []);
+    const update = (name: string, value: string) => {
+        onChange({ ...values, [name]: value });
+    };
+    const valueFor = (field: PluginField) => {
+        const explicit = values[field.name];
+        if (explicit !== undefined) return explicit;
+        const resolution = resolved.resolution;
+        return resolution && resolution.sources[field.name] !== "default"
+            ? resolution.values[field.name] ?? ""
+            : "";
+    };
     if (visible.length === 0) return null;
     return (
         <div className={styles.grid}>
-            {visible.map((field) => (
+            {visible.map((field) => field.editor === "sliders" ? (
+                <Sliders
+                    key={field.name}
+                    field={field}
+                    state={dynamic.get(field.name)}
+                    value={values[field.name] ?? resolved.resolution?.values[field.name] ?? field.default}
+                    error={resolved.error}
+                    loading={resolved.loading}
+                    onChange={(value) => update(field.name, value)}
+                />
+            ) : (
                 <Field key={field.name} label={field.name} hint={field.help}>
                     <FieldControl
                         field={field}
-                        value={values[field.name] ?? ""}
-                        onChange={(value) => onChange(field.name, value)}
+                        value={valueFor(field)}
+                        onChange={(value) => update(field.name, value)}
                     />
                 </Field>
             ))}

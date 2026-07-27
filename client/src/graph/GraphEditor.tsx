@@ -598,6 +598,7 @@ export function GraphEditor({
                             presets={presets}
                             maxUploadBytes={maxUploadBytes}
                             locked={locked}
+                            resolveConfiguration={backend.resolveConfiguration}
                             onChange={updateNode}
                             onUpload={upload}
                             onRecord={(node, file) => upload(node, file, true)}

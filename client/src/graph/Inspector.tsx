@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { Catalog, PluginEntry, PluginField, Preset } from "../api/types";
 import { Recorder } from "../audio/Recorder";
 import { FieldInputs } from "../components/FieldInputs";
+import type { ConversionBackend } from "../conversion/backend/types";
 import { Button, Field, Tabs } from "../ui";
 import { canDeleteNode, displayName, encoderForCodec, nodeTitle, type GraphNode, type SourceData } from "./model";
 import type { LibrarySelection } from "./NodeLibrary";
@@ -17,6 +18,7 @@ interface InspectorProps {
     presets: Preset[];
     maxUploadBytes: number;
     locked: boolean;
+    resolveConfiguration: ConversionBackend["resolveConfiguration"];
     onChange: (node: GraphNode) => void;
     onUpload: (node: GraphNode & SourceData, file: File) => void;
     onRecord: (node: GraphNode & SourceData, file: File) => void;
@@ -35,6 +37,7 @@ export function Inspector({
     presets,
     maxUploadBytes,
     locked,
+    resolveConfiguration,
     onChange,
     onUpload,
     onRecord,
@@ -103,12 +106,14 @@ export function Inspector({
                         label="Demuxer"
                         entries={catalog.demuxers}
                         value={node.demuxer}
+                        resolveConfiguration={resolveConfiguration}
                         onChange={(demuxer) => onChange({ ...node, demuxer })}
                     />
                     <PluginSelector
                         label="Decoder"
                         entries={catalog.decoders}
                         value={node.decoder}
+                        resolveConfiguration={resolveConfiguration}
                         onChange={(decoder) => onChange({ ...node, decoder })}
                     />
                     <NodeActions
@@ -155,14 +160,20 @@ export function Inspector({
                         <FieldInputs
                             fields={node.descriptor.parameters}
                             values={node.parameters}
-                            onChange={(name, value) => onFilterParametersChange(node, { ...node.parameters, [name]: value })}
+                            onChange={(parameters) => onFilterParametersChange(node, parameters)}
                         />
                     )}
                     {hasSettings && activeTab === "settings" && (
                         <FieldInputs
+                            configuration={{
+                                role: node.descriptor.role,
+                                name: node.descriptor.name,
+                                parameters: node.parameters,
+                                resolve: resolveConfiguration,
+                            }}
                             fields={node.descriptor.fields}
                             values={node.values}
-                            onChange={(name, value) => onChange({ ...node, values: { ...node.values, [name]: value } })}
+                            onChange={(values) => onChange({ ...node, values })}
                         />
                     )}
                     <NodeActions node={node} onDuplicate={onDuplicate} onDelete={onDelete} />
@@ -217,6 +228,7 @@ export function Inspector({
                     label="Encoder"
                     entries={catalog.encoders.filter((entry) => entry.name === node.codec || !node.codec)}
                     value={encoder ? { name: encoder.name, values: node.encoderValues } : undefined}
+                    resolveConfiguration={resolveConfiguration}
                     allowAuto={false}
                     showFields={false}
                     onChange={(value) => onChange({ ...node, encoderName: value?.name, encoderValues: value?.values ?? {} })}
@@ -235,13 +247,19 @@ export function Inspector({
                 )}
                 {activeOutputTab === "parameters" && (
                     <FieldInputs
+                        configuration={{ role: "muxer", name: node.muxer, resolve: resolveConfiguration }}
                         fields={muxerFields}
                         values={node.muxerValues}
-                        onChange={(name, value) => onChange({ ...node, muxerValues: { ...node.muxerValues, [name]: value } })}
+                        onChange={(muxerValues) => onChange({ ...node, muxerValues })}
                     />
                 )}
                 {activeOutputTab === "advanced" && encoder && (
-                    <FieldInputs fields={encoder.fields} values={node.encoderValues} onChange={(name, value) => onChange({ ...node, encoderName: encoder.name, encoderValues: { ...node.encoderValues, [name]: value } })} />
+                    <FieldInputs
+                        configuration={{ role: encoder.role, name: encoder.name, resolve: resolveConfiguration }}
+                        fields={encoder.fields}
+                        values={node.encoderValues}
+                        onChange={(encoderValues) => onChange({ ...node, encoderName: encoder.name, encoderValues })}
+                    />
                 )}
             </section>
         </aside>
@@ -330,6 +348,7 @@ function PluginSelector({
     value,
     allowAuto = true,
     showFields = true,
+    resolveConfiguration,
     onChange,
 }: {
     label: string;
@@ -337,6 +356,7 @@ function PluginSelector({
     value?: { name: string; values?: Record<string, string> };
     allowAuto?: boolean;
     showFields?: boolean;
+    resolveConfiguration: ConversionBackend["resolveConfiguration"];
     onChange: (value: { name: string; values?: Record<string, string> } | undefined) => void;
 }) {
     const selected = value ? entries.find((entry) => entry.name === value.name) : undefined;
@@ -351,7 +371,14 @@ function PluginSelector({
                     {entries.map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
                 </select>
             </Field>
-            {showFields && selected && <FieldInputs fields={selected.fields} values={value?.values ?? {}} onChange={(name, next) => onChange({ name: selected.name, values: { ...value?.values, [name]: next } })} />}
+            {showFields && selected && (
+                <FieldInputs
+                    configuration={{ role: selected.role, name: selected.name, resolve: resolveConfiguration }}
+                    fields={selected.fields}
+                    values={value?.values ?? {}}
+                    onChange={(values) => onChange({ name: selected.name, values })}
+                />
+            )}
         </section>
     );
 }
