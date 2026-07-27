@@ -1,6 +1,6 @@
 {
     "name": "@godexture/js",
-    "version": "0.0.4",
+    "version": "0.0.3",
     "description": "JavaScript/TypeScript bindings for godexture",
     "repository": {
         "type": "git",
