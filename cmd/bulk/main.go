@@ -113,9 +113,10 @@ func incrementVersion(v, bumpType string) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: release <subcommand> [args]")
+		fmt.Println("Usage: bulk <subcommand> [args]")
 		fmt.Println("Subcommands:")
-		fmt.Println("  commit <patch|minor|major|vX.Y.Z>  Bump versions in go.mod and commit")
+		fmt.Println("  bump <patch|minor|major|vX.Y.Z>    Bump versions in go.mod and commit")
+		fmt.Println("  commit [args...]                   Run git commit in all submodules with changes")
 		fmt.Println("  push                               Push commits in all submodules")
 		fmt.Println("  gh-release <vX.Y.Z>                Create GitHub release in all submodules")
 		fmt.Println("  sync                               Sync dependencies to @latest")
@@ -130,9 +131,15 @@ func main() {
 	commonFlags := pflag.NewFlagSet(subcommand, pflag.ExitOnError)
 	commonFlags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	commonFlags.StringVar(&goCommand, "go", "go", "go command to run")
-	commonFlags.Parse(os.Args[2:])
-
-	args := commonFlags.Args()
+	var commitArgs []string
+	var args []string
+	if subcommand == "commit" {
+		// For commit, we don't parse commonFlags so we can pass all args to git commit.
+		commitArgs = os.Args[2:]
+	} else {
+		commonFlags.Parse(os.Args[2:])
+		args = commonFlags.Args()
+	}
 
 	goWork, err := workspace.ResolveGoWork(goCommand, workPath)
 	if err != nil {
@@ -148,9 +155,9 @@ func main() {
 	}
 
 	switch subcommand {
-	case "commit":
+	case "bump":
 		if len(args) < 1 {
-			cli.Fatalf("commit subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
+			cli.Fatalf("bump subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
 		}
 		arg := args[0]
 		
@@ -211,6 +218,30 @@ func main() {
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
 				fmt.Printf("Warning: git commit failed in %s (maybe no changes?): %v\n", abs, err)
+			}
+		}
+
+	case "commit":
+		for _, abs := range modules {
+			// Check if there are changes
+			statusCmd := exec.Command("git", "status", "--porcelain")
+			statusCmd.Dir = abs
+			out, err := statusCmd.Output()
+			if err != nil {
+				continue
+			}
+			if len(bytes.TrimSpace(out)) == 0 {
+				continue
+			}
+
+			fmt.Printf("==> Committing changes in %s\n", abs)
+			gitArgs := append([]string{"commit"}, commitArgs...)
+			cmd := exec.Command("git", gitArgs...)
+			cmd.Dir = abs
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Warning: git commit failed in %s: %v\n", abs, err)
 			}
 		}
 
