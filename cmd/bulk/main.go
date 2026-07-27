@@ -116,8 +116,9 @@ func main() {
 		fmt.Println("Usage: bulk <subcommand> [args]")
 		fmt.Println("Subcommands:")
 		fmt.Println("  bump <patch|minor|major|vX.Y.Z>    Bump versions in go.mod and commit")
+		fmt.Println("  add [args...]                      Run git add in all submodules with changes")
 		fmt.Println("  commit [args...]                   Run git commit in all submodules with changes")
-		fmt.Println("  push                               Push commits in all submodules")
+		fmt.Println("  push [args...]                     Run git push in all submodules")
 		fmt.Println("  gh-release <vX.Y.Z>                Create GitHub release in all submodules")
 		fmt.Println("  sync                               Sync dependencies to @latest")
 		os.Exit(1)
@@ -131,11 +132,11 @@ func main() {
 	commonFlags := pflag.NewFlagSet(subcommand, pflag.ExitOnError)
 	commonFlags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	commonFlags.StringVar(&goCommand, "go", "go", "go command to run")
-	var commitArgs []string
+	var passThroughArgs []string
 	var args []string
-	if subcommand == "commit" {
-		// For commit, we don't parse commonFlags so we can pass all args to git commit.
-		commitArgs = os.Args[2:]
+	if subcommand == "commit" || subcommand == "add" || subcommand == "push" {
+		// For commands that wrap git, we don't parse commonFlags so we can pass all args.
+		passThroughArgs = os.Args[2:]
 	} else {
 		commonFlags.Parse(os.Args[2:])
 		args = commonFlags.Args()
@@ -235,7 +236,7 @@ func main() {
 			}
 
 			fmt.Printf("==> Committing changes in %s\n", abs)
-			gitArgs := append([]string{"commit"}, commitArgs...)
+			gitArgs := append([]string{"commit"}, passThroughArgs...)
 			cmd := exec.Command("git", gitArgs...)
 			cmd.Dir = abs
 			cmd.Stdout = os.Stdout
@@ -245,10 +246,35 @@ func main() {
 			}
 		}
 
+	case "add":
+		for _, abs := range modules {
+			// Check if there are changes
+			statusCmd := exec.Command("git", "status", "--porcelain")
+			statusCmd.Dir = abs
+			out, err := statusCmd.Output()
+			if err != nil {
+				continue
+			}
+			if len(bytes.TrimSpace(out)) == 0 {
+				continue
+			}
+
+			fmt.Printf("==> Adding changes in %s\n", abs)
+			gitArgs := append([]string{"add"}, passThroughArgs...)
+			cmd := exec.Command("git", gitArgs...)
+			cmd.Dir = abs
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Warning: git add failed in %s: %v\n", abs, err)
+			}
+		}
+
 	case "push":
 		for _, abs := range modules {
 			fmt.Printf("==> Pushing changes in %s\n", abs)
-			cmd := exec.Command("git", "push")
+			gitArgs := append([]string{"push"}, passThroughArgs...)
+			cmd := exec.Command("git", gitArgs...)
 			cmd.Dir = abs
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
