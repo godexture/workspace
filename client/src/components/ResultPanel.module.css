@@ -5,33 +5,44 @@
 }
 
 .status {
-    padding: 2px var(--space-3);
+    --status-color: var(--color-muted);
+
     border-radius: var(--radius-sm);
-    background: var(--color-raised);
-    color: var(--color-muted);
+    padding: 3px var(--space-4);
+    background: color-mix(in srgb, var(--status-color) 15%, transparent);
+    color: var(--status-color);
+    font-family: var(--font-mono);
     font-size: 0.66rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
 
-.status_running { color: var(--color-accent); }
-.status_completed { color: var(--color-success); }
-.status_failed { color: var(--color-error); }
-.status_canceled { color: var(--color-warning); }
+.status_running { --status-color: var(--color-accent); }
+.status_completed { --status-color: var(--color-success); }
+.status_failed { --status-color: var(--color-error); }
+.status_canceled { --status-color: var(--color-warning); }
 
 .progress {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
 }
 
 .progressStats {
     display: flex;
-    gap: var(--space-4);
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.chip {
+    border-radius: var(--radius-sm);
+    background: var(--color-raised);
+    border: 1px solid var(--color-border);
+    padding: 3px var(--space-4);
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
 }
 
 .error {
@@ -66,4 +77,9 @@
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+}
+
+.extraDescription {
+    color: var(--color-dim);
+    font-size: 0.72rem;
 }

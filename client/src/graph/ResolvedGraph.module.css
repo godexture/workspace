@@ -34,18 +34,26 @@
 }
 
 .node {
-    --state-color: var(--color-border);
+    --role-color: var(--color-filter);
 
     width: 168px;
-    border: 1px solid var(--state-color);
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--role-color);
     border-radius: var(--radius);
-    background: var(--color-panel);
+    background: var(--color-raised);
     overflow: hidden;
 }
 
-.state_running { --state-color: var(--color-accent); }
-.state_completed { --state-color: var(--color-success); }
-.state_failed { --state-color: var(--color-error); }
+.roleSource { --role-color: var(--color-source); }
+.roleFilter { --role-color: var(--color-filter); }
+.roleDynamics { --role-color: var(--color-dynamics); }
+.roleLevel { --role-color: var(--color-level); }
+.roleSpectral { --role-color: var(--color-spectral); }
+.roleTime { --role-color: var(--color-time); }
+.roleSpatial { --role-color: var(--color-spatial); }
+.roleCleanup { --role-color: var(--color-cleanup); }
+.roleUtility { --role-color: var(--color-utility); }
+.roleOutput { --role-color: var(--color-output); }
 
 .header {
     display: flex;
@@ -53,21 +61,37 @@
     justify-content: space-between;
     gap: var(--space-2);
     border-bottom: 1px solid var(--color-border);
-    background: var(--color-raised);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-4);
 }
 
 .title {
     overflow: hidden;
     color: var(--color-text);
-    font-size: 0.76rem;
-    font-weight: 600;
+    font-size: 0.72rem;
+    font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.state {
+.auto {
     flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    padding: 1px 5px;
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.status {
+    --state-color: var(--color-dim);
+
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4) 0;
     color: var(--state-color);
     font-family: var(--font-mono);
     font-size: 0.6rem;
@@ -76,25 +100,15 @@
     text-transform: uppercase;
 }
 
-.role {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-4) 0;
-    color: var(--color-dim);
-    font-size: 0.6rem;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
+.state_running { --state-color: var(--color-accent); }
+.state_completed { --state-color: var(--color-success); }
+.state_failed { --state-color: var(--color-error); }
 
-.auto {
-    border-radius: var(--radius-sm);
-    padding: 0 4px;
-    background: var(--color-warning);
-    color: #201400;
-    font-size: 0.56rem;
-    font-weight: 700;
-    text-transform: none;
+.stateDot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--state-color);
 }
 
 .nodeError {
@@ -130,14 +144,33 @@
     font-size: 0.62rem;
 }
 
-.portIn { margin-left: -0.3rem; }
-.portOut { justify-content: flex-end; margin-right: -0.3rem; }
+.portIn { margin-left: -0.3rem; padding-left: 9px; }
+.portOut { justify-content: flex-end; margin-right: -0.3rem; padding-right: 9px; }
 
-.portIn span,
-.portOut span {
+.portInfo {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--space-1) 0;
+}
+
+.portOut .portInfo {
+    align-items: flex-end;
+    text-align: right;
+}
+
+.portName {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.portDetail {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    color: var(--color-dim);
+    font-size: 0.56rem;
 }
 
 .portIn :global(.react-flow__handle),

@@ -11,11 +11,6 @@
     flex: 0 0 320px;
 }
 
-.filterSelect {
-    min-width: min(280px, 100%);
-    flex: 1;
-}
-
 .issues {
     border-left: 3px solid var(--color-warning);
     padding: var(--space-3) var(--space-4);
@@ -49,7 +44,7 @@
 
 .canvas :global(.react-flow__edge.selected .react-flow__edge-path),
 .canvas :global(.react-flow__edge:hover .react-flow__edge-path) {
-    stroke: var(--color-accent);
+    stroke-width: 2.5;
 }
 
 .canvas :global(.react-flow__arrowhead) {

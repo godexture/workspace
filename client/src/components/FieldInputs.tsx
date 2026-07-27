@@ -31,7 +31,7 @@ export function FieldInputs({ fields, values, onChange }: FieldInputsProps) {
     );
 }
 
-function isFieldVisible(
+export function isFieldVisible(
     field: PluginField,
     values: Record<string, string>,
     byName: Map<string, PluginField>,
@@ -66,6 +66,7 @@ function FieldControl({
         return (
             <input
                 type="checkbox"
+                className={styles.checkbox}
                 checked={(value || field.default) === "true"}
                 onChange={(e) => onChange(e.target.checked ? "true" : "false")}
             />
@@ -75,6 +76,7 @@ function FieldControl({
         return (
             <input
                 type="number"
+                className={styles.numeric}
                 placeholder={field.default}
                 value={value}
                 step={field.type.startsWith("float") ? "any" : "1"}

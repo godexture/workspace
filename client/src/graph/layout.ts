@@ -3,12 +3,12 @@ import dagre from "@dagrejs/dagre";
 import type { GraphDocument } from "./model";
 
 const NODE_WIDTH = 190;
-const NODE_HEIGHT = 60;
+const NODE_HEIGHT = 84;
 
 export function layoutGraph(graph: GraphDocument): GraphDocument {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
-    dagreGraph.setGraph({ rankdir: "TB", ranksep: 48, nodesep: 56, marginx: 32, marginy: 32 });
+    dagreGraph.setGraph({ rankdir: "LR", ranksep: 85, nodesep: 48, marginx: 32, marginy: 32 });
     for (const node of graph.nodes) {
         dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
     }

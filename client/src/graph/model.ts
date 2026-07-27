@@ -28,6 +28,7 @@ export interface SourceData {
     selection: SourceSelection;
     demuxer?: PluginSpec;
     decoder?: PluginSpec;
+    label?: string;
 }
 
 export interface FilterData {
@@ -35,6 +36,7 @@ export interface FilterData {
     descriptor: FilterEntry;
     values: Record<string, string>;
     parameters: Record<string, string>;
+    label?: string;
 }
 
 export interface OutputData {
@@ -150,6 +152,23 @@ export function createFilterNode(
     };
 }
 
+export function duplicateNode(node: GraphNode): GraphNode {
+    const position = { x: node.position.x + 24, y: node.position.y + 24 };
+    if (node.kind === "filter") {
+        return {
+            ...node,
+            id: nextNodeID(),
+            values: { ...node.values },
+            parameters: { ...node.parameters },
+            position,
+        };
+    }
+    if (node.kind === "source") {
+        return { ...node, id: nextNodeID(), primary: false, position };
+    }
+    return { ...node, id: nextNodeID(), position };
+}
+
 export function edgeID(
     source: string,
     sourcePort: string,
@@ -171,7 +190,80 @@ export function outputPorts(node: GraphNode): string[] {
     return [];
 }
 
+// The catalog carries no category metadata, but it does carry a real signal
+// for "utility" (a routing/combining node like a mixer, as opposed to a
+// fixed-shape per-stream filter): topology parameters. A filter whose port
+// *count* is itself configurable (descriptor.parameters is exactly this --
+// see the Topology section in Inspector.tsx) is structurally a routing node;
+// a fixed-arity filter like Convolver (always exactly "in" + "ir", never
+// configurable) is not, even though it also has more than one input. Checked
+// against the live catalog: "mixer" is presently the only filter with
+// non-empty parameters (`in`/`out` channel counts), which matches the
+// design's own use of "utility" for it -- but this reflects the data, not a
+// name lookup.
+export function isUtilityFilter(entry: FilterEntry): boolean {
+    return entry.parameters.length > 0;
+}
+
+export type FilterRole =
+    | "dynamics"
+    | "level"
+    | "spectral"
+    | "time"
+    | "spatial"
+    | "cleanup"
+    | "utility"
+    | "filter";
+
+// Everything past "utility" (a real, data-driven signal) is a manual,
+// client-side breakdown of what each filter actually does -- the catalog has
+// no metadata for this. Purely cosmetic (node/edge/library coloring and
+// grouping): unlisted filters still work fully, just fall back to the
+// generic "filter" role. Extend as new filters are added.
+const FILTER_ROLE_BY_NAME: Record<string, FilterRole> = {
+    compressor: "dynamics",
+    gate: "dynamics",
+    gain: "level",
+    normalize: "level",
+    equalizer: "spectral",
+    delay: "time",
+    fade: "time",
+    retime: "time",
+    trim: "time",
+    reverb: "spatial",
+    convolver: "spatial",
+    "remove-dc-offset": "cleanup",
+};
+
+export function filterRole(entry: FilterEntry): FilterRole {
+    if (isUtilityFilter(entry)) return "utility";
+    return FILTER_ROLE_BY_NAME[entry.name] ?? "filter";
+}
+
+// Same classification, keyed by plugin name -- for call sites (e.g. the
+// resolved pipeline view) that only have the plugin name, not a FilterEntry.
+export function filterRoleByName(name: string, catalog: Catalog): FilterRole {
+    const entry = catalog.filters.find((filter) => filter.name === name);
+    return entry ? filterRole(entry) : "filter";
+}
+
+const ROLE_COLOR_VAR: Record<FilterRole, string> = {
+    dynamics: "var(--color-dynamics)",
+    level: "var(--color-level)",
+    spectral: "var(--color-spectral)",
+    time: "var(--color-time)",
+    spatial: "var(--color-spatial)",
+    cleanup: "var(--color-cleanup)",
+    utility: "var(--color-utility)",
+    filter: "var(--color-filter)",
+};
+
+export function roleColorVar(role: FilterRole): string {
+    return ROLE_COLOR_VAR[role];
+}
+
 export function nodeTitle(node: GraphNode): string {
+    if (node.kind !== "output" && node.label) return node.label;
     if (node.kind === "source")
         return node.primary ? "Main audio" : "Audio source";
     if (node.kind === "filter") return displayName(node.descriptor.name);

@@ -14,6 +14,7 @@ interface ResultPanelProps {
     onStart: () => void;
     onCancel: () => void;
     childrenTitle?: string;
+    childrenDescription?: string;
     children?: ReactNode;
 }
 
@@ -34,6 +35,7 @@ export function ResultPanel({
     onStart,
     onCancel,
     childrenTitle,
+    childrenDescription,
     children,
 }: ResultPanelProps) {
     const progress = job.progress;
@@ -58,33 +60,34 @@ export function ResultPanel({
 
             {progress && (
                 <div className={styles.progress}>
-                    <Meter percent={progress.percent} />
                     <div className={styles.progressStats}>
                         {progress.percent >= 0 ? (
-                            <span>{progress.percent.toFixed(1)}%</span>
+                            <span className={styles.chip}>{progress.percent.toFixed(1)}%</span>
                         ) : (
-                            <span>{progress.processedItems} items</span>
+                            <span className={styles.chip}>{progress.processedItems} items</span>
                         )}
-                        <span>Elapsed {formatMs(progress.elapsedMs)}</span>
+                        <span className={styles.chip}>Elapsed {formatMs(progress.elapsedMs)}</span>
                         {progress.percent >= 0 && progress.percent < 100 && (
-                            <span>
+                            <span className={styles.chip}>
                                 Remaining {formatMs(progress.etaMs)} (estimated)
                             </span>
                         )}
                         {progress.speedRatio > 0 && (
-                            <span>{progress.speedRatio.toFixed(1)}x</span>
+                            <span className={styles.chip}>{progress.speedRatio.toFixed(1)}x</span>
                         )}
                     </div>
+                    <Meter percent={progress.percent} />
                 </div>
             )}
 
             {job.error && <p className={styles.error}>{job.error}</p>}
 
             <div className={styles.comparison}>
-                <AudioPlayer label="Input" src={inputSrc} />
+                <AudioPlayer label="Input" src={inputSrc} variant="input" />
                 <AudioPlayer
                     label="Output"
                     src={job.resultUrl}
+                    variant="output"
                     downloadName={
                         input ? `converted.${outputExtension}` : undefined
                     }
@@ -95,6 +98,9 @@ export function ResultPanel({
                 <div className={styles.extraSection}>
                     {childrenTitle && (
                         <h3 className={styles.extraTitle}>{childrenTitle}</h3>
+                    )}
+                    {childrenDescription && (
+                        <p className={styles.extraDescription}>{childrenDescription}</p>
                     )}
                     {children}
                 </div>

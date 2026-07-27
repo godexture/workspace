@@ -14,8 +14,10 @@ import { useHistory } from "../hooks/useHistory";
 import { useKeyboardShortcuts, type ShortcutBinding } from "../hooks/useKeyboardShortcuts";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { ResultPanel } from "../components/ResultPanel";
-import { Panel } from "../ui";
+import { Button, Panel, SegmentedControl } from "../ui";
 import styles from "./App.module.css";
+
+type View = "editor" | "result";
 
 const CLIENT_MAX_UPLOAD_BYTES = 100 << 20;
 const SERVER_MAX_UPLOAD_BYTES = 1 << 30;
@@ -29,6 +31,7 @@ export function App() {
     const history = useHistory<GraphDocument | null>(null);
     const graph = history.value;
     const [files, setFiles] = useState<Map<string, File>>(() => new Map());
+    const [view, setView] = useState<View>("editor");
     const backend = mode === "server" ? serverBackend : clientBackend;
     const maxUploadBytes = mode === "server" ? SERVER_MAX_UPLOAD_BYTES : CLIENT_MAX_UPLOAD_BYTES;
 
@@ -131,55 +134,89 @@ export function App() {
     if (loadError) return <div className={styles.centered}>Unable to connect to server: {loadError}</div>;
     if (!catalog || !graph) return <div className={styles.centered}>Loading...</div>;
 
+    const canStart = Boolean(compiled.inputs && compiled.spec && resolved && !resolveError);
+    function startConversion() {
+        if (compiled.inputs && compiled.spec && resolved) {
+            setActiveJobResolved(resolved);
+            void job.start(compiled.inputs, compiled.spec);
+            setView("result");
+        }
+    }
+
     return (
         <div className={styles.app}>
             <header className={styles.header}>
-                <h1>GODEC Example — Web Audio Converter</h1>
-                <p className={styles.subtitle}>Build audio pipelines visually with Godexture</p>
+                <div className={styles.brand}>
+                    <h1>GODEC</h1>
+                    <span className={styles.subtitle}>Web Audio Converter</span>
+                </div>
+                <SegmentedControl
+                    value={view}
+                    onChange={setView}
+                    options={[
+                        { value: "editor", label: "Editor" },
+                        { value: "result", label: "Result" },
+                    ]}
+                />
+                <div className={styles.headerActions}>
+                    <Button disabled={locked || !history.canUndo} onClick={history.undo}>Undo</Button>
+                    <Button disabled={locked || !history.canRedo} onClick={history.redo}>Redo</Button>
+                    <Button variant="primary" disabled={locked || !canStart} onClick={startConversion}>
+                        Convert
+                    </Button>
+                </div>
             </header>
 
             <main className={styles.main}>
-                <GraphEditor
-                    graph={graph}
-                    files={files}
-                    catalog={catalog}
-                    presets={presets}
-                    backend={backend}
-                    mode={mode}
-                    maxUploadBytes={maxUploadBytes}
-                    issues={compiled.issues}
-                    locked={locked}
-                    onGraphChange={updateGraph}
-                    onFileChange={updateFile}
-                    onModeChange={setMode}
-                    onReset={resetGraph}
-                    onUndo={history.undo}
-                    onRedo={history.redo}
-                    canUndo={history.canUndo}
-                    canRedo={history.canRedo}
-                />
-
-                <ResultPanel
-                    job={job.state}
-                    input={mainInput}
-                    inputSrc={inputSrc}
-                    outputExtension={outputExtension}
-                    canStart={Boolean(compiled.inputs && compiled.spec && resolved && !resolveError)}
-                    onStart={() => {
-                        if (compiled.inputs && compiled.spec && resolved) {
-                            setActiveJobResolved(resolved);
-                            void job.start(compiled.inputs, compiled.spec);
-                        }
-                    }}
-                    onCancel={() => void job.cancel()}
-                    childrenTitle="Resolved Pipeline"
-                >
-                    <ResolvedGraph
-                        description={resolved}
-                        liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
-                        error={resolveError}
+                <div className={[styles.editorColumn, view === "editor" ? undefined : styles.hidden].filter(Boolean).join(" ")}>
+                    <GraphEditor
+                        graph={graph}
+                        files={files}
+                        catalog={catalog}
+                        presets={presets}
+                        backend={backend}
+                        mode={mode}
+                        maxUploadBytes={maxUploadBytes}
+                        issues={compiled.issues}
+                        locked={locked}
+                        onGraphChange={updateGraph}
+                        onFileChange={updateFile}
+                        onModeChange={setMode}
+                        onReset={resetGraph}
                     />
-                </ResultPanel>
+                    <Panel
+                        title="Resolved Pipeline"
+                        description="The runtime graph, including auto-inserted nodes such as demuxers and decoders."
+                    >
+                        <ResolvedGraph
+                            catalog={catalog}
+                            description={resolved}
+                            liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
+                            error={resolveError}
+                        />
+                    </Panel>
+                </div>
+
+                <div className={view === "result" ? undefined : styles.hidden}>
+                    <ResultPanel
+                        job={job.state}
+                        input={mainInput}
+                        inputSrc={inputSrc}
+                        outputExtension={outputExtension}
+                        canStart={canStart}
+                        onStart={startConversion}
+                        onCancel={() => void job.cancel()}
+                        childrenTitle="Resolved Pipeline"
+                        childrenDescription="The runtime graph, including auto-inserted nodes such as demuxers and decoders."
+                    >
+                        <ResolvedGraph
+                            catalog={catalog}
+                            description={resolved}
+                            liveNodes={resolved === activeJobResolved ? job.state.progress?.nodes : undefined}
+                            error={resolveError}
+                        />
+                    </ResultPanel>
+                </div>
             </main>
         </div>
     );

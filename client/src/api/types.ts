@@ -15,6 +15,7 @@ export type {
     PipelineDescription,
     PipelineNode,
     PipelineEdge,
+    StreamInfo,
 } from "@godexture/js";
 
 export interface Preset {

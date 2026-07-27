@@ -4,3 +4,13 @@
     gap: var(--space-4) var(--space-5);
     margin-top: var(--space-3);
 }
+
+.numeric {
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+.checkbox {
+    width: auto;
+    accent-color: var(--color-accent);
+}

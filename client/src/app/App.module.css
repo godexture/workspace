@@ -10,13 +10,21 @@
 
 .header {
     display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
     padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--color-border);
 }
 
-.header h1 {
+.brand {
+    display: flex;
+    flex-shrink: 0;
+    align-items: baseline;
+    gap: var(--space-4);
+}
+
+.brand h1 {
     font-size: 0.92rem;
     font-weight: 700;
     letter-spacing: 0.01em;
@@ -27,10 +35,27 @@
     font-size: 0.76rem;
 }
 
+.headerActions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--space-3);
+}
+
 .main {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+}
+
+.editorColumn {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.hidden {
+    display: none;
 }
 
 .centered {
