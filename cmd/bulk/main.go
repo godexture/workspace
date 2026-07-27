@@ -325,6 +325,19 @@ func main() {
 		}
 
 		for _, abs := range goModules {
+			fmt.Printf("==> Creating local tag and pushing %s in %s\n", targetVersion, abs)
+			cmdTag := exec.Command("git", "tag", targetVersion)
+			cmdTag.Dir = abs
+			cmdTag.Run() // Ignore error if tag already exists locally
+
+			cmdPushTag := exec.Command("git", "push", "origin", targetVersion)
+			cmdPushTag.Dir = abs
+			cmdPushTag.Stdout = os.Stdout
+			cmdPushTag.Stderr = os.Stderr
+			if err := cmdPushTag.Run(); err != nil {
+				fmt.Printf("Warning: failed to push tag %s in %s: %v\n", targetVersion, abs, err)
+			}
+
 			fmt.Printf("==> Creating GitHub release for %s in %s\n", targetVersion, abs)
 			cmd := exec.Command("gh", "release", "create", targetVersion, "--generate-notes")
 			cmd.Dir = abs
