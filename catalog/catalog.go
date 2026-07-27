@@ -8,7 +8,7 @@ import (
 	godec "github.com/godexture/core"
 	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/cliflag"
+	setting "github.com/godexture/sdk/config"
 )
 
 // FilterEntry describes a filter's editable configuration and port topology.
@@ -69,7 +69,7 @@ func filterEntries(registries registry.Bundle) []FilterEntry {
 			if err != nil {
 				continue
 			}
-			config, err := value.NewConfiguration()
+			config, _, err := setting.Resolve(value, nil, setting.Strict)
 			if err != nil {
 				continue
 			}
@@ -112,37 +112,42 @@ func DescribeFilter(name string, parameters map[string]string) (FilterEntry, err
 }
 
 func DescribeFilterFrom(registries registry.Bundle, name string, parameters map[string]string) (FilterEntry, error) {
-	if registries.Filters != nil {
-		if value, err := registries.Filters.Lookup(name); err == nil {
-			if len(parameters) != 0 {
-				return FilterEntry{}, fmt.Errorf("filter %q does not accept parameters", name)
-			}
-			return filterEntry(value, []Field{})
-		}
-	}
-	if registries.ParameterizedFilters == nil {
-		return FilterEntry{}, fmt.Errorf("unknown filter %q", name)
-	}
-	value, err := registries.ParameterizedFilters.Lookup(name)
-	if err != nil {
-		return FilterEntry{}, fmt.Errorf("unknown filter %q", name)
-	}
-	parameterFields, err := fields(value)
-	if err != nil {
-		return FilterEntry{}, err
-	}
-	config, err := value.NewConfiguration()
-	if err != nil {
-		return FilterEntry{}, err
-	}
-	if err := cliflag.DecodeStruct(config, parameters); err != nil {
-		return FilterEntry{}, err
-	}
-	resolved, err := value.NewManifest(config)
+	resolved, parameterFields, err := resolveFilterManifest(registries, name, parameters)
 	if err != nil {
 		return FilterEntry{}, err
 	}
 	return filterEntry(resolved, parameterFields)
+}
+
+func resolveFilterManifest(registries registry.Bundle, name string, parameters map[string]string) (registry.FilterManifest, []Field, error) {
+	if registries.Filters != nil {
+		if value, err := registries.Filters.Lookup(name); err == nil {
+			if len(parameters) != 0 {
+				return registry.FilterManifest{}, nil, fmt.Errorf("filter %q does not accept parameters", name)
+			}
+			return value, []Field{}, nil
+		}
+	}
+	if registries.ParameterizedFilters == nil {
+		return registry.FilterManifest{}, nil, fmt.Errorf("unknown filter %q", name)
+	}
+	value, err := registries.ParameterizedFilters.Lookup(name)
+	if err != nil {
+		return registry.FilterManifest{}, nil, fmt.Errorf("unknown filter %q", name)
+	}
+	parameterFields, err := fields(value)
+	if err != nil {
+		return registry.FilterManifest{}, nil, err
+	}
+	config, _, err := setting.Resolve(value, parameters, setting.Strict)
+	if err != nil {
+		return registry.FilterManifest{}, nil, err
+	}
+	resolved, err := value.NewManifest(config)
+	if err != nil {
+		return registry.FilterManifest{}, nil, err
+	}
+	return resolved, parameterFields, nil
 }
 
 func outputFormats(registries registry.Bundle) []OutputFormat {

@@ -21,6 +21,7 @@ type FieldDescription struct {
 	Type      string
 	Help      string
 	Default   string
+	Editor    string
 	Choices   []string
 	DependsOn *FieldDependency
 }
@@ -36,6 +37,17 @@ type FieldValue struct {
 }
 
 func StructValues(target any) ([]FieldValue, error) {
+	return structValues(target, descriptionDefault)
+}
+
+// RawStructValues returns configuration values in their wire representation.
+// Unlike StructValues, an empty string remains empty rather than being quoted
+// for human-readable descriptions.
+func RawStructValues(target any) ([]FieldValue, error) {
+	return structValues(target, formatValue)
+}
+
+func structValues(target any, format func(reflect.Value) string) ([]FieldValue, error) {
 	value, typeOf, err := structValue(target)
 	if err != nil {
 		return nil, err
@@ -46,7 +58,7 @@ func StructValues(target any) ([]FieldValue, error) {
 	}
 	values := make([]FieldValue, 0, len(fields))
 	for _, field := range fields {
-		values = append(values, FieldValue{Name: field.name, Value: descriptionDefault(value.Field(field.index))})
+		values = append(values, FieldValue{Name: field.name, Value: format(value.Field(field.index))})
 	}
 	return values, nil
 }
@@ -57,6 +69,7 @@ type field struct {
 	name           string
 	flagName       string
 	help           string
+	editor         string
 	typeOf         reflect.Type
 	dependsOn      *FieldDependency
 	dependsOnIndex int
@@ -108,13 +121,13 @@ func DescribeStruct(prototype any) ([]FieldDescription, error) {
 			Type:      descriptionType(field.typeOf, choices),
 			Help:      field.help,
 			Default:   descriptionDefault(value.Field(field.index)),
+			Editor:    field.editor,
 			Choices:   choices,
 			DependsOn: field.dependsOn,
 		})
 	}
 	return descriptions, nil
 }
-
 
 func descriptionDefault(value reflect.Value) string {
 	if value.Kind() == reflect.Slice && value.Len() == 0 {

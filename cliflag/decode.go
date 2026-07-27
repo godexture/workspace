@@ -7,6 +7,26 @@ import (
 )
 
 func DecodeStruct(target any, values map[string]string) error {
+	return decodeStruct(target, values, true)
+}
+
+// ApplyStruct decodes values onto target without running whole-configuration
+// validation. It is used by the configuration resolver, which applies
+// dynamic defaults and normalization before validating the completed value.
+func ApplyStruct(target any, values map[string]string) error {
+	return decodeStruct(target, values, false)
+}
+
+// ValidateStruct runs the target configuration's Validate method, if any.
+func ValidateStruct(target any) error {
+	value, _, err := structValue(target)
+	if err != nil {
+		return err
+	}
+	return validate(value)
+}
+
+func decodeStruct(target any, values map[string]string, validateResult bool) error {
 	value, typeOf, err := structValue(target)
 	if err != nil {
 		return err
@@ -45,8 +65,10 @@ func DecodeStruct(target any, values map[string]string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	if err := validate(copy); err != nil {
-		return err
+	if validateResult {
+		if err := validate(copy); err != nil {
+			return err
+		}
 	}
 	value.Set(copy)
 	return nil

@@ -15,7 +15,7 @@ import (
 
 	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-pcm"
-	_ "github.com/godexture/filter-audio"
+	filter "github.com/godexture/filter-audio"
 	_ "github.com/godexture/format-flac"
 	_ "github.com/godexture/format-wav"
 )
@@ -93,6 +93,43 @@ func TestResolveDecodesFilterValues(t *testing.T) {
 	}
 	if len(resolved.Filters) != 1 {
 		t.Fatalf("Resolve() filters = %d, want 1", len(resolved.Filters))
+	}
+}
+
+func TestResolveFillsDynamicEqualizerDefault(t *testing.T) {
+	resolved, err := conversion.Resolve(conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{
+				Name:   "equalizer",
+				Values: map[string]string{"mode": "multiband", "bands": "3"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	config, ok := resolved.Filters[0].Config.(*filter.EqualizerConfig)
+	if !ok {
+		t.Fatalf("Resolve() config = %T, want *filter.EqualizerConfig", resolved.Filters[0].Config)
+	}
+	if config.Gains != "0,0,0" {
+		t.Fatalf("Resolve() gains = %q, want %q", config.Gains, "0,0,0")
+	}
+}
+
+func TestResolveRejectsExplicitEqualizerGainCount(t *testing.T) {
+	_, err := conversion.Resolve(conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+		Filters: []conversion.FilterSpec{{
+			PluginSpec: conversion.PluginSpec{
+				Name:   "equalizer",
+				Values: map[string]string{"mode": "multiband", "bands": "3", "gains": "0,0"},
+			},
+		}},
+	})
+	if !errorHasCode(err, conversion.CodeInvalidSpec) {
+		t.Fatalf("Resolve() error = %v, want %s", err, conversion.CodeInvalidSpec)
 	}
 }
 

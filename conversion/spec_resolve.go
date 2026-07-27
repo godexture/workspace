@@ -7,7 +7,7 @@ import (
 	"github.com/godexture/core/domain/media"
 	"github.com/godexture/core/registry"
 	"github.com/godexture/core/routing"
-	"github.com/godexture/sdk/cliflag"
+	setting "github.com/godexture/sdk/config"
 )
 
 func Resolve(spec Spec) (Resolved, error) {
@@ -186,8 +186,8 @@ func resolveFilterManifest(filterSpec FilterSpec) (registry.FilterManifest, erro
 }
 
 func configure(role string, value registry.Manifest, values map[string]string) (registry.Configuration, error) {
-	config := value.Default()
-	if err := cliflag.DecodeStruct(config, values); err != nil {
+	config, _, err := setting.Resolve(value, values, setting.Strict)
+	if err != nil {
 		return nil, wrapError(CodeInvalidSpec, fmt.Sprintf("configure %s %q", role, value.RegistryName()), err)
 	}
 	return config, nil

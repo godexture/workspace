@@ -77,6 +77,50 @@ func TestDescribeFilterEqualizerFieldDependencies(t *testing.T) {
 	for _, name := range []string{"bands", "low-hz", "high-hz", "manual-bands", "gains"} {
 		assertDependency(t, fields[name], "mode", "multiband")
 	}
+	if fields["gains"].Editor != "sliders" {
+		t.Fatalf("gains editor = %q", fields["gains"].Editor)
+	}
+}
+
+func TestResolveEqualizerConfiguration(t *testing.T) {
+	resolved, err := catalog.ResolveConfiguration("filter", "equalizer", nil, map[string]string{
+		"mode": "multiband", "bands": "3",
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfiguration() error = %v", err)
+	}
+	if resolved.Values["gains"] != "0,0,0" {
+		t.Fatalf("resolved gains = %q", resolved.Values["gains"])
+	}
+	if resolved.Sources["gains"] != "dynamic" {
+		t.Fatalf("gains source = %q", resolved.Sources["gains"])
+	}
+	if len(resolved.Fields) != 1 || len(resolved.Fields[0].Slots) != 3 {
+		t.Fatalf("resolved fields = %#v", resolved.Fields)
+	}
+
+	normalized, err := catalog.ResolveConfiguration("filter", "equalizer", nil, map[string]string{
+		"mode": "multiband", "bands": "2", "gains": "1,2,3",
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfiguration() normalization error = %v", err)
+	}
+	if normalized.Updates["gains"] != "1,2" {
+		t.Fatalf("normalized gains update = %q", normalized.Updates["gains"])
+	}
+
+	manual, err := catalog.ResolveConfiguration("filter", "equalizer", nil, map[string]string{
+		"mode": "multiband", "manual-bands": "1000,100",
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfiguration() manual bands error = %v", err)
+	}
+	slots := manual.Fields[0].Slots
+	if len(slots) != 2 ||
+		slots[0].Label != "100 Hz" || slots[0].Index != 1 ||
+		slots[1].Label != "1 kHz" || slots[1].Index != 0 {
+		t.Fatalf("manual band slots = %#v", slots)
+	}
 }
 
 func assertDependency(t *testing.T, field catalog.Field, name, value string) {

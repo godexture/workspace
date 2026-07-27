@@ -37,7 +37,7 @@ func fieldsFor(typeOf reflect.Type) ([]field, error) {
 		indexByName[tag] = len(fields)
 		fields = append(fields, field{
 			index: index, goName: structField.Name, name: tag, help: structField.Tag.Get("help"),
-			typeOf: structField.Type, dependsOn: dependsOn,
+			editor: structField.Tag.Get("editor"), typeOf: structField.Type, dependsOn: dependsOn,
 		})
 	}
 	for index := range fields {

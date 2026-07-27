@@ -12,6 +12,7 @@ type Field struct {
 	Type      string           `json:"type"`
 	Help      string           `json:"help"`
 	Default   string           `json:"default"`
+	Editor    string           `json:"editor,omitempty"`
 	Choices   []string         `json:"choices,omitempty"`
 	DependsOn *FieldDependency `json:"dependsOn,omitempty"`
 }
@@ -37,7 +38,7 @@ func fields(value registry.Manifest) ([]Field, error) {
 		if field.DependsOn != nil {
 			dependsOn = &FieldDependency{Field: field.DependsOn.Field, Values: slices.Clone(field.DependsOn.Values)}
 		}
-		result[i] = Field{Name: field.Name, Type: field.Type, Help: field.Help, Default: field.Default, Choices: slices.Clone(field.Choices), DependsOn: dependsOn}
+		result[i] = Field{Name: field.Name, Type: field.Type, Help: field.Help, Default: field.Default, Editor: field.Editor, Choices: slices.Clone(field.Choices), DependsOn: dependsOn}
 	}
 	return result, nil
 }
