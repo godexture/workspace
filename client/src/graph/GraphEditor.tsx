@@ -22,6 +22,7 @@ import { FitViewOnReady } from "./FitViewOnReady";
 import { GradientEdge, type GradientFlowEdge } from "./GradientEdge";
 import { Inspector } from "./Inspector";
 import { layoutGraph } from "./layout";
+import { PipelineLibrary } from "./PipelineLibrary";
 import {
     canDeleteNode,
     createFilterNode,
@@ -55,6 +56,7 @@ interface GraphEditorProps {
     onFileChange: (nodeID: string, file: File | null) => void;
     onModeChange: (mode: BackendMode) => void;
     onReset: () => void;
+    onLibraryLoad: (graph: GraphDocument) => void;
 }
 
 const nodeTypes = { editor: EditorNode } as NodeTypes;
@@ -92,6 +94,7 @@ export function GraphEditor({
     onFileChange,
     onModeChange,
     onReset,
+    onLibraryLoad,
 }: GraphEditorProps) {
     const [selectedID, setSelectedID] = useState<string | null>(null);
     const [preview, setPreview] = useState<LibrarySelection | null>(null);
@@ -512,6 +515,7 @@ export function GraphEditor({
                         Reset
                     </Button>
                 </ToolbarGroup>
+                <PipelineLibrary graph={graph} disabled={locked} onLoad={onLibraryLoad} />
             </Toolbar>
             {(editorError || issues.length > 0) && (
                 <div className={styles.issues}>

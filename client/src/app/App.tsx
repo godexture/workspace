@@ -131,6 +131,11 @@ export function App() {
         updateGraph(createInitialGraph(catalog, presets.find((preset) => preset.id === "lpcm")));
     }
 
+    function loadLibraryGraph(next: GraphDocument) {
+        setFiles(new Map());
+        updateGraph(next);
+    }
+
     if (loadError) return <div className={styles.centered}>Unable to connect to server: {loadError}</div>;
     if (!catalog || !graph) return <div className={styles.centered}>Loading...</div>;
 
@@ -183,6 +188,7 @@ export function App() {
                         onFileChange={updateFile}
                         onModeChange={setMode}
                         onReset={resetGraph}
+                        onLibraryLoad={loadLibraryGraph}
                     />
                     <Panel
                         title="Resolved Pipeline"
