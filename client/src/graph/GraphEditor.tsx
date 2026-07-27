@@ -595,6 +595,7 @@ export function GraphEditor({
                             catalog={catalog}
                             presets={presets}
                             maxUploadBytes={maxUploadBytes}
+                            locked={locked}
                             onChange={updateNode}
                             onUpload={upload}
                             onFilterParametersChange={changeFilterParameters}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { Catalog, PluginEntry, PluginField, Preset } from "../api/types";
+import { Recorder } from "../audio/Recorder";
 import { FieldInputs } from "../components/FieldInputs";
 import { Button, Field, Tabs } from "../ui";
 import { canDeleteNode, displayName, encoderForCodec, nodeTitle, type GraphNode, type SourceData } from "./model";
@@ -15,6 +16,7 @@ interface InspectorProps {
     catalog: Catalog;
     presets: Preset[];
     maxUploadBytes: number;
+    locked: boolean;
     onChange: (node: GraphNode) => void;
     onUpload: (node: GraphNode & SourceData, file: File) => void;
     onFilterParametersChange: (node: GraphNode, parameters: Record<string, string>) => void;
@@ -28,6 +30,7 @@ export function Inspector({
     catalog,
     presets,
     maxUploadBytes,
+    locked,
     onChange,
     onUpload,
     onFilterParametersChange,
@@ -78,6 +81,9 @@ export function Inspector({
                             }}
                         />
                         <small className={styles.hint}>All source files together: {formatLimit(maxUploadBytes)}</small>
+                    </Field>
+                    <Field label="Record audio">
+                        <Recorder disabled={locked} onRecorded={(file) => onUpload(node, file)} />
                     </Field>
                     {node.selection?.kind === "upload" && <p className={styles.hint}>{node.selection.name}</p>}
                     <PluginSelector
