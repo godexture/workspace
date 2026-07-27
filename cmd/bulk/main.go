@@ -111,6 +111,30 @@ func incrementVersion(v, bumpType string) string {
 	}
 }
 
+func getGitSubmodules(dir string) (map[string]string, error) {
+	cmd := exec.Command("git", "submodule", "status")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	modules := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			path := parts[1]
+			absPath := filepath.Join(dir, path)
+			modules[path] = absPath
+		}
+	}
+	return modules, nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: bulk <subcommand> [args]")
@@ -147,12 +171,17 @@ func main() {
 		cli.Fatal(err)
 	}
 
-	modules, err := workspace.WorkspaceModules(goCommand, goWork)
+	goModules, err := workspace.WorkspaceModules(goCommand, goWork)
 	if err != nil {
 		cli.Fatal(err)
 	}
-	if len(modules) == 0 {
+	if len(goModules) == 0 {
 		cli.Fatalf("no modules found in %s", goWork)
+	}
+
+	gitSubmodules, err := getGitSubmodules(filepath.Dir(goWork))
+	if err != nil {
+		cli.Fatal(err)
 	}
 
 	switch subcommand {
@@ -165,7 +194,7 @@ func main() {
 		var targetVersion string
 		if arg == "patch" || arg == "minor" || arg == "major" {
 			var maxV string
-			for _, abs := range modules {
+			for _, abs := range goModules {
 				vers := getGodextureDepVersions(abs)
 				for _, v := range vers {
 					if !semver.IsValid(v) {
@@ -188,7 +217,7 @@ func main() {
 			cli.Fatalf("invalid version argument: %s", arg)
 		}
 
-		for rel, abs := range modules {
+		for rel, abs := range goModules {
 			deps := getGodextureDeps(abs)
 			if len(deps) == 0 {
 				continue
@@ -223,7 +252,7 @@ func main() {
 		}
 
 	case "commit":
-		for _, abs := range modules {
+		for _, abs := range gitSubmodules {
 			// Check if there are changes
 			statusCmd := exec.Command("git", "status", "--porcelain")
 			statusCmd.Dir = abs
@@ -247,7 +276,7 @@ func main() {
 		}
 
 	case "add":
-		for _, abs := range modules {
+		for _, abs := range gitSubmodules {
 			// Check if there are changes
 			statusCmd := exec.Command("git", "status", "--porcelain")
 			statusCmd.Dir = abs
@@ -271,7 +300,7 @@ func main() {
 		}
 
 	case "push":
-		for _, abs := range modules {
+		for _, abs := range gitSubmodules {
 			fmt.Printf("==> Pushing changes in %s\n", abs)
 			gitArgs := append([]string{"push"}, passThroughArgs...)
 			cmd := exec.Command("git", gitArgs...)
@@ -291,7 +320,7 @@ func main() {
 		if !strings.HasPrefix(targetVersion, "v") {
 			cli.Fatalf("invalid version argument: %s", targetVersion)
 		}
-		for _, abs := range modules {
+		for _, abs := range goModules {
 			fmt.Printf("==> Creating GitHub release for %s in %s\n", targetVersion, abs)
 			cmd := exec.Command("gh", "release", "create", targetVersion, "--generate-notes")
 			cmd.Dir = abs
@@ -303,7 +332,7 @@ func main() {
 		}
 
 	case "sync":
-		for rel, abs := range modules {
+		for rel, abs := range goModules {
 			var toUpdate []string
 			if len(args) > 0 {
 				toUpdate = args
