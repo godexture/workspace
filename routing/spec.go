@@ -5,9 +5,13 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/godexture/core/domain/manifest"
 	"github.com/godexture/core/domain/media"
+	"github.com/godexture/core/node"
 	"github.com/godexture/core/registry"
 )
+
+type SinkFactory func(media.StreamInfo) (node.Sink, error)
 
 // MainInputAlias is the reserved source alias for the main input's decoded
 // stream. It cannot be used as an auxiliary input name or a filter alias.
@@ -84,6 +88,29 @@ type ConversionSpec struct {
 
 	// Resources sets the total execution budget. Parallelism == 0 uses
 	// runtime.GOMAXPROCS(0).
+	Resources registry.ResourceBudget
+}
+
+// PlaybackSpec describes a decoded-frame pipeline with a terminal sink. Sink
+// selects the graph source that feeds the terminal node, just as it does for
+// ConversionSpec's encoder.
+type PlaybackSpec struct {
+	Input io.ReadSeeker
+
+	DemuxManifest     registry.DemuxerManifest
+	DemuxConfig       registry.Configuration
+	SelectInputStream func(streams []media.StreamInfo) (media.StreamInfo, error)
+
+	DecoderManifest registry.DecoderManifest
+	DecodeConfig    registry.Configuration
+	Filters         []FilterSpec
+	AuxInputs       map[string]AuxInputSpec
+	Sink            *PortRef
+
+	SinkRequirements []manifest.Capability
+	SinkFactory      SinkFactory
+	SinkName         string
+
 	Resources registry.ResourceBudget
 }
 

@@ -8,5 +8,6 @@ const (
 	RoleDecoder NodeType = "decoder"
 	RoleEncoder NodeType = "encoder"
 	RoleFilter  NodeType = "filter"
+	RoleSink    NodeType = "sink"
 	RoleUnknown NodeType = "unknown"
 )

@@ -100,8 +100,8 @@ func (n *Negotiator) validateSpec(ctx context.Context, spec ConversionSpec) erro
 	return nil
 }
 
-func (n *Negotiator) addNodesToGeometry(spec ConversionSpec, state *negotiationState) error {
-	parallelism := spec.Resources.Parallelism
+func (n *Negotiator) addNodesToGeometry(resources registry.ResourceBudget, state *negotiationState) error {
+	parallelism := resources.Parallelism
 	if parallelism == 0 {
 		parallelism = runtime.GOMAXPROCS(0)
 	}
@@ -188,7 +188,7 @@ func (n *Negotiator) NegotiateConversion(ctx context.Context, spec ConversionSpe
 		return nil, err
 	}
 
-	if err := n.addNodesToGeometry(spec, state); err != nil {
+	if err := n.addNodesToGeometry(spec.Resources, state); err != nil {
 		return nil, err
 	}
 
