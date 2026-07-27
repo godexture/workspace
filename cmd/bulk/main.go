@@ -51,39 +51,33 @@ func getGodextureDeps(dir string) []string {
 	return deps
 }
 
-func getGodextureDepVersions(dir string) []string {
-	b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-	if err != nil {
-		return nil
+func resolveTargetVersion(arg string, modules map[string]string) string {
+	if strings.HasPrefix(arg, "v") {
+		return arg
 	}
-	var versions []string
-	scanner := bufio.NewScanner(bytes.NewReader(b))
-	inRequire := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "require (" {
-			inRequire = true
+	var maxV string
+	for _, abs := range modules {
+		cmd := exec.Command("git", "tag")
+		cmd.Dir = abs
+		out, err := cmd.Output()
+		if err != nil {
 			continue
 		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
-		if strings.HasPrefix(line, "require ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 && strings.HasPrefix(parts[1], "github.com/godexture/") {
-				versions = append(versions, parts[2])
+		scanner := bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			v := strings.TrimSpace(scanner.Text())
+			if !semver.IsValid(v) {
+				continue
 			}
-			continue
-		}
-		if inRequire && line != "" && !strings.HasPrefix(line, "//") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 && strings.HasPrefix(parts[0], "github.com/godexture/") {
-				versions = append(versions, parts[1])
+			if maxV == "" || semver.Compare(v, maxV) > 0 {
+				maxV = v
 			}
 		}
 	}
-	return versions
+	if maxV == "" {
+		maxV = "v0.0.0"
+	}
+	return incrementVersion(maxV, arg)
 }
 
 func incrementVersion(v, bumpType string) string {
@@ -190,32 +184,11 @@ func main() {
 			cli.Fatalf("bump subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
 		}
 		arg := args[0]
-		
-		var targetVersion string
-		if arg == "patch" || arg == "minor" || arg == "major" {
-			var maxV string
-			for _, abs := range goModules {
-				vers := getGodextureDepVersions(abs)
-				for _, v := range vers {
-					if !semver.IsValid(v) {
-						continue
-					}
-					if maxV == "" || semver.Compare(v, maxV) > 0 {
-						maxV = v
-					}
-				}
-			}
-			if maxV == "" {
-				maxV = "v0.0.0"
-			}
-			targetVersion = incrementVersion(maxV, arg)
-			fmt.Printf("Calculated new version: %s (from max %s)\n", targetVersion, maxV)
-		} else if strings.HasPrefix(arg, "v") {
-			targetVersion = arg
-			fmt.Printf("Using explicit version: %s\n", targetVersion)
-		} else {
+		if arg != "patch" && arg != "minor" && arg != "major" && !strings.HasPrefix(arg, "v") {
 			cli.Fatalf("invalid version argument: %s", arg)
 		}
+		targetVersion := resolveTargetVersion(arg, goModules)
+		fmt.Printf("Resolved target version: %s\n", targetVersion)
 
 		for rel, abs := range goModules {
 			deps := getGodextureDeps(abs)
@@ -314,12 +287,14 @@ func main() {
 
 	case "gh-release":
 		if len(args) < 1 {
-			cli.Fatalf("gh-release subcommand requires a version argument (vX.Y.Z)")
+			cli.Fatalf("gh-release subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
 		}
-		targetVersion := args[0]
-		if !strings.HasPrefix(targetVersion, "v") {
-			cli.Fatalf("invalid version argument: %s", targetVersion)
+		arg := args[0]
+		if arg != "patch" && arg != "minor" && arg != "major" && !strings.HasPrefix(arg, "v") {
+			cli.Fatalf("invalid version argument: %s", arg)
 		}
+		targetVersion := resolveTargetVersion(arg, goModules)
+		fmt.Printf("Resolved target version for release: %s\n", targetVersion)
 		for _, abs := range goModules {
 			fmt.Printf("==> Creating GitHub release for %s in %s\n", targetVersion, abs)
 			cmd := exec.Command("gh", "release", "create", targetVersion, "--generate-notes")
