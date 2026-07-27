@@ -3,6 +3,7 @@ export interface PluginField {
     type: string;
     help: string;
     default: string;
+    editor?: string;
     choices?: string[];
     dependsOn?: { field: string; values: string[] };
 }
@@ -34,6 +35,37 @@ export interface Catalog {
     encoders: PluginEntry[];
     muxers: PluginEntry[];
     outputs: OutputFormat[];
+}
+
+export type ConfigurationValueSource = "default" | "dynamic" | "explicit" | "normalized";
+
+export interface ConfigurationSlot {
+    index: number;
+    label: string;
+    default: number;
+}
+
+export interface ConfigurationField {
+    name: string;
+    active: boolean;
+    unit?: string;
+    dependsOn?: string[];
+    range?: { min: number; max: number; step: number };
+    slots?: ConfigurationSlot[];
+}
+
+export interface ConfigurationResolution {
+    values: Record<string, string>;
+    sources: Record<string, ConfigurationValueSource>;
+    updates?: Record<string, string>;
+    fields: ConfigurationField[];
+}
+
+export interface ConfigurationRequest {
+    role: string;
+    name: string;
+    parameters?: Record<string, string>;
+    values?: Record<string, string>;
 }
 
 export interface PluginSpec { name: string; values?: Record<string, string>; }

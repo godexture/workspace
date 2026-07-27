@@ -1,9 +1,14 @@
 import { GoMain } from "./generated/go-main";
-import type { Catalog, ConversionSpec, FilterEntry, InputSet, PipelineDescription, Progress } from "./types";
+import type { Catalog, ConfigurationRequest, ConfigurationResolution, ConversionSpec, FilterEntry, InputSet, PipelineDescription, Progress } from "./types";
 
 export type {
     AuxInputSpec,
     Catalog,
+    ConfigurationField,
+    ConfigurationRequest,
+    ConfigurationResolution,
+    ConfigurationSlot,
+    ConfigurationValueSource,
     ConversionSpec,
     FilterEntry,
     FilterSpec,
@@ -48,6 +53,15 @@ export class Godexture {
 
     async describeFilter(name: string, parameters: Record<string, string> = {}): Promise<FilterEntry> {
         return JSON.parse(await this.main().describeFilter(name, parameters));
+    }
+
+    async resolveConfiguration(request: ConfigurationRequest): Promise<ConfigurationResolution> {
+        return JSON.parse(await this.main().resolveConfiguration(
+            request.role,
+            request.name,
+            request.parameters ?? {},
+            request.values ?? {},
+        ));
     }
 
     async resolvePipeline(inputs: InputSet, spec: ConversionSpec): Promise<PipelineDescription> {

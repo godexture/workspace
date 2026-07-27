@@ -85,6 +85,14 @@ export class GoMain {
   }
 
   /**
+   * ResolveConfiguration applies defaults and normalization to plugin values
+   * and returns their effective values and dynamic field state.
+   */
+  resolveConfiguration(role: string, name: string, parameters: {[key: string]: string}, values: {[key: string]: string}): Promise<string> {
+    return this.call<string>("resolveConfiguration", [role, name, parameters, values]);
+  }
+
+  /**
    * Resolve negotiates a pipeline for inputs against the JSON-encoded spec
    * without building or running it, returning the resolved node/edge topology
    * as JSON. Used to preview a pipeline before starting a conversion.
