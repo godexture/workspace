@@ -52,7 +52,7 @@ export function PipelineLibrary({ graph, disabled, onLoad }: PipelineLibraryProp
                             value={name}
                             onChange={(event) => setName(event.target.value)}
                         />
-                        <Button variant="primary" disabled={!name.trim()}>Save</Button>
+                        <Button variant="primary" disabled={!name.trim()} onClick={save}>Save</Button>
                     </form>
                     <p className={styles.note}>Uploaded files are not saved. Choose them again after loading.</p>
                     {entries.length === 0 ? (
