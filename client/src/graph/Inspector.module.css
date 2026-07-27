@@ -96,6 +96,7 @@
 
 .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
     margin-top: auto;
     padding-top: var(--space-4);
@@ -105,6 +106,10 @@
 .duplicate,
 .delete {
     flex: 1;
+}
+
+.mainSource {
+    flex: 1 0 100%;
 }
 
 @media (max-width: 860px) {

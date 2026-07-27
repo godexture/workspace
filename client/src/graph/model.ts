@@ -169,6 +169,17 @@ export function duplicateNode(node: GraphNode): GraphNode {
     return { ...node, id: nextNodeID(), position };
 }
 
+export function selectMainSource(graph: GraphDocument, sourceID: string): GraphDocument {
+    const source = graph.nodes.find((node) => node.id === sourceID);
+    if (!source || source.kind !== "source" || source.primary) return graph;
+    return {
+        ...graph,
+        nodes: graph.nodes.map((node) =>
+            node.kind === "source" ? { ...node, primary: node.id === sourceID } : node,
+        ),
+    };
+}
+
 export function edgeID(
     source: string,
     sourcePort: string,

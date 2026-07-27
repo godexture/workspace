@@ -33,6 +33,7 @@ import {
     inputPorts,
     outputPorts,
     roleColorVar,
+    selectMainSource,
     type GraphDocument,
     type GraphEdge,
     type GraphNode,
@@ -598,6 +599,9 @@ export function GraphEditor({
                             locked={locked}
                             onChange={updateNode}
                             onUpload={upload}
+                            onSelectMainSource={(node) => {
+                                if (!locked) onGraphChange(selectMainSource(graph, node.id));
+                            }}
                             onFilterParametersChange={changeFilterParameters}
                             onDuplicate={duplicateSelected}
                             onDelete={(node) => {

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import type { Catalog, FilterEntry, PluginEntry, Preset } from "../src/api/types";
 import { layoutGraph } from "../src/graph/layout";
-import { compileGraph, createInitialGraph, encoderForCodec, type GraphDocument } from "../src/graph/model";
+import { compileGraph, createInitialGraph, encoderForCodec, selectMainSource, type GraphDocument } from "../src/graph/model";
 
 const preset: Preset = { id: "lpcm", name: "PCM", filename: "lpcm.wav", contentType: "audio/wav" };
 const catalog: Catalog = {
@@ -98,6 +98,29 @@ test("connected auxiliary sources require an audio selection", () => {
         ],
     };
     expect(compileGraph(graph, [preset], new Map()).issues.join(" ")).toContain("Select an audio file or preset for Audio source");
+});
+
+test("an auxiliary audio source can become the main input", () => {
+    const base = createInitialGraph(catalog, preset);
+    const graph: GraphDocument = {
+        ...base,
+        nodes: [
+            base.nodes[0]!,
+            { id: "aux", kind: "source", primary: false, selection: { kind: "preset", presetId: "lpcm" }, position: { x: 1, y: 1 } },
+            { id: "join", kind: "filter", descriptor: joiner, values: {}, parameters: {}, position: { x: 2, y: 1 } },
+            base.nodes[1]!,
+        ],
+        edges: [
+            { id: "a", source: "source-main", sourcePort: "out", target: "join", targetPort: "in0" },
+            { id: "b", source: "aux", sourcePort: "out", target: "join", targetPort: "in1" },
+            { id: "c", source: "join", sourcePort: "out0", target: "output", targetPort: "in" },
+        ],
+    };
+
+    const selected = selectMainSource(graph, "aux");
+    expect(selected.nodes.filter((node) => node.kind === "source" && node.primary).map((node) => node.id)).toEqual(["aux"]);
+    expect(compileGraph(selected, [preset], new Map()).inputs?.main).toEqual({ kind: "preset", preset });
+    expect(compileGraph(selected, [preset], new Map()).issues).toEqual([]);
 });
 
 test("profiles compilation and layout for a 100-node graph", () => {

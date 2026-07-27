@@ -19,6 +19,7 @@ interface InspectorProps {
     locked: boolean;
     onChange: (node: GraphNode) => void;
     onUpload: (node: GraphNode & SourceData, file: File) => void;
+    onSelectMainSource: (node: GraphNode & SourceData) => void;
     onFilterParametersChange: (node: GraphNode, parameters: Record<string, string>) => void;
     onDuplicate: (node: GraphNode) => void;
     onDelete: (node: GraphNode) => void;
@@ -33,6 +34,7 @@ export function Inspector({
     locked,
     onChange,
     onUpload,
+    onSelectMainSource,
     onFilterParametersChange,
     onDuplicate,
     onDelete,
@@ -98,7 +100,12 @@ export function Inspector({
                         value={node.decoder}
                         onChange={(decoder) => onChange({ ...node, decoder })}
                     />
-                    <NodeActions node={node} onDuplicate={onDuplicate} onDelete={onDelete} />
+                    <NodeActions
+                        node={node}
+                        onSelectMainSource={onSelectMainSource}
+                        onDuplicate={onDuplicate}
+                        onDelete={onDelete}
+                    />
                 </section>
             </aside>
         );
@@ -285,16 +292,21 @@ function PreviewFields({ fields }: { fields: PluginField[] }) {
 
 function NodeActions({
     node,
+    onSelectMainSource,
     onDuplicate,
     onDelete,
 }: {
     node: GraphNode;
+    onSelectMainSource?: (node: GraphNode & SourceData) => void;
     onDuplicate: (node: GraphNode) => void;
     onDelete: (node: GraphNode) => void;
 }) {
     if (!canDeleteNode(node)) return null;
     return (
         <div className={styles.actions}>
+            {node.kind === "source" && onSelectMainSource && (
+                <Button className={styles.mainSource} onClick={() => onSelectMainSource(node)}>Set as main source</Button>
+            )}
             <Button className={styles.duplicate} onClick={() => onDuplicate(node)}>Duplicate</Button>
             <Button variant="danger" className={styles.delete} onClick={() => onDelete(node)}>Delete node</Button>
         </div>
