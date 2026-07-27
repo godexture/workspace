@@ -115,11 +115,13 @@ func main() {
 	var workPath string
 	var goCommand string
 	var ghRelease bool
+	var commit bool
 
 	flags := pflag.NewFlagSet(filepath.Base(os.Args[0]), pflag.ExitOnError)
 	flags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	flags.StringVar(&goCommand, "go", "go", "go command to run")
 	flags.BoolVar(&ghRelease, "gh-release", false, "actually perform github release (commit, push, tag, gh release create)")
+	flags.BoolVar(&commit, "commit", false, "commit the version bump changes (git add & git commit)")
 
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		cli.Fatal(err)
@@ -190,8 +192,8 @@ func main() {
 			}
 		}
 
-		if ghRelease {
-			fmt.Println("==> Running git commit and push...")
+		if commit || ghRelease {
+			fmt.Println("==> Running git commit...")
 			cmd := exec.Command("git", "add", ".")
 			cmd.Dir = workspaceRoot
 			cmd.Stdout = os.Stdout
@@ -207,8 +209,11 @@ func main() {
 			if err := cmd.Run(); err != nil {
 				cli.Fatalf("git commit failed: %v", err)
 			}
+		}
 
-			cmd = exec.Command("git", "push")
+		if ghRelease {
+			fmt.Println("==> Running git push...")
+			cmd := exec.Command("git", "push")
 			cmd.Dir = workspaceRoot
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
