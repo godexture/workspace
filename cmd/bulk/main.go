@@ -129,16 +129,32 @@ func getGitSubmodules(dir string) (map[string]string, error) {
 	return modules, nil
 }
 
+func confirm(prompt string, autoYes bool) bool {
+	if autoYes {
+		return true
+	}
+	fmt.Printf("%s [y/N]: ", prompt)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		text := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		return text == "y" || text == "yes"
+	}
+	return false
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: bulk <subcommand> [args]")
+		fmt.Println("Usage: bulk <subcommand> [flags] [args]")
 		fmt.Println("Subcommands:")
-		fmt.Println("  bump <patch|minor|major|vX.Y.Z>    Bump versions in go.mod and commit")
+		fmt.Println("  bump [patch|minor|major|vX.Y.Z]    Bump versions in go.mod and commit (empty gets max tag)")
 		fmt.Println("  add [args...]                      Run git add in all submodules with changes")
 		fmt.Println("  commit [args...]                   Run git commit in all submodules with changes")
 		fmt.Println("  push [args...]                     Run git push in all submodules")
-		fmt.Println("  gh-release <vX.Y.Z>                Create GitHub release in all submodules")
+		fmt.Println("  gh-release <patch|vX.Y.Z>          Create GitHub release in all Go modules")
+		fmt.Println("  gh-release-undo <vX.Y.Z>           Delete GitHub release and tags in all Go modules")
 		fmt.Println("  sync                               Sync dependencies to @latest")
+		fmt.Println("\nFlags:")
+		fmt.Println("  -y, --yes                          Skip confirmation prompts")
 		os.Exit(1)
 	}
 
@@ -146,10 +162,12 @@ func main() {
 
 	var workPath string
 	var goCommand string
+	var autoYes bool
 
 	commonFlags := pflag.NewFlagSet(subcommand, pflag.ExitOnError)
 	commonFlags.StringVar(&workPath, "work", "", "path to go.work; defaults to searching from the current directory")
 	commonFlags.StringVar(&goCommand, "go", "go", "go command to run")
+	commonFlags.BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
 	var passThroughArgs []string
 	var args []string
 	if subcommand == "commit" || subcommand == "add" || subcommand == "push" {
@@ -180,15 +198,20 @@ func main() {
 
 	switch subcommand {
 	case "bump":
-		if len(args) < 1 {
-			cli.Fatalf("bump subcommand requires a version argument (patch, minor, major, vX.Y.Z)")
-		}
-		arg := args[0]
-		if arg != "patch" && arg != "minor" && arg != "major" && !strings.HasPrefix(arg, "v") {
-			cli.Fatalf("invalid version argument: %s", arg)
+		arg := ""
+		if len(args) >= 1 {
+			arg = args[0]
+			if arg != "patch" && arg != "minor" && arg != "major" && !strings.HasPrefix(arg, "v") {
+				cli.Fatalf("invalid version argument: %s", arg)
+			}
 		}
 		targetVersion := resolveTargetVersion(arg, goModules)
 		fmt.Printf("Resolved target version: %s\n", targetVersion)
+
+		if !confirm(fmt.Sprintf("Target version is %s. Proceed to bump dependencies and commit?", targetVersion), autoYes) {
+			fmt.Println("Aborted.")
+			return
+		}
 
 		for rel, abs := range goModules {
 			deps := getGodextureDeps(abs)
@@ -295,6 +318,12 @@ func main() {
 		}
 		targetVersion := resolveTargetVersion(arg, goModules)
 		fmt.Printf("Resolved target version for release: %s\n", targetVersion)
+
+		if !confirm(fmt.Sprintf("Target version is %s. Proceed to create GitHub releases?", targetVersion), autoYes) {
+			fmt.Println("Aborted.")
+			return
+		}
+
 		for _, abs := range goModules {
 			fmt.Printf("==> Creating GitHub release for %s in %s\n", targetVersion, abs)
 			cmd := exec.Command("gh", "release", "create", targetVersion, "--generate-notes")
@@ -304,6 +333,36 @@ func main() {
 			if err := cmd.Run(); err != nil {
 				fmt.Printf("Warning: gh release create failed in %s: %v\n", abs, err)
 			}
+		}
+
+	case "gh-release-undo":
+		if len(args) < 1 {
+			cli.Fatalf("gh-release-undo subcommand requires a version argument (vX.Y.Z)")
+		}
+		targetVersion := args[0]
+		if !strings.HasPrefix(targetVersion, "v") {
+			cli.Fatalf("invalid version argument: %s", targetVersion)
+		}
+
+		if !confirm(fmt.Sprintf("Are you sure you want to DELETE release %s in all submodules?", targetVersion), autoYes) {
+			fmt.Println("Aborted.")
+			return
+		}
+
+		for _, abs := range goModules {
+			fmt.Printf("==> Deleting GitHub release and remote tag for %s in %s\n", targetVersion, abs)
+			cmd := exec.Command("gh", "release", "delete", targetVersion, "--cleanup-tag", "-y")
+			cmd.Dir = abs
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Warning: gh release delete failed in %s: %v\n", abs, err)
+			}
+
+			fmt.Printf("==> Deleting local tag for %s in %s\n", targetVersion, abs)
+			cmd = exec.Command("git", "tag", "-d", targetVersion)
+			cmd.Dir = abs
+			cmd.Run() // Ignore error if local tag doesn't exist
 		}
 
 	case "sync":
