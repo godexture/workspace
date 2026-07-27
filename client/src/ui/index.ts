@@ -4,3 +4,4 @@ export { Toolbar, ToolbarGroup } from "./Toolbar";
 export { SegmentedControl, type SegmentedOption, type SegmentedControlProps } from "./SegmentedControl";
 export { Field, type FieldProps } from "./Field";
 export { Meter } from "./Meter";
+export { Tabs, type TabOption, type TabsProps } from "./Tabs";

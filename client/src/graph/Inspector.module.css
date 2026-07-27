@@ -1,5 +1,4 @@
-.panel,
-.empty {
+.panel {
     display: flex;
     box-sizing: border-box;
     width: 100%;
@@ -10,11 +9,6 @@
     border-left: 1px solid var(--color-border);
     padding: var(--space-4);
     overflow: hidden;
-}
-
-.empty {
-    color: var(--color-muted);
-    font-size: 0.8rem;
 }
 
 .hint,
@@ -70,13 +64,51 @@
     gap: var(--space-3);
 }
 
-.delete {
+.previewFields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.previewField {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-raised);
+    padding: var(--space-2) var(--space-3);
+    font-size: 0.74rem;
+}
+
+.previewFieldName {
+    overflow: hidden;
+    color: var(--color-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.previewFieldDefault {
+    flex: 0 0 auto;
+    color: var(--color-dim);
+    font-family: var(--font-mono);
+}
+
+.actions {
+    display: flex;
+    gap: var(--space-3);
     margin-top: auto;
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--color-border);
+}
+
+.duplicate,
+.delete {
+    flex: 1;
 }
 
 @media (max-width: 860px) {
-    .panel,
-    .empty {
+    .panel {
         border-left: none;
         border-top: 1px solid var(--color-border);
     }

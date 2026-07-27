@@ -3,36 +3,41 @@ import "@xyflow/react/dist/style.css";
 import {
     Background,
     Controls,
-    MarkerType,
     ReactFlow,
     applyNodeChanges,
     type Connection,
-    type Edge,
+    type EdgeTypes,
     type NodeTypes,
     type NodeChange,
+    type ReactFlowInstance,
 } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
-import type { Catalog, Preset } from "../api/types";
+import type { Catalog, FilterEntry, Preset } from "../api/types";
 import type {
     BackendMode,
     ConversionBackend,
 } from "../conversion/backend/types";
+import { FitViewOnReady } from "./FitViewOnReady";
+import { GradientEdge, type GradientFlowEdge } from "./GradientEdge";
 import { Inspector } from "./Inspector";
 import { layoutGraph } from "./layout";
 import {
     canDeleteNode,
     createFilterNode,
     createSourceNode,
-    displayName,
+    duplicateNode,
     edgeID,
+    filterRole,
     inputPorts,
     outputPorts,
+    roleColorVar,
     type GraphDocument,
     type GraphEdge,
     type GraphNode,
 } from "./model";
 import { EditorNode, type EditorFlowNode } from "./EditorNode";
+import { NODE_DRAG_MIME, NodeLibrary, type LibrarySelection, type NodeDragPayload } from "./NodeLibrary";
 import { Button, Panel, SegmentedControl, Toolbar, ToolbarGroup } from "../ui";
 import styles from "./GraphEditor.module.css";
 
@@ -50,24 +55,15 @@ interface GraphEditorProps {
     onFileChange: (nodeID: string, file: File | null) => void;
     onModeChange: (mode: BackendMode) => void;
     onReset: () => void;
-    onUndo: () => void;
-    onRedo: () => void;
-    canUndo: boolean;
-    canRedo: boolean;
 }
 
 const nodeTypes = { editor: EditorNode } as NodeTypes;
+const edgeTypes = { gradient: GradientEdge } as EdgeTypes;
 
-const SOURCE_CHOICE = "source";
-
-function nodeChoices(catalog: Catalog): { value: string; label: string }[] {
-    return [
-        { value: SOURCE_CHOICE, label: "Source: Audio input" },
-        ...catalog.filters.map((filter) => ({
-            value: filter.name,
-            label: `${displayName(filter.name)}: ${filter.description}`,
-        })),
-    ];
+function kindColorVar(node: GraphNode): string {
+    if (node.kind === "source") return "var(--color-source)";
+    if (node.kind === "output") return "var(--color-output)";
+    return roleColorVar(filterRole(node.descriptor));
 }
 
 function toFlowNodes(graph: GraphDocument): EditorFlowNode[] {
@@ -96,34 +92,46 @@ export function GraphEditor({
     onFileChange,
     onModeChange,
     onReset,
-    onUndo,
-    onRedo,
-    canUndo,
-    canRedo,
 }: GraphEditorProps) {
     const [selectedID, setSelectedID] = useState<string | null>(null);
-    const [nodeChoice, setNodeChoice] = useState(SOURCE_CHOICE);
+    const [preview, setPreview] = useState<LibrarySelection | null>(null);
+    const [libraryOpen, setLibraryOpen] = useState(false);
+    const [dragOverNodeId, setDragOverNodeId] = useState<string | null>(null);
     const [editorError, setEditorError] = useState<string | null>(null);
     const [flowNodes, setFlowNodes] = useState<EditorFlowNode[]>(() =>
         toFlowNodes(graph),
     );
+    const reactFlowInstance = useRef<ReactFlowInstance<EditorFlowNode, GradientFlowEdge> | null>(null);
     const selected = graph.nodes.find((node) => node.id === selectedID) ?? null;
     useEffect(() => setFlowNodes(toFlowNodes(graph)), [graph.nodes]);
-    const flowEdges = useMemo(
+    const displayNodes = useMemo(
         () =>
-            graph.edges.map(
-                (edge) =>
-                    ({
-                        id: edge.id,
-                        source: edge.source,
-                        sourceHandle: edge.sourcePort,
-                        target: edge.target,
-                        targetHandle: edge.targetPort,
-                        type: "smoothstep",
-                        markerEnd: { type: MarkerType.ArrowClosed },
-                    }) satisfies Edge,
-            ),
-        [graph.edges],
+            dragOverNodeId
+                ? flowNodes.map((node) =>
+                      node.id === dragOverNodeId ? { ...node, data: { ...node.data, dropTarget: true } } : node,
+                  )
+                : flowNodes,
+        [flowNodes, dragOverNodeId],
+    );
+    const flowEdges = useMemo<GradientFlowEdge[]>(
+        () =>
+            graph.edges.map((edge) => {
+                const source = graph.nodes.find((node) => node.id === edge.source);
+                const target = graph.nodes.find((node) => node.id === edge.target);
+                return {
+                    id: edge.id,
+                    source: edge.source,
+                    sourceHandle: edge.sourcePort,
+                    target: edge.target,
+                    targetHandle: edge.targetPort,
+                    type: "gradient",
+                    data: {
+                        sourceColor: source ? kindColorVar(source) : "var(--color-muted)",
+                        targetColor: target ? kindColorVar(target) : "var(--color-muted)",
+                    },
+                } satisfies GradientFlowEdge;
+            }),
+        [graph.edges, graph.nodes],
     );
 
     function updateNode(next: GraphNode) {
@@ -290,15 +298,13 @@ export function GraphEditor({
         setEditorError(null);
     }
 
-    function insertNode() {
+    // explicitTarget lets a drag-drop onto a specific node splice into that
+    // node (see onCanvasDrop) instead of the current selection.
+    function insertNode(descriptor: FilterEntry | null, explicitTarget?: GraphNode) {
         if (locked) return;
-        const descriptor =
-            nodeChoice === SOURCE_CHOICE
-                ? null
-                : catalog.filters.find((filter) => filter.name === nodeChoice);
-        if (nodeChoice !== SOURCE_CHOICE && !descriptor) return;
 
         const target =
+            explicitTarget ??
             selected ??
             graph.nodes.find((current) => current.kind === "output");
         // A terminal node (no outputs, e.g. the output node) has nothing to insert after, so insert before it instead.
@@ -414,6 +420,61 @@ export function GraphEditor({
         setEditorError(null);
     }
 
+    function duplicateSelected(node: GraphNode) {
+        if (locked || !canDeleteNode(node)) return;
+        const next = duplicateNode(node);
+        if (next.kind === "source" && next.selection?.kind === "upload") {
+            const file = files.get(node.id);
+            if (file) onFileChange(next.id, file);
+        }
+        onGraphChange({ ...graph, nodes: [...graph.nodes, next] });
+        setSelectedID(next.id);
+    }
+
+    // Placed exactly where dropped, unlike insertNode's heuristic
+    // splice-near-selection placement -- dragging from the library is about
+    // choosing where on the canvas the node lands.
+    function dropNode(descriptor: FilterEntry | null, position: { x: number; y: number }) {
+        if (locked) return;
+        const node = descriptor ? createFilterNode(descriptor, position) : createSourceNode(position);
+        onGraphChange({ ...graph, nodes: [...graph.nodes, node] });
+        setSelectedID(node.id);
+    }
+
+    function onCanvasDragOver(event: DragEvent) {
+        if (locked || !event.dataTransfer.types.includes(NODE_DRAG_MIME)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDragOverNodeId(nodeIdAtPoint(event.clientX, event.clientY));
+    }
+
+    function onCanvasDragLeave() {
+        setDragOverNodeId(null);
+    }
+
+    function onCanvasDrop(event: DragEvent) {
+        const raw = event.dataTransfer.getData(NODE_DRAG_MIME);
+        const targetId = dragOverNodeId;
+        setDragOverNodeId(null);
+        if (locked || !raw || !reactFlowInstance.current) return;
+        event.preventDefault();
+        const payload = JSON.parse(raw) as NodeDragPayload;
+        const descriptor = payload.kind === "filter"
+            ? catalog.filters.find((filter) => filter.name === payload.name) ?? null
+            : null;
+        if (payload.kind === "filter" && !descriptor) return;
+        // Dropping directly on an existing node splices in like inserting
+        // while that node is selected; dropping on empty canvas places the
+        // node exactly where it landed with no auto-connection.
+        const targetNode = targetId ? graph.nodes.find((node) => node.id === targetId) : undefined;
+        if (targetNode) {
+            insertNode(descriptor, targetNode);
+            return;
+        }
+        const position = reactFlowInstance.current.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        dropNode(descriptor, position);
+    }
+
     return (
         <Panel
             title="Pipeline Editor"
@@ -432,32 +493,14 @@ export function GraphEditor({
         >
             <Toolbar>
                 <ToolbarGroup>
-                    <select
-                        className={styles.filterSelect}
-                        disabled={locked}
-                        value={nodeChoice}
-                        onChange={(event) => setNodeChoice(event.target.value)}
-                    >
-                        {nodeChoices(catalog).map((choice) => (
-                            <option key={choice.value} value={choice.value}>
-                                {choice.label}
-                            </option>
-                        ))}
-                    </select>
                     <Button
-                        variant="primary"
-                        onClick={insertNode}
-                        disabled={locked || !nodeChoice}
+                        variant={libraryOpen ? "primary" : "default"}
+                        onClick={() => {
+                            setLibraryOpen((open) => !open);
+                            setPreview(null);
+                        }}
                     >
-                        Insert node
-                    </Button>
-                </ToolbarGroup>
-                <ToolbarGroup>
-                    <Button disabled={locked || !canUndo} onClick={onUndo}>
-                        Undo
-                    </Button>
-                    <Button disabled={locked || !canRedo} onClick={onRedo}>
-                        Redo
+                        {libraryOpen ? "Hide Library" : "Show Library"}
                     </Button>
                     <Button
                         disabled={locked}
@@ -479,11 +522,21 @@ export function GraphEditor({
                 </div>
             )}
             <div className={styles.workspace}>
-                <div className={styles.canvas}>
+                {libraryOpen && (
+                    <NodeLibrary catalog={catalog} disabled={locked} onPreview={setPreview} />
+                )}
+                <div
+                    className={styles.canvas}
+                    onDragOver={onCanvasDragOver}
+                    onDragLeave={onCanvasDragLeave}
+                    onDrop={onCanvasDrop}
+                >
                     <ReactFlow
-                        nodes={flowNodes}
+                        nodes={displayNodes}
                         edges={flowEdges}
                         nodeTypes={nodeTypes}
+                        edgeTypes={edgeTypes}
+                        onInit={(instance) => { reactFlowInstance.current = instance; }}
                         onNodesChange={onNodesChange}
                         onEdgesChange={(changes) => {
                             if (locked) return;
@@ -507,7 +560,10 @@ export function GraphEditor({
                             saveNodePosition(node.id, node.position)
                         }
                         onNodeClick={(_, node) => setSelectedID(node.id)}
-                        onPaneClick={() => setSelectedID(null)}
+                        onPaneClick={() => {
+                            setSelectedID(null);
+                            setPreview(null);
+                        }}
                         fitView
                         panOnScroll
                         nodesDraggable={!locked}
@@ -522,26 +578,31 @@ export function GraphEditor({
                             color="var(--color-border)"
                         />
                         <Controls showInteractive={false} />
+                        <FitViewOnReady once />
                     </ReactFlow>
                 </div>
-                <div
-                    className={`${styles.inspector}${locked ? ` ${styles.inspectorLocked}` : ""}`}
-                >
-                    <Inspector
-                        node={selected}
-                        catalog={catalog}
-                        presets={presets}
-                        maxUploadBytes={maxUploadBytes}
-                        onChange={updateNode}
-                        onUpload={upload}
-                        onFilterParametersChange={changeFilterParameters}
-                        onDelete={(node) => {
-                            if (locked) return;
-                            const next = deleteNodes(graph, [node.id]);
-                            if (next !== graph) onGraphChange(next);
-                        }}
-                    />
-                </div>
+                {(selected || preview) && (
+                    <div
+                        className={`${styles.inspector}${locked ? ` ${styles.inspectorLocked}` : ""}`}
+                    >
+                        <Inspector
+                            node={selected}
+                            preview={preview}
+                            catalog={catalog}
+                            presets={presets}
+                            maxUploadBytes={maxUploadBytes}
+                            onChange={updateNode}
+                            onUpload={upload}
+                            onFilterParametersChange={changeFilterParameters}
+                            onDuplicate={duplicateSelected}
+                            onDelete={(node) => {
+                                if (locked) return;
+                                const next = deleteNodes(graph, [node.id]);
+                                if (next !== graph) onGraphChange(next);
+                            }}
+                        />
+                    </div>
+                )}
             </div>
         </Panel>
     );
@@ -549,6 +610,11 @@ export function GraphEditor({
 
 function connectPorts(source: string, sourcePort: string, target: string, targetPort: string): GraphEdge {
     return { id: edgeID(source, sourcePort, target, targetPort), source, sourcePort, target, targetPort };
+}
+
+function nodeIdAtPoint(x: number, y: number): string | null {
+    const hit = document.elementsFromPoint(x, y).find((element) => element.classList.contains("react-flow__node"));
+    return hit?.getAttribute("data-id") ?? null;
 }
 
 function createsCycle(graph: GraphDocument, connection: Connection): boolean {
