@@ -22,6 +22,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(newListCommand())
 	root.AddCommand(newDescribeCommand())
 	root.AddCommand(newConvertCommand())
+	root.AddCommand(newPlayCommand())
 	return root
 }
 

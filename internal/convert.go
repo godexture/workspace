@@ -1,7 +1,8 @@
 package cli
 
 import (
-	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func newConvertCommand() *cobra.Command {
@@ -57,12 +59,11 @@ type pendingOutput struct {
 
 func prepareOutput(command *cobra.Command, path string, force bool) (*pendingOutput, bool, error) {
 	if _, err := os.Stat(path); err == nil && !force {
-		if !isTerminal(command.InOrStdin()) {
-			return nil, false, fmt.Errorf("output %q exists; use --force", path)
+		overwrite, confirmErr := confirmOverwrite(command.InOrStdin(), command.ErrOrStderr(), path)
+		if confirmErr != nil {
+			return nil, false, confirmErr
 		}
-		_, _ = fmt.Fprintf(command.ErrOrStderr(), "Overwrite %s? [y/N] ", path)
-		answer, _ := bufio.NewReader(command.InOrStdin()).ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		if !overwrite {
 			return nil, true, nil
 		}
 	} else if err != nil && !os.IsNotExist(err) {
@@ -73,6 +74,43 @@ func prepareOutput(command *cobra.Command, path string, force bool) (*pendingOut
 		return nil, false, err
 	}
 	return &pendingOutput{path: path, temporary: temporary.Name(), file: temporary}, false, nil
+}
+
+func confirmOverwrite(input io.Reader, output io.Writer, path string) (confirmed bool, resultErr error) {
+	file, ok := input.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return false, fmt.Errorf("output %q exists; use --force", path)
+	}
+	state, err := term.MakeRaw(int(file.Fd()))
+	if err != nil {
+		return false, fmt.Errorf("prepare overwrite confirmation: %w", err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, term.Restore(int(file.Fd()), state))
+	}()
+
+	terminal := term.NewTerminal(
+		terminalReadWriter{Reader: input, Writer: output},
+		fmt.Sprintf("Overwrite %s? [y/N] ", path),
+	)
+	answer, err := terminal.ReadLine()
+	if errors.Is(err, io.EOF) {
+		_, _ = fmt.Fprint(output, "^C\r\n")
+		return false, context.Canceled
+	}
+	if err != nil {
+		return false, err
+	}
+	return overwriteConfirmed(answer), nil
+}
+
+func overwriteConfirmed(answer string) bool {
+	return strings.EqualFold(strings.TrimSpace(answer), "y")
+}
+
+type terminalReadWriter struct {
+	io.Reader
+	io.Writer
 }
 
 func (output *pendingOutput) abort() {
@@ -88,11 +126,7 @@ func (output *pendingOutput) commit() error {
 	output.file = nil
 	return os.Rename(output.temporary, output.path)
 }
-func isTerminal(reader io.Reader) bool {
-	file, ok := reader.(*os.File)
-	return ok && terminalFile(file)
-}
+
 func terminalFile(file *os.File) bool {
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(file.Fd()))
 }

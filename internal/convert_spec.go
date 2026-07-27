@@ -40,24 +40,54 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 		return conversion.Spec{}, err
 	}
 
-	spec := conversion.Spec{Muxer: *format, Parallelism: options.jobs}
+	input, err := buildPlaybackSpec(options.graphOptions())
+	if err != nil {
+		return conversion.Spec{}, err
+	}
+	spec := conversion.Spec{
+		Demuxer: input.Demuxer, Decoder: input.Decoder,
+		Filters: input.Filters, AuxInputs: input.AuxInputs, Sink: input.Sink,
+		Muxer: *format, Parallelism: input.Parallelism,
+	}
 	if codec != nil {
 		spec.Codec = codec.Name
 		spec.Encoder = &conversion.PluginSpec{Values: codec.Values}
 	}
+	return spec, nil
+}
+
+type graphOptions struct {
+	demuxer string
+	decoder string
+	jobs    int
+	filters []string
+	inputs  []string
+	wires   []string
+}
+
+func (options convertOptions) graphOptions() graphOptions {
+	return graphOptions{
+		demuxer: options.demuxer, decoder: options.decoder, jobs: options.jobs,
+		filters: options.filters, inputs: options.inputs, wires: options.wires,
+	}
+}
+
+func buildPlaybackSpec(options graphOptions) (conversion.PlaybackSpec, error) {
+	spec := conversion.PlaybackSpec{Parallelism: options.jobs}
+	var err error
 	var demuxerParameters map[string]string
 	if spec.Demuxer, demuxerParameters, err = parsePluginSpec(options.demuxer); err != nil {
-		return conversion.Spec{}, fmt.Errorf("demuxer: %w", err)
+		return conversion.PlaybackSpec{}, fmt.Errorf("demuxer: %w", err)
 	}
 	if err := rejectPluginParameters("demuxer", demuxerParameters); err != nil {
-		return conversion.Spec{}, err
+		return conversion.PlaybackSpec{}, err
 	}
 	var decoderParameters map[string]string
 	if spec.Decoder, decoderParameters, err = parsePluginSpec(options.decoder); err != nil {
-		return conversion.Spec{}, fmt.Errorf("decoder: %w", err)
+		return conversion.PlaybackSpec{}, fmt.Errorf("decoder: %w", err)
 	}
 	if err := rejectPluginParameters("decoder", decoderParameters); err != nil {
-		return conversion.Spec{}, err
+		return conversion.PlaybackSpec{}, err
 	}
 	// aliasIndex tracks every declared filter alias to its position in
 	// spec.Filters, so --wire can look up its destination; aliasSeen also
@@ -69,16 +99,16 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 	for _, value := range options.filters {
 		alias, filter, parameters, parseErr := parseFilterSpec(value)
 		if parseErr != nil {
-			return conversion.Spec{}, fmt.Errorf("filter: %w", parseErr)
+			return conversion.PlaybackSpec{}, fmt.Errorf("filter: %w", parseErr)
 		}
 		if alias == "" {
 			alias = filter.Name
 		}
 		if !validGraphAlias(alias) {
-			return conversion.Spec{}, fmt.Errorf("filter: invalid alias %q", alias)
+			return conversion.PlaybackSpec{}, fmt.Errorf("filter: invalid alias %q", alias)
 		}
 		if aliasSeen[alias] {
-			return conversion.Spec{}, fmt.Errorf("filter: duplicate alias %q", alias)
+			return conversion.PlaybackSpec{}, fmt.Errorf("filter: duplicate alias %q", alias)
 		}
 		aliasSeen[alias] = true
 		aliasIndex[alias] = len(spec.Filters)
@@ -87,13 +117,13 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 	for _, value := range options.inputs {
 		name, _, parseErr := parseNamedValue(value)
 		if parseErr != nil {
-			return conversion.Spec{}, fmt.Errorf("input: %w", parseErr)
+			return conversion.PlaybackSpec{}, fmt.Errorf("input: %w", parseErr)
 		}
 		if !validGraphAlias(name) {
-			return conversion.Spec{}, fmt.Errorf("input: invalid name %q", name)
+			return conversion.PlaybackSpec{}, fmt.Errorf("input: invalid name %q", name)
 		}
 		if aliasSeen[name] {
-			return conversion.Spec{}, fmt.Errorf("input: name %q duplicates a filter alias", name)
+			return conversion.PlaybackSpec{}, fmt.Errorf("input: name %q duplicates a filter alias", name)
 		}
 		aliasSeen[name] = true
 		if spec.AuxInputs == nil {
@@ -104,38 +134,38 @@ func buildSpec(options convertOptions, outputPath string, outputs []catalog.Outp
 	for _, value := range options.wires {
 		left, source, parseErr := parseNamedValue(value)
 		if parseErr != nil {
-			return conversion.Spec{}, fmt.Errorf("wire: %w", parseErr)
+			return conversion.PlaybackSpec{}, fmt.Errorf("wire: %w", parseErr)
 		}
 		separator := strings.LastIndex(left, ".")
 		if separator <= 0 || separator == len(left)-1 {
-			return conversion.Spec{}, fmt.Errorf("wire: invalid destination %q", left)
+			return conversion.PlaybackSpec{}, fmt.Errorf("wire: invalid destination %q", left)
 		}
 		alias, port := left[:separator], left[separator+1:]
 		sourceAlias, sourcePort, sourceErr := parseWireSource(source)
 		if sourceErr != nil {
-			return conversion.Spec{}, fmt.Errorf("wire: %w", sourceErr)
+			return conversion.PlaybackSpec{}, fmt.Errorf("wire: %w", sourceErr)
 		}
 		ref := conversion.PortRef{Alias: sourceAlias, Port: sourcePort}
 		if alias == outputAlias {
 			if port != "in" {
-				return conversion.Spec{}, fmt.Errorf("wire: %s only has an \"in\" port", outputAlias)
+				return conversion.PlaybackSpec{}, fmt.Errorf("wire: %s only has an \"in\" port", outputAlias)
 			}
 			if spec.Sink != nil {
-				return conversion.Spec{}, fmt.Errorf("wire: output is already wired")
+				return conversion.PlaybackSpec{}, fmt.Errorf("wire: output is already wired")
 			}
 			spec.Sink = &ref
 			continue
 		}
 		index, ok := aliasIndex[alias]
 		if !ok {
-			return conversion.Spec{}, fmt.Errorf("wire: unknown filter alias %q", alias)
+			return conversion.PlaybackSpec{}, fmt.Errorf("wire: unknown filter alias %q", alias)
 		}
 		filter := &spec.Filters[index]
 		if filter.Inputs == nil {
 			filter.Inputs = make(map[string]conversion.PortRef)
 		}
 		if _, exists := filter.Inputs[port]; exists {
-			return conversion.Spec{}, fmt.Errorf("wire: duplicate destination %s", left)
+			return conversion.PlaybackSpec{}, fmt.Errorf("wire: duplicate destination %s", left)
 		}
 		filter.Inputs[port] = ref
 	}

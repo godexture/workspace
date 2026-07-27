@@ -53,19 +53,11 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 		return err
 	}
 	defer inputFile.Close()
-	auxiliaryInputs := make(map[string]io.ReadSeeker, len(options.inputs))
-	for _, value := range options.inputs {
-		name, path, parseErr := parseNamedValue(value)
-		if parseErr != nil {
-			return fmt.Errorf("input: %w", parseErr)
-		}
-		auxiliaryFile, openErr := os.Open(path)
-		if openErr != nil {
-			return fmt.Errorf("input %q: %w", name, openErr)
-		}
-		defer auxiliaryFile.Close()
-		auxiliaryInputs[name] = auxiliaryFile
+	auxiliaryInputs, auxiliaryClosers, err := openAuxiliaryInputs(options.inputs)
+	if err != nil {
+		return err
 	}
+	defer closeInputs(auxiliaryClosers)
 
 	inputInfo, err := inputFile.Stat()
 	if err != nil {
@@ -173,6 +165,10 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	}
 
 	finalizeStarted := time.Now()
+	if err := inputFile.Close(); err != nil {
+		return err
+	}
+	closeInputs(auxiliaryClosers)
 	err = pending.commit()
 	report.Phases.Finalize = time.Since(finalizeStarted)
 	if err != nil {
@@ -188,4 +184,3 @@ func runConvert(command *cobra.Command, inputPath, outputPath string, options co
 	}
 	return nil
 }
-

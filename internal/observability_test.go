@@ -101,6 +101,24 @@ func TestConvertMetricsReportsSuccessfulRun(t *testing.T) {
 	}
 }
 
+func TestConvertOverwritesItsInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.wav")
+	writeObservableTestWAV(t, path)
+
+	_, _, err := executeRoot(t, "convert", path, path, "--progress=never")
+	if err == nil || !strings.Contains(err.Error(), "use --force") {
+		t.Fatalf("convert without --force error = %v", err)
+	}
+
+	_, _, err = executeRoot(t, "convert", path, path, "--force", "--progress=never")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		t.Fatalf("output was not committed: info=%v err=%v", info, err)
+	}
+}
+
 func TestConvertPrintsStartAndSuccessWithoutVerbose(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input.wav")
