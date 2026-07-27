@@ -7,9 +7,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/godexture/web/internal/jobs"
 	"github.com/godexture/sdk/catalog"
 	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/web/internal/jobs"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -41,6 +41,7 @@ func New(jobStore *jobs.Store, assetsDir string, maxUploadBytes int64) *echo.Ech
 	api := e.Group("/api")
 	api.GET("/catalog", s.handleCatalog)
 	api.POST("/filters/describe", s.handleDescribeFilter)
+	api.POST("/configurations/resolve", s.handleResolveConfiguration)
 	api.GET("/presets", s.handlePresets)
 	api.GET("/presets/:id/audio", s.handlePresetAudio)
 	api.POST("/pipelines/resolve", s.handleResolve)
@@ -69,6 +70,23 @@ func (s *Server) handleDescribeFilter(c echo.Context) error {
 		return writeError(c, conversion.NewError(conversion.CodeInvalidSpec, err.Error()))
 	}
 	return writeJSON(c, http.StatusOK, entry)
+}
+
+func (s *Server) handleResolveConfiguration(c echo.Context) error {
+	var request struct {
+		Role       string            `json:"role"`
+		Name       string            `json:"name"`
+		Parameters map[string]string `json:"parameters"`
+		Values     map[string]string `json:"values"`
+	}
+	if err := c.Bind(&request); err != nil {
+		return writeError(c, conversion.NewError(conversion.CodeInvalidSpec, "invalid configuration resolution request: "+err.Error()))
+	}
+	resolution, err := catalog.ResolveConfiguration(request.Role, request.Name, request.Parameters, request.Values)
+	if err != nil {
+		return writeError(c, conversion.NewError(conversion.CodeInvalidSpec, err.Error()))
+	}
+	return writeJSON(c, http.StatusOK, resolution)
 }
 
 func (s *Server) handlePresets(c echo.Context) error {

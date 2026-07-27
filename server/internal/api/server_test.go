@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/godexture/sdk/conversion"
 	"github.com/godexture/web/internal/api"
 	"github.com/godexture/web/internal/jobs"
 	"github.com/godexture/web/internal/testutil"
-	"github.com/godexture/sdk/conversion"
 
 	_ "github.com/godexture/codec-flac"
 	_ "github.com/godexture/codec-pcm"
@@ -190,6 +190,36 @@ func TestDescribeParameterizedFilter(t *testing.T) {
 	}
 	if strings.Join(filter.Inputs, ",") != "in0,in1" || strings.Join(filter.Outputs, ",") != "out0" {
 		t.Fatalf("mixer topology = %#v", filter)
+	}
+}
+
+func TestResolveDynamicConfiguration(t *testing.T) {
+	server, _ := newTestServer(t)
+	request := strings.NewReader(`{"role":"filter","name":"equalizer","values":{"mode":"multiband","bands":"3"}}`)
+	resp, err := http.Post(server.URL+"/api/configurations/resolve", "application/json", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("resolve configuration status = %d: %s", resp.StatusCode, data)
+	}
+	var resolution struct {
+		Values map[string]string `json:"values"`
+		Fields []struct {
+			Name  string `json:"name"`
+			Slots []struct {
+				Index int    `json:"index"`
+				Label string `json:"label"`
+			} `json:"slots"`
+		} `json:"fields"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&resolution); err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Values["gains"] != "0,0,0" || len(resolution.Fields) != 1 || len(resolution.Fields[0].Slots) != 3 {
+		t.Fatalf("configuration resolution = %#v", resolution)
 	}
 }
 
