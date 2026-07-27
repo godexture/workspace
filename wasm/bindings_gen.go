@@ -25,6 +25,7 @@ func recoverFunc(fn func(js.Value, []js.Value) interface{}) js.Func {
 func init() {
 	js.Global().Set("catalog", recoverFunc(wasmCatalog))
 	js.Global().Set("describeFilter", recoverFunc(wasmDescribeFilter))
+	js.Global().Set("resolveConfiguration", recoverFunc(wasmResolveConfiguration))
 	js.Global().Set("resolve", recoverFunc(wasmResolve))
 	js.Global().Set("start", recoverFunc(wasmStart))
 	js.Global().Set("snapshot", recoverFunc(wasmSnapshot))
@@ -58,6 +59,34 @@ func wasmDescribeFilter(_ js.Value, args []js.Value) interface{} {
 	return result
 }
 
+func wasmResolveConfiguration(_ js.Value, args []js.Value) interface{} {
+	role := args[0].String()
+	name := args[1].String()
+	parameters := func() map[string]string {
+		result := make(map[string]string)
+		keys := js.Global().Get("Object").Call("keys", args[2])
+		for i := 0; i < keys.Length(); i++ {
+			key := keys.Index(i).String()
+			result[key] = args[2].Get(key).String()
+		}
+		return result
+	}()
+	values := func() map[string]string {
+		result := make(map[string]string)
+		keys := js.Global().Get("Object").Call("keys", args[3])
+		for i := 0; i < keys.Length(); i++ {
+			key := keys.Index(i).String()
+			result[key] = args[3].Get(key).String()
+		}
+		return result
+	}()
+	result, err := ResolveConfiguration(role, name, parameters, values)
+	if err != nil {
+		return map[string]interface{}{ErrorFieldName: err.Error()}
+	}
+	return result
+}
+
 func wasmResolve(_ js.Value, args []js.Value) interface{} {
 	mainInput := func() []byte {
 		length := args[0].Length()
@@ -71,11 +100,11 @@ func wasmResolve(_ js.Value, args []js.Value) interface{} {
 		for i := 0; i < keys.Length(); i++ {
 			key := keys.Index(i).String()
 			result[key] = func() []byte {
-		length := args[1].Get(key).Length()
-		result := make([]byte, length)
-		js.CopyBytesToGo(result, args[1].Get(key))
-		return result
-	}()
+			length := args[1].Get(key).Length()
+			result := make([]byte, length)
+			js.CopyBytesToGo(result, args[1].Get(key))
+			return result
+		}()
 		}
 		return result
 	}()
@@ -101,11 +130,11 @@ func wasmStart(_ js.Value, args []js.Value) interface{} {
 		for i := 0; i < keys.Length(); i++ {
 			key := keys.Index(i).String()
 			result[key] = func() []byte {
-		length := args[2].Get(key).Length()
-		result := make([]byte, length)
-		js.CopyBytesToGo(result, args[2].Get(key))
-		return result
-	}()
+			length := args[2].Get(key).Length()
+			result := make([]byte, length)
+			js.CopyBytesToGo(result, args[2].Get(key))
+			return result
+		}()
 		}
 		return result
 	}()
@@ -152,4 +181,3 @@ func wasmResult(_ js.Value, args []js.Value) interface{} {
 		return arr
 	}()
 }
-

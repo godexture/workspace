@@ -24,6 +24,27 @@ func TestDescribeFilterReturnsParameterizedTopology(t *testing.T) {
 	}
 }
 
+func TestResolveConfigurationReturnsDynamicFields(t *testing.T) {
+	text, err := ResolveConfiguration("filter", "equalizer", nil, map[string]string{
+		"mode": "multiband", "bands": "3",
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfiguration() error = %v", err)
+	}
+	var resolution struct {
+		Values map[string]string `json:"values"`
+		Fields []struct {
+			Slots []struct{ Index int } `json:"slots"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(text), &resolution); err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Values["gains"] != "0,0,0" || len(resolution.Fields) != 1 || len(resolution.Fields[0].Slots) != 3 {
+		t.Fatalf("configuration resolution = %#v", resolution)
+	}
+}
+
 func TestResolveAcceptsAuxiliaryInputs(t *testing.T) {
 	spec := `{"muxer":{"name":"wav"},"auxInputs":{"ir":{}},"filters":[{"name":"convolver","inputs":{"ir":{"alias":"ir"}}}]}`
 	resolved, err := Resolve(testWAV(), map[string][]byte{"ir": testWAV()}, spec)

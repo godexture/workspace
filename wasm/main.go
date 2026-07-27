@@ -38,6 +38,16 @@ func DescribeFilter(name string, parameters map[string]string) (string, error) {
 	return marshal(entry)
 }
 
+// ResolveConfiguration applies defaults and normalization to plugin values
+// and returns their effective values and dynamic field state.
+func ResolveConfiguration(role, name string, parameters, values map[string]string) (string, error) {
+	resolution, err := catalog.ResolveConfiguration(role, name, parameters, values)
+	if err != nil {
+		return "", err
+	}
+	return marshal(resolution)
+}
+
 // Resolve negotiates a pipeline for inputs against the JSON-encoded spec
 // without building or running it, returning the resolved node/edge topology
 // as JSON. Used to preview a pipeline before starting a conversion.
