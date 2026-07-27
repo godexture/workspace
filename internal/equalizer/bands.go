@@ -1,6 +1,7 @@
 package equalizer
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -19,11 +20,16 @@ type pair struct {
 	gain float64
 }
 
+type Axis struct {
+	Frequency float64
+	GainIndex int
+}
+
 func resolveBands(cfg config.EqualizerConfig) ([]bandSpec, error) {
 	if cfg.EqualizerMode == config.EqualizerModeSingle {
 		return []bandSpec{{eqType: cfg.Type, freq: cfg.FrequencyHz, gainDB: cfg.GainDB, q: cfg.Q}}, nil
 	}
-	manual, err := config.ParseBandList(cfg.ManualBands)
+	axis, err := ResolveAxis(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -31,26 +37,53 @@ func resolveBands(cfg config.EqualizerConfig) ([]bandSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	pairs := make([]pair, 0)
-	if len(manual) > 0 {
-		pairs = make([]pair, len(manual))
-		for index, frequency := range manual {
-			pairs[index] = pair{freq: frequency, gain: gains[index]}
-		}
-	} else {
-		ratio := math.Pow(cfg.HighHz/cfg.LowHz, 1/float64(cfg.Bands))
-		pairs = make([]pair, cfg.Bands)
-		for index := range pairs {
-			pairs[index] = pair{freq: cfg.LowHz * math.Pow(ratio, float64(index)+0.5), gain: gains[index]}
-		}
+	if len(gains) != len(axis) {
+		return nil, fmt.Errorf("equalizer gains has %d entries, want %d", len(gains), len(axis))
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].freq < pairs[j].freq })
+	pairs := make([]pair, len(axis))
+	for index, band := range axis {
+		pairs[index] = pair{freq: band.Frequency, gain: gains[band.GainIndex]}
+	}
 
 	bands := make([]bandSpec, len(pairs))
 	for index, pair := range pairs {
 		bands[index] = bandSpec{eqType: config.EqualizerTypePeaking, freq: pair.freq, gainDB: pair.gain, q: bandQ(pairs, index)}
 	}
 	return bands, nil
+}
+
+func ResolveAxis(cfg config.EqualizerConfig) ([]Axis, error) {
+	manual, err := config.ParseBandList(cfg.ManualBands)
+	if err != nil {
+		return nil, err
+	}
+	axis := make([]Axis, 0)
+	if len(manual) > 0 {
+		axis = make([]Axis, len(manual))
+		for index, frequency := range manual {
+			if math.IsNaN(frequency) || math.IsInf(frequency, 0) || frequency <= 0 {
+				return nil, fmt.Errorf("equalizer manual-bands frequencies must be finite and positive")
+			}
+			axis[index] = Axis{Frequency: frequency, GainIndex: index}
+		}
+	} else {
+		if cfg.Bands <= 0 {
+			return nil, fmt.Errorf("equalizer bands must be positive")
+		}
+		if math.IsNaN(cfg.LowHz) || math.IsInf(cfg.LowHz, 0) || cfg.LowHz <= 0 {
+			return nil, fmt.Errorf("equalizer low-hz must be finite and positive")
+		}
+		if math.IsNaN(cfg.HighHz) || math.IsInf(cfg.HighHz, 0) || !(cfg.HighHz > cfg.LowHz) {
+			return nil, fmt.Errorf("equalizer high-hz must be finite and greater than low-hz")
+		}
+		ratio := math.Pow(cfg.HighHz/cfg.LowHz, 1/float64(cfg.Bands))
+		axis = make([]Axis, cfg.Bands)
+		for index := range axis {
+			axis[index] = Axis{Frequency: cfg.LowHz * math.Pow(ratio, float64(index)+0.5), GainIndex: index}
+		}
+	}
+	sort.Slice(axis, func(i, j int) bool { return axis[i].Frequency < axis[j].Frequency })
+	return axis, nil
 }
 
 func bandQ(pairs []pair, index int) float64 {

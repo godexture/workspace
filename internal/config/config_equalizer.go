@@ -35,7 +35,7 @@ type EqualizerConfig struct {
 	LowHz       float64 `name:"low-hz" depends-on:"mode=multiband" check:"positive,finite" help:"Lower bound for automatic band split"`
 	HighHz      float64 `name:"high-hz" depends-on:"mode=multiband" check:"positive,finite" help:"Upper bound for automatic band split"`
 	ManualBands string  `name:"manual-bands" depends-on:"mode=multiband" help:"Comma-separated explicit band center frequencies in Hz; overrides bands/low-hz/high-hz"`
-	Gains       string  `name:"gains" depends-on:"mode=multiband" help:"Comma-separated per-band gain in dB; length must match the resolved band count"`
+	Gains       string  `name:"gains" editor:"sliders" depends-on:"mode=multiband" help:"Comma-separated per-band gain in dB; length must match the resolved band count"`
 }
 
 var DefaultEqualizerConfig = EqualizerConfig{
