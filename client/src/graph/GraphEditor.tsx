@@ -397,7 +397,7 @@ export function GraphEditor({
         }
     }
 
-    function upload(node: GraphNode, file: File) {
+    function upload(node: GraphNode, file: File, recorded = false) {
         if (locked) return;
         if (node.kind !== "source") return;
         const total =
@@ -419,6 +419,7 @@ export function GraphEditor({
                 name: file.name,
                 size: file.size,
                 lastModified: file.lastModified,
+                recorded: recorded || undefined,
             },
         });
         setEditorError(null);
@@ -599,6 +600,9 @@ export function GraphEditor({
                             locked={locked}
                             onChange={updateNode}
                             onUpload={upload}
+                            onRecord={(node, file) => upload(node, file, true)}
+                            recordedFile={selected?.kind === "source" && selected.selection?.kind === "upload" && selected.selection.recorded ? files.get(selected.id) ?? null : null}
+                            onSaveRecording={saveFile}
                             onSelectMainSource={(node) => {
                                 if (!locked) onGraphChange(selectMainSource(graph, node.id));
                             }}
@@ -644,4 +648,15 @@ function formatLimit(bytes: number): string {
     return bytes >= 1 << 30
         ? `${(bytes / (1 << 30)).toFixed(0)} GiB`
         : `${(bytes / (1 << 20)).toFixed(0)} MiB`;
+}
+
+function saveFile(file: File) {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
 }

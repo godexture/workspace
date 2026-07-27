@@ -19,7 +19,7 @@ export const GRAPH_VERSION = 1;
 
 export type SourceSelection =
     | { kind: "preset"; presetId: string }
-    | { kind: "upload"; name: string; size: number; lastModified: number }
+    | { kind: "upload"; name: string; size: number; lastModified: number; recorded?: boolean }
     | null;
 
 export interface SourceData {

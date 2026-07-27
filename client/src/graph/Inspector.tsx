@@ -19,6 +19,9 @@ interface InspectorProps {
     locked: boolean;
     onChange: (node: GraphNode) => void;
     onUpload: (node: GraphNode & SourceData, file: File) => void;
+    onRecord: (node: GraphNode & SourceData, file: File) => void;
+    recordedFile: File | null;
+    onSaveRecording: (file: File) => void;
     onSelectMainSource: (node: GraphNode & SourceData) => void;
     onFilterParametersChange: (node: GraphNode, parameters: Record<string, string>) => void;
     onDuplicate: (node: GraphNode) => void;
@@ -34,6 +37,9 @@ export function Inspector({
     locked,
     onChange,
     onUpload,
+    onRecord,
+    recordedFile,
+    onSaveRecording,
     onSelectMainSource,
     onFilterParametersChange,
     onDuplicate,
@@ -85,9 +91,14 @@ export function Inspector({
                         <small className={styles.hint}>All source files together: {formatLimit(maxUploadBytes)}</small>
                     </Field>
                     <Field label="Record audio">
-                        <Recorder disabled={locked} onRecorded={(file) => onUpload(node, file)} />
+                        <Recorder disabled={locked} onRecorded={(file) => onRecord(node, file)} />
                     </Field>
                     {node.selection?.kind === "upload" && <p className={styles.hint}>{node.selection.name}</p>}
+                    {node.selection?.kind === "upload" && node.selection.recorded && (
+                        <Button disabled={!recordedFile} onClick={() => recordedFile && onSaveRecording(recordedFile)}>
+                            Save recording
+                        </Button>
+                    )}
                     <PluginSelector
                         label="Demuxer"
                         entries={catalog.demuxers}

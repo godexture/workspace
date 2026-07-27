@@ -100,6 +100,21 @@ test("connected auxiliary sources require an audio selection", () => {
     expect(compileGraph(graph, [preset], new Map()).issues.join(" ")).toContain("Select an audio file or preset for Audio source");
 });
 
+test("recorded audio is accepted as an input file", () => {
+    const file = new File([new Uint8Array([82, 73, 70, 70])], "recording.wav", { type: "audio/wav" });
+    const graph = createInitialGraph(catalog);
+    graph.nodes[0] = {
+        ...graph.nodes[0]!,
+        kind: "source",
+        primary: true,
+        selection: { kind: "upload", name: file.name, size: file.size, lastModified: file.lastModified, recorded: true },
+    };
+
+    const result = compileGraph(graph, [], new Map([["source-main", file]]));
+    expect(result.issues).toEqual([]);
+    expect(result.inputs?.main).toEqual({ kind: "upload", file });
+});
+
 test("an auxiliary audio source can become the main input", () => {
     const base = createInitialGraph(catalog, preset);
     const graph: GraphDocument = {
