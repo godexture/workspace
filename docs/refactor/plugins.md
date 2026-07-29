@@ -1,0 +1,303 @@
+# プラグイン contract
+
+## 目的
+
+プラグイン API は、次の三者を同時に満たす必要がある。
+
+- 利用者: 標準構成は一行で使え、custom 構成も通常の Go コードで理解できる。
+- plugin 開発者: ID の衝突、runtime の並行制御、CLI/WASM 固有処理を意識せず component を追加できる。
+- core 開発者: plugin API を保ったまま planner、scheduler、memory、observability を交換できる。
+
+## identity
+
+### reflection を残す理由
+
+Go の named type identity は package path と type declaration で定まり、同一 build 内で一意である。これを利用すれば、第三者に `com.example.foo` のような文字列 ID を選ばせたり、中央 registry へ名前を予約させたりせずに済む。これは現在の reflection 利用の正しい動機であり、捨てる必要はない。
+
+問題は、現在の identity が設定型等の実装詳細と結び付くと、設定の refactor が component identity の変更として扱われ得る点である。また reflection を runtime dispatch にまで持ち込むと性能とエラー検出時期が悪化する。
+
+専用の空 marker type を用意し、identity と設定 schema を分ける。
+
+```go
+package acme
+
+type pluginID struct{}
+type decoderID struct{}
+
+type DecoderConfig struct {
+    Quality int
+}
+
+var Plugin = plugin.Define[pluginID](
+    plugin.Decoder[decoderID, DecoderConfig](Decoder),
+)
+```
+
+marker type は export しなくてよい。host は `reflect.TypeFor[pluginID]()` から canonical identity を作る。概念上は次の情報である。
+
+```text
+github.com/acme/godec-foo.pluginID
+github.com/acme/godec-foo.decoderID
+```
+
+外部表示や serialized `Plan` には安定した文字列表現を使うが、第三者がそれを手入力しない。Go module/package を fork すれば別 identity になるのも、供給元が変わったことを正しく表している。
+
+### identity と version の区別
+
+identity に version、display name、設定型を含めない。
+
+- identity: 「どの plugin/component か」
+- implementation version: build info または descriptor
+- config schema version: config decoder が扱う wire schema
+- alias: CLI 表示と検索に使う非一意な名前
+
+同じ marker identity を同じ `Set` に二度追加した場合は host 構築時に error とする。暗黙の last-wins は使わない。置換したい利用者は明示的な override API で対象 identity と置換元を指定する。
+
+### reflection の使用範囲
+
+許可:
+
+- `Define` 時の marker identity 取得
+- config schema の構築
+- property/schema の control-plane type erasure
+- catalog 構築と plan compile
+
+禁止:
+
+- frame/packet ごとの type lookup
+- edge ごとの `reflect.Value.Call`
+- runtime の文字列 ID lookup
+- data unit の serialize/deserialize による plugin 間受け渡し
+
+`Program` 生成時に typed function と dense integer index へ解決する。
+
+## 明示的な composition
+
+global mutable registry と blank import による副作用登録を廃止する。plugin package は definition を返すだけにする。
+
+```go
+set := plugin.NewSet(
+    wave.Plugin,
+    pcm.Plugin,
+    audio.Plugin,
+)
+
+h, err := host.New(host.Plugins(set))
+```
+
+標準利用者向けには公式 composition を提供する。
+
+```go
+h, err := host.New(host.Plugins(standard.Set()))
+```
+
+`Set` は persistent/immutable value とする。`Add`、`Remove`、`Override` は新しい値を返す。host 構築後の catalog も immutable にし、plan 実行中に component 集合が変わらないようにする。
+
+```go
+set := standard.Set().
+    Add(acme.Plugin).
+    Override(acme.FastFLAC)
+```
+
+plugin の import、composition、host 構築が明示的になることで、test ごとに隔離された catalog を作れ、CLI と library の component 差異も追跡できる。
+
+## 将来の discovery
+
+core は `.so` のロード、module download、署名 trust store、marketplace を直接提供しない。将来の discovery layer は、最終的に同じ `plugin.Set` または remote component descriptor を組み立てて `Host` へ渡す。
+
+Go の in-process plugin を後から導入する方法には platform 制約、toolchain/version 一致、ABI、unload 不可等があるため、標準 contract に固定しない。動的導入が必要になった時点で次のいずれかを上位層が選べる。
+
+- 利用者の custom binary を生成/build し、通常の static import を使う。
+- plugin を別 process として起動し、versioned wire protocol を使う。
+- 対応 platform に限り Go plugin loader adaptor を使う。
+
+どの方式でも planner に見せる capability と component identity は同じにする。
+
+## Access Provider と Endpoint
+
+`plugin.Set` は media component に加え、byte object を解決する `access.Provider` definition を保持できる。Provider は identity/config/descriptor/provenance/override 規則を共有するが、typed data-plane node ではない。
+
+RTSP/HLS/device 等は seekable byte Provider に偽装せず、通常の typed Endpoint component とする。capability、probe、transaction、clock、application-owned authority の詳細は [access](access.md) を正本とする。
+
+## component definition
+
+component は従来の decoder/demuxer/filter 等の固定 registry 型を増やす方式ではなく、typed port と phase を宣言する `Spec` とする。
+
+概念例:
+
+```go
+type Spec[C, P any] struct {
+    Config  config.Schema[C]
+    Ports   flow.Shape
+    Compile func(CompileContext, C, Inputs) (P, Outputs, error)
+    Open    func(OpenContext, P) (flow.Operator, error)
+    Suggest func(SuggestContext, Need) []C
+}
+```
+
+- `C`: ユーザー設定。immutable に解決される。
+- `P`: compile 済み component 固有 plan。runtime object ではない。
+- `Ports`: static shape。動的 topology が必要な component だけ `Shape` phase を持つ。
+- `Compile`: 入力 descriptor と設定から出力 descriptor、requirements、cost、resource request を計算する純粋関数。
+- `Suggest`: planner が不足 schema を埋める候補設定を列挙する optional hook。
+- `Open`: 選択済み `P` と host service から runtime operator を一度だけ生成する。
+
+`Suggest` と `Compile` は変換規則を別々に実装しない。`Suggest` は設定候補だけを提案し、それぞれの出力や cost は必ず同じ `Compile` を通して得る。
+
+## lifecycle
+
+Host build、prepared job、実行 transaction を次の lifecycle に統一する。
+
+```text
+Register
+  -> Normalize/Bind Access and Endpoints
+  -> Acquire/Inspect Inputs
+  -> Probe
+  -> Inspect
+  -> Shape
+  -> Compile
+  -> Optimize
+  -> Describe Plan/Build Program
+  -> Begin Output Transactions
+  -> Open Operators/Endpoints
+  -> Run
+  -> Finalize
+  -> Flush/PrepareCommit/Commit
+  -> Close
+```
+
+### Register
+
+marker identity、descriptor、config schema、port shape、capability を検証し、immutable catalog を作る。欠陥 component を黙って除外せず host 構築を error にする。
+
+### Bind と Acquire
+
+Reference と Endpoint request を catalog definition へ binding し、input Access session と read-only endpoint capability を取得する。これは probe/inspect に必要な I/O を含む prepared job phase であり、component の semantic `Compile` とは分ける。output transaction、live endpoint、media operator はまだ Open しない。
+
+### Probe と Inspect
+
+Format component だけが source の shared bounded immutable view を読む。Probe は evidence/追加 range request を返し、Inspect は選ばれた候補が stream topology、carrier、properties を読み取る。I/O capability は alternative requirement として明示し、隠れた type assertion にしない。
+
+### Shape
+
+入力数で出力 port 数が変わる demuxer、mixer、splitter 等だけが topology を確定する。通常の一入力一出力 Processor には見せない。
+
+### Compile
+
+semantic transformation を記述する唯一の phase である。副作用を持たず、同じ入力で何度呼ばれても同じ結果になる。planner は候補探索、bridge 挿入、再検証のために繰り返し呼べる。
+
+component が直接満たせない場合は、文字列 error でなく構造化 requirement を返す。
+
+```go
+Unsatisfied{
+    Port: input,
+    Need: schema.Constraint(...),
+}
+```
+
+solver は bridge 候補を挿入して再度同じ `Compile` を呼ぶ。
+
+### Open
+
+最終的に選ばれた component のみを一度開く。I/O handle、buffer grant、task group、clock、diagnostics 等は明示的な narrow service として渡す。全 service を引ける service locator は渡さない。
+
+Open は scope 内で transaction として行う。途中で失敗したら、既に開いた component、Endpoint、resource、output transaction を逆順に閉じ、sink を Abort する。
+
+### Run、Finalize、Close
+
+Run は compile 済み規則を再計算しない。Finalize は encoder の遅延 packet、muxer index/header patch、metadata flush 等を処理する。その後に sink Flush/Sync/PrepareCommit/Commit を行う。Close は resource release だけを担当し、出力成功を意味しない。
+
+EOF は edge close で表し、`PacketKindStreamEnd` のような data packet sentinel に最終 codec parameters を混ぜない。最終値は `Finalize` の明示 contract で渡す。
+
+## plugin authoring API
+
+通常の plugin 開発者には、一 item の変換を中心にした `Processor` を提供する。
+
+```go
+type Processor[I, O any] interface {
+    Process(Context, Input[I], Emitter[O]) error
+    Flush(Context, Emitter[O]) error
+}
+```
+
+`Input` は借用 view であり、次を明示する。
+
+- `Value()`: 呼び出し中だけ読む
+- `Take()`: ownership を取得し、出力へ移す
+- `Share()`: fan-out や非同期保持のため retained handle を得る
+
+利用者が通常経路で `Release` を手書きしなくてよいようにする。
+
+複雑な parser、decoder、mixer、seekable demuxer には typed Reader/Writer と host task group を扱う `Operator` を提供する。両 API は同じ port/schema/lifecycle を使い、別 runtime を作らない。
+
+## config と capability
+
+config の唯一の外部 contract は typed schema とする。完全な Go value と疎な surface patchを分け、`default < preset < explicit` の順で immutable に解決する。入力依存の `auto` は config mutation ではなく `Compile` が Plan に記録する。generated functional options は廃止する。詳細は [config](config.md) を参照する。
+
+capability は巨大な boolean manifest ではなく、accepted/emitted schema、property constraint、port multiplicity、I/O requirement、variant、effect、resource/latency estimate の組み合わせで表す。index は候補の絞り込みだけを担当し、最終判断は同じ `Compile` が行う。variant と再現性の契約は [performance](performance.md) を参照する。
+
+## trust と障害境界
+
+in-process plugin は host と同じ権限を持つ。host は次を行うが、sandbox とは呼ばない。
+
+- `Run`/execution island の入口で panic を recover し、diagnostic と job failure に変換する。
+- host task group で開始された task の cancel/join を追跡する。
+- resource grant と queue limit を適用する。
+- `Open`/`Finalize`/`Close` の error を集約する。
+
+plugin が独自に作った goroutine の panic、無限 loop、`unsafe` による memory corruption、process exit は封じ込められない。強い隔離が必要な場合は別 process adaptor を使う。
+
+panic recovery を frame ごとに `defer` してはならない。execution island または長寿命 task の境界で一度だけ設ける。
+
+## custom host template
+
+custom host は generator 固有形式ではなく、通常の 20〜30 行の Go `main` とする。
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/acme/godec-extra"
+    "github.com/godexture/godec/cli"
+    "github.com/godexture/godec/host"
+    "github.com/godexture/godec/standard"
+)
+
+func main() {
+    os.Exit(run(context.Background(), os.Args[1:]))
+}
+
+func run(ctx context.Context, args []string) int {
+    plugins := standard.Set().Add(extra.Plugin)
+
+    h, err := host.New(host.Plugins(plugins))
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        return 1
+    }
+    defer h.Close()
+
+    return cli.Run(ctx, h, args)
+}
+```
+
+通常利用者は公式 binary を使うだけでよい。library 利用者は `standard.NewHost()` の convenience を使える。custom plugin を追加したい利用者だけが上記 composition を書くため、global registry を廃止しても一般利用者の負担は増えない。
+
+CLI library は `Host` を引数として受け取り、公式 `cmd/godec` が `standard` を import する。Oto 等の playback dependency は transcode 標準 bundle から分離し、専用 command/adaptor に置く。
+
+## descriptor と配布情報
+
+plugin descriptor は runtime identity と分けて次を持てる。
+
+- display name、homepage、source repository
+- implementation version/build provenance
+- SPDX license expression
+- pure-Go/CGO/native dependency の属性
+- optional digest/signature metadata
+- component 一覧と alias
+
+第三者 plugin 全体に license policy を強制しない。一方、公式 `standard` と公式 binary は allowlist、SBOM、NOTICE、source provenance を release gate にする。

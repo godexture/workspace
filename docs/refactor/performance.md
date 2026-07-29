@@ -1,0 +1,475 @@
+# performance と reproducibility policy
+
+## 結論
+
+`Fast`、`Stable`、`Portable`、`Realtime` は component config や一つの enum にしない。利用者向けの named preset とし、Host が直交する policy vector へ展開する。
+
+> Decision: offline既定は`Fast + Repeatable + ArtifactNone`で確定した。`Variable`は明示opt-inとする。
+
+```go
+type Policy struct {
+    Goal          Goal
+    Accuracy      Accuracy
+    Repeatability Repeatability
+    Artifact      ArtifactPolicy
+    Implementation ImplementationPolicy
+    Continuity    ContinuityPolicy
+    Resources     ResourcePolicy
+}
+```
+
+- `Goal`: throughput、latency、memory の優先関係
+- `Accuracy`: exact または schema/variant ごとの bounded numerical difference
+- `Repeatability`: 同じProgram/inputでtask scheduleによる数値差を許すか
+- `Artifact`: final bytesを要求しない、execution signature内で固定、portability domain内で固定
+- `Implementation`: pure-Go、CGO/native、SIMD、unsafe、device 等の許可
+- `Continuity`: deadline/overflow 時の block、fail、drop、conceal
+- `Resources`: worker、memory、queue、temporary storage の上限
+
+planner は展開後の vector だけを扱う。preset 名を plugin が switch しない。Plan は preset と実効 vector、選ばれた variant、execution signature を両方記録する。
+
+offline job の推奨 default は `Fast` とする。ただし、これは media ordering、timestamp、frame 数、stream/metadata preservation、bounds、安全性を緩めるものではない。許可するのは、明示された numerical contract 内の差と、同じ semantic output を作る implementation/bitstream 選択の差だけである。
+
+## presetをruntime modeにしない
+
+複数presetを、各componentが`if fast`、`if stable`のように解釈してはならない。presetは利用者向けの入力syntaxであり、HostがCompile前に要求へ展開して消費する。
+
+```text
+user preset
+  -> normalized policy requirements
+  -> compatible variantをfilter/rank
+  -> 一つのprivate Programを生成
+  -> Runは選択済みkernelだけを呼ぶ
+```
+
+componentが登録するのはpreset別実装ではなく、実際に異なるalgorithm/implementation variantである。
+
+```go
+type Contract struct {
+    Accuracy      Accuracy
+    Repeatability Repeatability
+    Artifact      ArtifactSupport
+    Platform      PlatformRequirement
+    Resources     ResourceEstimate
+}
+
+type Variant[C, P any] struct {
+    ID       marker.Type
+    Contract Contract
+    Compile  func(CompileContext, C) (P, Effect, error)
+    Open     func(OpenContext, P) (Operator, error)
+}
+```
+
+一つのvariantは複数presetの要求を同時に満たせる。たとえばscalarと完全一致するAVX2 integer kernelはFast、Stable、対応domainのPortableすべてで再利用する。`Realtime`も主にscheduler/queue/resource policyであり、codecをRealtime用に複製しない。preset数と実装数の直積を作らない。
+
+実装共有の境界:
+
+- parser、validation、buffer ownership、bit writer、partition、係数table等は共通化する。
+- 差がreduction orderだけなら、partition処理を共有し、repeatable reducerとvariable reducerだけを分ける。
+- 差がSIMD kernelだけなら、frame/block wrapperを共有してinner kernelだけを分ける。
+- artifact安定化のseed、metadata ordering、timestamp field等はHost/muxerのcompile済みpolicyへ集約し、全codecへ分岐を散らさない。
+- boolean modeをsample loopへ渡して巨大な共通関数にするより、短い専用kernelを選択する。hot loopの小さな重複は、分岐除去とcompiler最適化に必要なら許容する。
+
+選択結果はfunction field/interface越しでもframe/block単位で一度だけdispatchし、sample/pixel/symbol loop内ではdirect concrete kernelを実行する。execution islandのspecializationで隣接converterもまとめ、itemごとのpolicy lookup、reflection、map lookup、feature判定を残さない。
+
+避けられるcostと避けられないcostを区別する。
+
+- 避けられる: itemごとのmode branch、複数variantの同時Open、重複state、preset数に比例する実装/testの直積。
+- control planeだけに残る: variant filtering、cost comparison、Plan記録。jobごとに一度であり、immutable catalog indexとfingerprint cacheでboundedにする。
+- 本質的に避けられない: repeatable reduction、portable reference algorithm、追加variantのbinary size等、その保証自体に必要なalgorithmic cost。
+
+plugin authorに全policyの実装を要求しない。一つの正しいvariantだけを提供してもよく、Hostはそのcontractを満たすJobで使用する。公式pluginも、paired benchmarkで意味のある差がないpreset専用variantを追加しない。
+
+## 現行実装の監査結果
+
+現在の最適化は性質が異なるものを同じ build/runtime dispatch で扱っている。
+
+### bit-exact な SIMD
+
+少なくとも次は scalar と exact equality を test している。
+
+- float32 → S16 conversion
+- PCM S32 stereo pack/unpack
+- MP3 DCT
+- MP3 antialias
+- FLAC の整数 LPC restore/residual/rice 系
+- MS ADPCM predictor の整数処理
+
+これらは SIMD だから `Fast` 専用にする必要はない。`Stable`/`Portable` が要求する domain でも、全対象で exact だと証明できれば利用できる。
+
+### bounded difference を持つ SIMD
+
+FLAC encoder の autocorrelation は scalar の逐次加算に対し、AVX2/FMA で積和と reduction order が変わる。test は relative error `1e-12` を許容している。
+
+decoded PCM は lossless でも、LPC/order/subframe の選択や最終 FLAC bitstream は変わり得る。したがって contract は「lossless semantic exact」と「encoded bytes reproducible」を分ける必要がある。
+
+### 並列化
+
+FLAC encoder/decoder は work completion が out-of-order でも submission queue 順に出力し、parallelism 1 と 8 の byte equality test を持つ。並列であること自体は nondeterministic output を意味しない。
+
+一方、worker 数は `0 -> runtime.GOMAXPROCS(0)` と実行環境から暗黙解決される。現在の Plan/description は CPU feature、scalar/SIMD/FMA、worker 数、block partition を reproducibility signature として十分に固定していない。
+
+### filter と chunking
+
+mixer は `inputIDs` の明示順で accumulation し、normalize は逐次 peak、convolver は partition 順に accumulation する。現在の主経路は schedule completion order を直接使っていない。
+
+ただし将来、parallel reduction、SIMD FMA、fusion、block size、FFT implementation を変更すると差が生じ得る。stateful filter は一 sample の誤差だけでなく、長時間 drift、SNR、stability、chunk-boundary invariance を検証する必要がある。
+
+### build/runtime dispatch
+
+SIMD file は `goexperiment.simd && amd64` build constraint と、mutable な `dsp.HasAVX2`/`HasAVX2FMA` global で dispatch している。この方式では次が不明確になる。
+
+- 同じ binary 内で `Stable`/`Portable` が scalar を要求する方法
+- Plan 時と Run 時の selected variant
+- CPU feature が cache/fingerprint に入るか
+- test が global flag mutation に依存すること
+
+build constraint は「variant が binary に存在するか」だけに使い、selection は Host が immutable CPU feature snapshot と policy を使って Compile 時に行うべきである。
+
+`sdk/bits` には別に、通常buildでprogrammer assertionを有効、`production` tagでno-opにする独自build modeがある。現行Docker buildやroot test commandはこのtagをrelease contractとして固定・比較していない。利用者が知らないtagでcorrectness checkとhot-path costを変えない。
+
+- untrusted boundaryのvalidationは全buildで必須にする。
+- programmer invariantはvalidated private type/APIで表現し、可能なら失敗不能にする。
+- debug-only assertionが必要なら明示instrumentation buildとし、official releaseの唯一の安全網にしない。
+- check除去に意味のある性能差がある場合だけpaired benchmarkで証明し、checked/referenceとのdifferential testを行う。
+- build tag/variantはartifact provenanceとCI matrixへ必ず入れる。
+
+## 常に守る correctness
+
+performance preset に関係なく、次は非交渉条件である。
+
+- timestamp/time-base overflow と rounding rule
+- packet/frame/event の順序
+- frame/sample の欠落・重複
+- fan-in の alignment と watermark
+- EOF、Flush、Finalize
+- stream mapping と metadata loss report
+- buffer bounds、input validation、panic/error semantics
+- lossless decoder の logical sample/data exactness
+- CRC、checksum、integer PCM、bit parser の規格 exactness
+- cancel、resource limit、transaction
+
+`Fast` を理由に validation を省いた unchecked SIMD を untrusted boundary へ適用しない。境界で一度 validation した後の internal fast path にだけ unchecked operation を許可する。
+
+Realtime でも drop/conceal を暗黙許可しない。deadline miss 時の `Block`、`Fail`、`DropLate`、`Conceal` は media/schema ごとの `ContinuityPolicy` で明示する。
+
+## 三種類の同一性
+
+「同じ結果」を一つにしない。
+
+### Semantic exact
+
+規格上の意味が同じである。
+
+- FLAC bitstream が異なっても decode 後 PCM が完全一致
+- container chunk ordering が異なっても stream/metadata semantics が同じ
+
+lossless codec は最低でも semantic exact を全 preset で満たす。
+
+### Numerical bounded
+
+decoded/filter output が variant の宣言した tolerance 内である。
+
+用途に応じて次を使う。
+
+- max absolute/relative error
+- max ULP
+- RMSE/SNR
+- peak/energy deviation
+- phase/time drift
+- long-stream stability
+- codec conformance tolerance
+
+generic Host が異種 component の tolerance を根拠なく加算し、偽の end-to-end bound を表示しない。Plan は node ごとの contract と「end-to-end bound 未算出」を区別する。公式 pipeline は integration fixture で全体品質を検査する。
+
+### Byte reproducible
+
+最終 output bytes が同じである。encoder decision、container field order、padding、random seed、creation time、metadata ordering、worker/reduction order まで固定する必要がある。
+
+byte reproducibility を要求する policy では、現在時刻、process ID、map order、unrecorded RNG、host-dependent metadata を自動出力しない。dither/randomized algorithm は seed を Plan に固定する。
+
+## repeatability と artifact reproducibility
+
+accuracy、run-to-run repeatability、final artifact identityは別の要求である。
+
+### Repeatability
+
+- `Repeatable`: 同じProgram/inputではtask completion timingにかかわらず同じitem valueを返す。固定partition/reduction orderを使う。
+- `Variable`: 同じProgram/inputでもscheduleにより、宣言したaccuracy bound内の数値差を許す。
+
+`Variable`でもplannerの選択、packet/frame ordering、timestamp、item数はdeterministicでなければならない。許可するのは数値contract内の差だけである。
+
+### ArtifactNone
+
+final byte identityを要求しない。CPU feature、FMA、encoder decision、container ordering等により、semantic exactまたはbounded numerical outputから異なるartifactを生成できる。
+
+### ArtifactStable
+
+同じ execution signature で最終 bytes を再現する。
+
+signature:
+
+- component/variant marker identity と implementation version
+- config と input snapshot
+- Go toolchain/build provenance
+- GOOS/GOARCH と relevant CPU features
+- numerical mode
+- worker count と deterministic partition/reduction tree
+- block、batch、FFT partition、fusion layout
+- explicit seed
+
+`ArtifactStable`は`Repeatable`を含意する。variantはtask completion orderをaccumulation/orderに使わない。同じsignatureなのにoutputが異なる場合はplugin bugである。
+
+### ArtifactPortable
+
+variant が宣言する portability domain 内で、architecture、SIMD availability、thread countを越えた byte reproducibility を要求する。
+
+すべての浮動小数点/transcendental algorithm が Portable を提供できるとは限らない。fixed-point/reference algorithm、固定係数、定義済み rounding/reduction を持つ variant だけが対応を宣言する。graph の一部が要求を満たせなければ、黙ってStable/ArtifactNoneへ落とさずCompile errorにする。
+
+Portable は `unsafe`/SIMD の全面禁止ではない。全対象 architecture の differential test で exact semantics を証明できる整数 SIMD 等は使用できる。CPU feature により結果が変わる FMA path は使用できない。
+
+portability domain には algorithm/schema version と supported toolchain/target matrix を明示する。「将来のすべての Go version/architecture で永久に同じ」という保証はしない。
+
+## user-facing preset
+
+### Fast
+
+```text
+Goal:            Throughput
+Accuracy:        Exact where required, otherwise declared bounded
+Repeatability:   Repeatable
+Artifact:        None
+Implementation: official pure-Go, unsafe/SIMD allowed, native only if separately allowed
+Continuity:      Preserve
+Resources:       auto within job/host limits
+```
+
+- fastest conforming scalar/SIMD/FMA/parallel variant を選べる
+- runtime-resolved worker/CPU feature を Plan に固定する
+- semantic exact と structural correctness は維持する
+- `Variable` variantは明示opt-inとし、variation causeをPlanに記録する
+
+### Stable
+
+```text
+Goal:            Balanced/Throughput
+Accuracy:        Exact or deterministic bounded
+Repeatability:   Repeatable
+Artifact:        Stable
+Implementation: stable variants only
+Continuity:      Preserve
+Resources:       resolved/fixed in execution signature
+```
+
+- 同じ signature で final bytes を再現する
+- deterministic partition/reduction を使う
+- exact SIMD は利用可能
+- CPU-specific bounded variant も、同じ CPU/signature 内で bit-reproducible なら利用可能
+
+### Portable
+
+```text
+Goal:            Reproducibility
+Accuracy:        portable exact/deterministic contract
+Repeatability:   Repeatable
+Artifact:        Portable
+Implementation: declared portable variants only
+Continuity:      Preserve
+Resources:       output-invariant worker policy
+```
+
+- cross-target digest test を通る reference/fixed algorithm を選ぶ
+- unsupported component があれば Compile error
+- scalar を優先できるが、「scalar だから Portable」とは自動判断しない
+
+### Realtime
+
+```text
+Goal:            Latency
+Accuracy:        declared bounded
+Repeatability:   explicit policy
+Artifact:        None by default
+Implementation: deadline-capable variants
+Continuity:      required explicit policy
+Resources:       bounded queue/buffer and deadline
+```
+
+Realtime は Fast/Stable/Portable と完全に同じ軸ではなく、主に Goal/Continuity/Resources の preset である。必要なら `Realtime + Stable` 相当の明示 vector を作れる。
+
+deadline miss だけで offline correctness を捨てない。drop/conceal を許可しない場合、deadline miss は diagnostic/failure にする。
+
+## component variant contract
+
+同じ semantic component は複数 implementation variant を持てる。
+
+```go
+type Variant[P any] struct {
+    Identity        plugin.Identity
+    Requirements    platform.Constraint
+    Accuracy        numeric.Contract
+    Reproducibility reproducibility.Contract
+    Estimate        component.Estimate
+    Open            func(OpenContext, P) (flow.Operator, error)
+}
+```
+
+variant identity は component identity/config と分ける。`scalar`、`avx2` の手入力 alias だけを canonical identity にせず、variant 専用 marker type から作る。表示 alias は別に持てる。
+
+variant は次を宣言する。
+
+- exact、bounded、semantic-only の区分
+- tolerance と適用 schema/property range
+- Stable/Portable domain
+- CPU/OS/architecture/toolchain requirement
+- pure-Go、unsafe、CGO/native、device property
+- schedule/chunk/worker count dependence
+- memory、latency、throughput estimate
+- alignment/block-size precondition
+
+一つしか implementation がなければ variant boilerplate を要求しない。component helper が implicit default variant を構築する。
+
+third-party plugin の宣言は利用者の trust 対象である。Host が numerical truth を runtime に証明することはできない。testkit、official review、provenance が宣言を検証する。
+
+## selection と fallback
+
+selection は Compile/Optimize 時に一度行い、private `Program` に direct function/operator factory として固定する。
+
+- item/frame ごとに policy、CPU feature、variant registry を lookup しない
+- variant branch を inner loop に残さない
+- `Open` 後に silent scalar/SIMD fallback しない
+- CPU/device/resource requirement が Plan 後に満たせなければ stale Plan/Prepare error にする
+- fallback が必要なら再 Compile して新しい Plan を得る
+
+CPU feature は Host construction/Prepare 時の immutable snapshot とする。`dsp.HasAVX2` のような exported mutable global は削除し、test は injected feature set/catalog を使う。
+
+worker 数、block/partition、fusion が output に影響し得る場合は Plan fingerprint に含める。`parallelism=auto` は実 worker grantへ解決してから Plan を確定する。
+
+## planner
+
+planner の hard filter:
+
+1. schema/semantic requirement
+2. implementation allow/deny policy
+3. required accuracy
+4. required repeatability と artifact identity
+5. platform/resource availability
+
+hard filter 後の候補だけを Goal/Estimate で順位付けする。少し速い variant が accuracy/reproducibility hard requirement を逆転させない。
+
+`Effect` は少なくとも次を区別する。
+
+- numerical bounded difference
+- schedule-dependent numerical result
+- semantic-exact but byte-different encoding
+- non-portable output
+- lossy encode generation
+- content/timeline/stream loss
+
+最後の三種類を一つの `QualityLoss` 整数へ潰さない。
+
+## caching と provenance
+
+Plan に記録する。
+
+- requested preset と expanded policy
+- component/variant canonical identity
+- implementation/build/toolchain provenance
+- CPU/platform feature requirement
+- resolved worker/block/partition/fusion
+- accuracy/reproducibility contract
+- schedule dependence
+- explicit seed
+
+ArtifactStable/ArtifactPortable output は execution signature/domain が一致する場合だけ content-addressed cache key にできる。ArtifactNone/Variable output を、input/config が同じという理由だけで byte-identical artifact cache として再利用しない。
+
+public Plan に raw pointer/function や platform-specific opaque handle を入れない。execution signature は canonical DTO/hash とする。
+
+## test strategy
+
+### variant differential
+
+公式 optimized variant は reference/scalar と次を比較する。
+
+- zero、boundary、NaN/Inf policy、denormal、clipping
+- random/property/fuzz input
+- misalignment、tail length、small/large block
+- scalar vs 各 SIMD feature
+- FMA on/off
+- worker 1/2/N
+- chunk/block/partition size
+- forced completion-order permutation
+- long stream/state drift
+
+Exact variant は equality/digest、bounded variant は schema-specific tolerance で判定する。
+
+### codec
+
+- lossless decoder: logical samples exact
+- lossless encoder: decode roundtrip exact
+- Stable encoder: same signature の bitstream digest exact
+- Portable encoder: target matrix の bitstream digest exact
+- lossy codec: conformance vector + PCM tolerance/SNR
+- parser/CRC/timestamp: 全 preset exact
+
+### filters
+
+- impulse、step、sine、noise、silence、boundary
+- chunk-boundary invariance
+- state reset/seek
+- long-duration drift
+- fan-in order
+- scalar/SIMD/parallel difference
+- end-to-end SNR/peak/phase
+
+### CI matrix
+
+- scalar build
+- SIMD build + available feature paths
+- forced scalar variant inside SIMD-capable build
+- parallelism 1/N
+- Stable repeat run/digest
+- Portable cross-target artifact/digest comparison
+- race/fuzz/sanitizer-equivalent checks where available
+
+現在の `./test-runner.exe --simd` は SIMD build を一度走らせるだけで、scalar/SIMD artifact の横断比較を保証しない。repository CI は両 build と differential fixture を明示的に実行する。
+
+## benchmark と採用条件
+
+bounded-difference variant は「速そう」という理由だけで追加しない。
+
+- scalar/reference と同じ input を交互に走らせる paired benchmark
+- CPU、allocation、memory bandwidth、block/mutex profile
+- representative small/medium/large media
+- cold Open と steady-state Run を分離
+- output difference/tolerance report を benchmark artifact と同時に保存
+
+PC の電源状態等で絶対時間が変わるため、過去 machine の raw timing と単純比較しない。paired result と profile で、差を許容するだけの実益があるか review する。
+
+optimized variant の保守コストに対して有意な改善がない場合は削除する。Fast path の存在自体を目的にしない。
+
+## architecture overhead gate
+
+policy/variant abstraction を導入しても、data plane へ次を増やさない。
+
+- item ごとの interface/registry lookup
+- item ごとの CPU feature/policy branch
+- variant ごとの frame conversion
+- observation 用 mandatory atomic/clock
+- stable mode のための Fast path 上の global lock
+
+Compile/Open が direct typed function、block size、worker layout を選び、Run は specialized path を使う。Stable/Portable の追加処理はそれを選んだ Program にだけ含める。
+
+## 完了条件
+
+- Fast/Stable/Portable/Realtime が一つの曖昧な enum ではなく policy vector として説明できる。
+- Fast でも media ordering、timestamp、frame count、lossless semantics、validation を緩めない。
+- exact SIMD は Stable/Portable から不必要に排除されない。
+- bounded SIMD/FMA と semantic-exact/byte-different encoder を Plan で区別できる。
+- selected variant、CPU feature、worker、block/partition、seed が Plan fingerprint に入る。
+- same Stable signature の repeat run が byte-identical になる。
+- Portable 非対応 graph は silent downgrade せず Compile error になる。
+- Realtime の drop/conceal は explicit ContinuityPolicy なしに有効にならない。
+- official optimized variant に scalar/reference differential test と paired benchmark がある。
+- observation off の Fast path に policy/variant lookup が現れない。
+- undocumented `production` tag でvalidation/correctness semanticsを切り替えない。

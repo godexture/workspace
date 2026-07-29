@@ -1,0 +1,153 @@
+# decision ledger
+
+この文書を、product/architecture 判断の正本とする。`Confirmed` 以外を決定済みとして実装しない。
+
+## Confirmed
+
+### C1. plugin の基本導入は static import
+
+Go package を import し、明示的な plugin Set へ加える。global `init` registry は使わない。
+
+install/discovery は将来考慮するが、transcoding foundation が package manager/marketplace を直接持たない。
+
+### C2. FFmpeg を代理できる拡張性を目標にする
+
+audio だけでなく、video、subtitle、data、timed event 等を第三者 plugin/schema で追加できる構造にする。
+
+### C3. in-process third-party plugin は利用者が信頼する
+
+Host は panic recovery、cancel、task/resource tracking を行うが sandbox とは呼ばない。強い隔離が必要な場合は将来の別 process adaptor とする。
+
+### C4. default output は入力を維持する
+
+指定がない限り、入力と同じ format、codec、stream mapping、metadata を可能な範囲で維持する。copy/remux が可能なら不要な decode/encode をしない。
+
+### C5. 公式 codec は pure Go
+
+公式 production codec で CGO を必須にしない。`unsafe` と CGO 不要 SIMD は許容する。native/CGO は test、reference adaptor、optional/third-party implementation で利用できる。
+
+### C6. copyleft を公式配布物から避ける
+
+可能な限り MIT とし、公式 artifact は dependency license、SBOM、provenance を検査する。
+
+### C7. 数値誤差を許容する高速実装を選択可能にする
+
+処理速度が向上する場合、ユーザーが Fast/Stable/Portable 等の policy を選べる。timestamp/order correctness、frame 欠落/重複は数値誤差の許容に含めない。
+
+### C8. reflection identity の利点を維持する
+
+第三者に衝突しない文字列 ID を考えさせない。plugin/component 専用 marker type の Go type identity を利用し、config type、version、alias から分離する。
+
+### C9. metadata key/規格は core から開く
+
+core は Key/Document/Origin/RawBlock contract のみを持ち、共通 vocabulary は `tag`、第三者 key/encoding は plugin として追加する。
+
+### C10. metadata の表現不能項目は warning
+
+既定は best effort + structured warning/loss report とし、黙って捨てない。変換不能で job を失敗させる strict mode は opt-in。
+
+### C11. 万能 `Frame` を廃止する
+
+`audio.Frame`、`video.Frame`、`subtitle.Cue`、第三者 schema を typed port で接続する。tee、queue、discard、observation 等の全型共通処理は schema trait から型別に構築する。
+
+### C12. 後方互換層を残さない
+
+新しい縦断経路へ公式利用側を同時に移し、旧 factory/resolver/routing/registry/SDK abstraction を削除する。
+
+### C13. monorepo と段階的な module/release 境界
+
+sourceは一つのmonorepoに統合し、Git submoduleを使わない。repository、module、packageを同じ境界として扱わない。
+
+設計・pre-v1期間:
+
+- foundation、公式pure-Go plugin、standard、基本CLIは一つのproduct module/release trainでatomicに変更する
+- tools、native/reference integration、WASM等の独立targetだけをnested moduleにする
+- full conformance/benchmark corpusはproduct moduleへ含めない
+
+public contractとfamily境界が安定した後:
+
+- foundationを最下層moduleとして独立させる
+- MP3、FLAC等の公式pluginは規格family単位のnested moduleとして独立release可能にする
+- standard distributionはtested plugin version setを依存として固定する
+- third-party pluginは常に独立moduleとしてfoundation public contractだけへ依存できる
+
+package pathは最初から`plugin/<規格>`に固定し、family directoryへ同じpathの`go.mod`を置いてもimport pathとmarker identityが変わらない構成にする。公開後の曖昧なmodule splitを避けるため、独立releaseを開始するfamilyは最初のstable v1より前に切り出す。
+
+MP3/FLACは親bundleの下でcodec/format/parser実装を`internal` subpackageに分け、親が`Plugin()`、`Codec()`、`Format()`等を提供する。WAVE/PCM等、Bindingだけで結ばれる独立規格は別packageにする。flat repository namespaceのための`codec-`/`format-` prefixは廃止し、複合語の方が明確な正式名称は無理に短縮しない。
+
+これにより設計中は不要なversion/tag調整を避け、最終的なselective download、独立release、foundationとの一方向dependencyを失わない。
+
+### C14. Access Provider と typed Endpoint を foundation contract に含める
+
+foundationへ具体的なprotocol/device実装を入れず、第三者が実装するためのtyped contractだけを置く。
+
+ただし一つの汎用 protocol interface にはしない。
+
+- file、HTTP object、S3 object 等は Reference を byte Source/Sink session に解決する `access.Provider`
+- RTSP、RTP、HLS、DASH 等は clock/dynamic topology を持つ typed Endpoint component
+- camera、microphone、speaker 等は Device trait を持つ typed Endpoint component
+- direct reader/writer は owned/borrowed Access adaptor
+- source acquisition、probe、Plan、Run を結ぶ primary API は Prepared Job
+- concrete HTTP/S3/device 実装と install/discovery は別 package/上位 product
+
+Provider/Endpoint の definition が Set に存在することと、application が実際に渡す Provider/handle・OS権限を分ける。foundation に Job ごとの権限 engine は設けない。詳細は [access と endpoint contract](access.md) に記載する。
+
+### C15. offline既定はFastかつRepeatable
+
+offline jobの既定presetは`Fast`とする。presetはcomponentへ渡すruntime modeではなく、HostがCompile前に次のpolicyへ展開する。
+
+`Fast` は component config や plugin が直接分岐する enum ではなく、Host が次へ展開する named preset とする。
+
+- Goal: throughput
+- Accuracy: 規格上 exact が必要な処理は exact、それ以外は variant が宣言した tolerance
+- Repeatability: `Repeatable`
+- Artifact: final byte identityは要求しない
+- Implementation: 公式 pure-Go、`unsafe`/SIMD/FMA/parallel を許可。native は別 policy
+- Continuity: preserve。drop/conceal は許可しない
+- Resources: Job/Host limit 内で worker 等を自動解決
+
+選択 variant、CPU feature、worker、block/partition、seed、実効 policy を Plan へ固定する。timestamp/order、frame/sample の欠落・重複、lossless semantics、validation は緩めない。同一 execution signature の byte reproducibility が必要なら `Stable`、宣言した architecture/thread domain を越える byte reproducibility が必要なら `Portable` を選ぶ。
+
+`Realtime` はArtifact再現性levelの第四値ではなく、主に Goal/Continuity/Resources の preset とし、Accuracy/Repeatability/Artifactの各policyと組み合わせる。詳細は [性能と再現性](performance.md) に記載する。
+
+schedule由来のbounded variationを持つ`Variable` variantは明示opt-inとする。Fast/Stable/Portableごとの実装を複製せず、一つのvariantが複数policyを満たせるcontractにする。preset名はRunへ渡さず、sample/pixel/symbol loopにmode branchを置かない。
+
+### C16. foundationはAccess権限管理を提供しない
+
+このprojectのprimary productは、開発者がGo applicationへ組み込むlibraryである。変換用HTTP serverをproduction productとして提供しない。
+
+- foundationのAccess contractはSeek、ReadAt、Snapshot、transaction等のI/O capabilityとdependency injectionを表す
+- file/network/deviceへ何を許可するかは、組み込みapplication、渡されたProvider/handle、OS/container/browserの責務とする
+- path、scheme、host、CIDR、credential等のpermission DSLやJobごとのauthority engineをfoundationに設けない
+- in-process pluginは利用者が信頼するため、Providerだけを制限してsandboxと見せない
+- 強い分離が必要なら将来の別process/OS sandbox adaptorで扱う
+
+official convenience package/CLIはlocal file、stdin/stdout、利用者が構成したHTTP client等を提供できる。browser WASMはbrowserから渡されたFile/Blob/Stream/fetch resultとbrowser sandboxへ従う。
+
+HTTP serverは固定された公式pluginだけを使う小さなdemo/reference implementationとする。upload、temporary output、cancel、bounded size/concurrency、cleanup等の事故防止は行うが、汎用remote URL resolver、third-party plugin loading、production向けauthorization/SSRF policy、multi-tenant securityをproject contractにしない。production利用を表明しない。
+
+## Deferred without blocking the first implementation
+
+### D1. dynamic install の方式
+
+custom static binary、別 process plugin、platform-specific loader のどれを使うかは install/discovery product を設計する時に決める。foundation は immutable Set/descriptor/identity を用意する。
+
+### D2. remote plugin wire protocol
+
+in-process contract を先に安定させる。CLI/WASM/HTTP DTO を将来の RPC ABI と約束しない。
+
+### D3. live dynamic topology の既定 policy
+
+contract は `FiniteStatic`、`LiveStatic`、`LiveDynamic` と stream event を表現できるようにする。新 stream を follow/ignore/fail のどれにするかは live input 実装時に surface/job policy として確定する。
+
+### D4. hardware accelerator の標準提供範囲
+
+third-party/native variant を同じ Codec contract で追加できるようにする。公式 distribution にどの device adaptor を含めるかは pure-Go base と別に判断する。
+
+## 更新規則
+
+- 新しい product 判断が必要になった場合は実装を止め、確認待ちとして記録する。
+- 明示的に承認された判断だけを `Confirmed` へ追加する。
+- 実装詳細から生じた product 判断を暗黙に確定しない。
+- `Deferred` が first implementation の public contract を変えると判明した場合は確認待ちへ昇格する。
+- 設計文書が ledger と矛盾する場合は ledger の status を優先し、文書を修正する。
