@@ -6,8 +6,8 @@ import (
 	"go/format"
 	"go/token"
 
-	"github.com/godexture/tools/internal/cli"
-	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/godec/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/config-generator/types"
 )
 
 // collectFields processes targets and returns a map of fields and their order.

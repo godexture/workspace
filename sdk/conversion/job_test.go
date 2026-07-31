@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/codec-flac"
-	_ "github.com/godexture/codec-pcm"
-	_ "github.com/godexture/format-flac"
-	_ "github.com/godexture/format-wav"
+	_ "github.com/godexture/godec/plugins/codec-flac"
+	_ "github.com/godexture/godec/plugins/codec-pcm"
+	_ "github.com/godexture/godec/plugins/format-flac"
+	_ "github.com/godexture/godec/plugins/format-wav"
 )
 
 func TestJobRunsToCompletion(t *testing.T) {

@@ -3,9 +3,9 @@ package encoder
 import (
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 type subframeKind uint8

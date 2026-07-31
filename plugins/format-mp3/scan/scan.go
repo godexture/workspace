@@ -7,7 +7,7 @@
 // MP3 decoder's resync path and the WAV demuxer's embedded-MP3 packetizer.
 package scan
 
-import mp3header "github.com/godexture/format-mp3/header"
+import mp3header "github.com/godexture/godec/plugins/format-mp3/header"
 
 const (
 	// maxFreeFormatFrameSize bounds how far ahead a free-format frame's

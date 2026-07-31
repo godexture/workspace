@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 func buildWAVHeader(attr media.MediaAttributes, dataSize uint64, trailerSize uint64, forceRF64 bool) ([]byte, error) {

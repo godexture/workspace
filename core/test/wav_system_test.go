@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	wavpkg "github.com/godexture/format-wav"
+	"github.com/godexture/godec/core/domain/media"
+	wavpkg "github.com/godexture/godec/plugins/format-wav"
 )
 
 func TestWAVDemuxerMuxerRoundtrip(t *testing.T) {

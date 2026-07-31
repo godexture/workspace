@@ -3,8 +3,8 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
 )
 
 func (g *Geometry) AddNode(id string, n node.Node) error {

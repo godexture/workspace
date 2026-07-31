@@ -3,11 +3,11 @@ package conversion
 import (
 	"fmt"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/routing"
-	setting "github.com/godexture/sdk/config"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/core/routing"
+	setting "github.com/godexture/godec/sdk/config"
 )
 
 func Resolve(spec Spec) (Resolved, error) {

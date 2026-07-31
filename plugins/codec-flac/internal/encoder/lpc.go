@@ -3,7 +3,7 @@ package encoder
 import (
 	"math"
 
-	"github.com/godexture/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
 )
 
 func lpcPrecisionCandidates(options config.EncoderConfig) []int {

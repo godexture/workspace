@@ -1,8 +1,8 @@
 package testutil
 
 import (
-	"github.com/godexture/sdk/testutil/audio"
-	"github.com/godexture/sdk/testutil/audio/pcm"
+	"github.com/godexture/godec/sdk/testutil/audio"
+	"github.com/godexture/godec/sdk/testutil/audio/pcm"
 )
 
 type CompareOptions = pcm.CompareOptions

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/sdk/catalog"
+	"github.com/godexture/godec/sdk/catalog"
 	"github.com/spf13/cobra"
 )
 

@@ -3,8 +3,8 @@ package pcm
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func ToFloat32(dst []float32, src []byte, format media.SampleFormat, bitsPerSample int) ([]float32, error) {

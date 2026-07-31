@@ -19,7 +19,7 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 	go func() {
 		defer buildWg.Done()
 		log.Printf("building config-generator...")
-		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "config-generator.exe"), "github.com/godexture/tools/cmd/config-generator")
+		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "config-generator.exe"), "github.com/godexture/godec/tools/cmd/config-generator")
 		buildConfigCmd.Env = append(os.Environ(), "GOWORK="+goWork)
 		buildConfigCmd.Stdout = os.Stdout
 		buildConfigCmd.Stderr = os.Stderr
@@ -34,7 +34,7 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 	go func() {
 		defer buildWg.Done()
 		log.Printf("building enum-generator...")
-		buildEnumCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "enum-generator.exe"), "github.com/godexture/tools/cmd/enum-generator")
+		buildEnumCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "enum-generator.exe"), "github.com/godexture/godec/tools/cmd/enum-generator")
 		buildEnumCmd.Env = append(os.Environ(), "GOWORK="+goWork)
 		buildEnumCmd.Stdout = os.Stdout
 		buildEnumCmd.Stderr = os.Stderr
@@ -49,7 +49,7 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 	go func() {
 		defer buildWg.Done()
 		log.Printf("pre-warming build cache for table-generator...")
-		buildTableCmd := exec.Command(goCommand, "build", "github.com/godexture/tools/pkg/table-generator")
+		buildTableCmd := exec.Command(goCommand, "build", "github.com/godexture/godec/tools/pkg/table-generator")
 		buildTableCmd.Env = append(os.Environ(), "GOWORK="+goWork)
 		buildTableCmd.Stdout = os.Stdout
 		buildTableCmd.Stderr = os.Stderr

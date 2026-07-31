@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	flacCodec "github.com/godexture/codec-flac"
-	"github.com/godexture/codec-flac/test/config"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	flacFormat "github.com/godexture/format-flac"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	flacCodec "github.com/godexture/godec/plugins/codec-flac"
+	"github.com/godexture/godec/plugins/codec-flac/test/config"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	flacFormat "github.com/godexture/godec/plugins/format-flac"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestRoundtrip(t *testing.T) {

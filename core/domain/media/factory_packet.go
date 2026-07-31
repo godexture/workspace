@@ -1,8 +1,8 @@
 package media
 
 import (
-	"github.com/godexture/core/domain/time"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/core/domain/time"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 // New is assigned in init rather than the var declaration: see the

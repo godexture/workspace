@@ -3,8 +3,8 @@
 package flac
 
 import (
-	config "github.com/godexture/codec-flac/internal/config"
-	flac "github.com/godexture/codec-flac/internal/flac"
+	config "github.com/godexture/godec/plugins/codec-flac/internal/config"
+	flac "github.com/godexture/godec/plugins/codec-flac/internal/flac"
 )
 
 type EncoderConfig config.EncoderConfig

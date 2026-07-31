@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/internal/xsync"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/internal/xsync"
 )
 
 type Manifest interface {

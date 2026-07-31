@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/godec/tools/internal/config-generator/types"
 )
 
 // collectImports extracts all the required imports across all targets.

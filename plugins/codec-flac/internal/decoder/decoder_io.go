@@ -3,9 +3,9 @@ package decoder
 import (
 	"errors"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 func (d *Decoder) SendPacket(pkt *media.Packet) error {

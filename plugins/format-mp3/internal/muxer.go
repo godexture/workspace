@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/metadata-id3/id3v1"
-	"github.com/godexture/metadata-id3/id3v2"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v1"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v2"
 )
 
 // Muxer はMP3パケットをストリームに書き出す。

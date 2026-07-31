@@ -6,7 +6,7 @@ import (
 	"simd/archsimd"
 	"unsafe"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func fixedResidual(samples []int64, order int) []int64 {

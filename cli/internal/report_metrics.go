@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 type phaseMetrics struct {

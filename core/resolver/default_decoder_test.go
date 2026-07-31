@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
 )
 
 type invalidDecoderConfig struct{}

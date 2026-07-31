@@ -4,11 +4,11 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/gain"
-	"github.com/godexture/filter-audio/internal/remix"
-	"github.com/godexture/sdk/audio"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/gain"
+	"github.com/godexture/godec/plugins/filter-audio/internal/remix"
+	"github.com/godexture/godec/sdk/audio"
 )
 
 func BenchmarkGainStereoF32(b *testing.B) {

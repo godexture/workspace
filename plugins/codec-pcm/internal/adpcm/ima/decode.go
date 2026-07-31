@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/codec-pcm/internal/adpcm/bits"
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/plugins/codec-pcm/internal/adpcm/bits"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 func Decode(block []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {

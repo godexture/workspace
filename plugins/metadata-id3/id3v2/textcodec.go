@@ -8,7 +8,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/godexture/metadata-id3/internal/id3text"
+	"github.com/godexture/godec/plugins/metadata-id3/internal/id3text"
 )
 
 func decodeTextFrames(frameData []byte) []string {

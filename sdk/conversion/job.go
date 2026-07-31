@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 type Status string

@@ -4,7 +4,7 @@ import (
 	"crypto/md5"
 	"hash"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 type PCMMD5 struct {

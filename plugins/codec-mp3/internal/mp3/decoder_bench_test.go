@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal/mp3/domain"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/domain"
 )
 
 func BenchmarkDecodeFile(b *testing.B) {

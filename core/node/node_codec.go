@@ -1,6 +1,6 @@
 package node
 
-import "github.com/godexture/core/domain/media"
+import "github.com/godexture/godec/core/domain/media"
 
 type Encoder interface {
 	Node

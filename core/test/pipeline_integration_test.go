@@ -9,12 +9,12 @@ import (
 	"runtime"
 	"testing"
 
-	pcm "github.com/godexture/codec-pcm"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/pipeline"
-	wav "github.com/godexture/format-wav"
-	eng "github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	pcm "github.com/godexture/godec/plugins/codec-pcm"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/pipeline"
+	wav "github.com/godexture/godec/plugins/format-wav"
+	eng "github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestPipeline_WavPcmRoundtrip(t *testing.T) {

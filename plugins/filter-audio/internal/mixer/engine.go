@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/dsp"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/sdk/audio"
+	"github.com/godexture/godec/sdk/dsp"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 // portState is one input port's accumulation state: pending holds samples

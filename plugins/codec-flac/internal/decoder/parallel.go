@@ -3,11 +3,11 @@ package decoder
 import (
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 var decoderOutputReady = func() <-chan struct{} {

@@ -3,7 +3,7 @@ package msadpcm
 import (
 	"testing"
 
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 func BenchmarkFindBestPredictor(b *testing.B) {

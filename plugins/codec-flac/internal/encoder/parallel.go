@@ -1,8 +1,8 @@
 package encoder
 
 import (
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 var outputReady = func() <-chan struct{} {

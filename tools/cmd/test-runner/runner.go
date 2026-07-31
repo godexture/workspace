@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/godexture/tools/internal/workspace"
+	"github.com/godexture/godec/tools/internal/workspace"
 )
 
 // runTests configures and executes the go test command, parsing its output.

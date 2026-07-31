@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil/audio/nodes"
-	"github.com/godexture/sdk/testutil/audio/pcm"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil/audio/nodes"
+	"github.com/godexture/godec/sdk/testutil/audio/pcm"
 )
 
 const syntheticPacketSize = 4096

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 func (p *Pipeline) Close() error {

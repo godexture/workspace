@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
-	internal "github.com/godexture/format-flac/internal"
-	engine "github.com/godexture/sdk/engine"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
+	internal "github.com/godexture/godec/plugins/format-flac/internal"
+	engine "github.com/godexture/godec/sdk/engine"
 )
 
 var (

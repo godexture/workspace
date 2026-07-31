@@ -1,8 +1,8 @@
 package trim
 
 import (
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/audio"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/audio"
 )
 
 // silenceTail buffers below-threshold blocks by shape only (PTS and sample

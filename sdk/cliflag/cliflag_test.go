@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 	"github.com/spf13/pflag"
 )
 

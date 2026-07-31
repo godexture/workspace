@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 type RemixConfig struct {

@@ -3,7 +3,7 @@
 package mp3
 
 import (
-	internal "github.com/godexture/format-mp3/internal"
+	internal "github.com/godexture/godec/plugins/format-mp3/internal"
 )
 
 type DemuxerConfig internal.DemuxerConfig

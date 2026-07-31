@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 const (

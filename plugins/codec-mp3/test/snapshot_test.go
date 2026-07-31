@@ -6,12 +6,12 @@ import (
 	"io"
 	"testing"
 
-	mp3codec "github.com/godexture/codec-mp3"
-	"github.com/godexture/codec-mp3/test/config"
-	"github.com/godexture/core/domain/media"
-	mp3format "github.com/godexture/format-mp3"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	mp3codec "github.com/godexture/godec/plugins/codec-mp3"
+	"github.com/godexture/godec/plugins/codec-mp3/test/config"
+	"github.com/godexture/godec/core/domain/media"
+	mp3format "github.com/godexture/godec/plugins/format-mp3"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 var compareOption = testutil.CompareOptions{MaxAbsDiff: 1e-6, MaxRMSE: 1e-6, MinSNR: 100.0}

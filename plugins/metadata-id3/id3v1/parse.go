@@ -3,9 +3,9 @@ package id3v1
 import (
 	"bytes"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/metadata-id3/internal/id3text"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/metadata-id3/internal/id3text"
+	"github.com/godexture/godec/sdk/date"
 )
 
 const (

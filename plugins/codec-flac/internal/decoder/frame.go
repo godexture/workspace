@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/media/pcm"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/dsp"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/media/pcm"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/dsp"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 type decodeWorkspace struct {

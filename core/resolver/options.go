@@ -3,7 +3,7 @@ package resolver
 import (
 	"reflect"
 
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/registry"
 )
 
 type Priority int

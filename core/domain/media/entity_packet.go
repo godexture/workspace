@@ -1,7 +1,7 @@
 package media
 
 import (
-	"github.com/godexture/core/domain/time"
+	"github.com/godexture/godec/core/domain/time"
 )
 
 type PacketKind uint8

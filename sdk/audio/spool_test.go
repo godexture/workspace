@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func TestSpoolNextMemoryDoesNotAliasStoredSamples(t *testing.T) {

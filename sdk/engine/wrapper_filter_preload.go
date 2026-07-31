@@ -7,7 +7,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 // Preload drains every declared preload-phase port to EOF, before Start

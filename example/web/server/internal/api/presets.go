@@ -3,7 +3,7 @@ package api
 import (
 	"path/filepath"
 
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 type Preset struct {

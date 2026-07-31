@@ -1,9 +1,9 @@
 package factory
 
 import (
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/resolver"
-	"github.com/godexture/core/routing"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/core/resolver"
+	"github.com/godexture/godec/core/routing"
 )
 
 type NegotiatorConfig struct {

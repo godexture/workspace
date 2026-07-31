@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"math"
 
-	"github.com/godexture/codec-mp3/internal/mp3"
-	"github.com/godexture/codec-mp3/internal/mp3/domain"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/domain"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 type Decoder struct {

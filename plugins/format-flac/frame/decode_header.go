@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 func decodeHeader(r *bits.Reader, info streaminfo.StreamInfo) (Header, error) {

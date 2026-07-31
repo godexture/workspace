@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 func parseHeader(r io.ReadSeeker, meta *metadata.Bundle) (wavHeader, error) {

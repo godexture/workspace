@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"strings"
 
-	setting "github.com/godexture/sdk/config"
+	setting "github.com/godexture/godec/sdk/config"
 
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/equalizer"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/equalizer"
 )
 
 func (c *EqualizerConfig) ResolveConfiguration(context setting.Context) ([]setting.Field, error) {

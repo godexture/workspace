@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/streaminfo"
-	vc "github.com/godexture/metadata-vorbiscomment"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	vc "github.com/godexture/godec/plugins/metadata-vorbiscomment"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 const appendixDExample1Hex = "664c6143800000221000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0ffff869180000bf0358fd03128baa9a"

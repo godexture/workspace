@@ -3,8 +3,8 @@ package convolver
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/audio"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/audio"
 )
 
 func (e *Engine) ensureChannels(block audio.Block) error {

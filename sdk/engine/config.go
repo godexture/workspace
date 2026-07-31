@@ -3,7 +3,7 @@ package engine
 import (
 	"fmt"
 
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/registry"
 )
 
 type Validateable interface {

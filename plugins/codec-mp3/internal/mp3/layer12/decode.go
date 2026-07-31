@@ -1,9 +1,9 @@
 package layer12
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/domain"
-	"github.com/godexture/format-mp3/header"
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/domain"
+	"github.com/godexture/godec/plugins/format-mp3/header"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 const (

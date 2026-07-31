@@ -1,11 +1,11 @@
 package filter
 
 import (
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/reverb"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/reverb"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func init() {

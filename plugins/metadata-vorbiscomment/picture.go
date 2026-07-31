@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 func ParsePicture(payload []byte) (metadata.Thumbnail, error) {

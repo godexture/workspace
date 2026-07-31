@@ -1,14 +1,14 @@
 package mp3
 
 import (
-	"github.com/godexture/codec-mp3/internal/mp3/domain"
-	"github.com/godexture/codec-mp3/internal/mp3/layer12"
-	"github.com/godexture/codec-mp3/internal/mp3/layer3"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/domain"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/layer12"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/layer3"
 
-	"github.com/godexture/format-mp3/header"
-	"github.com/godexture/format-mp3/scan"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/buffer"
+	"github.com/godexture/godec/plugins/format-mp3/header"
+	"github.com/godexture/godec/plugins/format-mp3/scan"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/buffer"
 )
 
 const (

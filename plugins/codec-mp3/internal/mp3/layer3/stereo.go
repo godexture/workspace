@@ -1,7 +1,7 @@
 package layer3
 
 import (
-	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/godec/plugins/format-mp3/header"
 )
 
 func stereoTopBand(rightChannel []float32, scaleFactorBandTable []byte, bandCount int, maxBand []int) {

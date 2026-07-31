@@ -3,10 +3,10 @@ package catalog
 import (
 	"fmt"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/registry"
-	setting "github.com/godexture/sdk/config"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/registry"
+	setting "github.com/godexture/godec/sdk/config"
 )
 
 func ResolveConfiguration(role, name string, parameters, values map[string]string) (setting.Resolution, error) {

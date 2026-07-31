@@ -3,8 +3,8 @@ package catalog
 import (
 	"slices"
 
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/cliflag"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/cliflag"
 )
 
 type Field struct {

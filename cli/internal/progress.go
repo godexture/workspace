@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 type progressConfig struct {

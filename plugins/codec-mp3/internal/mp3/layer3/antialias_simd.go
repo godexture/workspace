@@ -5,7 +5,7 @@ package layer3
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func Antialias(granule []float32, bandCount int) {

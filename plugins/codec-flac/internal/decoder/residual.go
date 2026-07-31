@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 // DecodeResidual reads a FLAC residual coding block. Structural validity

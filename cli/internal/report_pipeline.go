@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/cliflag"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/cliflag"
 )
 
 func writePipelineDescription(writer io.Writer, description pipeline.Description) error {

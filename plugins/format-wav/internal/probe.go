@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/manifest"
 )
 
 func Probe(r io.Reader) manifest.ProbeScore {

@@ -7,15 +7,15 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	mediatime "github.com/godexture/core/domain/time"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/seektable"
-	"github.com/godexture/format-flac/streaminfo"
-	id3 "github.com/godexture/metadata-id3"
-	"github.com/godexture/metadata-id3/id3v1"
-	vc "github.com/godexture/metadata-vorbiscomment"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	mediatime "github.com/godexture/godec/core/domain/time"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/seektable"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	id3 "github.com/godexture/godec/plugins/metadata-id3"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v1"
+	vc "github.com/godexture/godec/plugins/metadata-vorbiscomment"
 )
 
 type Demuxer struct {

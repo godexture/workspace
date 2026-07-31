@@ -1,7 +1,7 @@
 package flac
 
 import (
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
 )
 
 type Apodization = flac.Apodization

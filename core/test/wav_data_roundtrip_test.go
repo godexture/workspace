@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	wavpkg "github.com/godexture/format-wav"
-	"github.com/godexture/sdk/testutil"
+	wavpkg "github.com/godexture/godec/plugins/format-wav"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestWaveFilesInDataRoundtrip(t *testing.T) {

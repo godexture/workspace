@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/godec/tools/internal/config-generator/types"
 )
 
 // generateTargetStructs generates the core structs, option interfaces, and constructor functions.

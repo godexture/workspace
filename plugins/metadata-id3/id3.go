@@ -3,9 +3,9 @@ package id3
 import (
 	"io"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/metadata-id3/id3v1"
-	"github.com/godexture/metadata-id3/id3v2"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v1"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v2"
 )
 
 func Trim(buffer []byte) (start int, end int) {

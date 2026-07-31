@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 func TestSinkStreamsWhilePlayerPlayReadsSynchronously(t *testing.T) {

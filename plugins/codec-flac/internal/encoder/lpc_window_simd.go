@@ -5,7 +5,7 @@ package encoder
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 var lowInt32LaneIndices = [...]uint32{0, 2, 4, 6, 0, 2, 4, 6}

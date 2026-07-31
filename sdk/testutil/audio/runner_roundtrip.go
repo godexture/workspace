@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil/audio/nodes"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil/audio/nodes"
 )
 
 // RunRoundtripTests runs one format, codec, and full roundtrip for the

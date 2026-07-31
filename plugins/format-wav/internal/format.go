@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func wavResolvedAudioFormat(header wavHeader) uint16 {

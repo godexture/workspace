@@ -3,8 +3,8 @@ package audio
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	mediapcm "github.com/godexture/core/domain/media/pcm"
+	"github.com/godexture/godec/core/domain/media"
+	mediapcm "github.com/godexture/godec/core/domain/media/pcm"
 )
 
 // Channels holds one []float32 sample buffer per audio channel.

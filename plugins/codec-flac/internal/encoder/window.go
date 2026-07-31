@@ -1,6 +1,6 @@
 package encoder
 
-import "github.com/godexture/codec-flac/internal/flac"
+import "github.com/godexture/godec/plugins/codec-flac/internal/flac"
 
 type windowSet struct {
 	funcs    []flac.Apodization

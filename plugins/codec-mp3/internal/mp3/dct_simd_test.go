@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal/mp3/layer3"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/layer3"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 // dctType2 is only ever called with bandCount == SamplesPerSubBandLayer3 (18)

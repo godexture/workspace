@@ -4,8 +4,8 @@ package filter
 
 import (
 	fmt "fmt"
-	media "github.com/godexture/core/domain/media"
-	config "github.com/godexture/filter-audio/internal/config"
+	media "github.com/godexture/godec/core/domain/media"
+	config "github.com/godexture/godec/plugins/filter-audio/internal/config"
 	math "math"
 	time "time"
 )

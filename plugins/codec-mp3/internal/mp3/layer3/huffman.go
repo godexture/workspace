@@ -1,7 +1,7 @@
 package layer3
 
 import (
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 // linearize calculates power of 4/3 for the given value

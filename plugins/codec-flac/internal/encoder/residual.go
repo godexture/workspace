@@ -3,7 +3,7 @@ package encoder
 import (
 	"errors"
 
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 func EncodeResidual(w *bits.Writer, residual []int64, coding riceCoding) error {

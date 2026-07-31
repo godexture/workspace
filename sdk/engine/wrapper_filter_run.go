@@ -8,8 +8,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
 )
 
 func (n *FilterAdapter) Start(ctx context.Context) error {

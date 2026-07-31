@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 func TestGeometryCloseReleasesAbandonedNodes(t *testing.T) {

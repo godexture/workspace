@@ -9,15 +9,15 @@ import (
 	"math"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/codec-flac"
-	_ "github.com/godexture/codec-pcm"
-	filter "github.com/godexture/filter-audio"
-	_ "github.com/godexture/format-flac"
-	_ "github.com/godexture/format-wav"
+	_ "github.com/godexture/godec/plugins/codec-flac"
+	_ "github.com/godexture/godec/plugins/codec-pcm"
+	filter "github.com/godexture/godec/plugins/filter-audio"
+	_ "github.com/godexture/godec/plugins/format-flac"
+	_ "github.com/godexture/godec/plugins/format-wav"
 )
 
 // writeTestWAV writes a short synthetic mono 16-bit PCM WAV (a few hundred

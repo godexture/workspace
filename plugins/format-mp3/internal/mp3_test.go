@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-mp3/internal"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-mp3/internal"
 )
 
 func TestProbe_ValidMP3(t *testing.T) {

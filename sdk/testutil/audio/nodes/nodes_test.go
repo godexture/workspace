@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil/audio"
-	"github.com/godexture/sdk/testutil/audio/nodes"
-	"github.com/godexture/sdk/testutil/audio/pcm"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil/audio"
+	"github.com/godexture/godec/sdk/testutil/audio/nodes"
+	"github.com/godexture/godec/sdk/testutil/audio/pcm"
 )
 
 func runNodes(ctx context.Context, ns ...node.Node) error {

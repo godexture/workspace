@@ -3,7 +3,7 @@ package date
 import (
 	"testing"
 
-	"github.com/godexture/sdk/optional"
+	"github.com/godexture/godec/sdk/optional"
 )
 
 func TestNewPartial(t *testing.T) {

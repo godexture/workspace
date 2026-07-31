@@ -3,7 +3,7 @@
 package wav
 
 import (
-	internal "github.com/godexture/format-wav/internal"
+	internal "github.com/godexture/godec/plugins/format-wav/internal"
 )
 
 type DemuxerConfig internal.DemuxerConfig

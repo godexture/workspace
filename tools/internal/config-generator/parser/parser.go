@@ -3,7 +3,7 @@ package parser
 import (
 	"strings"
 
-	"github.com/godexture/tools/internal/config-generator/types"
+	"github.com/godexture/godec/tools/internal/config-generator/types"
 )
 
 // ParseTarget parses a target definition string into a Target struct.

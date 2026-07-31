@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"io"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/format-mp3/header"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/plugins/format-mp3/header"
 )
 
 // Probe はMP3ファイルを検出する。

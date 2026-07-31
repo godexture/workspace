@@ -1,8 +1,8 @@
 package linear
 
 import (
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/audio"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/audio"
 )
 
 // Resampler implements streaming linear-interpolation resampling from

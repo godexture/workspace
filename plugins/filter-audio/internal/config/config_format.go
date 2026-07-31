@@ -3,8 +3,8 @@ package config
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	mediapcm "github.com/godexture/core/domain/media/pcm"
+	"github.com/godexture/godec/core/domain/media"
+	mediapcm "github.com/godexture/godec/core/domain/media/pcm"
 )
 
 type FormatConfig struct {

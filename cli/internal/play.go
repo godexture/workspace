@@ -4,9 +4,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/godexture/cli/internal/play"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/cli/internal/play"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/conversion"
 	"github.com/spf13/cobra"
 )
 

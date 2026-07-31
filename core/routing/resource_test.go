@@ -3,7 +3,7 @@ package routing
 import (
 	"testing"
 
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/registry"
 )
 
 func TestGrantResources(t *testing.T) {

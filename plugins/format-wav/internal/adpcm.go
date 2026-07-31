@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 func parseADPCMParameters(audioFormat uint16, channels int, blockAlign uint16, extra []byte) (params.ADPCM, error) {

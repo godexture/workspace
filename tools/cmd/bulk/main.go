@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/godexture/tools/internal/cli"
-	"github.com/godexture/tools/internal/workspace"
+	"github.com/godexture/godec/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/workspace"
 	"github.com/spf13/pflag"
 	"golang.org/x/mod/semver"
 )

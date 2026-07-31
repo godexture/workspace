@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 func TestWriteConversionStartRendersSeparateAuxiliaryChain(t *testing.T) {

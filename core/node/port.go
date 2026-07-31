@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 type InPort[T any] struct {

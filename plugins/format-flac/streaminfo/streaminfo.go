@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 const (

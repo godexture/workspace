@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	mediatime "github.com/godexture/core/domain/time"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	mediatime "github.com/godexture/godec/core/domain/time"
+	"github.com/godexture/godec/core/node"
 )
 
 type observationSource struct {

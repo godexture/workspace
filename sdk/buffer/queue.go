@@ -1,8 +1,8 @@
 package buffer
 
 import (
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 // Queue is a FIFO of pending output items, for engines that may emit

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/sdk/testutil/audio/pcm"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/sdk/testutil/audio/pcm"
 )
 
 const PcmFramesPerChunk = 4096

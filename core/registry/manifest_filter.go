@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 type FilterManifest struct {

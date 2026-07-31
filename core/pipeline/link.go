@@ -3,8 +3,8 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
 )
 
 func Link[T any, A node.OutputNode[T], B node.InputNode[T]](nodeA A, portA string, nodeB B, portB string) error {

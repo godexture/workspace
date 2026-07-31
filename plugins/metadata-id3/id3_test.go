@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/metadata-id3/id3v1"
-	"github.com/godexture/metadata-id3/id3v2"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v1"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v2"
+	"github.com/godexture/godec/sdk/date"
 )
 
 func TestParse_ImportantFrames(t *testing.T) {

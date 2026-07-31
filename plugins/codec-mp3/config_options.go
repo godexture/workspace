@@ -3,7 +3,7 @@
 package mp3
 
 import (
-	domain "github.com/godexture/codec-mp3/internal/domain"
+	domain "github.com/godexture/godec/plugins/codec-mp3/internal/domain"
 )
 
 type DecoderConfig domain.DecoderConfig

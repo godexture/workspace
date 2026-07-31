@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
 )
 
 func BenchmarkScannerNext(b *testing.B) {

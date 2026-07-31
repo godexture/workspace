@@ -6,10 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
 )
 
 type DemuxerAdapter struct {

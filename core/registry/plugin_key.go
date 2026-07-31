@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/manifest"
 )
 
 // PluginKey is the registry-assigned identity of a plugin implementation.

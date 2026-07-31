@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/testutil"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 type testProfile struct {

@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 type observedEdge[T any] struct {

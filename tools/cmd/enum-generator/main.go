@@ -4,9 +4,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/godexture/tools/internal/cli"
-	"github.com/godexture/tools/internal/enum-generator/generator"
-	"github.com/godexture/tools/internal/enumscan"
+	"github.com/godexture/godec/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/enum-generator/generator"
+	"github.com/godexture/godec/tools/internal/enumscan"
 	"github.com/spf13/pflag"
 )
 

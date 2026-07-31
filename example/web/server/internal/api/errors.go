@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/sdk/conversion"
 	"github.com/labstack/echo/v4"
 )
 

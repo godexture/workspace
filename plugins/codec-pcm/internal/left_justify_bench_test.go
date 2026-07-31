@@ -3,7 +3,7 @@ package internal
 import (
 	"testing"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func BenchmarkLeftJustifyPCM(b *testing.B) {

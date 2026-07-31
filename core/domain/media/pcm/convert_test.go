@@ -3,7 +3,7 @@ package pcm
 import (
 	"testing"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func TestPlanarAndPackedFormatsShareConversion(t *testing.T) {

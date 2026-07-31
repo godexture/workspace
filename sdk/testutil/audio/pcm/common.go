@@ -3,8 +3,8 @@ package pcm
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	mediapcm "github.com/godexture/core/domain/media/pcm"
+	"github.com/godexture/godec/core/domain/media"
+	mediapcm "github.com/godexture/godec/core/domain/media/pcm"
 )
 
 // ConvertToFloat32 converts an AudioFrame's samples to float32, reusing dst when possible.

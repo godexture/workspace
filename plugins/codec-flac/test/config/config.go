@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/godexture/sdk/testutil"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 var (

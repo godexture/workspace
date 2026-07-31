@@ -1,6 +1,6 @@
 package routing
 
-import "github.com/godexture/core/registry"
+import "github.com/godexture/godec/core/registry"
 
 // grantResources hands every parallel-eligible request a reference to the
 // same shared pool, so idle stages never hold capacity a busy stage could

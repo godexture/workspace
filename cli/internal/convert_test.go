@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
-	"github.com/godexture/sdk/catalog"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/sdk/catalog"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 func TestParsePluginSpecParsesNameAndValues(t *testing.T) {

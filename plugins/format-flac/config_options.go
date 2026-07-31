@@ -3,7 +3,7 @@
 package flac
 
 import (
-	internal "github.com/godexture/format-flac/internal"
+	internal "github.com/godexture/godec/plugins/format-flac/internal"
 )
 
 type DemuxerConfig internal.DemuxerConfig

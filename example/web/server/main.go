@@ -16,16 +16,16 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/godexture/web/internal/api"
-	"github.com/godexture/web/internal/jobs"
+	"github.com/godexture/godec/example/web/server/internal/api"
+	"github.com/godexture/godec/example/web/server/internal/jobs"
 
-	_ "github.com/godexture/codec-flac"
-	_ "github.com/godexture/codec-mp3"
-	_ "github.com/godexture/codec-pcm"
-	_ "github.com/godexture/filter-audio"
-	_ "github.com/godexture/format-flac"
-	_ "github.com/godexture/format-mp3"
-	_ "github.com/godexture/format-wav"
+	_ "github.com/godexture/godec/plugins/codec-flac"
+	_ "github.com/godexture/godec/plugins/codec-mp3"
+	_ "github.com/godexture/godec/plugins/codec-pcm"
+	_ "github.com/godexture/godec/plugins/filter-audio"
+	_ "github.com/godexture/godec/plugins/format-flac"
+	_ "github.com/godexture/godec/plugins/format-mp3"
+	_ "github.com/godexture/godec/plugins/format-wav"
 )
 
 const maxUploadBytes = 1 << 30 // Server mode limit: 1 GiB

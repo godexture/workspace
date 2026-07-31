@@ -1,8 +1,8 @@
 package layer12
 
 import (
-	"github.com/godexture/format-mp3/header"
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/plugins/format-mp3/header"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 type ScaleFactorInfo struct {

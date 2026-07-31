@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/godexture/web/internal/jobs"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/example/web/server/internal/jobs"
+	"github.com/godexture/godec/sdk/conversion"
 	"github.com/labstack/echo/v4"
 )
 

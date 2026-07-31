@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/dsp"
-	"github.com/godexture/sdk/dsp/fft"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp/fft"
 )
 
 func (e *Engine) buildImpulse(impulse [][]float32, rate int) error {

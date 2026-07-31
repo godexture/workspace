@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 func DecodeSubframe(r *bits.Reader, samples []int64, bitsPerSample int) error {

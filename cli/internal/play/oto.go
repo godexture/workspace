@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/ebitengine/oto/v3"
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 type player interface {

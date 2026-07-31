@@ -6,10 +6,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 func TestMuxerWritesMeasuredStreamInfoToSeekableOutput(t *testing.T) {

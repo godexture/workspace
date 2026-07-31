@@ -1,7 +1,7 @@
 package encoder
 
 import (
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func (e *Encoder) emitFullBlocks() error {

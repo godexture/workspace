@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 func BytesPerPCMBlock(channels int, blockAlign int) int {

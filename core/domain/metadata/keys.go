@@ -1,7 +1,7 @@
 package metadata
 
 import (
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/sdk/date"
 )
 
 type KeyId string

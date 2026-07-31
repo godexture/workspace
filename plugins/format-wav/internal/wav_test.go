@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	mp3codec "github.com/godexture/codec-mp3"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	mp3codec "github.com/godexture/godec/plugins/codec-mp3"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestProberCognizesWAVSignature(t *testing.T) {

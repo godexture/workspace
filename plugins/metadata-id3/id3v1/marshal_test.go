@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/sdk/date"
 )
 
 func TestMarshal(t *testing.T) {

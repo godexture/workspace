@@ -1,7 +1,7 @@
 package media
 
 import (
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 // audioFramePool reuses *AudioFrame objects the way packetPool reuses

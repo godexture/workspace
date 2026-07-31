@@ -1,6 +1,6 @@
 package resolver
 
-import "github.com/godexture/core/registry"
+import "github.com/godexture/godec/core/registry"
 
 type Bundle struct {
 	NewMuxerResolver   func(*registry.MuxerRegistry) MuxerResolver

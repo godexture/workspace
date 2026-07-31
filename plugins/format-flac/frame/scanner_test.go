@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
 )
 
 const appendixDStreamInfo = "1000100000000f00000f0ac442f0000000013e84b41807dc690307586a3dad1a2e0f"

@@ -1,8 +1,8 @@
 package factory
 
 import (
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/resolver"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/core/resolver"
 )
 
 type ResolverOption func(*resolver.Bundle)

@@ -1,6 +1,6 @@
 package factory
 
-import "github.com/godexture/core/registry"
+import "github.com/godexture/godec/core/registry"
 
 type RegistryOption func(*registry.Bundle)
 

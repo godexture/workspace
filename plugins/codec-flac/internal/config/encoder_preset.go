@@ -3,7 +3,7 @@ package config
 import (
 	"log"
 
-	"github.com/godexture/codec-flac/internal/flac"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
 )
 
 const (

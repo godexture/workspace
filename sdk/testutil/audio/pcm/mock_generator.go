@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 // CreateAudioFrame creates a new AudioFrame containing the given float32 PCM samples converted to the target format.

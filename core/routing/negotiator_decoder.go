@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/core/registry"
 )
 
 func (n *Negotiator) negotiateDecoder(ctx context.Context, spec ConversionSpec, inputStream media.StreamInfo, state *negotiationState) error {

@@ -3,7 +3,7 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 type preparationPlan struct {

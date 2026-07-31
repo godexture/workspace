@@ -6,8 +6,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func TestFindBestPredictorSIMD(t *testing.T) {

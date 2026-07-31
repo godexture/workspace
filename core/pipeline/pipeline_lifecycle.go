@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
 	"golang.org/x/sync/errgroup"
 )
 

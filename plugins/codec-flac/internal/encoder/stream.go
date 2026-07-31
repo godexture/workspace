@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/media/pcm"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/media/pcm"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 // FormatSupport describes one FLAC-supported input container: MinBits is

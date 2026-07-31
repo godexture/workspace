@@ -3,7 +3,7 @@ package media
 import (
 	"time"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 type StreamInfo struct {

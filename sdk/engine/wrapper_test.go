@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 // fakeEncoderEngine verifies that adapter Close owns engine teardown and is

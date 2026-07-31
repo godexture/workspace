@@ -3,11 +3,11 @@ package encoder
 import (
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 func EncodeFrame(samples [][]int64, sampleRate, bitsPerSample int, frameNumber uint64, options config.EncoderConfig) ([]byte, error) {

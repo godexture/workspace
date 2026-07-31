@@ -4,9 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/audio"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func monoFrame(rate int, pts media.Pts, values []float32) *media.Frame {

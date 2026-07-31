@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/web/internal/jobs"
-	"github.com/godexture/web/internal/testutil"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/example/web/server/internal/jobs"
+	"github.com/godexture/godec/example/web/server/internal/testutil"
+	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/codec-pcm"
-	_ "github.com/godexture/filter-audio"
-	_ "github.com/godexture/format-wav"
+	_ "github.com/godexture/godec/plugins/codec-pcm"
+	_ "github.com/godexture/godec/plugins/filter-audio"
+	_ "github.com/godexture/godec/plugins/format-wav"
 )
 
 func newStore(t *testing.T) *jobs.Store {

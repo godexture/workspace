@@ -5,7 +5,7 @@ package mp3
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func dctType2(granule []float32, bandCount int) {

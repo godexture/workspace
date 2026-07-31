@@ -5,7 +5,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/godexture/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
 )
 
 type bandSpec struct {

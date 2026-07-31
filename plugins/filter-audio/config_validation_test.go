@@ -2,7 +2,7 @@ package filter_test
 
 import (
 	"testing"
-	"github.com/godexture/filter-audio"
+	"github.com/godexture/godec/plugins/filter-audio"
 )
 
 func TestSpeedConfigValidate(t *testing.T) {

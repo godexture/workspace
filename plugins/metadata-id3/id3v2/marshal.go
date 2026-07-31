@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/sdk/date"
 )
 
 const commentLanguage = "eng"

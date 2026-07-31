@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
 )
 
 type metadataBlock struct {

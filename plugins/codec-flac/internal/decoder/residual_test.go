@@ -3,7 +3,7 @@ package decoder
 import (
 	"testing"
 
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 func TestDecodeResidualRiceRange(t *testing.T) {

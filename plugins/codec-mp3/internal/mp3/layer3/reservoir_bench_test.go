@@ -3,7 +3,7 @@ package layer3
 import (
 	"testing"
 
-	"github.com/godexture/sdk/bits"
+	"github.com/godexture/godec/sdk/bits"
 )
 
 func BenchmarkReservoirRestoreSave(b *testing.B) {

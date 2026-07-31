@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/sdk/date"
 )
 
 func TestParseMapsCommentsAndKeepsUnmappedFields(t *testing.T) {

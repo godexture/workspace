@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/godexture/codec-mp3/internal/mp3/layer3"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3/layer3"
 )
 
 func TestSynthesizeGranuleChannelTransitions(t *testing.T) {

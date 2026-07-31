@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 func EncodeHeader(w *bits.Writer, header *Header, streamableSubset bool) error {

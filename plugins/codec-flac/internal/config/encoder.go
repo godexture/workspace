@@ -5,8 +5,8 @@ package config
 import (
 	"fmt"
 
-	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 const (

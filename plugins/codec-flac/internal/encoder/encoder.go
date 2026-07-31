@@ -3,15 +3,15 @@ package encoder
 import (
 	"errors"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/codec-flac/internal/flac"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/parallel"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/flac"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/parallel"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 type Encoder struct {

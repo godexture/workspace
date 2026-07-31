@@ -1,6 +1,6 @@
 package frame
 
-import "github.com/godexture/format-flac/streaminfo"
+import "github.com/godexture/godec/plugins/format-flac/streaminfo"
 
 func StartSample(header Header, info streaminfo.StreamInfo) uint64 {
 	if header.BlockingStrategy {

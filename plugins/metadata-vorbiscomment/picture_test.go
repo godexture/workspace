@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 func TestParsePicture(t *testing.T) {

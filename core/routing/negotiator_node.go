@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 func appendPlanNodes(owned []node.Node, plans []transformPlan) []node.Node {

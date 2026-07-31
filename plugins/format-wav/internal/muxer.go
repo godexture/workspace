@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 type Muxer struct {

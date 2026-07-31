@@ -6,7 +6,7 @@ import (
 	"simd/archsimd"
 	"unsafe"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func autocorrelate(values, auto []float64) {

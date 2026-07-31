@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 // Coefficient is one Microsoft ADPCM predictor coefficient pair.

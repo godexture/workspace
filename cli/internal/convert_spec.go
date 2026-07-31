@@ -6,9 +6,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/godexture/sdk/catalog"
-	"github.com/godexture/sdk/cliflag"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/sdk/catalog"
+	"github.com/godexture/godec/sdk/cliflag"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 // buildSpec turns convert flags into a conversion.Spec. --format infers the

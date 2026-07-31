@@ -5,10 +5,10 @@ import (
 	"io"
 	"strings"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/cliflag"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/cliflag"
 	"github.com/spf13/cobra"
 )
 

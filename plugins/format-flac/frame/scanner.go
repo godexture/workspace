@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/buffer"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/buffer"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 const (

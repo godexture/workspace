@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"math"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 // leftJustifyPCM shifts samples that occupy only the low BitsPerSample bits of

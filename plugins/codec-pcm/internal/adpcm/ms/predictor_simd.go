@@ -5,8 +5,8 @@ package msadpcm
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []params.Coefficient) int {

@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-mp3/header"
-	"github.com/godexture/format-mp3/scan"
-	"github.com/godexture/metadata-id3/id3v2"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-mp3/header"
+	"github.com/godexture/godec/plugins/format-mp3/scan"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v2"
 )
 
 // scanWindowBytes is how much unread data nextFrame peeks at a time while

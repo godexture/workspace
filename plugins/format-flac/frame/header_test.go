@@ -3,8 +3,8 @@ package frame
 import (
 	"testing"
 
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 func TestParseHeaderRejectsBlockSize65536(t *testing.T) {

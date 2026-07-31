@@ -4,10 +4,10 @@ import (
 	"io"
 	"testing"
 
-	"github.com/godexture/codec-mp3/test/config"
-	mp3format "github.com/godexture/format-mp3"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	"github.com/godexture/godec/plugins/codec-mp3/test/config"
+	mp3format "github.com/godexture/godec/plugins/format-mp3"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestRoundtrip(t *testing.T) {

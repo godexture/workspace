@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
 )
 
 type packetCompareNode struct {

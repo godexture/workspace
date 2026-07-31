@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/metadata-id3/internal/id3text"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/metadata-id3/internal/id3text"
 )
 
 func decodeAPICFrame(frameData []byte) metadata.Thumbnail {

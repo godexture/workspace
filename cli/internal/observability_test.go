@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/pipeline"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/pipeline"
 )
 
 func writeObservableTestWAV(t *testing.T, path string) {

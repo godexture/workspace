@@ -1,14 +1,14 @@
 package pcm
 
 import (
-	internal "github.com/godexture/codec-pcm/internal"
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/engine"
+	internal "github.com/godexture/godec/plugins/codec-pcm/internal"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func NewDecoderEngine(stream media.StreamInfo, cfg DecoderConfig) (engine.DecoderEngine, error) {

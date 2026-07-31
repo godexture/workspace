@@ -4,11 +4,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/godexture/tools/internal/cli"
-	"github.com/godexture/tools/internal/config-generator/generator"
-	"github.com/godexture/tools/internal/config-generator/parser"
-	"github.com/godexture/tools/internal/config-generator/types"
-	"github.com/godexture/tools/internal/enumscan"
+	"github.com/godexture/godec/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/config-generator/generator"
+	"github.com/godexture/godec/tools/internal/config-generator/parser"
+	"github.com/godexture/godec/tools/internal/config-generator/types"
+	"github.com/godexture/godec/tools/internal/enumscan"
 	"github.com/spf13/pflag"
 )
 

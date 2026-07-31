@@ -10,12 +10,12 @@ package convolver
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/buffer"
-	"github.com/godexture/sdk/dsp/fft"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/sdk/audio"
+	"github.com/godexture/godec/sdk/buffer"
+	"github.com/godexture/godec/sdk/dsp/fft"
 )
 
 const defaultBlockSize = 4096

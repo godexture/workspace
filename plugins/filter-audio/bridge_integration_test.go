@@ -7,15 +7,15 @@ import (
 	"math"
 	"testing"
 
-	_ "github.com/godexture/codec-flac"
-	_ "github.com/godexture/codec-pcm"
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/resolver"
-	"github.com/godexture/core/routing"
-	formatFlac "github.com/godexture/format-flac"
-	formatWav "github.com/godexture/format-wav"
+	_ "github.com/godexture/godec/plugins/codec-flac"
+	_ "github.com/godexture/godec/plugins/codec-pcm"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/core/resolver"
+	"github.com/godexture/godec/core/routing"
+	formatFlac "github.com/godexture/godec/plugins/format-flac"
+	formatWav "github.com/godexture/godec/plugins/format-wav"
 )
 
 func TestRegisteredBridgeSatisfiesFLACPCMInput(t *testing.T) {

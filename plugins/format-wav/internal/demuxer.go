@@ -6,10 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	mediatime "github.com/godexture/core/domain/time"
-	"github.com/godexture/format-wav/params"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	mediatime "github.com/godexture/godec/core/domain/time"
+	"github.com/godexture/godec/plugins/format-wav/params"
 )
 
 const (

@@ -7,9 +7,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/dsp"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/dsp"
+	"github.com/godexture/godec/sdk/pool"
 )
 
 // Spool retains decoded audio with bounded RAM and transparently spills samples to a temporary file.

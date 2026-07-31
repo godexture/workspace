@@ -3,9 +3,9 @@ package encoder
 import (
 	"math"
 	stdbits "math/bits"
-	"github.com/godexture/sdk/pool"
+	"github.com/godexture/godec/sdk/pool"
 
-	"github.com/godexture/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
 )
 
 type ricePartition struct {

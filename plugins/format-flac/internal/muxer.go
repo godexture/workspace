@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/streaminfo"
-	vc "github.com/godexture/metadata-vorbiscomment"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	vc "github.com/godexture/godec/plugins/metadata-vorbiscomment"
 )
 
 // Muxer writes a native FLAC stream. Packets are expected to contain complete

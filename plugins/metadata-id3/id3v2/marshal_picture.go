@@ -3,7 +3,7 @@ package id3v2
 import (
 	"strings"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 func (e *encoder) addAttachedPictureFrames(thumbnails []metadata.Thumbnail) {

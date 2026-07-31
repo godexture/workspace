@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
 )
 
 type DefaultDecoderResolver struct {

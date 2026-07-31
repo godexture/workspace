@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
 )
 
 // requiredPorts lists a filter's declared input ports, "in" first (so a

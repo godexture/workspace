@@ -5,7 +5,7 @@ package main
 import (
 	"log"
 
-	generator "github.com/godexture/tools/pkg/table-generator"
+	generator "github.com/godexture/godec/tools/pkg/table-generator"
 )
 
 func buildCRC8Table() [256]byte {

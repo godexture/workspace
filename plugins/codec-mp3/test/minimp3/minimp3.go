@@ -49,7 +49,7 @@ import "C"
 import (
 	"unsafe"
 
-	"github.com/godexture/codec-mp3/internal/mp3"
+	"github.com/godexture/godec/plugins/codec-mp3/internal/mp3"
 )
 
 func Decode(data []byte) []float32 {

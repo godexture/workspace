@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/godexture/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/cli"
 )
 
 // Enum is a string-backed named type and the literal values declared for it

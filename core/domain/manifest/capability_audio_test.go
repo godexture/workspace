@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func TestAudioConstraintMatchesWildcardAndConcreteFields(t *testing.T) {

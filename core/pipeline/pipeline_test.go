@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
 )
 
 type lifecycleTestNode struct {

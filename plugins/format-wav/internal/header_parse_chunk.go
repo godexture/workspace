@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/godexture/core/domain/metadata"
+	"github.com/godexture/godec/core/domain/metadata"
 )
 
 func parseLISTChunk(r io.ReadSeeker, chunkSize uint32, listMeta *metadata.Bundle) error {

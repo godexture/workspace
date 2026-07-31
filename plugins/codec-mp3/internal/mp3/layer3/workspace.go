@@ -1,9 +1,9 @@
 package layer3
 
 import (
-	"github.com/godexture/format-mp3/header"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/buffer"
+	"github.com/godexture/godec/plugins/format-mp3/header"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/buffer"
 )
 
 const (

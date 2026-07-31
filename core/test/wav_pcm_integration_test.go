@@ -8,11 +8,11 @@ import (
 	"runtime"
 	"testing"
 
-	pcm "github.com/godexture/codec-pcm"
-	"github.com/godexture/core/domain/media"
-	wav "github.com/godexture/format-wav"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil"
+	pcm "github.com/godexture/godec/plugins/codec-pcm"
+	"github.com/godexture/godec/core/domain/media"
+	wav "github.com/godexture/godec/plugins/format-wav"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil"
 )
 
 func TestWaveFilesDemuxDecodeEncodeMuxRoundtrip(t *testing.T) {

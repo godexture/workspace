@@ -1,10 +1,10 @@
 package core
 
 import (
-	"github.com/godexture/core/factory"
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/core/resolver"
+	"github.com/godexture/godec/core/factory"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/core/resolver"
 )
 
 var (

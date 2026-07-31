@@ -3,7 +3,7 @@ package encoder
 import (
 	"errors"
 
-	"github.com/godexture/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
 )
 
 var errNoChannelAssignment = errors.New("no valid FLAC channel assignment")

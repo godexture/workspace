@@ -3,8 +3,8 @@ package buffer
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 // Slot holds at most one pending output item, matching the convention (used

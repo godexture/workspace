@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/sdk/date"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/sdk/date"
 )
 
 func Marshal(bundle metadata.Bundle) ([]byte, error) {

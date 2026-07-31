@@ -5,9 +5,9 @@ import (
 	"errors"
 	"io"
 
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/bits"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/bits"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 type Header struct {

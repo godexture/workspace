@@ -3,8 +3,8 @@ package filter
 import (
 	"testing"
 
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/equalizer"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/equalizer"
 )
 
 func TestEqualizerPeakingZeroGainIsIdentity(t *testing.T) {

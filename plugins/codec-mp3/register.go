@@ -1,13 +1,13 @@
 package mp3
 
 import (
-	"github.com/godexture/codec-mp3/internal"
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/plugins/codec-mp3/internal"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func NewDecoderEngine(config DecoderConfig) engine.DecoderEngine {

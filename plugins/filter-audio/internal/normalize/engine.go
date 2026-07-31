@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/sdk/audio"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 type Engine struct {

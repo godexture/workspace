@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/domain/metadata"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/format-flac/frame"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/hash"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/domain/metadata"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/hash"
 )
 
 func TestDecoder_ReceiveFrameEmptyActive(t *testing.T) {

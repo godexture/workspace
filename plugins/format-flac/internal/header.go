@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/format-flac/seektable"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/metadata-id3/id3v2"
+	"github.com/godexture/godec/plugins/format-flac/seektable"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/plugins/metadata-id3/id3v2"
 )
 
 func parseNativeFLACHeader(r io.ReadSeeker, strict bool) (streaminfo.StreamInfo, []byte, [][]byte, []seektable.Point, int64, error) {

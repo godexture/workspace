@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/godexture/tools/internal/cli"
-	"github.com/godexture/tools/internal/enumscan"
+	"github.com/godexture/godec/tools/internal/cli"
+	"github.com/godexture/godec/tools/internal/enumscan"
 )
 
 // Generate writes a Valid() bool method for each enum to output.

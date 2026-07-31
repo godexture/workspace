@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/node"
 )
 
 type NodeDef struct {

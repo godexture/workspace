@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func mustNewDecoder(t *testing.T, stream media.StreamInfo, config DecoderConfig) *Decoder {

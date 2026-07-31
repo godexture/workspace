@@ -4,9 +4,9 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/internal/clone"
-	"github.com/godexture/core/node"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/internal/clone"
+	"github.com/godexture/godec/core/node"
 )
 
 type Configuration interface{}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/codec-flac/test/config"
+	"github.com/godexture/godec/plugins/codec-flac/test/config"
 )
 
 func walTestFiles(t *testing.T, run func(t *testing.T, path string, group string)) {

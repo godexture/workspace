@@ -5,7 +5,7 @@ package encoder
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 const (

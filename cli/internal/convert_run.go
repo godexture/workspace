@@ -8,10 +8,10 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/catalog"
-	"github.com/godexture/sdk/conversion"
-	"github.com/godexture/sdk/profiling"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/catalog"
+	"github.com/godexture/godec/sdk/conversion"
+	"github.com/godexture/godec/sdk/profiling"
 	"github.com/spf13/cobra"
 )
 

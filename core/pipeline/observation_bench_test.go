@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 func BenchmarkPipelineObservation(b *testing.B) {

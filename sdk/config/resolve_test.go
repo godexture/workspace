@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/godexture/core/registry"
-	"github.com/godexture/sdk/config"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/sdk/config"
 )
 
 type dynamicConfig struct {

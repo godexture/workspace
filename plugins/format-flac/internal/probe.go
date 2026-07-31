@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
 )
 
 func Probe(r io.Reader) manifest.ProbeScore {

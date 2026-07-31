@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"slices"
 
-	godec "github.com/godexture/core"
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/registry"
-	setting "github.com/godexture/sdk/config"
+	godec "github.com/godexture/godec/core"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/registry"
+	setting "github.com/godexture/godec/sdk/config"
 )
 
 // FilterEntry describes a filter's editable configuration and port topology.

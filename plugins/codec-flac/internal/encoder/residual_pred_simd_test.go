@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func TestLPCResidualSIMD(t *testing.T) {

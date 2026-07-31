@@ -4,12 +4,12 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	imaadpcm "github.com/godexture/codec-pcm/internal/adpcm/ima"
-	msadpcm "github.com/godexture/codec-pcm/internal/adpcm/ms"
-	"github.com/godexture/codec-pcm/internal/g711"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-wav/params"
-	"github.com/godexture/sdk/buffer"
+	imaadpcm "github.com/godexture/godec/plugins/codec-pcm/internal/adpcm/ima"
+	msadpcm "github.com/godexture/godec/plugins/codec-pcm/internal/adpcm/ms"
+	"github.com/godexture/godec/plugins/codec-pcm/internal/g711"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-wav/params"
+	"github.com/godexture/godec/sdk/buffer"
 )
 
 type DecoderConfig struct {

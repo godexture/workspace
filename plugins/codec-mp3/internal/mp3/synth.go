@@ -1,6 +1,6 @@
 package mp3
 
-import "github.com/godexture/codec-mp3/internal/mp3/layer3"
+import "github.com/godexture/godec/plugins/codec-mp3/internal/mp3/layer3"
 
 func synthesizePair(samples []float32, channelCount int, zBuffer []float32) {
 	accumulator := (zBuffer[14*64] - zBuffer[0]) * 29

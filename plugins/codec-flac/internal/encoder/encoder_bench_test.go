@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/codec-flac/internal/decoder"
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/format-flac/streaminfo"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/plugins/codec-flac/internal/decoder"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func benchmarkBlock(blockSize int) [][]int64 {

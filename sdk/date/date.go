@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/godexture/sdk/optional"
+	"github.com/godexture/godec/sdk/optional"
 )
 
 type Partial struct {

@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/engine"
-	"github.com/godexture/sdk/testutil/audio/nodes"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/engine"
+	"github.com/godexture/godec/sdk/testutil/audio/nodes"
 )
 
 // RunSnapshotTests runs applicable demux-decode and encode-mux snapshot tests.

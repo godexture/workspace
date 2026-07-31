@@ -1,9 +1,9 @@
 package filter
 
 import (
-	"github.com/godexture/core/registry"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/dcoffset"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/dcoffset"
 )
 
 func init() {

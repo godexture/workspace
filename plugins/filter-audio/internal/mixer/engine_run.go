@@ -3,9 +3,9 @@ package mixer
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/sdk/audio"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/sdk/audio"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func (e *Engine) SendFrame(frame *media.Frame) error { return e.SendInput(e.inputIDs[0], frame) }

@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/godexture/codec-flac/internal/config"
-	"github.com/godexture/sdk/dsp"
+	"github.com/godexture/godec/plugins/codec-flac/internal/config"
+	"github.com/godexture/godec/sdk/dsp"
 )
 
 func BenchmarkAutocorrelateCompare(b *testing.B) {

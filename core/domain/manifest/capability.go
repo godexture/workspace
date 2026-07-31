@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/godexture/core/domain/media"
+	"github.com/godexture/godec/core/domain/media"
 )
 
 type Capability interface {

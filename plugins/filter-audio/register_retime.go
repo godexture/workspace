@@ -3,12 +3,12 @@ package filter
 import (
 	"time"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/core/node"
-	"github.com/godexture/core/registry"
-	"github.com/godexture/filter-audio/internal/config"
-	"github.com/godexture/filter-audio/internal/retime"
-	"github.com/godexture/sdk/engine"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/core/node"
+	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugins/filter-audio/internal/config"
+	"github.com/godexture/godec/plugins/filter-audio/internal/retime"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 func init() {

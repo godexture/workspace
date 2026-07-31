@@ -15,8 +15,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/godexture/core/pipeline"
-	"github.com/godexture/sdk/conversion"
+	"github.com/godexture/godec/core/pipeline"
+	"github.com/godexture/godec/sdk/conversion"
 )
 
 // Input identifies one file used by a conversion. Shared preset assets are

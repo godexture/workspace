@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/core/domain/manifest"
-	"github.com/godexture/core/registry"
+	"github.com/godexture/godec/core/domain/manifest"
+	"github.com/godexture/godec/core/registry"
 )
 
 type DefaultDemuxerResolver struct {

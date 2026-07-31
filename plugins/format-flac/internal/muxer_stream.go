@@ -3,8 +3,8 @@ package internal
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/media"
-	"github.com/godexture/format-flac/streaminfo"
+	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugins/format-flac/streaminfo"
 )
 
 func (m *Muxer) recordFrame(blockSize, frameSize int) {

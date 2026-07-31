@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/godexture/codec-mp3/test/config"
-	"github.com/godexture/codec-mp3/test/minimp3"
+	"github.com/godexture/godec/plugins/codec-mp3/test/config"
+	"github.com/godexture/godec/plugins/codec-mp3/test/minimp3"
 )
 
 func main() {

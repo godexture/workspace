@@ -3,7 +3,7 @@ package registry
 import (
 	"fmt"
 
-	"github.com/godexture/core/domain/manifest"
+	"github.com/godexture/godec/core/domain/manifest"
 )
 
 func assignManifestID[V Manifest](manifest V, key PluginKey) (V, error) {

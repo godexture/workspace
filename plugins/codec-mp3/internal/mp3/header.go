@@ -1,6 +1,6 @@
 package mp3
 
-import "github.com/godexture/format-mp3/header"
+import "github.com/godexture/godec/plugins/format-mp3/header"
 
 // ParseID3v2Size returns the total size of an ID3v2 tag (including header) if the headerBytes contains a valid ID3v2 header.
 // The headerBytes must be at least 10 bytes long.

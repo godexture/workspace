@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/godexture/format-flac/frame"
+	"github.com/godexture/godec/plugins/format-flac/frame"
 )
 
 func (d *Demuxer) Seek(offset time.Duration) error {
