@@ -1,0 +1,10 @@
+github.com/godexture/core v0.0.0 h1:fozCrR3S19NwVHkZcReN9RsOOB1Az8/oOh/PEnmOqiE=
+github.com/godexture/core v0.0.0/go.mod h1:yt6zGJFtFFh/LyD2sDKAKZDpbRi//lDeaJbpHdDNtyA=
+github.com/godexture/format-mp3 v0.0.0 h1:VQT3cbGDfx6mWs5E07NhgZ9innjfenhYBRNhmoM2Y3I=
+github.com/godexture/format-mp3 v0.0.0/go.mod h1:moNkUH72vB6nDc3WHCLZ2FBktJt+tezy54HwdcTCLr0=
+github.com/godexture/metadata-id3 v0.0.0 h1:3H4mOs6b70ALIXCEuJvC8qxtWDqddRuI99GBvgNvun8=
+github.com/godexture/metadata-id3 v0.0.0/go.mod h1:7LxG0+Uo6i40RxgJooLKnv4WkF5E2ornRnpIhqgKRzM=
+github.com/godexture/sdk v0.0.0 h1:m2F/PU5bH9jcu48yxgmrrX290rfChiMyYhH/Rjy8EQk=
+github.com/godexture/sdk v0.0.0/go.mod h1:wt2jWG+IbH+A44NwTxokO65vCywNhvryR/vjcnlvMtQ=
+golang.org/x/sync v0.21.0 h1:HLII4xRRTtCRkxYp4HNFF0Js/Og6q2i++KXbg0gHCwM=
+golang.org/x/sync v0.21.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
