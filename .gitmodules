@@ -4,3 +4,6 @@
 [submodule "example/assets"]
 	path = example/assets
 	url = https://github.com/godexture/assets.git
+[submodule "example/web/assets"]
+	path = example/web/assets
+	url = https://github.com/godexture/assets.git
