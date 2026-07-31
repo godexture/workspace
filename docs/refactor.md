@@ -1,8 +1,13 @@
 # Godec リファクタリング計画
 
-> 実装進捗: **0 / 12 マイルストーン完了（すべて未着手）**
+> 実装進捗: **0 / 12 マイルストーン完了（M0, M1 進行中）**
 >
 > この文書を、リファクタリング全体の概要・実装順・進捗の正本とする。詳細資料は設計仕様を説明するものであり、個別に進捗を管理しない。
+>
+> ### M0/M1 進行状況メモ（直近更新分）
+>
+> - **M1**: 16 Git submodule（`example/assets` と `plugins/codec-flac/test/testdata/conformance` を除く）を `git subtree` で履歴を保持したまま monorepo へ統合済み。import path を `github.com/godexture/godec/...` へ書き換え、`core`⇄`sdk` を含む相互依存 12 module を単一の root `go.mod` へ統合し、`tools`・`bindings/wasm`・`example/go`・`example/web/server` を root へ依存する nested module として維持した。`go.work` は 16 entry から 5 entry へ縮小（`go.work` 自体は既定でgitignore対象、ローカル開発設定のまま）。旧 submodule 16件の内容・履歴は保持したまま新配置へ移動しており、`go build ./...` と `test-runner.exe`（scalar/SIMD 双方、計63パッケージ）は移行前後で pass 件数が一致し回帰なし。未完了: `core`/`sdk` package 間の相互 import 自体の解消、plugin family のディレクトリ再編（`plugins/codec-flac` → `plugin/flac` 等）は M2/M3/M8 のスコープとして残す。
+> - **M0**: 既存の decode/encode/roundtrip・SIMD差分・観測 paired benchmark 資産を確認し、次のギャップを埋めた: (1) `plugins/filter-audio/internal/convolver` の worker 数 1/4/16 不変性 test、(2) 1/4/16段 gain filter chain の正しさ test と benchmark、(3) `core/pipeline` の observation off/on/progress/metrics 各 mode の goroutine leak 検出 test、(4) `plugins/format-wav` の truncated input baseline test（既存 FLAC/MP3 にはあったが WAVE/PCM になかった）。observation off/on の CPU/block profile 採取自体も実際に実行し機構を検証済み（生 profile は fixtures.md の方針により commit しない）。判明した事実として、`codec-pcm`/`codec-mp3` には worker/parallelism 実装自体が存在せず、worker 数比較 test の対象にならない。未完了: Finalize/Close failure の明示的な injection test を全 format で網羅していない。
 
 ## 目標
 
@@ -47,8 +52,8 @@ application / CLI / WASM
 
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
-| M0 | 未着手 | 現行基準の固定 | 代表 pipeline、意味上の正しさ、allocation/profile、paired benchmark の比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
-| M1 | 未着手 | repository と foundation の再編 | monorepo、単一の設計期 release train、一方向の package/module DAG | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
+| M0 | 進行中 | 現行基準の固定 | 代表 pipeline、意味上の正しさ、allocation/profile、paired benchmark の比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
+| M1 | 進行中 | repository と foundation の再編 | monorepo、単一の設計期 release train、一方向の package/module DAG | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | 未着手 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program` | [planner](refactor/planner.md)、[runtime](refactor/runtime.md) |
