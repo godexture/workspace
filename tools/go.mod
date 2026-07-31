@@ -1,4 +1,4 @@
-module github.com/godexture/tools
+module github.com/godexture/godec/tools
 
 go 1.26.4
 
