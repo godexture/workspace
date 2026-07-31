@@ -1,0 +1,135 @@
+.player {
+    --wave-color: var(--color-accent);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.output { --wave-color: var(--color-output); }
+
+.header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 0.76rem;
+}
+
+.label {
+    color: var(--color-muted);
+    font-weight: 600;
+}
+
+.size {
+    color: var(--color-dim);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+.empty {
+    color: var(--color-dim);
+    font-size: 0.76rem;
+}
+
+.transport {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-raised);
+    padding: var(--space-3);
+}
+
+.playButton {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 50%;
+    background: var(--wave-color);
+    color: #fff;
+    font-size: 0.7rem;
+}
+
+.wave {
+    position: relative;
+    flex: 1;
+    height: 26px;
+}
+
+.bars {
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    height: 100%;
+    gap: 1px;
+}
+
+.barRest,
+.barPlayed {
+    flex: 1;
+    min-width: 1px;
+    border-radius: 1px;
+    background: var(--color-border-strong);
+}
+
+.barPlayed {
+    background: var(--wave-color);
+}
+
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--wave-color);
+    pointer-events: none;
+    transform: translateX(-1px);
+}
+
+.seekInput {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    background: transparent;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.seekInput:disabled {
+    cursor: default;
+}
+
+.duration {
+    flex: 0 0 auto;
+    color: var(--color-dim);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+.download {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    text-decoration: none;
+}
+
+.download:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+}
+
+.audio {
+    display: none;
+}
