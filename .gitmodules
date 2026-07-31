@@ -4,9 +4,6 @@
 [submodule "cli"]
 	path = cli
 	url = https://github.com/godexture/cli.git
-[submodule "sdk"]
-	path = sdk
-	url = https://github.com/godexture/sdk.git
 [submodule "tools"]
 	path = tools
 	url = https://github.com/godexture/tools.git
