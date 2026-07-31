@@ -1,0 +1,7 @@
+[install]
+exact = true
+ignoreScripts = true
+engineStrict = true
+audit = true
+auditLevel = "high"
+minimumReleaseAge = 604800
