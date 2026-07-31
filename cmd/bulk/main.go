@@ -229,11 +229,19 @@ func main() {
 				}
 			}
 
+			cmdTidy := exec.Command(goCommand, "mod", "tidy")
+			cmdTidy.Dir = abs
+			cmdTidy.Stdout = os.Stdout
+			cmdTidy.Stderr = os.Stderr
+			if err := cmdTidy.Run(); err != nil {
+				fmt.Printf("Warning: go mod tidy failed in %s: %v\n", abs, err)
+			}
+
 			fmt.Printf("==> Committing changes in %s\n", abs)
 			cmd := exec.Command("git", "add", "go.mod")
 			cmd.Dir = abs
 			cmd.Run()
-			
+
 			cmd = exec.Command("git", "add", "go.sum")
 			cmd.Dir = abs
 			cmd.Run()
@@ -395,7 +403,7 @@ func main() {
 			}
 
 			fmt.Printf("==> Updating dependencies in %s\n", rel)
-			
+
 			getArgs := append([]string{"get"}, toUpdate...)
 			cmd := exec.Command(goCommand, getArgs...)
 			cmd.Dir = abs
