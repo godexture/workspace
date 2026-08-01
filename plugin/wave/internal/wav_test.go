@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	mp3codec "github.com/godexture/godec/plugins/codec-mp3"
+	mp3codec "github.com/godexture/godec/plugin/mp3"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/domain/metadata"
 	"github.com/godexture/godec/plugin/wave/params"
@@ -1027,7 +1027,7 @@ func TestWAVAnalyzeCompressedFormatTags(t *testing.T) {
 
 func TestWAVMP3PacketizationDecodes(t *testing.T) {
 	t.Parallel()
-	mp3Data, err := os.ReadFile("../../../plugins/codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	mp3Data, err := os.ReadFile("../../../plugin/mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}

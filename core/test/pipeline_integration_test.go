@@ -9,10 +9,10 @@ import (
 	"runtime"
 	"testing"
 
-	pcm "github.com/godexture/godec/plugins/codec-pcm"
+	pcm "github.com/godexture/godec/plugin/pcm"
 	"github.com/godexture/godec/core/node"
 	"github.com/godexture/godec/core/pipeline"
-	wav "github.com/godexture/godec/plugins/format-wav"
+	wav "github.com/godexture/godec/plugin/wave"
 	eng "github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"
 )

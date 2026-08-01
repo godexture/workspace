@@ -8,7 +8,7 @@ import (
 	"runtime/debug"
 	"runtime/pprof"
 
-	"github.com/godexture/godec/plugins/filter-audio"
+	"github.com/godexture/godec/plugin/audio"
 	"github.com/godexture/godec/sdk/dsp"
 	"github.com/godexture/godec/sdk/profiling"
 	"github.com/godexture/godec/sdk/timer"
@@ -17,14 +17,11 @@ import (
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/routing"
 
-	flacFormat "github.com/godexture/godec/plugins/format-flac"
+	flacFormat "github.com/godexture/godec/plugin/flac"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
-	_ "github.com/godexture/godec/plugins/codec-mp3"
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	_ "github.com/godexture/godec/plugins/format-flac"
-	_ "github.com/godexture/godec/plugins/format-mp3"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/mp3"
+	_ "github.com/godexture/godec/plugin/pcm"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 const targetCodec = media.CodecFLAC

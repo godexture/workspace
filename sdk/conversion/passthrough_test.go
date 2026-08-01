@@ -12,7 +12,7 @@ import (
 	"github.com/godexture/godec/sdk/conversion"
 	"github.com/godexture/godec/sdk/testutil/audio"
 
-	wav "github.com/godexture/godec/plugins/format-wav"
+	wav "github.com/godexture/godec/plugin/wave"
 )
 
 // TestBuildOmittedCodecStillOpensDecoderAndEncoder is the M0 baseline for

@@ -1,5 +1,5 @@
 [submodule "plugins/codec-flac/test/testdata/conformance"]
-	path = plugins/codec-flac/test/testdata/conformance
+	path = plugin/flac/test/testdata/conformance
 	url = https://github.com/ietf-wg-cellar/flac-test-files.git
 [submodule "example/assets"]
 	path = example/assets

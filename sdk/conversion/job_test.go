@@ -9,10 +9,9 @@ import (
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	_ "github.com/godexture/godec/plugins/format-flac"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/flac"
+	_ "github.com/godexture/godec/plugin/pcm"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 func TestJobRunsToCompletion(t *testing.T) {

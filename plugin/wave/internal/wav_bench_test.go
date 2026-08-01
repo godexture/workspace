@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkWAVReadMP3Packets(b *testing.B) {
-	mp3Data, err := os.ReadFile("../../../plugins/codec-mp3/test/testdata/l3-sin1k0db.mp3")
+	mp3Data, err := os.ReadFile("../../../plugin/mp3/test/testdata/l3-sin1k0db.mp3")
 	if err != nil {
 		b.Fatal(err)
 	}

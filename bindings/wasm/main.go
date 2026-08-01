@@ -13,13 +13,11 @@ import (
 	"github.com/godexture/godec/sdk/catalog"
 	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
-	_ "github.com/godexture/godec/plugins/codec-mp3"
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	_ "github.com/godexture/godec/plugins/filter-audio"
-	_ "github.com/godexture/godec/plugins/format-flac"
-	_ "github.com/godexture/godec/plugins/format-mp3"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/flac"
+	_ "github.com/godexture/godec/plugin/mp3"
+	_ "github.com/godexture/godec/plugin/pcm"
+	_ "github.com/godexture/godec/plugin/audio"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 // Catalog returns the available demuxers, decoders, filters, encoders, and

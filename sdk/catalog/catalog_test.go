@@ -6,11 +6,10 @@ import (
 
 	"github.com/godexture/godec/sdk/catalog"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	_ "github.com/godexture/godec/plugins/filter-audio"
-	_ "github.com/godexture/godec/plugins/format-flac"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/flac"
+	_ "github.com/godexture/godec/plugin/pcm"
+	_ "github.com/godexture/godec/plugin/audio"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 func TestBuildListsPluginsAndSupportedOutputs(t *testing.T) {

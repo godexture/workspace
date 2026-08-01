@@ -6,8 +6,8 @@ import (
 	"io"
 
 	"github.com/godexture/godec/core/domain/media"
-	mp3header "github.com/godexture/godec/plugins/format-mp3/header"
-	"github.com/godexture/godec/plugins/format-mp3/scan"
+	mp3header "github.com/godexture/godec/plugin/mp3/header"
+	"github.com/godexture/godec/plugin/mp3/scan"
 )
 
 func (d *Demuxer) ReadPacket() (*media.Packet, int, error) {

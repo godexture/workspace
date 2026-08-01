@@ -13,11 +13,10 @@ import (
 	"github.com/godexture/godec/core/pipeline"
 	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	filter "github.com/godexture/godec/plugins/filter-audio"
-	_ "github.com/godexture/godec/plugins/format-flac"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/flac"
+	_ "github.com/godexture/godec/plugin/pcm"
+	filter "github.com/godexture/godec/plugin/audio"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 // writeTestWAV writes a short synthetic mono 16-bit PCM WAV (a few hundred

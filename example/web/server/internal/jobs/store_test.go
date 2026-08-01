@@ -10,9 +10,9 @@ import (
 	"github.com/godexture/godec/example/web/server/internal/testutil"
 	"github.com/godexture/godec/sdk/conversion"
 
-	_ "github.com/godexture/godec/plugins/codec-pcm"
-	_ "github.com/godexture/godec/plugins/filter-audio"
-	_ "github.com/godexture/godec/plugins/format-wav"
+	_ "github.com/godexture/godec/plugin/pcm"
+	_ "github.com/godexture/godec/plugin/audio"
+	_ "github.com/godexture/godec/plugin/wave"
 )
 
 func newStore(t *testing.T) *jobs.Store {

@@ -7,14 +7,13 @@ import (
 	"math"
 	"testing"
 
-	_ "github.com/godexture/godec/plugins/codec-flac"
 	_ "github.com/godexture/godec/plugin/pcm"
 	godec "github.com/godexture/godec/core"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/registry"
 	"github.com/godexture/godec/core/resolver"
 	"github.com/godexture/godec/core/routing"
-	formatFlac "github.com/godexture/godec/plugins/format-flac"
+	formatFlac "github.com/godexture/godec/plugin/flac"
 	formatWav "github.com/godexture/godec/plugin/wave"
 )
 

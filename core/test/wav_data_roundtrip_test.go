@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	wavpkg "github.com/godexture/godec/plugins/format-wav"
+	wavpkg "github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/sdk/testutil"
 )
 
