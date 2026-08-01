@@ -1,13 +1,13 @@
 # Godec リファクタリング計画
 
-> 実装進捗: **0 / 12 マイルストーン完了（M0, M1 進行中）**
+> 実装進捗: **1 / 12 マイルストーン完了（M0 完了、M1 進行中）**
 >
 > この文書を、リファクタリング全体の概要・実装順・進捗の正本とする。詳細資料は設計仕様を説明するものであり、個別に進捗を管理しない。
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
 > - **M1**: code を持つ旧 16 Git submodule を `git subtree` で履歴を保持したまま monorepo へ統合済み。import path を `github.com/godexture/godec/...` へ書き換え、`core`⇄`sdk` を含む相互依存 12 module を単一の root `go.mod` へ統合し、`tools`・`bindings/wasm`・`example/go`・`example/web/server` を nested module として維持した。移行後の native Go test は scalar/SIMD 双方で63 packageが通り、WASM target buildも通る。data/asset の Git submodule である `example/assets`、`example/web/assets`、`plugins/codec-flac/test/testdata/conformance` は、code と独立した任意取得の共有データとして意図的に維持する。未完了: `plugin/<family>` への最終 package path 固定、clean checkout から再現できる workspace/tool bootstrap、npm/repository metadata の更新、browser/JS の build/typecheck と structured skip を含む再現可能な検証経路。`core`/`sdk` の責務再編は M2/M3、cross-plugin import の Binding 化は M8 で行う。
-> - **M0**: 既存の decode/encode/roundtrip・SIMD kernel差分・観測 paired benchmark 資産を確認し、convolver worker 数 1/4/16、1/4/16段 gain chain、observation mode 別 goroutine、WAVE truncated input の test/benchmark を追加した。追加物はすべて実行可能だが、M0 の比較基準としてはまだ不十分である。未完了: format ごとの Finalize/Close failure injection、scalar/SIMD build 間の end-to-end semantic比較、実 pipeline を通す filter chain benchmark、cold Open と steady-state Run の分離、WAVE truncated input の実 payload 長検証、再現可能な input manifest・command・correctness summary の保存。stream copy は現行実装に存在しないため、M0 では「codecを開く現行経路」を記録し、copy/remux の実装と contract test は M7 で行う。
+> - **M0**: [checkpoint.md](refactor/checkpoint.md) の M0 backlog 7項目すべてに着手し完了した。WAVE truncated input を独立した ground truth（宣言 payload 長、data chunk offset）に対する厳密な test へ書き換え（3種の mutant 検出を手動確認済み）、WAVE/MP3/FLAC の mux/demux 各 I/O phase に `sdk/testutil/fault` 経由の failure injection を追加し、実 muxer + 実 source を組んだ pipeline レベルの primary+Finalize failure 同時発生も検証した。target codec 省略時に decoder/encoder が必ず開くこと（stream copy 不在の現状固定）と known metadata の伝播を `sdk/conversion` レベルで固定し、`tools/cmd/differential` で scalar/SIMD 104 package を一つの report に統合（2026-08-01 時点で 104/104 一致）。filter chain benchmark を実 `core/pipeline` 経路へ拡張し construction/Open と steady-state Run を分離、observation goroutine leak baseline を stack identity diff + processed item count 検証へ強化した。再現手順・toolchain・所見の要約は [baseline.md](refactor/baseline.md) に固定した。未完了として明示的に残す事項: Close 自体の failure injection は現行実装の全 format Close が no-op のため対象が存在しない、metadata 一般契約は M3 待ち、大容量 corpus の tier 分離は M10。
 
 ## 目標
 
@@ -52,7 +52,7 @@ application / CLI / WASM
 
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
-| M0 | 進行中 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
+| M0 | 完了 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
 | M1 | 進行中 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
@@ -75,6 +75,7 @@ M0〜M5 は foundation を固めるための先行作業である。M1 は将来
 |---|---|
 | 確定した方針、延期した判断 | [decisions.md](refactor/decisions.md) |
 | M0/M1 を完了するための具体的な残作業 | [checkpoint.md](refactor/checkpoint.md) |
+| M0 baseline の再現手順・toolchain・所見の要約 | [baseline.md](refactor/baseline.md) |
 | package/module/repository の境界、依存方向 | [architecture.md](refactor/architecture.md) |
 | plugin identity、composition、component lifecycle、custom Host | [plugins.md](refactor/plugins.md) |
 | config、default、preset、validation、surface projection | [config.md](refactor/config.md) |

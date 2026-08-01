@@ -4,13 +4,13 @@
 
 ## 現在の判定
 
-- M0: 進行中。代表 codec/format の既存 test と一部 benchmark はあるが、failure injection、cross-build differential、実 pipeline benchmark、baseline manifest が不足する。
+- M0: 完了。以下7項目すべてに対応する test/tool/document を追加し、`docs/refactor.md` を更新済み。詳細は [baseline.md](baseline.md) を正本とする。
 - M1: 進行中。source history と Go module の統合は済んだが、最終 family path、clean-checkout bootstrap、配布 metadata、surface validation が不足する。
 - `example/assets`、`example/web/assets`、FLAC conformance corpus の3 gitlinkは、codeと独立した任意取得の共有データとして意図的に維持し、M1 blockerにしない。
 
 ## M0 で行うコード作業
 
-### 1. WAVE truncated input testを厳密化する
+### 1. WAVE truncated input testを厳密化する 〔対応済み: plugins/format-wav/internal/truncated_test.go〕
 
 - truncation長は `0...len(full)` の両端を含め、完全な入力も検査する。
 - RIFF/fmt/data headerの境界と、data payloadの開始offsetを明示する。
@@ -20,7 +20,7 @@
 
 完了条件: header分をpayloadとして水増しするmutant、宣言sizeをfabricateするmutant、完全入力を拒否するmutantをtestが検出する。
 
-### 2. lifecycle failure injectionを完成させる
+### 2. lifecycle failure injectionを完成させる 〔対応済み: sdk/testutil/fault、plugins/format-{wav,mp3,flac}/internal/failure_test.go。node Close自体は全formatでno-opのため検証対象が存在しない旨を記録〕
 
 - demux read、decode/encode Flush、mux AddStream/SetMetadata/WriteHeader/WritePacket/WriteTrailer、sink write、node Closeへ個別にfailureを注入する。
 - primary failureとFinalize/Close failureを同時に発生させ、`errors.Is`で双方を保持することを検査する。
@@ -29,7 +29,7 @@
 
 完了条件: 各failure phaseでerrorとcleanup結果が決定的に集約され、resource/goroutineを残さない。
 
-### 3. 現行stream/metadata挙動を固定する
+### 3. 現行stream/metadata挙動を固定する 〔対応済み: sdk/conversion/passthrough_test.go〕
 
 - target codec/formatを省略した現行routeがdecoder/encoderを開くことを明示的に検査する。
 - known metadata、unknown/raw metadata、duplicate/orderの現行伝播・欠落を記録する。
@@ -37,7 +37,7 @@
 
 完了条件: M7でstream copyを導入した時、codec Openの消滅と情報保持の差を同じfixtureで比較できる。stream copyそのものはM7まで実装しない。
 
-### 4. scalar/SIMDとworkerのdifferential harnessを作る
+### 4. scalar/SIMDとworkerのdifferential harnessを作る 〔対応済み: tools/cmd/differential(104/104一致)、既存FLAC parallelism testとplugins/filter-audio/internal/convolver/impulse_test.goが1/4/16 worker end-to-end比較を担う〕
 
 - 同一fixtureをscalar build、SIMD build、SIMD-capable build内のforced-scalar pathで実行する。
 - exact kernelはartifactまたはlogical output exact、bounded kernelはtolerance、lossless encoderはdecoded PCM exactを検査する。
@@ -46,7 +46,7 @@
 
 完了条件: buildごとの個別passではなく、同一inputに対するcross-build resultが一つのreportに出る。
 
-### 5. filter chain benchmarkを組み直す
+### 5. filter chain benchmarkを組み直す 〔対応済み: plugins/filter-audio/chain_pipeline_test.go〕
 
 - 1/4/16段gain chainを実 `core/pipeline` 経路で走らせる。
 - direct engine chainをlower boundとして別benchmarkにする。
@@ -56,7 +56,7 @@
 
 完了条件: scheduler/edge/ownership overheadとfilter kernel costを別々に比較できる。
 
-### 6. observation leak/profile baselineを強化する
+### 6. observation leak/profile baselineを強化する 〔対応済み: core/pipeline/observation_profile_test.go〕
 
 - aggregateな `runtime.NumGoroutine` 差だけでなく、期限付き収束とgoroutine stack identityを検査する。
 - observation off/progress/metricsごとにprocessed item countを検証し、dropした高速化を成功にしない。
@@ -64,7 +64,7 @@
 
 完了条件: unrelated goroutineの終了でleakが相殺されず、profile採取を別の開発者が再現できる。
 
-### 7. baseline artifactを固定する
+### 7. baseline artifactを固定する 〔対応済み: docs/refactor/baseline.md〕
 
 - machine-readable input manifestにgenerator/fixture digest、size tier、build mode、worker、expected semanticsを記録する。
 - human-readable summaryに実行command、toolchain、correctness result、allocation、profile所見を記録する。
