@@ -27,7 +27,7 @@ config は「Go struct に値を入れる補助機能」ではなく、component
 - generated constructor、`WithX`、`WithPreset`
 - catalog や各 surface の field description
 
-この構成では、field の追加や意味の変更が複数経路へ波及する。特に `plugins/filter-audio/config_options.go` は 1,453 行あり、config の本体より生成された API の方が大きい。さらに単一 preset の生成分岐には compile 不能なコードを出すバグがあり、生成物と generator source の drift も起きている。
+この構成では、field の追加や意味の変更が複数経路へ波及する。特に `plugin/audio/config_options.go` は 1,453 行あり、config の本体より生成された API の方が大きい。さらに単一 preset の生成分岐には compile 不能なコードを出すバグがあり、生成物と generator source の drift も起きている。
 
 generator の bug だけを修正しても、重複した public API と source of truth の分散は残る。互換性を残さない前提では、長期的な解決は generator の削除である。
 

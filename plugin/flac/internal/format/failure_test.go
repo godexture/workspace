@@ -11,8 +11,8 @@ import (
 
 // Failure-injection baseline for docs/refactor/quality.md's "cancel、
 // invalid input、Finalize/Close failure" M0 item, covering the FLAC
-// muxer/demuxer I/O phases the same way plugins/format-wav and
-// plugins/format-mp3's failure_test.go do. FLAC's own WriteHeader only
+// muxer/demuxer I/O phases the same way plugin/wave and
+// plugin/mp3's failure_test.go do. FLAC's own WriteHeader only
 // prepares in-memory state (see muxer.go's writeHeader vs. WriteHeader);
 // the first byte actually reaches the writer inside WritePacket or
 // WriteTrailer, so those are where a write failure is injected.

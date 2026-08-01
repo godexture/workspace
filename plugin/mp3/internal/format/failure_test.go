@@ -14,7 +14,7 @@ import (
 
 // Failure-injection baseline for docs/refactor/quality.md's "cancel、
 // invalid input、Finalize/Close failure" M0 item, covering the MP3
-// muxer/demuxer's I/O phases the same way plugins/format-wav's
+// muxer/demuxer's I/O phases the same way plugin/wave's
 // failure_test.go does for WAVE.
 
 func mp3TestStream() media.StreamInfo {

@@ -84,8 +84,9 @@ func TestMarshalRoundtrip(t *testing.T) {
 // docs/refactor/checkpoint.md M1#4's Vorbis Comment vendor-string
 // decision: it is artifact identity written into other people's files,
 // not a repository path, so it deliberately does not track internal
-// package moves. This pins the explicit choice made when plugins/format-
-// flac (the previous, now-stale value) was merged away.
+// package moves. This pins the explicit choice made when the pre-M1
+// `plugins/format-flac` package (since merged into plugin/flac) was
+// retired as the value's source.
 func TestDefaultVendorIsStableProjectIdentity(t *testing.T) {
 	t.Parallel()
 	if defaultVendor != "godexture/godec" {

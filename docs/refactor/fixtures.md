@@ -21,9 +21,9 @@ monorepo は code と contract を atomic に変更するための境界であ�
 | `core/test/assets` | 1 | 37,015,596 |
 | `example/assets` | 7 | 48,788,521 |
 | `example/web/assets` | 7 | 48,788,521 |
-| `plugins/codec-flac/test/testdata` | 95 | 310,101,031 |
-| `plugins/codec-mp3/test/testdata` | 13 | 11,216,042 |
-| `plugins/codec-pcm/test/testdata` | 10 | 302,907,103 |
+| `plugin/flac/test/testdata` | 95 | 310,101,031 |
+| `plugin/mp3/test/testdata` | 13 | 11,216,042 |
+| `plugin/pcm/test/testdata` | 10 | 302,907,103 |
 
 `core/test/assets/sample_lpcm.wav`、`example/assets/lpcm.wav`、`example/web/assets/lpcm.wav` は SHA-256 が同一である。example の MP3、ADPCM、license も二つの directory に同一内容が複製されている。
 
@@ -31,7 +31,7 @@ PCM の五つの `.snapshot` は各約53 MiBで、decoded sample を `0.000000` 
 
 FLAC conformance corpus は専用 Git submoduleで、license/source information がある一方、最大約87 MiBの単体 fileを含む。これは codec conformance には価値があるが、foundation/product module の download や通常 unit test に含める理由にはならない。
 
-M1 後も data/asset gitlink として `example/assets`、`example/web/assets`、`plugins/codec-flac/test/testdata/conformance` の3件を意図的に残す。これは product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
+M1 後も data/asset gitlink として `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3件を意図的に残す。これは product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
 
 PCM corpus には同じ水準の README/license/origin file が見当たらない。生成物であっても source media と期待値の由来、生成 tool/version、再配布条件を明示する必要がある。
 
