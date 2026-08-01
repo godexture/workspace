@@ -86,6 +86,10 @@ M1 は repository、package identity、module/workspace topology を固定する
 - root product module と target/dependency が独立する nested module だけで一方向の module DAGを作る。
 - clean checkout から、未追跡 `go.work` や事前生成済み実行fileに依存せず、tracked source/manifestを使って全moduleのbuild/test/generateを起動できる。
 - Go native scalar/SIMD、WASM target、JS type/test の対象とskipを区別して検証し、package/repository metadataも新しいmonorepo pathを指す。
+- module DAG の完了条件は設計期の repository 内 composition に限定する。`bindings/wasm`、`example/go`、`example/web/server` の zero pseudo-version と relative `replace` は正直な設計期表現だが、`replace` directive は依存する側からは無視され、zero pseudo-version は公開 repository から解決できない。したがって M1 は次だけを要求する。
+  - clean checkout 内で `go.work` を使う通常 build/test/generate が成功する。
+  - 各 nested module directory で `GOWORK=off go build ./...` が relative `replace` 経由で成功し、`go.work` だけに依存した import を持たない。
+  - repository 外からの install、downstream consumer build、publish 順序と real version pin は M10 の release gate で扱い、M1 には要求しない。
 
 `core`/`sdk` の責務再編は M2/M3、Format/Codec/Metadata 間の直接importを Binding/compositionへ移す作業は M8 で行う。ただし、その移行で公式 plugin の公開 package path を再変更しない。
 
