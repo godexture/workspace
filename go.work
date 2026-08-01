@@ -1,0 +1,9 @@
+go 1.26.4
+
+use (
+	.
+	./bindings/wasm
+	./example/go
+	./example/web/server
+	./tools
+)

@@ -37,7 +37,10 @@
     - 例外的に、複合語にした方が明確だと判断した場合は、複合語を用いてよい
 
 ## Tools
-- 全モジュールのテスト: `./test-runner.exe --simd` (at the workspace root)
+`go.work` は clean checkout から追加の手作業なしに全 module を build/test/generate できるよう、tracked file として repository に含める（gitignore しない）。以下のコマンドは事前 build した local binary を前提にせず、tracked source から起動する。同じコマンドを AGENTS.md、開発手順、CI で使う。
+
+- 全モジュールのテスト: `go run ./tools/cmd/test-runner --simd` (at the workspace root)
     - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
-    
-- 全 generator の実行 `./generate.exe` (at the workspace root)
+    - scalar/SIMD 横断で一つの report にしたい場合は `go run ./tools/cmd/differential ./...` を使う。
+- 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)
+- nested module (`tools`、`bindings/wasm`、`example/go`、`example/web/server`) が root module への暗黙の local source 解決に依存していないことを確認する場合は、各 module 内で `GOWORK=off go build ./...` を実行する（`replace` directive 経由の明示的な依存は解決されるが、`go.work` がなければ解決できない参照があれば失敗する）。
