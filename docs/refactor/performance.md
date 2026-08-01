@@ -445,7 +445,7 @@ Exact variant は equality/digest、bounded variant は schema-specific toleranc
 - Portable cross-target artifact/digest comparison
 - race/fuzz/sanitizer-equivalent checks where available
 
-`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant の build/test を走らせるだけで、それ単独では scalar/SIMD artifact の横断比較を保証しない。横断比較は `tools/cmd/differential` が scalar/SIMD/SIMD 内 forced-scalar の3 variant を1回の実行で比較し、shared failure・build-fail・mismatch を区別して報告する（[baseline.md](baseline.md) 参照）。repository CI はこの3 variant 比較を明示的な gate として実行する。
+`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant の build/test を走らせるだけで、それ単独では scalar/SIMD artifact の横断比較を保証しない。
 
 ## benchmark と採用条件
 

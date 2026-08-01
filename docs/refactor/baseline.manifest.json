@@ -1,0 +1,39 @@
+{
+  "$comment": "Machine-readable companion to baseline.md, per docs/refactor/checkpoint.md M0-R5. This file is the input manifest a script or CI job can parse directly; baseline.md is the human-readable summary of what running against it produces.",
+  "baselineCommit": "924461d0e004fda41745bfcbebcdb9f1c0af03ab",
+  "repository": "github.com/godexture/godec",
+  "go": {
+    "version": "go1.26.4",
+    "os": "windows",
+    "arch": "amd64"
+  },
+  "workspace": {
+    "rootModule": ".",
+    "goWorkEntries": [
+      ".",
+      "./bindings/wasm",
+      "./example/go",
+      "./example/web/server",
+      "./tools"
+    ],
+    "rootPackageCount": 104
+  },
+  "buildVariants": [
+    { "name": "scalar", "goexperiment": "" },
+    { "name": "simd", "goexperiment": "simd" },
+    { "name": "simd-forced-scalar", "goexperiment": "simd", "env": { "GODEC_FORCE_SCALAR": "1" } }
+  ],
+  "workerCounts": [1, 4, 16],
+  "commands": {
+    "buildScalar": "go build ./...",
+    "testScalar": "go test ./...",
+    "buildSIMD": "GOEXPERIMENT=simd go build ./...",
+    "testSIMD": "GOEXPERIMENT=simd go test ./...",
+    "testSIMDForcedScalar": "GOEXPERIMENT=simd GODEC_FORCE_SCALAR=1 go test ./...",
+    "benchObservationPaired": "go test ./core/pipeline/... -bench BenchmarkPipelineObservationPaired64MiB",
+    "benchFilterChain": "go test ./plugin/audio -bench BenchmarkGainChainPipeline",
+    "benchFilterChainOpen": "go test ./plugin/audio -bench BenchmarkGainChainPipelineOpen",
+    "benchFLACParallelDecode": "go test ./plugin/flac/internal/codec/decoder/... -bench BenchmarkParallelDecodeThroughput",
+    "testGoroutineLeak": "go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v"
+  }
+}

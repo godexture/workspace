@@ -193,7 +193,7 @@ root runner は test semantics を独自に再実装せず、manifest から必�
 | supply/release | network-off build、SBOM/NOTICE/provenance、release plan | [supply](supply.md) |
 | documentation | link、snippet compile、public package/example consistency | [experience](experience.md) |
 
-CI matrix は root の machine-readable manifest から生成し、skip、未実行、失敗を区別する。`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant を走らせるだけで、それ単独を repository 全体の成功条件にはしない。scalar/SIMD/SIMD 内 forced-scalar を横断して意味上の一致まで検査するのは `tools/cmd/differential`（[baseline.md](baseline.md) 参照）であり、CI matrix はこちらを正本の比較 gate とする。
+CI matrix は root の machine-readable manifest から生成し、skip、未実行、失敗を区別する。`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant を走らせるだけで、それ単独を repository 全体の成功条件にはしない。
 
 ## performance と reproducibility の検証
 
