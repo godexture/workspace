@@ -112,7 +112,11 @@
 
 完了条件: 配布物からsource repositoryとsubdirectoryを正しく辿れ、旧repository名が意図不明のまま出力へ残らない。
 
-### 5. Go以外のsurfaceも移行検証する
+### 5. Go以外のsurfaceも移行検証する 〔対応済み: 手動検証。コマンドはAGENTS.md「JS/WASM surface」節に記録〕
+
+`GOOS=js GOARCH=wasm go build ./...`（bindings/wasm）、`bun install --frozen-lockfile`（root）、`bun run build`+`bun run ./test`（bindings/js。実ブラウザ限定のWorker経路は明示skipメッセージ付きでskipされる。exit codeは0だが標準出力にskip理由が残るため、本文のいう「exit 0の通常成功」と区別できる）、`tsc --noEmit`+`bun test test`+`bun run build`（example/web/client、bindings/jsのbuildを先に行う必要がある）をすべて手動実行し、いずれもエラーなく完了した。
+
+副産物として、`bindings_gen.go`・`bindings/js/src/generated/*` の再生成結果が commit 済みのものと空白のみ異なる(非決定的な生成)ことを発見した。今回は生成し直さず commit 済みの内容を維持したが、generatorの決定性はquality.mdが定めるM10の生成物 gate 対象として残す。
 
 - `GOOS=js GOARCH=wasm` のbuildをroot validationへ含める。
 - root `bun.lock` を使うfrozen install、bindings TypeScript build/test、web client typecheck/testをtracked commandにする。

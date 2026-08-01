@@ -22,7 +22,7 @@ async function main() {
         throw new Error("catalog is missing demuxers or muxers");
     }
 
-    const inputPath = path.join(__dirname, "../../../plugins/codec-mp3/test/testdata/l3-hecommon.mp3");
+    const inputPath = path.join(__dirname, "../../../plugin/mp3/test/testdata/l3-hecommon.mp3");
     console.log(`Reading input from ${inputPath}`);
     const input = new Uint8Array(fs.readFileSync(inputPath));
 

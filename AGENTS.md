@@ -44,3 +44,13 @@
     - scalar/SIMD 横断で一つの report にしたい場合は `go run ./tools/cmd/differential ./...` を使う。
 - 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)
 - nested module (`tools`、`bindings/wasm`、`example/go`、`example/web/server`) が root module への暗黙の local source 解決に依存していないことを確認する場合は、各 module 内で `GOWORK=off go build ./...` を実行する（`replace` directive 経由の明示的な依存は解決されるが、`go.work` がなければ解決できない参照があれば失敗する）。
+- WASM target のビルド確認: `bindings/wasm` module 内で `GOOS=js GOARCH=wasm go build ./...`。
+
+### JS/WASM surface
+
+root `bun.lock` を使った frozen install から、以下を tracked command として実行できる。native Go の test pass だけを monorepo 移行成功の判定に使わない。
+
+- root で一度: `bun install --frozen-lockfile`
+- `bindings/js`（WASM 本体の build を含む。TinyGo と `go run github.com/13rac1/gowasm-bindgen@...` に依存する）: `bun run build`、続けて `bun run ./test`
+    - `bun run ./test` は Bun の Worker 実装が `importScripts()` に未対応なため、実際の WASM 経路を `"Skipping: ..."` という明示メッセージ付きで skip する（exit code は 0 だが、標準出力に skip 理由が残る）。実ブラウザでの経路検証は M9/M10 の real-browser lifecycle test へ接続する。
+- `example/web/client`（`@godexture/js` の型を要求するため、先に `bindings/js` を build しておく）: `bunx --bun tsc -p tsconfig.app.json --noEmit`（typecheck）、`bun test test`、`bun run build`
