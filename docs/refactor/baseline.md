@@ -8,25 +8,29 @@
 - 選定理由: 以前このファイルが固定していた `2a7ea1a` は `go.work`/`go.work.sum` が tracked になる **前** の commit で、この文書自体が要求する「clean checkout からの再現」が成立しなかった（`git ls-tree 2a7ea1a -- go.work` は空）。今回の commit は go.work が tracked 済みで、`plugins/<family>` から `plugin/<family>` への M1 path 移行も完了した後の状態であり、以下の再現手順をこの commit から直接実行できる。
 - repository は 2026-08-01 の monorepo 統合（M1）および M1-1 の `plugin/<family>` 最終 path 移行後の状態。旧 16 submodule 構成・旧 `plugins/codec-*`/`plugins/format-*` path の baseline ではない。
 
-## toolchain（[baseline.manifest.json](baseline.manifest.json) の要約）
+## toolchain（[baseline.manifest.json](baseline.manifest.json) が正本）
 
 | 項目 | 値 |
 |---|---|
 | Go | `go1.26.4 windows/amd64` |
 | CPU | `13th Gen Intel(R) Core(TM) i7-13620H`（絶対時間の参考値。AGENTS.md の方針により過去 machine との単純比較はしない） |
+| CPU feature | `avx2=true`、`avx2fma=true`。`sdk/dsp.HasAVX2`/`HasAVX2FMA` が SIMD 分岐の gate であり、これらが false の machine では `simd` variant も scalar path と同じ経路になる |
 | GOWORK | repository root `go.work`（root module + `tools`、`bindings/wasm`、`example/go`、`example/web/server` の4 nested module） |
-| build mode | scalar（既定 `GOEXPERIMENT` なし）、SIMD（`GOEXPERIMENT=simd`）、SIMD 内 forced-scalar（`GODEC_FORCE_SCALAR=1`）の3種 |
+| build mode | 必須: scalar（既定 `GOEXPERIMENT` なし）、SIMD（`GOEXPERIMENT=simd`）の2種。任意診断: SIMD 内 forced-scalar（`GODEC_FORCE_SCALAR=1`、`sdk/dsp` の scalar dispatch path を SIMD build 内で検査する追加手段であり、baseline 再現の必須条件ではない） |
 | worker | `registry.NewWorkerPool(N)`、N ∈ {1, 4, 16} を明示指定（`auto` は使わない） |
 | package 数 | 104（`go list ./...`、root module のみ。nested module 4件は別途 `go list` する） |
+| input generator | `stereoBlock`（`plugin/audio/filters_bench_test.go`）は固定 seed の `math/rand/v2` PCG generator を使い、同じ size tier に対して常に同一 byte 列を生成する。仕様は manifest の `inputGenerators` を正本とする。FLAC/observation paired benchmark の fixture はいずれも hardcode/固定 size で乱数を使わない。 |
 
 ## 再現手順（human-readable summary の実行 command）
 
-個別 build の正しさ:
+正確な argv/env は [baseline.manifest.json](baseline.manifest.json) の `commands` を正本とする（shell string ではなく構造化済みなので、記録した OS 以外でも shell 構文の違いを気にせず実行できる）。以下は human-readable な要約。
+
+個別 build の正しさ（必須2種 + 任意診断1種）:
 
 ```bash
-go build ./... && go test ./...                                      # scalar
-GOEXPERIMENT=simd go build ./... && GOEXPERIMENT=simd go test ./...  # SIMD
-GOEXPERIMENT=simd GODEC_FORCE_SCALAR=1 go test ./...                 # SIMD build, forced scalar dispatch
+go build ./... && go test ./...                                      # scalar (required)
+GOEXPERIMENT=simd go build ./... && GOEXPERIMENT=simd go test ./...  # SIMD (required)
+GOEXPERIMENT=simd GODEC_FORCE_SCALAR=1 go test ./...                 # SIMD build, forced scalar dispatch (optional diagnostic)
 ```
 
 代表 benchmark（paired、allocation、worker/block/depth 別）:
@@ -55,7 +59,7 @@ go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v
 ## 意味上の正しさの結果
 
 - decode/encode/roundtrip（WAVE/PCM/MP3/FLAC）: 既存 test が green（`plugin/*/...` 配下の roundtrip 系 test）。
-- worker/parallelism 数不変性: FLAC decoder/encoder（既存、parallelism 1 vs 8、`plugin/flac/internal/codec/decoder` 等）、convolver の partition build に加え、Engine の SendFrame/ReceiveFrame を通した end-to-end 出力そのもの（`TestEngineWorkerCountDoesNotChangeEndToEndOutput`、M0-R1 で追加、worker 1/4/16）で確認。**PCM codec と MP3 decoder は worker/parallelism 実装自体を持たず、比較対象がない**という事実を記録する。
+- worker/parallelism 数不変性: FLAC decoder/encoder（既存、parallelism 1 vs 8、`plugin/flac/internal/codec/decoder` 等）、convolver の partition build に加え、Engine の SendFrame/ReceiveFrame を通した end-to-end 出力そのもの（`TestEngineWorkerCountDoesNotChangeEndToEndOutput`、worker 1/4/16、frame 数・各 frame の PTS・sample data を比較。入力 frame の Release と Engine の Close も検査する）で確認。**PCM codec と MP3 decoder は worker/parallelism 実装自体を持たず、比較対象がない**という事実を記録する。
 - truncated/invalid input: WAVE で、期待される dataOffset/dataSize/payload byte 数を独立した ground truth と突き合わせる形で追加（`plugin/wave/internal/truncated_test.go`）。実際に3種の mutant（宣言 size の fabrication、有効な完全入力の誤 reject、header byte の payload への混入）を手動注入し検出を確認した上で revert 済み。
 - lifecycle failure injection: WAVE/MP3/FLAC の mux/demux 各 I/O phase（`sdk/testutil/fault` 経由）、実 muxer + 実 source を組んだ pipeline レベルの「primary failure と Finalize failure の同時発生」（`plugin/wave/internal/failure_test.go`）に加え、M0-R4 で decoder/encoder の Flush 失敗（`sdk/engine/wrapper_test.go` の `TestEncoderAdapter_CloseAfterFlushError`/`TestDecoderAdapter_CloseAfterFlushError`）と、muxer の `SetMetadata`/`AddStream` 失敗時に全 node が確実に1回だけ close されること（`core/routing/negotiator_lifecycle_test.go` の `TestNegotiatorClosesAllNodesWhenMuxerSetMetadataFails`/`TestNegotiatorClosesAllNodesWhenMuxerAddStreamFails`）を追加。
 - 現行 stream/metadata 経路: target codec 省略時も decoder/encoder が必ず開くこと（stream copy が存在しないこと）を固定（`sdk/conversion/passthrough_test.go`）。metadata は M0-R3 で単一 known key（title）の baseline から拡張し、multi-value の順序保持（`TestBuildPreservesOrderedMultiValueMetadataThroughOmittedCodecRoute`）、single-value の重複上書き（`TestBuildOverwritesDuplicateSingleValueMetadataThroughOmittedCodecRoute`、後勝ち）、未知 INFO tag の完全消失（`TestBuildDropsUnrecognizedMetadataThroughOmittedCodecRoute`、raw fallback すら存在しない明示的な loss）、raw chunk（`cue `）の保持（`TestBuildPreservesRawCueChunkThroughOmittedCodecRoute`）を固定した。
@@ -64,7 +68,7 @@ go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v
 
 - `BenchmarkPipelineObservationPaired64MiB`（core/pipeline）: plain/off/progress/metrics を同一 process 内で交互実行する paired 比較を持つ。baseline commit 上の実測では metrics-vs-off `-3.4%`、off-vs-plain `+2.7%`、progress-vs-off `-3.1%` で、observation の有無による系統的な悪化は見られない（絶対値は machine 依存のため比率のみを参照する）。
 - `TestPipelineObservationDoesNotLeakGoroutines`: plain/off/progress/metrics いずれも green。
-- `BenchmarkGainChainPipeline`（plugin/audio）: M0-R2 で construction を `b.StopTimer`/`b.StartTimer` により計測対象から除外し、steady-state Run のみを計測するよう修正済み。baseline commit 上の実測（Small block）では 1 段 7968B/106 allocs 〜 16 段 28166B/678 allocs。`BenchmarkGainChainPipelineOpen` は construction/Open 単体のコストを引き続き分離して持つ（1 段 7772B/40 allocs 〜 16 段 59377B/267 allocs）。
+- `BenchmarkGainChainPipeline`（plugin/audio）: construction は `b.StopTimer`/`b.StartTimer` で計測対象から除外し、`Pipeline.Prepare` も同じ除外区間で明示的に呼ぶことで、timer 内の `Run` 呼び出し自体は Prepare を no-op として通過する。ただし `Pipeline.Run` は必ず内部で teardown（全 node の Close）まで行うため、計測値は「steady-state processing + teardown」であり「steady-state のみ」ではない（`Pipeline` に teardown を伴わない公開 API がないため）。baseline commit 上の実測（Small block）では 1 段 7254B/100 allocs 〜 16 段 25025B/672 allocs。`BenchmarkGainChainPipelineOpen` は construction + `Prepare`（cold lifecycle）のコストを分離して持つ（Close は timer 外。1 段 7940B/43 allocs 〜 16 段 62067B/270 allocs）。
 - `BenchmarkParallelDecodeThroughput`（plugin/flac/internal/codec/decoder）: parallelism 1/4/16 で処理時間はおおむね短縮し、allocs/op はわずかに増加する（1: 277 allocs、4: 290 allocs、16: 309 allocs）。
 
 ## 既知のギャップ（M0 完了時点で未解消、後続 milestone へ）
@@ -76,4 +80,4 @@ go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v
 
 ## 完了条件との対応
 
-quality.md の M0 完了条件 6 項目（decode/encode/roundtrip、stream passthrough/metadata、cancel/invalid/Finalize failure、1/4/16 段 filter chain、observation off/on profile、scalar/SIMD/worker semantic diff）はすべて対応する test/benchmark を持ち green である。raw profile と時系列 benchmark 結果は本文書に埋め込まず、再実行 command と最新の意味的所見だけを保つ。
+quality.md の M0 完了条件 6 項目（decode/encode/roundtrip、stream passthrough/metadata、cancel/invalid/Finalize failure、1/4/16 段 filter chain、observation off/on profile、scalar/SIMD/worker semantic diff）はすべて対応する test/benchmark を持ち green である。scalar/SIMD/worker の semantic diff は、対象 package ごとの differential test（`sdk/dsp` の scalar/SIMD 比較、FLAC decoder/encoder の parallelism 1 vs 8、convolver の worker 1/4/16 end-to-end 比較 等）で満たしており、repository 全体を横断する `tools/cmd/differential` の実行結果には依存しない（同 tool は required gate ではない。上記のとおり）。raw profile と時系列 benchmark 結果は本文書に埋め込まず、再実行 command と最新の意味的所見だけを保つ。

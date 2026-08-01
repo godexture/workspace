@@ -37,7 +37,7 @@ M0 では入力仕様・digest、実行 command、toolchain、correctness summar
 - cancel、invalid/truncated input、Finalize/Close と primary+cleanup failure の集約を、代表 pipeline と format lifecycle で検査する。
 - 1/4/16段 filter chain は実 pipeline の end-to-end cost と direct engine の下限を分け、cold construction と steady-state processing を分けて測る。
 - observation off/on の allocation と CPU/block/goroutine profileについて、再現 command、入力、correctness counter、要約を保存する。
-- 同一入力に対する scalar/SIMD build 間の semantic output と、worker 1/N の output/order/count を differential test する。
+- 同一入力に対する scalar/SIMD 実装間の semantic output と、worker 1/N の output/order/count を、対象 package ごとの differential test で検査する。repository 全体を横断する単一 gate は要求しない（実行コストが高く、実用的な baseline/CI gate にならないため）。
 - baseline manifest と test/benchmark source だけで比較条件を再構成でき、特定開発者の未追跡 file や手順に依存しない。
 
 ## test の層

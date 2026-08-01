@@ -51,12 +51,24 @@ func BenchmarkRemixStereoToMonoF32Scratch(b *testing.B) {
 	}
 }
 
+// stereoBlockSeed1/2 seed stereoBlock's generator. Fixed rather than
+// runtime-seeded (math/rand/v2's package-level functions seed themselves
+// from the OS at process start) so the same call produces byte-identical
+// input on every run and every machine -- required for
+// docs/refactor/baseline.manifest.json to name a reproducible input rather
+// than "whatever the process happened to seed itself with".
+const (
+	stereoBlockSeed1 = 0x9e3779b97f4a7c15
+	stereoBlockSeed2 = 0xbf58476d1ce4e5b9
+)
+
 func stereoBlock(samples int) audio.Block {
+	gen := rand.New(rand.NewPCG(stereoBlockSeed1, stereoBlockSeed2))
 	block := audio.Block{Channels: make([][]float32, 2), Layout: media.LayoutStereo2_0, Rate: 48000}
 	for channel := range block.Channels {
 		block.Channels[channel] = make([]float32, samples)
 		for i := range block.Channels[channel] {
-			block.Channels[channel][i] = rand.Float32()*2 - 1
+			block.Channels[channel][i] = gen.Float32()*2 - 1
 		}
 	}
 	return block

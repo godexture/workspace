@@ -1,11 +1,19 @@
 {
-  "$comment": "Machine-readable companion to baseline.md, per docs/refactor/checkpoint.md M0-R5. This file is the input manifest a script or CI job can parse directly; baseline.md is the human-readable summary of what running against it produces.",
+  "$comment": "Machine-readable companion to baseline.md, per docs/refactor/checkpoint.md M0-R5 (and its second re-audit, M0#4). This file is the input manifest a script or CI job can parse directly; baseline.md is the human-readable summary of what running against it produces. Every command is argv + env (no shell string), so it runs the same way regardless of the recording OS's shell.",
   "baselineCommit": "924461d0e004fda41745bfcbebcdb9f1c0af03ab",
   "repository": "github.com/godexture/godec",
   "go": {
     "version": "go1.26.4",
     "os": "windows",
     "arch": "amd64"
+  },
+  "cpu": {
+    "model": "13th Gen Intel(R) Core(TM) i7-13620H",
+    "features": {
+      "avx2": true,
+      "avx2fma": true
+    },
+    "featuresNote": "sdk/dsp.HasAVX2/HasAVX2FMA gate SIMD dispatch in the FLAC/PCM/MP3 codec packages; on a machine without these features, the 'simd' build variant exercises the same scalar path as 'scalar' regardless of GODEC_FORCE_SCALAR, so a semantic comparison across variants is only meaningful on hardware where avx2/avx2fma are both true."
   },
   "workspace": {
     "rootModule": ".",
@@ -19,21 +27,60 @@
     "rootPackageCount": 104
   },
   "buildVariants": [
-    { "name": "scalar", "goexperiment": "" },
-    { "name": "simd", "goexperiment": "simd" },
-    { "name": "simd-forced-scalar", "goexperiment": "simd", "env": { "GODEC_FORCE_SCALAR": "1" } }
+    { "name": "scalar", "env": { "GOEXPERIMENT": "" }, "requiredForBaseline": true },
+    { "name": "simd", "env": { "GOEXPERIMENT": "simd" }, "requiredForBaseline": true },
+    { "name": "simd-forced-scalar", "env": { "GOEXPERIMENT": "simd", "GODEC_FORCE_SCALAR": "1" }, "requiredForBaseline": false, "requiredForBaselineNote": "Exercises sdk/dsp's forced-scalar dispatch path inside a SIMD-capable build. Useful as an optional diagnostic; not required to consider M0's baseline reproduced -- scalar and simd alone establish per-variant build/test correctness." }
   ],
   "workerCounts": [1, 4, 16],
+  "inputGenerators": {
+    "stereoBlock": {
+      "source": "plugin/audio/filters_bench_test.go",
+      "description": "Deterministic pseudo-random 2-channel float32 audio.Block, sample values in [-1, 1).",
+      "algorithm": "math/rand/v2 PCG(seed1, seed2)",
+      "seed1Hex": "0x9e3779b97f4a7c15",
+      "seed2Hex": "0xbf58476d1ce4e5b9",
+      "channels": 2,
+      "sizeTiers": { "Small": 64, "Medium": 4096, "Large": 65536 },
+      "note": "Fixed seeds (not runtime/OS-seeded, which is math/rand/v2's package-level default) so the same size tier produces byte-identical input on every run and every machine."
+    },
+    "flacFrameFixture": {
+      "source": "plugin/flac/internal/codec/decoder/parallel_bench_test.go",
+      "description": "A single hardcoded FLAC STREAMINFO + frame, hex-decoded once, reused as 64 packets per iteration. No randomness; fully deterministic by construction.",
+      "packetsPerIteration": 64
+    },
+    "observationPairedFixture": {
+      "source": "core/pipeline/observation_bench_test.go",
+      "description": "Synthetic fixed-size 4096-byte frames totalling 64MiB. No randomness; fully deterministic by construction.",
+      "totalBytes": 67108864,
+      "frameBytes": 4096
+    }
+  },
   "commands": {
-    "buildScalar": "go build ./...",
-    "testScalar": "go test ./...",
-    "buildSIMD": "GOEXPERIMENT=simd go build ./...",
-    "testSIMD": "GOEXPERIMENT=simd go test ./...",
-    "testSIMDForcedScalar": "GOEXPERIMENT=simd GODEC_FORCE_SCALAR=1 go test ./...",
-    "benchObservationPaired": "go test ./core/pipeline/... -bench BenchmarkPipelineObservationPaired64MiB",
-    "benchFilterChain": "go test ./plugin/audio -bench BenchmarkGainChainPipeline",
-    "benchFilterChainOpen": "go test ./plugin/audio -bench BenchmarkGainChainPipelineOpen",
-    "benchFLACParallelDecode": "go test ./plugin/flac/internal/codec/decoder/... -bench BenchmarkParallelDecodeThroughput",
-    "testGoroutineLeak": "go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v"
+    "correctness": [
+      { "id": "buildScalar", "argv": ["go", "build", "./..."], "env": { "GOEXPERIMENT": "" }, "input": null, "requiredForBaseline": true },
+      { "id": "testScalar", "argv": ["go", "test", "./..."], "env": { "GOEXPERIMENT": "" }, "input": null, "requiredForBaseline": true },
+      { "id": "buildSIMD", "argv": ["go", "build", "./..."], "env": { "GOEXPERIMENT": "simd" }, "input": null, "requiredForBaseline": true },
+      { "id": "testSIMD", "argv": ["go", "test", "./..."], "env": { "GOEXPERIMENT": "simd" }, "input": null, "requiredForBaseline": true },
+      { "id": "testSIMDForcedScalar", "argv": ["go", "test", "./..."], "env": { "GOEXPERIMENT": "simd", "GODEC_FORCE_SCALAR": "1" }, "input": null, "requiredForBaseline": false }
+    ],
+    "benchmarks": [
+      { "id": "benchObservationPaired", "argv": ["go", "test", "./core/pipeline/...", "-bench", "BenchmarkPipelineObservationPaired64MiB"], "env": {}, "input": "observationPairedFixture" },
+      { "id": "benchFilterChain", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipeline"], "env": {}, "input": "stereoBlock" },
+      { "id": "benchFilterChainOpen", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipelineOpen"], "env": {}, "input": "stereoBlock" },
+      { "id": "benchFLACParallelDecode", "argv": ["go", "test", "./plugin/flac/internal/codec/decoder/...", "-bench", "BenchmarkParallelDecodeThroughput"], "env": {}, "input": "flacFrameFixture" }
+    ],
+    "profiles": [
+      {
+        "id": "cpuBlockHeapProfileObservationOff",
+        "argv": ["go", "test", "./core/pipeline/...", "-run", "^$", "-bench", "BenchmarkPipelineObservation/64MiB/Off$", "-benchtime=20x", "-cpuprofile=cpu.prof", "-blockprofile=block.prof", "-memprofile=heap.prof", "-blockprofilerate=1"],
+        "env": {},
+        "input": "observationPairedFixture",
+        "variant": "Off",
+        "note": "Substitute the trailing path segment (Off) for another variant.md mode name (Plain/Progress/Metrics) to re-profile that mode."
+      }
+    ],
+    "correctnessChecks": [
+      { "id": "testGoroutineLeak", "argv": ["go", "test", "./core/pipeline/...", "-run", "TestPipelineObservationDoesNotLeakGoroutines", "-v"], "env": {}, "input": null }
+    ]
   }
 }
