@@ -1,12 +1,12 @@
 # Godec リファクタリング計画
 
-> 実装進捗: **1 / 12 マイルストーン完了（M1 完了、M0 進行中）**
+> 実装進捗: **2 / 12 マイルストーン完了（M0, M1 完了）**
 >
 > この文書を、リファクタリング全体の概要・実装順・進捗の正本とする。詳細資料は設計仕様を説明するものであり、個別に進捗を管理しない。
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> M1 は完了。M0 は、repository 全体を対象にした `tools/cmd/differential` の横断実行を baseline/CI の必須証跡から外した後、その撤回を M0 の文書・manifest・完了宣言へ正しく反映しきれていない箇所と、filter chain benchmark の計測範囲、baseline manifest の再現性、convolver end-to-end test の resource/observation 不備が [checkpoint.md](refactor/checkpoint.md) の再監査で見つかり、進行中に差し戻した。詳細と再判定の順序は checkpoint.md を正本とする。
+> M1 は完了。M0 は、repository 全体を対象にした `tools/cmd/differential` の横断実行を baseline/CI の必須証跡から外した後の第二次再監査で、任意 tool 自体の false positive、撤回の文書反映漏れ、filter chain benchmark の計測範囲、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備が見つかり、一旦進行中に差し戻した。すべて解消し、scalar/SIMD 両 build の全 test（各66 package）green を再検証した上で M0 を完了へ更新した。詳細は [checkpoint.md](refactor/checkpoint.md) と [baseline.md](refactor/baseline.md) を正本とする。
 
 ## 目標
 
@@ -51,7 +51,7 @@ application / CLI / WASM
 
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
-| M0 | 進行中 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、対象別 differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
+| M0 | 完了 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、対象別 differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
 | M1 | 完了 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
