@@ -74,7 +74,7 @@
 
 ## M1 で行うコードベース作業
 
-### 1. 最終 family package pathへ移動する
+### 1. 最終 family package pathへ移動する 〔対応済み: plugin/{flac,mp3,pcm,wave,audio,id3,vorbiscomment}、plugin/identity/identity_test.go〕
 
 - `plugin/flac`、`plugin/mp3`、`plugin/pcm`、`plugin/wave`、`plugin/audio`、`plugin/id3`、`plugin/vorbiscomment` を最終pathとして作る。
 - FLAC/MP3は同じfamily内へCodec/Format/Parser実装を集め、公開親package以外は必要に応じて `internal` にする。
@@ -93,7 +93,9 @@
 
 完了条件: clean checkoutから追加の手作業なしに全moduleのbuild/test/generateを開始できる。
 
-### 3. module version/release relationを明示する
+### 3. module version/release relationを明示する 〔対応済み: bindings/wasm, example/go, example/web/server の go.mod〕
+
+`v0.0.3` という実在しないバージョンを require していたのを、Go の慣習的な zero pseudo-version `v0.0.0-00010101000000-000000000000` に置き換え、各 go.mod の `replace` directive 直前に、設計期間限定であること・real release 公開後は `replace` を外し実バージョンへ差し替える必要があること・`replace` は import する側からは無視されるため release の正しさをそこに依存させてはならないことを明示するコメントを追加した。`tools` は root module へ依存しないため対象外。実際の release publish 順序の自動検査（root を先に publish → nested がそのバージョンだけを参照）は、release pipeline 自体が存在しない現時点では対象外とし、[supply.md](supply.md) が定める M10 の release plan へ委ねる。
 
 - nested moduleのroot dependencyに、存在しないreleaseを完成済みversionのように書かない。
 - design期間のlocal compositionと、publish時に有効なroot version pinを分ける。
