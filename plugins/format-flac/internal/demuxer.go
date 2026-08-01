@@ -13,9 +13,9 @@ import (
 	"github.com/godexture/godec/plugins/format-flac/frame"
 	"github.com/godexture/godec/plugins/format-flac/seektable"
 	"github.com/godexture/godec/plugins/format-flac/streaminfo"
-	id3 "github.com/godexture/godec/plugins/metadata-id3"
-	"github.com/godexture/godec/plugins/metadata-id3/id3v1"
-	vc "github.com/godexture/godec/plugins/metadata-vorbiscomment"
+	id3 "github.com/godexture/godec/plugin/id3"
+	"github.com/godexture/godec/plugin/id3/id3v1"
+	vc "github.com/godexture/godec/plugin/vorbiscomment"
 )
 
 type Demuxer struct {

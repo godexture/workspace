@@ -13,7 +13,7 @@ import (
 	"github.com/godexture/godec/core/domain/metadata"
 	"github.com/godexture/godec/plugins/format-flac/frame"
 	"github.com/godexture/godec/plugins/format-flac/streaminfo"
-	vc "github.com/godexture/godec/plugins/metadata-vorbiscomment"
+	vc "github.com/godexture/godec/plugin/vorbiscomment"
 	"github.com/godexture/godec/sdk/bits"
 	"github.com/godexture/godec/sdk/hash"
 )
