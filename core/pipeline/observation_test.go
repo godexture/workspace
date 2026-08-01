@@ -58,7 +58,8 @@ func (source *observationSource) Start(ctx context.Context) error {
 }
 
 type observationSink struct {
-	in map[string]*node.InPort[*media.Packet]
+	in    map[string]*node.InPort[*media.Packet]
+	count int
 }
 
 func newObservationSink() *observationSink {
@@ -76,6 +77,7 @@ func (sink *observationSink) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		sink.count++
 		packet.Release()
 	}
 }
