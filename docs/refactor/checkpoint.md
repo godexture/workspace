@@ -104,7 +104,7 @@
 
 完了条件: workspace外から対象module/artifactをbuildしても、同じsource contractを解決する。
 
-### 4. repository/package metadataを更新する
+### 4. repository/package metadataを更新する 〔対応済み: bindings/js/package.json、plugin/vorbiscomment のvendor文字列を"godexture/godec"へ更新しtestで固定〕
 
 - `bindings/js/package.json` のrepository URLをmonorepoへ、directoryを `bindings/js` へ変更する。
 - README、badge、source link、generator input、package metadataから旧repository pathを除く。

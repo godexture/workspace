@@ -80,6 +80,19 @@ func TestMarshalRoundtrip(t *testing.T) {
 	}
 }
 
+// TestDefaultVendorIsStableProjectIdentity is the M1 baseline for
+// docs/refactor/checkpoint.md M1#4's Vorbis Comment vendor-string
+// decision: it is artifact identity written into other people's files,
+// not a repository path, so it deliberately does not track internal
+// package moves. This pins the explicit choice made when plugins/format-
+// flac (the previous, now-stale value) was merged away.
+func TestDefaultVendorIsStableProjectIdentity(t *testing.T) {
+	t.Parallel()
+	if defaultVendor != "godexture/godec" {
+		t.Fatalf("defaultVendor = %q, want %q", defaultVendor, "godexture/godec")
+	}
+}
+
 func testCommentPayload(vendor string, comments []string) []byte {
 	payload := appendString(nil, vendor)
 	payload = binary.LittleEndian.AppendUint32(payload, uint32(len(comments)))

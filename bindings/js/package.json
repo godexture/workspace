@@ -4,8 +4,8 @@
     "description": "JavaScript/TypeScript bindings for godexture",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/godexture/bindings.git",
-        "directory": "js"
+        "url": "git+https://github.com/godexture/godec.git",
+        "directory": "bindings/js"
     },
     "license": "MIT",
     "main": "dist/index.js",

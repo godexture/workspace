@@ -12,7 +12,16 @@ import (
 
 const metadataFieldKey = "flac.vorbiscomment.field"
 
-const defaultVendor = "godexture/format-flac"
+// defaultVendor is the Vorbis Comment vendor string this encoder writes
+// into output file metadata when the source bundle doesn't already carry
+// one. It is artifact identity (what future readers of the encoded file
+// see as "who wrote this"), not a source-repository path: it is
+// deliberately the stable project name rather than
+// github.com/godexture/godec/plugin/vorbiscomment, so a later internal
+// package move (M2/M3 are expected to keep changing package boundaries)
+// doesn't change bytes this project already writes into other people's
+// files. See TestDefaultVendorIsStableProjectIdentity.
+const defaultVendor = "godexture/godec"
 
 func Parse(payload []byte, bundle *metadata.Bundle) error {
 	if bundle == nil {
