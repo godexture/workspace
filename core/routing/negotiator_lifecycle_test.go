@@ -123,6 +123,111 @@ func TestNegotiatorClosesConstructedNodesWhenFactoryFails(t *testing.T) {
 	}
 }
 
+// buildSingleStreamNegotiator wires up demux/decode/encode resolvers that
+// each succeed exactly once against a single FLAC stream, for the muxer
+// failure-injection tests below: they only care about what happens once
+// negotiateMuxer itself runs, with every earlier phase already having
+// constructed and registered its node.
+func buildSingleStreamNegotiator(mux *mockMuxer, closeOrder *[]string) *Negotiator {
+	demux := &mockDemuxer{
+		mockNode: mockNode{onClose: func() { *closeOrder = append(*closeOrder, "demuxer") }},
+		streams: []media.StreamInfo{{
+			Type: media.MediaAudio,
+			MediaAttributes: media.MediaAttributes{
+				Codec: media.CodecFLAC,
+			},
+		}},
+	}
+	decoder := &mockDecoder{mockNode: mockNode{onClose: func() { *closeOrder = append(*closeOrder, "decoder") }}}
+	encoder := &mockEncoder{mockNode: mockNode{onClose: func() { *closeOrder = append(*closeOrder, "encoder") }}}
+	mux.onClose = func() { *closeOrder = append(*closeOrder, "muxer") }
+
+	demuxResolver := &mockDemuxerResolver{resolved: registry.DemuxerManifest{
+		Factory: func(io.Reader, registry.Configuration) (node.Demuxer, error) {
+			return demux, nil
+		},
+	}}
+	decoderResolver := &mockDecoderResolver{resolved: registry.DecoderManifest{
+		Factory: func(stream media.StreamInfo, _ registry.TransformFactoryOptions) (node.Decoder, media.StreamInfo, error) {
+			return decoder, stream, nil
+		},
+	}}
+	encoderResolver := &mockEncoderResolver{resolved: registry.EncoderManifest{
+		TransformManifest: registry.TransformManifest{
+			InputRequirements: registry.SingleInputRequirements(registry.StaticRequirements(alwaysCapability{})),
+		},
+		Factory: func(stream media.StreamInfo, target media.CodecID, _ registry.TransformFactoryOptions) (node.Encoder, media.StreamInfo, error) {
+			output := stream.Clone()
+			output.Codec = target
+			return encoder, output, nil
+		},
+	}}
+	muxResolver := &mockMuxerResolver{resolved: registry.MuxerManifest{
+		Codecs:  []media.CodecID{media.CodecFLAC},
+		Factory: func(io.Writer, registry.Configuration) (node.Muxer, error) { return mux, nil },
+	}}
+	return NewNegotiator(muxResolver, demuxResolver, encoderResolver, decoderResolver, nil, nil)
+}
+
+// TestNegotiatorClosesAllNodesWhenMuxerSetMetadataFails covers the
+// docs/refactor/checkpoint.md M0-R4 gap: negotiateMuxer calls
+// muxNode.SetMetadata before AddStream, and by that point demuxer, decoder,
+// encoder, and the muxer itself are all already owned by state.geometry
+// (released from state.ownedNodes) -- so a SetMetadata failure must still
+// close every node exactly once, via geometry.Close()'s cleanup path, not
+// leak the muxer or double-close anything already transferred.
+func TestNegotiatorClosesAllNodesWhenMuxerSetMetadataFails(t *testing.T) {
+	t.Parallel()
+	var closeOrder []string
+	setMetaErr := errors.New("set metadata boom")
+	mux := &mockMuxer{setMetadataErr: setMetaErr}
+	neg := buildSingleStreamNegotiator(mux, &closeOrder)
+
+	_, err := neg.NegotiateConversion(context.Background(), ConversionSpec{
+		Input:       strings.NewReader("input"),
+		Output:      &strings.Builder{},
+		TargetCodec: media.CodecFLAC,
+		MuxConfig:   dummyConfig{},
+	})
+	if !errors.Is(err, setMetaErr) {
+		t.Fatalf("NegotiateConversion() error = %v, want wrapping %v", err, setMetaErr)
+	}
+	if len(mux.addedStreams) != 0 {
+		t.Fatalf("AddStream should not run after SetMetadata failed, got %v", mux.addedStreams)
+	}
+	if got, want := closeOrder, []string{"muxer", "encoder", "decoder", "demuxer"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("close order = %v, want %v", got, want)
+	}
+}
+
+// TestNegotiatorClosesAllNodesWhenMuxerAddStreamFails is the AddStream
+// counterpart: SetMetadata already succeeded (so the muxer recorded
+// metadata) before AddStream fails, and the same full-teardown guarantee
+// must hold.
+func TestNegotiatorClosesAllNodesWhenMuxerAddStreamFails(t *testing.T) {
+	t.Parallel()
+	var closeOrder []string
+	addStreamErr := errors.New("add stream boom")
+	mux := &mockMuxer{addStreamErr: addStreamErr}
+	neg := buildSingleStreamNegotiator(mux, &closeOrder)
+
+	_, err := neg.NegotiateConversion(context.Background(), ConversionSpec{
+		Input:       strings.NewReader("input"),
+		Output:      &strings.Builder{},
+		TargetCodec: media.CodecFLAC,
+		MuxConfig:   dummyConfig{},
+	})
+	if !errors.Is(err, addStreamErr) {
+		t.Fatalf("NegotiateConversion() error = %v, want wrapping %v", err, addStreamErr)
+	}
+	if !mux.setMetadataCalled {
+		t.Fatal("SetMetadata should have run and succeeded before AddStream failed")
+	}
+	if got, want := closeOrder, []string{"muxer", "encoder", "decoder", "demuxer"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("close order = %v, want %v", got, want)
+	}
+}
+
 func TestNegotiatorConstructsEachTransformOnce(t *testing.T) {
 	t.Parallel()
 	stream := media.StreamInfo{Type: media.MediaAudio, MediaAttributes: media.MediaAttributes{Codec: media.CodecFLAC}}

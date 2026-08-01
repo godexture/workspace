@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -280,6 +281,117 @@ func TestEncoderAdapter_CloseAfterContextCancellation(t *testing.T) {
 	}
 	if !fake.closed {
 		t.Fatal("engine was not closed")
+	}
+}
+
+// TestEncoderAdapter_CloseAfterFlushError exercises the phase
+// fakeEncoderEngine.flushErr already declared but no test set: input
+// reaching io.EOF drives runCodecLoop into calling Flush before it ever
+// checks for further output, so a Flush failure must surface as Start's
+// error and must not close the engine out from under the adapter (Close
+// still owns that), the same contract the send-error and cancellation
+// tests already pin for their phases.
+func TestEncoderAdapter_CloseAfterFlushError(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("encoder flush failed")
+	fake := &fakeEncoderEngine{flushErr: wantErr}
+	adapter, in := connectEncoderAdapter(t, fake)
+	in.Close() // no frames: Pull immediately reports io.EOF, driving Flush
+
+	err := adapter.Start(context.Background())
+	if err != wantErr {
+		t.Fatalf("Start() error = %v, want %v", err, wantErr)
+	}
+	if !fake.flushed {
+		t.Fatal("expected Flush() to have run before failing")
+	}
+	if fake.closed {
+		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if !fake.closed {
+		t.Fatal("engine was not closed")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if fake.closeCount != 1 {
+		t.Fatalf("engine Close() called %d times, want 1", fake.closeCount)
+	}
+}
+
+// fakeDecoderEngine mirrors fakeEncoderEngine's Close-ownership contract for
+// DecoderAdapter, needed since no decoder-side fake previously existed to
+// exercise a decode Flush failure.
+type fakeDecoderEngine struct {
+	flushErr   error
+	flushed    bool
+	closed     bool
+	closeCount int
+}
+
+func (f *fakeDecoderEngine) SendPacket(*media.Packet) error { return nil }
+
+func (f *fakeDecoderEngine) ReceiveFrame() (media.Frame, error) { return nil, ErrEAGAIN }
+
+func (f *fakeDecoderEngine) Flush() error {
+	f.flushed = true
+	return f.flushErr
+}
+
+func (f *fakeDecoderEngine) Close() error {
+	f.closed = true
+	f.closeCount++
+	return nil
+}
+
+func connectDecoderAdapter(t *testing.T, engine DecoderEngine) (node interface {
+	Start(ctx context.Context) error
+	Close() error
+}, in *pipeline.ChanEdge[*media.Packet]) {
+	t.Helper()
+	adapter := WrapDecoder(engine)
+	in = pipeline.NewChanEdge[*media.Packet](1)
+	out := pipeline.NewChanEdge[media.Frame](1)
+	adapter.InputPorts()["in"].Connect(in)
+	adapter.OutputPorts()["out"].Connect(out)
+	return adapter, in
+}
+
+// TestDecoderAdapter_CloseAfterFlushError is the decode-side counterpart to
+// TestEncoderAdapter_CloseAfterFlushError, per
+// docs/refactor/checkpoint.md M0-R4's "missing decode/encode Flush"
+// failure-injection gap.
+func TestDecoderAdapter_CloseAfterFlushError(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("decoder flush failed")
+	fake := &fakeDecoderEngine{flushErr: wantErr}
+	adapter, in := connectDecoderAdapter(t, fake)
+	in.Close() // no packets: Pull immediately reports io.EOF, driving Flush
+
+	err := adapter.Start(context.Background())
+	if err != wantErr {
+		t.Fatalf("Start() error = %v, want %v", err, wantErr)
+	}
+	if !fake.flushed {
+		t.Fatal("expected Flush() to have run before failing")
+	}
+	if fake.closed {
+		t.Fatal("engine closed before adapter ownership was released")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if !fake.closed {
+		t.Fatal("engine was not closed")
+	}
+	if err := adapter.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if fake.closeCount != 1 {
+		t.Fatalf("engine Close() called %d times, want 1", fake.closeCount)
 	}
 }
 

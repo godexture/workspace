@@ -60,15 +60,28 @@ func (m *mockFilter) OutputPorts() map[string]*node.OutPort[media.Frame] { retur
 
 type mockMuxer struct {
 	mockNode
-	addedStreams []media.StreamInfo
-	metadata     *metadata.Bundle
+	addedStreams      []media.StreamInfo
+	metadata          *metadata.Bundle
+	setMetadataCalled bool
+	addStreamErr      error
+	setMetadataErr    error
 }
 
 func (m *mockMuxer) AddStream(info media.StreamInfo) (int, error) {
+	if m.addStreamErr != nil {
+		return 0, m.addStreamErr
+	}
 	m.addedStreams = append(m.addedStreams, info)
 	return len(m.addedStreams) - 1, nil
 }
-func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error            { m.metadata = meta; return nil }
+func (m *mockMuxer) SetMetadata(meta *metadata.Bundle) error {
+	m.setMetadataCalled = true
+	if m.setMetadataErr != nil {
+		return m.setMetadataErr
+	}
+	m.metadata = meta
+	return nil
+}
 func (m *mockMuxer) InputPorts() map[string]*node.InPort[*media.Packet] { return nil }
 
 // Mock Resolvers
