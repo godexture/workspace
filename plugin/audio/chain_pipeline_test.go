@@ -36,22 +36,34 @@ const chainFrameCount = 8
 // actually pays for. That direct-call benchmark is kept as the lower
 // bound; the gap between the two is the pipeline's own overhead.
 //
-// Construction is excluded from the timed/measured portion via
-// b.StopTimer/b.StartTimer around buildGainChainPipeline (this pauses both
-// wall-clock and allocation counting, per testing.B), so ns/op and
-// allocs/op reflect steady-state Run alone -- not construction-plus-Run as
-// a single number a reader would have to disentangle by hand.
-// BenchmarkGainChainPipelineOpen below isolates construction on its own
-// for a direct look at that cost in isolation.
+// Construction and Prepare are excluded from the timed/measured portion:
+// buildGainChainPipeline runs under b.StopTimer/b.StartTimer (which pauses
+// both wall-clock and allocation counting, per testing.B), and Prepare is
+// called explicitly in that same excluded window so Run's own internal
+// Prepare call (Pipeline.Run always calls Prepare first) is a no-op by the
+// time the timer restarts. BenchmarkGainChainPipelineOpen below isolates
+// that excluded construction+Prepare cost on its own.
+//
+// The timed portion is still Run's steady-state node processing PLUS its
+// teardown (Run always closes every node before returning; Pipeline has no
+// public entry point that runs nodes without also closing them). This
+// benchmark's ns/op and allocs/op should be read as "steady-state + close",
+// not "steady-state alone" -- at Small block sizes in particular, teardown
+// is not necessarily amortized away by the 8 frames this benchmark pushes
+// through.
 func BenchmarkGainChainPipeline(b *testing.B) {
 	for _, depth := range chainDepths {
 		for _, size := range chainBlockSizes {
 			b.Run(depthName(depth)+"/"+size.name, func(b *testing.B) {
 				b.ReportAllocs()
 				b.SetBytes(int64(size.frames * 2 * 4 * chainFrameCount))
+				block := stereoBlock(size.frames)
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					conversion, sink := buildGainChainPipeline(b, depth, chainFrameCount, stereoBlock(size.frames))
+					conversion, sink := buildGainChainPipeline(b, depth, chainFrameCount, block)
+					if err := conversion.Prepare(context.Background()); err != nil {
+						b.Fatalf("Prepare() error = %v", err)
+					}
 					b.StartTimer()
 
 					if err := conversion.Run(context.Background()); err != nil {
@@ -76,17 +88,27 @@ func BenchmarkGainChainPipeline(b *testing.B) {
 	}
 }
 
-// BenchmarkGainChainPipelineOpen isolates construction+Prepare/Open cost in
-// its own benchmark (the pipeline is built but never Run), for a direct
-// look at that cost rather than only the exclusion inside
-// BenchmarkGainChainPipeline above.
+// BenchmarkGainChainPipelineOpen isolates construction+Prepare (cold
+// lifecycle) cost: the counterpart to BenchmarkGainChainPipeline's
+// steady-state-plus-teardown measurement above. The input block is built
+// once outside the timed loop (it is never mutated, so every iteration can
+// safely reuse it), and Close runs under b.StopTimer so its cost -- which
+// belongs to neither "Open" nor the other benchmark's "steady-state +
+// teardown" -- is excluded from both.
 func BenchmarkGainChainPipelineOpen(b *testing.B) {
 	for _, depth := range chainDepths {
 		b.Run(depthName(depth), func(b *testing.B) {
 			b.ReportAllocs()
+			block := stereoBlock(chainBlockSizes[0].frames)
 			for i := 0; i < b.N; i++ {
-				conversion, _ := buildGainChainPipeline(b, depth, chainFrameCount, stereoBlock(chainBlockSizes[0].frames))
+				conversion, _ := buildGainChainPipeline(b, depth, chainFrameCount, block)
+				if err := conversion.Prepare(context.Background()); err != nil {
+					b.Fatalf("Prepare() error = %v", err)
+				}
+
+				b.StopTimer()
 				conversion.Close()
+				b.StartTimer()
 			}
 		})
 	}
