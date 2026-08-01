@@ -6,8 +6,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
+
+// exeName returns base with the platform's executable suffix, so binaries
+// built into a PATH-prepended tmpDir resolve under bare //go:generate
+// invocations (config-generator, enum-generator) on every platform: Windows
+// PATH lookup requires the .exe suffix, but Unix PATH lookup requires its
+// absence -- a hardcoded ".exe" broke generate on Unix even though the
+// binary built and ran fine when invoked directly.
+func exeName(base string) string {
+	if runtime.GOOS == "windows" {
+		return base + ".exe"
+	}
+	return base
+}
 
 // buildTools compiles the necessary generators into a temporary directory
 // and prepends that directory to the PATH.
@@ -19,7 +33,7 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 	go func() {
 		defer buildWg.Done()
 		log.Printf("building config-generator...")
-		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "config-generator.exe"), "github.com/godexture/godec/tools/cmd/config-generator")
+		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, exeName("config-generator")), "github.com/godexture/godec/tools/cmd/config-generator")
 		buildConfigCmd.Env = append(os.Environ(), "GOWORK="+goWork)
 		buildConfigCmd.Stdout = os.Stdout
 		buildConfigCmd.Stderr = os.Stderr
@@ -34,7 +48,7 @@ func buildTools(goCommand, goWork, tmpDir string) error {
 	go func() {
 		defer buildWg.Done()
 		log.Printf("building enum-generator...")
-		buildEnumCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, "enum-generator.exe"), "github.com/godexture/godec/tools/cmd/enum-generator")
+		buildEnumCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, exeName("enum-generator")), "github.com/godexture/godec/tools/cmd/enum-generator")
 		buildEnumCmd.Env = append(os.Environ(), "GOWORK="+goWork)
 		buildEnumCmd.Stdout = os.Stdout
 		buildEnumCmd.Stderr = os.Stderr
