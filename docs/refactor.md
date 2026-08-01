@@ -1,12 +1,12 @@
 # Godec リファクタリング計画
 
-> 実装進捗: **1 / 12 マイルストーン完了（M0 完了、M1 進行中）**
+> 実装進捗: **2 / 12 マイルストーン完了（M0、M1 完了）**
 >
 > この文書を、リファクタリング全体の概要・実装順・進捗の正本とする。詳細資料は設計仕様を説明するものであり、個別に進捗を管理しない。
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> - **M1**: code を持つ旧 16 Git submodule を `git subtree` で履歴を保持したまま monorepo へ統合済み。import path を `github.com/godexture/godec/...` へ書き換え、`core`⇄`sdk` を含む相互依存 12 module を単一の root `go.mod` へ統合し、`tools`・`bindings/wasm`・`example/go`・`example/web/server` を nested module として維持した。移行後の native Go test は scalar/SIMD 双方で63 packageが通り、WASM target buildも通る。data/asset の Git submodule である `example/assets`、`example/web/assets`、`plugins/codec-flac/test/testdata/conformance` は、code と独立した任意取得の共有データとして意図的に維持する。未完了: `plugin/<family>` への最終 package path 固定、clean checkout から再現できる workspace/tool bootstrap、npm/repository metadata の更新、browser/JS の build/typecheck と structured skip を含む再現可能な検証経路。`core`/`sdk` の責務再編は M2/M3、cross-plugin import の Binding 化は M8 で行う。
+> - **M1**: [checkpoint.md](refactor/checkpoint.md) の M1 backlog 5項目すべてに着手し完了した。旧16 Git submoduleを`git subtree`で履歴を保持したままmonorepoへ統合し、`core`⇄`sdk`を含む相互依存12 moduleを単一のroot `go.mod`へ統合。FLAC/MP3はcodec+format実装を`plugin/flac`・`plugin/mp3`へ統合し（internal/{codec,format}への再編、`WithStrict`衝突の解消込み）、PCM/WAVE/audio/id3/vorbiscommentは`plugin/<family>`へ改名、`plugin/identity`でpackage identityのsnapshot testを追加した。`go.work`/`go.work.sum`をtracked fileにし、`AGENTS.md`のtool commandをtracked sourceから起動する形へ更新。nested module 4件のroot依存を実在しないv0.0.3から正直なzero pseudo-versionへ修正し設計期/release期の区別をcommentで明示。`bindings/js/package.json`のrepository metadataと、artifact identityとして扱うVorbis Commentのvendor文字列を更新。WASM target build、`bindings/js`のbuild/test（実browser限定経路は明示skip）、`example/web/client`のtypecheck/test/buildを手動検証しAGENTS.mdへcommand化した。data/asset のGit submoduleである`example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance`は、codeと独立した任意取得の共有データとして意図的に維持する。`core`/`sdk`のpackage内部再編はM2/M3、plugin family間の直接import解消はM8で行う。
 > - **M0**: [checkpoint.md](refactor/checkpoint.md) の M0 backlog 7項目すべてに着手し完了した。WAVE truncated input を独立した ground truth（宣言 payload 長、data chunk offset）に対する厳密な test へ書き換え（3種の mutant 検出を手動確認済み）、WAVE/MP3/FLAC の mux/demux 各 I/O phase に `sdk/testutil/fault` 経由の failure injection を追加し、実 muxer + 実 source を組んだ pipeline レベルの primary+Finalize failure 同時発生も検証した。target codec 省略時に decoder/encoder が必ず開くこと（stream copy 不在の現状固定）と known metadata の伝播を `sdk/conversion` レベルで固定し、`tools/cmd/differential` で scalar/SIMD 104 package を一つの report に統合（2026-08-01 時点で 104/104 一致）。filter chain benchmark を実 `core/pipeline` 経路へ拡張し construction/Open と steady-state Run を分離、observation goroutine leak baseline を stack identity diff + processed item count 検証へ強化した。再現手順・toolchain・所見の要約は [baseline.md](refactor/baseline.md) に固定した。未完了として明示的に残す事項: Close 自体の failure injection は現行実装の全 format Close が no-op のため対象が存在しない、metadata 一般契約は M3 待ち、大容量 corpus の tier 分離は M10。
 
 ## 目標
@@ -53,7 +53,7 @@ application / CLI / WASM
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
 | M0 | 完了 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
-| M1 | 進行中 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
+| M1 | 完了 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | 未着手 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program` | [planner](refactor/planner.md)、[runtime](refactor/runtime.md) |

@@ -5,7 +5,7 @@
 ## 現在の判定
 
 - M0: 完了。以下7項目すべてに対応する test/tool/document を追加し、`docs/refactor.md` を更新済み。詳細は [baseline.md](baseline.md) を正本とする。
-- M1: 進行中。source history と Go module の統合は済んだが、最終 family path、clean-checkout bootstrap、配布 metadata、surface validation が不足する。
+- M1: 完了。以下5項目すべてに対応した。
 - `example/assets`、`example/web/assets`、FLAC conformance corpus の3 gitlinkは、codeと独立した任意取得の共有データとして意図的に維持し、M1 blockerにしない。
 
 ## M0 で行うコード作業
