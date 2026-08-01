@@ -37,7 +37,7 @@
     - 例外的に、複合語にした方が明確だと判断した場合は、複合語を用いてよい
 
 ## Tools
-`go.work` は clean checkout から追加の手作業なしに全 module を build/test/generate できるよう、tracked file として repository に含める（gitignore しない）。以下のコマンドは事前 build した local binary を前提にせず、tracked source から起動する。同じコマンドを AGENTS.md、開発手順、CI で使う。
+以下のコマンドは事前 build した local binary を前提にせず、tracked source から起動する。同じコマンドを AGENTS.md、開発手順、CI で使う。
 
 - 全モジュールのテスト: `go run ./tools/cmd/test-runner --simd` (at the workspace root)
     - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
