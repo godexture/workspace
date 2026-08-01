@@ -1,16 +1,24 @@
-// Command differential runs the workspace test suite under three build
-// variants -- the default (scalar) toolchain, GOEXPERIMENT=simd, and
-// GOEXPERIMENT=simd with GODEC_FORCE_SCALAR=1 (forcing every dsp.HasAVX2/
-// HasAVX2FMA-gated dispatch in a SIMD-capable build onto its scalar path,
-// see sdk/dsp/cpu_simd.go) -- and prints a single joined report comparing
-// them, instead of separate pass/fail runs a reader has to compare by
-// hand.
+// Command differential is an optional diagnostic tool, not a required
+// baseline/CI gate (docs/refactor/checkpoint.md M0-R5 dropped the
+// repository-wide run as a required verification step: it is too slow to
+// gate on). It runs `go test` under three build variants -- the default
+// (scalar) toolchain, GOEXPERIMENT=simd, and GOEXPERIMENT=simd with
+// GODEC_FORCE_SCALAR=1 (forcing every dsp.HasAVX2/HasAVX2FMA-gated
+// dispatch in a SIMD-capable build onto its scalar path, see
+// sdk/dsp/cpu_simd.go) -- and joins the three `go test -json` streams into
+// one report of each package's PASS/FAIL/MISSING status per variant. It
+// aggregates package-level test status only; it does not compare decoded
+// output, artifact bytes, or any other semantic result -- that kind of
+// comparison lives in the correctness tests themselves (e.g. the FLAC
+// parallelism and convolver worker-count tests), not in this tool.
 //
 // docs/refactor/checkpoint.md M0#4/M0-R1: a shared failure (the same
 // package failing identically under every variant) must not exit 0, a
-// package pattern that resolves to nothing must not exit 0, and the
-// scalar variant must not silently inherit a SIMD-enabling GOEXPERIMENT
-// from the calling shell.
+// package pattern that resolves to nothing must not exit 0, a `go test`
+// invocation that fails before emitting a single test event (e.g. an
+// invalid GOFLAGS value) must not be indistinguishable from "0 packages,
+// nothing wrong", and the scalar variant must not silently inherit a
+// SIMD-enabling GOEXPERIMENT from the calling shell.
 package main
 
 import (
@@ -152,14 +160,36 @@ func runSuite(goWork, pattern string, variant envVariant, stderr io.Writer) suit
 
 	result := suiteResult{packages: packages, parseIssue: parseIssue}
 	if waitErr != nil {
-		if _, ok := waitErr.(*exec.ExitError); !ok {
+		exitErr, ok := waitErr.(*exec.ExitError)
+		switch {
+		case !ok:
 			// Not a plain "tests failed" exit (e.g. the binary could not
 			// even run): this is a hard process error, independent of
 			// whatever packages did get parsed.
 			result.processErr = waitErr
+		case !anyPackageFailed(packages):
+			// go test exited non-zero but never reported a single package
+			// as failing -- e.g. an invalid GOFLAGS value or another
+			// toolchain-level failure that aborts before any test event
+			// reaches stdout. Without this check, an empty (or all-pass)
+			// packages map reads as "0 packages, nothing to disagree on"
+			// and the run silently reports success despite go test never
+			// having actually run anything.
+			result.processErr = fmt.Errorf("go test exited (%v) but reported no package failure among %d parsed package(s)", exitErr, len(packages))
 		}
 	}
 	return result
+}
+
+// anyPackageFailed reports whether at least one parsed package result
+// explains a non-zero `go test` exit. See runSuite's use above.
+func anyPackageFailed(packages map[string]*packageResult) bool {
+	for _, r := range packages {
+		if r.ran && !r.pass {
+			return true
+		}
+	}
+	return false
 }
 
 // testEvent covers both shapes go test -json emits: ordinary test/package

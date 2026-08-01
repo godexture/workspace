@@ -169,6 +169,41 @@ func TestRunReportsNonZeroOnNonexistentPackage(t *testing.T) {
 	}
 }
 
+func TestAnyPackageFailedRequiresAFailedPackage(t *testing.T) {
+	if anyPackageFailed(map[string]*packageResult{}) {
+		t.Fatal("anyPackageFailed() = true for an empty map, want false")
+	}
+	if anyPackageFailed(map[string]*packageResult{"./pkg": {ran: true, pass: true}}) {
+		t.Fatal("anyPackageFailed() = true when every parsed package passed, want false")
+	}
+	if !anyPackageFailed(map[string]*packageResult{"./pkg": {ran: true, pass: false}}) {
+		t.Fatal("anyPackageFailed() = false when a parsed package failed, want true")
+	}
+}
+
+// TestRunReportsNonZeroWhenGoTestExitsBeforeAnyTestEvent reproduces
+// docs/refactor/checkpoint.md's named repro for the optional tool's false
+// positive: GOFLAGS=-definitely-invalid makes every `go test` invocation
+// exit non-zero before printing a single JSON test event (go rejects the
+// flag before it even resolves packages), so the old runSuite logic --
+// treating any *exec.ExitError as "tests failed, and that's reflected in
+// packages" -- couldn't distinguish this from "0 packages, nothing wrong"
+// and run() reported success despite go test never having run anything.
+func TestRunReportsNonZeroWhenGoTestExitsBeforeAnyTestEvent(t *testing.T) {
+	dir := scratchModule(t, `package pkg
+
+import "testing"
+
+func TestAlwaysPasses(t *testing.T) {}
+`)
+	t.Setenv("GOFLAGS", "-definitely-invalid")
+	var stdout, stderr bytes.Buffer
+	err := run(dir, []string{"./..."}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("run() succeeded despite go test exiting before any test event, want an error\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+}
+
 // scratchModule writes a minimal module + workspace containing pkgSource
 // as pkg/pkg.go (or pkg_test.go if it declares tests) under t.TempDir()
 // and returns the module root.
