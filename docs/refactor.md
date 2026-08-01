@@ -6,8 +6,8 @@
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> - **M1**: 16 Git submodule（`example/assets` と `plugins/codec-flac/test/testdata/conformance` を除く）を `git subtree` で履歴を保持したまま monorepo へ統合済み。import path を `github.com/godexture/godec/...` へ書き換え、`core`⇄`sdk` を含む相互依存 12 module を単一の root `go.mod` へ統合し、`tools`・`bindings/wasm`・`example/go`・`example/web/server` を root へ依存する nested module として維持した。`go.work` は 16 entry から 5 entry へ縮小（`go.work` 自体は既定でgitignore対象、ローカル開発設定のまま）。旧 submodule 16件の内容・履歴は保持したまま新配置へ移動しており、`go build ./...` と `test-runner.exe`（scalar/SIMD 双方、計63パッケージ）は移行前後で pass 件数が一致し回帰なし。未完了: `core`/`sdk` package 間の相互 import 自体の解消、plugin family のディレクトリ再編（`plugins/codec-flac` → `plugin/flac` 等）は M2/M3/M8 のスコープとして残す。
-> - **M0**: 既存の decode/encode/roundtrip・SIMD差分・観測 paired benchmark 資産を確認し、次のギャップを埋めた: (1) `plugins/filter-audio/internal/convolver` の worker 数 1/4/16 不変性 test、(2) 1/4/16段 gain filter chain の正しさ test と benchmark、(3) `core/pipeline` の observation off/on/progress/metrics 各 mode の goroutine leak 検出 test、(4) `plugins/format-wav` の truncated input baseline test（既存 FLAC/MP3 にはあったが WAVE/PCM になかった）。observation off/on の CPU/block profile 採取自体も実際に実行し機構を検証済み（生 profile は fixtures.md の方針により commit しない）。判明した事実として、`codec-pcm`/`codec-mp3` には worker/parallelism 実装自体が存在せず、worker 数比較 test の対象にならない。未完了: Finalize/Close failure の明示的な injection test を全 format で網羅していない。
+> - **M1**: code を持つ旧 16 Git submodule を `git subtree` で履歴を保持したまま monorepo へ統合済み。import path を `github.com/godexture/godec/...` へ書き換え、`core`⇄`sdk` を含む相互依存 12 module を単一の root `go.mod` へ統合し、`tools`・`bindings/wasm`・`example/go`・`example/web/server` を nested module として維持した。移行後の native Go test は scalar/SIMD 双方で63 packageが通り、WASM target buildも通る。data/asset の Git submodule である `example/assets`、`example/web/assets`、`plugins/codec-flac/test/testdata/conformance` は、code と独立した任意取得の共有データとして意図的に維持する。未完了: `plugin/<family>` への最終 package path 固定、clean checkout から再現できる workspace/tool bootstrap、npm/repository metadata の更新、browser/JS の build/typecheck と structured skip を含む再現可能な検証経路。`core`/`sdk` の責務再編は M2/M3、cross-plugin import の Binding 化は M8 で行う。
+> - **M0**: 既存の decode/encode/roundtrip・SIMD kernel差分・観測 paired benchmark 資産を確認し、convolver worker 数 1/4/16、1/4/16段 gain chain、observation mode 別 goroutine、WAVE truncated input の test/benchmark を追加した。追加物はすべて実行可能だが、M0 の比較基準としてはまだ不十分である。未完了: format ごとの Finalize/Close failure injection、scalar/SIMD build 間の end-to-end semantic比較、実 pipeline を通す filter chain benchmark、cold Open と steady-state Run の分離、WAVE truncated input の実 payload 長検証、再現可能な input manifest・command・correctness summary の保存。stream copy は現行実装に存在しないため、M0 では「codecを開く現行経路」を記録し、copy/remux の実装と contract test は M7 で行う。
 
 ## 目標
 
@@ -48,24 +48,24 @@ application / CLI / WASM
 
 ## 実装ロードマップ
 
-進捗状態は `未着手`、`進行中`、`完了` の三つを使う。マイルストーンは、その行の完了条件と対応する詳細資料の完了条件をすべて満たした時だけ `完了` にする。
+進捗状態は `未着手`、`進行中`、`完了` の三つを使う。マイルストーンは、その行の完了条件と、詳細資料内で同じ milestone ID を明示した固有の完了条件を満たした時だけ `完了` にする。詳細資料末尾の「文書全体の完了条件」は最終設計の gate であり、参照しただけで先行 milestone にすべて遡及適用しない。
 
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
-| M0 | 進行中 | 現行基準の固定 | 代表 pipeline、意味上の正しさ、allocation/profile、paired benchmark の比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
-| M1 | 進行中 | repository と foundation の再編 | monorepo、単一の設計期 release train、一方向の package/module DAG | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
+| M0 | 進行中 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
+| M1 | 進行中 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | 未着手 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program` | [planner](refactor/planner.md)、[runtime](refactor/runtime.md) |
 | M5 | 未着手 | runtime と ownership | execution island、move/fan-out/COW、cancel、queue、Finalize、transactional Open/Close | [runtime](refactor/runtime.md)、[performance](refactor/performance.md) |
 | M6 | 未着手 | 最初の縦断経路 | WAVE + PCM の demux → decode → encode → mux が新設計だけで動く | [media](refactor/media.md)、[plugins](refactor/plugins.md)、[quality](refactor/quality.md) |
 | M7 | 未着手 | multi-stream と保存優先の既定動作 | 複数入出力、mapping、stream copy、metadata raw preservation、loss report | [planner](refactor/planner.md)、[surfaces](refactor/surfaces.md)、[media](refactor/media.md) |
-| M8 | 未着手 | 公式 plugin の移行 | MP3、FLAC、audio processor が Parser/Binding/variant/typed audio contract を使う | [audio](refactor/audio.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md) |
+| M8 | 未着手 | 公式 plugin contract の移行 | M1で固定したfamily path上で、MP3、FLAC、audio processor が Parser/Binding/variant/typed audio contract を使い、公式plugin間の直接依存を解消する | [audio](refactor/audio.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md) |
 | M9 | 未着手 | 利用 surface の移行 | library、CLI、WASM、非 production demo が同じ Host/Job/Plan/Result を使う | [surfaces](refactor/surfaces.md)、[web](refactor/web.md)、[experience](refactor/experience.md) |
-| M10 | 未着手 | 品質・配布基盤 | conformance testkit、root CI、外部 corpus、hermetic build、SBOM/NOTICE、release plan | [quality](refactor/quality.md)、[fixtures](refactor/fixtures.md)、[supply](refactor/supply.md) |
+| M10 | 未着手 | 品質・配布基盤 | conformance testkit、root CI、外部 corpus/asset の取得tier・provenance、hermetic build、SBOM/NOTICE、release plan | [quality](refactor/quality.md)、[fixtures](refactor/fixtures.md)、[supply](refactor/supply.md) |
 | M11 | 未着手 | 旧経路の削除と拡張性の実証 | 旧 core/SDK/routing/registry と互換層を削除し、未知 video/subtitle plugin を core 無変更で追加 | [inventory](refactor/inventory.md)、[findings](refactor/findings.md)、[architecture](refactor/architecture.md) |
 
-M0〜M5 は foundation を固めるための先行作業である。M6 で最小の実用経路を完成させ、その経路を壊さず M7〜M9 へ広げる。M10 は各段階と並行して整備するが、release gate を満たすまでは完了としない。M11 では旧新二経路を残さず、stable v1 前に必要な module split を確定する。
+M0〜M5 は foundation を固めるための先行作業である。M1 は将来の reflection/marker identity を変えないために最終 family package path までを固定するが、foundation package の責務分割と plugin 間の contract 分離までは要求しない。それらは M2/M3/M8 で行う。M6 で最小の実用経路を完成させ、その経路を壊さず M7〜M9 へ広げる。M10 は各段階と並行して整備するが、release gate を満たすまでは完了としない。M11 では旧新二経路を残さず、stable v1 前に必要な module split を確定する。
 
 ## 読み方
 
@@ -74,6 +74,7 @@ M0〜M5 は foundation を固めるための先行作業である。M6 で最小
 | 知りたいこと | 読む資料 |
 |---|---|
 | 確定した方針、延期した判断 | [decisions.md](refactor/decisions.md) |
+| M0/M1 を完了するための具体的な残作業 | [checkpoint.md](refactor/checkpoint.md) |
 | package/module/repository の境界、依存方向 | [architecture.md](refactor/architecture.md) |
 | plugin identity、composition、component lifecycle、custom Host | [plugins.md](refactor/plugins.md) |
 | config、default、preset、validation、surface projection | [config.md](refactor/config.md) |
@@ -123,4 +124,4 @@ M0〜M11 に加え、少なくとも次をすべて満たした時にリファ�
 - 公式 standard distribution は CGO なしで build でき、性能・再現性 contract を differential test と paired benchmark で検証できる。
 - full corpus を通常 module download へ含めず、toolchain、dependency、asset、license、SBOM、artifact provenance を release ごとに追跡できる。
 - CLI、WASM、demo web は Host の planner/runtime を再実装せず、未知の第三者 component/schema を固定 role の変更なしに扱える。
-- 旧 factory/resolver/routing/registry/SDK 経路、互換 wrapper、不要 export、Git submodule が残っていない。
+- 旧 factory/resolver/routing/registry/SDK 経路、互換 wrapper、不要 export、source code の Git submodule が残っておらず、data/asset submodule は任意取得の test/demo dependency に限定されている。

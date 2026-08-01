@@ -81,6 +81,19 @@ type Variant[C, P any] struct {
 
 plugin authorに全policyの実装を要求しない。一つの正しいvariantだけを提供してもよく、Hostはそのcontractを満たすJobで使用する。公式pluginも、paired benchmarkで意味のある差がないpreset専用variantを追加しない。
 
+## M0 baseline への適用
+
+M0 は最終 policy/variant architecture の完成を要求しない。現行実装から将来の回帰を判定できる測定契約を固定する。
+
+- input generatorまたはfixtureの仕様・digest、実行command、Go/OS/arch/build tag、CPU feature、worker数を記録する。
+- throughputだけでなく、item/frame/sample数、順序、timestamp、output digestまたは数値誤差を同時に記録する。
+- scalar build と SIMD build は別々にpassさせるだけでなく、同一inputのsemantic outputを横断比較する。
+- 比較可能な現行kernel/variantは同じprocess内でAB/BAを反転する。旧runtimeと新runtimeのpaired比較は、新経路導入後に同じharnessへ追加する。
+- filter chainは実pipelineとdirect engine lower boundを分け、cold construction/Openとsteady-state Runを分ける。
+- raw CPU/block/goroutine/heap profileと時系列resultはCI artifactに置き、Gitにはinput manifest、command、correctness summary、profile summaryを保存する。
+
+M0 の完了判定は [quality](quality.md) の「M0 完了条件」とこの節を用いる。以下の最終 policy、Plan fingerprint、Portable/Realtime gate の完成は後続 milestone の責務である。
+
 ## 現行実装の監査結果
 
 現在の最適化は性質が異なるものを同じ build/runtime dispatch で扱っている。
@@ -460,7 +473,9 @@ policy/variant abstraction を導入しても、data plane へ次を増やさな
 
 Compile/Open が direct typed function、block size、worker layout を選び、Run は specialized path を使う。Stable/Portable の追加処理はそれを選んだ Program にだけ含める。
 
-## 完了条件
+## 文書全体の完了条件
+
+この節は performance/reproducibility contract の最終状態を示し、M0 単独には遡及適用しない。
 
 - Fast/Stable/Portable/Realtime が一つの曖昧な enum ではなく policy vector として説明できる。
 - Fast でも media ordering、timestamp、frame count、lossless semantics、validation を緩めない。

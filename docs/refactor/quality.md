@@ -22,13 +22,23 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 リファクタリング開始前に、現行の代表経路を凍結する。
 
 1. WAVE/PCM、MP3、FLAC の decode/encode/roundtrip。
-2. stream passthrough と metadata preservation。
+2. input metadata の output への伝播と、現行 stream 経路。現行実装に stream copy がなければ、decoder/encoder を開く事実を baseline として記録する。
 3. cancel、invalid input、Finalize/Close failure。
 4. 1/4/16段の軽量 audio filter chain。
 5. observation off/on の allocation、CPU、block/goroutine profile。
-6. scalar/SIMD と worker 1/N の意味上の差。
+6. scalar/SIMD build 間と worker 1/N の意味上の差。
 
-絶対時間だけを将来 gate にしない。同じ process で旧新を交互に測る paired benchmark、allocation、correctness counter、profile を保存する。M0 の詳細な測定対象は [performance](performance.md) に従う。
+M0 では入力仕様・digest、実行 command、toolchain、correctness summary、allocation、profile summary を保存する。raw profile/result は Git に蓄積せず CI artifact とする。比較可能な現行 variant は同じ process で交互に測り、リファクタリング後は同じ fixture/harness で旧新を paired 比較する。絶対時間だけを将来 gate にしない。詳細な測定対象は [performance](performance.md) に従う。
+
+### M0 完了条件
+
+- WAVE/PCM、MP3、FLAC の代表 decode/encode/roundtrip が small hermetic fixture で再現できる。
+- metadata の既知項目と opaque/raw 項目について、現行の伝播・欠落挙動を検査する。stream copy 自体の実装は M7 の完了条件とする。
+- cancel、invalid/truncated input、Finalize/Close と primary+cleanup failure の集約を、代表 pipeline と format lifecycle で検査する。
+- 1/4/16段 filter chain は実 pipeline の end-to-end cost と direct engine の下限を分け、cold construction と steady-state processing を分けて測る。
+- observation off/on の allocation と CPU/block/goroutine profileについて、再現 command、入力、correctness counter、要約を保存する。
+- 同一入力に対する scalar/SIMD build 間の semantic output と、worker 1/N の output/order/count を differential test する。
+- baseline manifest と test/benchmark source だけで比較条件を再構成でき、特定開発者の未追跡 file や手順に依存しない。
 
 ## test の層
 
@@ -40,7 +50,7 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 | integration | 公式 plugin 間、CLI、WASM、reference implementation | 最上位 integration module |
 | surface end-to-end | library/CLI/browser/demo の利用経路 | 対象 distribution |
 
-small hermetic fixture、cross-plugin fixture、full conformance corpus、benchmark corpus を同じ directory/command に混在させない。詳細な tier と manifest/cache は [fixtures](fixtures.md) を参照する。
+small hermetic fixture、cross-plugin fixture、full conformance corpus、benchmark corpus を同じ directory/command に混在させない。詳細なtierとdata submoduleまたはmanifest/cacheによる取得方針は [fixtures](fixtures.md) を参照する。
 
 ## foundation test
 
@@ -114,7 +124,7 @@ integration/
 
 - native/CGO/FFmpeg reference は integration または明示 reference tier に置く。
 - third-party 相当の video/subtitle/custom schema fixture を含める。
-- small fixture だけを repository/module に置き、full corpus は外部 manifest/cache を使う。
+- small fixture だけを product repository/module の通常配布対象に置き、full corpus は任意取得のdata submoduleまたは外部manifest/cacheを使う。
 - foundation と plugin 固有 unit test は integration asset に依存しない。
 
 ## generator
@@ -173,7 +183,7 @@ root runner は test semantics を独自に再実装せず、manifest から必�
 
 | Gate | 検証内容 | 詳細 |
 |---|---|---|
-| structure | dependency direction、module graph、Git submodule不在、API snapshot | [architecture](architecture.md) |
+| structure | dependency direction、module graph、source code submodule不在、data submodule policy、API snapshot | [architecture](architecture.md) |
 | build | supported target、CGO-off standard、semantic build tag | [supply](supply.md) |
 | correctness | unit/property/fuzz/race、integration、failure injection | この文書 |
 | performance | scalar/SIMD differential、worker/chunk variation、paired benchmark | [performance](performance.md) |
@@ -191,9 +201,11 @@ CI matrix は root の machine-readable manifest から生成し、skip、未実
 
 最低限、公式 optimized variant は reference/scalar との differential testを持ち、lossless codec は logical output exact、Stable は同じ signature の artifact exact、Portable は宣言 domain の cross-target artifact exact を検査する。`Fast` でも parser、CRC、timestamp、ordering、item count、bounds validation を緩めない。
 
-## 完了条件
+## 文書全体の完了条件
 
-- M0 baseline が意味・allocation・profile・paired benchmark を含む。
+この節は品質・検証基盤の最終状態を示す。M0 単独の完了判定には、上記「M0 完了条件」だけを用いる。
+
+- M0 固有の完了条件を満たす。
 - foundation の通常 test が公式 plugin/native/full corpus を必要としない。
 - 公式・第三者 plugin が同じ public testkit を利用する。
 - test-only CGO/reference dependency が production/standard graphへ入らない。

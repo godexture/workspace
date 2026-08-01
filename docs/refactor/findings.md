@@ -50,7 +50,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F30 | 公式 CLI が plugin を固定 import する一方、明示 composition を低水準 API だけにすると、通常利用者と custom Host 作者のどちらかへ過剰な負担が移る。 | [plugins](plugins.md)、[surfaces](surfaces.md)、[experience](experience.md) |
 | F31 | Go の live manifest/Plan/error を wire DTO に流用し、TypeScript 側も固定 role の手書き型と無検証 `JSON.parse` を使うため、内部変更と wire compatibility が結合している。 | [web](web.md)、[surfaces](surfaces.md) |
 | F32 | WASM が `runtime.Gosched` loop、全量 `[]byte`/`bytes.Buffer` copy、global job map、暗黙 lifetime に依存し、large input、cancel、dispose、browser event loop に弱い。 | [web](web.md) |
-| F33 | Git submodule と16 moduleの境界が責務・release independenceに対応せず、横断変更に tag/submodule pointer の同期を要求する。 | [architecture](architecture.md)、[inventory](inventory.md) |
+| F33 | source code の Git submodule と16 moduleの境界が責務・release independenceに対応せず、横断変更に tag/submodule pointer の同期を要求する。 | [architecture](architecture.md)、[inventory](inventory.md) |
 | F34 | source LICENSE だけでは plugin、transitive dependency、generated data、test asset、npm/WASM artifact の license/provenance を保証できない。 | [supply](supply.md) |
 
 ## P2: 開発・運用・仕上げ

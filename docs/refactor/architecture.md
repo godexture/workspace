@@ -35,7 +35,7 @@ package を分けるためだけに repository/module を分けない。import p
 
 ### 設計・pre-v1期間
 
-source を一つの monorepo に統合し、Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。
+source を一つの monorepo に統合し、source code の Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。code と独立して更新・配布される任意取得の test/demo asset は data submodule として維持できる。`example/assets`、`example/web/assets`、FLAC conformance corpus がこれに該当する。通常 build/test の必須入力や production dependency にせず、新しい source submodule は追加しない。
 
 ```text
 module github.com/godexture/godec
@@ -52,7 +52,7 @@ target/dependency が独立するものだけ nested module:
 └─ optional playback/native adaptors
 ```
 
-full conformance/benchmark corpus は product module に含めず、[fixtures](fixtures.md) の manifest/cache で管理する。
+full conformance/benchmark corpus は product module に含めず、[fixtures](fixtures.md) の data submodule または manifest/cache policy で版・取得tier・provenanceを管理する。
 
 ### contract 安定後
 
@@ -75,6 +75,19 @@ nested module は、次のいずれかに具体的な実益がある場合だけ
 - browser、device、tool 等、target/artifact が独立している。
 - foundation と異なる release cadence が利用者に必要である。
 - module download size の実測により selective download が必要である。
+
+### M1 完了条件
+
+M1 は repository、package identity、module/workspace topology を固定する milestone であり、最終 foundation contract や全 production import の層分離までは要求しない。
+
+- product source とその履歴が monorepo に入り、source code の Git submodule が残っていない。
+- data/asset gitlink は上記3件を独立した任意取得dependencyとして明示し、通常build/testからの分離、固定revision、license、未取得時の挙動が記録されている。
+- 公式 plugin の最終 package path が `plugin/<family>` に固定され、後の family module split で import path と reflection/marker identity が変わらない。
+- root product module と target/dependency が独立する nested module だけで一方向の module DAGを作る。
+- clean checkout から、未追跡 `go.work` や事前生成済み実行fileに依存せず、tracked source/manifestを使って全moduleのbuild/test/generateを起動できる。
+- Go native scalar/SIMD、WASM target、JS type/test の対象とskipを区別して検証し、package/repository metadataも新しいmonorepo pathを指す。
+
+`core`/`sdk` の責務再編は M2/M3、Format/Codec/Metadata 間の直接importを Binding/compositionへ移す作業は M8 で行う。ただし、その移行で公式 plugin の公開 package path を再変更しない。
 
 ## foundation package
 
@@ -202,11 +215,13 @@ Job + input snapshot + Catalog
 - module split 前でも、規格 family は foundation の public package だけに依存させる。
 - 現行 directory ごとの処遇は [inventory](inventory.md)、監査根拠は [findings](findings.md) を正本とする。
 
-## 完了条件
+## 文書全体の完了条件
+
+この節は最終 architecture の gate であり、M1 単独の完了判定には上記「M1 完了条件」だけを用いる。
 
 - foundation から plugin/standard/surface への依存がない。
 - plugin family と surface を foundation contract から独立して build/test できる。
-- monorepo 内の module graph が一方向で、Git submodule を必要としない。
+- monorepo 内の source module graph が一方向で、source code の Git submodule を必要としない。data submodule は任意取得の test/demo asset に限る。
 - public package が第三者 contract、private package が Host/implementation detail に対応する。
 - package path と marker identity を変えず、stable v1 前に family module split を実施または不要と判断できる。
 - runtime internal を交換しても、公式・第三者 plugin の public API を変更しない。

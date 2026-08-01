@@ -110,11 +110,11 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | 現在 | 分類 | 目標 |
 |---|---|---|
 | `plugins/*/test/config` | 統合 | testkit の config fixture。production package と同じ validation を通す |
-| `plugins/codec-flac/test` | 分割 | small codec fixture は plugin、format との roundtrip は integration。310 MB の full conformance corpus/submodule は digest/license 付き外部 corpus manifest へ移す |
+| `plugins/codec-flac/test` | 分割 | small codec fixture は plugin、format との roundtrip は integration。full conformance corpus は任意取得のdata submoduleとして維持し、通常testとrequired conformance testを明示的に分ける |
 | `plugins/codec-mp3/test/minimp3` | test-only 維持 | reference adaptor として optional/native test 境界に置く。公式 production graphへ含めない |
 | `plugins/*/test/snapshot-generator` | 移動 | review 対象 artifact を作る integration/tool command。production module に含めない |
 | `plugins/codec-pcm/test/testdata` | 置換 | 300 MB 超の source/decimal sample snapshot を procedural small vector、streaming digest、metric、failure diff へ置換。origin/license を manifest 化 |
-| `plugins/codec-mp3/test/testdata` | 分割 | small reference vector は plugin、full/native comparison corpus は integration manifest/cache |
+| `plugins/codec-mp3/test/testdata` | 分割 | small reference vector は plugin、full/native comparison corpus は任意取得のdata submoduleまたはintegration manifest/cache |
 | `core/test/assets` | 移動・重複削除 | foundation から公式 WAVE/PCM asset dependency を除去し、cross-plugin fixture は integration へ移す |
 
 ## CLI、bindings、examples
@@ -136,7 +136,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `example/web/client` | 維持・置換 | catalog-driven Host client。server/WASM capability handshake、requested/resolved graph 表示、generic schema editor を持ち、audio-only wire model を所有しない |
 | `example/web/client/src/graph` | 置換 | descriptor snapshot と独自 semantic `compileGraph` を削除。selector/config patch/catalog fingerprint を保存し、Host Plan を正本にして unresolved node と migration を扱う |
 | `example/web/client/src/conversion/backend` | 維持・整理 | server/worker transport を共通 Event/Plan/Result DTO へ正規化する adaptor。progress/planning semantics を再実装しない |
-| `example/assets`、`example/web/assets` | 統合 | 同一 media の重複 submodule/directory を一つの manifest/source にする。web build は検証済み asset を取得し、大容量 demo は optional |
+| `example/assets`、`example/web/assets` | 維持・整理 | 同一asset repositoryを各exampleが独立して取得できるdata submoduleとして維持できる。固定revisionの関係を明示し、web buildも同じ検証済みsourceを使い、大容量demoはoptionalにする |
 | `example/web/{client,server}/Dockerfile` | 置換 | root monorepo context、frozen Bun lock、current Go source、digest-pinned base、verified local assetでhermetic build。remote Git `ADD`とfloating tagを使わない |
 | `example/web/compose.yaml`、`Makefile`、`scripts` | 整理 | rootのdocumented dev/build commandへ接続し、platform固有helperは薄いadaptorにする |
 
@@ -153,7 +153,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `tools/cmd/generate` | 維持・強化 | bounded deterministic repository generator runner |
 | `tools/cmd/test-runner` | 維持・修正 | Scanner 上限、parse failure、child cancel、structured result を修正 |
 | `tools/cmd/bulk` | 置換後削除候補 | 多数 repository/module の version 操作は monorepo release plan へ統合。残る一般操作だけ workspace tool にする |
-| `tools/internal/workspace` | 簡素化 | nested module matrix の列挙に限定。submodule/repository 横断の複雑性を除く |
+| `tools/internal/workspace` | 簡素化 | nested module matrix の列挙に限定。source submodule/repository 横断の複雑性を除く。data submoduleの取得はtest/demo tier側で扱う |
 | `tools/internal/cli` | 維持・非公開 | tool command 共通 error/exit helper |
 | root `package.json`/`bun.lock` | 維持・整理 | JavaScript workspace と toolchain lock の正本。Go/WASM release manifest と npm artifact provenance へ接続 |
 | root build/tool manifest | 新設 | Go/TinyGo/Bun/TypeScript、external reference tool、container base、artifact input/output、license policyを固定 |
@@ -183,9 +183,18 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 - `internal/{catalog,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}`: host implementation
 - `standard`: official component と codec/metadata Binding の composition
 - `integration`: cross-module、reference adaptor、surface end-to-end test
-- `integration/corpus`: external conformance/benchmark corpus の digest/license/size manifest と bounded fetch/cache
+- `integration/corpus`: external conformance/benchmark corpus の data submodule または manifest/cache、license、size、任意取得の test tier
 
-## 棚卸しの完了条件
+## M1 で使う棚卸し条件
+
+- 旧 repository/submodule の product source と履歴が monorepo に揃い、欠落した package、generator source、build manifest がない。
+- 現行 production/test/tool/surface package が、この文書の移行先または削除対象のいずれかへ割り当てられている。
+- 公式 plugin は M1 で確定する `plugin/<family>` path へ配置し、同じ family 内の Codec/Format/Parser 実装を後から `internal` へ再編しても公開 import path と marker identity が変わらない。
+- M2以降へ残す責務再編・直接import・旧API削除を未完了事項として列挙し、M1完了と取り違えない。
+
+## 文書全体の移行完了条件
+
+この節は棚卸し対象をすべて新 architecture へ移し終えた時の gate であり、M1 単独には適用しない。
 
 - 現行 production package は上記のいずれかへ割り当てられている。
 - `sdk`、旧 factory/resolver/routing/registry、global façade は互換層として残らない。

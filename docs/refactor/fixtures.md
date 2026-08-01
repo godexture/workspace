@@ -5,9 +5,9 @@
 code、small hermetic fixture、full conformance corpus、benchmark corpus、demo media を同じ repository/module 配布物として扱わない。
 
 - 通常の `go test` は small hermetic fixture と procedural generator だけで offline に完結する。
-- full conformance corpus は content-addressed manifest で取得し、integration job が明示的に使う。
+- full conformance corpus は data submodule または content-addressed manifest で版を固定し、integration job が明示的に取得して使う。
 - native/reference comparison と長時間 benchmark corpus はさらに別の opt-in tier にする。
-- example asset は一つの正本から build/package し、同じ大容量 media を directory/submodule ごとに複製しない。
+- example asset は独立した一つのrepositoryを正本にできる。各exampleを単独で利用できることに実益があれば、同じrevisionを複数pathのdata submoduleとして参照してよい。
 - fixture/corpus の source、license、digest、生成 recipe を production dependency と同じ水準で追跡する。
 
 monorepo は code と contract を atomic に変更するための境界であり、数百 MiB の外部 corpus をすべて Git/Go module zip へ含めるという意味ではない。
@@ -30,6 +30,8 @@ monorepo は code と contract を atomic に変更するための境界であ�
 PCM の五つの `.snapshot` は各約53 MiBで、decoded sample を `0.000000` のような十進文字列一行ずつに展開している。binary source より snapshot が大きく、float formatting、改行、巨大 diff、review不能な generated text に storage/CI cost を払っている。
 
 FLAC conformance corpus は専用 Git submoduleで、license/source information がある一方、最大約87 MiBの単体 fileを含む。これは codec conformance には価値があるが、foundation/product module の download や通常 unit test に含める理由にはならない。
+
+M1 後も data/asset gitlink として `example/assets`、`example/web/assets`、`plugins/codec-flac/test/testdata/conformance` の3件を意図的に残す。これは product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
 
 PCM corpus には同じ水準の README/license/origin file が見当たらない。生成物であっても source media と期待値の由来、生成 tool/version、再配布条件を明示する必要がある。
 
@@ -69,7 +71,7 @@ code と少数の小型 media は `integration` nested module に置ける。fou
 - 将来の video/subtitle/container corpus
 - native/reference decoder comparison
 
-通常 test と release gate では manifest が要求する corpus を明示取得する。network がない環境では「test success」と装って skip せず、`corpus unavailable` と `not requested` を structured result で区別する。release conformance job は unavailable を failure にする。
+通常 test と release gate では、data submoduleまたはmanifestが固定するcorpusを明示取得する。network がない環境では「test success」と装って skip せず、`corpus unavailable` と `not requested` を structured result で区別する。release conformance job は unavailable を failure にする。
 
 ### Tier 3: benchmark/stress
 
@@ -111,9 +113,16 @@ generator と codec implementation が同じ誤りを共有しないよう、次
 - encode→decode property
 - scalar/optimized differential
 
-## corpus manifest
+## corpus の版と取得方法
 
-外部 corpus は Git submodule の checkout stateでなく、review可能な content-addressed manifest で固定する。
+外部corpusには、用途に応じて次の二方式を使える。
+
+- data submodule: 一つの独立repositoryをcorpus全体として再利用し、Git revisionで版を固定する。全体取得で問題なく、upstreamの履歴・license・directory構造をそのまま使いたい場合に選ぶ。現行FLAC conformance corpusはこの方式を維持する。
+- manifest/cache: 複数sourceを束ねる、一部fileだけ取得する、Git以外のarchiveを使う、同一contentを複数corpus間でcache共有する場合に選ぶ。
+
+いずれもsource、revision/version、license、取得sizeをreview可能にする。submoduleをmanifestへ機械的に置き換えず、取得選択性やcache共有という具体的な必要が生じた時だけ移行する。
+
+manifest方式を選ぶ場合は、次のようなcontent-addressed記述を使う。
 
 ```text
 Corpus {
@@ -140,7 +149,7 @@ Corpus {
 - testはfilesystem walk順でなくmanifest順に実行する。
 - corpus version更新は file/digest/license/test expectation の差分としてreviewする。
 
-fetcher は repository tool として次を満たす。
+manifest方式のfetcherを実装する場合は次を満たす。
 
 - user cache directoryまたはCI cacheへのatomic download
 - partial downloadのresumeまたは安全な破棄
@@ -155,36 +164,38 @@ corpus 自体を Go `embed` したり production binary から参照したりし
 
 ## repository と module boundary
 
-推奨 layout:
+例:
 
 ```text
 integration/                 nested Go module
 ├─ testdata/
 │  └─ small/                small redistributable fixtures only
 ├─ corpus/
-│  ├─ flac.json
-│  ├─ mp3.json
+│  ├─ flac/                 optional data submodule
+│  ├─ mp3.json              manifest when selective fetch is useful
 │  └─ stress.json
 └─ internal/fixture/         procedural/reference helpers
 
 example/
-├─ assets.json               demo asset manifest
-└─ web/                      build consumes manifest
+├─ assets/                   shared asset repository as data submodule
+└─ web/
+   └─ assets/                same source mounted here when standalone use matters
 ```
 
-full corpus は workspace 外の content-addressed cache に置く。Git submoduleを使わない。`integration` nested module は native/reference dependency と小型 fixture を product moduleから隔離するが、数百 MiB の corpus を module zipへ移すだけの場所にはしない。
+full corpus は product module zipへ含めず、data submoduleなら明示的なcheckout、manifest方式ならworkspace外のcontent-addressed cacheへ置く。`integration` nested module は native/reference dependency と小型 fixture を product moduleから隔離するが、数百 MiB の corpus を module zipへ移すだけの場所にはしない。
 
 test helperのうち第三者 pluginにも有用な generator/assertionだけを public `testkit` へ置く。公式 corpus path、download cache、reference executableは integration internal に保つ。
 
 ## example asset
 
-exampleとweb clientが同じmediaを使う場合、source asset/manifestは一つにする。
+exampleとweb clientが同じmediaを使う場合、独立したasset repositoryを一つの正本にする。各exampleを単独で初期化できる必要があるなら、同じrepositoryを複数のgitlink pathから参照してよい。
 
-- build/dev command が同じ verified cache/sourceから必要なtargetへcopy/link/packageする。
+- 複数pathのpinを同じrevisionにするか、異なる版が必要な理由を明示する。
+- build/dev command はcheckout済みsubmoduleまたは同じ固定revisionのsourceから必要なtargetへcopy/packageする。
 - browser demoに37 MiBの無圧縮WAVEを既定bundleしない。短い小型fixtureをdefaultにする。
 - 長い/high-quality demoはoptional downloadとし、size/content type/licenseを表示する。
 - serverとclient buildが別artifactを必要としてもsource digestは共有する。
-- application testはassetの存在だけでなくmanifest digestを検査する。
+- application testは通常test用の小型fixtureと、任意取得のdemo assetを区別する。release/demo buildは使用したasset revisionを記録する。
 
 symbolic linkはWindows、archive、npm publishで扱いが不安定なため、source distributionの正本として依存しない。
 
@@ -220,17 +231,18 @@ benchmark:
   selected Tier 3 + paired result/profile artifact
 ```
 
-各jobは requested corpus version、cache hit/miss、実行/skip/error数、総input bytesを機械可読に報告する。corpusが巨大だからという理由でtimeoutを無制限にせず、tag/shardとbudgetを使う。
+各jobは requested corpus version、submodule checkoutまたはcacheの利用状態、実行/skip/error数、総input bytesを機械可読に報告する。corpusが巨大だからという理由でtimeoutを無制限にせず、tag/shardとbudgetを使う。
 
 ## 完了条件
 
 - product module zipと通常testがfull conformance/benchmark corpusを含まない。
 - clean checkoutのTier 0がnetwork/native dependencyなしで完了する。
-- full corpusがsource revision、digest、license、sizeを持つmanifestで固定される。
-- Git submoduleをcode/corpusのversion pinに使わない。
+- full corpusとdemo assetがsource revision/version、license、sizeを持つdata submoduleまたはmanifestで固定される。
+- source codeのversion pinにGit submoduleを使わない。data submoduleは独立した任意取得のtest/demo assetに限定する。
+- corpus未取得時に通常testが0件実行を成功とせず、`not requested`、`unavailable`、required jobのfailureを区別する。
 - PCMの一行一sample巨大snapshotがsmall vector、digest、metric、failure diffへ置換される。
-- 同一demo mediaがcore/example/web directoryへ重複保存されない。
+- 同一demo mediaは一つのasset repositoryを正本とし、複数pathに置く場合も独立した内容や履歴へforkしない。
 - foundation testが公式format/codec assetへ依存しない。
-- corpus fetch/extractがatomic、bounded、digest-verified、path-safeである。
+- manifest/cache方式を使うcorpusのfetch/extractはatomic、bounded、digest-verified、path-safeである。
 - third-party pluginがpublic testkitのsmall generator/assertionを利用できる。
 - release artifactのSBOM/provenanceが同梱testdata/example assetのlicenseも追跡する。
