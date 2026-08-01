@@ -1,12 +1,12 @@
 # Godec リファクタリング計画
 
-> 実装進捗: **0 / 12 マイルストーン完了（M0, M1 進行中）**
+> 実装進捗: **2 / 12 マイルストーン完了（M0, M1 完了）**
 >
 > この文書を、リファクタリング全体の概要・実装順・進捗の正本とする。詳細資料は設計仕様を説明するものであり、個別に進捗を管理しない。
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> [checkpoint.md](refactor/checkpoint.md) の再監査により、M0/M1 とも一旦「完了」とした判定を撤回し「進行中」へ差し戻した。differential harness の false positive、filter chain benchmark の計測範囲、metadata/lifecycle failure injection の未検査 phase、baseline artifact の再現可能性、generator bootstrap の cross-platform 対応、module relation の完了条件が再監査で不足と判明したため、checkpoint.md が正本の未解消事項リストと再判定の順序を保持する。
+> [checkpoint.md](refactor/checkpoint.md) の再監査で判明した未解消事項（differential harness の false positive、filter chain benchmark の計測範囲、metadata/lifecycle failure injection の未検査 phase、baseline artifact の再現可能性、generator bootstrap の cross-platform 対応、module relation の完了条件、M1 後の path/command 同期）をすべて解消し、scalar/SIMD 両 build の全 test（各66 package）green、対象 nested module の `GOWORK=off` build、WASM target build を再検証した上で M0/M1 を完了へ更新した。詳細は [baseline.md](refactor/baseline.md) を正本とする。なお、repository 全体を対象にした `tools/cmd/differential` の横断実行は実行時間が長すぎるため、baseline/CI の必須証跡から外した（tool 自体とその unit/integration test は維持する）。
 
 ## 目標
 
@@ -51,8 +51,8 @@ application / CLI / WASM
 
 | ID | 状態 | マイルストーン | 完了時に得られるもの | 詳細 |
 |---|---|---|---|---|
-| M0 | 進行中 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
-| M1 | 進行中 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
+| M0 | 完了 | 現行基準の固定 | decode/encode/roundtrip、metadata伝播、現行stream経路、failure semantics、allocation/profile、differential/paired benchmark の再現可能な比較基準 | [performance](refactor/performance.md)、[quality](refactor/quality.md) |
+| M1 | 完了 | repository と release topology の再編 | source monorepo、最終 `plugin/<family>` path、単一の設計期 release train、一方向の module DAG、clean-checkout bootstrap | [architecture](refactor/architecture.md)、[inventory](refactor/inventory.md) |
 | M2 | 未着手 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | 未着手 | media・metadata・I/O contract | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | 未着手 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program` | [planner](refactor/planner.md)、[runtime](refactor/runtime.md) |
@@ -73,7 +73,7 @@ M0〜M5 は foundation を固めるための先行作業である。M1 は将来
 | 知りたいこと | 読む資料 |
 |---|---|
 | 確定した方針、延期した判断 | [decisions.md](refactor/decisions.md) |
-| M0/M1 を完了するための具体的な残作業 | [checkpoint.md](refactor/checkpoint.md) |
+| M0/M1 完了までの backlog と再監査の解消記録 | [checkpoint.md](refactor/checkpoint.md) |
 | M0 baseline の再現手順・toolchain・所見の要約 | [baseline.md](refactor/baseline.md) |
 | package/module/repository の境界、依存方向 | [architecture.md](refactor/architecture.md) |
 | plugin identity、composition、component lifecycle、custom Host | [plugins.md](refactor/plugins.md) |
