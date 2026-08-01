@@ -3,6 +3,7 @@ package conversion_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"testing"
 
 	"github.com/godexture/godec/core/domain/manifest"
@@ -156,4 +157,212 @@ func writeTestWAVWithTitle(t *testing.T, buf *audio.Buffer, title string) {
 	if err := muxer.WriteTrailer(); err != nil {
 		t.Fatalf("WriteTrailer() error = %v", err)
 	}
+}
+
+// TestBuildPreservesOrderedMultiValueMetadataThroughOmittedCodecRoute
+// extends the single-key baseline above to metadata.KeyArtist, a `multiple`
+// key: two IART INFO subchunks in the source must survive the decode/
+// re-encode route above as two ordered values, not collapse to one or
+// reorder, per docs/refactor/checkpoint.md M0-R3.
+func TestBuildPreservesOrderedMultiValueMetadataThroughOmittedCodecRoute(t *testing.T) {
+	wavBytes := buildTestWAVWithInfoTags(t, []wavInfoTag{
+		{id: "IART", value: "Artist One"},
+		{id: "IART", value: "Artist Two"},
+	}, nil)
+
+	output := audio.NewBuffer(nil)
+	built, err := conversion.Build(context.Background(), conversion.InputSet{Main: bytes.NewReader(wavBytes)}, output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bundle := demuxWAVMetadata(t, output.Bytes())
+	metadata.AssertBundleSlice(t, &bundle, []metadata.KeyArtist{"Artist One", "Artist Two"})
+}
+
+// TestBuildOverwritesDuplicateSingleValueMetadataThroughOmittedCodecRoute
+// pins today's behavior for a `single` key (metadata.KeyComment) repeated
+// in the source: baseBundle.set unconditionally overwrites by type, so the
+// last ICMT subchunk read wins and the first is silently discarded. This is
+// exactly the kind of duplicate-handling the checkpoint asks to freeze,
+// whether or not "last wins" is the eventual desired policy.
+func TestBuildOverwritesDuplicateSingleValueMetadataThroughOmittedCodecRoute(t *testing.T) {
+	wavBytes := buildTestWAVWithInfoTags(t, []wavInfoTag{
+		{id: "ICMT", value: "First Comment"},
+		{id: "ICMT", value: "Second Comment"},
+	}, nil)
+
+	output := audio.NewBuffer(nil)
+	built, err := conversion.Build(context.Background(), conversion.InputSet{Main: bytes.NewReader(wavBytes)}, output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bundle := demuxWAVMetadata(t, output.Bytes())
+	metadata.AssertBundleValue(t, &bundle, metadata.KeyComment("Second Comment"))
+}
+
+// TestBuildDropsUnrecognizedMetadataThroughOmittedCodecRoute pins the
+// current silent-loss behavior the checkpoint asks to make explicit: a WAV
+// INFO subchunk tag with no case in mapWavInfoTag (here "IENG", Engineer)
+// has no raw fallback at parse time, so it disappears completely -- not
+// merely unmapped to a known key, but absent from the Bundle's raw map too,
+// with no warning of any kind. A known title tag alongside it is the
+// control proving the rest of metadata handling still worked.
+func TestBuildDropsUnrecognizedMetadataThroughOmittedCodecRoute(t *testing.T) {
+	wavBytes := buildTestWAVWithInfoTags(t, []wavInfoTag{
+		{id: "INAM", value: "Known Title"},
+		{id: "IENG", value: "Should Be Lost"},
+	}, nil)
+
+	output := audio.NewBuffer(nil)
+	built, err := conversion.Build(context.Background(), conversion.InputSet{Main: bytes.NewReader(wavBytes)}, output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bundle := demuxWAVMetadata(t, output.Bytes())
+	metadata.AssertBundleValue(t, &bundle, metadata.KeyTitle("Known Title"))
+	if raw := bundle.AllRaw(); len(raw) != 0 {
+		t.Fatalf("unrecognized INFO tag left a trace in raw metadata: %v (loss is expected to be total, not partial)", raw)
+	}
+}
+
+// TestBuildPreservesRawCueChunkThroughOmittedCodecRoute is the
+// conversion.Build()-route counterpart to format-wav's own lower-level
+// TestWAVMetadataRoundTrip: an opaque "cue " chunk (preserved via
+// metadata.Bundle's raw map, since Godec has no typed cue-point model) must
+// still come out byte-identical after going through the full decode/
+// re-encode route this package tests, not just a direct demux/mux
+// round-trip.
+func TestBuildPreservesRawCueChunkThroughOmittedCodecRoute(t *testing.T) {
+	cuePayload := []byte{0x01, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD}
+	wavBytes := buildTestWAVWithInfoTags(t, nil, cuePayload)
+
+	output := audio.NewBuffer(nil)
+	built, err := conversion.Build(context.Background(), conversion.InputSet{Main: bytes.NewReader(wavBytes)}, output, conversion.Spec{
+		Muxer: conversion.PluginSpec{Name: "wav"},
+	}, pipeline.ObservationOff)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	defer built.Close()
+	if err := built.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bundle := demuxWAVMetadata(t, output.Bytes())
+	raw, exists := bundle.GetRaw("cue ")
+	if !exists || len(raw) == 0 || !bytes.Equal(raw[0], cuePayload) {
+		t.Fatalf("raw cue chunk = %v (exists=%v), want %v", raw, exists, cuePayload)
+	}
+}
+
+// wavInfoTag is one LIST/INFO subchunk (id, value) pair for
+// buildTestWAVWithInfoTags, in the order it should appear in the file.
+type wavInfoTag struct {
+	id    string
+	value string
+}
+
+// buildTestWAVWithInfoTags hand-assembles a minimal RIFF/WAVE byte stream
+// (fmt chunk + a short PCM data chunk) with a LIST/INFO chunk carrying the
+// given subchunks in order, and an optional raw "cue " chunk -- unlike
+// writeTestWAVWithTitle, this does not go through wav.NewMuxerEngine, whose
+// metadata writer only ever emits one subchunk per known key from a typed
+// Bundle and so cannot produce the duplicate/unrecognized-tag inputs these
+// tests need to drive the demuxer with.
+func buildTestWAVWithInfoTags(t *testing.T, tags []wavInfoTag, cuePayload []byte) []byte {
+	t.Helper()
+	const sampleRate = 8000
+	const numSamples = 4000
+
+	samples := make([]int16, numSamples)
+	for i := range samples {
+		samples[i] = int16(float64(i%200-100) * 40)
+	}
+	data := make([]byte, len(samples)*2)
+	for i, s := range samples {
+		data[2*i] = byte(s)
+		data[2*i+1] = byte(s >> 8)
+	}
+
+	var chunks bytes.Buffer
+	chunks.WriteString("fmt ")
+	_ = binary.Write(&chunks, binary.LittleEndian, uint32(16))
+	_ = binary.Write(&chunks, binary.LittleEndian, uint16(1)) // PCM
+	_ = binary.Write(&chunks, binary.LittleEndian, uint16(1)) // mono
+	_ = binary.Write(&chunks, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(&chunks, binary.LittleEndian, uint32(sampleRate*2)) // byte rate
+	_ = binary.Write(&chunks, binary.LittleEndian, uint16(2))            // block align
+	_ = binary.Write(&chunks, binary.LittleEndian, uint16(16))           // bits per sample
+
+	if len(tags) > 0 {
+		var info bytes.Buffer
+		info.WriteString("INFO")
+		for _, tag := range tags {
+			info.Write(wavRIFFChunk(tag.id, append([]byte(tag.value), 0)))
+		}
+		chunks.Write(wavRIFFChunk("LIST", info.Bytes()))
+	}
+
+	if cuePayload != nil {
+		chunks.Write(wavRIFFChunk("cue ", cuePayload))
+	}
+
+	chunks.Write(wavRIFFChunk("data", data))
+
+	var out bytes.Buffer
+	out.WriteString("RIFF")
+	_ = binary.Write(&out, binary.LittleEndian, uint32(4+chunks.Len()))
+	out.WriteString("WAVE")
+	out.Write(chunks.Bytes())
+	return out.Bytes()
+}
+
+// wavRIFFChunk builds one RIFF chunk (4-byte id, little-endian uint32 size,
+// payload, zero pad byte if the payload length is odd), matching the
+// layout plugin/wave/internal's parser expects.
+func wavRIFFChunk(id string, payload []byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(id)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(payload)))
+	buf.Write(payload)
+	if len(payload)%2 == 1 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// demuxWAVMetadata parses wavBytes with the WAVE demuxer and returns its
+// metadata.Bundle, failing the test on any error.
+func demuxWAVMetadata(t *testing.T, wavBytes []byte) metadata.Bundle {
+	t.Helper()
+	demuxer, err := wav.NewDemuxerEngine(bytes.NewReader(wavBytes), wav.MustNewDemuxerConfig())
+	if err != nil {
+		t.Fatalf("NewDemuxerEngine() error = %v", err)
+	}
+	_, bundle, err := demuxer.Analyze()
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	return bundle
 }
