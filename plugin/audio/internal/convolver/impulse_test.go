@@ -1,6 +1,7 @@
 package convolver
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/godexture/godec/plugin/audio/internal/config"
 	"github.com/godexture/godec/sdk/audio"
 	"github.com/godexture/godec/sdk/dsp/fft"
+	"github.com/godexture/godec/sdk/engine"
 )
 
 // TestBuildPartitionsWorkerCountDoesNotChangeOutput is the convolver's
@@ -58,7 +60,10 @@ func TestBuildPartitionsWorkerCountDoesNotChangeOutput(t *testing.T) {
 // struct comparison doesn't prove the *filter's actual output samples* are
 // worker-count invariant. Drive the real Engine (Prepare/SendFrame/
 // ReceiveFrame, the same path production code uses) with impulse-building
-// pool sizes 1/4/16 and compare the full processed sample stream.
+// pool sizes 1/4/16 and compare frame count, each frame's sample count and
+// PTS, and the sample data itself -- not just a flat concatenated sample
+// stream, which would miss a regression that reshuffles frame boundaries
+// or timestamps while keeping the sample sequence intact.
 func TestEngineWorkerCountDoesNotChangeEndToEndOutput(t *testing.T) {
 	const hop = 64
 	ir := make([]float32, hop*10)
@@ -71,6 +76,9 @@ func TestEngineWorkerCountDoesNotChangeEndToEndOutput(t *testing.T) {
 	}
 
 	want := runConvolverEndToEnd(t, ir, input, nil)
+	if len(want) == 0 {
+		t.Fatal("sequential build produced no output frames")
+	}
 
 	for _, workers := range []int{1, 4, 16} {
 		pool := registry.NewWorkerPool(workers)
@@ -78,23 +86,45 @@ func TestEngineWorkerCountDoesNotChangeEndToEndOutput(t *testing.T) {
 
 		got := runConvolverEndToEnd(t, ir, input, pool)
 		if len(got) != len(want) {
-			t.Fatalf("workers=%d: output length = %d, want %d", workers, len(got), len(want))
+			t.Fatalf("workers=%d: output frame count = %d, want %d", workers, len(got), len(want))
 		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("workers=%d: sample %d = %v, want %v (end-to-end output differs from the sequential build)", workers, i, got[i], want[i])
+		for f := range want {
+			if got[f].pts != want[f].pts {
+				t.Fatalf("workers=%d: frame %d PTS = %v, want %v", workers, f, got[f].pts, want[f].pts)
+			}
+			if len(got[f].samples) != len(want[f].samples) {
+				t.Fatalf("workers=%d: frame %d sample count = %d, want %d", workers, f, len(got[f].samples), len(want[f].samples))
+			}
+			for i := range want[f].samples {
+				if got[f].samples[i] != want[f].samples[i] {
+					t.Fatalf("workers=%d: frame %d sample %d = %v, want %v (end-to-end output differs from the sequential build)", workers, f, i, got[f].samples[i], want[f].samples[i])
+				}
 			}
 		}
 	}
 }
 
+// receivedFrame is one decoded output frame's observable contract: its
+// timestamp and sample data. Concatenating every frame's samples into one
+// flat slice (the previous shape of this test) would hide a regression
+// that reshuffles frame boundaries or PTS while the overall sample
+// sequence stays byte-identical.
+type receivedFrame struct {
+	pts     media.Pts
+	samples []float32
+}
+
 // runConvolverEndToEnd builds a fresh Engine, prepares it against pool (nil
 // for sequential impulse construction), pushes input through SendFrame/
-// ReceiveFrame in one block plus a Flush, and returns the concatenated
-// output samples.
-func runConvolverEndToEnd(t *testing.T, impulse, input []float32, pool *registry.WorkerPool) []float32 {
+// ReceiveFrame in one block plus a Flush, and returns each decoded output
+// frame's PTS and sample data in delivery order. It releases the input
+// frame after SendFrame (the SendFrame contract used throughout this
+// package: see plugin/audio/filters_test.go's send helper) and always
+// closes the Engine, so a failure partway through still exercises the
+// Engine's queued-frame cleanup on Close instead of leaking it silently.
+func runConvolverEndToEnd(t *testing.T, impulse, input []float32, pool *registry.WorkerPool) []receivedFrame {
 	t.Helper()
-	engine, err := New(config.ConvolutionConfig{
+	eng, err := New(config.ConvolutionConfig{
 		ImpulseResponse: [][]float32{impulse},
 		WetDryMix:       1,
 		BlockSize:       64,
@@ -102,7 +132,12 @@ func runConvolverEndToEnd(t *testing.T, impulse, input []float32, pool *registry
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if err := engine.Prepare(registry.ResourceGrant{Pool: pool}); err != nil {
+	defer func() {
+		if err := eng.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if err := eng.Prepare(registry.ResourceGrant{Pool: pool}); err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 
@@ -112,24 +147,32 @@ func runConvolverEndToEnd(t *testing.T, impulse, input []float32, pool *registry
 		t.Fatalf("audio.Encode() error = %v", err)
 	}
 	var frame media.Frame = encoded
-	if err := engine.SendFrame(&frame); err != nil {
-		t.Fatalf("SendFrame() error = %v", err)
+	sendErr := eng.SendFrame(&frame)
+	frame.Release()
+	if sendErr != nil {
+		t.Fatalf("SendFrame() error = %v", sendErr)
 	}
-	if err := engine.Flush(); err != nil {
+	if err := eng.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
 	}
 
-	var out []float32
+	var out []receivedFrame
 	for {
-		frame, err := engine.ReceiveFrame()
-		if err != nil {
+		frame, err := eng.ReceiveFrame()
+		if errors.Is(err, engine.ErrEOF) {
 			break
+		}
+		if err != nil {
+			t.Fatalf("ReceiveFrame() error = %v", err)
 		}
 		decoded, err := audio.Decode(&frame)
 		if err != nil {
 			t.Fatalf("audio.Decode() error = %v", err)
 		}
-		out = append(out, decoded.Channels[0]...)
+		out = append(out, receivedFrame{
+			pts:     frame.Pts(),
+			samples: append([]float32(nil), decoded.Channels[0]...),
+		})
 		frame.Release()
 	}
 	return out
