@@ -66,18 +66,26 @@ func TestGainChainDepthsProduceExpectedAttenuation(t *testing.T) {
 	}
 }
 
+// BenchmarkGainChainDepths is chain_pipeline_test.go's "direct-call lower
+// bound": stage construction and input encoding are built once outside the
+// timed loop (chainStageDecibels is never exactly 0dB, so gain.Engine.
+// SendFrame always decodes-and-reads rather than retaining/mutating the
+// input frame -- reusing the same encoded frame and stage chain across
+// b.N iterations is safe), so the timed region is only the
+// SendFrame/ReceiveFrame processing chain_pipeline_test.go's
+// processing-ns/op metric is compared against.
 func BenchmarkGainChainDepths(b *testing.B) {
 	for _, depth := range chainDepths {
 		b.Run(depthName(depth), func(b *testing.B) {
 			block := stereoBlock(4096)
+			stages := newGainChain(b, depth)
+			encoded, err := audio.Encode(block, media.SampleFormatF32P, 32)
+			if err != nil {
+				b.Fatal(err)
+			}
 			b.ReportAllocs()
 			b.SetBytes(int64(4096 * 2 * 4))
 			for i := 0; i < b.N; i++ {
-				stages := newGainChain(b, depth)
-				encoded, err := audio.Encode(block, media.SampleFormatF32P, 32)
-				if err != nil {
-					b.Fatal(err)
-				}
 				out := runChain(b, stages, encoded)
 				out.Release()
 			}
