@@ -6,7 +6,7 @@
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> M1 は完了。M0 は、repository 全体を対象にした `tools/cmd/differential` の横断実行を baseline/CI の必須証跡から外した後の第二次再監査で、任意 tool 自体の false positive、撤回の文書反映漏れ、filter chain benchmark の計測範囲、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備が見つかり、一旦進行中に差し戻した。すべて解消し、scalar/SIMD 両 build の全 test（各66 package）green を再検証した上で M0 を完了へ更新した。詳細は [checkpoint.md](refactor/checkpoint.md) と [baseline.md](refactor/baseline.md) を正本とする。
+> M1 は完了。M0 は3度の再監査を経た。一次: differential harness、filter chain benchmark、metadata baseline、lifecycle failure injection、baseline artifact。二次: 任意 differential tool の false positive、撤回した保証の文書反映漏れ、filter chain benchmark の lifecycle 境界、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備。三次: baseline commit の古さ（修正後 commit より前を指していた）、filter chain benchmark が teardown を分離できていなかった点（`core/pipeline` に `NewObserved` を追加し steady-state-only の `processing-ns/op` custom metric で解決）、checkpoint.md 自身の矛盾した記述、convolver test の decode failure 経路での小さな leak。すべて解消し、scalar/SIMD 両 build の全 test（各66 package）green を再検証した上で M0 を完了へ更新した。詳細は [checkpoint.md](refactor/checkpoint.md) と [baseline.md](refactor/baseline.md) を正本とする。
 
 ## 目標
 

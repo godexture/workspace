@@ -4,10 +4,17 @@
 
 ## 現在の判定
 
-- M0: 完了。一次再監査（differential harness、filter chain benchmark、metadata baseline、lifecycle failure injection、baseline artifact）と、それに続く二次再監査（任意 differential tool の false positive、撤回した保証の文書反映漏れ、filter chain benchmark の lifecycle 境界、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備）のいずれも解消済み。詳細は [baseline.md](baseline.md) を正本とする。
+- M0: 完了。一次再監査（differential harness、filter chain benchmark、metadata baseline、lifecycle failure injection、baseline artifact）、二次再監査（任意 differential tool の false positive、撤回した保証の文書反映漏れ、filter chain benchmark の lifecycle 境界、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備）、三次再監査（baseline commit の古さ、filter chain benchmark の teardown 分離不足、checkpoint.md 自身の矛盾記述、convolver test の decode failure 経路の leak）のいずれも解消済み。詳細は [baseline.md](baseline.md) を正本とする。
 - M1: 完了。monorepo 化、最終 `plugin/<family>` path、tracked workspace、設計期の module relation、path/command 同期、generator bootstrap の cross-platform 対応を完了している。
 - `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3 gitlinkは、code と独立した任意取得の共有データとして意図的に維持し、M0/M1 の blocker にしない。
 - repository 全体の scalar/SIMD/forced-scalar semantic differential は、検証コストを理由に M0 の保証と必須 gate から外している。`tools/cmd/differential` は任意の診断 tool として残り、`main_test.go` の unit/integration test がその正しさ（子 process の failure を必ず検出すること等）を検証する。scalar/SIMD/worker の semantic diff 自体は、対象 package ごとの differential test（`sdk/dsp`、FLAC parallelism、convolver worker 1/4/16 等）で満たす。
+
+## 三次再監査で解消した項目
+
+- **baseline commit の古さ**: `baseline.manifest.json`/`baseline.md` が固定していた commit は、benchmark 修正・固定 seed 化・convolver 修正より **前** で、記載条件をその commit から再現できなかった。全修正を含む commit（`1b3a38e68d9374a1b605d9cb70d142c7c51eeccd`）へ再固定し、benchmark 数値を含む実測値をすべてこの commit 上で再取得した。
+- **filter chain benchmark の teardown 分離不足**: `Pipeline.Run` が必ず内部で teardown まで行う構造上、外部から steady-state だけを timer で分離する手段がなかった。`core/pipeline` に `NewObserved(observation ObservationMode, nodes ...node.Node)` を追加し、`ObservationMetrics` で構築した Pipeline の `Snapshot()` から各 node の `Start(ctx)` 区間（teardown 開始前に終わる）を読み出せるようにした。`BenchmarkGainChainPipeline` はこれを使い、built-in の ns/op（teardown 込み）に加えて `processing-ns/op` という steady-state-only の custom metric を報告する。比較対象の `BenchmarkGainChainDepths` も construction/input encode を timer 外へ出し、両者が公正に比較可能になった。`NewObserved` の効果は、`nodeMetrics.finish` に人工的な遅延を加えて teardown 相当のコストが Elapsed に混入することを一時的に確認した上で revert して検証した。
+- **checkpoint.md 自身の矛盾記述**: 一次再監査の解消記録に残っていた「differential harness が semantic result を比較するようにした」という記述が、二次再監査自身の指摘（package の PASS/FAIL/MISSING 集約のみで semantic output は比較しない）と矛盾していたため、実態に合わせて修正した。
+- **convolver end-to-end test の decode failure 経路の leak**: `runConvolverEndToEnd` が `audio.Decode` 失敗時に `frame.Release()` へ到達せず、正常経路のみ所有権処理が完全になっていた。失敗経路にも `Release()` を追加した。
 
 ## 二次再監査で解消した項目
 
