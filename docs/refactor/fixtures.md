@@ -71,13 +71,13 @@ code と少数の小型 media は `integration` nested module に置ける。fou
 - 将来の video/subtitle/container corpus
 - native/reference decoder comparison
 
-通常 test と release gate では、data submoduleまたはmanifestが固定するcorpusを明示取得する。network がない環境では「test success」と装って skip せず、`corpus unavailable` と `not requested` を structured result で区別する。release conformance job は unavailable を failure にする。
+Tier 2 を要求する job だけが、data submoduleまたはmanifestが固定するcorpusを明示取得する。通常の change-scoped test には含めない。network がない環境では `corpus unavailable` と `not requested` を structured result で区別し、release conformance job では unavailable を failure にする。
 
 ### Tier 3: benchmark/stress
 
 長時間、高 channel、高解像度、極端な metadata、fuzz corpus、soak test を置く。functional correctness test の timeout と artifact size を支配させない。
 
-paired benchmark の input manifest と output correctness summary を保存し、raw profile/result はCI artifactとして retention policyを持たせる。Gitへ時系列のprofileを蓄積しない。
+benchmark の input manifest と output correctness summary を保存する。paired result/profile は精密な採用判断または回帰調査で取得した場合だけ CI artifact とし、Gitへ時系列で蓄積しない。
 
 ## procedural fixture
 
@@ -228,7 +228,7 @@ release:
   required Tier 0/1/2 + license/digest verification
 
 benchmark:
-  selected Tier 3 + paired result/profile artifact
+  selected Tier 3 + result artifact; paired/profile only when needed
 ```
 
 各jobは requested corpus version、submodule checkoutまたはcacheの利用状態、実行/skip/error数、総input bytesを機械可読に報告する。corpusが巨大だからという理由でtimeoutを無制限にせず、tag/shardとbudgetを使う。

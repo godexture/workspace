@@ -16,8 +16,8 @@ import (
 	"github.com/godexture/godec/sdk/engine"
 )
 
-// chainBlockSizes is the M0 "small/medium/large block" baseline shape from
-// docs/refactor/checkpoint.md M0#5.
+// chainBlockSizes is the M0 small/medium/large shape from
+// docs/refactor/quality.md.
 var chainBlockSizes = []struct {
 	name   string
 	frames int

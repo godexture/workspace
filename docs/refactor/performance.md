@@ -79,7 +79,20 @@ type Variant[C, P any] struct {
 - control planeだけに残る: variant filtering、cost comparison、Plan記録。jobごとに一度であり、immutable catalog indexとfingerprint cacheでboundedにする。
 - 本質的に避けられない: repeatable reduction、portable reference algorithm、追加variantのbinary size等、その保証自体に必要なalgorithmic cost。
 
-plugin authorに全policyの実装を要求しない。一つの正しいvariantだけを提供してもよく、Hostはそのcontractを満たすJobで使用する。公式pluginも、paired benchmarkで意味のある差がないpreset専用variantを追加しない。
+plugin authorに全policyの実装を要求しない。一つの正しいvariantだけを提供してもよく、Hostはそのcontractを満たすJobで使用する。公式pluginも、代表 benchmark で意味のある差がないpreset専用variantを追加しない。
+
+## 開発時の性能回帰方針
+
+日常の性能検証は微小な差の追跡ではなく、開発を止める価値がある明白な回帰を早く見つけるために行う。
+
+- 性能に影響し得る変更だけを対象とし、同じ machine・電源条件・input で変更前後または基準実装を比較する。まず代表的な depth/size/worker の少数 case を使う。
+- user-visible な総時間の `ns/op` と、絶対量が無視できない `B/op`・`allocs/op` のいずれかが概ね 2 倍以上へ悪化した場合を review trigger とする。小さな絶対値の 1→2 allocation のような比率だけの変化は含めない。
+- 2 倍未満の timing 差は、同じ傾向の累積、resource limit 超過、明確な hot-path 変更がない限り routine gate にしない。correctness、leak、panic、data race の失敗にはこの許容幅を適用しない。
+- trigger を超えた時だけ再測定し、再現するなら paired benchmark や profile で原因を調べる。小さな差を根拠に optimized variant を採否する場合も、そこで初めて精密測定を行う。
+- `processing-ns/op` のような custom metric は lifecycle の内訳を理解する診断値であり、短い run で 0 になり得る値を hard gate にしない。粗い回帰検出には benchmark 全体の標準 metric を使う。
+- depth/size/worker/variant の full matrix と CPU/block/heap profile は、baseline 更新、milestone/release、optimized variant の採用、runtime architecture の大幅変更、回帰調査に限定する。
+
+2 倍は自動 reject の厳密な統計閾値ではなく、追加調査を始める目安である。異なる machine の absolute timing や、過去の単発値との比較から失敗を決めない。
 
 ## M0 baseline への適用
 
@@ -89,7 +102,7 @@ M0 は最終 policy/variant architecture の完成を要求しない。現行実
 - throughputだけでなく、item/frame/sample数、順序、timestamp、output digestまたは数値誤差を同時に記録する。
 - scalar build と SIMD build は別々にpassさせるだけでなく、同一inputのsemantic outputを横断比較する。
 - 比較可能な現行kernel/variantは同じprocess内でAB/BAを反転する。旧runtimeと新runtimeのpaired比較は、新経路導入後に同じharnessへ追加する。
-- filter chainは実pipelineとdirect engine lower boundを分け、cold construction/Openとsteady-state Runを分ける。
+- filter chainは実pipelineと同じ workload shape の sequential direct-call 経路を分け、cold construction/Openとsteady-state Runを分ける。並行実行条件が異なるため、direct-callを厳密なoverhead lower boundとはみなさない。
 - raw CPU/block/goroutine/heap profileと時系列resultはCI artifactに置き、Gitにはinput manifest、command、correctness summary、profile summaryを保存する。
 
 M0 の完了判定は [quality](quality.md) の「M0 完了条件」とこの節を用いる。以下の最終 policy、Plan fingerprint、Portable/Realtime gate の完成は後続 milestone の責務である。
@@ -435,7 +448,7 @@ Exact variant は equality/digest、bounded variant は schema-specific toleranc
 - scalar/SIMD/parallel difference
 - end-to-end SNR/peak/phase
 
-### CI matrix
+### full CI matrix
 
 - scalar build
 - SIMD build + available feature paths
@@ -451,13 +464,13 @@ Exact variant は equality/digest、bounded variant は schema-specific toleranc
 
 bounded-difference variant は「速そう」という理由だけで追加しない。
 
-- scalar/reference と同じ input を交互に走らせる paired benchmark
-- CPU、allocation、memory bandwidth、block/mutex profile
-- representative small/medium/large media
-- cold Open と steady-state Run を分離
-- output difference/tolerance report を benchmark artifact と同時に保存
+- scalar/reference と同じ input の代表 case で、correctness と改善の方向を確認する。
+- 採用判断が小さな差に依存する場合は、同じ process で交互に走らせる paired benchmark を使う。
+- bottleneck や予想外の回帰を説明する必要がある場合だけ CPU、allocation、memory bandwidth、block/mutex profile を取る。
+- lifecycle cost が判断を変える経路では cold Open と steady-state Run を分ける。
+- bounded difference を許す variant は output difference/tolerance を correctness test で固定し、性能値だけで採用しない。
 
-PC の電源状態等で絶対時間が変わるため、過去 machine の raw timing と単純比較しない。paired result と profile で、差を許容するだけの実益があるか review する。
+PC の電源状態等で絶対時間が変わるため、過去 machine の raw timing と単純比較しない。日常の回帰判定は上記の 2 倍目安を使い、精密な採用判断だけ paired result と必要な profile で review する。
 
 optimized variant の保守コストに対して有意な改善がない場合は削除する。Fast path の存在自体を目的にしない。
 
@@ -485,6 +498,6 @@ Compile/Open が direct typed function、block size、worker layout を選び、
 - same Stable signature の repeat run が byte-identical になる。
 - Portable 非対応 graph は silent downgrade せず Compile error になる。
 - Realtime の drop/conceal は explicit ContinuityPolicy なしに有効にならない。
-- official optimized variant に scalar/reference differential test と paired benchmark がある。
+- official optimized variant に scalar/reference differential test と代表 benchmark があり、小さな性能差を採用根拠にする場合は paired comparison がある。
 - observation off の Fast path に policy/variant lookup が現れない。
 - undocumented `production` tag でvalidation/correctness semanticsを切り替えない。

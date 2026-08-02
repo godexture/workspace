@@ -139,7 +139,7 @@ Transform/Start、core/SDK、CLI/runtime 等に同じ判断を重複実装しな
 - package は責務で分け、互換 shim を残さない。
 - cross-plugin dependency は Binding/standard/integration に集約する。
 - root command から generate/test/license/API を検証できる。
-- paired benchmark/profile で architecture overhead を検出できる。
+- 代表 benchmark で大きな architecture regression を検出し、必要時だけ paired comparison/profile で原因を調べられる。
 - test/native dependency は production graph と分離される。
 
 ## complexity budget

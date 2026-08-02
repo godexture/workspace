@@ -26,10 +26,12 @@
     - コードの意図が明確であれば、コメントは不要
     - コードだけで説明しきれない背景知識等を補足する場合にコメントを利用する
     - コミットメッセージも簡潔に
-- ベンチマークやコマンドの実行時間は、PC の電源供給状態に大きく依存するので、参考程度にとどめ、過去との比較は避ける
-    - paired ベンチマークを活用するとよい
-- 実装を編集する際は、回帰を防ぐためにテストとプロファイリングを行うこと。
-    - 巻き戻しやすいように小まめに commit するとよい
+- 検証範囲は変更内容とリスクに合わせる
+    - 実装変更では、まず変更した package と直接影響する経路の test を実行する
+    - 全 module test は、広範な変更、milestone の完了確認、release 前に実行する。日常の局所変更では必須にしない
+    - benchmark/profile は hot path、allocation、並行処理、runtime 構造に影響し得る変更、または性能回帰の調査時だけ実行する
+    - 日常の性能確認は代表 case で、同一条件における処理時間または無視できない allocation が概ね 2 倍以上に悪化する明白な回帰の検出を目的とする。小さな差は gate にしない
+    - 小さな性能差を採用判断に使う場合だけ、同一 process の paired benchmark や profile で追加確認する。異なる machine や電源状態の raw timing は比較しない
 
 ## Rules
 - package などの命名に複合語はなるべく用いない
@@ -40,15 +42,15 @@
 以下のコマンドは事前 build した local binary を前提にせず、tracked source から起動する。同じコマンドを AGENTS.md、開発手順、CI で使う。
 
 - 全モジュールのテスト: `go run ./tools/cmd/test-runner --simd` (at the workspace root)
-    - 実行に時間がかかるので、むやみに回さない (最大 8 分)。
-    - scalar/SIMD 横断で一つの report にしたい場合は `go run ./tools/cmd/differential ./...` を使う。
-- 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)
+    - 最大 8 分かかるため、広範な変更、milestone の完了確認、release 前に使う。通常は対象 package の test を優先する
+    - scalar/SIMD 横断の診断が必要な場合は `go run ./tools/cmd/differential ./...` を使う。通常の必須 gate ではない
+- 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)。generator、入力、生成物に関係する変更、または milestone/release の確認時に使う
 - nested module (`tools`、`bindings/wasm`、`example/go`、`example/web/server`) が root module への暗黙の local source 解決に依存していないことを確認する場合は、各 module 内で `GOWORK=off go build ./...` を実行する（`replace` directive 経由の明示的な依存は解決されるが、`go.work` がなければ解決できない参照があれば失敗する）。
 - WASM target のビルド確認: `bindings/wasm` module 内で `GOOS=js GOARCH=wasm go build ./...`。
 
 ### JS/WASM surface
 
-root `bun.lock` を使った frozen install から、以下を tracked command として実行できる。native Go の test pass だけを monorepo 移行成功の判定に使わない。
+JS/WASM surface に影響する変更、milestone の完了確認、release 前には、root `bun.lock` を使った frozen install から以下を実行する。native Go の test pass だけでこれらの surface を検証済みとしない。
 
 - root で一度: `bun install --frozen-lockfile`
 - `bindings/js`（WASM 本体の build を含む。TinyGo と `go run github.com/13rac1/gowasm-bindgen@...` に依存する）: `bun run build`、続けて `bun run ./test`

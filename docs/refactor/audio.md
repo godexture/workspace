@@ -213,4 +213,4 @@ mixer、sidechain compressor、convolver は、全 input を単に F32P にす�
 - observation off で plane size 計算・timestamp conversion を追加しない。
 - Plan に conversion 数と selected sample schema が表示される。
 
-benchmark counter と profile で `Conversions/op`、`FrameAllocations/op`、`BytesCopied/op` を確認する。ns/op だけでは architecture regression を判定しない。
+benchmark counter で `Conversions/op`、`FrameAllocations/op`、`BytesCopied/op` を確認する。profile は予想外の回帰を説明する時だけ取得する。ns/op だけでは architecture regression を判定しない。

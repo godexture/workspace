@@ -17,6 +17,17 @@
 
 test-only CGO、FFmpeg、native reference implementation は production purity を損なわない。ただし foundation/standard の通常 dependency と default test commandには混ぜず、明示的な integration/reference tier へ隔離する。
 
+## 開発時の検証 tier
+
+検証は変更範囲とリスクに合わせ、日常開発の待ち時間を full repository gate に固定しない。
+
+- 日常の変更では、変更した package と直接影響する contract の correctness test を優先する。無関係な module、browser、full corpus まで毎回実行しない。
+- benchmark/profile は hot path、allocation、並行処理、runtime 構造に影響し得る変更、または性能回帰の調査時だけ行う。代表 case による短い smoke から始める。
+- milestone の完了確認、release 前、広範な contract/module 変更では repository-wide gate を実行する。新しい optimized variant の採用時は、その variant に必要な differential/benchmark を追加する。
+- 選択した gate の失敗や skip は成功扱いにしない。一方、日常 tier で選択していない full tier は「未検証」と記録すればよく、日常 job 自体を失敗にしない。
+
+性能の判定基準は [performance](performance.md#開発時の性能回帰方針) を正本とする。correctness、resource leak、panic、data race は性能の許容幅とは無関係に失敗である。
+
 ## M0: 実装前の baseline
 
 リファクタリング開始前に、現行の代表経路を凍結する。
@@ -28,14 +39,14 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 5. observation off/on の allocation、CPU、block/goroutine profile。
 6. scalar/SIMD build 間と worker 1/N の意味上の差。
 
-M0 では入力仕様・digest、実行 command、toolchain、correctness summary、allocation、profile summary を保存する。raw profile/result は Git に蓄積せず CI artifact とする。比較可能な現行 variant は同じ process で交互に測り、リファクタリング後は同じ fixture/harness で旧新を paired 比較する。絶対時間だけを将来 gate にしない。詳細な測定対象は [performance](performance.md) に従う。
+M0 では入力仕様・digest、実行 command、toolchain、correctness summary、allocation、profile summary を保存する。raw profile/result は Git に蓄積せず CI artifact とする。比較可能な現行 variant は同じ process で交互に測り、リファクタリング後も同じ fixture/harness を再利用できるようにする。この full baseline の再取得は baseline 更新や回帰調査のためのもので、日常変更の必須 gate ではない。詳細な測定対象は [performance](performance.md) に従う。
 
 ### M0 完了条件
 
 - WAVE/PCM、MP3、FLAC の代表 decode/encode/roundtrip が small hermetic fixture で再現できる。
 - metadata の既知項目と opaque/raw 項目について、現行の伝播・欠落挙動を検査する。stream copy 自体の実装は M7 の完了条件とする。
 - cancel、invalid/truncated input、Finalize/Close と primary+cleanup failure の集約を、代表 pipeline と format lifecycle で検査する。
-- 1/4/16段 filter chain は実 pipeline の end-to-end cost と direct engine の下限を分け、cold construction と steady-state processing を分けて測る。
+- 1/4/16段 filter chain は実 pipeline と同じ workload shape の sequential direct-call 経路を分け、cold construction と steady-state processing を分けて測る。並行実行条件が異なるため、direct-call を厳密な overhead 下限とはみなさない。
 - observation off/on の allocation と CPU/block/goroutine profileについて、再現 command、入力、correctness counter、要約を保存する。
 - 同一入力に対する scalar/SIMD 実装間の semantic output と、worker 1/N の output/order/count を、対象 package ごとの differential test で検査する。repository 全体を横断する単一 gate は要求しない（実行コストが高く、実用的な baseline/CI gate にならないため）。
 - baseline manifest と test/benchmark source だけで比較条件を再構成でき、特定開発者の未追跡 file や手順に依存しない。
@@ -186,14 +197,14 @@ root runner は test semantics を独自に再実装せず、manifest から必�
 | structure | dependency direction、module graph、source code submodule不在、data submodule policy、API snapshot | [architecture](architecture.md) |
 | build | supported target、CGO-off standard、semantic build tag | [supply](supply.md) |
 | correctness | unit/property/fuzz/race、integration、failure injection | この文書 |
-| performance | scalar/SIMD differential、worker/chunk variation、paired benchmark | [performance](performance.md) |
+| performance | 代表 smoke、必要時の scalar/SIMD differential、worker/chunk variation、paired benchmark | [performance](performance.md) |
 | corpus | small/full tier、digest、license、size budget | [fixtures](fixtures.md) |
 | wire/browser | Go/TS compatibility、real browser lifecycle | [web](web.md) |
 | generation | deterministic output、compile、clean tree | この文書 |
 | supply/release | network-off build、SBOM/NOTICE/provenance、release plan | [supply](supply.md) |
 | documentation | link、snippet compile、public package/example consistency | [experience](experience.md) |
 
-CI matrix は root の machine-readable manifest から生成し、skip、未実行、失敗を区別する。`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant を走らせるだけで、それ単独を repository 全体の成功条件にはしない。
+CI matrix は root の machine-readable manifest から生成し、日常の change-scoped tier と milestone/release 用の full tier を区別する。各 tier 内では skip、未実行、失敗を区別する。`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant を走らせるだけで、それ単独を full repository verification の成功条件にはしない。
 
 ## performance と reproducibility の検証
 
@@ -211,5 +222,5 @@ CI matrix は root の machine-readable manifest から生成し、skip、未実
 - test-only CGO/reference dependency が production/standard graphへ入らない。
 - config generator/生成 options が削除され、残す generatorだけが deterministic/compile gateを通る。
 - test runner が長い/malformed output、process crash、cancel、partial resultを正しく失敗として扱う。
-- root CI が structure、build、correctness、performance、wire、corpus、supply、docs の結果を一つの reportに集約する。
-- skipped/未実行 gate を repository success と扱わない。
+- full tier の root CI が structure、build、correctness、performance、wire、corpus、supply、docs の結果を一つの reportに集約する。
+- 選択した required gate の skip/未実行を成功扱いせず、日常 tier と full tier のどちらを実行したかを report から判別できる。

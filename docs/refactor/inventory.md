@@ -1,6 +1,6 @@
 # package inventory
 
-この文書は現行 package/asset/tool の移行台帳であり、進捗は管理しない。全体の状態は [refactor.md](../refactor.md)、移行後の package 境界は [architecture](architecture.md) を正本とする。
+この文書は現行 package/asset/tool の移行台帳であり、進捗は管理しない。全体の状態は [checkpoint.md](checkpoint.md)、移行後の package 境界は [architecture](architecture.md) を正本とする。
 
 この一覧は、調査時点で `core`、`sdk`、`plugins`、`cli`、`bindings`、`example`、`tools` 配下に production `.go` file を持つ directory を対象にしている。内部 package が同じ処遇になる場合は `{...}` でまとめる。
 
@@ -62,7 +62,7 @@
 | `sdk/config` | 統合・置換 | foundation `config` の Schema/Patch/Resolved/canonicalization。string map と CLI reflection への依存を切る |
 | `sdk/conversion` | 統合・置換 | foundation の `job` と `host` façade。`InputSet{io.ReadSeeker}`/`BuildPlayback` を typed Access/Endpoint と Prepared Job に置換 |
 | `sdk/date` | 移動 | `tag.Date`。metadata vocabulary の値型として部分日付を表す |
-| `sdk/dsp`、`sdk/dsp/fft` | 維持・移動 | public algorithm utility。reference/scalar/optimized variant を分離し、exact/bounded contract と paired benchmark を持つ。exported mutable CPU feature global は削除し、Host の immutable snapshot から Compile 時に選択 |
+| `sdk/dsp`、`sdk/dsp/fft` | 維持・移動 | public algorithm utility。reference/scalar/optimized variant を分離し、exact/bounded contract と代表 benchmark を持つ。小さな差を採用根拠にする場合だけ paired comparison を行う。exported mutable CPU feature global は削除し、Host の immutable snapshot から Compile 時に選択 |
 | `sdk/engine` | 削除 | core と並立する Send/Receive/EAGAIN abstraction を Processor/Operator へ置換 |
 | `sdk/hash` | 分割・削除 | CRC8/16 は FLAC polynomial 固有なので `plugin/flac/internal/crc` へ移す。未使用 FNV は削除 |
 | `sdk/optional` | 削除 | 現在は `date` のみ。`tag.Date` の presence mask または `(value, ok)` API に内包し、panic する `Unwrap` を公開しない |

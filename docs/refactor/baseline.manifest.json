@@ -1,7 +1,14 @@
 {
-  "$comment": "Machine-readable companion to baseline.md, per docs/refactor/checkpoint.md M0-R5 (and its second re-audit, M0#4). This file is the input manifest a script or CI job can parse directly; baseline.md is the human-readable summary of what running against it produces. Every command is argv + env (no shell string), so it runs the same way regardless of the recording OS's shell.",
+  "$comment": "Machine-readable companion to baseline.md. Commands reproduce the full M0 baseline; they are not all required for routine development. Every command is argv + env rather than a shell string.",
   "baselineCommit": "4429711a88481e6643ea2427a8192938737b1e9e",
   "repository": "github.com/godexture/godec",
+  "performancePolicy": {
+    "routineGate": false,
+    "reviewTriggerRatio": 2.0,
+    "reviewTriggerMeaning": "Approximate trigger for repeat measurement and investigation of total time or material allocation regressions; not an automatic hard-fail threshold.",
+    "customMetrics": "Diagnostic only.",
+    "fullMatrix": "Baseline refresh, milestone/release verification, optimized-variant adoption, major runtime changes, or regression investigation."
+  },
   "go": {
     "version": "go1.26.4",
     "os": "windows",
@@ -64,11 +71,11 @@
       { "id": "testSIMDForcedScalar", "argv": ["go", "test", "./..."], "env": { "GOEXPERIMENT": "simd", "GODEC_FORCE_SCALAR": "1" }, "input": null, "requiredForBaseline": false }
     ],
     "benchmarks": [
-      { "id": "benchObservationPaired", "argv": ["go", "test", "./core/pipeline/...", "-bench", "BenchmarkPipelineObservationPaired64MiB"], "env": {}, "input": "observationPairedFixture" },
-      { "id": "benchFilterChain", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipeline"], "env": {}, "input": "stereoBlock", "note": "Reports both the built-in ns/op (steady-state processing + Run's teardown) and a custom processing-ns/op metric (steady-state only, read from Snapshot().Elapsed)." },
-      { "id": "benchFilterChainOpen", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipelineOpen"], "env": {}, "input": "stereoBlock" },
-      { "id": "benchFilterChainDirect", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainDepths"], "env": {}, "input": "stereoBlock", "note": "Single-goroutine SendFrame/ReceiveFrame chain, no pipeline scheduling; same depths/block sizes/frames-per-op/Encode-Decode boundary as benchFilterChain, so its ns/op is directly comparable to benchFilterChain's processing-ns/op. Not a strict lower bound: benchFilterChain's per-node goroutines can overlap Encode/gain/Decode across in-flight frames on separate cores, which this sequential benchmark cannot, so benchFilterChain is often faster for deep/large chains despite doing the same work." },
-      { "id": "benchFLACParallelDecode", "argv": ["go", "test", "./plugin/flac/internal/codec/decoder/...", "-bench", "BenchmarkParallelDecodeThroughput"], "env": {}, "input": "flacFrameFixture" }
+      { "id": "benchObservationPaired", "argv": ["go", "test", "./core/pipeline/...", "-bench", "^BenchmarkPipelineObservationPaired64MiB$"], "env": {}, "input": "observationPairedFixture" },
+      { "id": "benchFilterChain", "argv": ["go", "test", "./plugin/audio", "-bench", "^BenchmarkGainChainPipeline$"], "env": {}, "input": "stereoBlock", "note": "Reports built-in metrics for coarse regression detection and processing-ns/op for lifecycle diagnosis." },
+      { "id": "benchFilterChainOpen", "argv": ["go", "test", "./plugin/audio", "-bench", "^BenchmarkGainChainPipelineOpen$"], "env": {}, "input": "stereoBlock" },
+      { "id": "benchFilterChainDirect", "argv": ["go", "test", "./plugin/audio", "-bench", "^BenchmarkGainChainDepths$"], "env": {}, "input": "stereoBlock", "note": "Uses the same workload shape as benchFilterChain, but its sequential execution means the difference also includes the pipeline's concurrency benefit; it is not a strict overhead lower bound." },
+      { "id": "benchFLACParallelDecode", "argv": ["go", "test", "./plugin/flac/internal/codec/decoder/...", "-bench", "^BenchmarkParallelDecodeThroughput$"], "env": {}, "input": "flacFrameFixture" }
     ],
     "profiles": [
       {
@@ -77,7 +84,7 @@
         "env": {},
         "input": "observationPairedFixture",
         "variant": "Off",
-        "note": "Substitute the trailing path segment (Off) for another variant.md mode name (Plain/Progress/Metrics) to re-profile that mode."
+        "note": "Substitute the trailing benchmark path segment (Off) with Plain, Progress, or Metrics to profile another mode."
       }
     ],
     "correctnessChecks": [
