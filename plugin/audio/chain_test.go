@@ -32,7 +32,14 @@ func newGainChain(t testing.TB, depth int) []engine.FilterEngine {
 
 // runChain pushes input through each stage's SendFrame/ReceiveFrame in
 // sequence, mirroring how core/pipeline links single-input single-output
-// filter nodes, without depending on pipeline wiring itself.
+// filter nodes, without depending on pipeline wiring itself. It takes
+// ownership of input and releases it (and every intermediate stage output)
+// once consumed by the next stage's SendFrame -- gain.Engine.SendFrame
+// only reads its input (via DecodeInto) rather than retaining it, so
+// nothing else may still reference input by the time this returns. Only
+// the final output is left unreleased, for the caller to consume/release.
+// A caller that wants to keep its own reference to input alive afterward
+// must Retain it before calling.
 func runChain(t testing.TB, stages []engine.FilterEngine, input media.Frame) media.Frame {
 	t.Helper()
 	current := input
@@ -40,6 +47,7 @@ func runChain(t testing.TB, stages []engine.FilterEngine, input media.Frame) med
 		if err := stage.SendFrame(&current); err != nil {
 			t.Fatalf("stage %d SendFrame() error = %v", i, err)
 		}
+		current.Release()
 		out, err := stage.ReceiveFrame()
 		if err != nil {
 			t.Fatalf("stage %d ReceiveFrame() error = %v", i, err)
@@ -66,31 +74,63 @@ func TestGainChainDepthsProduceExpectedAttenuation(t *testing.T) {
 	}
 }
 
-// BenchmarkGainChainDepths is chain_pipeline_test.go's "direct-call lower
-// bound": stage construction and input encoding are built once outside the
-// timed loop (chainStageDecibels is never exactly 0dB, so gain.Engine.
-// SendFrame always decodes-and-reads rather than retaining/mutating the
-// input frame -- reusing the same encoded frame and stage chain across
-// b.N iterations is safe), so the timed region is only the
-// SendFrame/ReceiveFrame processing chain_pipeline_test.go's
-// processing-ns/op metric is compared against.
+// BenchmarkGainChainDepths is chain_pipeline_test.go's single-goroutine,
+// direct-call reference: SendFrame/ReceiveFrame through the gain stages
+// sequentially in the calling goroutine, with none of core/pipeline's
+// scheduler/edge/ownership machinery -- not a strict "lower bound", since
+// BenchmarkGainChainPipeline's per-node goroutines can overlap Encode/
+// gain/Decode across in-flight frames on separate cores in a way this
+// benchmark structurally cannot (see that benchmark's doc comment). Depth
+// and block size sub-benchmarks match BenchmarkGainChainPipeline's exactly
+// (same chainDepths x chainBlockSizes, same chainFrameCount frames per
+// op), and each frame is freshly Encoded before the chain and Decoded
+// after, the same per-frame cost BenchmarkGainChainPipeline's source/sink
+// nodes pay -- so this benchmark's plain ns/op is directly comparable to
+// that one's processing-ns/op.
+//
+// Stage construction is excluded from the timed region (built once per
+// sub-benchmark, matching Prepare's exclusion on the pipeline side) and
+// closed once at the end via b.Cleanup; gain.Engine doesn't expose Close
+// through the engine.FilterEngine interface, so stageCloser asserts for it
+// where present.
 func BenchmarkGainChainDepths(b *testing.B) {
 	for _, depth := range chainDepths {
-		b.Run(depthName(depth), func(b *testing.B) {
-			block := stereoBlock(4096)
-			stages := newGainChain(b, depth)
-			encoded, err := audio.Encode(block, media.SampleFormatF32P, 32)
-			if err != nil {
-				b.Fatal(err)
-			}
-			b.ReportAllocs()
-			b.SetBytes(int64(4096 * 2 * 4))
-			for i := 0; i < b.N; i++ {
-				out := runChain(b, stages, encoded)
-				out.Release()
-			}
-		})
+		for _, size := range chainBlockSizes {
+			b.Run(depthName(depth)+"/"+size.name, func(b *testing.B) {
+				block := stereoBlock(size.frames)
+				stages := newGainChain(b, depth)
+				b.Cleanup(func() {
+					for _, stage := range stages {
+						if closer, ok := stage.(stageCloser); ok {
+							_ = closer.Close()
+						}
+					}
+				})
+				b.ReportAllocs()
+				b.SetBytes(int64(size.frames * 2 * 4 * chainFrameCount))
+				for i := 0; i < b.N; i++ {
+					for f := 0; f < chainFrameCount; f++ {
+						encoded, err := audio.Encode(block, media.SampleFormatF32P, 32)
+						if err != nil {
+							b.Fatal(err)
+						}
+						out := runChain(b, stages, encoded)
+						if _, err := audio.Decode(&out); err != nil {
+							b.Fatal(err)
+						}
+						out.Release()
+					}
+				}
+			})
+		}
 	}
+}
+
+// stageCloser is asserted against each engine.FilterEngine stage to close
+// it after a benchmark reuses it across many iterations; gain.Engine
+// implements Close but engine.FilterEngine itself doesn't require it.
+type stageCloser interface {
+	Close() error
 }
 
 func depthName(depth int) string {

@@ -6,7 +6,6 @@ import (
 	"io"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/godexture/godec/core/domain/media"
 	mediatime "github.com/godexture/godec/core/domain/time"
@@ -224,57 +223,5 @@ func TestMetricsSnapshotAfterCancellation(t *testing.T) {
 	}
 	if snapshot.Nodes[0].State != "failed" {
 		t.Fatalf("source state = %q, want failed", snapshot.Nodes[0].State)
-	}
-}
-
-// slowCloseSink wraps observationSink with an artificially slow Close, so
-// TestNewObservedNodeElapsedExcludesTeardown below has a teardown cost
-// large enough to fail the assertion if node.snapshot's Elapsed ever
-// started including it.
-type slowCloseSink struct {
-	*observationSink
-	closeDelay time.Duration
-}
-
-func (s *slowCloseSink) Close() error {
-	time.Sleep(s.closeDelay)
-	return s.observationSink.Close()
-}
-
-// TestNewObservedNodeElapsedExcludesTeardown is docs/refactor/checkpoint.md
-// M0's benchmark-lifecycle finding applied to the mechanism itself: Run
-// always closes every node before returning, so any caller timing Run as a
-// whole (as a benchmark's b.N loop does) inescapably measures teardown
-// alongside steady-state processing. NewObserved's whole purpose is to let
-// a caller read steady-state duration back out separately via Snapshot
-// after Run returns; this pins that Snapshot's node Elapsed values do not
-// grow to include an artificially slow Close, while Run's own wall-clock
-// duration does.
-func TestNewObservedNodeElapsedExcludesTeardown(t *testing.T) {
-	const closeDelay = 50 * time.Millisecond
-	source := newObservationSource(4, 16, media.StreamInfo{Index: 0, Type: media.MediaAudio})
-	sink := &slowCloseSink{observationSink: newObservationSink(), closeDelay: closeDelay}
-	if err := LinkWithBufferSize(source, "out", sink, "in", 100); err != nil {
-		t.Fatal(err)
-	}
-	conversion, err := NewObserved(ObservationMetrics, source, sink)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	runStart := time.Now()
-	if err := conversion.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	runElapsed := time.Since(runStart)
-	if runElapsed < closeDelay {
-		t.Fatalf("Run() took %v, want at least the %v Close delay -- the delay was not exercised", runElapsed, closeDelay)
-	}
-
-	snapshot := conversion.Snapshot()
-	for _, n := range snapshot.Nodes {
-		if n.Elapsed >= closeDelay {
-			t.Fatalf("node %q Elapsed = %v, want well under the %v Close delay (teardown must not be included)", n.Description.ID, n.Elapsed, closeDelay)
-		}
 	}
 }

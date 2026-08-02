@@ -32,13 +32,22 @@ const chainFrameCount = 8
 // BenchmarkGainChainPipeline runs the 1/4/16-stage gain chain through a
 // real core/pipeline.Pipeline (source -> N gain filter nodes -> sink),
 // unlike BenchmarkGainChainDepths in chain_test.go, which calls
-// SendFrame/ReceiveFrame directly and so measures only the filter kernels
-// with none of the scheduler/edge/ownership machinery a production graph
-// actually pays for. That direct-call benchmark is kept as the lower
-// bound, and both benchmarks now exclude everything but their own
-// steady-state processing (see chain_test.go's doc comment), so the gap
-// between the two reported ns/op values is the pipeline's own overhead and
-// nothing else.
+// SendFrame/ReceiveFrame directly in one goroutine and so measures only
+// the filter kernels plus the same per-frame Encode/Decode cost, with none
+// of core/pipeline's scheduler/edge/ownership machinery. Both benchmarks
+// process the same chainFrameCount frames at the same block size per op
+// (see chain_test.go's doc comment), so they are directly comparable --
+// but the difference between the two reported ns/op values is not purely
+// the pipeline's scheduling overhead. Every node runs as its own
+// goroutine, connected by buffer-100 channels (pipeline.Link's default),
+// so the pipeline can genuinely overlap source Encode, gain processing,
+// and sink Decode across the 8 in-flight frames on separate cores, which
+// the strictly sequential direct-call benchmark structurally cannot; for
+// deep chains and large blocks this overlap benefit outweighs scheduling
+// cost and the pipeline benchmark comes out faster despite doing more
+// work per node. Read the gap as "the net effect of using core/pipeline
+// instead of direct sequential calls for this workload", not as an
+// isolated overhead cost.
 //
 // Construction and Prepare are excluded from the timed/measured portion:
 // buildGainChainPipeline runs under b.StopTimer/b.StartTimer (which pauses
@@ -51,21 +60,16 @@ const chainFrameCount = 8
 // b.N's own ns/op and allocs/op still include Run's teardown (every node's
 // Close), since Pipeline has no public entry point that runs nodes without
 // also closing them -- there is no way to StopTimer only around Close from
-// outside Run. Instead, buildGainChainPipeline constructs the Pipeline via
-// pipeline.NewObserved(pipeline.ObservationMetrics, ...), and this
-// benchmark reads Snapshot() after each Run to get every node's
-// Start(ctx)-only Elapsed window (which ends before teardown begins) and
-// reports the true steady-state-only wall-clock time as a custom
-// "processing-ns/op" metric, alongside the teardown-inclusive built-in
-// ns/op.
-//
-// processing-ns/op is a real per-node wall-clock measurement, not a
-// synthetic one, so like any single-sample timing it is noisy at very low
-// iteration counts (an explicit -benchtime=1x/2x can read as 0 for
-// Small/1stage, where the actual work is a handful of microseconds and OS
-// goroutine-scheduling jitter dominates); it stabilizes with the default
-// adaptive -benchtime or a reasonably large explicit count, same as any
-// other Go benchmark metric.
+// outside Run. Pipeline already tracks a steady-state-only timestamp pair
+// for this, though: Run sets startedAt right before node processing begins
+// and finishedAt right after it ends, both before teardown starts (see
+// pipeline_lifecycle.go's Run/finish and pipeline_closer.go's finish/
+// completeClose), and Snapshot().Elapsed derives from exactly those two
+// fields regardless of ObservationMode -- so this benchmark reads it
+// straight off Snapshot() after each Run and reports it as a
+// "processing-ns/op" custom metric, directly comparable to
+// BenchmarkGainChainDepths' plain ns/op, alongside the teardown-inclusive
+// built-in ns/op.
 func BenchmarkGainChainPipeline(b *testing.B) {
 	for _, depth := range chainDepths {
 		for _, size := range chainBlockSizes {
@@ -87,7 +91,7 @@ func BenchmarkGainChainPipeline(b *testing.B) {
 					}
 
 					b.StopTimer()
-					totalProcessing += processingElapsed(conversion.Snapshot())
+					totalProcessing += conversion.Snapshot().Elapsed
 					if sink.decodeErr != nil {
 						b.Fatalf("sink decode error: %v", sink.decodeErr)
 					}
@@ -106,32 +110,6 @@ func BenchmarkGainChainPipeline(b *testing.B) {
 			})
 		}
 	}
-}
-
-// processingElapsed reduces a Pipeline Snapshot taken after Run returns to
-// a single steady-state duration: the span from the earliest node
-// Start(ctx) began to the latest one finished. Nodes run concurrently (see
-// core/pipeline's errgroup-based runNodesObservedSelected), so this is the
-// wall-clock width of that concurrent window, not a sum across nodes --
-// and since nodeMetrics.finish is always called before Run's teardown
-// begins, it never includes Close.
-func processingElapsed(snapshot pipeline.Snapshot) time.Duration {
-	var start, finish time.Time
-	for _, n := range snapshot.Nodes {
-		if n.StartedAt.IsZero() {
-			continue
-		}
-		if start.IsZero() || n.StartedAt.Before(start) {
-			start = n.StartedAt
-		}
-		if n.FinishedAt.After(finish) {
-			finish = n.FinishedAt
-		}
-	}
-	if start.IsZero() || finish.IsZero() {
-		return 0
-	}
-	return finish.Sub(start)
 }
 
 // BenchmarkGainChainPipelineOpen isolates construction+Prepare (cold
@@ -196,34 +174,11 @@ func buildGainChainPipeline(t testing.TB, depth, frames int, block audio.Block) 
 	}
 	nodes = append(nodes, sink)
 
-	// ObservationMetrics (rather than pipeline.New's default ObservationOff)
-	// so BenchmarkGainChainPipeline can read each node's Start(ctx)-only
-	// Elapsed via Snapshot() after Run returns -- see processingElapsed.
-	conversion, err := pipeline.NewObserved(pipeline.ObservationMetrics, nodes...)
+	conversion, err := pipeline.New(nodes...)
 	if err != nil {
-		t.Fatalf("pipeline.NewObserved() error = %v", err)
+		t.Fatalf("pipeline.New() error = %v", err)
 	}
 	return conversion, sink
-}
-
-// TestProcessingElapsedSpansConcurrentNodesExcludingGaps pins
-// processingElapsed's reduction rule directly against synthetic
-// timestamps, independent of any real Pipeline run: it must be the span
-// from the earliest StartedAt to the latest FinishedAt (nodes run
-// concurrently, so summing would overcount), and must ignore nodes with a
-// zero StartedAt (never observed to run).
-func TestProcessingElapsedSpansConcurrentNodesExcludingGaps(t *testing.T) {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	snapshot := pipeline.Snapshot{Nodes: []pipeline.NodeSnapshot{
-		{StartedAt: base.Add(2 * time.Millisecond), FinishedAt: base.Add(30 * time.Millisecond)},
-		{StartedAt: base, FinishedAt: base.Add(10 * time.Millisecond)},
-		{}, // unobserved node: zero StartedAt/FinishedAt, must not zero out the result
-	}}
-	got := processingElapsed(snapshot)
-	want := 30 * time.Millisecond
-	if got != want {
-		t.Fatalf("processingElapsed() = %v, want %v", got, want)
-	}
 }
 
 // TestGainChainPipelineOutputCorrectness drives the same gain chain the
