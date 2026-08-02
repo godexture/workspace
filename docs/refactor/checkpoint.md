@@ -19,7 +19,7 @@
 
 ## 一次再監査で解消した項目
 
-- differential harness を fail-safe にし、semantic result を比較するようにした（`tools/cmd/differential`、`sdk/dsp/cpu_simd.go` の forced-scalar 機構）。
+- differential harness を fail-safe にした（shared failure を exit 0 として見逃さない、build-fail を見落とさない、scalar variant が呼び出し元の GOEXPERIMENT を継承しない）。実装は package 単位の PASS/FAIL/MISSING 集約であり、semantic output の比較はしない（`tools/cmd/differential`）。SIMD build 内で forced-scalar path を検査する機構を追加した（`sdk/dsp/cpu_simd.go`）。
 - filter chain benchmark の construction を steady-state から分離し、output の正しさを検査する test を追加した（`plugin/audio/chain_pipeline_test.go`）。
 - stream/metadata baseline を単一 known key から拡張し、multi-value の順序保持、duplicate の上書き、unknown tag の loss、raw chunk の保持を固定した（`sdk/conversion/passthrough_test.go`）。
 - lifecycle failure injection の未検査 phase（decoder/encoder の Flush、muxer の SetMetadata/AddStream）を埋めた（`sdk/engine/wrapper_test.go`、`core/routing/negotiator_lifecycle_test.go`）。

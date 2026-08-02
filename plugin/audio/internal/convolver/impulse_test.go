@@ -167,6 +167,7 @@ func runConvolverEndToEnd(t *testing.T, impulse, input []float32, pool *registry
 		}
 		decoded, err := audio.Decode(&frame)
 		if err != nil {
+			frame.Release()
 			t.Fatalf("audio.Decode() error = %v", err)
 		}
 		out = append(out, receivedFrame{
