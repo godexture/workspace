@@ -9,7 +9,7 @@ func TestErrorAggregatesItemsWithoutDetailInString(t *testing.T) {
 	detail := map[string]string{"source": "cli", "redacted": "secret-value"}
 	errorValue := NewError(
 		NewItem("config.range", ErrorSeverity, FieldPath("encoder", "compression"), "value is outside the allowed range", detail),
-		NewItem("config.warning", Warning, ComponentPath("example.component"), "using a default", nil),
+		NewItem("config.warning", WarningSeverity, ComponentPath("example.component"), "using a default", nil),
 	)
 
 	if got := errorValue.Len(); got != 2 {
