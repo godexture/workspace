@@ -17,7 +17,7 @@
 |---|---|---|
 | M0 | 完了 | 現行の correctness、failure semantics、metadata/stream、worker/variant、performance の比較条件を固定した。再現条件は [baseline.md](baseline.md) と [baseline.manifest.json](baseline.manifest.json) を参照する。 |
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
-| M2 | 未着手 | 次の主対象。identity、immutable catalog、typed config、diagnostic の実装単位を着手時に記録する。 |
+| M2 | 未着手 | 次の主対象。固有の完了条件を [plugins.md](plugins.md#m2-完了条件) と [config.md](config.md#m2-完了条件)、作業手順を [task/m2.md](task/m2.md) に定義した。着手時に実装単位を記録する。 |
 | M3 | 未着手 | — |
 | M4 | 未着手 | — |
 | M5 | 未着手 | — |

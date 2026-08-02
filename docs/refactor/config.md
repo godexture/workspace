@@ -304,7 +304,26 @@ enum table、codec lookup table、SIMD table 等、手書きより生成が適�
 
 planning 時間への影響は benchmark する。少数 field の schema resolve、nested/repeated config、candidate memoization、canonicalization を個別に測り、候補数に比例して同じ patch を再 decode しない。
 
-## 完了条件
+## M2 完了条件
+
+M2 は typed config contract を foundation package として新設する milestone である。公式 plugin の config 移行、generator と `config_options.go` の削除、CLI/WASM への投影実装は M8/M9 の作業であり、M2 には要求しない。identity/catalog 側の条件は [plugins](plugins.md#m2-完了条件) を参照する。
+
+- `config.Schema[C]` が field identity、default、preset、decode、validation、canonicalization、表示 description の唯一の外部契約になる。struct tag、default 変数、個別 `Validate` を主契約にしない。
+- 完全値 `C` と疎な `Patch` を区別し、省略と明示 zero を取り違えない。unknown field は error にする。
+- 解決順序が `schema default -> named preset -> explicit patch -> normalization -> validation -> canonicalization` で固定され、優先順位が常に `default < preset < explicit` になる。複数 preset を暗黙合成しない。
+- `Resolved[C]` が `Value`、field ごとの `Provenance`、`Diagnostics`、`Fingerprint` を持ち、解決後に caller が元の slice/map を変更しても意味が変わらない。
+- `Schema.Default()` が呼び出しごとに fresh な値を返し、slice、map、pointer、function を含む nested field も snapshot 化する。新 package に exported `DefaultXConfig` を作らない。
+- schema 構築時の自己検証（duplicate/空の field・preset ID、invalid default/preset、unknown/cyclic dependency、field 型と codec の不一致、canonicalization 不能型、invalid range/step/choice、secret の default/表示規則、nested path 衝突）が import 時 panic ではなく、component identity と field path を含む aggregate error として host 構築時に報告される。
+- ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。
+- canonical fingerprint が map iteration order、registration order、pointer address、process 再起動に依存しない。canonical form を作れない field は schema 登録を失敗させる。
+- 標準 field 型（bool、整数、有限 float、string、単位付き値、enum、optional/auto の sum type、nested struct、ordered slice、discriminated union、secret）を扱え、第三者が `config.Codec[T]` を core 編集なしで追加できる。
+- secret が `Resolved` の公開表現、diagnostic、error、log に raw value として現れない。
+- 入力依存の `auto` を config mutation で表さない型（`Rate` 相当の明示 sum type）を提供する。実際の解決は `Compile` の責務として M4 で扱う。
+- 上記を unit/property test で検査し、schema resolve と canonicalization の代表 benchmark を取る。候補ごとの再 decode を避ける memoization の測定は M4 の planner 側で行う。
+
+## 文書全体の完了条件
+
+この節は config contract の最終状態を示す gate であり、M2 単独の完了判定には上記「M2 完了条件」だけを用いる。`config_options.go` と generator の削除は、各 plugin を typed schema へ移した後に完了する。
 
 - field の外部意味が一つの `Schema` から library、CLI、WASM、HTTP、catalog、docs へ投影される。
 - config 未指定と明示 zero が区別される。
