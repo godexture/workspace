@@ -4,8 +4,8 @@
 
 ## 固定した commit
 
-- baseline commit: `1b3a38e68d9374a1b605d9cb70d142c7c51eeccd`
-- 選定理由: 以前このファイルが固定していた `924461d` は、この文書自体が記録する条件（filter chain benchmark の steady-state 分離、`stereoBlock` の決定性、構造化 manifest、convolver test の resource/observation 修正）より **前** の commit だったため、当該条件をその commit から再現できなかった。今回の commit はそれらすべての修正を含む。以下の再現手順とこの文書の実測値は、この commit から直接得られる。
+- baseline commit: `4429711a88481e6643ea2427a8192938737b1e9e`
+- 選定理由: 以前このファイルが固定していた `1b3a38e` は、`Snapshot().Elapsed` 方式への切り替え、`runChain` の frame release 修正、`BenchmarkGainChainDepths` の frame数/block size/Encode-Decode 境界の整合より **前** の commit だったため、当該条件をその commit から再現できなかった。今回の commit はそれらすべての修正を含む。以下の再現手順とこの文書の実測値は、この commit から直接得られる。
 - repository は 2026-08-01 の monorepo 統合（M1）および M1-1 の `plugin/<family>` 最終 path 移行後の状態。旧 16 submodule 構成・旧 `plugins/codec-*`/`plugins/format-*` path の baseline ではない。
 
 ## toolchain（[baseline.manifest.json](baseline.manifest.json) が正本）
@@ -39,7 +39,7 @@ GOEXPERIMENT=simd GODEC_FORCE_SCALAR=1 go test ./...                 # SIMD buil
 go test ./core/pipeline/... -bench BenchmarkPipelineObservationPaired64MiB
 go test ./plugin/audio -bench BenchmarkGainChainPipeline        # reports processing-ns/op alongside built-in ns/op
 go test ./plugin/audio -bench BenchmarkGainChainPipelineOpen
-go test ./plugin/audio -bench BenchmarkGainChainDepths          # steady-state-only lower bound, compare against processing-ns/op above
+go test ./plugin/audio -bench BenchmarkGainChainDepths          # same shape as above; compare its ns/op against processing-ns/op
 go test ./plugin/flac/internal/codec/decoder/... -bench BenchmarkParallelDecodeThroughput
 ```
 
@@ -69,7 +69,8 @@ go test ./core/pipeline/... -run TestPipelineObservationDoesNotLeakGoroutines -v
 
 - `BenchmarkPipelineObservationPaired64MiB`（core/pipeline）: plain/off/progress/metrics を同一 process 内で交互実行する paired 比較を持つ。baseline commit 上の実測では metrics-vs-off `+13.7%`、off-vs-plain `+4.8%`、progress-vs-off `+4.5%`（共有 machine 上の実行で run ごとの分散が大きく、絶対値・符号とも参考値。系統的な悪化の有無は比率の桁で見る）。
 - `TestPipelineObservationDoesNotLeakGoroutines`: plain/off/progress/metrics いずれも green。
-- `BenchmarkGainChainPipeline`（plugin/audio）: construction は `b.StopTimer`/`b.StartTimer` で計測対象から除外し、`Pipeline.Prepare` も同じ除外区間で明示的に呼ぶことで、timer 内の `Run` 呼び出し自体は Prepare を no-op として通過する。built-in の ns/op と allocs/op は `Pipeline.Run` の teardown（全 node の Close）を引き続き含む（`Pipeline` に teardown を伴わない公開 API がないため）が、`pipeline.NewObserved(pipeline.ObservationMetrics, ...)` で構築し、Run 後に `Snapshot()` から各 node の `Start(ctx)` 区間（teardown 開始前に終わる）を読み出す `processing-ns/op` という custom metric を追加で報告する。baseline commit 上の実測（Small block）では built-in ns/op が 1 段 45408ns/7613B/100 allocs 〜 16 段 192144ns/25745B/673 allocs、processing-ns/op は 1 段 28257ns 〜 16 段 141122ns（teardown が全体の 30〜38% を占め、8 frame では償却されないことを裏付ける）。`BenchmarkGainChainPipelineOpen` は construction + `Prepare`（cold lifecycle）のコストを分離して持つ（Close は timer 外。1 段 8636B/47 allocs 〜 16 段 66277B/289 allocs）。`BenchmarkGainChainDepths`（chain_test.go、direct engine chain の下限）も construction と input encode を timer 外へ出し、`BenchmarkGainChainPipeline` の processing-ns/op と比較可能な steady-state-only 値になった（1 段 19324ns、4 段 96626ns、16 段 440810ns、いずれも 4096-sample block）。
+- `BenchmarkGainChainPipeline`（plugin/audio）: construction は `b.StopTimer`/`b.StartTimer` で計測対象から除外し、`Pipeline.Prepare` も同じ除外区間で明示的に呼ぶことで、timer 内の `Run` 呼び出し自体は Prepare を no-op として通過する。built-in の ns/op と allocs/op は `Pipeline.Run` の teardown（全 node の Close）を引き続き含む（`Pipeline` に teardown を伴わない公開 API がないため）。`Pipeline.Run` は node 処理開始直前に `startedAt`、終了直後・teardown 開始前に `finishedAt` を記録するため、`Snapshot().Elapsed`（plain `pipeline.New` のままで、追加の公開 API 不要）がすでに steady-state-only の値であり、これを Run 後に読み出して `processing-ns/op` という custom metric として追加報告する。baseline commit 上の実測（Small block）では built-in ns/op が 1 段 54103ns/7416B/100 allocs 〜 16 段 211915ns/25255B/673 allocs、processing-ns/op は 1 段 37772ns 〜 16 段 189972ns。`BenchmarkGainChainPipelineOpen` は construction + `Prepare`（cold lifecycle）のコストを分離して持つ（Close は timer 外。1 段 7942B/43 allocs 〜 16 段 62078B/270 allocs）。
+- `BenchmarkGainChainDepths`（chain_test.go、direct な SendFrame/ReceiveFrame chain）: `BenchmarkGainChainPipeline` と同じ chainDepths × chainBlockSizes、同じ chainFrameCount(8) frame/op、frame ごとに Encode/Decode する形へ揃えたことで、processing-ns/op と直接比較できるようになった。baseline commit 上の実測（Small block）では 1 段 16100ns、4 段 31009ns、16 段 76252ns。ただし depth/block size が大きいほど `BenchmarkGainChainPipeline` の方が速い逆転が起きる（例: 16段/Large で Depths 153318588ns、Pipeline processing-ns/op 11597499ns、13倍の差）。これは `pipeline.Link` の既定 buffer（100）により、8 frame が source Encode・各 gain stage・sink Decode をまたいで並行にオーバーラップ実行できるためで、単一 goroutine で逐次実行する direct-call benchmark には原理的に再現できない。したがって両者の差は「pipeline のオーバーヘッドのみ」ではなく、オーバーヘッドと並行実行による利得の純計として読む。
 - `BenchmarkParallelDecodeThroughput`（plugin/flac/internal/codec/decoder）: parallelism 4 が 1/16 より速く、allocs/op はわずかに増加する（1: 229 allocs、4: 238 allocs、16: 245 allocs）。
 
 ## 既知のギャップ（M0 完了時点で未解消、後続 milestone へ）
