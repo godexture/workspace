@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -327,7 +328,7 @@ func TestZeroSchemaIsInvalid(t *testing.T) {
 	}
 }
 
-func TestSchemaRequiresIdentityVersionAndRegisteredMutableFields(t *testing.T) {
+func TestSchemaRequiresIdentityVersionAndRegisteredFields(t *testing.T) {
 	type invalidConfig struct {
 		Values []int
 		Count  int
@@ -358,6 +359,30 @@ func TestSchemaRequiresIdentityVersionAndRegisteredMutableFields(t *testing.T) {
 	if !found {
 		t.Fatalf("unregistered field diagnostic missing: %v", items)
 	}
+}
+
+func TestSchemaRejectsUnregisteredScalarField(t *testing.T) {
+	type scalarConfig struct {
+		Registered int
+		Forgotten  string
+	}
+	schema := Struct(func() scalarConfig {
+		return scalarConfig{Registered: 1, Forgotten: "not registered"}
+	}).
+		Identity("test.unregistered.scalar").
+		Version("1").
+		AddField(Field("registered", func(value *scalarConfig) *int { return &value.Registered }, Int())).
+		Build()
+
+	if schema.Valid() {
+		t.Fatal("schema with an unregistered scalar field reported valid")
+	}
+	for _, item := range schema.Diagnostics() {
+		if item.Code == codeUnregisteredField && item.Path.String() == "Forgotten" {
+			return
+		}
+	}
+	t.Fatalf("unregistered scalar field diagnostic missing: %v", schema.Diagnostics())
 }
 
 func TestSchemaSnapshotsFactorySourceAndSecret(t *testing.T) {
@@ -476,6 +501,45 @@ func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
 		_, err := mapSchema.Resolve(NewPatch().SetText("value", value))
 		return err
 	})
+}
+
+func TestStructuredCodecsRoundTripSurface(t *testing.T) {
+	type nestedSurface struct {
+		Level  int
+		Tags   []string
+		Labels map[string]string
+	}
+	nestedSchema := Struct(func() nestedSurface { return nestedSurface{} }).
+		Identity("test.round-trip.nested").
+		Version("1").
+		AddField(Field("level", func(value *nestedSurface) *int { return &value.Level }, Int())).
+		AddField(Field("labels", func(value *nestedSurface) *map[string]string { return &value.Labels }, Map(String(), String()))).
+		AddField(Field("tags", func(value *nestedSurface) *[]string { return &value.Tags }, Slice(String()))).
+		Build()
+
+	assertCodecRoundTrip(t, "nested", Nested(nestedSchema), nestedSurface{
+		Level:  7,
+		Tags:   []string{"alpha", "two words"},
+		Labels: map[string]string{"first": "one", "second": "two:two"},
+	})
+	assertCodecRoundTrip(t, "slice", Slice(String()), []string{"a,b", "quote\""})
+	assertCodecRoundTrip(t, "map", Map(String(), String()), map[string]string{"first": "one", "second": "two:two"})
+	assertCodecRoundTrip(t, "union", UnionCodec(UnionChoice[string]{ID: "text", Codec: String()}), Union[string]{Variant: "text", Value: "a:b"})
+}
+
+func assertCodecRoundTrip[T any](t *testing.T, name string, codec Codec[T], value T) {
+	t.Helper()
+	encoded := codec.Encode(value)
+	if !json.Valid([]byte(encoded)) {
+		t.Fatalf("%s Encode returned invalid JSON: %s", name, encoded)
+	}
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("%s Decode(Encode(value)) failed: %v; encoded=%s", name, err, encoded)
+	}
+	if !reflect.DeepEqual(decoded, value) {
+		t.Fatalf("%s round trip = %#v, want %#v; encoded=%s", name, decoded, value, encoded)
+	}
 }
 
 func TestIntegerDecodeChecksTargetWidth(t *testing.T) {

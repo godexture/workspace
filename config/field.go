@@ -573,33 +573,55 @@ type UnionChoice[T any] struct {
 	Codec Codec[T]
 }
 
-// UnionCodec returns a codec for values encoded as "variant:value".
+// UnionCodec returns a codec for values encoded as a JSON object with
+// variant and value members.
 func UnionCodec[T any](choices ...UnionChoice[T]) Codec[Union[T]] {
 	byID := make(map[string]UnionChoice[T], len(choices))
 	descriptions := make([]ChoiceDescription, 0, len(choices))
 	result := NewCodec(CodecSpec[Union[T]]{
 		Type: "union",
 		Decode: func(value string) (Union[T], error) {
-			variant, encoded, found := strings.Cut(value, ":")
-			if !found {
-				return Union[T]{}, fmt.Errorf("union value must contain a variant and value")
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(value), &raw); err != nil || raw == nil {
+				return Union[T]{}, fmt.Errorf("union value must be a JSON object")
+			}
+			encodedVariant, ok := raw["variant"]
+			if !ok {
+				return Union[T]{}, fmt.Errorf("union value must contain a variant")
+			}
+			var variant string
+			if err := json.Unmarshal(encodedVariant, &variant); err != nil {
+				return Union[T]{}, withDecodePath("variant", fmt.Errorf("union variant must be a JSON string"))
+			}
+			encoded, ok := raw["value"]
+			if !ok {
+				return Union[T]{}, fmt.Errorf("union value must contain a value")
+			}
+			for field := range raw {
+				if field != "variant" && field != "value" {
+					return Union[T]{}, withDecodePath(field, fmt.Errorf("unknown union field %q", field))
+				}
 			}
 			choice, ok := byID[variant]
 			if !ok {
 				return Union[T]{}, fmt.Errorf("unknown union variant %q", variant)
 			}
-			decoded, err := choice.Codec.Decode(encoded)
+			decoded, err := choice.Codec.Decode(jsonValueText(encoded))
 			if err != nil {
-				return Union[T]{}, err
+				return Union[T]{}, withDecodePath("value", err)
 			}
 			return Union[T]{Variant: variant, Value: decoded}, nil
 		},
 		Encode: func(value Union[T]) string {
-			choice, ok := byID[value.Variant]
-			if !ok {
-				return "<unknown>"
+			variant, err := json.Marshal(value.Variant)
+			if err != nil {
+				return "null"
 			}
-			return value.Variant + ":" + choice.Codec.Encode(value.Value)
+			encoded := "null"
+			if choice, ok := byID[value.Variant]; ok {
+				encoded = surfaceJSON(choice.Codec.Encode(value.Value))
+			}
+			return `{"variant":` + string(variant) + `,"value":` + encoded + "}"
 		},
 		Canonical: func(value Union[T]) ([]byte, error) {
 			choice, ok := byID[value.Variant]
@@ -649,6 +671,9 @@ func Slice[T any](inner Codec[T]) Codec[[]T] {
 	result := NewCodec(CodecSpec[[]T]{
 		Type: "slice<" + inner.description.Type + ">",
 		Decode: func(value string) ([]T, error) {
+			if strings.TrimSpace(value) == "null" {
+				return nil, nil
+			}
 			var raw []json.RawMessage
 			if err := json.Unmarshal([]byte(value), &raw); err != nil {
 				return nil, fmt.Errorf("slice must be a JSON array")
@@ -664,9 +689,12 @@ func Slice[T any](inner Codec[T]) Codec[[]T] {
 			return result, nil
 		},
 		Encode: func(value []T) string {
+			if value == nil {
+				return "null"
+			}
 			parts := make([]string, len(value))
 			for index, item := range value {
-				parts[index] = inner.Encode(item)
+				parts[index] = surfaceJSON(inner.Encode(item))
 			}
 			return "[" + strings.Join(parts, ",") + "]"
 		},
@@ -728,6 +756,9 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 	result := NewCodec(CodecSpec[map[K]V]{
 		Type: "map<" + keyCodec.description.Type + "," + valueCodec.description.Type + ">",
 		Decode: func(value string) (map[K]V, error) {
+			if strings.TrimSpace(value) == "null" {
+				return nil, nil
+			}
 			var raw map[string]json.RawMessage
 			if err := json.Unmarshal([]byte(value), &raw); err != nil {
 				return nil, fmt.Errorf("map must be a JSON object")
@@ -747,11 +778,14 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 			return decoded, nil
 		},
 		Encode: func(value map[K]V) string {
+			if value == nil {
+				return "null"
+			}
 			entries := sortedMapEntries(value, keyCodec)
 			parts := make([]string, 0, len(entries))
 			for _, entry := range entries {
 				key, _ := json.Marshal(keyCodec.Encode(entry.key))
-				parts = append(parts, string(key)+":"+valueCodec.Encode(entry.value))
+				parts = append(parts, string(key)+":"+surfaceJSON(valueCodec.Encode(entry.value)))
 			}
 			return "{" + strings.Join(parts, ",") + "}"
 		},
@@ -829,9 +863,9 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 // field IDs and canonical order define the nested representation.
 func Nested[T any](schema Schema[T]) Codec[T] {
 	result := NewCodec(CodecSpec[T]{
-		Type:   "nested",
-		Decode: schema.decodeJSON,
-		Encode: schema.encodeJSON,
+		Type:      "nested",
+		Decode:    schema.decodeJSON,
+		Encode:    schema.encodeJSON,
 		Canonical: func(value T) ([]byte, error) { return schema.Canonical(value) },
 		Clone: func(value T) T {
 			cloned, _ := schema.snapshot(value)
@@ -877,68 +911,6 @@ func decodePath(err error) []string {
 		return nil
 	}
 	return append([]string(nil), pathErr.path...)
-}
-
-func (s Schema[T]) decodeJSON(value string) (T, error) {
-	var decoded T
-	if !s.Valid() {
-		return decoded, s.Err()
-	}
-	if strings.TrimSpace(value) == "null" {
-		return decoded, fmt.Errorf("nested value must be a JSON object")
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(value), &raw); err != nil || raw == nil {
-		return decoded, fmt.Errorf("nested value must be a JSON object")
-	}
-	var factoryItems []diagnostic.Item
-	decoded, factoryItems = s.defaultValue()
-	if len(factoryItems) != 0 {
-		return decoded, diagnosticError(factoryItems)
-	}
-	keys := make([]string, 0, len(raw))
-	for key := range raw {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		field, ok := s.field(key)
-		if !ok {
-			return decoded, withDecodePath(key, fmt.Errorf("unknown nested field %q", key))
-		}
-		decodedValue, err := field.decode(jsonValueText(raw[key]))
-		if err != nil {
-			return decoded, withDecodePath(key, err)
-		}
-		if err := field.write(&decoded, decodedValue); err != nil {
-			return decoded, withDecodePath(key, err)
-		}
-	}
-	return decoded, nil
-}
-
-func (s Schema[T]) encodeJSON(value T) string {
-	parts := make([]string, 0, len(s.fields))
-	for _, field := range s.fields {
-		fieldValue, err := field.read(&value)
-		if err != nil || field.encode == nil {
-			return "<invalid>"
-		}
-		encoded := field.encode(fieldValue)
-		if !json.Valid([]byte(encoded)) {
-			quoted, marshalErr := json.Marshal(encoded)
-			if marshalErr != nil {
-				return "<invalid>"
-			}
-			encoded = string(quoted)
-		}
-		key, marshalErr := json.Marshal(field.id)
-		if marshalErr != nil {
-			return "<invalid>"
-		}
-		parts = append(parts, string(key)+":"+encoded)
-	}
-	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func unitInt64Codec[T ~int64](typ, unit string, encode func(T) string) Codec[T] {

@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -434,7 +435,7 @@ type Builder[C any] struct {
 	problems []diagnostic.Item
 }
 
-// Struct starts a schema builder with a fresh default factory. Every mutable
+// Struct starts a schema builder with a fresh default factory. Every
 // top-level field in C must be registered with AddField.
 func Struct[C any](defaults func() C) *Builder[C] {
 	return &Builder[C]{defaults: defaults}
@@ -467,7 +468,9 @@ func (b *Builder[C]) AddField(field FieldSpec[C]) *Builder[C] {
 	return b
 }
 
-// Preset adds a named default patch.
+// Preset adds a named default patch. Provenance marks SourcePreset only when a
+// field's canonical value differs from the default; assigning the same value
+// remains SourceDefault.
 func (b *Builder[C]) Preset(id string, apply func(*C)) *Builder[C] {
 	if b == nil {
 		return b
@@ -839,6 +842,72 @@ func (s Schema[C]) preset(id string) (presetSpec[C], bool) {
 	return s.presets[index], true
 }
 
+func (s Schema[C]) decodeJSON(value string) (C, error) {
+	var decoded C
+	if !s.Valid() {
+		return decoded, s.Err()
+	}
+	if strings.TrimSpace(value) == "null" {
+		return decoded, fmt.Errorf("nested value must be a JSON object")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil || raw == nil {
+		return decoded, fmt.Errorf("nested value must be a JSON object")
+	}
+	var factoryItems []diagnostic.Item
+	decoded, factoryItems = s.defaultValue()
+	if len(factoryItems) != 0 {
+		return decoded, diagnosticError(factoryItems)
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		field, ok := s.field(key)
+		if !ok {
+			return decoded, withDecodePath(key, fmt.Errorf("unknown nested field %q", key))
+		}
+		decodedValue, err := field.decode(jsonValueText(raw[key]))
+		if err != nil {
+			return decoded, withDecodePath(key, err)
+		}
+		if err := field.write(&decoded, decodedValue); err != nil {
+			return decoded, withDecodePath(key, err)
+		}
+	}
+	return decoded, nil
+}
+
+func (s Schema[C]) encodeJSON(value C) string {
+	parts := make([]string, 0, len(s.fields))
+	for _, field := range s.fields {
+		fieldValue, err := field.read(&value)
+		if err != nil || field.encode == nil {
+			return "<invalid>"
+		}
+		encoded := surfaceJSON(field.encode(fieldValue))
+		key, marshalErr := json.Marshal(field.id)
+		if marshalErr != nil {
+			return "<invalid>"
+		}
+		parts = append(parts, string(key)+":"+encoded)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func surfaceJSON(encoded string) string {
+	if json.Valid([]byte(encoded)) {
+		return encoded
+	}
+	quoted, err := json.Marshal(encoded)
+	if err != nil {
+		return "null"
+	}
+	return string(quoted)
+}
+
 func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	var items []diagnostic.Item
 	var defaultValue C
@@ -902,7 +971,7 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	if s.defaults != nil {
 		value, factoryItems := s.defaultValue()
 		items = append(items, factoryItems...)
-		items = append(items, s.validateUnregisteredMutableFields(value)...)
+		items = append(items, s.validateUnregisteredFields(value)...)
 		defaultValue = value
 		defaultReady = len(factoryItems) == 0
 	}
@@ -947,45 +1016,52 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	return items
 }
 
-// Mutable means a type containing a slice, map, pointer, interface, function,
-// channel, unsafe pointer, or a mutable descendant; each top-level field must
-// then be registered so its codec defines the snapshot boundary.
-func (s Schema[C]) validateUnregisteredMutableFields(value C) []diagnostic.Item {
+// Every top-level field must be registered so its codec defines the value and
+// snapshot boundaries.
+func (s Schema[C]) validateUnregisteredFields(value C) []diagnostic.Item {
 	typ := reflect.TypeFor[C]()
-	if typ.Kind() != reflect.Struct {
-		if mutableType(typ) && len(s.fields) == 0 {
-			return []diagnostic.Item{diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath("<root>"), "mutable config value must be registered through a field codec", map[string]string{"type": typ.String()})}
-		}
-		return nil
-	}
-
 	root := reflect.ValueOf(&value).Elem()
-	registered := make(map[uintptr]string, len(s.fields))
+	registered := make(map[uintptr][]reflect.Type, len(s.fields))
 	for _, field := range s.fields {
 		if field.target == nil {
 			continue
 		}
 		if pointer := field.target(&value); pointer != 0 {
-			registered[pointer] = field.id
+			registered[pointer] = append(registered[pointer], field.valueType)
 		}
 	}
+	if typ.Kind() != reflect.Struct {
+		pointer, ok := fieldAddress(root)
+		if ok && registeredField(registered[pointer], typ) {
+			return nil
+		}
+		return []diagnostic.Item{diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath("<root>"), "config value is not registered through a field codec", map[string]string{"type": typ.String()})}
+	}
+
 	var items []diagnostic.Item
 	for index := 0; index < typ.NumField(); index++ {
 		fieldType := typ.Field(index)
-		if !mutableType(fieldType.Type) {
-			continue
-		}
 		fieldValue := root.Field(index)
 		pointer, ok := fieldAddress(fieldValue)
 		if !ok {
+			items = append(items, diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldType.Name), "config field cannot be addressed by the schema", map[string]string{"type": fieldType.Type.String()}))
 			continue
 		}
-		if _, exists := registered[pointer]; exists {
+		if registeredField(registered[pointer], fieldType.Type) {
 			continue
 		}
-		items = append(items, diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldType.Name), "mutable config field is not registered by the schema", map[string]string{"type": fieldType.Type.String()}))
+		items = append(items, diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldType.Name), "config field is not registered by the schema", map[string]string{"type": fieldType.Type.String()}))
 	}
 	return items
+}
+
+func registeredField(types []reflect.Type, fieldType reflect.Type) bool {
+	for _, registeredType := range types {
+		if registeredType == fieldType {
+			return true
+		}
+	}
+	return false
 }
 
 func fieldAddress(value reflect.Value) (pointer uintptr, ok bool) {
