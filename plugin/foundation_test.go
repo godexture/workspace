@@ -50,8 +50,12 @@ func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSet failed: %v", err)
 	}
-	if _, err := set.Add(definition); err == nil {
+	returned, err := set.Add(definition)
+	if err == nil {
 		t.Fatal("duplicate plugin marker was accepted")
+	}
+	if len(returned.Components()) != len(set.Components()) {
+		t.Fatal("Add changed the returned receiver on error")
 	}
 	other := NewComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2))
 	otherDefinition := Define[secondPluginID](pluginDescriptor("other-plugin"), other)

@@ -16,16 +16,16 @@ import (
 type Severity uint8
 
 const (
-	Info Severity = iota
-	Warning
+	InfoSeverity Severity = iota
+	WarningSeverity
 	ErrorSeverity
 )
 
 func (s Severity) String() string {
 	switch s {
-	case Info:
+	case InfoSeverity:
 		return "info"
-	case Warning:
+	case WarningSeverity:
 		return "warning"
 	case ErrorSeverity:
 		return "error"

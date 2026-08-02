@@ -32,21 +32,21 @@ func Build(set plugin.Set) (Index, error) {
 	}
 
 	components := set.Components()
-	byID := make(map[plugin.Identity]int, len(components))
+	seen := make(map[plugin.Identity]struct{}, len(components))
 	for _, component := range components {
 		identity := component.Identity()
 		if identity.IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.component-identity", diagnostic.ErrorSeverity, diagnostic.Path{}, "component has no valid marker identity", nil))
 			continue
 		}
-		if _, exists := byID[identity]; exists {
+		if _, exists := seen[identity]; exists {
 			items = append(items, diagnostic.NewItem("catalog.duplicate-component", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component identity is repeated", nil))
 			continue
 		}
 		if component.PluginIdentity().IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component has no parent plugin identity", nil))
 		}
-		byID[identity] = len(byID)
+		seen[identity] = struct{}{}
 	}
 
 	if hasError(items) {
@@ -57,17 +57,17 @@ func Build(set plugin.Set) (Index, error) {
 	sort.Slice(components, func(left, right int) bool {
 		return components[left].Identity().String() < components[right].Identity().String()
 	})
-	byID = make(map[plugin.Identity]int, len(components))
+	byID := make(map[plugin.Identity]int, len(components))
 	for index, component := range components {
 		byID[component.Identity()] = index
 		components[index] = component
 	}
-	return Index{components: cloneComponents(components), byID: byID}, nil
+	return Index{components: copyComponents(components), byID: byID}, nil
 }
 
 // Components returns copied component definitions in stable identity order.
 func (i Index) Components() []plugin.Component {
-	return cloneComponents(i.components)
+	return copyComponents(i.components)
 }
 
 // Views returns copied read-only component descriptions.
@@ -92,7 +92,7 @@ func (i Index) Lookup(identity plugin.Identity) (plugin.Component, bool) {
 // Len reports the number of validated components.
 func (i Index) Len() int { return len(i.components) }
 
-func cloneComponents(components []plugin.Component) []plugin.Component {
+func copyComponents(components []plugin.Component) []plugin.Component {
 	result := make([]plugin.Component, len(components))
 	for index, component := range components {
 		result[index] = component

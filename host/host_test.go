@@ -98,3 +98,23 @@ func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
 		t.Fatalf("diagnostics lack component/field paths: %v", items)
 	}
 }
+
+func TestNewRejectsComponentWithZeroSchema(t *testing.T) {
+	bad := plugin.Define[hostPluginB](plugin.Descriptor{DisplayName: "broken", Version: "1.0.0"},
+		plugin.NewComponent[hostComponentB](plugin.Descriptor{DisplayName: "zero schema", Version: "1.0.0"}, config.Schema[hostConfig]{}))
+	set, err := plugin.NewSet(bad)
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err = New(Plugins(set))
+	if err == nil {
+		t.Fatal("host accepted a component with an unbuilt zero schema")
+	}
+	componentID := plugin.IdentityOf[hostComponentB]().String()
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "config.invalid-schema" && strings.Contains(item.Path.String(), componentID) {
+			return
+		}
+	}
+	t.Fatalf("zero schema diagnostic lacks component identity: %v", err)
+}

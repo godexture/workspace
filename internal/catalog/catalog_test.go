@@ -16,6 +16,8 @@ type catalogConfig struct{ Value int }
 
 func catalogSchema() config.Schema[catalogConfig] {
 	return config.Struct(func() catalogConfig { return catalogConfig{Value: 1} }).
+		Identity("catalog.test.config").
+		Version("1").
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int())).
 		Build()
 }
@@ -67,8 +69,5 @@ func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
 	items := diagnostic.ItemsOf(err)
 	if len(items) < 5 {
 		t.Fatalf("got %d diagnostics, want aggregate: %v", len(items), err)
-	}
-	if len(diagnostic.ItemsOf(err)) == 0 {
-		t.Fatal("catalog error is not structured")
 	}
 }

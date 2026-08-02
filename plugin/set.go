@@ -31,12 +31,12 @@ func NewSet(definitions ...Definition) (Set, error) {
 func (s Set) Add(definition Definition) (Set, error) {
 	for _, existing := range s.definitions {
 		if existing.identity == definition.identity && !definition.identity.IsZero() {
-			return Set{}, duplicateError(definition.identity)
+			return s, duplicateError(definition.identity)
 		}
 		for _, existingComponent := range existing.components {
 			for _, component := range definition.components {
 				if existingComponent.identity == component.identity && !component.identity.IsZero() {
-					return Set{}, duplicateError(component.identity)
+					return s, duplicateError(component.identity)
 				}
 			}
 		}
