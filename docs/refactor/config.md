@@ -246,7 +246,7 @@ snapshot の唯一の機構は field codec の `Clone` とする。任意の Go 
 
 - reference 型を扱う codec は `Clone` を宣言する。宣言がなければ schema 登録を失敗させる。
 - snapshot は「default factory が fresh な値を返す」ことと「登録 field ごとの codec `Clone`」だけで構成する。
-- 登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の mutable field があれば schema 登録を失敗させる。config 型の一部を意図的に schema 外へ置くことは認めない。
+- 登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の field があれば schema 登録を失敗させる。mutable field だけを検査すると、未登録の scalar field を持つ二つの値が同じ fingerprint を持ち、planner cache key が別の config を同一視する。config 型の一部を意図的に schema 外へ置くことは認めない。
 
 exported `var DefaultXConfig` は設けない。`Schema.Default()`またはpluginの`Default()`は呼出しごとにfreshな値を返し、slice、map、pointer、functionを含むnested fieldもsnapshot化する。現行FLAC configのようにdefault structを単純代入すると`Apodizations`のbacking arrayを共有し、一つのcallerによる変更が後続Jobのdefaultを変え得る。
 
@@ -322,7 +322,8 @@ M2 は typed config contract を foundation package として新設する milest
 - `Resolved[C]` が `Value`、field ごとの `Provenance`、`Diagnostics`、`Fingerprint` を持ち、解決後に caller が元の slice/map を変更しても意味が変わらない。
 - `Schema.Default()` が呼び出しごとに fresh な値を返し、slice、map、pointer、function を含む nested field も snapshot 化する。snapshot は field codec の `Clone` だけで構成し、generic reflection clone を使わない。新 package に exported `DefaultXConfig` を作らない。
 - 未 Build の zero `Schema` を含む invalid schema が `Valid()` で true を返さない。schema identity と version は必須とする。
-- `C` の mutable な field が schema に未登録の場合、schema 登録を失敗させる。canonical/fingerprint に入らない field が config の意味を変えることを許さない。
+- `C` の field が schema に未登録の場合、schema 登録を失敗させる。canonical/fingerprint に入らない field が config の意味を変えることを許さない。
+- 構造化 codec の surface 表現は decode と encode が逆関数になる。`Nested` が返した encode 結果を同じ codec の decode が読み戻せる。
 - schema 構築時の自己検証（duplicate/空の field・preset ID、invalid default/preset、unknown/cyclic dependency、field 型と codec の不一致、canonicalization 不能型、invalid range/step/choice、secret の default/表示規則、nested path 衝突）が import 時 panic ではなく、component identity と field path を含む aggregate error として host 構築時に報告される。
 - ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。
 - canonical fingerprint が map iteration order、registration order、pointer address、process 再起動に依存しない。canonical form を作れない field は schema 登録を失敗させる。

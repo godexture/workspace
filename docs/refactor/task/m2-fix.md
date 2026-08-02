@@ -4,6 +4,8 @@ M2 の実装 review で見つかった欠陥を是正する作業指示である
 
 review 時点の状態: `go build ./...`、`go vet`、対象 package の test と `-race`、`go run ./tools/cmd/test-runner --simd` はすべて green。依存方向も正しい。以下は回帰ではなく contract の欠陥である。
 
+1〜7 は 1 回目の review、8〜10 はその是正後の 2 回目の review で見つかった項目である。1〜10 は修正済みで、対象 package の test・race、全体 build、全体 `--simd` runner、config benchmark を完了している。
+
 ## 必読
 
 [task/m2.md](m2.md) の必読に加えて [findings.md](../findings.md) の F26、F28 を読む。
@@ -68,6 +70,39 @@ canonical encoding に含まれるのに空でも通るため、識別力の弱�
   - 同ファイルの `base := testSchema(false)` と続く空 loop。
   - `internal/catalog/catalog_test.go` の重複した `diagnostic.ItemsOf` アサート。
 - canonical encoding の golden digest test を追加する。fingerprint が process 再起動に依存しないことと、canonical format の意図しない変更の両方を固定できる。
+
+## 8. 構造化 codec の surface 表現を decode と対称にする
+
+1 回目の是正後の review で見つかった欠陥である。`Schema.encodeJSON` は各 field の human-readable な `Encode` 出力を JSON document へ埋め込むが、`Slice`/`Map` の `Encode` は JSON ではない（`[a,b]`）。`json.Valid` に落ちて文字列として quote されるため、`Nested` の encode 結果を同じ codec の `decodeJSON` が復元できない。
+
+```text
+nested encode = {"level":3,"tags":"[a,b]"}
+decode        = slice must be a JSON array
+```
+
+- `Nested` の encode と decode は同じ「JSON object」表現を名乗っているので、逆関数にする。
+- そのために、構造化 codec（`Slice`、`Map`、`Nested`、`Union`）の surface 表現を decode が受け付ける syntax に揃える。人間向けの短い表示が別途必要なら、`Encode` とは別の表示専用 API として分ける。両者を一つの `Encode` に混ぜない。
+- test: `Nested`、`Slice`、`Map`、`Union` それぞれで `Decode(Encode(v))` が元の値と一致すること。nested の中に slice と map を含む形を必ず含める。
+
+## 9. 未登録 field の検査を全 field へ広げる
+
+8 と同じ review で見つかった。3 の実装は mutable field だけを検査するため、未登録の scalar field が残る。`ResolveValue` に渡した値の差が `Resolved.Value` には現れるのに canonical には入らず、異なる config が同じ fingerprint を持つ。
+
+```text
+ResolveValue{Level:1, Forgotten:1} と {Level:1, Forgotten:999} が同じ fingerprint
+```
+
+これは 3 の指示（および [config.md](../config.md#immutability-と-canonicalization)）が検査対象を「mutable field」と限定していたことによる。文書は全 field を対象とする形へ訂正済みである。
+
+- `C` の top-level field はすべて登録を必須にし、未登録があれば component identity と field path 付きで schema 登録を失敗させる。
+- mutable 判定は codec の `Clone` 必須判定にだけ使い、登録必須判定とは分ける。
+- test: 未登録の scalar field を持つ schema が登録に失敗すること。
+
+## 10. 小さな是正
+
+- `Builder.Preset` の godoc に provenance の制約を書く。6 で [config.md](../config.md) には記載したが godoc が未反映で、plugin 開発者は godoc を先に読む。
+- `Set.Override`/`OverridePlugin` も error 時に空 `Set` ではなく receiver を返す。7 で `Add` だけ直したため非対称になっている。
+- `Schema.decodeJSON`/`encodeJSON` を `config/field.go` から `config/schema.go` へ移す。`Schema` の責務であり、field codec 定義の file に置く理由がない。
 
 ## 検証
 
