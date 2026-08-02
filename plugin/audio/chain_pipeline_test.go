@@ -58,6 +58,14 @@ const chainFrameCount = 8
 // reports the true steady-state-only wall-clock time as a custom
 // "processing-ns/op" metric, alongside the teardown-inclusive built-in
 // ns/op.
+//
+// processing-ns/op is a real per-node wall-clock measurement, not a
+// synthetic one, so like any single-sample timing it is noisy at very low
+// iteration counts (an explicit -benchtime=1x/2x can read as 0 for
+// Small/1stage, where the actual work is a handful of microseconds and OS
+// goroutine-scheduling jitter dominates); it stabilizes with the default
+// adaptive -benchtime or a reasonably large explicit count, same as any
+// other Go benchmark metric.
 func BenchmarkGainChainPipeline(b *testing.B) {
 	for _, depth := range chainDepths {
 		for _, size := range chainBlockSizes {
