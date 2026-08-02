@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func BenchmarkSchemaResolve(b *testing.B) {
-	schema := testSchema(false)
+	schema := testSchema()
 	patch := NewPatch().SetText("number", "8").SetText("values", "[1,2,3,5,8]")
 	b.ReportAllocs()
 	for b.Loop() {
@@ -14,7 +14,7 @@ func BenchmarkSchemaResolve(b *testing.B) {
 }
 
 func BenchmarkCanonicalization(b *testing.B) {
-	schema := testSchema(false)
+	schema := testSchema()
 	value := schema.Default()
 	b.ReportAllocs()
 	for b.Loop() {

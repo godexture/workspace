@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,28 +24,27 @@ type testConfig struct {
 	Rate   Rate
 }
 
-func testSchema(reverse bool) Schema[testConfig] {
+func testSchema() Schema[testConfig] {
 	builder := Struct(func() testConfig {
 		return defaultTestConfig()
 	}).Identity("test.config").Version("1")
 
-	add := func() {
-		builder.AddField(Field("number", func(value *testConfig) *int { return &value.Number }, Int().Range(0, 10).Help("number")))
-		builder.AddField(Field("verify", func(value *testConfig) *bool { return &value.Verify }, Bool()))
-		builder.AddField(Field("values", func(value *testConfig) *[]int { return &value.Values }, Slice(Int())))
-		builder.AddField(Field("labels", func(value *testConfig) *map[string]int { return &value.Labels }, Map(String(), Int())))
-		builder.AddField(Field("nested", func(value *testConfig) *nestedConfig { return &value.Nested }, Nested(Struct(func() nestedConfig {
-			return nestedConfig{Limit: 3}
-		}).AddField(Field("limit", func(value *nestedConfig) *int { return &value.Limit }, Int())).Build())))
-		builder.AddField(Field("secret", func(value *testConfig) *SecretValue[string] { return &value.Secret }, SecretCodec(String())))
-		builder.AddField(Field("rate", func(value *testConfig) *Rate { return &value.Rate }, RateCodec()))
-	}
-	if reverse {
-		add()
-		return builder.Build()
-	}
-	add()
+	builder.AddField(Field("number", func(value *testConfig) *int { return &value.Number }, Int().Range(0, 10).Help("number")))
+	builder.AddField(Field("verify", func(value *testConfig) *bool { return &value.Verify }, Bool()))
+	builder.AddField(Field("values", func(value *testConfig) *[]int { return &value.Values }, Slice(Int())))
+	builder.AddField(Field("labels", func(value *testConfig) *map[string]int { return &value.Labels }, Map(String(), Int())))
+	builder.AddField(Field("nested", func(value *testConfig) *nestedConfig { return &value.Nested }, Nested(testNestedSchema())))
+	builder.AddField(Field("secret", func(value *testConfig) *SecretValue[string] { return &value.Secret }, SecretCodec(String())))
+	builder.AddField(Field("rate", func(value *testConfig) *Rate { return &value.Rate }, RateCodec()))
 	return builder.Build()
+}
+
+func testNestedSchema() Schema[nestedConfig] {
+	return Struct(func() nestedConfig { return nestedConfig{Limit: 3} }).
+		Identity("test.config.nested").
+		Version("1").
+		AddField(Field("limit", func(value *nestedConfig) *int { return &value.Limit }, Int())).
+		Build()
 }
 
 func defaultTestConfig() testConfig {
@@ -59,7 +59,7 @@ func defaultTestConfig() testConfig {
 }
 
 func TestSchemaDefaultIsFresh(t *testing.T) {
-	schema := testSchema(false)
+	schema := testSchema()
 	if !schema.Valid() {
 		t.Fatalf("schema is invalid: %v", schema.Err())
 	}
@@ -76,7 +76,7 @@ func TestSchemaDefaultIsFresh(t *testing.T) {
 }
 
 func TestSchemaResolveOrderAndProvenance(t *testing.T) {
-	schema := testSchema(false)
+	schema := testSchema()
 
 	_, err := schema.Resolve(NewPatch().Preset("fast"))
 	if err == nil {
@@ -87,17 +87,13 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 
 	builder := Struct(defaultTestConfig).Identity("test.config").Version("1")
 	// Reuse the same field contract while adding a named preset.
-	base := testSchema(false)
-	for _, field := range base.Description().Fields {
-		_ = field
-	}
-	// The typed builder is rebuilt explicitly so the test exercises the public
+	// Rebuild the typed builder explicitly so the test exercises the public
 	// registration path rather than reaching into schema internals.
 	builder.AddField(Field("number", func(value *testConfig) *int { return &value.Number }, Int().Range(0, 10)))
 	builder.AddField(Field("verify", func(value *testConfig) *bool { return &value.Verify }, Bool()))
 	builder.AddField(Field("values", func(value *testConfig) *[]int { return &value.Values }, Slice(Int())))
 	builder.AddField(Field("labels", func(value *testConfig) *map[string]int { return &value.Labels }, Map(String(), Int())))
-	builder.AddField(Field("nested", func(value *testConfig) *nestedConfig { return &value.Nested }, Nested(Struct(func() nestedConfig { return nestedConfig{Limit: 3} }).AddField(Field("limit", func(value *nestedConfig) *int { return &value.Limit }, Int())).Build())))
+	builder.AddField(Field("nested", func(value *testConfig) *nestedConfig { return &value.Nested }, Nested(testNestedSchema())))
 	builder.AddField(Field("secret", func(value *testConfig) *SecretValue[string] { return &value.Secret }, SecretCodec(String())))
 	builder.AddField(Field("rate", func(value *testConfig) *Rate { return &value.Rate }, RateCodec()))
 	builder.Preset("fast", func(value *testConfig) { value.Number = 1 })
@@ -130,7 +126,7 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 }
 
 func TestSchemaAggregatesUnknownAndInvalidInput(t *testing.T) {
-	schema := testSchema(false)
+	schema := testSchema()
 	_, err := schema.Resolve(NewPatch().SetText("number", "100").SetText("verify", "not-bool").SetText("missing", "1"))
 	if err == nil {
 		t.Fatal("invalid patch unexpectedly resolved")
@@ -192,8 +188,33 @@ func TestCanonicalFingerprintIgnoresMapAndRegistrationOrder(t *testing.T) {
 	}
 }
 
+func TestCanonicalEncodingGoldenDigest(t *testing.T) {
+	type goldenConfig struct {
+		Count  int
+		Labels map[string]int
+	}
+	schema := Struct(func() goldenConfig {
+		return goldenConfig{Count: 3, Labels: map[string]int{"b": 2, "a": 1}}
+	}).
+		Identity("test.golden").
+		Version("1").
+		AddField(Field("labels", func(value *goldenConfig) *map[string]int { return &value.Labels }, Map(String(), Int()))).
+		AddField(Field("count", func(value *goldenConfig) *int { return &value.Count }, Int())).
+		Build()
+	canonical, err := schema.Canonical(schema.Default())
+	if err != nil {
+		t.Fatalf("canonical failed: %v", err)
+	}
+	if got := fmt.Sprintf("%x", canonical); got != "676f6465632f636f6e6669672f63616e6f6e6963616c2f763100000000000000000b746573742e676f6c64656e0000000000000001310000000000000005636f756e740000000000000003696e740000000000000005696e743a3300000000000000066c6162656c73000000000000000f6d61703c737472696e672c696e743e000000000000003e6d6170000000000000000008737472696e673a610000000000000005696e743a310000000000000008737472696e673a620000000000000005696e743a32" {
+		t.Fatalf("canonical digest = %s", got)
+	}
+	if got := hashCanonical(canonical).String(); got != "06e37b07f8bdefaf27b30c9ab4d8cda747f13e47760a46152db548c047baf0bf" {
+		t.Fatalf("fingerprint digest = %s", got)
+	}
+}
+
 func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
-	schema := testSchema(false)
+	schema := testSchema()
 	resolved, err := schema.Resolve(NewPatch().SetText("secret", "super-secret"))
 	if err != nil {
 		t.Fatalf("secret resolve failed: %v", err)
@@ -273,7 +294,7 @@ func TestStandardSumTypesAndCustomCodec(t *testing.T) {
 func diagnosticItems(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }
 
 func TestDescriptionIsImmutable(t *testing.T) {
-	builder := Struct(func() struct{ Mode int } { return struct{ Mode int }{} })
+	builder := Struct(func() struct{ Mode int } { return struct{ Mode int }{} }).Identity("test.description").Version("1")
 	field := Field("mode", func(value *struct{ Mode int }) *int { return &value.Mode }, Int().Help("mode"), Alias("m"))
 	schema := builder.AddField(field).Build()
 	description := schema.Description()
@@ -290,5 +311,227 @@ func TestDescriptionIsImmutable(t *testing.T) {
 	}
 	if !reflect.DeepEqual(schema.Description().Fields[0].Choices, []ChoiceDescription(nil)) {
 		t.Fatalf("description choices unexpectedly changed")
+	}
+}
+
+func TestZeroSchemaIsInvalid(t *testing.T) {
+	var schema Schema[struct{}]
+	if schema.Valid() {
+		t.Fatal("zero schema reported valid")
+	}
+	if schema.View().Valid() {
+		t.Fatal("zero schema view reported valid")
+	}
+	if schema.Err() == nil || !strings.Contains(schema.Err().Error(), "schema has not been built") {
+		t.Fatalf("zero schema error = %v", schema.Err())
+	}
+}
+
+func TestSchemaRequiresIdentityVersionAndRegisteredMutableFields(t *testing.T) {
+	type invalidConfig struct {
+		Values []int
+		Count  int
+	}
+
+	missingMetadata := Struct(func() struct{ Count int } { return struct{ Count int }{} }).
+		AddField(Field("count", func(value *struct{ Count int }) *int { return &value.Count }, Int())).
+		Build()
+	if missingMetadata.Valid() {
+		t.Fatal("schema without identity/version reported valid")
+	}
+
+	schema := Struct(func() invalidConfig { return invalidConfig{Values: []int{1}} }).
+		Identity("test.unregistered").
+		Version("1").
+		AddField(Field("count", func(value *invalidConfig) *int { return &value.Count }, Int())).
+		Build()
+	if schema.Valid() {
+		t.Fatal("schema with an unregistered mutable field reported valid")
+	}
+	items := schema.Diagnostics()
+	found := false
+	for _, item := range items {
+		if item.Code == codeUnregisteredField && item.Path.String() == "Values" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unregistered field diagnostic missing: %v", items)
+	}
+}
+
+func TestSchemaSnapshotsFactorySourceAndSecret(t *testing.T) {
+	type nested struct{ Values []int }
+	type shared struct {
+		Exported []int
+		hidden   []int
+		Nested   nested
+		Secret   SecretValue[[]int]
+	}
+
+	source := shared{
+		Exported: []int{1},
+		hidden:   []int{2},
+		Nested:   nested{Values: []int{3}},
+		Secret:   NewSecret([]int{4}),
+	}
+	nestedSchema := Struct(func() nested { return nested{Values: []int{3}} }).
+		Identity("test.shared.nested").
+		Version("1").
+		AddField(Field("values", func(value *nested) *[]int { return &value.Values }, Slice(Int()))).
+		Build()
+	schema := Struct(func() shared { return source }).
+		Identity("test.shared").
+		Version("1").
+		AddField(Field("exported", func(value *shared) *[]int { return &value.Exported }, Slice(Int()))).
+		AddField(Field("hidden", func(value *shared) *[]int { return &value.hidden }, Slice(Int()))).
+		AddField(Field("nested", func(value *shared) *nested { return &value.Nested }, Nested(nestedSchema))).
+		AddField(Field("secret", func(value *shared) *SecretValue[[]int] { return &value.Secret }, SecretCodec(Slice(Int())))).
+		Build()
+	if !schema.Valid() {
+		t.Fatalf("schema is invalid: %v", schema.Err())
+	}
+
+	first := schema.Default()
+	first.Exported[0] = 10
+	first.hidden[0] = 20
+	first.Nested.Values[0] = 30
+	first.Secret.Reveal()[0] = 40
+	second := schema.Default()
+	if second.Exported[0] != 1 || second.hidden[0] != 2 || second.Nested.Values[0] != 3 || second.Secret.Reveal()[0] != 4 {
+		t.Fatalf("default snapshot shared state: %#v", second)
+	}
+	if source.Exported[0] != 1 || source.hidden[0] != 2 || source.Nested.Values[0] != 3 || source.Secret.Reveal()[0] != 4 {
+		t.Fatalf("factory source was mutated: %#v", source)
+	}
+
+	resolved, err := schema.Resolve(NewPatch())
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	resolved.Value.Exported[0] = 99
+	resolved.Value.Nested.Values[0] = 99
+	next, err := schema.Resolve(NewPatch())
+	if err != nil || next.Value.Exported[0] != 1 || next.Value.Nested.Values[0] != 3 {
+		t.Fatalf("resolved value affected later snapshot: %#v, %v", next.Value, err)
+	}
+}
+
+func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
+	type nestedSurface struct{ Value int }
+	type sliceSurface struct{ Values []nestedSurface }
+	type mapSurface struct{ Values map[string]nestedSurface }
+
+	makeNested := func() Schema[nestedSurface] {
+		return Struct(func() nestedSurface { return nestedSurface{Value: 1} }).
+			Identity("test.surface.nested").
+			Version("1").
+			AddField(Field("value", func(value *nestedSurface) *int { return &value.Value }, Int())).
+			Build()
+	}
+	check := func(name, value, wantPath string, resolve func(string) error) {
+		t.Helper()
+		err := resolve(value)
+		if err == nil {
+			t.Fatalf("%s unknown field unexpectedly resolved", name)
+		}
+		found := false
+		for _, item := range diagnostic.ItemsOf(err) {
+			if item.Path.String() == wantPath {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s diagnostic path missing: %v", name, err)
+		}
+	}
+
+	nestedSchema := makeNested()
+	nested := Struct(func() struct{ Value nestedSurface } { return struct{ Value nestedSurface }{} }).
+		Identity("test.surface.direct").
+		Version("1").
+		AddField(Field("value", func(value *struct{ Value nestedSurface }) *nestedSurface { return &value.Value }, Nested(nestedSchema))).
+		Build()
+	check("nested", `{"value":1,"unknown":2}`, "value.unknown", func(value string) error {
+		_, err := nested.Resolve(NewPatch().SetText("value", value))
+		return err
+	})
+
+	slice := Struct(func() sliceSurface { return sliceSurface{} }).
+		Identity("test.surface.slice").
+		Version("1").
+		AddField(Field("value", func(value *sliceSurface) *[]nestedSurface { return &value.Values }, Slice(Nested(nestedSchema)))).
+		Build()
+	check("slice", `[{"value":1,"unknown":2}]`, "value.0.unknown", func(value string) error {
+		_, err := slice.Resolve(NewPatch().SetText("value", value))
+		return err
+	})
+
+	mapSchema := Struct(func() mapSurface { return mapSurface{} }).
+		Identity("test.surface.map").
+		Version("1").
+		AddField(Field("value", func(value *mapSurface) *map[string]nestedSurface { return &value.Values }, Map(String(), Nested(nestedSchema)))).
+		Build()
+	check("map", `{"item":{"value":1,"unknown":2}}`, "value.item.unknown", func(value string) error {
+		_, err := mapSchema.Resolve(NewPatch().SetText("value", value))
+		return err
+	})
+}
+
+func TestIntegerDecodeChecksTargetWidth(t *testing.T) {
+	if _, err := parseInt[int8]("128"); err == nil {
+		t.Fatal("int8 overflow was accepted")
+	}
+	if _, err := parseUint[uint8]("256"); err == nil {
+		t.Fatal("uint8 overflow was accepted")
+	}
+}
+
+func TestMapCloneIncludesKeysAndNormalizeIncludesKeysAndValues(t *testing.T) {
+	type key struct{ Value int }
+	keyCodec := NewCodec(CodecSpec[*key]{
+		Decode: func(value string) (*key, error) {
+			var decoded int
+			if _, err := fmt.Sscanf(value, "%d", &decoded); err != nil {
+				return nil, err
+			}
+			return &key{Value: decoded}, nil
+		},
+		Encode: func(value *key) string { return fmt.Sprint(value.Value) },
+		Canonical: func(value *key) ([]byte, error) {
+			return []byte(fmt.Sprintf("key:%d", value.Value)), nil
+		},
+		Clone: func(value *key) *key {
+			if value == nil {
+				return nil
+			}
+			copy := *value
+			return &copy
+		},
+	})
+	codec := Map(keyCodec, Int())
+	originalKey := &key{Value: 1}
+	cloned := codec.Clone(map[*key]int{originalKey: 2})
+	for clonedKey := range cloned {
+		if clonedKey == originalKey {
+			t.Fatal("map key was not cloned")
+		}
+		clonedKey.Value = 9
+	}
+	if originalKey.Value != 1 {
+		t.Fatal("changing cloned key mutated original key")
+	}
+
+	normalizedKey := NewCodec(CodecSpec[int]{
+		Decode: func(value string) (int, error) { return strconv.Atoi(value) },
+		Encode: strconv.Itoa,
+		Canonical: func(value int) ([]byte, error) {
+			return []byte(fmt.Sprintf("int:%d", value)), nil
+		},
+		Normalize: func(value int) (int, []diagnostic.Item) { return value + 1, nil },
+	})
+	normalized, items := Map(normalizedKey, normalizedKey).normalizeValue(map[int]int{1: 2})
+	if len(items) != 0 || normalized[2] != 3 {
+		t.Fatalf("map normalize = %#v, %v", normalized, items)
 	}
 }

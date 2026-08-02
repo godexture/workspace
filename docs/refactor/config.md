@@ -141,6 +141,8 @@ schema default
 
 優先順位は常に `default < preset < explicit` とする。preset は default に対する named patch であり、明示 field を上書きしない。複数 preset の暗黙合成は行わず、一つを選ぶ。必要なら plugin が意味の明確な個別 field を公開する。
 
+現行の `Preset(id, func(*C))` では callback が触れた field を記録できないため、provenance の `preset` は default と適用後の field canonical 値が異なる場合だけ付与する。preset が default と同じ値を再代入した field は `default` と記録される。触れた field を正確に追跡する API は、別の product 判断が必要になるため後続 milestone で扱う。
+
 `ApplyPreset(int)` の magic number は共通 contract から除く。`fast`、`balanced`、`maximum` のような安定した名前を使う。FLAC の compression level のように数値自体に規格・実装上の意味がある場合は、preset ではなく range を持つ通常 field とする。
 
 環境変数、設定 file、CLI flag の優先関係は application/surface の責務である。foundation は任意の環境を読み取らず、選択済みの完全値または `Patch` だけを解決する。

@@ -45,6 +45,7 @@ type CodecSpec[T any] struct {
 	Decode      func(string) (T, error)
 	Encode      func(T) string
 	Canonical   func(T) ([]byte, error)
+	// Clone is required for values containing mutable reference state.
 	Clone       func(T) T
 	Normalize   func(T) (T, []diagnostic.Item)
 	Validate    func(T) []diagnostic.Item
@@ -74,8 +75,12 @@ func NewCodec[T any](spec CodecSpec[T]) Codec[T] {
 	if spec.Encode == nil {
 		spec.Encode = func(value T) string { return fmt.Sprint(value) }
 	}
+	var construction []diagnostic.Item
 	if spec.Clone == nil {
-		spec.Clone = cloneTyped[T]
+		spec.Clone = func(value T) T { return value }
+		if mutableType(reflect.TypeFor[T]()) {
+			construction = append(construction, diagnostic.NewItem(codeMissingClone, diagnostic.ErrorSeverity, diagnostic.Path{}, "reference-valued codec must provide a Clone operation", nil))
+		}
 	}
 	if spec.Normalize == nil {
 		spec.Normalize = func(value T) (T, []diagnostic.Item) { return value, nil }
@@ -85,20 +90,21 @@ func NewCodec[T any](spec CodecSpec[T]) Codec[T] {
 	}
 	spec.Description.Type = spec.Type
 	return Codec[T]{
-		decode:      spec.Decode,
-		encode:      spec.Encode,
-		canonical:   spec.Canonical,
-		clone:       spec.Clone,
-		normalize:   spec.Normalize,
-		validate:    spec.Validate,
-		description: cloneDescription(spec.Description),
+		decode:       spec.Decode,
+		encode:       spec.Encode,
+		canonical:    spec.Canonical,
+		clone:        spec.Clone,
+		normalize:    spec.Normalize,
+		validate:     spec.Validate,
+		description:  cloneDescription(spec.Description),
+		construction: construction,
 	}
 }
 
 // Valid reports whether the codec has the operations required for schema
 // registration.
 func (c Codec[T]) Valid() bool {
-	return c.decode != nil && c.encode != nil && c.canonical != nil && c.clone != nil && c.normalize != nil && c.validate != nil
+	return c.decode != nil && c.encode != nil && c.canonical != nil && c.clone != nil && c.normalize != nil && c.validate != nil && len(c.construction) == 0
 }
 
 // Decode parses one surface value.
@@ -130,7 +136,7 @@ func (c Codec[T]) Canonical(value T) ([]byte, error) {
 // Clone returns a defensive copy of a field value.
 func (c Codec[T]) Clone(value T) T {
 	if c.clone == nil {
-		return cloneTyped(value)
+		return value
 	}
 	return c.clone(value)
 }
@@ -267,4 +273,34 @@ func cloneDescription(description Description) Description {
 		description.Range = &rangeCopy
 	}
 	return description
+}
+
+// mutableType identifies values whose shallow copy can preserve shared mutable
+// state. It is used only during schema construction; data-plane code never
+// performs reflection-based value dispatch.
+func mutableType(typ reflect.Type) bool {
+	return mutableTypeSeen(typ, make(map[reflect.Type]bool))
+}
+
+func mutableTypeSeen(typ reflect.Type, seen map[reflect.Type]bool) bool {
+	if typ == nil {
+		return false
+	}
+	switch typ.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return true
+	case reflect.Array:
+		return mutableTypeSeen(typ.Elem(), seen)
+	case reflect.Struct:
+		if seen[typ] {
+			return false
+		}
+		seen[typ] = true
+		for index := 0; index < typ.NumField(); index++ {
+			if mutableTypeSeen(typ.Field(index).Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }

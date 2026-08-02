@@ -26,7 +26,11 @@ const (
 	codeFieldDependency    = "config.field-dependency"
 	codeFieldPathCollision = "config.field-path-collision"
 	codeMissingCodec       = "config.missing-codec"
+	codeMissingClone       = "config.missing-clone"
 	codeMissingAccessor    = "config.missing-accessor"
+	codeMissingIdentity    = "config.missing-identity"
+	codeMissingVersion     = "config.missing-version"
+	codeUnregisteredField  = "config.unregistered-field"
 	codeInvalidAlias       = "config.invalid-alias"
 )
 
@@ -301,6 +305,8 @@ type FieldSpec[C any] struct {
 	dependsOn    []string
 	read         func(*C) (any, error)
 	write        func(*C, any) error
+	target       func(*C) uintptr
+	encode       func(any) string
 	decode       func(string) (any, error)
 	canonical    func(any) ([]byte, error)
 	normalize    func(any) (any, []diagnostic.Item)
@@ -329,6 +335,13 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 				return nil, fmt.Errorf("field value has type %T, want %s", value, reflect.TypeFor[T]())
 			}
 			return codec.Canonical(typed)
+		},
+		encode: func(value any) string {
+			typed, ok := value.(T)
+			if !ok {
+				return "<invalid>"
+			}
+			return codec.Encode(typed)
 		},
 		decode: func(value string) (any, error) {
 			decoded, err := codec.Decode(value)
@@ -385,6 +398,21 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 		*target = codec.Clone(typed)
 		return nil
 	}
+	result.target = func(config *C) uintptr {
+		defer func() {
+			if recover() != nil {
+				// An invalid accessor is reported by its normal read/write path.
+			}
+		}()
+		if accessor == nil || config == nil {
+			return 0
+		}
+		value := accessor(config)
+		if value == nil {
+			return 0
+		}
+		return reflect.ValueOf(value).Pointer()
+	}
 	return result
 }
 
@@ -406,7 +434,8 @@ type Builder[C any] struct {
 	problems []diagnostic.Item
 }
 
-// Struct starts a schema builder with a fresh default factory.
+// Struct starts a schema builder with a fresh default factory. Every mutable
+// top-level field in C must be registered with AddField.
 func Struct[C any](defaults func() C) *Builder[C] {
 	return &Builder[C]{defaults: defaults}
 }
@@ -464,6 +493,7 @@ func (b *Builder[C]) Build() Schema[C] {
 		return Schema[C]{problems: []diagnostic.Item{diagnostic.NewItem(codeInvalidSchema, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema builder is nil", nil)}}
 	}
 	result := Schema[C]{
+		built:    true,
 		defaults: b.defaults,
 		identity: b.identity,
 		version:  b.version,
@@ -485,6 +515,7 @@ func (b *Builder[C]) Build() Schema[C] {
 
 // Schema is a frozen typed configuration contract.
 type Schema[C any] struct {
+	built    bool
 	defaults func() C
 	identity string
 	version  string
@@ -495,19 +526,19 @@ type Schema[C any] struct {
 }
 
 // Valid reports whether schema construction completed without errors.
-func (s Schema[C]) Valid() bool { return !hasError(s.problems) }
+func (s Schema[C]) Valid() bool { return s.built && !hasError(s.problems) }
 
 // Err returns all schema construction diagnostics, or nil when valid.
-func (s Schema[C]) Err() error { return diagnosticError(s.problems) }
+func (s Schema[C]) Err() error { return diagnosticError(s.schemaProblems()) }
 
 // Diagnostics returns a copy of schema construction diagnostics.
-func (s Schema[C]) Diagnostics() []diagnostic.Item { return cloneItems(s.problems) }
+func (s Schema[C]) Diagnostics() []diagnostic.Item { return cloneItems(s.schemaProblems()) }
 
 // Default returns a fresh snapshot on every call, including nested mutable
 // values returned by the default factory.
 func (s Schema[C]) Default() C {
 	value, _ := s.defaultValue()
-	return cloneTyped(value)
+	return value
 }
 
 // Description returns a frozen read-only schema description.
@@ -563,7 +594,8 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 		} else if err := callPreset(preset.apply, &value); err != nil {
 			items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "preset application failed", nil))
 		} else {
-			presetValue := cloneTyped(value)
+			presetValue, snapshotItems := s.snapshot(value)
+			items = append(items, snapshotItems...)
 			defaultValue, _ := s.defaultValue()
 			for _, field := range s.fields {
 				before, beforeErr := field.read(&defaultValue)
@@ -588,7 +620,9 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 		if entry.isText {
 			value, err := field.decode(entry.text)
 			if err != nil {
-				items = append(items, diagnostic.NewItem(codeInvalidInput, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input could not be decoded", inputDetail(field)))
+				path := diagnostic.FieldPath(fieldID)
+				path.Fields = append(path.Fields, decodePath(err)...)
+				items = append(items, diagnostic.NewItem(codeInvalidInput, diagnostic.ErrorSeverity, path, "field input could not be decoded", inputDetail(field)))
 				continue
 			}
 			decoded = value
@@ -608,18 +642,20 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 // ResolveValue resolves a complete value. Every registered field is explicit,
 // including fields whose value is the type's zero value.
 func (s Schema[C]) ResolveValue(value C) (Resolved[C], error) {
-	value = cloneTyped(value)
+	value, snapshotItems := s.snapshot(value)
 	provenance := Provenance{sources: make(map[string]Source, len(s.fields))}
 	for _, field := range s.fields {
 		provenance.sources[field.id] = SourceExplicit
 	}
-	return s.finish(value, provenance, nil)
+	return s.finish(value, provenance, snapshotItems)
 }
 
 func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Item) (Resolved[C], error) {
 	if !s.Valid() {
-		items = append(items, s.problems...)
-		return Resolved[C]{Value: cloneTyped(value), Provenance: cloneProvenance(provenance), Diagnostics: cloneItems(items)}, diagnosticError(items)
+		items = append(items, s.schemaProblems()...)
+		value, snapshotItems := s.snapshot(value)
+		items = append(items, snapshotItems...)
+		return Resolved[C]{Value: value, Provenance: cloneProvenance(provenance), Diagnostics: cloneItems(items)}, diagnosticError(items)
 	}
 
 	for _, field := range s.fields {
@@ -651,8 +687,10 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 
 	canonical, canonicalItems := s.canonicalValue(value)
 	items = append(items, canonicalItems...)
+	value, snapshotItems := s.snapshot(value)
+	items = append(items, snapshotItems...)
 	resolved := Resolved[C]{
-		Value:       cloneTyped(value),
+		Value:       value,
 		Provenance:  cloneProvenance(provenance),
 		Diagnostics: cloneItems(items),
 	}
@@ -686,7 +724,9 @@ func (s Schema[C]) validateSchema(value C) []diagnostic.Item {
 		return nil
 	}
 	var items []diagnostic.Item
-	for _, item := range s.validate(cloneTyped(value)) {
+	validated, snapshotItems := s.snapshot(value)
+	items = append(items, snapshotItems...)
+	for _, item := range s.validate(validated) {
 		items = append(items, item)
 	}
 	return items
@@ -733,12 +773,44 @@ func (s Schema[C]) defaultValue() (C, []diagnostic.Item) {
 				value = *new(C)
 			}
 		}()
-		value = cloneTyped(s.defaults())
+		value = s.defaults()
 	}()
 	if panicked {
 		return value, []diagnostic.Item{diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory panicked", nil)}
 	}
-	return value, nil
+	return s.snapshot(value)
+}
+
+func (s Schema[C]) snapshot(value C) (C, []diagnostic.Item) {
+	result := value
+	items := s.snapshotItemsInto(&result)
+	return result, items
+}
+
+func (s Schema[C]) snapshotItemsInto(value *C) []diagnostic.Item {
+	if value == nil {
+		return []diagnostic.Item{diagnostic.NewItem(codeInvalidSchema, diagnostic.ErrorSeverity, diagnostic.Path{}, "config snapshot target is nil", nil)}
+	}
+	var items []diagnostic.Item
+	for _, field := range s.fields {
+		fieldValue, err := field.read(value)
+		if err != nil {
+			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "field could not be copied for snapshot", nil))
+			continue
+		}
+		if err := field.write(value, fieldValue); err != nil {
+			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "field snapshot could not be stored", nil))
+		}
+	}
+	return items
+}
+
+func (s Schema[C]) schemaProblems() []diagnostic.Item {
+	items := cloneItems(s.problems)
+	if !s.built {
+		items = append(items, diagnostic.NewItem(codeInvalidSchema, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema has not been built", nil))
+	}
+	return items
 }
 
 func callPreset[C any](apply func(*C), value *C) (err error) {
@@ -769,6 +841,14 @@ func (s Schema[C]) preset(id string) (presetSpec[C], bool) {
 
 func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	var items []diagnostic.Item
+	var defaultValue C
+	defaultReady := false
+	if strings.TrimSpace(s.identity) == "" {
+		items = append(items, diagnostic.NewItem(codeMissingIdentity, diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: "identity"}, "schema identity is required", nil))
+	}
+	if strings.TrimSpace(s.version) == "" {
+		items = append(items, diagnostic.NewItem(codeMissingVersion, diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: "version"}, "schema version is required", nil))
+	}
 	if s.defaults == nil {
 		items = append(items, diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory is required", nil))
 	}
@@ -819,6 +899,13 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	if hasDependencyCycle(s.fields) {
 		items = append(items, diagnostic.NewItem(codeFieldDependency, diagnostic.ErrorSeverity, diagnostic.Path{}, "field dependencies contain a cycle", nil))
 	}
+	if s.defaults != nil {
+		value, factoryItems := s.defaultValue()
+		items = append(items, factoryItems...)
+		items = append(items, s.validateUnregisteredMutableFields(value)...)
+		defaultValue = value
+		defaultReady = len(factoryItems) == 0
+	}
 	presetIDs := make(map[string]struct{}, len(s.presets))
 	for _, preset := range s.presets {
 		path := diagnostic.Path{Fields: []string{"preset", preset.id}}
@@ -833,9 +920,8 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 			items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, path, "preset apply function is required", nil))
 		}
 	}
-	if s.defaults != nil {
-		value, factoryItems := s.defaultValue()
-		items = append(items, factoryItems...)
+	if defaultReady {
+		value := defaultValue
 		items = append(items, s.validateValue(value)...)
 		_, canonicalItems := s.canonicalValue(value)
 		items = append(items, canonicalItems...)
@@ -843,7 +929,8 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 			if preset.apply == nil {
 				continue
 			}
-			presetValue := cloneTyped(value)
+			presetValue, snapshotItems := s.snapshot(value)
+			items = append(items, snapshotItems...)
 			if err := callPreset(preset.apply, &presetValue); err != nil {
 				items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, diagnostic.Path{Fields: []string{"preset", preset.id}}, "preset application failed", nil))
 				continue
@@ -858,6 +945,60 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 		}
 	}
 	return items
+}
+
+// Mutable means a type containing a slice, map, pointer, interface, function,
+// channel, unsafe pointer, or a mutable descendant; each top-level field must
+// then be registered so its codec defines the snapshot boundary.
+func (s Schema[C]) validateUnregisteredMutableFields(value C) []diagnostic.Item {
+	typ := reflect.TypeFor[C]()
+	if typ.Kind() != reflect.Struct {
+		if mutableType(typ) && len(s.fields) == 0 {
+			return []diagnostic.Item{diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath("<root>"), "mutable config value must be registered through a field codec", map[string]string{"type": typ.String()})}
+		}
+		return nil
+	}
+
+	root := reflect.ValueOf(&value).Elem()
+	registered := make(map[uintptr]string, len(s.fields))
+	for _, field := range s.fields {
+		if field.target == nil {
+			continue
+		}
+		if pointer := field.target(&value); pointer != 0 {
+			registered[pointer] = field.id
+		}
+	}
+	var items []diagnostic.Item
+	for index := 0; index < typ.NumField(); index++ {
+		fieldType := typ.Field(index)
+		if !mutableType(fieldType.Type) {
+			continue
+		}
+		fieldValue := root.Field(index)
+		pointer, ok := fieldAddress(fieldValue)
+		if !ok {
+			continue
+		}
+		if _, exists := registered[pointer]; exists {
+			continue
+		}
+		items = append(items, diagnostic.NewItem(codeUnregisteredField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldType.Name), "mutable config field is not registered by the schema", map[string]string{"type": fieldType.Type.String()}))
+	}
+	return items
+}
+
+func fieldAddress(value reflect.Value) (pointer uintptr, ok bool) {
+	if !value.IsValid() || !value.CanAddr() {
+		return 0, false
+	}
+	defer func() {
+		if recover() != nil {
+			pointer = 0
+			ok = false
+		}
+	}()
+	return value.Addr().Pointer(), true
 }
 
 func (s *Schema[C]) sortDefinitions() {

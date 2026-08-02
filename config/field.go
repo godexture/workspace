@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,7 +122,7 @@ func Float32() Codec[float32] {
 		},
 		Normalize: func(value float32) (float32, []diagnostic.Item) {
 			if value == 0 && math.Signbit(float64(value)) {
-				return 0, []diagnostic.Item{diagnostic.NewItem("config.normalize-negative-zero", diagnostic.Info, diagnostic.Path{}, "normalized negative zero", nil)}
+				return 0, []diagnostic.Item{diagnostic.NewItem("config.normalize-negative-zero", diagnostic.InfoSeverity, diagnostic.Path{}, "normalized negative zero", nil)}
 			}
 			return value, nil
 		},
@@ -157,7 +159,7 @@ func Float64() Codec[float64] {
 		},
 		Normalize: func(value float64) (float64, []diagnostic.Item) {
 			if value == 0 && math.Signbit(value) {
-				return 0, []diagnostic.Item{diagnostic.NewItem("config.normalize-negative-zero", diagnostic.Info, diagnostic.Path{}, "normalized negative zero", nil)}
+				return 0, []diagnostic.Item{diagnostic.NewItem("config.normalize-negative-zero", diagnostic.InfoSeverity, diagnostic.Path{}, "normalized negative zero", nil)}
 			}
 			return value, nil
 		},
@@ -290,7 +292,7 @@ func None[T any]() Optional[T] { return Optional[T]{} }
 
 // OptionalCodec adds an explicit "none" representation around a codec.
 func OptionalCodec[T any](inner Codec[T]) Codec[Optional[T]] {
-	return NewCodec(CodecSpec[Optional[T]]{
+	result := NewCodec(CodecSpec[Optional[T]]{
 		Type: "optional<" + inner.description.Type + ">",
 		Decode: func(value string) (Optional[T], error) {
 			if value == "none" || value == "null" {
@@ -345,6 +347,10 @@ func OptionalCodec[T any](inner Codec[T]) Codec[Optional[T]] {
 			return description
 		}(),
 	})
+	if !inner.Valid() {
+		result = result.addConstruction(diagnostic.NewItem("config.invalid-optional-codec", diagnostic.ErrorSeverity, diagnostic.Path{}, "optional inner codec must be valid", nil))
+	}
+	return result
 }
 
 // AutoMode distinguishes an input-independent explicit value from a value
@@ -371,7 +377,7 @@ func ValueOf[T any](value T) Auto[T] { return Auto[T]{Mode: AutoModeValue, Value
 
 // AutoCodec wraps a value codec with an explicit "auto" choice.
 func AutoCodec[T any](inner Codec[T]) Codec[Auto[T]] {
-	return NewCodec(CodecSpec[Auto[T]]{
+	result := NewCodec(CodecSpec[Auto[T]]{
 		Type: "auto<" + inner.description.Type + ">",
 		Decode: func(value string) (Auto[T], error) {
 			if value == "auto" {
@@ -427,6 +433,10 @@ func AutoCodec[T any](inner Codec[T]) Codec[Auto[T]] {
 			return description
 		}(),
 	})
+	if !inner.Valid() {
+		result = result.addConstruction(diagnostic.NewItem("config.invalid-auto-codec", diagnostic.ErrorSeverity, diagnostic.Path{}, "auto inner codec must be valid", nil))
+	}
+	return result
 }
 
 // RateMode distinguishes an explicitly requested rate from an input-derived
@@ -508,7 +518,7 @@ func (value SecretValue[T]) String() string { return "<redacted>" }
 // canonical output. The fingerprint contains a domain-separated digest so
 // equal secrets remain distinguishable without exposing the secret.
 func SecretCodec[T any](inner Codec[T]) Codec[SecretValue[T]] {
-	return NewCodec(CodecSpec[SecretValue[T]]{
+	result := NewCodec(CodecSpec[SecretValue[T]]{
 		Type: "secret<" + inner.description.Type + ">",
 		Decode: func(value string) (SecretValue[T], error) {
 			decoded, err := inner.Decode(value)
@@ -544,6 +554,10 @@ func SecretCodec[T any](inner Codec[T]) Codec[SecretValue[T]] {
 		},
 		Description: Description{Type: "secret<" + inner.description.Type + ">", Secret: true},
 	})
+	if !inner.Valid() {
+		result = result.addConstruction(diagnostic.NewItem("config.invalid-secret-codec", diagnostic.ErrorSeverity, diagnostic.Path{}, "secret inner codec must be valid", nil))
+	}
+	return result
 }
 
 // Union is a discriminated union whose variants share the same Go value type.
@@ -615,7 +629,7 @@ func UnionCodec[T any](choices ...UnionChoice[T]) Codec[Union[T]] {
 	})
 	seen := make(map[string]struct{}, len(choices))
 	for _, choice := range choices {
-		if choice.ID == "" || choice.Codec.description.Type == "" {
+		if choice.ID == "" || !choice.Codec.Valid() {
 			result = result.addConstruction(diagnostic.NewItem("config.invalid-union-variant", diagnostic.ErrorSeverity, diagnostic.Path{}, "union variants require an ID and codec", nil))
 		}
 		if _, exists := seen[choice.ID]; exists {
@@ -632,7 +646,7 @@ func UnionCodec[T any](choices ...UnionChoice[T]) Codec[Union[T]] {
 // Slice returns an ordered slice codec. Element order is part of the
 // canonical representation.
 func Slice[T any](inner Codec[T]) Codec[[]T] {
-	return NewCodec(CodecSpec[[]T]{
+	result := NewCodec(CodecSpec[[]T]{
 		Type: "slice<" + inner.description.Type + ">",
 		Decode: func(value string) ([]T, error) {
 			var raw []json.RawMessage
@@ -643,7 +657,7 @@ func Slice[T any](inner Codec[T]) Codec[[]T] {
 			for index, item := range raw {
 				decoded, err := inner.Decode(jsonValueText(item))
 				if err != nil {
-					return nil, fmt.Errorf("slice item %d: %w", index, err)
+					return nil, withDecodePath(strconv.Itoa(index), fmt.Errorf("slice item %d: %w", index, err))
 				}
 				result[index] = decoded
 			}
@@ -702,6 +716,10 @@ func Slice[T any](inner Codec[T]) Codec[[]T] {
 		},
 		Description: Description{Type: "slice<" + inner.description.Type + ">", Ordered: true},
 	})
+	if !inner.Valid() {
+		result = result.addConstruction(diagnostic.NewItem("config.invalid-slice-codec", diagnostic.ErrorSeverity, diagnostic.Path{}, "slice inner codec must be valid", nil))
+	}
+	return result
 }
 
 // Map returns a map codec whose canonical entries are sorted by canonical key
@@ -718,11 +736,11 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 			for encodedKey, encodedValue := range raw {
 				key, err := keyCodec.Decode(encodedKey)
 				if err != nil {
-					return nil, fmt.Errorf("map key: %w", err)
+					return nil, withDecodePath(encodedKey, fmt.Errorf("map key: %w", err))
 				}
 				item, err := valueCodec.Decode(jsonValueText(encodedValue))
 				if err != nil {
-					return nil, fmt.Errorf("map value: %w", err)
+					return nil, withDecodePath(encodedKey, fmt.Errorf("map value: %w", err))
 				}
 				decoded[key] = item
 			}
@@ -759,16 +777,42 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 			}
 			result := make(map[K]V, len(value))
 			for key, item := range value {
-				result[key] = valueCodec.Clone(item)
+				result[keyCodec.Clone(key)] = valueCodec.Clone(item)
 			}
 			return result
+		},
+		Normalize: func(value map[K]V) (map[K]V, []diagnostic.Item) {
+			if value == nil {
+				return nil, nil
+			}
+			result := make(map[K]V, len(value))
+			var items []diagnostic.Item
+			for key, item := range value {
+				normalizedKey, keyItems := keyCodec.normalizeValue(key)
+				normalizedValue, valueItems := valueCodec.normalizeValue(item)
+				keyPath := keyCodec.Encode(key)
+				for _, child := range keyItems {
+					items = append(items, prefixItem(child, keyPath))
+				}
+				for _, child := range valueItems {
+					items = append(items, prefixItem(child, keyPath))
+				}
+				if _, exists := result[normalizedKey]; exists {
+					items = append(items, diagnostic.NewItem("config.map-key-collision", diagnostic.ErrorSeverity, diagnostic.FieldPath(keyPath), "map key normalization produced a duplicate key", nil))
+					continue
+				}
+				result[normalizedKey] = normalizedValue
+			}
+			return result, items
 		},
 		Validate: func(value map[K]V) []diagnostic.Item {
 			var items []diagnostic.Item
 			for key, item := range value {
+				for _, child := range keyCodec.validateValue(key) {
+					items = append(items, prefixItem(child, keyCodec.Encode(key)))
+				}
 				for _, child := range valueCodec.validateValue(item) {
-					child.Path = child.Path.Prefix(diagnostic.FieldPath(keyCodec.Encode(key)))
-					items = append(items, child)
+					items = append(items, prefixItem(child, keyCodec.Encode(key)))
 				}
 			}
 			return items
@@ -784,29 +828,117 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 // Nested returns a codec backed by another typed schema. The nested schema's
 // field IDs and canonical order define the nested representation.
 func Nested[T any](schema Schema[T]) Codec[T] {
-	return NewCodec(CodecSpec[T]{
-		Type: "nested",
-		Decode: func(value string) (T, error) {
-			var decoded T
-			if err := json.Unmarshal([]byte(value), &decoded); err != nil {
-				return decoded, fmt.Errorf("nested value must be a JSON object")
-			}
-			return decoded, nil
-		},
-		Encode: func(value T) string {
-			encoded, err := json.Marshal(value)
-			if err != nil {
-				return "<invalid>"
-			}
-			return string(encoded)
-		},
+	result := NewCodec(CodecSpec[T]{
+		Type:   "nested",
+		Decode: schema.decodeJSON,
+		Encode: schema.encodeJSON,
 		Canonical: func(value T) ([]byte, error) { return schema.Canonical(value) },
-		Clone:     cloneTyped[T],
+		Clone: func(value T) T {
+			cloned, _ := schema.snapshot(value)
+			return cloned
+		},
 		Validate: func(value T) []diagnostic.Item {
 			return schema.validateValue(value)
 		},
 		Description: Description{Type: "nested"},
 	})
+	if !schema.Valid() {
+		for _, item := range schema.Diagnostics() {
+			result = result.addConstruction(item)
+		}
+	}
+	return result
+}
+
+type decodePathError struct {
+	path []string
+	err  error
+}
+
+func (e *decodePathError) Error() string { return e.err.Error() }
+
+func (e *decodePathError) Unwrap() error { return e.err }
+
+func withDecodePath(field string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var pathErr *decodePathError
+	if errors.As(err, &pathErr) {
+		path := append([]string{field}, pathErr.path...)
+		return &decodePathError{path: path, err: err}
+	}
+	return &decodePathError{path: []string{field}, err: err}
+}
+
+func decodePath(err error) []string {
+	var pathErr *decodePathError
+	if !errors.As(err, &pathErr) || pathErr == nil {
+		return nil
+	}
+	return append([]string(nil), pathErr.path...)
+}
+
+func (s Schema[T]) decodeJSON(value string) (T, error) {
+	var decoded T
+	if !s.Valid() {
+		return decoded, s.Err()
+	}
+	if strings.TrimSpace(value) == "null" {
+		return decoded, fmt.Errorf("nested value must be a JSON object")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil || raw == nil {
+		return decoded, fmt.Errorf("nested value must be a JSON object")
+	}
+	var factoryItems []diagnostic.Item
+	decoded, factoryItems = s.defaultValue()
+	if len(factoryItems) != 0 {
+		return decoded, diagnosticError(factoryItems)
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		field, ok := s.field(key)
+		if !ok {
+			return decoded, withDecodePath(key, fmt.Errorf("unknown nested field %q", key))
+		}
+		decodedValue, err := field.decode(jsonValueText(raw[key]))
+		if err != nil {
+			return decoded, withDecodePath(key, err)
+		}
+		if err := field.write(&decoded, decodedValue); err != nil {
+			return decoded, withDecodePath(key, err)
+		}
+	}
+	return decoded, nil
+}
+
+func (s Schema[T]) encodeJSON(value T) string {
+	parts := make([]string, 0, len(s.fields))
+	for _, field := range s.fields {
+		fieldValue, err := field.read(&value)
+		if err != nil || field.encode == nil {
+			return "<invalid>"
+		}
+		encoded := field.encode(fieldValue)
+		if !json.Valid([]byte(encoded)) {
+			quoted, marshalErr := json.Marshal(encoded)
+			if marshalErr != nil {
+				return "<invalid>"
+			}
+			encoded = string(quoted)
+		}
+		key, marshalErr := json.Marshal(field.id)
+		if marshalErr != nil {
+			return "<invalid>"
+		}
+		parts = append(parts, string(key)+":"+encoded)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func unitInt64Codec[T ~int64](typ, unit string, encode func(T) string) Codec[T] {
@@ -852,12 +984,12 @@ func unitFloat64Codec[T ~float64](typ, unit string) Codec[T] {
 }
 
 func parseInt[T ~int | ~int64 | ~int32 | ~int16 | ~int8](value string) (T, error) {
-	parsed, err := strconv.ParseInt(value, 10, 64)
+	parsed, err := strconv.ParseInt(value, 10, reflect.TypeFor[T]().Bits())
 	return T(parsed), err
 }
 
 func parseUint[T ~uint | ~uint64 | ~uint32 | ~uint16 | ~uint8](value string) (T, error) {
-	parsed, err := strconv.ParseUint(value, 10, 64)
+	parsed, err := strconv.ParseUint(value, 10, reflect.TypeFor[T]().Bits())
 	return T(parsed), err
 }
 
