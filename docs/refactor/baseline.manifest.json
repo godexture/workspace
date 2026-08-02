@@ -1,6 +1,6 @@
 {
   "$comment": "Machine-readable companion to baseline.md, per docs/refactor/checkpoint.md M0-R5 (and its second re-audit, M0#4). This file is the input manifest a script or CI job can parse directly; baseline.md is the human-readable summary of what running against it produces. Every command is argv + env (no shell string), so it runs the same way regardless of the recording OS's shell.",
-  "baselineCommit": "924461d0e004fda41745bfcbebcdb9f1c0af03ab",
+  "baselineCommit": "1b3a38e68d9374a1b605d9cb70d142c7c51eeccd",
   "repository": "github.com/godexture/godec",
   "go": {
     "version": "go1.26.4",
@@ -65,8 +65,9 @@
     ],
     "benchmarks": [
       { "id": "benchObservationPaired", "argv": ["go", "test", "./core/pipeline/...", "-bench", "BenchmarkPipelineObservationPaired64MiB"], "env": {}, "input": "observationPairedFixture" },
-      { "id": "benchFilterChain", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipeline"], "env": {}, "input": "stereoBlock" },
+      { "id": "benchFilterChain", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipeline"], "env": {}, "input": "stereoBlock", "note": "Reports both the built-in ns/op (steady-state processing + Run's teardown) and a custom processing-ns/op metric (steady-state only, via pipeline.NewObserved/Snapshot)." },
       { "id": "benchFilterChainOpen", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainPipelineOpen"], "env": {}, "input": "stereoBlock" },
+      { "id": "benchFilterChainDepthsLowerBound", "argv": ["go", "test", "./plugin/audio", "-bench", "BenchmarkGainChainDepths"], "env": {}, "input": "stereoBlock", "note": "Direct SendFrame/ReceiveFrame chain with no pipeline scheduling; construction and input encode run once outside the timed loop, so this is directly comparable to benchFilterChain's processing-ns/op." },
       { "id": "benchFLACParallelDecode", "argv": ["go", "test", "./plugin/flac/internal/codec/decoder/...", "-bench", "BenchmarkParallelDecodeThroughput"], "env": {}, "input": "flacFrameFixture" }
     ],
     "profiles": [
