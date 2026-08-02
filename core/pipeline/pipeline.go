@@ -48,6 +48,22 @@ type Pipeline struct {
 }
 
 func New(nodes ...node.Node) (*Pipeline, error) {
+	return newFromNodes(ObservationOff, nodes)
+}
+
+// NewObserved is New with an explicit ObservationMode. Run always closes
+// every node before returning (see the Pipeline doc comment), so a caller
+// that needs steady-state processing duration separate from teardown --
+// e.g. a benchmark -- has no way to time that from outside except by
+// requesting ObservationMetrics here and reading Snapshot() after Run
+// returns: nodeMetrics records each node's Start(ctx) window only, which
+// ends before Run's internal teardown begins, and Snapshot remains valid
+// after Close since it doesn't depend on the fields Close clears.
+func NewObserved(observation ObservationMode, nodes ...node.Node) (*Pipeline, error) {
+	return newFromNodes(observation, nodes)
+}
+
+func newFromNodes(observation ObservationMode, nodes []node.Node) (*Pipeline, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("%w: pipeline has no nodes", ErrInvalidPipeline)
 	}
@@ -73,7 +89,7 @@ func New(nodes ...node.Node) (*Pipeline, error) {
 	for i := range owned {
 		description.Nodes[i].ID = fmt.Sprintf("node:%d", i)
 	}
-	return newPipeline(owned, description, ObservationOff, nil, nil, preparationPlan{run: owned, runIndex: makeIndexes(len(owned))})
+	return newPipeline(owned, description, observation, nil, nil, preparationPlan{run: owned, runIndex: makeIndexes(len(owned))})
 }
 
 func newPipeline(nodes []node.Node, description Description, observation ObservationMode, edges []*edgeMetrics, resourceClosers []func() error, preparation preparationPlan) (*Pipeline, error) {
