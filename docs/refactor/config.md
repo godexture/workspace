@@ -240,6 +240,12 @@ encoder.flac.compression:
 
 `Schema.Resolve` は default/value を新しい snapshot へ copy する。caller が後で元の slice/map/config を変更しても、Plan の意味は変わらない。config は小さな control-plane value であることを前提に一度だけ defensive copy し、frame/artwork buffer の clone と同じ仕組みにはしない。
 
+snapshot の唯一の機構は field codec の `Clone` とする。任意の Go 値を推測して複製する generic reflection clone は使わない。[F26](findings.md) のとおり、reflection clone は pointer、slice、map、interface、unexported field の意味を推測し、特に unexported field を静かに shallow copy して snapshot でない値を snapshot と見せる。したがって次を守る。
+
+- reference 型を扱う codec は `Clone` を宣言する。宣言がなければ schema 登録を失敗させる。
+- snapshot は「default factory が fresh な値を返す」ことと「登録 field ごとの codec `Clone`」だけで構成する。
+- 登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の mutable field があれば schema 登録を失敗させる。config 型の一部を意図的に schema 外へ置くことは認めない。
+
 exported `var DefaultXConfig` は設けない。`Schema.Default()`またはpluginの`Default()`は呼出しごとにfreshな値を返し、slice、map、pointer、functionを含むnested fieldもsnapshot化する。現行FLAC configのようにdefault structを単純代入すると`Apodizations`のbacking arrayを共有し、一つのcallerによる変更が後続Jobのdefaultを変え得る。
 
 schema/descriptor自体は毎回組み立て直さなくてよい。private fieldとcopyを返すread APIによってimmutabilityを型で強制できる場合は、interned valueを共有する。つまり「default valueはfresh」「schema definitionはfrozen」を区別する。
@@ -309,10 +315,12 @@ planning 時間への影響は benchmark する。少数 field の schema resolv
 M2 は typed config contract を foundation package として新設する milestone である。公式 plugin の config 移行、generator と `config_options.go` の削除、CLI/WASM への投影実装は M8/M9 の作業であり、M2 には要求しない。identity/catalog 側の条件は [plugins](plugins.md#m2-完了条件) を参照する。
 
 - `config.Schema[C]` が field identity、default、preset、decode、validation、canonicalization、表示 description の唯一の外部契約になる。struct tag、default 変数、個別 `Validate` を主契約にしない。
-- 完全値 `C` と疎な `Patch` を区別し、省略と明示 zero を取り違えない。unknown field は error にする。
+- 完全値 `C` と疎な `Patch` を区別し、省略と明示 zero を取り違えない。unknown field は error にする。これは top-level の field ID だけでなく、nested/slice/map の surface decode にも適用する。
 - 解決順序が `schema default -> named preset -> explicit patch -> normalization -> validation -> canonicalization` で固定され、優先順位が常に `default < preset < explicit` になる。複数 preset を暗黙合成しない。
 - `Resolved[C]` が `Value`、field ごとの `Provenance`、`Diagnostics`、`Fingerprint` を持ち、解決後に caller が元の slice/map を変更しても意味が変わらない。
-- `Schema.Default()` が呼び出しごとに fresh な値を返し、slice、map、pointer、function を含む nested field も snapshot 化する。新 package に exported `DefaultXConfig` を作らない。
+- `Schema.Default()` が呼び出しごとに fresh な値を返し、slice、map、pointer、function を含む nested field も snapshot 化する。snapshot は field codec の `Clone` だけで構成し、generic reflection clone を使わない。新 package に exported `DefaultXConfig` を作らない。
+- 未 Build の zero `Schema` を含む invalid schema が `Valid()` で true を返さない。schema identity と version は必須とする。
+- `C` の mutable な field が schema に未登録の場合、schema 登録を失敗させる。canonical/fingerprint に入らない field が config の意味を変えることを許さない。
 - schema 構築時の自己検証（duplicate/空の field・preset ID、invalid default/preset、unknown/cyclic dependency、field 型と codec の不一致、canonicalization 不能型、invalid range/step/choice、secret の default/表示規則、nested path 衝突）が import 時 panic ではなく、component identity と field path を含む aggregate error として host 構築時に報告される。
 - ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。
 - canonical fingerprint が map iteration order、registration order、pointer address、process 再起動に依存しない。canonical form を作れない field は schema 登録を失敗させる。

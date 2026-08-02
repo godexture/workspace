@@ -309,7 +309,7 @@ M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract �
 - `plugin` package が marker type の Go type identity から canonical identity を導出し、identity に version、display name、config 型、alias を含めない。
 - 同じ marker identity を同じ `Set` へ二度加えた場合に error になる。暗黙の last-wins や registration order 依存を持たず、置換は対象 identity を指定する明示 `Override` だけで行う。
 - `Set` が immutable な persistent value であり、`Add`/`Remove`/`Override` が元の値を変更せず新しい値を返す。新 package が package-level mutable registry と `init` による副作用登録を持たない。
-- `internal/catalog` が host 構築時に検証済み immutable index を作り、invalid entry を黙って除外せず host 構築 error にする。「未導入」と「壊れた plugin」を区別できる（[F28](findings.md)）。
+- `internal/catalog` が host 構築時に検証済み immutable index を作り、invalid entry を黙って除外せず host 構築 error にする。「未導入」と「壊れた plugin」を区別できる（[F28](findings.md)）。未 Build の zero config schema を持つ component もここで失敗させる。
 - host 構築 error が component identity と対象 field/descriptor path を含む aggregate な構造化 diagnostic として返り、最初の一件で打ち切らない。
 - component definition は identity、descriptor、config schema、alias、provenance を検証する。port shape、`Compile` purity、`Suggest` bounded 性の検証は M3/M4 で追加するため、この時点では definition を不透明な値として保持してよい。
 - 公式 plugin package が definition を返す API の形を確定する。`flac.Plugin()`、`flac.Codec()` のように関数で返す形とし、`var Plugin = ...` の変数形は使わない。実際の公式 plugin の移行は M6/M8 で行う。

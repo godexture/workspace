@@ -17,7 +17,7 @@
 |---|---|---|
 | M0 | 完了 | 現行の correctness、failure semantics、metadata/stream、worker/variant、performance の比較条件を固定した。再現条件は [baseline.md](baseline.md) と [baseline.manifest.json](baseline.manifest.json) を参照する。 |
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
-| M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、immutable catalog view を持つ `host.New` を追加し、M2 固有 test/race/benchmark と全体 `--simd` gate を通過した。 |
+| M2 | 進行中 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` を追加し全体 `--simd` gate は green。review で完了条件に反する欠陥を検出したため、[task/m2-fix.md](task/m2-fix.md) の是正が完了するまで完了にしない。 |
 | M3 | 未着手 | — |
 | M4 | 未着手 | — |
 | M5 | 未着手 | — |
