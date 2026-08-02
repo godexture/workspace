@@ -86,6 +86,16 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 	if overridden.Components()[0].Descriptor().DisplayName != "new" {
 		t.Fatalf("Override did not replace component")
 	}
+	missingComponent := NewComponent[secondComponentID](pluginDescriptor("missing"), pluginSchema(9))
+	missing, err := set.Override(missingComponent.Identity(), missingComponent)
+	if err == nil || len(missing.Components()) != len(set.Components()) {
+		t.Fatalf("Override error returned the wrong receiver: result=%d source=%d err=%v", len(missing.Components()), len(set.Components()), err)
+	}
+	missingPlugin := Define[secondPluginID](pluginDescriptor("missing-plugin"), missingComponent)
+	missing, err = set.OverridePlugin(missingPlugin.Identity(), missingPlugin)
+	if err == nil || len(missing.Components()) != len(set.Components()) {
+		t.Fatalf("OverridePlugin error returned the wrong receiver: result=%d source=%d err=%v", len(missing.Components()), len(set.Components()), err)
+	}
 	removed, ok := overridden.Remove(component.Identity())
 	if !ok || !removed.Empty() {
 		t.Fatalf("Remove = %#v, %v; want empty set", removed, ok)

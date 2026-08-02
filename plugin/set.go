@@ -83,7 +83,7 @@ func (s Set) Remove(identity Identity) (Set, bool) {
 // allowing identity changes to masquerade as an override.
 func (s Set) Override(target Identity, replacement Component) (Set, error) {
 	if target.IsZero() || replacement.identity != target {
-		return Set{}, invalidOverrideError("override target and replacement component identities must match")
+		return s, invalidOverrideError("override target and replacement component identities must match")
 	}
 	result := Set{}
 	replaced := false
@@ -95,7 +95,7 @@ func (s Set) Override(target Identity, replacement Component) (Set, error) {
 		result.definitions = append(result.definitions, updated)
 	}
 	if !replaced {
-		return Set{}, invalidOverrideError("override target identity is not present")
+		return s, invalidOverrideError("override target identity is not present")
 	}
 	return result, nil
 }
@@ -103,7 +103,7 @@ func (s Set) Override(target Identity, replacement Component) (Set, error) {
 // OverridePlugin replaces a whole plugin definition by plugin identity.
 func (s Set) OverridePlugin(target Identity, replacement Definition) (Set, error) {
 	if target.IsZero() || replacement.identity != target {
-		return Set{}, invalidOverrideError("override target and replacement plugin identities must match")
+		return s, invalidOverrideError("override target and replacement plugin identities must match")
 	}
 	result := Set{}
 	replaced := false
@@ -116,7 +116,7 @@ func (s Set) OverridePlugin(target Identity, replacement Definition) (Set, error
 		result.definitions = append(result.definitions, definition.clone())
 	}
 	if !replaced {
-		return Set{}, invalidOverrideError("override target identity is not present")
+		return s, invalidOverrideError("override target identity is not present")
 	}
 	return result, nil
 }
