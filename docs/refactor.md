@@ -6,7 +6,7 @@
 >
 > ### M0/M1 進行状況メモ（直近更新分）
 >
-> M1 は完了。M0 は3度の再監査を経た。一次: differential harness、filter chain benchmark、metadata baseline、lifecycle failure injection、baseline artifact。二次: 任意 differential tool の false positive、撤回した保証の文書反映漏れ、filter chain benchmark の lifecycle 境界、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備。三次: baseline commit の古さ（修正後 commit より前を指していた）、filter chain benchmark が teardown を分離できていなかった点（`core/pipeline` に `NewObserved` を追加し steady-state-only の `processing-ns/op` custom metric で解決）、checkpoint.md 自身の矛盾した記述、convolver test の decode failure 経路での小さな leak。すべて解消し、scalar/SIMD 両 build の全 test（各66 package）green を再検証した上で M0 を完了へ更新した。詳細は [checkpoint.md](refactor/checkpoint.md) と [baseline.md](refactor/baseline.md) を正本とする。
+> M1 は完了。M0 は4度の再監査を経た。一次: differential harness、filter chain benchmark、metadata baseline、lifecycle failure injection、baseline artifact。二次: 任意 differential tool の false positive、撤回した保証の文書反映漏れ、filter chain benchmark の lifecycle 境界、baseline manifest の再現性・構造、convolver end-to-end test の resource/observation 不備。三次: baseline commit の古さ、filter chain benchmark の teardown 分離不足、checkpoint.md 自身の矛盾した記述、convolver test の decode failure 経路での小さな leak。四次: 三次で追加した `processing-ns/op` の計測方法自体が不正確だった点（`Pipeline.Run` が既に teardown 前に記録する `Snapshot().Elapsed` を使う形に直し、不要だった `core/pipeline.NewObserved` を削除）、direct-call benchmark の frame leak、pipeline benchmark と direct-call benchmark の frame数/block size/Encode-Decode 境界の不一致（揃えた結果、pipeline の並行実行がもたらす実際の優位性が判明し、「差はoverheadのみ」という説明を訂正）。すべて解消し、scalar/SIMD 両 build の全 test（各66 package）green を再検証した上で M0 を完了へ更新した。詳細は [checkpoint.md](refactor/checkpoint.md) と [baseline.md](refactor/baseline.md) を正本とする。
 
 ## 目標
 
