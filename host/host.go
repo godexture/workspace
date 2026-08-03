@@ -3,6 +3,8 @@
 package host
 
 import (
+	"encoding/hex"
+
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/plugin"
@@ -42,6 +44,23 @@ type Catalog struct {
 	index catalog.Index
 }
 
+// CatalogFingerprint identifies a validated host catalog composition and its
+// surface-visible component/schema metadata.
+type CatalogFingerprint [32]byte
+
+// IsZero reports whether the catalog has not been built.
+func (f CatalogFingerprint) IsZero() bool { return f == CatalogFingerprint{} }
+
+// String returns the lowercase hexadecimal fingerprint.
+func (f CatalogFingerprint) String() string { return hex.EncodeToString(f[:]) }
+
+// Bytes returns a copy of the fingerprint bytes.
+func (f CatalogFingerprint) Bytes() []byte {
+	result := make([]byte, len(f))
+	copy(result, f[:])
+	return result
+}
+
 // Catalog returns the host's immutable catalog view.
 func (h *Host) Catalog() Catalog {
 	if h == nil {
@@ -64,6 +83,11 @@ func (c Catalog) Lookup(identity plugin.Identity) (plugin.ComponentView, bool) {
 
 // Len reports the number of catalog components.
 func (c Catalog) Len() int { return c.index.Len() }
+
+// Fingerprint returns the stable identity of this catalog.
+func (c Catalog) Fingerprint() CatalogFingerprint {
+	return CatalogFingerprint(c.index.Fingerprint())
+}
 
 // Diagnostics is a helper for callers that want to inspect an aggregate host
 // error without depending on catalog internals.

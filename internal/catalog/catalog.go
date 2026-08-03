@@ -12,8 +12,9 @@ import (
 
 // Index is an immutable, validated component index.
 type Index struct {
-	components []plugin.Component
-	byID       map[plugin.Identity]int
+	components  []plugin.Component
+	byID        map[plugin.Identity]int
+	fingerprint [32]byte
 }
 
 // Build validates every definition and returns an index only when all entries
@@ -62,7 +63,11 @@ func Build(set plugin.Set) (Index, error) {
 		byID[component.Identity()] = index
 		components[index] = component
 	}
-	return Index{components: copyComponents(components), byID: byID}, nil
+	return Index{
+		components:  copyComponents(components),
+		byID:        byID,
+		fingerprint: catalogFingerprint(components),
+	}, nil
 }
 
 // Components returns copied component definitions in stable identity order.
@@ -91,6 +96,9 @@ func (i Index) Lookup(identity plugin.Identity) (plugin.Component, bool) {
 
 // Len reports the number of validated components.
 func (i Index) Len() int { return len(i.components) }
+
+// Fingerprint returns the stable identity of this validated catalog.
+func (i Index) Fingerprint() [32]byte { return i.fingerprint }
 
 func copyComponents(components []plugin.Component) []plugin.Component {
 	result := make([]plugin.Component, len(components))

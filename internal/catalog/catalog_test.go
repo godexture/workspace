@@ -18,7 +18,7 @@ func catalogSchema() config.Schema[catalogConfig] {
 	return config.Struct(func() catalogConfig { return catalogConfig{Value: 1} }).
 		Identity("catalog.test.config").
 		Version("1").
-		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int())).
+		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int().Range(0, 10))).
 		Build()
 }
 
@@ -63,5 +63,38 @@ func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
 	items := diagnostic.ItemsOf(err)
 	if len(items) < 5 {
 		t.Fatalf("got %d diagnostics, want aggregate: %v", len(items), err)
+	}
+}
+
+func TestCatalogComponentResolvesPatch(t *testing.T) {
+	component := catalogComponent[catalogFirstID]("first")
+	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"}, component)
+	index, err := Build(plugin.NewSet(definition))
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	fromCatalog, ok := index.Lookup(component.Identity())
+	if !ok {
+		t.Fatal("catalog component lookup failed")
+	}
+	resolved, err := fromCatalog.Resolve(config.NewPatch().SetText("value", "7"))
+	if err != nil {
+		t.Fatalf("catalog component resolve failed: %v", err)
+	}
+	value, ok := resolved.Value.(catalogConfig)
+	if !ok || value.Value != 7 {
+		t.Fatalf("resolved catalog value = %#v, want catalogConfig{Value: 7}", resolved.Value)
+	}
+
+	_, err = fromCatalog.Resolve(config.NewPatch().SetText("value", "99").SetText("unknown", "1"))
+	if err == nil {
+		t.Fatal("invalid catalog patch unexpectedly resolved")
+	}
+	paths := make(map[string]bool)
+	for _, item := range diagnostic.ItemsOf(err) {
+		paths[item.Path.String()] = true
+	}
+	if !paths["value"] || !paths["unknown"] {
+		t.Fatalf("catalog resolver diagnostics lack field paths: %v", err)
 	}
 }

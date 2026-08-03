@@ -59,6 +59,34 @@ func TestNewCreatesIsolatedHostCatalogs(t *testing.T) {
 	}
 }
 
+func TestCatalogFingerprintTracksCompositionAndSurface(t *testing.T) {
+	definition := hostDefinition[hostPluginA, hostComponentA]("a", 1)
+	first, err := New(Plugins(plugin.NewSet(definition)))
+	if err != nil {
+		t.Fatalf("first host: %v", err)
+	}
+	second, err := New(Plugins(plugin.NewSet(definition)))
+	if err != nil {
+		t.Fatalf("second host: %v", err)
+	}
+	if first.Catalog().Fingerprint().IsZero() {
+		t.Fatal("catalog fingerprint is zero")
+	}
+	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
+		t.Fatalf("same composition produced different fingerprints: %s vs %s", first.Catalog().Fingerprint(), second.Catalog().Fingerprint())
+	}
+
+	changed := plugin.Define[hostPluginA](plugin.Descriptor{DisplayName: "a plugin", Version: "2.0.0"},
+		plugin.NewComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "2.0.0"}, hostSchema(1)))
+	third, err := New(Plugins(plugin.NewSet(changed)))
+	if err != nil {
+		t.Fatalf("changed host: %v", err)
+	}
+	if first.Catalog().Fingerprint() == third.Catalog().Fingerprint() {
+		t.Fatal("surface descriptor change did not change catalog fingerprint")
+	}
+}
+
 func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
 	badSchema := config.Struct(func() hostConfig { return hostConfig{} }).
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int(), config.DependsOn("missing"))).
