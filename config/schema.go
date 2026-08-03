@@ -659,7 +659,12 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			if err != nil {
 				path := diagnostic.FieldPath(fieldID)
 				path.Fields = append(path.Fields, decodePath(err)...)
-				items = append(items, diagnostic.NewItem(decodeDiagnosticCode(err), diagnostic.ErrorSeverity, path, "field input could not be decoded", inputDetail(field)))
+				code := decodeDiagnosticCode(err)
+				message := "field input could not be decoded"
+				if code == codeSecretRedacted {
+					message = "secret field input cannot use the redaction marker"
+				}
+				items = append(items, diagnostic.NewItem(code, diagnostic.ErrorSeverity, path, message, inputDetail(field)))
 				continue
 			}
 			decoded = value

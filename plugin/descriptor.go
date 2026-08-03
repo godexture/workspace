@@ -10,9 +10,35 @@ import (
 // Provenance records source/build information without becoming part of
 // runtime identity.
 type Provenance struct {
-	Repository string
-	Revision   string
-	Builder    string
+	Revision string
+	Builder  string
+}
+
+// BuildMode identifies the implementation dependency mode. The zero value is
+// unset and is intended for component descriptors that inherit from a plugin.
+type BuildMode uint8
+
+const (
+	BuildModeUnset BuildMode = iota
+	BuildModePureGo
+	BuildModeCGO
+	BuildModeNative
+)
+
+// String returns the stable surface spelling of a build mode.
+func (m BuildMode) String() string {
+	switch m {
+	case BuildModeUnset:
+		return "unset"
+	case BuildModePureGo:
+		return "pure-go"
+	case BuildModeCGO:
+		return "cgo"
+	case BuildModeNative:
+		return "native"
+	default:
+		return "unknown"
+	}
 }
 
 // Descriptor contains display and distribution metadata. Only DisplayName
@@ -24,9 +50,7 @@ type Descriptor struct {
 	Repository  string
 	Version     string
 	License     string
-	PureGo      bool
-	CGO         bool
-	Native      bool
+	Build       BuildMode
 	Digest      string
 	Signature   string
 	Provenance  Provenance
@@ -49,7 +73,46 @@ func (d Descriptor) diagnostics(path diagnostic.Path) []diagnostic.Item {
 	if strings.TrimSpace(d.Version) == "" {
 		items = append(items, diagnostic.NewItem("plugin.descriptor.version", diagnostic.ErrorSeverity, versionPath, "descriptor version is required", nil))
 	}
+	if d.Build > BuildModeNative {
+		buildPath := path
+		buildPath.Descriptor = "build"
+		items = append(items, diagnostic.NewItem("plugin.descriptor.build-mode", diagnostic.ErrorSeverity, buildPath, "descriptor build mode is invalid", nil))
+	}
 	return items
+}
+
+func (d Descriptor) inherit(parent Descriptor) Descriptor {
+	if d.DisplayName == "" {
+		d.DisplayName = parent.DisplayName
+	}
+	if d.Homepage == "" {
+		d.Homepage = parent.Homepage
+	}
+	if d.Repository == "" {
+		d.Repository = parent.Repository
+	}
+	if d.Version == "" {
+		d.Version = parent.Version
+	}
+	if d.License == "" {
+		d.License = parent.License
+	}
+	if d.Build == BuildModeUnset {
+		d.Build = parent.Build
+	}
+	if d.Digest == "" {
+		d.Digest = parent.Digest
+	}
+	if d.Signature == "" {
+		d.Signature = parent.Signature
+	}
+	if d.Provenance.Revision == "" {
+		d.Provenance.Revision = parent.Provenance.Revision
+	}
+	if d.Provenance.Builder == "" {
+		d.Provenance.Builder = parent.Provenance.Builder
+	}
+	return d
 }
 
 func validAlias(alias string) bool {

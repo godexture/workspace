@@ -68,6 +68,65 @@ func TestComponentResolvesTypeErasedPatch(t *testing.T) {
 	}
 }
 
+func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
+	component := NewComponent[testComponentID](Descriptor{}, pluginSchema(1))
+	parent := Descriptor{
+		DisplayName: "Plugin display",
+		Homepage:    "https://example.com/plugin",
+		Repository:  "https://example.com/repository",
+		Version:     "2.0.0",
+		License:     "MIT",
+		Build:       BuildModePureGo,
+		Digest:      "sha256:plugin",
+		Signature:   "sig:plugin",
+		Provenance:  Provenance{Revision: "revision", Builder: "builder"},
+	}
+	definition := Define[testPluginID](parent, component)
+	got := definition.Components()[0]
+	if got.Descriptor() != parent {
+		t.Fatalf("component descriptor = %#v, want inherited %#v", got.Descriptor(), parent)
+	}
+	if got.Provenance() != parent.Provenance {
+		t.Fatalf("component provenance = %#v, want inherited %#v", got.Provenance(), parent.Provenance)
+	}
+	if view := definition.View().Components[0].Descriptor; view != parent {
+		t.Fatalf("component view descriptor = %#v, want inherited %#v", view, parent)
+	}
+	replaced := NewSet(definition).Override(component.Identity(), NewComponent[testComponentID](Descriptor{}, pluginSchema(2)))
+	if got := replaced.Components()[0].Descriptor(); got != parent {
+		t.Fatalf("overridden component descriptor = %#v, want inherited %#v", got, parent)
+	}
+
+	standalone := NewComponent[secondComponentID](Descriptor{}, pluginSchema(1))
+	if got := standalone.View().Descriptor.DisplayName; got != standalone.Identity().Name() {
+		t.Fatalf("standalone display name = %q, want marker name %q", got, standalone.Identity().Name())
+	}
+}
+
+func TestZeroComponentViewIsSafe(t *testing.T) {
+	component := Component{}
+	view := component.View()
+	if !view.Identity.IsZero() || view.Schema.Identity != "" {
+		t.Fatalf("zero component view = %#v", view)
+	}
+	if len(component.Diagnostics()) == 0 {
+		t.Fatal("zero component diagnostics are missing")
+	}
+}
+
+func TestDescriptorBuildModeIsExclusive(t *testing.T) {
+	if got := (Descriptor{DisplayName: "x", Version: "1", Build: BuildModeCGO}).Build.String(); got != "cgo" {
+		t.Fatalf("build mode string = %q, want cgo", got)
+	}
+	items := (Descriptor{DisplayName: "x", Version: "1", Build: BuildMode(99)}).Validate()
+	for _, item := range items {
+		if item.Code == "plugin.descriptor.build-mode" {
+			return
+		}
+	}
+	t.Fatalf("invalid build mode diagnostic missing: %v", items)
+}
+
 func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)

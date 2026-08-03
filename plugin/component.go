@@ -36,7 +36,9 @@ func WithProvenance(value Provenance) ComponentOption {
 }
 
 // NewComponent constructs a typed component definition without package-level
-// registration or initialization side effects.
+// registration or initialization side effects. Descriptor fields left unset
+// are inherited from the parent plugin by Define; a standalone component view
+// displays its marker name when DisplayName is unset.
 func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema[C], options ...ComponentOption) Component {
 	identity, identityErr := identityOf[Marker]()
 	componentOptionsValue := componentOptions{provenance: descriptor.Provenance}
@@ -101,7 +103,9 @@ func (c Component) Diagnostics() []diagnostic.Item {
 	if !c.identity.IsZero() {
 		componentPath.Component = c.identity.String()
 	}
-	items = append(items, c.descriptor.diagnostics(componentPath)...)
+	if !c.plugin.IsZero() {
+		items = append(items, c.descriptor.diagnostics(componentPath)...)
+	}
 	if !c.schema.Valid() {
 		items = append(items, c.schema.Diagnostics()...)
 	}
@@ -115,10 +119,14 @@ func (c Component) Diagnostics() []diagnostic.Item {
 
 // View returns a read-only component description for catalog surfaces.
 func (c Component) View() ComponentView {
+	descriptor := c.descriptor
+	if descriptor.DisplayName == "" && !c.identity.IsZero() {
+		descriptor.DisplayName = c.identity.Name()
+	}
 	return ComponentView{
 		Identity:   c.identity,
 		Plugin:     c.plugin,
-		Descriptor: c.descriptor,
+		Descriptor: descriptor,
 		Schema:     c.schema.Description(),
 		Aliases:    c.Aliases(),
 		Provenance: c.provenance,
@@ -167,8 +175,7 @@ func Define[Marker any](descriptor Descriptor, components ...Component) Definiti
 	}
 	seen := make(map[Identity]struct{}, len(components))
 	for index, component := range components {
-		component = component.clone()
-		component.plugin = identity
+		component = bindComponent(component, identity, descriptor)
 		result.components[index] = component
 		if _, exists := seen[component.identity]; exists {
 			result.problems = append(result.problems, diagnostic.NewItem("plugin.duplicate-component", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.identity.String()}, "component identity is repeated in a plugin definition", nil))
@@ -225,12 +232,24 @@ func (d Definition) replaceComponent(target Identity, replacement Component) (De
 	result := d.clone()
 	for index, component := range result.components {
 		if component.identity == target {
-			replacement.plugin = result.identity
-			result.components[index] = replacement.clone()
+			result.components[index] = bindComponent(replacement, result.identity, result.descriptor)
 			return result, true
 		}
 	}
 	return d, false
+}
+
+func bindComponent(component Component, pluginIdentity Identity, descriptor Descriptor) Component {
+	component = component.clone()
+	component.plugin = pluginIdentity
+	component.descriptor = component.descriptor.inherit(descriptor)
+	if component.descriptor.DisplayName == "" && !component.identity.IsZero() {
+		component.descriptor.DisplayName = component.identity.Name()
+	}
+	if component.provenance == (Provenance{}) {
+		component.provenance = component.descriptor.Provenance
+	}
+	return component
 }
 
 // DefinitionView is a read-only plugin description.

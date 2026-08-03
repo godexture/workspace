@@ -280,6 +280,9 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 	for _, item := range items {
 		if item.Code == codeSecretRedacted {
 			found = true
+			if item.Message == "field input could not be decoded" || !strings.Contains(item.Message, "redaction marker") {
+				t.Fatalf("secret redaction message is not marker-specific: %#v", item)
+			}
 		}
 		if strings.Contains(item.Message, redactionMarker) || strings.Contains(item.Message, "live-secret") {
 			t.Fatalf("diagnostic message exposed secret data: %#v", item)
