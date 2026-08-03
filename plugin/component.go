@@ -1,9 +1,6 @@
 package plugin
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 )
@@ -255,12 +252,4 @@ func cloneItems(items []diagnostic.Item) []diagnostic.Item {
 		result[index] = item.WithPath(item.Path)
 	}
 	return result
-}
-
-func duplicateError(identity Identity) error {
-	return diagnostic.NewError(diagnostic.NewItem("plugin.duplicate-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, fmt.Sprintf("identity %q is already present in the set", identity.String()), nil))
-}
-
-func invalidOverrideError(message string) error {
-	return diagnostic.NewError(diagnostic.NewItem("plugin.override", diagnostic.ErrorSeverity, diagnostic.Path{}, strings.TrimSpace(message), nil))
 }

@@ -46,40 +46,32 @@ func TestIdentityUsesOnlyMarkerType(t *testing.T) {
 func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)
-	set, err := NewSet(definition)
-	if err != nil {
-		t.Fatalf("NewSet failed: %v", err)
-	}
-	returned, err := set.Add(definition)
-	if err == nil {
-		t.Fatal("duplicate plugin marker was accepted")
+	set := NewSet(definition)
+	returned := set.Add(definition)
+	if len(returned.Diagnostics()) == 0 {
+		t.Fatal("duplicate plugin marker was not retained as a diagnostic")
 	}
 	if len(returned.Components()) != len(set.Components()) {
-		t.Fatal("Add changed the returned receiver on error")
+		t.Fatal("Add changed the returned receiver when retaining an error")
 	}
 	other := NewComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2))
 	otherDefinition := Define[secondPluginID](pluginDescriptor("other-plugin"), other)
-	withOther, err := set.Add(otherDefinition)
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
+	withOther := set.Add(otherDefinition)
 	if len(set.Components()) != 1 || len(withOther.Components()) != 2 {
 		t.Fatalf("persistent set mutated: original=%d new=%d", len(set.Components()), len(withOther.Components()))
+	}
+	continued := returned.Add(otherDefinition)
+	if len(continued.Diagnostics()) != len(returned.Diagnostics()) {
+		t.Fatalf("composition diagnostic was not retained: before=%v after=%v", returned.Diagnostics(), continued.Diagnostics())
 	}
 }
 
 func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 	component := NewComponent[testComponentID](pluginDescriptor("old"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)
-	set, err := NewSet(definition)
-	if err != nil {
-		t.Fatalf("NewSet failed: %v", err)
-	}
+	set := NewSet(definition)
 	replacement := NewComponent[testComponentID](pluginDescriptor("new"), pluginSchema(8))
-	overridden, err := set.Override(component.Identity(), replacement)
-	if err != nil {
-		t.Fatalf("Override failed: %v", err)
-	}
+	overridden := set.Override(component.Identity(), replacement)
 	if set.Components()[0].Descriptor().DisplayName != "old" {
 		t.Fatalf("Override mutated original set")
 	}
@@ -87,21 +79,25 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 		t.Fatalf("Override did not replace component")
 	}
 	missingComponent := NewComponent[secondComponentID](pluginDescriptor("missing"), pluginSchema(9))
-	missing, err := set.Override(missingComponent.Identity(), missingComponent)
-	if err == nil || len(missing.Components()) != len(set.Components()) {
-		t.Fatalf("Override error returned the wrong receiver: result=%d source=%d err=%v", len(missing.Components()), len(set.Components()), err)
+	missing := set.Override(missingComponent.Identity(), missingComponent)
+	if len(missing.Diagnostics()) == 0 || len(missing.Components()) != len(set.Components()) {
+		t.Fatalf("Override diagnostic returned the wrong receiver: result=%d source=%d diagnostics=%v", len(missing.Components()), len(set.Components()), missing.Diagnostics())
 	}
 	missingPlugin := Define[secondPluginID](pluginDescriptor("missing-plugin"), missingComponent)
-	missing, err = set.OverridePlugin(missingPlugin.Identity(), missingPlugin)
-	if err == nil || len(missing.Components()) != len(set.Components()) {
-		t.Fatalf("OverridePlugin error returned the wrong receiver: result=%d source=%d err=%v", len(missing.Components()), len(set.Components()), err)
+	missing = set.OverridePlugin(missingPlugin.Identity(), missingPlugin)
+	if len(missing.Diagnostics()) == 0 || len(missing.Components()) != len(set.Components()) {
+		t.Fatalf("OverridePlugin diagnostic returned the wrong receiver: result=%d source=%d diagnostics=%v", len(missing.Components()), len(set.Components()), missing.Diagnostics())
 	}
-	removed, ok := overridden.Remove(component.Identity())
-	if !ok || !removed.Empty() {
-		t.Fatalf("Remove = %#v, %v; want empty set", removed, ok)
+	removed := overridden.Remove(component.Identity())
+	if !removed.Empty() {
+		t.Fatalf("Remove = %#v; want empty set", removed)
 	}
 	if overridden.Empty() {
 		t.Fatal("Remove mutated source set")
+	}
+	missingRemoval := set.Remove(IdentityOf[secondComponentID]())
+	if len(missingRemoval.Diagnostics()) == 0 {
+		t.Fatal("missing Remove target was not retained as a diagnostic")
 	}
 }
 

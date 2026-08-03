@@ -32,14 +32,8 @@ func hostDefinition[PluginMarker any, ComponentMarker any](name string, value in
 func TestNewCreatesIsolatedHostCatalogs(t *testing.T) {
 	definitionA := hostDefinition[hostPluginA, hostComponentA]("a", 1)
 	definitionB := hostDefinition[hostPluginB, hostComponentB]("b", 2)
-	setA, err := plugin.NewSet(definitionA)
-	if err != nil {
-		t.Fatalf("set A: %v", err)
-	}
-	setB, err := plugin.NewSet(definitionB)
-	if err != nil {
-		t.Fatalf("set B: %v", err)
-	}
+	setA := plugin.NewSet(definitionA)
+	setB := plugin.NewSet(definitionB)
 	hostA, err := New(Plugins(setA))
 	if err != nil {
 		t.Fatalf("host A: %v", err)
@@ -71,11 +65,8 @@ func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int())).
 		Build()
 	bad := plugin.Define[hostPluginA](plugin.Descriptor{}, plugin.NewComponent[hostComponentA](plugin.Descriptor{}, badSchema))
-	set, err := plugin.NewSet(bad)
-	if err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	_, err = New(Plugins(set))
+	set := plugin.NewSet(bad)
+	_, err := New(Plugins(set))
 	if err == nil {
 		t.Fatal("invalid host unexpectedly constructed")
 	}
@@ -99,14 +90,28 @@ func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
 	}
 }
 
+func TestNewRejectsRetainedSetCompositionDiagnostics(t *testing.T) {
+	first := hostDefinition[hostPluginA, hostComponentA]("first", 1)
+	duplicate := hostDefinition[hostPluginA, hostComponentB]("duplicate", 2)
+	set := plugin.NewSet(first).Add(duplicate)
+
+	_, err := New(Plugins(set))
+	if err == nil {
+		t.Fatal("host accepted a set with a duplicate plugin identity")
+	}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "plugin.duplicate-identity" {
+			return
+		}
+	}
+	t.Fatalf("duplicate set diagnostic was not aggregated: %v", err)
+}
+
 func TestNewRejectsComponentWithZeroSchema(t *testing.T) {
 	bad := plugin.Define[hostPluginB](plugin.Descriptor{DisplayName: "broken", Version: "1.0.0"},
 		plugin.NewComponent[hostComponentB](plugin.Descriptor{DisplayName: "zero schema", Version: "1.0.0"}, config.Schema[hostConfig]{}))
-	set, err := plugin.NewSet(bad)
-	if err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	_, err = New(Plugins(set))
+	set := plugin.NewSet(bad)
+	_, err := New(Plugins(set))
 	if err == nil {
 		t.Fatal("host accepted a component with an unbuilt zero schema")
 	}

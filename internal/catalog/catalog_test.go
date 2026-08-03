@@ -30,10 +30,7 @@ func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
 	first := catalogComponent[catalogFirstID]("first")
 	second := catalogComponent[catalogSecondID]("second")
 	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"}, second, first)
-	set, err := plugin.NewSet(definition)
-	if err != nil {
-		t.Fatalf("NewSet failed: %v", err)
-	}
+	set := plugin.NewSet(definition)
 	index, err := Build(set)
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -58,11 +55,8 @@ func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int())).
 		Build()
 	bad := plugin.Define[catalogPluginID](plugin.Descriptor{}, plugin.NewComponent[catalogFirstID](plugin.Descriptor{}, badSchema))
-	set, err := plugin.NewSet(bad)
-	if err != nil {
-		t.Fatalf("NewSet failed: %v", err)
-	}
-	_, err = Build(set)
+	set := plugin.NewSet(bad)
+	_, err := Build(set)
 	if err == nil {
 		t.Fatal("broken definition was accepted")
 	}

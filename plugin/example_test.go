@@ -23,10 +23,7 @@ func Codec() plugin.Definition {
 }
 
 func ExampleNewSet() {
-	set, err := plugin.NewSet(Codec())
-	if err != nil {
-		panic(err)
-	}
+	set := plugin.NewSet(Codec())
 	fmt.Println(len(set.Components()))
 	// Output: 1
 }
