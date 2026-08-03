@@ -5,9 +5,9 @@ import (
 	"io"
 
 	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugin/id3/id3v2"
 	"github.com/godexture/godec/plugin/mp3/header"
 	"github.com/godexture/godec/plugin/mp3/scan"
-	"github.com/godexture/godec/plugin/id3/id3v2"
 )
 
 // scanWindowBytes is how much unread data nextFrame peeks at a time while

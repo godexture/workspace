@@ -1,9 +1,9 @@
 package encoder
 
 import (
+	"github.com/godexture/godec/sdk/pool"
 	"math"
 	stdbits "math/bits"
-	"github.com/godexture/godec/sdk/pool"
 
 	"github.com/godexture/godec/plugin/flac/internal/codec/config"
 )

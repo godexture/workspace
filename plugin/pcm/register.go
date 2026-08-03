@@ -1,12 +1,12 @@
 package pcm
 
 import (
-	internal "github.com/godexture/godec/plugin/pcm/internal"
 	godec "github.com/godexture/godec/core"
 	"github.com/godexture/godec/core/domain/manifest"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/node"
 	"github.com/godexture/godec/core/registry"
+	internal "github.com/godexture/godec/plugin/pcm/internal"
 	"github.com/godexture/godec/plugin/wave/params"
 	"github.com/godexture/godec/sdk/engine"
 )

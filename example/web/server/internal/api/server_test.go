@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/godec/sdk/conversion"
 	"github.com/godexture/godec/example/web/server/internal/api"
 	"github.com/godexture/godec/example/web/server/internal/jobs"
 	"github.com/godexture/godec/example/web/server/internal/testutil"
+	"github.com/godexture/godec/sdk/conversion"
 
+	_ "github.com/godexture/godec/plugin/audio"
 	_ "github.com/godexture/godec/plugin/flac"
 	_ "github.com/godexture/godec/plugin/pcm"
-	_ "github.com/godexture/godec/plugin/audio"
 	_ "github.com/godexture/godec/plugin/wave"
 )
 

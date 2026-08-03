@@ -17,7 +17,7 @@
 |---|---|---|
 | M0 | 完了 | 現行の correctness、failure semantics、metadata/stream、worker/variant、performance の比較条件を固定した。再現条件は [baseline.md](baseline.md) と [baseline.manifest.json](baseline.manifest.json) を参照する。 |
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
-| M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` と review 指摘 1〜18 の是正を完了した。Set composition diagnostic、型消去 resolver、component ごとの DisplayName、責務別 config file、catalog fingerprint を含め、対象 race、全体 test、build、vet、`--simd` gate を確認済み。 |
+| M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` を追加し、[task/m2-fix.md](task/m2-fix.md) の review 指摘 1〜19 を是正した。[plugins.md](plugins.md#m2-完了条件) と [config.md](config.md#m2-完了条件) の完了条件を逐条確認し、build、vet、対象 race、`--simd` gate（71/71 PASS、runner exit 0）を通過した。 |
 | M3 | 未着手 | — |
 | M4 | 未着手 | — |
 | M5 | 未着手 | — |
@@ -35,4 +35,7 @@
 - repository 全体の scalar/SIMD/forced-scalar differential は必須 gate にしない。`tools/cmd/differential` は任意の診断 tool とし、semantic 差は対象 package の test で検証する。
 - 日常開発と milestone/release の検証範囲は [quality.md](quality.md#開発時の検証-tier)、性能回帰の判定は [performance.md](performance.md#開発時の性能回帰方針) に従う。
 - `config.SchemaView` は型消去 resolver を持ち、catalog 経由で `Patch` を resolve できる。CLI/WASM への投影と M3/M4 の component 契約拡張はこの経路へ接続する。
-- `plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 で marker ベースの test へ置き換える。
+- `plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 で marker ベースの test へ置き換える。あわせて置き場所も見直す。M2 で `plugin/` 直下に foundation の `package plugin` が入ったため、現在は `plugin/flac` 等と並んで規格 family の一つに見える。[architecture.md](architecture.md#依存原則) が想定する最上位 `integration` module が適切な位置である。
+- `config` の source は責務別 file へ分割したが、test は `config/schema_test.go` 一本のままである。M3 以降の作業と合わせて同じ境界で分ける。
+- `bindings/wasm/bindings_gen.go` は `gowasm-bindgen` の出力で、gofmt 非準拠のまま checked in されている。format すると生成器の出力と乖離して drift 検出が誤発火するため、意図的に未 format で維持している。[supply.md](supply.md#generate) の generate phase が求める「生成物を format/typecheck/compile して checked-in state と比較する」形は、build recipe に gofmt を挟む M9/M10 で満たす。
+- repository の line ending は `.gitattributes` の `* text=auto eol=lf` で固定した。これがないと Windows checkout が CRLF になり、`gofmt -l` が数百 file を誤検出して format を gate にできない。`.gitignore` と `LICENSE` は CRLF で commit されているため、次に `git add` した時点で LF へ正規化される。

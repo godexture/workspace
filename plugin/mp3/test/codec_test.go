@@ -3,8 +3,8 @@ package test
 import (
 	"testing"
 
-	"github.com/godexture/godec/plugin/mp3/internal/codec"
 	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugin/mp3/internal/codec"
 )
 
 func TestDecoder_EmptyPacket(t *testing.T) {

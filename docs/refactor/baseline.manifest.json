@@ -31,7 +31,8 @@
       "./example/web/server",
       "./tools"
     ],
-    "rootPackageCount": 104
+    "rootPackageCountAtBaselineCommit": 104,
+    "rootPackageCountNote": "Counted with `go list ./...` at baselineCommit, root module only. Later milestones add packages, so a count taken at HEAD is expected to be larger and is not a setup error."
   },
   "buildVariants": [
     { "name": "scalar", "env": { "GOEXPERIMENT": "" }, "requiredForBaseline": true },

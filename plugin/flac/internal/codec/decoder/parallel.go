@@ -3,8 +3,8 @@ package decoder
 import (
 	"fmt"
 
-	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/plugin/flac/internal/frame"
 	"github.com/godexture/godec/plugin/flac/internal/streaminfo"
 	"github.com/godexture/godec/sdk/pool"
@@ -30,8 +30,8 @@ type pendingEntry struct {
 }
 
 type frameJob struct {
-	d      *Decoder
-	data   []byte
+	d    *Decoder
+	data []byte
 	// dataBuf is the pool.Get-backed storage for data, non-nil for jobs
 	// dispatched to the worker pool (see SendPacket). It's returned to the
 	// pool once decodeJob is done reading it, in runJob. nil for jobs run

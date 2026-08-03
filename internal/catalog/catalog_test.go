@@ -121,3 +121,20 @@ func TestCatalogComponentResolvesPatch(t *testing.T) {
 		t.Fatalf("catalog resolver diagnostics lack field paths: %v", err)
 	}
 }
+
+func TestBuildRejectsMarkerSharedByPluginAndComponent(t *testing.T) {
+	definition := plugin.Define[catalogPluginID](
+		plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"},
+		catalogComponent[catalogPluginID]("shared"),
+	)
+	_, err := Build(plugin.NewSet(definition))
+	if err == nil {
+		t.Fatal("a marker used by both a plugin and a component was accepted")
+	}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "catalog.identity-conflict" {
+			return
+		}
+	}
+	t.Fatalf("identity conflict diagnostic missing: %v", err)
+}

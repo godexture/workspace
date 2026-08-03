@@ -3,10 +3,10 @@ package encoder
 import (
 	"errors"
 
-	"github.com/godexture/godec/plugin/flac/internal/codec/config"
-	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugin/flac/internal/codec/config"
+	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/plugin/flac/internal/streaminfo"
 	"github.com/godexture/godec/sdk/bits"
 	"github.com/godexture/godec/sdk/engine"

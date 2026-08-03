@@ -49,6 +49,12 @@ func Build(set plugin.Set) (Index, error) {
 			items = append(items, diagnostic.NewItem("catalog.duplicate-component", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component identity is repeated", nil))
 			continue
 		}
+		// One marker cannot answer both "which plugin" and "which component":
+		// Remove and Override would match two different things.
+		if _, exists := seenPlugins[identity]; exists {
+			items = append(items, diagnostic.NewItem("catalog.identity-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "marker identity is used by both a plugin and a component", nil))
+			continue
+		}
 		if component.PluginIdentity().IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component has no parent plugin identity", nil))
 		}

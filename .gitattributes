@@ -1,0 +1,15 @@
+# Normalize line endings in the working copy, not just in the object store.
+# Without this, a Windows checkout hands CRLF to gofmt, which reports several
+# hundred files as unformatted even though their content is correct. Pinning
+# eol=lf keeps gofmt and the JavaScript formatters usable as CI gates on every
+# platform.
+* text=auto eol=lf
+
+# Media fixtures must never be normalized.
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.wasm binary

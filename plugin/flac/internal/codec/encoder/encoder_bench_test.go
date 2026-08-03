@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godexture/godec/plugin/flac/internal/codec/config"
-	"github.com/godexture/godec/plugin/flac/internal/codec/decoder"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugin/flac/internal/codec/config"
+	"github.com/godexture/godec/plugin/flac/internal/codec/decoder"
 	"github.com/godexture/godec/plugin/flac/internal/streaminfo"
 	"github.com/godexture/godec/sdk/engine"
 )

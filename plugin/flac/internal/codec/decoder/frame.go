@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/domain/media/pcm"
+	"github.com/godexture/godec/plugin/flac/internal/codec/flac"
 	"github.com/godexture/godec/plugin/flac/internal/frame"
 	"github.com/godexture/godec/plugin/flac/internal/streaminfo"
 	"github.com/godexture/godec/sdk/bits"

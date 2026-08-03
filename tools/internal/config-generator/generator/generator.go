@@ -44,7 +44,7 @@ func Generate(output, packageName string, targets []*types.Target) {
 
 	// filter imports used in the generated file
 	finalImports := make(map[string]string)
-	
+
 	for _, name := range []string{"fmt", "math"} {
 		if _, ok := usedImports[name]; !ok {
 			usedImports[name] = name

@@ -11,8 +11,8 @@ import (
 	"os/exec"
 	"strconv"
 
-	"github.com/godexture/godec/plugin/pcm/test/config"
 	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugin/pcm/test/config"
 )
 
 func ffmpegCodec(codec media.CodecID, format media.SampleFormat) (string, error) {

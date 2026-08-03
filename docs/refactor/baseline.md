@@ -18,7 +18,7 @@
 | GOWORK | repository root `go.work`（root module + `tools`、`bindings/wasm`、`example/go`、`example/web/server` の4 nested module） |
 | build mode | 必須: scalar（既定 `GOEXPERIMENT` なし）、SIMD（`GOEXPERIMENT=simd`）の2種。任意診断: SIMD 内 forced-scalar（`GODEC_FORCE_SCALAR=1`、`sdk/dsp` の scalar dispatch path を SIMD build 内で検査する追加手段であり、baseline 再現の必須条件ではない） |
 | worker | `registry.NewWorkerPool(N)`、N ∈ {1, 4, 16} を明示指定（`auto` は使わない） |
-| package 数 | 104（`go list ./...`、root module のみ。nested module 4件は別途 `go list` する） |
+| package 数 | baseline commit 時点で 104（`go list ./...`、root module のみ。nested module 4件は別途 `go list` する）。後続 milestone が package を追加するため、HEAD で再取得した数と一致しなくてよい |
 | input generator | `stereoBlock`（`plugin/audio/filters_bench_test.go`）は固定 seed の `math/rand/v2` PCG generator を使い、同じ size tier に対して常に同一 byte 列を生成する。仕様は manifest の `inputGenerators` を正本とする。FLAC/observation paired benchmark の fixture はいずれも hardcode/固定 size で乱数を使わない。 |
 
 ## 使い方と判定基準

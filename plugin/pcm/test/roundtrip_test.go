@@ -4,9 +4,9 @@ import (
 	"io"
 	"testing"
 
+	"github.com/godexture/godec/core/domain/media"
 	pcmCodec "github.com/godexture/godec/plugin/pcm"
 	"github.com/godexture/godec/plugin/pcm/test/config"
-	"github.com/godexture/godec/core/domain/media"
 	wavFormat "github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"

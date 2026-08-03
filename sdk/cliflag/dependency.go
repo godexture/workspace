@@ -1,4 +1,4 @@
-﻿package cliflag
+package cliflag
 
 import (
 	"fmt"

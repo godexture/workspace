@@ -4,8 +4,8 @@ package pcm
 
 import (
 	binary "encoding/binary"
-	internal "github.com/godexture/godec/plugin/pcm/internal"
 	media "github.com/godexture/godec/core/domain/media"
+	internal "github.com/godexture/godec/plugin/pcm/internal"
 	params "github.com/godexture/godec/plugin/wave/params"
 )
 

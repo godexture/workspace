@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	pcm "github.com/godexture/godec/plugin/pcm"
 	"github.com/godexture/godec/core/domain/media"
+	pcm "github.com/godexture/godec/plugin/pcm"
 	wav "github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"

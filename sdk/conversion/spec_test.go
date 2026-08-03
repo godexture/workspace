@@ -13,9 +13,9 @@ import (
 	"github.com/godexture/godec/core/pipeline"
 	"github.com/godexture/godec/sdk/conversion"
 
+	filter "github.com/godexture/godec/plugin/audio"
 	_ "github.com/godexture/godec/plugin/flac"
 	_ "github.com/godexture/godec/plugin/pcm"
-	filter "github.com/godexture/godec/plugin/audio"
 	_ "github.com/godexture/godec/plugin/wave"
 )
 

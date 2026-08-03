@@ -5,10 +5,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/plugin/pcm/internal/adpcm/bits"
 	imaadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ms"
-	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/plugin/wave/params"
 )
 

@@ -1,8 +1,8 @@
 package layer3
 
 import (
-	"github.com/godexture/godec/plugin/mp3/internal/codec/mp3/domain"
 	"github.com/godexture/godec/plugin/mp3/header"
+	"github.com/godexture/godec/plugin/mp3/internal/codec/mp3/domain"
 	"github.com/godexture/godec/sdk/bits"
 )
 

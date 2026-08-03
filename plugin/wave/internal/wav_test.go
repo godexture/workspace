@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	mp3codec "github.com/godexture/godec/plugin/mp3"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/domain/metadata"
+	mp3codec "github.com/godexture/godec/plugin/mp3"
 	"github.com/godexture/godec/plugin/wave/params"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"

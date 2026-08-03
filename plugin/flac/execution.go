@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/godexture/godec/core/registry"
 	"github.com/godexture/godec/plugin/flac/internal/codec/decoder"
 	"github.com/godexture/godec/plugin/flac/internal/codec/encoder"
-	"github.com/godexture/godec/core/registry"
 )
 
 type EngineOption interface {

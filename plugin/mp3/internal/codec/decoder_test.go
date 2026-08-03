@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/godexture/godec/plugin/mp3/internal/codec/mp3/domain"
 	"github.com/godexture/godec/core/domain/media"
+	"github.com/godexture/godec/plugin/mp3/internal/codec/mp3/domain"
 	"github.com/godexture/godec/sdk/engine"
 )
 

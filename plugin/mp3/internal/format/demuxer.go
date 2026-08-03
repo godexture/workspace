@@ -10,8 +10,8 @@ import (
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/domain/metadata"
 	mediatime "github.com/godexture/godec/core/domain/time"
-	"github.com/godexture/godec/plugin/mp3/header"
 	id3 "github.com/godexture/godec/plugin/id3"
+	"github.com/godexture/godec/plugin/mp3/header"
 )
 
 // Demuxer はMP3コンテナを読み込む。

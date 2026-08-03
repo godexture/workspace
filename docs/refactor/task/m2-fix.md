@@ -4,7 +4,7 @@ M2 の実装 review で見つかった欠陥を是正する作業指示である
 
 review 時点の状態: `go build ./...`、`go vet`、対象 package の test と `-race`、`go run ./tools/cmd/test-runner --simd` はすべて green。依存方向も正しい。以下は回帰ではなく contract の欠陥である。
 
-1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目、13〜17 は 4 回目の review で見つかった項目で、いずれも修正済みである。18 は 5 回目の review で見つかった仕上げ項目であり、今回の修正と検証を完了した。
+1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目、13〜17 は 4 回目、18 は 5 回目、19 は 6 回目の review で見つかった項目である。すべて是正と検証を完了しており、残る作業はない。
 
 ## 必読
 
@@ -229,6 +229,12 @@ host.New(host.Plugins(set)) -> err=nil, components=1
 - test: 既存の重複検査 test が catalog 経由で同じ diagnostic を得ること。
 
 `config/schema_test.go` が 677 行のまま source の分割に追随していない点は、M3 以降の作業と合わせて整理する。
+
+## 19. plugin と component が同じ marker を共有する場合を検出する（適用済み）
+
+18 で `Set.ValidateDuplicates` を削除した際、plugin identity と component identity を一つの `seen` map で走査していた検査が失われた。`Define[m](desc, NewComponent[m](...))` が host 構築を通り、その identity で `Remove` すると component ではなく plugin 定義ごと黙って消える。`Override` と `OverridePlugin` の両方が同じ identity に一致する状態でもある。identity は「どの plugin/component か」を一意に答えるものなので不整合である。
+
+`catalog.Build` が component identity を plugin identity の集合とも照合し、`catalog.identity-conflict` として host 構築 error にする形で適用済み。回帰 test は `internal/catalog/catalog_test.go` にある。
 
 ## 検証
 

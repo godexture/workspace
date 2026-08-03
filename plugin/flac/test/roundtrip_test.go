@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	flacCodec "github.com/godexture/godec/plugin/flac"
-	"github.com/godexture/godec/plugin/flac/test/config"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/domain/metadata"
+	flacCodec "github.com/godexture/godec/plugin/flac"
+	"github.com/godexture/godec/plugin/flac/test/config"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"
 )

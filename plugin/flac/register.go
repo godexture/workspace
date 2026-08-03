@@ -1,14 +1,14 @@
 package flac
 
 import (
-	"github.com/godexture/godec/plugin/flac/internal/codec/config"
-	"github.com/godexture/godec/plugin/flac/internal/codec/decoder"
-	"github.com/godexture/godec/plugin/flac/internal/codec/encoder"
 	godec "github.com/godexture/godec/core"
 	"github.com/godexture/godec/core/domain/manifest"
 	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/core/node"
 	"github.com/godexture/godec/core/registry"
+	"github.com/godexture/godec/plugin/flac/internal/codec/config"
+	"github.com/godexture/godec/plugin/flac/internal/codec/decoder"
+	"github.com/godexture/godec/plugin/flac/internal/codec/encoder"
 	"github.com/godexture/godec/sdk/engine"
 )
 

@@ -6,9 +6,9 @@ import (
 	"io"
 	"testing"
 
+	"github.com/godexture/godec/core/domain/media"
 	mp3codec "github.com/godexture/godec/plugin/mp3"
 	"github.com/godexture/godec/plugin/mp3/test/config"
-	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"
 )

@@ -15,17 +15,3 @@ func TestFormatConfigEffectiveBitsPerSample(t *testing.T) {
 		t.Fatalf("explicit effective bits = %d, want %d", got, want)
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

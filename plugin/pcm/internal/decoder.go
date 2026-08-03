@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/godexture/godec/core/domain/media"
 	imaadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ms"
 	"github.com/godexture/godec/plugin/pcm/internal/g711"
-	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/plugin/wave/params"
 	"github.com/godexture/godec/sdk/buffer"
 )

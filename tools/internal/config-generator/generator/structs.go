@@ -1,4 +1,4 @@
-﻿package generator
+package generator
 
 import (
 	"bytes"
@@ -64,7 +64,7 @@ func generateTargetStructs(body *bytes.Buffer, targets []*types.Target, packageN
 
 		fmt.Fprintf(body, "func (c %s) ResolveDefault() %s {\n\treturn %s(%s)\n}\n\n", configName, t.ResolvedType, t.ResolvedType, initExpr)
 		fmt.Fprintf(body, "func (c %s) Resolve() %s {\n\treturn %s(c)\n}\n\n", configName, t.ResolvedType, t.ResolvedType)
-		
+
 		// Always generate Validate() method
 		fmt.Fprintf(body, "func (c %s) Validate() error {\n", configName)
 		generateValidationBody(body, t)
@@ -100,7 +100,7 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 			continue
 		}
 		fieldName := field.Names[0].Name
-		
+
 		if field.Tag == nil {
 			continue
 		}
@@ -108,17 +108,17 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 
 		checkTag, checkOk := structTag.Lookup("check")
 		dependsOnTag, dependsOk := structTag.Lookup("depends-on")
-		
+
 		if !checkOk && !dependsOk {
 			continue
 		}
-		
+
 		if dependsOk {
 			parts := strings.SplitN(dependsOnTag, "=", 2)
 			if len(parts) == 2 {
 				depField := parts[0]
 				depValues := strings.Split(parts[1], ",")
-				
+
 				depGoField := findGoFieldNameByTagName(t.StructType, depField)
 				if depGoField == "" {
 					depGoField = strings.ToUpper(depField[:1]) + depField[1:]
@@ -133,12 +133,12 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 				fmt.Fprintf(body, " {\n")
 			}
 		}
-		
+
 		indent := "\t"
 		if dependsOk {
 			indent = "\t\t"
 		}
-		
+
 		if checkOk {
 			checks := strings.Split(checkTag, ",")
 			for _, check := range checks {
@@ -158,7 +158,7 @@ func generateValidationBody(body *bytes.Buffer, t *types.Target) {
 				}
 			}
 		}
-		
+
 		if dependsOk {
 			fmt.Fprintf(body, "\t}\n")
 		}

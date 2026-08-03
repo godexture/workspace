@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	flacCodec "github.com/godexture/godec/plugin/flac"
 	"github.com/godexture/godec/core/domain/media"
+	flacCodec "github.com/godexture/godec/plugin/flac"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"
 )

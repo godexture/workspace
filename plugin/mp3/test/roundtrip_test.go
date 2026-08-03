@@ -4,8 +4,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/godexture/godec/plugin/mp3/test/config"
 	mp3format "github.com/godexture/godec/plugin/mp3"
+	"github.com/godexture/godec/plugin/mp3/test/config"
 	"github.com/godexture/godec/sdk/engine"
 	"github.com/godexture/godec/sdk/testutil"
 )
