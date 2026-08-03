@@ -4,7 +4,7 @@ M2 の実装 review で見つかった欠陥を是正する作業指示である
 
 review 時点の状態: `go build ./...`、`go vet`、対象 package の test と `-race`、`go run ./tools/cmd/test-runner --simd` はすべて green。依存方向も正しい。以下は回帰ではなく contract の欠陥である。
 
-1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目の review で見つかった項目である。1〜12 は修正済みで、対象 package の test・race、全体 build、全体 `--simd` runner、config benchmark を完了している。
+1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目の review で見つかった項目で、いずれも修正済みである。13〜17 は 3 回目の是正後に実装全体を文書の正本と照らして見直した設計レベルの指摘であり、今回の実装で修正済みである。
 
 ## 必読
 
@@ -136,6 +136,75 @@ type markerConf struct {
 
 blank field と zero-size field は config の意味を運べないため、検査から除く。test に blank field を持つ config 型を含める。
 
+## 13. `Set` の error を保持し `host.New` で集約する
+
+11・12 の是正後、実装全体を文書の正本と照らして見直した結果である。[plugins.md](../plugins.md) は composition を次の形で書いており、重複は **host 構築時**に error とすると明記している。
+
+```go
+set := plugin.NewSet(wave.Plugin, pcm.Plugin, audio.Plugin)     // plugins.md
+set := standard.Set().Add(acme.Plugin).Override(acme.FastFLAC)  // plugins.md
+set := plugin.NewSet(mp3.Plugin(), flac.Plugin())               // architecture.md
+```
+
+現在の `NewSet`/`Add`/`Override`/`OverridePlugin` は `(Set, error)` を返すため、この形で書けない。さらに error を握りつぶすと壊れた composition が痕跡なく消える。
+
+```text
+set, _ := plugin.NewSet(first)
+set, _  = set.Add(duplicate)
+host.New(host.Plugins(set)) -> err=nil, components=1
+```
+
+これは [F28](../findings.md) の「未導入と壊れた plugin を区別できない」と同じ失敗であり、schema builder・`Component`・`Definition` がすべて採っている「問題を保持して `host.New` が集約する」方針とも逆行している。
+
+- `Set` が composition 時の問題（重複 identity、無効な override target、identity 不一致の置換、存在しない `Remove` 対象）を diagnostic として保持する。
+- `NewSet`、`Add`、`Remove`、`Override`、`OverridePlugin` は `Set` だけを返し、chain して書ける形にする。
+- `host.New` と `catalog.Build` がその問題を他の diagnostic と一緒に集約する。
+- 保持した問題は失われない。`Set` を further compose しても消えないこと、`Definitions()`/`Components()` の内容と矛盾しないことを保証する。
+- test: 重複を加えた `Set` で `host.New` が失敗し、diagnostic に重複した identity が現れること。chain した composition が期待どおりの catalog を作ること。
+
+## 14. `Component` が型消去した config resolver を保持する
+
+`NewComponent[Marker, C]` は `C` を知っているのに、保持しているのは `Schema.View()`（`Valid`/`Diagnostics`/`Description`）だけで、`Patch` を解決する経路がない。M4 の planner は component identity で選んだ component に利用者の `Patch` を渡して `Resolved[C]` を作り `Compile` へ渡す必要があるため、このままでは M3/M4 で `Component` の契約を作り直すことになる。完了条件の「型消去した config schema を保持する」も description だけでは満たしきれない。
+
+- `NewComponent` が `C` を確定している時点で型消去した resolver を capture する。`Patch` を受け取り、解決済み config と diagnostic を返せるようにする。解決結果の具体型を公開する必要はない。
+- `config.SchemaView` を interface から `config.Schema[C]` だけが作れる具体型へ変える。第三者が `Valid() == true` を騙る実装を差し込めないようにし、「invalid definition は host 構築で失敗する」不変条件を型で閉じる。
+- `Compile`、port、`Open` に関わる型はこの milestone では追加しない。追加するのは config 解決の経路だけである。
+- test: catalog から取り出した component に `Patch` を渡して解決でき、unknown field や範囲外の値が field path 付き diagnostic になること。
+
+## 15. component descriptor の重複を減らす
+
+現在は component ごとに `DisplayName` と `Version` が必須で、family 単位では同じ version を 4〜5 回書くことになる。[experience.md](../experience.md) の目標像は marker、config、Processor だけであり、complexity budget の「plugin 開発者: marker type 一つ」から離れている。
+
+- descriptor の必須は plugin 単位だけにする。
+- `Define` が component descriptor の未設定 field を親 plugin の descriptor から引き継ぐ。
+- component の `DisplayName` が未設定なら marker 型名から導出してよい。導出規則を godoc に書く。
+- test: component descriptor を省いた definition が host 構築を通り、catalog view に親から引き継いだ値が現れること。
+
+## 16. `config` package の file を責務で分割する
+
+`config/schema.go` が 1223 行、`config/field.go` が 1058 行ある。さらに `Field()` は `schema.go` にあり標準 codec は `field.go` にあるという逆転が起きている。AGENTS.md の「ファイル・ディレクトリは責務によって構造的に分割する」に反する。
+
+責務ごとに分ける。file 名は実装者が決めてよいが、`Field` と標準 codec の逆転は必ず解消する。目安は次のとおり。
+
+- `field.go`: `FieldSpec`、`Field`、`FieldOption`
+- `codec.go`: `Codec`、`CodecSpec`、codec 共通の builder
+- 標準 codec: scalar、単位付き、sum type、collection、secret を別 file に分ける
+- `patch.go`: `Patch`
+- `resolved.go`: `Resolved`、`Provenance`、`Fingerprint`
+- `describe.go`: `Description`、`SchemaDescription`、型消去した schema view
+- `wire.go`: surface JSON の encode/decode
+- `validate.go`: schema 自己検証と未登録 field 検査
+
+分割は移動だけとし、同じ commit で挙動を変えない。
+
+## 17. 残りの小さな是正
+
+- `plugin.Component{}.View()` が nil の schema view を参照して panic する。`Diagnostics()` は nil を守っているので同じ扱いにする。zero value の public API が panic しないことを test で固定する。
+- redaction marker の diagnostic は code が `config.secret-redacted` なのに message が汎用の「field input could not be decoded」のままで理由が読めない。marker 由来であることが分かる message にする。値は含めない。
+- `plugin.Descriptor` の `Repository` が `Provenance.Repository` と重複している。どちらか一方にする。
+- `plugin.Descriptor` の `PureGo`/`CGO`/`Native` は 3 つの独立した bool のため矛盾した状態を表現できる。排他的な enum にする。
+- `host.Catalog` に catalog fingerprint を持たせる。[surfaces.md](../surfaces.md#catalog) と [web.md](../web.md#open-catalog) が要求しており、host composition と component/schema version から作る catalog の責務である。M9 まで待つ理由がない。
+
 ## 検証
 
 - 単位ごと: 対象 package の test と `-race`。
@@ -151,5 +220,5 @@ blank field と zero-size field は config の意味を運べないため、検�
 1. [plugins.md](../plugins.md#m2-完了条件) と [config.md](../config.md#m2-完了条件) の完了条件を逐条で確認する。
 2. `go run ./tools/cmd/test-runner --simd` を実行する。
 3. [checkpoint.md](../checkpoint.md) の M2 行を更新する。あわせて M3 以降への申し送りを注記へ書く。現時点で分かっている申し送りは次の 2 件である。
-   - `config.SchemaView` は description しか持たないため、catalog 経由で `Patch` を resolve する経路がない。CLI/WASM への投影が必要になる M3/M4 で component 契約と一緒に設計する。
+   - `config.SchemaView` は型消去 resolver を持ち、catalog 経由で `Patch` を resolve できる状態にした。CLI/WASM への投影と M3/M4 の component 契約拡張はこの経路へ接続する。
    - `plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 で marker ベースの test へ置き換える。

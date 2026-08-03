@@ -307,11 +307,13 @@ plugin descriptor は runtime identity と分けて次を持てる。
 M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract を foundation package として新設する milestone であり、公式 plugin の移行、旧 `core/registry`・`sdk/catalog` の削除、port/`Compile` の検証までは要求しない。config 側の条件は [config](config.md#m2-完了条件) を参照する。
 
 - `plugin` package が marker type の Go type identity から canonical identity を導出し、identity に version、display name、config 型、alias を含めない。
-- 同じ marker identity を同じ `Set` へ二度加えた場合に error になる。暗黙の last-wins や registration order 依存を持たず、置換は対象 identity を指定する明示 `Override` だけで行う。
-- `Set` が immutable な persistent value であり、`Add`/`Remove`/`Override` が元の値を変更せず新しい値を返す。新 package が package-level mutable registry と `init` による副作用登録を持たない。
+- 同じ marker identity を同じ `Set` へ二度加えた場合に error になる。暗黙の last-wins や registration order 依存を持たず、置換は対象 identity を指定する明示 `Override` だけで行う。この error は `Set` が保持し、`host.New` が集約報告する。composition 時に error を返して呼び出し側が握りつぶせる形にしない。壊れた composition が痕跡なく消えることは [F28](findings.md) と同じ失敗である。
+- `Set` が immutable な persistent value であり、`Add`/`Remove`/`Override` が元の値を変更せず新しい `Set` だけを返す。composition を chain して書ける。新 package が package-level mutable registry と `init` による副作用登録を持たない。
 - `internal/catalog` が host 構築時に検証済み immutable index を作り、invalid entry を黙って除外せず host 構築 error にする。「未導入」と「壊れた plugin」を区別できる（[F28](findings.md)）。未 Build の zero config schema を持つ component もここで失敗させる。
 - host 構築 error が component identity と対象 field/descriptor path を含む aggregate な構造化 diagnostic として返り、最初の一件で打ち切らない。
 - component definition は identity、descriptor、config schema、alias、provenance を検証する。port shape、`Compile` purity、`Suggest` bounded 性の検証は M3/M4 で追加するため、この時点では definition を不透明な値として保持してよい。
+- component は config schema を description だけでなく型消去した resolver として保持し、catalog 側から `Patch` を `Resolved` へ解決できる。型消去した schema は `config.Schema[C]` からしか作れないようにし、第三者が valid を騙る実装を差し込めないようにする。
+- descriptor は plugin 単位で必須とし、component 単位では未設定 field を親 plugin の descriptor から引き継ぐ。family の全 component へ同じ version や license を書かせない。
 - 公式 plugin package が definition を返す API の形を確定する。`flac.Plugin()`、`flac.Codec()` のように関数で返す形とし、`var Plugin = ...` の変数形は使わない。実際の公式 plugin の移行は M6/M8 で行う。
 - 複数 `Host` を同一 process で構築しても catalog、default、CPU feature、resource state が互いに影響しない。
 - reflection の使用が `Define` 時の identity 取得、config schema 構築、catalog 構築に限定される。
