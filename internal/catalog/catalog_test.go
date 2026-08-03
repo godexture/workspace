@@ -66,6 +66,29 @@ func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesSetCompositionDiagnostics(t *testing.T) {
+	first := plugin.Define[catalogPluginID](
+		plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"},
+		catalogComponent[catalogFirstID]("first"),
+	)
+	duplicate := plugin.Define[catalogPluginID](
+		plugin.Descriptor{DisplayName: "catalog replacement", Version: "1.0.0"},
+		catalogComponent[catalogSecondID]("second"),
+	)
+	set := plugin.NewSet(first).Add(duplicate)
+
+	_, err := Build(set)
+	if err == nil {
+		t.Fatal("Build accepted retained set composition diagnostics")
+	}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "plugin.duplicate-identity" {
+			return
+		}
+	}
+	t.Fatalf("set composition diagnostic was not aggregated: %v", err)
+}
+
 func TestCatalogComponentResolvesPatch(t *testing.T) {
 	component := catalogComponent[catalogFirstID]("first")
 	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"}, component)

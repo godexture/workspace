@@ -20,14 +20,19 @@ type Index struct {
 // Build validates every definition and returns an index only when all entries
 // are valid. Broken definitions are never silently omitted.
 func Build(set plugin.Set) (Index, error) {
-	var items []diagnostic.Item
-	if err := set.ValidateDuplicates(); err != nil {
-		items = append(items, diagnostic.ItemsOf(err)...)
-	}
+	items := set.Diagnostics()
 	definitions := set.Definitions()
+	seenPlugins := make(map[plugin.Identity]struct{}, len(definitions))
 	for _, definition := range definitions {
+		identity := definition.Identity()
+		if !identity.IsZero() {
+			if _, exists := seenPlugins[identity]; exists {
+				items = append(items, diagnostic.NewItem("plugin.duplicate-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "plugin identity is repeated", nil))
+			}
+			seenPlugins[identity] = struct{}{}
+		}
 		items = append(items, definition.Diagnostics()...)
-		if definition.Identity().IsZero() {
+		if identity.IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{}, "plugin definition has no valid marker identity", nil))
 		}
 	}

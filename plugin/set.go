@@ -154,29 +154,6 @@ func (s Set) Components() []Component {
 // Empty reports whether no plugin/component definition is present.
 func (s Set) Empty() bool { return len(s.definitions) == 0 }
 
-// ValidateDuplicates is useful to catalog implementations that receive a set
-// assembled through future adapters.
-func (s Set) ValidateDuplicates() error {
-	seen := make(map[Identity]struct{})
-	items := s.Diagnostics()
-	for _, definition := range s.definitions {
-		if _, exists := seen[definition.identity]; exists && !definition.identity.IsZero() {
-			items = append(items, diagnostic.NewItem("plugin.duplicate-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: definition.identity.String()}, "plugin identity is repeated", nil))
-		}
-		seen[definition.identity] = struct{}{}
-		for _, component := range definition.components {
-			if _, exists := seen[component.identity]; exists && !component.identity.IsZero() {
-				items = append(items, diagnostic.NewItem("plugin.duplicate-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.identity.String()}, "component identity is repeated", nil))
-			}
-			seen[component.identity] = struct{}{}
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return diagnostic.NewError(items...)
-}
-
 func (s Set) withProblem(item diagnostic.Item) Set {
 	result := Set{
 		definitions: make([]Definition, len(s.definitions)),
