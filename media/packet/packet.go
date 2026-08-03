@@ -1,0 +1,71 @@
+// Package packet separates container chunks from codec packets.
+package packet
+
+import (
+	"context"
+
+	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/timing"
+)
+
+// Chunk is the unit emitted by a container format. A Chunk never represents
+// end-of-stream; edge closure carries that lifecycle event.
+type Chunk struct {
+	sequence uint64
+	pts      timing.OptionalPTS
+	payload  buffer.Handle
+}
+
+func NewChunk(sequence uint64, payload buffer.Handle) Chunk {
+	return Chunk{sequence: sequence, payload: payload}
+}
+
+func NewTimestampedChunk(sequence uint64, pts timing.OptionalPTS, payload buffer.Handle) Chunk {
+	return Chunk{sequence: sequence, pts: pts, payload: payload}
+}
+
+func (c Chunk) Valid() bool             { return c.payload.Valid() }
+func (c Chunk) Sequence() uint64        { return c.sequence }
+func (c Chunk) PTS() timing.OptionalPTS { return c.pts }
+func (c Chunk) Payload() buffer.Handle  { return c.payload.Share() }
+func (c Chunk) Bytes() []byte           { return c.payload.Bytes() }
+func (c Chunk) Release()                { c.payload.Release() }
+
+// Packet is the unit requested by a codec parser/decoder. Its timestamp types
+// are distinct and optional; a zero value is a valid timestamp when present.
+type Packet struct {
+	sequence uint64
+	pts      timing.OptionalPTS
+	dts      timing.OptionalDTS
+	duration timing.OptionalDuration
+	payload  buffer.Handle
+}
+
+func NewPacket(sequence uint64, pts timing.OptionalPTS, dts timing.OptionalDTS, duration timing.OptionalDuration, payload buffer.Handle) Packet {
+	return Packet{sequence: sequence, pts: pts, dts: dts, duration: duration, payload: payload}
+}
+
+func (p Packet) Valid() bool                       { return p.payload.Valid() }
+func (p Packet) Sequence() uint64                  { return p.sequence }
+func (p Packet) PTS() timing.OptionalPTS           { return p.pts }
+func (p Packet) DTS() timing.OptionalDTS           { return p.dts }
+func (p Packet) Duration() timing.OptionalDuration { return p.duration }
+func (p Packet) Payload() buffer.Handle            { return p.payload.Share() }
+func (p Packet) Bytes() []byte                     { return p.payload.Bytes() }
+func (p Packet) Clone() Packet {
+	p.payload = p.payload.Share()
+	return p
+}
+func (p Packet) Release() { p.payload.Release() }
+
+// Filter is a packet-to-packet transformation independent of a decoder or
+// encoder. It may return the input unchanged when no transformation is needed.
+type Filter interface {
+	Process(context.Context, Packet) (Packet, error)
+}
+
+type FilterFunc func(context.Context, Packet) (Packet, error)
+
+func (f FilterFunc) Process(ctx context.Context, value Packet) (Packet, error) {
+	return f(ctx, value)
+}
