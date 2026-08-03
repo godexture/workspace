@@ -5,6 +5,8 @@
 agents/
 prompts/
 .specify/
+.gocache/
+
 
 # Binaries for programs and plugins
 *.exe
