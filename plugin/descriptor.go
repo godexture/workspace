@@ -82,9 +82,6 @@ func (d Descriptor) diagnostics(path diagnostic.Path) []diagnostic.Item {
 }
 
 func (d Descriptor) inherit(parent Descriptor) Descriptor {
-	if d.DisplayName == "" {
-		d.DisplayName = parent.DisplayName
-	}
 	if d.Homepage == "" {
 		d.Homepage = parent.Homepage
 	}

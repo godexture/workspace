@@ -69,7 +69,8 @@ func TestComponentResolvesTypeErasedPatch(t *testing.T) {
 }
 
 func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
-	component := NewComponent[testComponentID](Descriptor{}, pluginSchema(1))
+	component := NewComponent[testComponentID](Descriptor{DisplayName: "Component display"}, pluginSchema(1))
+	markerFallback := NewComponent[secondComponentID](Descriptor{}, pluginSchema(2))
 	parent := Descriptor{
 		DisplayName: "Plugin display",
 		Homepage:    "https://example.com/plugin",
@@ -81,20 +82,43 @@ func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
 		Signature:   "sig:plugin",
 		Provenance:  Provenance{Revision: "revision", Builder: "builder"},
 	}
-	definition := Define[testPluginID](parent, component)
-	got := definition.Components()[0]
-	if got.Descriptor() != parent {
-		t.Fatalf("component descriptor = %#v, want inherited %#v", got.Descriptor(), parent)
+	definition := Define[testPluginID](parent, component, markerFallback)
+	components := definition.Components()
+	got := components[0]
+	expected := parent
+	expected.DisplayName = "Component display"
+	if got.Descriptor() != expected {
+		t.Fatalf("component descriptor = %#v, want inherited %#v", got.Descriptor(), expected)
 	}
 	if got.Provenance() != parent.Provenance {
 		t.Fatalf("component provenance = %#v, want inherited %#v", got.Provenance(), parent.Provenance)
 	}
-	if view := definition.View().Components[0].Descriptor; view != parent {
-		t.Fatalf("component view descriptor = %#v, want inherited %#v", view, parent)
+	fallback := components[1]
+	fallbackExpected := parent
+	fallbackExpected.DisplayName = fallback.Identity().Name()
+	if fallback.Descriptor() != fallbackExpected {
+		t.Fatalf("unset component descriptor = %#v, want inherited %#v", fallback.Descriptor(), fallbackExpected)
+	}
+	if got.Descriptor().DisplayName == fallback.Descriptor().DisplayName {
+		t.Fatalf("same plugin components share display name: %#v", components)
+	}
+	views := definition.View().Components
+	if views[0].Descriptor != expected || views[1].Descriptor != fallbackExpected {
+		t.Fatalf("component view descriptors = %#v, want %#v and %#v", views[0].Descriptor, expected, fallbackExpected)
 	}
 	replaced := NewSet(definition).Override(component.Identity(), NewComponent[testComponentID](Descriptor{}, pluginSchema(2)))
-	if got := replaced.Components()[0].Descriptor(); got != parent {
-		t.Fatalf("overridden component descriptor = %#v, want inherited %#v", got, parent)
+	replacementExpected := parent
+	replacementExpected.DisplayName = component.Identity().Name()
+	var replacement Component
+	for _, candidate := range replaced.Components() {
+		if candidate.Identity() == component.Identity() {
+			replacement = candidate
+			break
+		}
+	}
+	if replacement.Descriptor() != replacementExpected {
+		got := replacement.Descriptor()
+		t.Fatalf("overridden component descriptor = %#v, want inherited %#v", got, replacementExpected)
 	}
 
 	standalone := NewComponent[secondComponentID](Descriptor{}, pluginSchema(1))
