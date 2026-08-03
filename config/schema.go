@@ -244,29 +244,49 @@ func cloneSchemaDescription(description SchemaDescription) SchemaDescription {
 	return description
 }
 
-// SchemaView is the type-erased control-plane view stored by catalog. It has
-// no data-plane operations and exposes only immutable descriptions/errors.
-type SchemaView interface {
-	Valid() bool
-	Diagnostics() []diagnostic.Item
-	Description() SchemaDescription
+// ResolvedView is the type-erased result of resolving a component patch. Value
+// contains the schema's concrete configuration behind an any boundary.
+type ResolvedView struct {
+	Value       any
+	Provenance  Provenance
+	Diagnostics []diagnostic.Item
+	Fingerprint Fingerprint
 }
 
-type schemaView struct {
+// SchemaView is the type-erased control-plane view stored by catalog. Its
+// fields are private so only Schema[C].View can create a valid resolver.
+type SchemaView struct {
 	valid       bool
 	diagnostics []diagnostic.Item
 	description SchemaDescription
+	resolve     func(Patch) (ResolvedView, error)
 }
 
-func (v schemaView) Valid() bool { return v.valid }
+// Valid reports whether the captured schema was built without errors.
+func (v SchemaView) Valid() bool { return v.valid }
 
-func (v schemaView) Diagnostics() []diagnostic.Item {
-	items := make([]diagnostic.Item, len(v.diagnostics))
-	copy(items, v.diagnostics)
-	return items
+// Diagnostics returns schema construction diagnostics.
+func (v SchemaView) Diagnostics() []diagnostic.Item {
+	if len(v.diagnostics) != 0 {
+		return cloneItems(v.diagnostics)
+	}
+	if v.resolve == nil && !v.valid {
+		return []diagnostic.Item{diagnostic.NewItem(codeInvalidSchema, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema view has no captured schema", nil)}
+	}
+	return nil
 }
 
-func (v schemaView) Description() SchemaDescription { return cloneSchemaDescription(v.description) }
+// Description returns a copy of the captured schema description.
+func (v SchemaView) Description() SchemaDescription { return cloneSchemaDescription(v.description) }
+
+// Resolve applies a patch through the captured typed schema.
+func (v SchemaView) Resolve(patch Patch) (ResolvedView, error) {
+	if v.resolve == nil {
+		items := v.Diagnostics()
+		return ResolvedView{Diagnostics: cloneItems(items)}, diagnosticError(items)
+	}
+	return v.resolve(patch)
+}
 
 // FieldOption changes a field's read-only description and dependency metadata.
 type FieldOption func(*fieldOptions)
@@ -561,7 +581,20 @@ func (s Schema[C]) Description() SchemaDescription {
 
 // View returns the type-erased control-plane view used by plugin/catalog.
 func (s Schema[C]) View() SchemaView {
-	return schemaView{valid: s.Valid(), diagnostics: s.Diagnostics(), description: s.Description()}
+	return SchemaView{
+		valid:       s.Valid(),
+		diagnostics: s.Diagnostics(),
+		description: s.Description(),
+		resolve: func(patch Patch) (ResolvedView, error) {
+			resolved, err := s.Resolve(patch)
+			return ResolvedView{
+				Value:       resolved.Value,
+				Provenance:  cloneProvenance(resolved.Provenance),
+				Diagnostics: cloneItems(resolved.Diagnostics),
+				Fingerprint: resolved.Fingerprint,
+			}, err
+		},
+	}
 }
 
 // Canonical returns a deterministic encoding sorted by field identity. It is

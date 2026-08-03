@@ -80,6 +80,12 @@ func (c Component) Descriptor() Descriptor { return c.descriptor }
 // Schema returns the type-erased control-plane schema view.
 func (c Component) Schema() config.SchemaView { return c.schema }
 
+// Resolve applies a control-plane patch through the component's captured
+// schema resolver.
+func (c Component) Resolve(patch config.Patch) (config.ResolvedView, error) {
+	return c.schema.Resolve(patch)
+}
+
 // Aliases returns a copy of component aliases.
 func (c Component) Aliases() []string { return append([]string(nil), c.aliases...) }
 
@@ -96,9 +102,7 @@ func (c Component) Diagnostics() []diagnostic.Item {
 		componentPath.Component = c.identity.String()
 	}
 	items = append(items, c.descriptor.diagnostics(componentPath)...)
-	if c.schema == nil {
-		items = append(items, diagnostic.NewItem("plugin.schema", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: "schema"}, "component config schema is required", nil))
-	} else if !c.schema.Valid() {
+	if !c.schema.Valid() {
 		items = append(items, c.schema.Diagnostics()...)
 	}
 	for index, item := range items {

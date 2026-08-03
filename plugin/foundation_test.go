@@ -43,6 +43,31 @@ func TestIdentityUsesOnlyMarkerType(t *testing.T) {
 	}
 }
 
+func TestComponentResolvesTypeErasedPatch(t *testing.T) {
+	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	resolved, err := component.Resolve(config.NewPatch().SetText("level", "7"))
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	value, ok := resolved.Value.(pluginConfig)
+	if !ok || value.Level != 7 {
+		t.Fatalf("resolved value = %#v, want pluginConfig{Level: 7}", resolved.Value)
+	}
+
+	_, err = component.Resolve(config.NewPatch().SetText("level", "99").SetText("unknown", "1"))
+	if err == nil {
+		t.Fatal("invalid patch unexpectedly resolved")
+	}
+	items := diagnostic.ItemsOf(err)
+	paths := make(map[string]bool, len(items))
+	for _, item := range items {
+		paths[item.Path.String()] = true
+	}
+	if !paths["level"] || !paths["unknown"] {
+		t.Fatalf("resolver diagnostics lack field paths: %v", items)
+	}
+}
+
 func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)
