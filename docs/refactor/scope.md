@@ -94,6 +94,12 @@ live topology は static descriptor の mutationではなく `stream.Event` と�
 
 ## M3 完了条件
 
+### M3-1 の contract 分類
+
+M3-1 の walking skeleton が実際に consumer として使う contract は、`media/schema` の marker 由来 typed schema、`media/timing` の optional PTS、`flow` の静的 port shape・`Input` ownership・operator lifecycle、`plugin.Component` の `Open`、`media/buffer` の ownership handle、`media/packet` の Chunk/Packet 境界、`media/audio` の planar frame、`media/format` の trivial Format、`media/codec` の codec Binding、`plugin.Set` と `host.New` の catalog 検証である。test fixture の駆動 loop が `bytes → chunk → packet → frame → packet → chunk → bytes` を接続し、Binding conflict も同じ host 構築経路で検査する。
+
+M3-1 で宣言のみを consumer としない contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、Codec/Parser の実 decode/encode、schema の runtime factory 以外の planner/runtime 拡張である。metadata、side data、endpoint、dynamic Shape、Compile/Suggest、実 Format/Codec は M3-2/M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
+
 M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
 
 - capability matrix の各行に対応する拡張点の型が foundation に存在し、追加時に core の closed enum や switch を編集する必要がない。M3 時点で型が存在しない行があれば、どの milestone が担当するかを明示する。
