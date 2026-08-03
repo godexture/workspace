@@ -33,6 +33,7 @@ const (
 	codeMissingVersion     = "config.missing-version"
 	codeUnregisteredField  = "config.unregistered-field"
 	codeInvalidAlias       = "config.invalid-alias"
+	codeSecretRedacted     = "config.secret-redacted"
 )
 
 // Source records which stage supplied the final field value.
@@ -625,7 +626,7 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			if err != nil {
 				path := diagnostic.FieldPath(fieldID)
 				path.Fields = append(path.Fields, decodePath(err)...)
-				items = append(items, diagnostic.NewItem(codeInvalidInput, diagnostic.ErrorSeverity, path, "field input could not be decoded", inputDetail(field)))
+				items = append(items, diagnostic.NewItem(decodeDiagnosticCode(err), diagnostic.ErrorSeverity, path, "field input could not be decoded", inputDetail(field)))
 				continue
 			}
 			decoded = value
@@ -883,6 +884,9 @@ func (s Schema[C]) decodeJSON(value string) (C, error) {
 func (s Schema[C]) encodeJSON(value C) string {
 	parts := make([]string, 0, len(s.fields))
 	for _, field := range s.fields {
+		if field.description.Secret {
+			continue
+		}
 		fieldValue, err := field.read(&value)
 		if err != nil || field.encode == nil {
 			return "<invalid>"
@@ -1041,6 +1045,9 @@ func (s Schema[C]) validateUnregisteredFields(value C) []diagnostic.Item {
 	var items []diagnostic.Item
 	for index := 0; index < typ.NumField(); index++ {
 		fieldType := typ.Field(index)
+		if fieldType.Name == "_" || fieldType.Type.Size() == 0 {
+			continue
+		}
 		fieldValue := root.Field(index)
 		pointer, ok := fieldAddress(fieldValue)
 		if !ok {

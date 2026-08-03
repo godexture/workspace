@@ -41,10 +41,10 @@ type ChoiceDescription struct {
 // Callers must redact values in custom diagnostics; secret handling is
 // provided by SecretCodec for values that should never be rendered.
 type CodecSpec[T any] struct {
-	Type        string
-	Decode      func(string) (T, error)
-	Encode      func(T) string
-	Canonical   func(T) ([]byte, error)
+	Type      string
+	Decode    func(string) (T, error)
+	Encode    func(T) string
+	Canonical func(T) ([]byte, error)
 	// Clone is required for values containing mutable reference state.
 	Clone       func(T) T
 	Normalize   func(T) (T, []diagnostic.Item)
@@ -116,8 +116,8 @@ func (c Codec[T]) Decode(value string) (T, error) {
 	return c.decode(value)
 }
 
-// Encode renders a value for a human-facing surface. It is not used for
-// fingerprints.
+// Encode renders a value for human-facing display. It is not a wire
+// representation and is not used for fingerprints.
 func (c Codec[T]) Encode(value T) string {
 	if c.encode == nil {
 		return "<invalid>"

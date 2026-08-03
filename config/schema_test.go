@@ -236,6 +236,65 @@ func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
 	}
 }
 
+func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
+	type secretConfig struct {
+		Endpoint string
+		Token    SecretValue[string]
+	}
+	schema := Struct(func() secretConfig {
+		return secretConfig{Token: NewSecret("default-secret")}
+	}).
+		Identity("test.secret.surface").
+		Version("1").
+		AddField(Field("endpoint", func(value *secretConfig) *string { return &value.Endpoint }, String())).
+		AddField(Field("token", func(value *secretConfig) *SecretValue[string] { return &value.Token }, SecretCodec(String()))).
+		Build()
+	codec := Nested(schema)
+
+	encoded := codec.Encode(secretConfig{Endpoint: "s3://bucket", Token: NewSecret("live-secret")})
+	if strings.Contains(encoded, redactionMarker) || strings.Contains(encoded, "live-secret") {
+		t.Fatalf("secret appeared in wire encoding: %q", encoded)
+	}
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("secret wire decode failed: %v; encoded=%q", err, encoded)
+	}
+	if decoded.Endpoint != "s3://bucket" || decoded.Token.Reveal() != "default-secret" {
+		t.Fatalf("secret wire decode = %#v, want endpoint and default secret", decoded)
+	}
+
+	_, err = codec.Decode(`{"endpoint":"s3://bucket","token":"<redacted>"}`)
+	if err == nil {
+		t.Fatal("redaction marker was accepted by nested decode")
+	}
+	if strings.Contains(err.Error(), redactionMarker) || strings.Contains(err.Error(), "live-secret") {
+		t.Fatalf("nested decode error exposed secret data: %q", err)
+	}
+
+	_, err = schema.Resolve(NewPatch().SetText("token", redactionMarker))
+	if err == nil {
+		t.Fatal("redaction marker was accepted by patch decode")
+	}
+	items := diagnostic.ItemsOf(err)
+	found := false
+	for _, item := range items {
+		if item.Code == codeSecretRedacted {
+			found = true
+		}
+		if strings.Contains(item.Message, redactionMarker) || strings.Contains(item.Message, "live-secret") {
+			t.Fatalf("diagnostic message exposed secret data: %#v", item)
+		}
+		for _, detail := range item.Detail {
+			if strings.Contains(detail, redactionMarker) || strings.Contains(detail, "live-secret") {
+				t.Fatalf("diagnostic detail exposed secret data: %#v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("secret redaction diagnostic missing: %v", items)
+	}
+}
+
 func TestInvalidSchemaIsAggregated(t *testing.T) {
 	type invalidConfig struct{ Value int }
 	badCodec := NewCodec(CodecSpec[func()]{
@@ -383,6 +442,23 @@ func TestSchemaRejectsUnregisteredScalarField(t *testing.T) {
 		}
 	}
 	t.Fatalf("unregistered scalar field diagnostic missing: %v", schema.Diagnostics())
+}
+
+func TestSchemaAllowsBlankAndZeroSizeFields(t *testing.T) {
+	type markerConfig struct {
+		Level  int
+		_      struct{}
+		Marker struct{}
+	}
+	schema := Struct(func() markerConfig { return markerConfig{Level: 1} }).
+		Identity("test.blank-fields").
+		Version("1").
+		AddField(Field("level", func(value *markerConfig) *int { return &value.Level }, Int())).
+		Build()
+
+	if !schema.Valid() {
+		t.Fatalf("schema with blank and zero-size fields is invalid: %v", schema.Err())
+	}
 }
 
 func TestSchemaSnapshotsFactorySourceAndSecret(t *testing.T) {

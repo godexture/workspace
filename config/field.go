@@ -499,6 +499,8 @@ func RateCodec() Codec[Rate] {
 	})
 }
 
+const redactionMarker = "<redacted>"
+
 // SecretValue stores a value whose display and canonical form are redacted.
 // Reveal is an explicit capability used only by the component that needs the
 // secret for execution.
@@ -512,22 +514,26 @@ func NewSecret[T any](value T) SecretValue[T] { return SecretValue[T]{value: val
 // Reveal returns the secret to the caller that explicitly requested it.
 func (value SecretValue[T]) Reveal() T { return value.value }
 
-func (value SecretValue[T]) String() string { return "<redacted>" }
+func (value SecretValue[T]) String() string { return redactionMarker }
 
 // SecretCodec wraps a codec and ensures raw values never enter human or
-// canonical output. The fingerprint contains a domain-separated digest so
+// canonical output. Its Encode result is display-only; Schema wire encoding
+// omits secret fields. The fingerprint contains a domain-separated digest so
 // equal secrets remain distinguishable without exposing the secret.
 func SecretCodec[T any](inner Codec[T]) Codec[SecretValue[T]] {
 	result := NewCodec(CodecSpec[SecretValue[T]]{
 		Type: "secret<" + inner.description.Type + ">",
 		Decode: func(value string) (SecretValue[T], error) {
+			if value == redactionMarker {
+				return SecretValue[T]{}, decodeError{code: codeSecretRedacted, message: "secret input is not accepted"}
+			}
 			decoded, err := inner.Decode(value)
 			if err != nil {
 				return SecretValue[T]{}, fmt.Errorf("secret value is invalid")
 			}
 			return NewSecret(decoded), nil
 		},
-		Encode: func(SecretValue[T]) string { return "<redacted>" },
+		Encode: func(SecretValue[T]) string { return redactionMarker },
 		Canonical: func(value SecretValue[T]) ([]byte, error) {
 			canonical, err := inner.Canonical(value.value)
 			if err != nil {
@@ -887,6 +893,27 @@ func Nested[T any](schema Schema[T]) Codec[T] {
 type decodePathError struct {
 	path []string
 	err  error
+}
+
+type decodeError struct {
+	code    string
+	message string
+}
+
+func (e decodeError) Error() string { return e.message }
+
+func (e decodeError) decodeCode() string { return e.code }
+
+type codedDecodeError interface {
+	decodeCode() string
+}
+
+func decodeDiagnosticCode(err error) string {
+	var coded codedDecodeError
+	if errors.As(err, &coded) && coded != nil && coded.decodeCode() != "" {
+		return coded.decodeCode()
+	}
+	return codeInvalidInput
 }
 
 func (e *decodePathError) Error() string { return e.err.Error() }
