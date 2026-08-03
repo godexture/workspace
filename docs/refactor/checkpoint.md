@@ -18,7 +18,7 @@
 | M0 | 完了 | 現行の correctness、failure semantics、metadata/stream、worker/variant、performance の比較条件を固定した。再現条件は [baseline.md](baseline.md) と [baseline.manifest.json](baseline.manifest.json) を参照する。 |
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
 | M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` を追加し、[task/m2-fix.md](task/m2-fix.md) の review 指摘 1〜19 を是正した。[plugins.md](plugins.md#m2-完了条件) と [config.md](config.md#m2-完了条件) の完了条件を逐条確認し、build、vet、対象 race、`--simd` gate（71/71 PASS、runner exit 0）を通過した。 |
-| M3 | 未着手 | 次の主対象。固有の完了条件を [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) に定義した。着手前の [C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) 実 config 検証と、設計文書に残っていた 4 件の留保解消は完了した。作業は 3 単位に分け、指示書は [task/m3-1.md](task/m3-1.md) を起点とする。 |
+| M3 | M3-1 完了（M3 継続） | docs link/anchor gate、media/access foundation contract、plugin Component の static shape/Open、codec Binding conflict、walking skeleton を完了した。M3-2 は metadata model/Binding、M3-3 は残る access/media 拡張点を担当する。固有の完了条件は [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) を参照する。 |
 | M4 | 未着手 | — |
 | M5 | 未着手 | — |
 | M6 | 未着手 | — |
