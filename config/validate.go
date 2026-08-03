@@ -76,7 +76,7 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 	}
 	presetIDs := make(map[string]struct{}, len(s.presets))
 	for _, preset := range s.presets {
-		path := diagnostic.Path{Fields: []string{"preset", preset.id}}
+		path := presetPath(preset.id)
 		if preset.id == "" || strings.TrimSpace(preset.id) != preset.id {
 			items = append(items, diagnostic.NewItem(codeInvalidSchema, diagnostic.ErrorSeverity, path, "preset ID must be non-empty and trimmed", nil))
 		}
@@ -100,7 +100,7 @@ func (s Schema[C]) validateDefinition() []diagnostic.Item {
 			presetValue, snapshotItems := s.snapshot(value)
 			items = append(items, snapshotItems...)
 			if err := callPreset(preset.apply, &presetValue); err != nil {
-				items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, diagnostic.Path{Fields: []string{"preset", preset.id}}, "preset application failed", nil))
+				items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, presetPath(preset.id), "preset application failed", nil))
 				continue
 			}
 			for _, item := range s.validateValue(presetValue) {
@@ -199,7 +199,7 @@ func prefixItem(item diagnostic.Item, field string) diagnostic.Item {
 }
 
 func prefixPresetItem(item diagnostic.Item, preset string) diagnostic.Item {
-	item.Path = item.Path.Prefix(diagnostic.Path{Fields: []string{"preset", preset}})
+	item.Path = item.Path.Prefix(presetPath(preset))
 	return item
 }
 

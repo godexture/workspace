@@ -126,6 +126,44 @@ official convenience package/CLIはlocal file、stdin/stdout、利用者が構�
 
 HTTP serverは固定された公式pluginだけを使う小さなdemo/reference implementationとする。upload、temporary output、cancel、bounded size/concurrency、cleanup等の事故防止は行うが、汎用remote URL resolver、third-party plugin loading、production向けauthorization/SSRF policy、multi-tenant securityをproject contractにしない。production利用を表明しない。
 
+### C17. config snapshot は codec `Clone` だけで構成する
+
+任意の Go 値を推測して複製する generic reflection clone を使わない。[F26](findings.md) のとおり、reflection clone は unexported field を静かに shallow copy し、snapshot でない値を snapshot と見せる。
+
+reference 型を扱う codec は `Clone` を宣言し、宣言がなければ schema 登録を失敗させる。snapshot は default factory が fresh な値を返すことと、登録 field ごとの codec `Clone` だけで構成する。登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の field があれば schema 登録を失敗させる。
+
+### C18. secret は surface 表現に出さず、redaction marker を値にしない
+
+secret は redaction が本質であり、surface 表現の decode と encode を逆関数にできない。したがって次の二つを両方守る。
+
+- 構造化 codec の surface encode は secret field を出力しない。decode 側はその field を未指定として扱う。
+- redaction marker を値として decode することを error にする。marker が表示、保存 graph、手入力のどこから来ても secret にならない。
+
+前者だけでは手入力の経路が残り、後者だけでは secret を含む config の roundtrip が常に失敗する。人間向けの表示は wire 表現と別に持つ。
+
+### C19. composition の error は `Set` が保持し `host.New` が集約する
+
+`plugin.Set` の `Add`/`Remove`/`Override` は error を返さず、新しい `Set` だけを返して chain できる。重複 identity、無効な override target、存在しない削除対象は `Set` が diagnostic として保持し、`host.New` が他の diagnostic と一緒に報告する。
+
+composition 時に error を返すと呼び出し側が握りつぶせてしまい、壊れた composition が痕跡なく消える。これは [F28](findings.md) の「未導入と壊れた plugin を区別できない」と同じ失敗である。schema builder、component、definition がすべて採る「問題を保持して host 構築時に集約する」方針に揃える。
+
+### C20. descriptor は plugin 単位で必須とし、`DisplayName` だけ継承しない
+
+component descriptor の未設定 field は親 plugin の descriptor から引き継ぐ。family の全 component へ同じ version や license を書かせない。
+
+ただし `DisplayName` は component ごとに異なるべき唯一の field なので継承せず、未設定なら marker 名を表示に使う。継承すると family の全 component が同じ表示名になり、catalog 上で区別できなくなる。
+
+### C21. foundation package は media 領域だけを grouping する
+
+media 領域を `media/` 配下へ置き、それ以外は root に置く。単独では意味が読み取れない語（`side`、`property`、`buffer`、`tag`、`stream`、`schema`）が media に集中しており、`media` は容器のための造語ではなく実在する domain 語である。
+
+- `media/`: `schema`、`property`、`timing`、`stream`、`metadata`、`tag`、`packet`、`side`、`buffer`、`audio`、`video`、`subtitle`、`format`、`codec`
+- root: `plugin`、`config`、`diagnostic`、`flow`、`component`、`access`、`endpoint`、`resource`、`job`、`host`、`testkit`
+
+`app` や `io` のような容器語を作って `host` や `access` を沈めると `godec/host` より読みにくくなるため、全面 grouping はしない。`flow` と `component` は media 専用ではなく第三者の非 media schema にも使うので media 配下へ置かず、2 package のために `graph/` も作らない。ただし両者は一つの概念なので M3 で統合を検討してよい。
+
+この配置により `config.Schema`（設定 schema）と `media/schema`（data unit schema）、`media/audio`（frame 型）と `plugin/audio`（processor 実装）が path で区別される。M2 が作った root の 4 package は移動しない。
+
 ## Deferred without blocking the first implementation
 
 ### D1. dynamic install の方式

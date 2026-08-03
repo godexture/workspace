@@ -351,7 +351,9 @@ JSON/schema decode は catalog/Plan/event の control plane に限定する。me
 - graph editor の catalog index は fingerprint ごとに一度構築する。
 - large descriptor/artwork/Plan は immutable reference と pagination/summary を使う。
 
-## 完了条件
+## 文書全体の完了条件
+
+この節は JavaScript/WASM/web client の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。この文書の主担当は M9 で、build/release 部分は M10 と分担する。
 
 - JavaScript catalog が固定 demuxer/decoder/filter/encoder/muxer 配列に閉じていない。
 - Job/graph が audio main/aux、単一 sink、固定 role を必須にしない。

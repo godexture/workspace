@@ -30,7 +30,9 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 
 ## M0: 実装前の baseline
 
-リファクタリング開始前に、現行の代表経路を凍結する。
+リファクタリング開始前に、現行の代表経路を比較の基準点として記録する。
+
+正式 release 前のため、新経路が現行と同じ出力を返すことは要求しない。より良い API や挙動へ変えてよい。したがってこの baseline は保存契約ではなく、差異を見つけた時に「意図的な変更か bug か」を判断するための diagnostic である。意図的な変更は [capability](capability.md#挙動変更の記録) へ記録し、記録のない差異は回帰として原因を調べる。新経路の正しさそのものは、旧実装ではなく仕様と conformance corpus で確認する。
 
 1. WAVE/PCM、MP3、FLAC の decode/encode/roundtrip。
 2. input metadata の output への伝播と、現行 stream 経路。現行実装に stream copy がなければ、decoder/encoder を開く事実を baseline として記録する。
@@ -203,6 +205,8 @@ root runner は test semantics を独自に再実装せず、manifest から必�
 | generation | deterministic output、compile、clean tree | この文書 |
 | supply/release | network-off build、SBOM/NOTICE/provenance、release plan | [supply](supply.md) |
 | documentation | link、snippet compile、public package/example consistency | [experience](experience.md) |
+
+`documentation` gate のうち link と anchor の検査だけは M3 から実行する。設計文書が正本である以上、参照が壊れたまま milestone を跨ぐと判断の根拠を辿れなくなる。M2 の期間だけで package 数、API の形、削除済み method、descriptor の扱いの 4 件が文書と実装で drift し、anchor も複数回手で修正している。残りの snippet compile と example consistency は M10 で揃える。
 
 CI matrix は root の machine-readable manifest から生成し、日常の change-scoped tier と milestone/release 用の full tier を区別する。各 tier 内では skip、未実行、失敗を区別する。`tools/cmd/test-runner`（`./test-runner.exe --simd` 相当）は指定した1 variant を走らせるだけで、それ単独を full repository verification の成功条件にはしない。
 

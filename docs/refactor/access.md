@@ -521,7 +521,31 @@ Host integration:
 - source changed after probe
 - application-supplied Provider wrapper が宣言 capability を保つ
 
-## 完了条件
+## M3 完了条件
+
+M3 は Access と Endpoint の contract を foundation package として新設する milestone である。具体的な file/HTTP/S3/device 実装、prepared job の実行、spool の実挿入は M5/M6/M9 の担当であり、M3 には要求しない。media 側の条件は [media](media.md#m3-完了条件) を参照する。
+
+- `access.Reference`、`access.Provider`、byte `Source`/`Sink` capability、transaction が別々の型として存在し、一つの汎用 protocol interface に潰れていない。
+- source capability が巨大な boolean struct ではなく、sequential read、position-independent random read、stable size、reopen、snapshot identity、concurrent range read、cancel 等の小さな contract の組み合わせで表現される。
+- Format が capability alternative を宣言でき、宣言した requirement を満たす narrow view だけを受け取る形になっている。不可能な operation を nil field として渡し plugin 内で type assertion させる余地がない。
+- `Own`/`Borrow`/`Factory` で ownership が明示され、Host が閉じるかどうかと、blocked I/O を cancel で解除できるかが capability に現れる。
+- Probe が immutable な bounded view を受け取り、source cursor を変更しない。候補ごとの独立 reader または immutable range を使い、byte budget と追加 range request を表現できる。
+- sink が `io.Writer` ではなく transaction として表現され、Provider が transaction class（atomic replace、staged commit、rollbackable、append-only、live/no-commit）を宣言できる。
+- spool が隠れた実装詳細ではなく、予測 bytes、memory/disk 使用、開始 latency、rollback class を伴う明示的な要素として表現できる。
+- Endpoint が閉じた `Device` role registry ではなく通常の typed component として表現され、`FiniteStatic`/`LiveStatic`/`LiveDynamic` と realtime/offline の区別を宣言できる。
+- Device が component identity、device reference、device descriptor を分けて表現でき、Host 構築や package import が device scan、permission prompt、network access を起こさない。
+- snapshot identity、retry、reopen が同じ content を指す保証を型で表現でき、strong snapshot を持たない source がその事実を descriptor に残せる。
+- credential が config schema の secret field または application 所有の handle として扱われ、[C16](decisions.md) のとおり path/scheme/CIDR 等の権限 DSL や Job ごとの authority engine を foundation に持たない。
+- foundation package が filesystem、network、device の具体実装を import しない。
+- 上記を unit/property test で検査する。第三者相当の Provider/Endpoint fixture を含め、公式 plugin と OS/network 依存を持ち込まない。
+
+M3 では次を未完了事項として残す。prepared job の acquire/probe/inspect 実行順は M4、transaction の実行と rollback は M5、file/HTTP Provider と device Endpoint の実装は M6/M9、conformance testkit は M10 で扱う。
+
+**consumer を持たない contract は M3 で凍結しない。** clock domain と timestamp origin、latency/buffer range、block/drop/duplicate/conceal policy、reconnect/discontinuity semantics、exclusive/shared resource、hotplug event、multi-output の `AllOrNothing` 共同 transaction は、この文書に設計として記述するが、実装する Endpoint も Provider も現時点の roadmap に存在しない。M3 では最小の型だけを置き、詳細は実際の Endpoint を作る milestone で決める。現行 `MediaAttributes` が「使われないまま形だけ先に決めて後で作り直す」失敗をした構造を繰り返さないためである。
+
+## 文書全体の完了条件
+
+この節は Access/Endpoint contract の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。
 
 - 第三者が core/surface を変更せず新しい object Provider を Set に追加できる。
 - 第三者が core/surface を変更せず typed session/device Endpoint を追加できる。

@@ -243,7 +243,9 @@ FFmpeg等をtest executableとして使用する場合は、実行binaryをoffic
 
 publishはartifactごとに別commandを即時実行せず、全targetのdigest/license/test statusを持つrelease planをreviewしてから行う。partial publishはstateを保存してresumeし、既に公開されたversionを上書きしない。
 
-## 完了条件
+## 文書全体の完了条件
+
+この節は build/supply chain の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。この文書の主担当は M10 である。
 
 - Go/npm source dependencyだけでなくTinyGo、Bun、bindgen、FFmpeg/flac、container base、asset/corpusがmanifestにある。
 - release buildがversion未確認のsystem toolとfloating container tagを使わない。

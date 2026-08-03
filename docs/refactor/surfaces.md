@@ -52,6 +52,21 @@ stream selector と output stream の関係を明示する。
 
 selector は最初に canonical stream IDs へ解決し、曖昧さや未一致を compile diagnostic にする。CLI の `-map`、library の typed builder、WASM/HTTP DTO は同じ `Job` へ正規化する。
 
+### 最短経路の convenience
+
+`Job` の tagged choice と `access.Reference` は一般ケースに必要な表現だが、最も多い「1 file を 1 file へ変換する」利用にそれを要求しない。次の水準を M6 の成果に含める。
+
+```go
+err := standard.Convert(ctx, "in.flac", "out.wav")
+```
+
+- path から Reference への解決は convenience が行い、利用者に URL 構文を要求しない。
+- `job.File(path)` 相当の短縮 constructor を用意し、`access.Parse` を必須にしない。
+- convenience は `Job` を組み立てて同じ `Host` を呼ぶだけとし、別経路の planner や既定を持たない。
+- 2 段目以降（codec 指定、filter、mapping、policy、custom Set）へは同じ `Job` を露出させて連続的に移行できる。
+
+[experience](experience.md#progressive-disclosure) の 1 段目「path と output を指定」を実際に 1 行で満たすためのものであり、これが無いと利用者は最初の変換のために Host、Job、Reference、URL 構文を同時に学ぶことになる。
+
 source acquisition、bounded probe、Inspect と実行を同じ snapshot/session で結ぶ primary API は `Host.Prepare` とする。`Host.Run` は Prepare + Run の convenience、`Host.Plan` は resource を閉じる read-only convenience とし、保存した Plan だけで後日同じ input を無検証実行できるとは約束しない。
 
 ## default behavior

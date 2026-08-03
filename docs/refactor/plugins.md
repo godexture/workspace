@@ -28,10 +28,15 @@ type DecoderConfig struct {
     Quality int
 }
 
-var Plugin = plugin.Define[pluginID](
-    plugin.Decoder[decoderID, DecoderConfig](Decoder),
-)
+func Plugin() plugin.Definition {
+    return plugin.Define[pluginID](
+        plugin.Descriptor{DisplayName: "Acme", Version: "1.0.0", License: "MIT"},
+        plugin.NewComponent[decoderID](plugin.Descriptor{}, decoderSchema()),
+    )
+}
 ```
+
+動く code は `plugin` と `host` の `Example` 関数を正本とする。この文書の例は形を示すためのもので、helper が増えれば簡潔になる。
 
 marker type は export しなくてよい。host は `reflect.TypeFor[pluginID]()` から canonical identity を作る。概念上は次の情報である。
 
@@ -77,9 +82,9 @@ global mutable registry と blank import による副作用登録を廃止する
 
 ```go
 set := plugin.NewSet(
-    wave.Plugin,
-    pcm.Plugin,
-    audio.Plugin,
+    wave.Plugin(),
+    pcm.Plugin(),
+    audio.Plugin(),
 )
 
 h, err := host.New(host.Plugins(set))
@@ -95,8 +100,8 @@ h, err := host.New(host.Plugins(standard.Set()))
 
 ```go
 set := standard.Set().
-    Add(acme.Plugin).
-    Override(acme.FastFLAC)
+    Add(acme.Plugin()).
+    Override(flac.CodecIdentity(), acme.FastFLAC())
 ```
 
 plugin の import、composition、host 構築が明示的になることで、test ごとに隔離された catalog を作れ、CLI と library の component 差異も追跡できる。
@@ -272,7 +277,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) int {
-    plugins := standard.Set().Add(extra.Plugin)
+    plugins := standard.Set().Add(extra.Plugin())
 
     h, err := host.New(host.Plugins(plugins))
     if err != nil {
@@ -311,6 +316,7 @@ M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract �
 - `Set` が immutable な persistent value であり、`Add`/`Remove`/`Override` が元の値を変更せず新しい `Set` だけを返す。composition を chain して書ける。新 package が package-level mutable registry と `init` による副作用登録を持たない。
 - `internal/catalog` が host 構築時に検証済み immutable index を作り、invalid entry を黙って除外せず host 構築 error にする。「未導入」と「壊れた plugin」を区別できる（[F28](findings.md)）。未 Build の zero config schema を持つ component もここで失敗させる。
 - host 構築 error が component identity と対象 field/descriptor path を含む aggregate な構造化 diagnostic として返り、最初の一件で打ち切らない。
+- `Override`、`OverridePlugin`、`Remove` の対象 identity が存在しない場合、diagnostic が探した identity を path に持ち、`Set` 内の近い identity を候補として示す。selector から component を解決する surface API は M9 で追加するため、その経路の候補提示もそこで扱う。
 - component definition は identity、descriptor、config schema、alias、provenance を検証する。port shape、`Compile` purity、`Suggest` bounded 性の検証は M3/M4 で追加するため、この時点では definition を不透明な値として保持してよい。
 - component は config schema を description だけでなく型消去した resolver として保持し、catalog 側から `Patch` を `Resolved` へ解決できる。型消去した schema は `config.Schema[C]` からしか作れないようにし、第三者が valid を騙る実装を差し込めないようにする。
 - descriptor は plugin 単位で必須とし、component 単位では未設定 field を親 plugin の descriptor から引き継ぐ。family の全 component へ同じ version や license を書かせない。ただし `DisplayName` は component ごとに異なるべき唯一の field なので継承せず、未設定なら marker 名を表示に使う。

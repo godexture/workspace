@@ -223,3 +223,35 @@ func TestInvalidComponentKeepsAggregateDiagnostics(t *testing.T) {
 		t.Fatal("definition diagnostics are not structured")
 	}
 }
+
+func TestMissingCompositionTargetSuggestsAlternatives(t *testing.T) {
+	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	set := NewSet(Define[testPluginID](pluginDescriptor("plugin"), component))
+
+	missing := IdentityOf[secondComponentID]()
+	overridden := set.Override(missing, NewComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2)))
+	assertTargetDiagnostic(t, overridden.Diagnostics(), "plugin.override", missing, component.Identity())
+
+	removed := set.Remove(missing)
+	assertTargetDiagnostic(t, removed.Diagnostics(), "plugin.remove-missing", missing, component.Identity())
+}
+
+func assertTargetDiagnostic(t *testing.T, items []diagnostic.Item, code string, target, expected Identity) {
+	t.Helper()
+	for _, item := range items {
+		if item.Code != code {
+			continue
+		}
+		if item.Path.Component != target.String() {
+			t.Fatalf("%s diagnostic does not name the target: %#v", code, item)
+		}
+		if !strings.Contains(item.Message, expected.String()) {
+			t.Fatalf("%s diagnostic does not suggest %q: %q", code, expected, item.Message)
+		}
+		if item.Detail["suggestions"] == "" {
+			t.Fatalf("%s diagnostic has no structured suggestions: %#v", code, item)
+		}
+		return
+	}
+	t.Fatalf("no %s diagnostic in %v", code, items)
+}

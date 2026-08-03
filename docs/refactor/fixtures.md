@@ -73,6 +73,8 @@ code と少数の小型 media は `integration` nested module に置ける。fou
 
 Tier 2 を要求する job だけが、data submoduleまたはmanifestが固定するcorpusを明示取得する。通常の change-scoped test には含めない。network がない環境では `corpus unavailable` と `not requested` を structured result で区別し、release conformance job では unavailable を failure にする。
 
+**format family を新経路へ移す milestone の完了確認では、その family の Tier 2 を必ず実行する。** 正式 release 前は旧実装との出力一致を求めないため、新経路の正しさを示す根拠が仕様と conformance corpus しかない。M6 は WAVE/PCM、M8 は MP3/FLAC が対象で、この時 unavailable を成功扱いにしない。
+
 ### Tier 3: benchmark/stress
 
 長時間、高 channel、高解像度、極端な metadata、fuzz corpus、soak test を置く。functional correctness test の timeout と artifact size を支配させない。
@@ -233,7 +235,9 @@ benchmark:
 
 各jobは requested corpus version、submodule checkoutまたはcacheの利用状態、実行/skip/error数、総input bytesを機械可読に報告する。corpusが巨大だからという理由でtimeoutを無制限にせず、tag/shardとbudgetを使う。
 
-## 完了条件
+## 文書全体の完了条件
+
+この節は fixture/corpus 方針の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。この文書の主担当は M10 である。
 
 - product module zipと通常testがfull conformance/benchmark corpusを含まない。
 - clean checkoutのTier 0がnetwork/native dependencyなしで完了する。

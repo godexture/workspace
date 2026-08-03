@@ -66,7 +66,11 @@ foundation の Access contract は permission system ではない。file/network
 
 ## seek と live topology
 
-seek は Demuxer 一つの optional method ではない。source capability、format index、codec preroll、filter state、timeline、sink/device clock を含む graph operation である。実装する時は次を一つの seek plan に記録する。
+seek は Demuxer 一つの optional method ではない。source capability、format index、codec preroll、filter state、timeline、sink/device clock を含む graph operation である。
+
+担当は分ける。graph operation としての seek plan は M7、format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC には seek 実装があるため、M11 で旧経路を削除する前に、新経路が同等の能力を持つことを M8 完了時点で確認する。
+
+実装する時は次を一つの seek plan に記録する。
 
 - target timeline/domain
 - source index/keyframe point
@@ -88,7 +92,19 @@ live topology は static descriptor の mutationではなく `stream.Event` と�
 
 これらを実装する際も、既存の schema/component/Provider/Endpoint/variant contract へ接続し、core の closed role を追加しない。
 
-## 完了条件
+## M3 完了条件
+
+M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
+
+- capability matrix の各行に対応する拡張点の型が foundation に存在し、追加時に core の closed enum や switch を編集する必要がない。M3 時点で型が存在しない行があれば、どの milestone が担当するかを明示する。
+- object Access、session Endpoint、Device Endpoint、Format の責務が型の上で混ざっていない。
+- 初期実装が対応しない capability を、false capability や隠れた type assertion ではなく、宣言された requirement として表現できる。
+- `FiniteStatic`、`LiveStatic`、`LiveDynamic` と stream event を表現でき、[D3](decisions.md) の未決事項を暗黙の既定で埋めていない。
+- seek を Demuxer の optional method として表現していない。graph operation として扱う前提が型の上で崩れていない。
+
+## 文書全体の完了条件
+
+この節は拡張点全体の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。
 
 - capability matrix の各行を第三者 definition として追加でき、core/surface の switch を変更しない。
 - object Access、session Endpoint、Device Endpoint、Format の責務が混ざらない。

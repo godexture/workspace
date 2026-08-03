@@ -2,6 +2,8 @@
 
 拡張性は API の自由度だけで評価しない。通常の利用者、plugin 開発者、core 開発者のそれぞれに complexity budget を設ける。
 
+> この文書の code は**目標の形**であり、現在の API と一致するとは限らない。実際に動く code は各 package の `Example` 関数を正本とする。文書に code を直書きすると API 変更で静かに嘘になるため、helper が目標形に追いついた時点で例を Example 関数へ移し、この文書からは参照する。M2 の `plugin/example_test.go` がその形である。
+
 ## 利用者
 
 ### 最短経路

@@ -78,6 +78,8 @@ var EncoderSchema = config.Struct(
 
 struct tag を schema の主契約にしない。tag だけでは conditional field、nested value、secret、custom codec、preset、cross-field invariant、canonical encoding を十分に表せず、結局別の経路が必要になるためである。単純な schema 用の補助として tag から description を導出する adaptor は許容できるが、公式 plugin は明示 schema を使う。
 
+この adaptor は M8 の担当とする。field ごとに ID、typed accessor、codec の 3 点を書く明示 schema は、`plugin/audio` の 17 processor や FLAC encoder config のような field 数の多い component では登録だけで数百行になる。第三者の参入コストが [C2](decisions.md) の拡張性目標に直結するため、scalar だけで構成される単純な config には軽い経路を用意する。公式 plugin の移行で実際の負担が測れる M8 で、adaptor を作るか作らないかを決め、作らない場合は理由を [capability](capability.md) へ記録する。
+
 ### 完全値と疎な Patch
 
 Go library の利用者は型付きの完全値を渡せる。
@@ -238,6 +240,8 @@ encoder.flac.compression:
 
 文字列だけの `Validate() error` は adaptor として利用できるが、公式 schema は複数 error を一度に返せる structured validator を使う。
 
+未知の識別子に対する diagnostic は、schema から算出した最も近い候補を含める。unknown field なら登録済み field ID と alias、unknown preset なら登録済み preset、範囲外の値なら有効な range や choice を示す。利用者が体感する品質の大半は error 表示に現れるため、構造化するだけで終わらせない。候補算出は control plane の一度きりの処理であり、data plane には影響しない。
+
 ## immutability と canonicalization
 
 `Schema.Resolve` は default/value を新しい snapshot へ copy する。caller が後で元の slice/map/config を変更しても、Plan の意味は変わらない。config は小さな control-plane value であることを前提に一度だけ defensive copy し、frame/artwork buffer の clone と同じ仕組みにはしない。
@@ -332,7 +336,7 @@ M2 は typed config contract を foundation package として新設する milest
 - `C` の field が schema に未登録の場合、schema 登録を失敗させる。canonical/fingerprint に入らない field が config の意味を変えることを許さない。
 - 構造化 codec の surface 表現は decode と encode が逆関数になる。`Nested` が返した encode 結果を同じ codec の decode が読み戻せる。secret field はこの対象外とし、surface 表現に現れず、redaction marker の decode は error になる。
 - schema 構築時の自己検証（duplicate/空の field・preset ID、invalid default/preset、unknown/cyclic dependency、field 型と codec の不一致、canonicalization 不能型、invalid range/step/choice、secret の default/表示規則、nested path 衝突）が import 時 panic ではなく、component identity と field path を含む aggregate error として host 構築時に報告される。
-- ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。
+- ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。unknown field と unknown preset の diagnostic は、登録済みの候補のうち最も近いものを含む。
 - canonical fingerprint が map iteration order、registration order、pointer address、process 再起動に依存しない。canonical form を作れない field は schema 登録を失敗させる。
 - 標準 field 型（bool、整数、有限 float、string、単位付き値、enum、optional/auto の sum type、nested struct、ordered slice、discriminated union、secret）を扱え、第三者が `config.Codec[T]` を core 編集なしで追加できる。
 - secret が `Resolved` の公開表現、diagnostic、error、log に raw value として現れない。

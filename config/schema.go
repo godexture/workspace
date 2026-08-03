@@ -187,7 +187,8 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 	if patch.preset != "" {
 		preset, ok := s.preset(patch.preset)
 		if !ok {
-			items = append(items, diagnostic.NewItem(codeUnknownPreset, diagnostic.ErrorSeverity, diagnostic.Path{}, "named preset is not registered", map[string]string{"preset": patch.preset}))
+			items = append(items, diagnostic.NewItem(codeUnknownPreset, diagnostic.ErrorSeverity, presetPath(patch.preset), "named preset is not registered", map[string]string{"preset": patch.preset}).
+				WithSuggestions(diagnostic.Suggest(patch.preset, s.presetIDs())))
 		} else if preset.apply == nil {
 			items = append(items, diagnostic.NewItem(codePresetFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "preset has no apply function", nil))
 		} else if err := callPreset(preset.apply, &value); err != nil {
@@ -211,7 +212,8 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 	for _, fieldID := range patch.FieldIDs() {
 		field, ok := s.field(fieldID)
 		if !ok {
-			items = append(items, diagnostic.NewItem(codeUnknownField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field is not registered by this schema", nil))
+			items = append(items, diagnostic.NewItem(codeUnknownField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field is not registered by this schema", nil).
+				WithSuggestions(diagnostic.Suggest(fieldID, s.fieldNames())))
 			continue
 		}
 		entry := patch.fields[fieldID]
@@ -425,6 +427,29 @@ func callPreset[C any](apply func(*C), value *C) (err error) {
 	}()
 	apply(value)
 	return nil
+}
+
+// fieldNames returns every name a caller could legitimately have typed for a
+// field: its ID and its search aliases.
+func (s Schema[C]) fieldNames() []string {
+	names := make([]string, 0, len(s.fields))
+	for _, field := range s.fields {
+		names = append(names, field.id)
+		names = append(names, field.aliases...)
+	}
+	return names
+}
+
+func (s Schema[C]) presetIDs() []string {
+	ids := make([]string, 0, len(s.presets))
+	for _, preset := range s.presets {
+		ids = append(ids, preset.id)
+	}
+	return ids
+}
+
+func presetPath(id string) diagnostic.Path {
+	return diagnostic.Path{Fields: []string{"preset", id}}
 }
 
 func (s Schema[C]) field(id string) (FieldSpec[C], bool) {

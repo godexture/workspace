@@ -97,15 +97,21 @@ M1 は repository、package identity、module/workspace topology を固定する
 
 `contract` という巨大 package は作らず、責務ごとの小さな package に分ける。名前は仮称だが、境界は次のとおりである。
 
-| 領域 | package | 責務 |
+| 領域 | package path | 責務 |
 |---|---|---|
-| identity/config | `schema`、`config`、`property`、`diagnostic` | open identity、typed schema、immutable property、構造化診断 |
-| media control plane | `timing`、`stream`、`metadata`、`tag` | time base、stream descriptor、semantic metadata |
-| media data plane | `packet`、`side`、`audio`、`video`、`subtitle`、`buffer` | typed unit、side data、ownership |
+| media control plane | `media/schema`、`media/property`、`media/timing`、`media/stream`、`media/metadata`、`media/tag` | open identity、immutable property、time base、stream descriptor、semantic metadata |
+| media data plane | `media/packet`、`media/side`、`media/buffer`、`media/audio`、`media/video`、`media/subtitle` | typed unit、side data、ownership |
+| media extension | `media/format`、`media/codec` | Probe/Inspect、Carrier、Parser/Binding |
 | graph contract | `flow`、`component` | typed port、Processor/Operator、Compile/Open definition |
-| plugin/media extension | `plugin`、`format`、`codec` | marker identity、Set、Probe/Inspect、Parser/Binding |
+| identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、typed schema、構造化診断 |
 | I/O extension | `access`、`endpoint` | byte object capability/transaction、live/session/device trait |
 | application API | `resource`、`job`、`host`、`testkit` | request/grant、normalized Job、public façade、conformance |
+
+media 領域だけを `media/` 配下へ置き、それ以外は root に置く。単独では意味が読み取れない語（`side`、`property`、`buffer`、`tag`、`stream`、`schema`）は media に集中しており、`media` は容器のための造語ではなく実在する domain 語だからである。逆に `app` や `io` のような容器語を作って `host` や `access` を沈めると、`godec/host` より読みにくくなり、[AGENTS.md](../../AGENTS.md) の「一単語でより明確な意味を持つ語を先に検討する」に反する。
+
+この配置は概念の衝突も解消する。`config.Schema`（設定 schema）と `media/schema`（data unit schema）が path で区別され、`media/audio`（frame 型）と `plugin/audio`（processor 実装）も紛れない。
+
+`flow` と `component` は media 専用ではなく第三者の非 media schema にも使うため `media/` 配下へは置かない。2 package のために `graph/` を作る実益は薄いので root に置く。ただし両者は「component がどう繋がるか」という一つの概念なので、M3 で 1 package へ統合する余地を残す。
 
 public package を増やすのは、第三者が実装・宣言・検証する contract がある場合だけとする。codec 内部の bitstream/parser table、Host scheduler、surface helper の都合で public package を作らない。
 

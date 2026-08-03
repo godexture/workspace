@@ -377,3 +377,28 @@ diagnostic は key だけでなく origin、target carrier、理由、選ばれ�
 無指定出力では入力 format/codec/stream と metadata raw block の保持を優先する。media model が保証するのは、copy可否、Binding、raw preservation、loss/effect を planner が判断できる descriptor を提供することである。
 
 具体的な候補順、自動挿入、明示 output との競合は [planner](planner.md#default-transcode-の探索)、利用者向け既定動作は [surfaces](surfaces.md#default-behavior) を正本とする。
+
+## M3 完了条件
+
+M3 は media control plane と data plane の型、metadata model、Binding を foundation package として新設する milestone である。`Compile`/`Suggest` は M4、runtime と ownership の実行は M5、公式 plugin の移行と実際の Format/Codec 実装は M6/M8 の担当であり、M3 には要求しない。I/O 側の条件は [access](access.md#m3-完了条件)、拡張点の網羅は [scope](scope.md#m3-完了条件) を参照する。
+
+- 第三者が `schema.Define[ID, T]` で独自 unit を宣言でき、その build に `pipe[T]`、tee、drop 等の型付き実装が含まれる。core は `T` を事前に知らない。
+- schema identity が payload の Go 型ではなく marker 型から導出され、payload 型の refactor と identity が分離している。
+- 万能 `Frame` interface と閉じた stream kind enum が新 package に存在しない。`audio.Frame`、`video.Frame`、`subtitle.Cue` を別 schema として宣言でき、port を schema の具体型で結べる。
+- 型消去は catalog/planner が保持する erased factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。type assertion は Open 時に一度だけ行う形になっている。
+- `stream.Descriptor` が schema identity、time base、immutable `property.Set`、`metadata.Document` を持ち、未知 property を解釈せずに保持できる。
+- `timing` が integer time base と型を区別した PTS/DTS/duration を持ち、rescale が checked arithmetic で overflow と rounding policy を明示する。timestamp 不明を `0` と混同しない optional/flag を持つ。
+- Format、Codec、Carrier、Metadata Encoding、Metadata Document、Binding が別の型として分かれ、Format が特定の decoder/metadata parser/Access Provider を import しない構造になっている。
+- container chunk と codec packet が別の型で、Parser を第一級 component として宣言できる。bitstream filter を `Packet -> Packet` として表現できる。
+- codec Binding と metadata Binding を composition 時に登録でき、同じ binding key が異なる対象を指す場合に host 構築を失敗させる。意図的な置換は明示 override だけで行う。
+- `metadata.Document` が順序付き entry、`Origin`、未解釈 `RawBlock` を保持し、slice の直接 mutation を許さない。第三者が core を変更せず固有 key を定義でき、共通 vocabulary は `tag` package が持つ。
+- metadata Mapping が source key、target key、lossiness、priority を宣言でき、host が曖昧な変換を推測しない。
+- metadata scope（asset/program/stream/chapter）を表現でき、時刻に沿って変化する metadata は static document ではなく typed event stream として宣言できる。
+- artwork 等の大きな byte slice が entry の複製ごとに copy されず、immutable blob 参照を共有する。
+- 上記を unit/property test で検査する。第三者相当の schema/key/Binding fixture を含め、公式 plugin を import しない。
+- **walking skeleton が通る。** test 用の trivial な schema、format、codec、metadata encoding を foundation の test 内に定義し、`bytes → packet → frame → packet → bytes` が新 contract だけで端から端まで流れる。実 format を使わず、planner と runtime も使わない直結で構わない。この経路は M4 と M5 が planner/runtime を差し込む間も壊さず、M6 が trivial component を実 WAVE/PCM へ置換する。
+- 各 contract が「walking skeleton が実際に使うもの」と「宣言だけで consumer を持たないもの」に分類され、後者が一覧できる。consumer を持たない contract は型を最小限にとどめ、詳細を凍結しない。
+
+M3 では次を未完了事項として残す。descriptor から実際の Format/Codec を駆動する経路は M6/M8、`Compile` が capability 不足を structured diagnostic にする経路は M4、loss report の surface 表示は M7 で扱う。
+
+walking skeleton を要求する理由は、consumer のいない contract を M3〜M5 の 3 段積み上げないためである。M2 では `config.SchemaView` に resolver が必要だと判明したのが「M4 がどう使うか」を検討した時点であり、それまでの review では検出できなかった。M3 は package 数がさらに多く、同じ失敗の影響が大きい。

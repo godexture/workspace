@@ -80,7 +80,8 @@ func (s Set) Remove(identity Identity) Set {
 		result.definitions = append(result.definitions, definition.clone())
 	}
 	if !removed {
-		return s.withProblem(invalidCompositionItem("plugin.remove-missing", identity, "remove target identity is not present"))
+		return s.withProblem(invalidCompositionItem("plugin.remove-missing", identity, "remove target identity is not present").
+			WithSuggestions(diagnostic.Suggest(identity.String(), s.identityNames())))
 	}
 	return result
 }
@@ -102,7 +103,8 @@ func (s Set) Override(target Identity, replacement Component) Set {
 		result.definitions = append(result.definitions, updated)
 	}
 	if !replaced {
-		return s.withProblem(invalidOverrideItem("override target identity is not present"))
+		return s.withProblem(invalidCompositionItem("plugin.override", target, "override target identity is not present").
+			WithSuggestions(diagnostic.Suggest(target.String(), s.componentNames())))
 	}
 	return result
 }
@@ -123,7 +125,8 @@ func (s Set) OverridePlugin(target Identity, replacement Definition) Set {
 		result.definitions = append(result.definitions, definition.clone())
 	}
 	if !replaced {
-		return s.withProblem(invalidOverrideItem("override target identity is not present"))
+		return s.withProblem(invalidCompositionItem("plugin.override", target, "override target identity is not present").
+			WithSuggestions(diagnostic.Suggest(target.String(), s.pluginNames())))
 	}
 	return result
 }
@@ -153,6 +156,37 @@ func (s Set) Components() []Component {
 
 // Empty reports whether no plugin/component definition is present.
 func (s Set) Empty() bool { return len(s.definitions) == 0 }
+
+// pluginNames and componentNames list the identities a composition call could
+// legitimately have targeted, so an unknown target reports alternatives rather
+// than only stating that it was absent.
+func (s Set) pluginNames() []string {
+	names := make([]string, 0, len(s.definitions))
+	for _, definition := range s.definitions {
+		if !definition.identity.IsZero() {
+			names = append(names, definition.identity.String())
+		}
+	}
+	return names
+}
+
+func (s Set) componentNames() []string {
+	var names []string
+	for _, definition := range s.definitions {
+		for _, component := range definition.components {
+			if !component.identity.IsZero() {
+				names = append(names, component.identity.String())
+			}
+		}
+	}
+	return names
+}
+
+// identityNames covers Remove, which accepts either a plugin or a component
+// identity.
+func (s Set) identityNames() []string {
+	return append(s.pluginNames(), s.componentNames()...)
+}
 
 func (s Set) withProblem(item diagnostic.Item) Set {
 	result := Set{
