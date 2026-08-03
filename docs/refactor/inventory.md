@@ -160,30 +160,39 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 
 ## package を新設するもの
 
-現行 directory の移動だけでは得られないため、新設する。
+現行 directory の移動だけでは得られないため、新設する。path は [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) の grouping に従う。`担当` 列は新設する milestone であり、その後の拡張は別 milestone が行う。
 
-- `schema`: open typed schema、trait、typed runtime factory
-- `property`: immutable open property key/set
-- `side`: packet/frame side data
-- `access`: Reference、Provider、byte Source/Sink capability、ownership、transaction
-- `endpoint`: realtime/session/device clock、topology、backpressure trait
-- `stream`: open descriptor、program/stream scope、dynamic event
-- `component`: Spec、requirement、cost、variant
-- `config`: typed Schema、Patch、Resolved、field Codec、canonical fingerprint
-- `plugin`: marker identity、descriptor、immutable Set
-- `format`: Probe/Inspect/Carrier contract
-- `codec`: Parser、Parameters、container codec Binding
-- `metadata`: Document、Origin、RawBlock、Mapping、metadata Binding
-- `tag`: shared semantic vocabulary
-- `diagnostic`: warning、loss、structured error
-- `resource`: coarse Request/Grant
-- `job`: normalized source/sink/mapping/policy
-- `host`: public Plan/Run façade
-- `testkit`: public plugin conformance
-- `internal/{catalog,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}`: host implementation
-- `standard`: official component と codec/metadata Binding の composition
-- `integration`: cross-module、reference adaptor、surface end-to-end test
-- `integration/corpus`: external conformance/benchmark corpus の data submodule または manifest/cache、license、size、任意取得の test tier
+| path | 責務 | 担当 |
+|---|---|---|
+| `diagnostic` | warning、loss、structured error | M2 完了 |
+| `config` | typed Schema、Patch、Resolved、field Codec、canonical fingerprint | M2 完了 |
+| `plugin` | marker identity、descriptor、immutable Set、component Spec | M2 完了（Spec は M3） |
+| `host` | public Catalog/Plan/Run façade | M2 完了（Plan/Run は M4/M5） |
+| `media/schema` | open typed schema、trait、typed runtime factory | M3 |
+| `media/property` | immutable open property key/set | M3 |
+| `media/timing` | integer time base、typed PTS/DTS/duration、checked rescale | M3 |
+| `media/stream` | open descriptor、program/stream scope、dynamic event | M3 |
+| `media/packet` | container chunk と codec packet | M3 |
+| `media/buffer` | aligned backing buffer、plane layout、ownership handle | M3 |
+| `media/audio` | typed sample frame `Frame[S]` | M3 |
+| `media/metadata` | Document、Origin、RawBlock、Mapping、metadata Binding | M3 |
+| `media/tag` | shared semantic vocabulary | M3 |
+| `media/format` | Probe/Inspect/Carrier contract | M3 |
+| `media/codec` | Parser、Parameters、container codec Binding | M3 |
+| `media/side` | packet/frame side data | M3 |
+| `flow` | typed port、Reader/Writer、Processor/Operator、Input/Emitter | M3 |
+| `access` | Reference、Provider、byte Source/Sink capability、ownership、transaction | M3 |
+| `endpoint` | realtime/session/device clock、topology、backpressure trait | M3 |
+| `media/video`、`media/subtitle` | typed frame/cue | 実 consumer を持つ milestone |
+| `resource` | coarse Request/Grant | M4/M5 |
+| `job` | normalized source/sink/mapping/policy | M4 |
+| `testkit` | public plugin conformance | M6（最小形）、M10（完成） |
+| `standard` | official component と codec/metadata Binding の composition | M6 |
+| `integration` | cross-module、reference adaptor、surface end-to-end test | M6 |
+| `integration/corpus` | external conformance/benchmark corpus の data submodule または manifest/cache、license、size、任意取得の test tier | M10 |
+| `internal/{catalog,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}` | host implementation | `catalog` は M2 完了、他は M4/M5 |
+
+`component` package は新設しない。component Spec は `plugin.Component` が持つ。理由は [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) を参照する。
 
 ## M1 で使う棚卸し条件
 

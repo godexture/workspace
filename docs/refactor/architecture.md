@@ -102,8 +102,8 @@ M1 は repository、package identity、module/workspace topology を固定する
 | media control plane | `media/schema`、`media/property`、`media/timing`、`media/stream`、`media/metadata`、`media/tag` | open identity、immutable property、time base、stream descriptor、semantic metadata |
 | media data plane | `media/packet`、`media/side`、`media/buffer`、`media/audio`、`media/video`、`media/subtitle` | typed unit、side data、ownership |
 | media extension | `media/format`、`media/codec` | Probe/Inspect、Carrier、Parser/Binding |
-| graph contract | `flow`、`component` | typed port、Processor/Operator、Compile/Open definition |
-| identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、typed schema、構造化診断 |
+| graph contract | `flow` | typed port、Reader/Writer、Processor/Operator |
+| identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、component Spec、typed schema、構造化診断 |
 | I/O extension | `access`、`endpoint` | byte object capability/transaction、live/session/device trait |
 | application API | `resource`、`job`、`host`、`testkit` | request/grant、normalized Job、public façade、conformance |
 
@@ -111,7 +111,9 @@ media 領域だけを `media/` 配下へ置き、それ以外は root に置く�
 
 この配置は概念の衝突も解消する。`config.Schema`（設定 schema）と `media/schema`（data unit schema）が path で区別され、`media/audio`（frame 型）と `plugin/audio`（processor 実装）も紛れない。
 
-`flow` と `component` は media 専用ではなく第三者の非 media schema にも使うため `media/` 配下へは置かない。2 package のために `graph/` を作る実益は薄いので root に置く。ただし両者は「component がどう繋がるか」という一つの概念なので、M3 で 1 package へ統合する余地を残す。
+`flow` は media 専用ではなく第三者の非 media schema にも使うため `media/` 配下へは置かない。1 package のために `graph/` を作る実益は薄いので root に置く。
+
+[C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) のとおり `component` package は新設せず、component Spec は `plugin.Component` が持つ。`plugin -> flow` の一方向依存だけを作り、port shape と `Open` を `plugin.Component` へ足す。
 
 public package を増やすのは、第三者が実装・宣言・検証する contract がある場合だけとする。codec 内部の bitstream/parser table、Host scheduler、surface helper の都合で public package を作らない。
 

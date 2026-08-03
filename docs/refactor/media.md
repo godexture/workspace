@@ -380,11 +380,16 @@ diagnostic は key だけでなく origin、target carrier、理由、選ばれ�
 
 ## M3 完了条件
 
-M3 は media control plane と data plane の型、metadata model、Binding を foundation package として新設する milestone である。`Compile`/`Suggest` は M4、runtime と ownership の実行は M5、公式 plugin の移行と実際の Format/Codec 実装は M6/M8 の担当であり、M3 には要求しない。I/O 側の条件は [access](access.md#m3-完了条件)、拡張点の網羅は [scope](scope.md#m3-完了条件) を参照する。
+M3 は media control plane と data plane の型、metadata model、Binding を foundation package として新設する milestone である。runtime と ownership の実行は M5、公式 plugin の移行と実際の Format/Codec 実装は M6/M8 の担当であり、M3 には要求しない。I/O 側の条件は [access](access.md#m3-完了条件)、拡張点の網羅は [scope](scope.md#m3-完了条件) を参照する。
+
+component Spec のうち M3 が確定するのは port shape と `Open` までとする。`Compile` と `Suggest` は planner という consumer が入る M4 が確定する。walking skeleton は `Open` が返した operator を test 内の手書き駆動 loop で流し、descriptor 変換規則を持たない。これは [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) のとおり `component` package ではなく `plugin.Component` へ足す。
+
+typed frame は `media/audio` だけを M3 で実装する。`media/video` と `media/subtitle` は実 consumer が現れる milestone まで作らず、第三者相当の schema fixture で拡張性を検査する。`media/audio` を先に作るのは、[audio](audio.md#原則) の「filter が内部で sample format を decode/encode しない」という性能契約が `media/buffer` の plane layout と ownership に依存し、両者を離して決めると M5/M6 で作り直しになるためである。
 
 - 第三者が `schema.Define[ID, T]` で独自 unit を宣言でき、その build に `pipe[T]`、tee、drop 等の型付き実装が含まれる。core は `T` を事前に知らない。
 - schema identity が payload の Go 型ではなく marker 型から導出され、payload 型の refactor と identity が分離している。
-- 万能 `Frame` interface と閉じた stream kind enum が新 package に存在しない。`audio.Frame`、`video.Frame`、`subtitle.Cue` を別 schema として宣言でき、port を schema の具体型で結べる。
+- 万能 `Frame` interface と閉じた stream kind enum が新 package に存在しない。`audio.Frame` に加え、`video.Frame`/`subtitle.Cue` 相当の非 audio unit を core 無変更で別 schema として宣言でき、port を schema の具体型で結べる。後者は foundation の test fixture で検査し、`media/video`/`media/subtitle` package は作らない。
+- `plugin.Component` が port shape と `Open` を持ち、`flow` の typed port を宣言できる。`component` package を新設しない。
 - 型消去は catalog/planner が保持する erased factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。type assertion は Open 時に一度だけ行う形になっている。
 - `stream.Descriptor` が schema identity、time base、immutable `property.Set`、`metadata.Document` を持ち、未知 property を解釈せずに保持できる。
 - `timing` が integer time base と型を区別した PTS/DTS/duration を持ち、rescale が checked arithmetic で overflow と rounding policy を明示する。timestamp 不明を `0` と混同しない optional/flag を持つ。
@@ -396,7 +401,7 @@ M3 は media control plane と data plane の型、metadata model、Binding を 
 - metadata scope（asset/program/stream/chapter）を表現でき、時刻に沿って変化する metadata は static document ではなく typed event stream として宣言できる。
 - artwork 等の大きな byte slice が entry の複製ごとに copy されず、immutable blob 参照を共有する。
 - 上記を unit/property test で検査する。第三者相当の schema/key/Binding fixture を含め、公式 plugin を import しない。
-- **walking skeleton が通る。** test 用の trivial な schema、format、codec、metadata encoding を foundation の test 内に定義し、`bytes → packet → frame → packet → bytes` が新 contract だけで端から端まで流れる。実 format を使わず、planner と runtime も使わない直結で構わない。この経路は M4 と M5 が planner/runtime を差し込む間も壊さず、M6 が trivial component を実 WAVE/PCM へ置換する。
+- **walking skeleton が通る。** test 用の trivial な schema、format、codec、metadata encoding を foundation の test 内に定義し、`bytes → packet → frame → packet → bytes` が新 contract だけで端から端まで流れる。実 format を使わず、planner と runtime も使わない。component は `plugin.Component` の `Open` が返した operator として繋ぎ、駆動 loop と接続順だけを test が持つ。この経路は M4 と M5 が planner/runtime を差し込む間も壊さず、M6 が trivial component を実 WAVE/PCM へ置換する。
 - 各 contract が「walking skeleton が実際に使うもの」と「宣言だけで consumer を持たないもの」に分類され、後者が一覧できる。consumer を持たない contract は型を最小限にとどめ、詳細を凍結しない。
 
 M3 では次を未完了事項として残す。descriptor から実際の Format/Codec を駆動する経路は M6/M8、`Compile` が capability 不足を structured diagnostic にする経路は M4、loss report の surface 表示は M7 で扱う。

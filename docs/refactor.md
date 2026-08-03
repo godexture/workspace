@@ -105,7 +105,7 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 
 ## 確定済みの境界
 
-詳細は [decision ledger](refactor/decisions.md) の C1〜C16 を正本とする。特に実装中に崩してはならない境界は次である。
+詳細は [decision ledger](refactor/decisions.md) の Confirmed 判断を正本とする。特に実装中に崩してはならない境界は次である。
 
 - plugin の基本導入は static import と明示 composition である。
 - in-process plugin の trust は組み込む利用者が決める。Host の panic recovery は sandbox ではない。

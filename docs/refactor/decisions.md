@@ -158,9 +158,11 @@ component descriptor の未設定 field は親 plugin の descriptor から引�
 media 領域を `media/` 配下へ置き、それ以外は root に置く。単独では意味が読み取れない語（`side`、`property`、`buffer`、`tag`、`stream`、`schema`）が media に集中しており、`media` は容器のための造語ではなく実在する domain 語である。
 
 - `media/`: `schema`、`property`、`timing`、`stream`、`metadata`、`tag`、`packet`、`side`、`buffer`、`audio`、`video`、`subtitle`、`format`、`codec`
-- root: `plugin`、`config`、`diagnostic`、`flow`、`component`、`access`、`endpoint`、`resource`、`job`、`host`、`testkit`
+- root: `plugin`、`config`、`diagnostic`、`flow`、`access`、`endpoint`、`resource`、`job`、`host`、`testkit`
 
-`app` や `io` のような容器語を作って `host` や `access` を沈めると `godec/host` より読みにくくなるため、全面 grouping はしない。`flow` と `component` は media 専用ではなく第三者の非 media schema にも使うので media 配下へ置かず、2 package のために `graph/` も作らない。ただし両者は一つの概念なので M3 で統合を検討してよい。
+`app` や `io` のような容器語を作って `host` や `access` を沈めると `godec/host` より読みにくくなるため、全面 grouping はしない。`flow` は media 専用ではなく第三者の非 media schema にも使うので media 配下へ置かず、1 package のために `graph/` も作らない。
+
+当初この項目が併記していた `component` package は新設しない。M2 の `plugin.Component` が既に identity、descriptor、型消去した config schema を持つため、そこへ port shape と `Open` を足す。別 package の `component.Spec` を作ると「誰が提供するか」と「何をするか」が二重管理になり、`component` が `plugin.Identity` を要求した時点で import cycle にもなる。`flow` は port shape、typed Reader/Writer、Processor/Operator、Input/Emitter を持ち、`plugin` から一方向に参照される。
 
 この配置により `config.Schema`（設定 schema）と `media/schema`（data unit schema）、`media/audio`（frame 型）と `plugin/audio`（processor 実装）が path で区別される。M2 が作った root の 4 package は移動しない。
 
