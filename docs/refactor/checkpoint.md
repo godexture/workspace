@@ -17,7 +17,7 @@
 |---|---|---|
 | M0 | 完了 | 現行の correctness、failure semantics、metadata/stream、worker/variant、performance の比較条件を固定した。再現条件は [baseline.md](baseline.md) と [baseline.manifest.json](baseline.manifest.json) を参照する。 |
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
-| M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` と review 指摘 1〜17 の是正を完了した。Set composition diagnostic、型消去 resolver、descriptor 継承、責務別 config file、catalog fingerprint を含め、対象 race、build、全体 test、`--simd` gate を確認済み。 |
+| M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` と review 指摘 1〜18 の是正を完了した。Set composition diagnostic、型消去 resolver、component ごとの DisplayName、責務別 config file、catalog fingerprint を含め、対象 race、全体 test、build、vet、`--simd` gate を確認済み。 |
 | M3 | 未着手 | — |
 | M4 | 未着手 | — |
 | M5 | 未着手 | — |
@@ -34,5 +34,5 @@
 - `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3 gitlinkは、code と独立した任意取得の共有 data/asset として意図的に維持する。source code submodule 禁止には該当しない。
 - repository 全体の scalar/SIMD/forced-scalar differential は必須 gate にしない。`tools/cmd/differential` は任意の診断 tool とし、semantic 差は対象 package の test で検証する。
 - 日常開発と milestone/release の検証範囲は [quality.md](quality.md#開発時の検証-tier)、性能回帰の判定は [performance.md](performance.md#開発時の性能回帰方針) に従う。
-- `config.SchemaView` は description しか持たないため、catalog 経由で `Patch` を resolve する経路がない。CLI/WASM への投影が必要になる M3/M4 で component 契約と一緒に設計する。
+- `config.SchemaView` は型消去 resolver を持ち、catalog 経由で `Patch` を resolve できる。CLI/WASM への投影と M3/M4 の component 契約拡張はこの経路へ接続する。
 - `plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 で marker ベースの test へ置き換える。

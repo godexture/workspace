@@ -313,7 +313,7 @@ M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract �
 - host 構築 error が component identity と対象 field/descriptor path を含む aggregate な構造化 diagnostic として返り、最初の一件で打ち切らない。
 - component definition は identity、descriptor、config schema、alias、provenance を検証する。port shape、`Compile` purity、`Suggest` bounded 性の検証は M3/M4 で追加するため、この時点では definition を不透明な値として保持してよい。
 - component は config schema を description だけでなく型消去した resolver として保持し、catalog 側から `Patch` を `Resolved` へ解決できる。型消去した schema は `config.Schema[C]` からしか作れないようにし、第三者が valid を騙る実装を差し込めないようにする。
-- descriptor は plugin 単位で必須とし、component 単位では未設定 field を親 plugin の descriptor から引き継ぐ。family の全 component へ同じ version や license を書かせない。
+- descriptor は plugin 単位で必須とし、component 単位では未設定 field を親 plugin の descriptor から引き継ぐ。family の全 component へ同じ version や license を書かせない。ただし `DisplayName` は component ごとに異なるべき唯一の field なので継承せず、未設定なら marker 名を表示に使う。
 - 公式 plugin package が definition を返す API の形を確定する。`flac.Plugin()`、`flac.Codec()` のように関数で返す形とし、`var Plugin = ...` の変数形は使わない。実際の公式 plugin の移行は M6/M8 で行う。
 - 複数 `Host` を同一 process で構築しても catalog、default、CPU feature、resource state が互いに影響しない。
 - reflection の使用が `Define` 時の identity 取得、config schema 構築、catalog 構築に限定される。

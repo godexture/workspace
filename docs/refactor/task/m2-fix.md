@@ -4,7 +4,7 @@ M2 の実装 review で見つかった欠陥を是正する作業指示である
 
 review 時点の状態: `go build ./...`、`go vet`、対象 package の test と `-race`、`go run ./tools/cmd/test-runner --simd` はすべて green。依存方向も正しい。以下は回帰ではなく contract の欠陥である。
 
-1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目の review で見つかった項目で、いずれも修正済みである。13〜17 は 3 回目の是正後に実装全体を文書の正本と照らして見直した設計レベルの指摘であり、今回の実装で修正済みである。
+1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目、13〜17 は 4 回目の review で見つかった項目で、いずれも修正済みである。18 は 5 回目の review で見つかった仕上げ項目であり、今回の修正と検証を完了した。
 
 ## 必読
 
@@ -204,6 +204,31 @@ host.New(host.Plugins(set)) -> err=nil, components=1
 - `plugin.Descriptor` の `Repository` が `Provenance.Repository` と重複している。どちらか一方にする。
 - `plugin.Descriptor` の `PureGo`/`CGO`/`Native` は 3 つの独立した bool のため矛盾した状態を表現できる。排他的な enum にする。
 - `host.Catalog` に catalog fingerprint を持たせる。[surfaces.md](../surfaces.md#catalog) と [web.md](../web.md#open-catalog) が要求しており、host composition と component/schema version から作る catalog の責務である。M9 まで待つ理由がない。
+
+## 18. 仕上げ
+
+13〜17 の是正後の review で見つかった。どちらも小さいが、放置すると catalog surface と public API に残る。
+
+### DisplayName を継承対象から外す
+
+`bindComponent` は `Descriptor.inherit` で `DisplayName` も親から埋めるため、`View()` にある marker 名の fallback は bound な component では到達しない（親の `DisplayName` が空なら plugin 側の descriptor 検証が先に失敗するため）。結果として family の全 component が同じ表示名になる。FLAC family なら codec、format、parser がすべて "FLAC" と表示される。
+
+`DisplayName` は descriptor の中で唯一 component ごとに異なるべき field である。version、license、homepage、repository、build、digest、signature、provenance の継承はそのままでよい。
+
+- `inherit` から `DisplayName` を外す。
+- 未設定の component は marker 名を表示に使う（既存の fallback をそのまま活かす）。
+- `plugin/foundation_test.go` の `TestDefinitionInheritsPluginDescriptor` は `got.Descriptor() == parent` で現在の挙動を固定しているので、`DisplayName` だけ別に検査する形へ直す。
+- test: 同じ plugin の 2 component が異なる表示名を持つこと。
+
+### `Set.ValidateDuplicates` を削除する
+
+`Diagnostics()` の内容を含んだうえで重複走査を足す形になっており、名前と実態がずれている。doc の「future adapters に有用」も投機的で、AGENTS.md の「必要なくなった export は残さない」から外れる。`catalog.Build` は既に component の重複走査を自前で持っている。
+
+- `catalog.Build` が `set.Diagnostics()` を取り込み、自前の走査へ plugin identity の重複検査を足す。
+- `Set.ValidateDuplicates` を削除する。
+- test: 既存の重複検査 test が catalog 経由で同じ diagnostic を得ること。
+
+`config/schema_test.go` が 677 行のまま source の分割に追随していない点は、M3 以降の作業と合わせて整理する。
 
 ## 検証
 
