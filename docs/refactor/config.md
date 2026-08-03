@@ -212,6 +212,15 @@ CLI は同じ schema から repeatable flag、indexed path、JSON file のいず
 
 unordered map は canonical key codec と順序規則を宣言できる場合だけ受け入れる。NaN/Inf、同値な複数表記、負の zero、単位の別表記等は codec が canonical form を決める。canonical form を作れない field は Plan fingerprint を不安定にするため schema 登録を失敗させる。
 
+関数値と closure は config ではない。`[]func(...)` のような field は canonical 表現を持てないため登録に失敗する。これは制限ではなく検出であり、実装の選択肢が config 型へ漏れていることを示す。設定として表したいのは「どの関数を、どの parameter で使うか」であって関数そのものではないので、data として宣言し、実際の関数への解決は plugin 内部の lookup として `Compile` で行う。
+
+```text
+Apodizations []func([]float64)        canonical 不能。Tukey(0.5) と Tukey(0.9) を区別できない
+Apodizations []ApodizationSpec        kind と parameter を持つ data。canonical で区別できる
+```
+
+closure が parameter を捕捉すると、異なる出力を生む二つの設定が config 上で同一に見える。fingerprint に差が出ないため [performance](performance.md#artifactstable) の `ArtifactStable` を満たせず、surface へ投影することもできない。
+
 ## validation と diagnostic
 
 schema 構築時に次を自己検証する。

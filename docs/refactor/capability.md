@@ -88,6 +88,7 @@
 | B1 | 無指定出力で decoder/encoder を開かず、可能なら copy/remux を選ぶ | [C4](decisions.md)。入力の情報を保持する既定へ変える | M7 |
 | B2 | metadata の表現不能項目を黙って捨てず warning/loss report にする | [C10](decisions.md) | M7 |
 | B3 | 数値誤差を許容する variant を policy で選択可能にする | [C7](decisions.md)、[C15](decisions.md) | M5/M8 |
+| B4 | FLAC encoder の `Apodizations []Apodization`（関数値）を kind と parameter を持つ data 表現へ変える | 関数値は canonical 表現を持てず、`Tukey(0.5)` と `Tukey(0.9)` を区別できない。異なる bitstream を生むのに Plan と fingerprint に残らず、[performance.md](performance.md#artifactstable) の `ArtifactStable` を満たせない。現状 CLI/WASM からも設定できないため、data 化して初めて surface へ出せる | M8 |
 
 ## 更新規則
 
