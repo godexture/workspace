@@ -3,7 +3,6 @@ package property
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"sort"
 )
@@ -18,16 +17,31 @@ func (id ID) String() string { return id.canonical }
 type Key[T any] struct {
 	id        ID
 	valueType reflect.Type
+	clone     func(T) T
 }
 
-func Define[Marker any, T any]() Key[T] {
+// Define creates an open property key. Reference-valued properties must
+// provide a clone function; immutable values use a shallow value copy.
+func Define[Marker any, T any](clones ...func(T) T) Key[T] {
 	typ := reflect.TypeFor[Marker]()
 	if typ == nil || typ.Kind() == reflect.Interface || typ.Name() == "" || typ.PkgPath() == "" {
 		return Key[T]{}
 	}
+	if len(clones) > 1 || (len(clones) == 1 && clones[0] == nil) {
+		return Key[T]{}
+	}
+	var clone func(T) T
+	if len(clones) == 1 {
+		clone = clones[0]
+	} else if propertyNeedsClone(reflect.TypeFor[T]()) {
+		return Key[T]{}
+	} else {
+		clone = func(value T) T { return value }
+	}
 	return Key[T]{
 		id:        ID{canonical: typ.PkgPath() + "." + typ.Name()},
 		valueType: reflect.TypeFor[T](),
+		clone:     clone,
 	}
 }
 
@@ -35,7 +49,7 @@ func IdentityOf[Marker any]() ID {
 	return Define[Marker, struct{}]().ID()
 }
 
-func (k Key[T]) Valid() bool             { return !k.id.IsZero() && k.valueType != nil }
+func (k Key[T]) Valid() bool             { return !k.id.IsZero() && k.valueType != nil && k.clone != nil }
 func (k Key[T]) ID() ID                  { return k.id }
 func (k Key[T]) ValueType() reflect.Type { return k.valueType }
 
@@ -45,8 +59,12 @@ func (k Key[T]) Get(set Set) (T, bool) {
 		var zero T
 		return zero, false
 	}
-	value, ok := entry.value.(T)
-	return cloneValue(value).(T), ok
+	value, ok := k.cloneAny(entry.value)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return value.(T), true
 }
 
 func (k Key[T]) Set(set Set, value T) (Set, error) {
@@ -56,11 +74,13 @@ func (k Key[T]) Set(set Set, value T) (Set, error) {
 type keyLike interface {
 	ID() ID
 	ValueType() reflect.Type
+	cloneAny(any) (any, bool)
 }
 
 type entry struct {
 	typeOf reflect.Type
 	value  any
+	clone  func(any) (any, bool)
 }
 
 // Set is immutable. With and Delete return a new set and never modify their
@@ -73,15 +93,12 @@ func (s Set) With(key keyLike, value any) (Set, error) {
 	if key == nil || key.ID().IsZero() || key.ValueType() == nil {
 		return s, errors.New("invalid property key")
 	}
-	if value == nil {
+	cloned, ok := key.cloneAny(value)
+	if !ok {
 		return s, ErrPropertyType
 	}
-	valueType := reflect.TypeOf(value)
-	if valueType != key.ValueType() {
-		return s, fmt.Errorf("%w: got %s, want %s", ErrPropertyType, valueType, key.ValueType())
-	}
 	values := cloneEntries(s.values)
-	values[key.ID()] = entry{typeOf: valueType, value: cloneValue(value)}
+	values[key.ID()] = entry{typeOf: key.ValueType(), value: cloned, clone: key.cloneAny}
 	return Set{values: values}, nil
 }
 
@@ -105,7 +122,11 @@ func (s Set) Lookup(key ID) (Value, bool) {
 	if !ok {
 		return Value{}, false
 	}
-	return Value{id: key, typeOf: entry.typeOf, value: cloneValue(entry.value)}, true
+	value, ok := entry.clone(entry.value)
+	if !ok {
+		return Value{}, false
+	}
+	return Value{id: key, typeOf: entry.typeOf, value: value, clone: entry.clone}, true
 }
 
 func (s Set) Keys() []ID {
@@ -121,26 +142,68 @@ type Value struct {
 	id     ID
 	typeOf reflect.Type
 	value  any
+	clone  func(any) (any, bool)
 }
 
 func (v Value) ID() ID             { return v.id }
 func (v Value) Type() reflect.Type { return v.typeOf }
-func (v Value) Any() any           { return cloneValue(v.value) }
+func (v Value) Any() any {
+	if v.clone == nil {
+		return nil
+	}
+	value, ok := v.clone(v.value)
+	if !ok {
+		return nil
+	}
+	return value
+}
 
 func cloneEntries(source map[ID]entry) map[ID]entry {
 	result := make(map[ID]entry, len(source))
 	for key, value := range source {
-		result[key] = entry{typeOf: value.typeOf, value: cloneValue(value.value)}
+		cloned, ok := value.clone(value.value)
+		if !ok {
+			continue
+		}
+		result[key] = entry{typeOf: value.typeOf, value: cloned, clone: value.clone}
 	}
 	return result
 }
 
-func cloneValue(value any) any {
-	switch typed := value.(type) {
-	case []byte:
-		return append([]byte(nil), typed...)
-	case string:
-		return typed
+func (k Key[T]) cloneAny(value any) (any, bool) {
+	if k.clone == nil {
+		return nil, false
 	}
-	return value
+	typed, ok := value.(T)
+	if !ok {
+		return nil, false
+	}
+	return k.clone(typed), true
+}
+
+func propertyNeedsClone(typ reflect.Type) bool {
+	return propertyNeedsCloneSeen(typ, make(map[reflect.Type]bool))
+}
+
+func propertyNeedsCloneSeen(typ reflect.Type, seen map[reflect.Type]bool) bool {
+	if typ == nil {
+		return false
+	}
+	switch typ.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return true
+	case reflect.Array:
+		return propertyNeedsCloneSeen(typ.Elem(), seen)
+	case reflect.Struct:
+		if seen[typ] {
+			return false
+		}
+		seen[typ] = true
+		for index := 0; index < typ.NumField(); index++ {
+			if propertyNeedsCloneSeen(typ.Field(index).Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }

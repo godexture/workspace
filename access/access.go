@@ -55,6 +55,8 @@ func AnyOf(capabilities ...Capability) Alternative {
 	return Alternative{Capabilities: append([]Capability(nil), capabilities...)}
 }
 
+func (a Alternative) Clone() Alternative { return AnyOf(a.Capabilities...) }
+
 type Requirements struct{ Alternatives []Alternative }
 
 func NewRequirements(alternatives ...Alternative) Requirements {
@@ -78,13 +80,17 @@ const (
 type Resource[T any] struct {
 	value     T
 	ownership Ownership
-	close     func() error
-	once      sync.Once
-	closeErr  error
+	state     *resourceState
+}
+
+type resourceState struct {
+	once     sync.Once
+	close    func() error
+	closeErr error
 }
 
 func Own[T any](value T) Resource[T] {
-	return Resource[T]{value: value, ownership: Owned, close: closeFunc(value)}
+	return Resource[T]{value: value, ownership: Owned, state: &resourceState{close: closeFunc(value)}}
 }
 
 func Borrow[T any](value T) Resource[T] {
@@ -95,15 +101,15 @@ func (r Resource[T]) Value() T             { return r.value }
 func (r Resource[T]) Ownership() Ownership { return r.ownership }
 
 func (r *Resource[T]) Close() error {
-	if r == nil {
+	if r == nil || r.state == nil {
 		return nil
 	}
-	r.once.Do(func() {
-		if (r.ownership == Owned || r.ownership == FactoryOwned) && r.close != nil {
-			r.closeErr = r.close()
+	r.state.once.Do(func() {
+		if r.state.close != nil {
+			r.state.closeErr = r.state.close()
 		}
 	})
-	return r.closeErr
+	return r.state.closeErr
 }
 
 type SessionFactory[T any] struct {

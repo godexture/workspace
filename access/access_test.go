@@ -34,6 +34,21 @@ func TestOwnershipModesAreExplicit(t *testing.T) {
 	}
 }
 
+func TestCopiedOwnedResourceClosesOnce(t *testing.T) {
+	closed := &atomic.Int32{}
+	first := Own(accessHandle{closed: closed})
+	second := first
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("copied resource close count = %d, want 1", closed.Load())
+	}
+}
+
 func TestFactoryCreatesOwnedSessionEachTime(t *testing.T) {
 	var opens atomic.Int32
 	factory := Factory(func(context.Context) (accessHandle, error) {

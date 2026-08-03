@@ -41,8 +41,21 @@ func TestRescaleOverflowAndNegativeLimits(t *testing.T) {
 	if _, err := MustBase(1, 1).Rescale(math.MaxInt64, MustBase(1, 2), RoundAwayFromZero); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("positive overflow = %v", err)
 	}
+	if _, err := MustBase(1<<30, 1).Rescale(1<<40, MustBase(1, 1<<30), RoundTowardZero); !errors.Is(err, ErrOverflow) {
+		t.Fatalf("wide intermediate overflow = %v", err)
+	}
 	if got, err := MustBase(1, 1).Rescale(math.MinInt64, MustBase(2, 1), RoundTowardZero); err != nil || got != math.MinInt64/2 {
 		t.Fatalf("negative limit = %d, %v", got, err)
+	}
+}
+
+func TestMultiplyFactorsCarriesAcrossTheLowWord(t *testing.T) {
+	value, ok := multiplyFactors([]uint64{1 << 40, 1 << 30, 1 << 30})
+	if !ok || value.hi != 1<<36 || value.lo != 0 {
+		t.Fatalf("multiplyFactors = %#v, %v", value, ok)
+	}
+	if _, ok := multiplyFactors([]uint64{^uint64(0), ^uint64(0), 2}); ok {
+		t.Fatal("128-bit overflow was not reported")
 	}
 }
 

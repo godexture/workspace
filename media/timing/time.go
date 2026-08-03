@@ -190,13 +190,13 @@ func subtract128(left, right uint128) uint128 {
 func multiplyFactors(factors []uint64) (uint128, bool) {
 	result := uint128{lo: 1}
 	for _, factor := range factors {
-		hi, lo := bits.Mul64(result.lo, factor)
-		high, _ := bits.Mul64(result.hi, factor)
-		sum, carry := bits.Add64(hi, high, 0)
-		if carry != 0 {
+		lowHigh, low := bits.Mul64(result.lo, factor)
+		highHigh, highLow := bits.Mul64(result.hi, factor)
+		sum, carry := bits.Add64(lowHigh, highLow, 0)
+		if highHigh != 0 || carry != 0 {
 			return uint128{}, false
 		}
-		result = uint128{hi: sum, lo: lo}
+		result = uint128{hi: sum, lo: low}
 	}
 	return result, true
 }

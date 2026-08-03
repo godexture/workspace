@@ -4,6 +4,8 @@ package format
 import (
 	"errors"
 	"fmt"
+
+	"github.com/godexture/godec/access"
 )
 
 type Tag string
@@ -37,23 +39,22 @@ func NewCarrier(identity CarrierID, owner string) Carrier {
 	return Carrier{Identity: identity, Owner: owner}
 }
 
-type Capability string
+type Capability = access.Capability
 
 const (
-	SequentialRead Capability = "sequential-read"
-	RandomRead     Capability = "random-read"
-	StableSize     Capability = "stable-size"
-	Reopen         Capability = "reopen"
-	ConcurrentRead Capability = "concurrent-read"
+	SequentialRead = access.SequentialRead
+	RandomRead     = access.RandomRead
+	StableSize     = access.StableSize
+	Reopen         = access.Reopen
+	ConcurrentRead = access.ConcurrentRead
+	CancelableRead = access.CancelableRead
 )
 
-type Alternative struct{ Capabilities []Capability }
+type Alternative = access.Alternative
 
 func AnyOf(capabilities ...Capability) Alternative {
-	return Alternative{Capabilities: append([]Capability(nil), capabilities...)}
+	return access.AnyOf(capabilities...)
 }
-
-func (a Alternative) Clone() Alternative { return AnyOf(a.Capabilities...) }
 
 // Format is a declarative format contract. It does not own byte locations,
 // decoder implementations, metadata parsers, or access providers.
