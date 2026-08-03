@@ -246,7 +246,7 @@ snapshot の唯一の機構は field codec の `Clone` とする。任意の Go 
 
 - reference 型を扱う codec は `Clone` を宣言する。宣言がなければ schema 登録を失敗させる。
 - snapshot は「default factory が fresh な値を返す」ことと「登録 field ごとの codec `Clone`」だけで構成する。
-- 登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の field があれば schema 登録を失敗させる。mutable field だけを検査すると、未登録の scalar field を持つ二つの値が同じ fingerprint を持ち、planner cache key が別の config を同一視する。config 型の一部を意図的に schema 外へ置くことは認めない。
+- 登録されていない field は canonical/fingerprint にも snapshot にも参加しないため、`C` に未登録の field があれば schema 登録を失敗させる。ただし blank field と zero-size field は config の意味を運ばないため検査対象から除く。mutable field だけを検査すると、未登録の scalar field を持つ二つの値が同じ fingerprint を持ち、planner cache key が別の config を同一視する。config 型の一部を意図的に schema 外へ置くことは認めない。
 
 exported `var DefaultXConfig` は設けない。`Schema.Default()`またはpluginの`Default()`は呼出しごとにfreshな値を返し、slice、map、pointer、functionを含むnested fieldもsnapshot化する。現行FLAC configのようにdefault structを単純代入すると`Apodizations`のbacking arrayを共有し、一つのcallerによる変更が後続Jobのdefaultを変え得る。
 
@@ -261,6 +261,13 @@ canonical encoding は次を満たす。
 - schema identity/version と effective config を区別できる
 
 private `Program` は実行に必要な secret を保持できる。公開 `Plan` は redacted value と、必要なら domain-separated digest だけを持つ。
+
+secret は redaction が本質であるため、surface 表現の decode と encode を逆関数にできない。したがって次の二つを両方守る。
+
+- 構造化 codec の surface encode は secret field を出力しない。decode 側はその field を「未指定」として扱い、default を使う。`Patch` の省略と明示 zero の区別にそのまま乗る。
+- redaction marker を値として decode することを error にする。marker が表示、保存 graph、手入力のどこから来ても secret にならない。
+
+前者だけでは利用者が marker を手で入力した経路が残り、後者だけでは secret を含む config の roundtrip が常に失敗する。人間向けの `Codec.Encode` は `<redacted>` を返してよいが、それは表示専用であり wire 表現ではない。
 
 ## CLI、WASM、HTTP への投影
 
@@ -323,7 +330,7 @@ M2 は typed config contract を foundation package として新設する milest
 - `Schema.Default()` が呼び出しごとに fresh な値を返し、slice、map、pointer、function を含む nested field も snapshot 化する。snapshot は field codec の `Clone` だけで構成し、generic reflection clone を使わない。新 package に exported `DefaultXConfig` を作らない。
 - 未 Build の zero `Schema` を含む invalid schema が `Valid()` で true を返さない。schema identity と version は必須とする。
 - `C` の field が schema に未登録の場合、schema 登録を失敗させる。canonical/fingerprint に入らない field が config の意味を変えることを許さない。
-- 構造化 codec の surface 表現は decode と encode が逆関数になる。`Nested` が返した encode 結果を同じ codec の decode が読み戻せる。
+- 構造化 codec の surface 表現は decode と encode が逆関数になる。`Nested` が返した encode 結果を同じ codec の decode が読み戻せる。secret field はこの対象外とし、surface 表現に現れず、redaction marker の decode は error になる。
 - schema 構築時の自己検証（duplicate/空の field・preset ID、invalid default/preset、unknown/cyclic dependency、field 型と codec の不一致、canonicalization 不能型、invalid range/step/choice、secret の default/表示規則、nested path 衝突）が import 時 panic ではなく、component identity と field path を含む aggregate error として host 構築時に報告される。
 - ユーザー入力 error が field path、入力 source、期待型、制約を持つ構造化 diagnostic になり、複数 error を一度に返せる。
 - canonical fingerprint が map iteration order、registration order、pointer address、process 再起動に依存しない。canonical form を作れない field は schema 登録を失敗させる。

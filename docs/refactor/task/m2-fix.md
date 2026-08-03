@@ -4,7 +4,7 @@ M2 の実装 review で見つかった欠陥を是正する作業指示である
 
 review 時点の状態: `go build ./...`、`go vet`、対象 package の test と `-race`、`go run ./tools/cmd/test-runner --simd` はすべて green。依存方向も正しい。以下は回帰ではなく contract の欠陥である。
 
-1〜7 は 1 回目の review、8〜10 はその是正後の 2 回目の review で見つかった項目である。1〜10 は修正済みで、対象 package の test・race、全体 build、全体 `--simd` runner、config benchmark を完了している。
+1〜7 は 1 回目、8〜10 は 2 回目、11〜12 は 3 回目の review で見つかった項目である。1〜12 は修正済みで、対象 package の test・race、全体 build、全体 `--simd` runner、config benchmark を完了している。
 
 ## 必読
 
@@ -103,6 +103,38 @@ ResolveValue{Level:1, Forgotten:1} と {Level:1, Forgotten:999} が同じ finger
 - `Builder.Preset` の godoc に provenance の制約を書く。6 で [config.md](../config.md) には記載したが godoc が未反映で、plugin 開発者は godoc を先に読む。
 - `Set.Override`/`OverridePlugin` も error 時に空 `Set` ではなく receiver を返す。7 で `Add` だけ直したため非対称になっている。
 - `Schema.decodeJSON`/`encodeJSON` を `config/field.go` から `config/schema.go` へ移す。`Schema` の責務であり、field codec 定義の file に置く理由がない。
+
+## 11. secret を surface 表現から外し、redaction marker の decode を error にする
+
+8 の是正後の review で見つかった。`Nested.Encode` が wire 表現になったことで、secret field が `<redacted>` という marker として wire に載り、同じ codec の decode がそれを**そのまま値として受け取る**。
+
+```text
+Encode(live)  -> {"endpoint":"s3://bucket","token":"<redacted>"}
+Decode(above) -> err=nil, token="<redacted>"
+```
+
+nested に限らず、`Patch.SetText("token", "<redacted>")` も同じく素通りする。CLI 表示や保存 graph を読み戻して再実行すると、本物の credential が marker に置き換わったまま remote へ送られ、手元には何の diagnostic も出ない。
+
+確定した方針は [config.md](../config.md#immutability-と-canonicalization) に追記済みで、次の二つを**両方**実装する。
+
+- 構造化 codec の surface encode（`Schema` の wire encode と、それを使う `Nested` 等）は `Secret` な field を出力しない。decode 側は欠けた secret field を「未指定」として扱い、default を使う。error にはしない。
+- `SecretCodec` の decode が redaction marker を受け取ったら error にする。code は `config.secret-redacted` 等の安定した識別子とし、message と diagnostic に marker 以外の値を含めない。
+- 人間向けの `Codec.Encode` は `<redacted>` を返してよい。表示専用であり wire 表現ではないことを godoc に書く。
+- test: secret を含む nested config の encode 出力に secret が現れないこと、その出力を decode すると secret 以外が復元され secret は default になること、marker を明示的に decode させると error になること、error と diagnostic に本物の secret も marker 由来の値も現れないこと。
+
+## 12. blank/zero-size field を未登録検査から除く
+
+9 の全 field 検査は blank field と zero-size field も対象にするため、次のような config 型は登録できる accessor が存在せず、schema を永久に構築できない。
+
+```text
+type markerConf struct {
+    Level int
+    _     struct{}
+}
+-> _: error: config.unregistered-field
+```
+
+blank field と zero-size field は config の意味を運べないため、検査から除く。test に blank field を持つ config 型を含める。
 
 ## 検証
 
