@@ -17,46 +17,41 @@ func TestMarkerIdentityIsIndependentFromPayload(t *testing.T) {
 	}
 }
 
-func TestErasedFactoryRetainsTypedPipeAndTee(t *testing.T) {
+func TestTypedTraitsRemainOnTypedSchema(t *testing.T) {
 	type unit struct{ Value int }
-	typ := Define[thirdPartyUnitID](Traits[unit]{Fork: func(value unit) unit { value.Value++; return value }})
-	pipeValue, err := typ.Descriptor().NewPipe(2)
-	if err != nil {
-		t.Fatal(err)
+	typ := Define[thirdPartyUnitID](Traits[unit]{
+		Fork: func(value unit) unit { value.Value++; return value },
+		Size: func(unit) int { return 1 },
+		Time: func(unit) (int64, bool) { return 7, true },
+	})
+	if got := typ.Fork(unit{Value: 4}); got.Value != 5 {
+		t.Fatalf("forked value = %#v", got)
 	}
-	pipe, ok := pipeValue.(*Pipe[unit])
-	if !ok {
-		t.Fatalf("pipe type = %T", pipeValue)
+	if got, ok := typ.Size(unit{}); !ok || got != 1 {
+		t.Fatalf("size = %d, %v", got, ok)
 	}
-	if !pipe.Push(unit{Value: 1}) {
-		t.Fatal("pipe rejected first value")
-	}
-	teeValue, err := typ.Descriptor().NewTee(2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tee, ok := teeValue.(*Tee[unit])
-	if !ok || tee.Outputs() != 2 {
-		t.Fatalf("tee = %#v (%T)", teeValue, teeValue)
-	}
-	if got := tee.Split(unit{Value: 4}); got[1].Value != 5 {
-		t.Fatalf("forked values = %#v", got)
+	if got, ok := typ.Time(unit{}); !ok || got != 7 {
+		t.Fatalf("time = %d, %v", got, ok)
 	}
 }
 
-func TestCatalogRejectsUnknownAndDuplicateSchema(t *testing.T) {
+func TestDescriptorContainsOnlyErasedIdentityAndPayload(t *testing.T) {
 	typ := Define[thirdPartyUnitID](Traits[alternatePayload]{})
-	catalog, err := NewCatalog(typ.Descriptor())
-	if err != nil {
-		t.Fatal(err)
+	descriptor := typ.Descriptor()
+	if !descriptor.Valid() || descriptor.Identity() != typ.Identity() {
+		t.Fatalf("descriptor = %#v", descriptor)
 	}
-	if !catalog.Has(typ.Identity()) {
-		t.Fatal("registered schema is missing")
+	if descriptor.Payload() == nil || descriptor.Payload().Name() != "alternatePayload" {
+		t.Fatalf("payload = %v", descriptor.Payload())
 	}
-	if catalog.Has(IdentityOf[struct{}]()) {
-		t.Fatal("unknown schema unexpectedly resolved")
+}
+
+func TestInvalidMarkerRetainsProblem(t *testing.T) {
+	typ := Define[struct{}](Traits[int]{})
+	if typ.Valid() || !typ.Identity().IsZero() {
+		t.Fatal("invalid marker unexpectedly produced a valid schema")
 	}
-	if _, err := NewCatalog(typ.Descriptor(), typ.Descriptor()); err == nil {
-		t.Fatal("duplicate schema unexpectedly accepted")
+	if typ.Problem() == nil {
+		t.Fatal("invalid marker problem was discarded")
 	}
 }

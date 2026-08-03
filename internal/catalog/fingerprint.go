@@ -8,7 +8,6 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
-	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -38,7 +37,7 @@ type fingerprintDefinition struct {
 	Descriptor plugin.Descriptor
 }
 
-func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, bindings []codec.Binding) [32]byte {
+func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, declarations []plugin.Declaration) [32]byte {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v1\x00"))
 	sort.Slice(definitions, func(left, right int) bool {
@@ -67,12 +66,17 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 		}
 		writeFingerprintEntry(hash, canonical)
 	}
-	for _, binding := range bindings {
+	for _, declaration := range declarations {
+		targets := declaration.Targets()
+		targetNames := make([]string, len(targets))
+		for index, target := range targets {
+			targetNames[index] = target.String()
+		}
 		writeFingerprintEntry(hash, struct {
-			Kind   string
-			Key    string
-			Target codec.Target
-		}{Kind: "codec-binding", Key: binding.Key().String(), Target: binding.Target()})
+			Kind    string
+			Key     string
+			Targets []string
+		}{Kind: "declaration", Key: declaration.Key().String(), Targets: targetNames})
 	}
 	var result [32]byte
 	copy(result[:], hash.Sum(nil))

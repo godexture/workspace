@@ -10,7 +10,6 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/catalog"
-	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -94,7 +93,7 @@ func (c Catalog) Open(identity plugin.Identity) (flow.Operator, error) {
 	return component.Open()
 }
 
-func (c Catalog) Bindings() []codec.Binding { return c.index.Bindings() }
+func (c Catalog) Declarations() []plugin.Declaration { return c.index.Declarations() }
 
 // Open selects a validated component and creates its operator.
 func (h *Host) Open(identity plugin.Identity) (flow.Operator, error) {

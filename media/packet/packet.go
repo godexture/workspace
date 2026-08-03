@@ -27,9 +27,13 @@ func NewTimestampedChunk(sequence uint64, pts timing.OptionalPTS, payload buffer
 func (c Chunk) Valid() bool             { return c.payload.Valid() }
 func (c Chunk) Sequence() uint64        { return c.sequence }
 func (c Chunk) PTS() timing.OptionalPTS { return c.pts }
-func (c Chunk) Payload() buffer.Handle  { return c.payload.Share() }
-func (c Chunk) Bytes() []byte           { return c.payload.Bytes() }
-func (c Chunk) Release()                { c.payload.Release() }
+
+// Payload returns a borrowed view valid until the chunk owner is released.
+// Call View.Share when the payload must outlive this chunk.
+func (c Chunk) Payload() buffer.View { return c.payload.Borrow() }
+func (c Chunk) Bytes() []byte        { return c.payload.Bytes() }
+func (c Chunk) Share() Chunk         { c.payload = c.payload.Share(); return c }
+func (c Chunk) Release()             { c.payload.Release() }
 
 // Packet is the unit requested by a codec parser/decoder. Its timestamp types
 // are distinct and optional; a zero value is a valid timestamp when present.
@@ -50,9 +54,12 @@ func (p Packet) Sequence() uint64                  { return p.sequence }
 func (p Packet) PTS() timing.OptionalPTS           { return p.pts }
 func (p Packet) DTS() timing.OptionalDTS           { return p.dts }
 func (p Packet) Duration() timing.OptionalDuration { return p.duration }
-func (p Packet) Payload() buffer.Handle            { return p.payload.Share() }
-func (p Packet) Bytes() []byte                     { return p.payload.Bytes() }
-func (p Packet) Clone() Packet {
+
+// Payload returns a borrowed view valid until the packet owner is released.
+// Call View.Share when the payload must outlive this packet.
+func (p Packet) Payload() buffer.View { return p.payload.Borrow() }
+func (p Packet) Bytes() []byte        { return p.payload.Bytes() }
+func (p Packet) Share() Packet {
 	p.payload = p.payload.Share()
 	return p
 }

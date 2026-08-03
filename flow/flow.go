@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/godexture/godec/media/schema"
 )
@@ -33,60 +32,53 @@ type portOptions struct {
 	multiplicity Multiplicity
 }
 
+// Required and Optional control whether a port must be connected. They are
+// independent from multiplicity.
 func Required() PortOption {
-	return func(options *portOptions) {
-		options.required = true
-		options.multiplicity = One
-	}
+	return func(options *portOptions) { options.required = true }
 }
 
 func Optional() PortOption {
-	return func(options *portOptions) {
-		options.required = false
-		options.multiplicity = OptionalMultiplicity
-	}
+	return func(options *portOptions) { options.required = false }
 }
 
+// Many declares a port that may carry multiple connections. It may still be
+// required; Required and multiplicity are separate axes.
 func Many() PortOption {
-	return func(options *portOptions) {
-		options.required = false
-		options.multiplicity = ManyMultiplicity
-	}
+	return func(options *portOptions) { options.multiplicity = ManyMultiplicity }
 }
 
 func WithMultiplicity(value Multiplicity) PortOption {
-	return func(options *portOptions) {
-		options.multiplicity = value
-		options.required = value == One
-	}
+	return func(options *portOptions) { options.multiplicity = value }
 }
 
 // Port is an erased static port declaration. The schema identity is retained
 // on the port; the typed constructors ensure it is created while T is known.
 type Port struct {
-	id           string
-	direction    Direction
-	schema       schema.ID
-	required     bool
-	multiplicity Multiplicity
+	id            string
+	direction     Direction
+	schema        schema.ID
+	schemaProblem error
+	required      bool
+	multiplicity  Multiplicity
 }
 
 func In[T any](id string, typ schema.Type[T], options ...PortOption) Port {
-	return newPort(id, InputDirection, typ.Identity(), options...)
+	return newPort(id, InputDirection, typ.Identity(), typ.Problem(), options...)
 }
 
 func Out[T any](id string, typ schema.Type[T], options ...PortOption) Port {
-	return newPort(id, OutputDirection, typ.Identity(), options...)
+	return newPort(id, OutputDirection, typ.Identity(), typ.Problem(), options...)
 }
 
-func newPort(id string, direction Direction, identity schema.ID, options ...PortOption) Port {
+func newPort(id string, direction Direction, identity schema.ID, schemaProblem error, options ...PortOption) Port {
 	state := portOptions{required: true, multiplicity: One}
 	for _, option := range options {
 		if option != nil {
 			option(&state)
 		}
 	}
-	return Port{id: id, direction: direction, schema: identity, required: state.required, multiplicity: state.multiplicity}
+	return Port{id: id, direction: direction, schema: identity, schemaProblem: schemaProblem, required: state.required, multiplicity: state.multiplicity}
 }
 
 func (p Port) ID() string                 { return p.id }
@@ -124,17 +116,14 @@ func (s Shape) Validate() error {
 				return fmt.Errorf("port id %q is repeated", port.id)
 			}
 			seen[port.id] = struct{}{}
+			if port.schemaProblem != nil {
+				return fmt.Errorf("port %q has an invalid schema: %w", port.id, port.schemaProblem)
+			}
 			if port.schema.IsZero() {
 				return fmt.Errorf("port %q has an undefined schema", port.id)
 			}
 			if port.multiplicity < One || port.multiplicity > ManyMultiplicity {
 				return fmt.Errorf("port %q has an invalid multiplicity", port.id)
-			}
-			if port.multiplicity == OptionalMultiplicity && port.required {
-				return fmt.Errorf("optional port %q cannot be required", port.id)
-			}
-			if port.multiplicity == ManyMultiplicity && port.required {
-				return fmt.Errorf("many port %q cannot be required", port.id)
 			}
 		}
 	}
@@ -151,143 +140,117 @@ func (s Shape) Validate() error {
 	return nil
 }
 
-type ownership[T any] struct {
-	refs    atomic.Int64
-	claimed atomic.Bool
-	value   T
-	drop    func(T)
+// Input is a value-type borrowed view. The schema trait supplies fork and
+// drop operations. It deliberately carries no runtime claim/refcount state:
+// conformance instrumentation, rather than the release hot path, detects
+// double Take or use-after-Take in later milestones.
+type Input[T any] struct {
+	value T
+	fork  func(T) T
+	drop  func(T)
+	valid bool
 }
 
-type handle[T any] struct {
-	state    *ownership[T]
-	released atomic.Bool
-}
-
-func newOwnership[T any](value T, drop func(T)) *ownership[T] {
-	state := &ownership[T]{value: value, drop: drop}
-	state.refs.Store(1)
-	return state
-}
-
-func (state *ownership[T]) release() {
-	if state == nil || state.refs.Add(-1) != 0 {
-		return
+func NewInput[T any](value T, typ schema.Type[T]) Input[T] {
+	if !typ.Valid() {
+		return Input[T]{}
 	}
-	if state.drop != nil {
-		state.drop(state.value)
-	}
+	traits := typ.Traits()
+	return NewInputWithTraits(value, traits.Fork, traits.Drop)
 }
 
-func (state *ownership[T]) retain() bool {
-	if state == nil || state.claimed.Load() {
-		return false
-	}
-	for {
-		refs := state.refs.Load()
-		if refs == 0 {
-			return false
-		}
-		if state.refs.CompareAndSwap(refs, refs+1) {
-			if state.claimed.Load() {
-				state.release()
-				return false
-			}
-			return true
-		}
-	}
+func NewInputWithTraits[T any](value T, fork func(T) T, drop func(T)) Input[T] {
+	return Input[T]{value: value, fork: fork, drop: drop, valid: true}
 }
 
-// Input is a borrowed view over an item whose ownership starts with the
-// reader. Take transfers that ownership, Share creates a retained handle, and
-// Drop releases it. Reader return transfers the item to its consumer; writer
-// success transfers it to the writer, while writer failure leaves it with the
-// caller.
-type Input[T any] struct{ state *ownership[T] }
+func (i Input[T]) Valid() bool { return i.valid }
 
-func NewInput[T any](value T, drop func(T)) Input[T] {
-	return Input[T]{state: newOwnership(value, drop)}
-}
+// Value is a borrow valid only during the current call. The owner must not be
+// released while the borrow is in use.
+func (i Input[T]) Value() T { return i.value }
 
-func (i Input[T]) Valid() bool {
-	return i.state != nil && i.state.refs.Load() > 0 && !i.state.claimed.Load()
-}
-
-func (i Input[T]) Value() T {
-	if i.state == nil {
-		var zero T
-		return zero
-	}
-	return i.state.value
-}
-
+// Take moves the item to an Owned value. The caller must not use or drop the
+// Input after taking it.
 func (i Input[T]) Take() Owned[T] {
-	if i.state == nil || !i.state.claimed.CompareAndSwap(false, true) {
+	if !i.valid {
 		return Owned[T]{}
 	}
-	return Owned[T]{handle: &handle[T]{state: i.state}}
+	return Owned[T]{value: i.value, fork: i.fork, drop: i.drop, valid: true}
 }
 
+// Share creates a retained value through the schema's Fork trait. The input
+// remains borrowed and is not consumed.
 func (i Input[T]) Share() Shared[T] {
-	if !i.state.retain() {
+	if !i.valid {
 		return Shared[T]{}
 	}
-	return Shared[T]{handle: &handle[T]{state: i.state}}
+	value := i.value
+	if i.fork != nil {
+		value = i.fork(value)
+	}
+	return Shared[T]{value: value, fork: i.fork, drop: i.drop, valid: true}
 }
 
 func (i Input[T]) Drop() {
-	if i.state != nil && i.state.claimed.CompareAndSwap(false, true) {
-		i.state.release()
+	if i.valid && i.drop != nil {
+		i.drop(i.value)
 	}
 }
 
-// Owned is the explicit owner returned by Input.Take.
-type Owned[T any] struct{ handle *handle[T] }
+// Owned is the explicit owner returned by Input.Take. Release is a move
+// operation and must be called once by its owner.
+type Owned[T any] struct {
+	value T
+	fork  func(T) T
+	drop  func(T)
+	valid bool
+}
 
-func (o Owned[T]) Valid() bool {
-	return o.handle != nil && o.handle.state != nil && o.handle.state.refs.Load() > 0
-}
-func (o Owned[T]) Value() T {
-	if o.handle == nil || o.handle.state == nil {
-		var zero T
-		return zero
-	}
-	return o.handle.state.value
-}
+func (o Owned[T]) Valid() bool { return o.valid }
+func (o Owned[T]) Value() T    { return o.value }
+
 func (o Owned[T]) Share() Shared[T] {
-	if o.handle == nil || !o.handle.state.retain() {
+	if !o.valid {
 		return Shared[T]{}
 	}
-	return Shared[T]{handle: &handle[T]{state: o.handle.state}}
+	value := o.value
+	if o.fork != nil {
+		value = o.fork(value)
+	}
+	return Shared[T]{value: value, fork: o.fork, drop: o.drop, valid: true}
 }
-func (o Owned[T]) Release() { releaseHandle(o.handle) }
+
+func (o Owned[T]) Release() {
+	if o.valid && o.drop != nil {
+		o.drop(o.value)
+	}
+}
+
 func (o Owned[T]) Close() error {
 	o.Release()
 	return nil
 }
 
-// Shared is a retained item handle. Close/Release are idempotent per handle.
-type Shared[T any] struct{ handle *handle[T] }
+// Shared is a retained value obtained from Input.Share or Owned.Share.
+type Shared[T any] struct {
+	value T
+	fork  func(T) T
+	drop  func(T)
+	valid bool
+}
 
-func (s Shared[T]) Valid() bool {
-	return s.handle != nil && s.handle.state != nil && s.handle.state.refs.Load() > 0
-}
-func (s Shared[T]) Value() T {
-	if s.handle == nil || s.handle.state == nil {
-		var zero T
-		return zero
+func (s Shared[T]) Valid() bool { return s.valid }
+func (s Shared[T]) Value() T    { return s.value }
+
+func (s Shared[T]) Release() {
+	if s.valid && s.drop != nil {
+		s.drop(s.value)
 	}
-	return s.handle.state.value
 }
-func (s Shared[T]) Release() { releaseHandle(s.handle) }
+
 func (s Shared[T]) Close() error {
 	s.Release()
 	return nil
-}
-
-func releaseHandle[T any](value *handle[T]) {
-	if value != nil && value.released.CompareAndSwap(false, true) {
-		value.state.release()
-	}
 }
 
 // Reader returns ownership to its consumer with each successful Read.
@@ -296,7 +259,8 @@ type Reader[T any] interface {
 }
 
 // Writer consumes an Input only after it has successfully accepted it. On an
-// error the writer must not call Take, so the caller retains ownership.
+// error the writer must leave the Input untouched, so the caller retains
+// ownership.
 type Writer[T any] interface {
 	Write(context.Context, Input[T]) error
 }

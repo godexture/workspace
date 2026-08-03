@@ -17,7 +17,7 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 		t.Fatal(err)
 	}
 	chunk := NewTimestampedChunk(4, pts, payload)
-	packetPayload := chunk.Payload()
+	packetPayload := chunk.Payload().Share()
 	packet := NewPacket(chunk.Sequence(), chunk.PTS(), dts, duration, packetPayload)
 	chunk.Release()
 	defer packet.Release()
@@ -32,16 +32,29 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	}
 }
 
-func TestPacketCloneSharesPayload(t *testing.T) {
+func TestPacketShareRetainsPayload(t *testing.T) {
 	payload, err := buffer.FromBytes([]byte{9}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	packet := NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload)
-	clone := packet.Clone()
+	clone := packet.Share()
 	packet.Release()
 	if !clone.Valid() || clone.Bytes()[0] != 9 {
 		t.Fatal("clone did not retain payload")
 	}
 	clone.Release()
+}
+
+func TestChunkPayloadIsBorrowed(t *testing.T) {
+	payload, err := buffer.FromBytes([]byte{7}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := NewChunk(0, payload)
+	view := chunk.Payload()
+	chunk.Release()
+	if view.Valid() {
+		t.Fatal("chunk payload accessor retained storage implicitly")
+	}
 }

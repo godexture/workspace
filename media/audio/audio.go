@@ -52,9 +52,16 @@ func NewFrame[S Sample](pts timing.OptionalPTS, samples int, planes buffer.Handl
 	return Frame[S]{pts: pts, samples: samples, planes: planes}, nil
 }
 
-func (f Frame[S]) Valid() bool                     { return f.planes.Valid() }
-func (f Frame[S]) PTS() timing.OptionalPTS         { return f.pts }
-func (f Frame[S]) Samples() int                    { return f.samples }
-func (f Frame[S]) Planes() buffer.Handle           { return f.planes.Share() }
-func (f Frame[S]) Plane(index int) ([]byte, error) { return f.planes.Plane(index) }
-func (f Frame[S]) Release()                        { f.planes.Release() }
+func (f Frame[S]) Valid() bool             { return f.planes.Valid() }
+func (f Frame[S]) PTS() timing.OptionalPTS { return f.pts }
+func (f Frame[S]) Samples() int            { return f.samples }
+
+// Planes returns a borrowed view valid until the frame owner is released.
+// Call View.Share when the planes must outlive this frame.
+func (f Frame[S]) Planes() buffer.View             { return f.planes.Borrow() }
+func (f Frame[S]) Plane(index int) ([]byte, error) { return f.planes.Borrow().Plane(index) }
+func (f Frame[S]) Share() Frame[S] {
+	f.planes = f.planes.Share()
+	return f
+}
+func (f Frame[S]) Release() { f.planes.Release() }

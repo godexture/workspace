@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/plugin"
 )
 
 type Tag string
@@ -59,22 +60,22 @@ func AnyOf(capabilities ...Capability) Alternative {
 // Format is a declarative format contract. It does not own byte locations,
 // decoder implementations, metadata parsers, or access providers.
 type Format struct {
-	identity     Tag
+	identity     plugin.Identity
 	alternatives []Alternative
 	carriers     []Carrier
 	packetized   bool
 }
 
-func New(identity Tag, alternatives []Alternative, carriers []Carrier) (Format, error) {
-	result := Format{identity: identity, packetized: false}
+func Define[Marker any](alternatives []Alternative, carriers []Carrier) (Format, error) {
+	result := Format{identity: plugin.IdentityOf[Marker]()}
 	if err := result.set(alternatives, carriers); err != nil {
 		return Format{}, err
 	}
 	return result, nil
 }
 
-func NewPacketized(identity Tag, carriers []Carrier) (Format, error) {
-	result := Format{identity: identity, packetized: true}
+func DefinePacketized[Marker any](carriers []Carrier) (Format, error) {
+	result := Format{identity: plugin.IdentityOf[Marker](), packetized: true}
 	if err := result.set(nil, carriers); err != nil {
 		return Format{}, err
 	}
@@ -82,8 +83,8 @@ func NewPacketized(identity Tag, carriers []Carrier) (Format, error) {
 }
 
 func (f *Format) set(alternatives []Alternative, carriers []Carrier) error {
-	if !f.identity.Valid() {
-		return errors.New("format identity must not be empty")
+	if f.identity.IsZero() {
+		return errors.New("format marker identity must be valid")
 	}
 	if len(alternatives) == 0 && !f.packetized {
 		return errors.New("format must declare a capability alternative")
@@ -108,8 +109,8 @@ func (f *Format) set(alternatives []Alternative, carriers []Carrier) error {
 	return nil
 }
 
-func (f Format) Valid() bool                 { return f.identity.Valid() }
-func (f Format) Identity() Tag               { return f.identity }
+func (f Format) Valid() bool                 { return !f.identity.IsZero() }
+func (f Format) Identity() plugin.Identity   { return f.identity }
 func (f Format) Alternatives() []Alternative { return cloneAlternatives(f.alternatives) }
 func (f Format) Carriers() []Carrier         { return append([]Carrier(nil), f.carriers...) }
 func (f Format) Packetized() bool            { return f.packetized }

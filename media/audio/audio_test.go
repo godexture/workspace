@@ -35,3 +35,19 @@ func TestFrameRejectsShortPlane(t *testing.T) {
 		t.Fatalf("short plane error = %v", err)
 	}
 }
+
+func TestFramePlanesAreBorrowed(t *testing.T) {
+	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := NewFrame[int16](timing.UnknownPTS(), 1, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := frame.Planes()
+	frame.Release()
+	if view.Valid() {
+		t.Fatal("frame planes accessor retained storage implicitly")
+	}
+}

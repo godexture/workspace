@@ -7,16 +7,15 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
 // Index is an immutable, validated component index.
 type Index struct {
-	components  []plugin.Component
-	bindings    []codec.Binding
-	byID        map[plugin.Identity]int
-	fingerprint [32]byte
+	components   []plugin.Component
+	declarations []plugin.Declaration
+	byID         map[plugin.Identity]int
+	fingerprint  [32]byte
 }
 
 // Build validates every definition and returns an index only when all entries
@@ -40,19 +39,17 @@ func Build(set plugin.Set) (Index, error) {
 	}
 
 	components := set.Components()
-	seen := make(map[plugin.Identity]struct{}, len(components))
+	seenComponents := make(map[plugin.Identity]struct{}, len(components))
 	for _, component := range components {
 		identity := component.Identity()
 		if identity.IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.component-identity", diagnostic.ErrorSeverity, diagnostic.Path{}, "component has no valid marker identity", nil))
 			continue
 		}
-		if _, exists := seen[identity]; exists {
+		if _, exists := seenComponents[identity]; exists {
 			items = append(items, diagnostic.NewItem("catalog.duplicate-component", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component identity is repeated", nil))
 			continue
 		}
-		// One marker cannot answer both "which plugin" and "which component":
-		// Remove and Override would match two different things.
 		if _, exists := seenPlugins[identity]; exists {
 			items = append(items, diagnostic.NewItem("catalog.identity-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "marker identity is used by both a plugin and a component", nil))
 			continue
@@ -60,58 +57,63 @@ func Build(set plugin.Set) (Index, error) {
 		if component.PluginIdentity().IsZero() {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component has no parent plugin identity", nil))
 		}
-		seen[identity] = struct{}{}
+		seenComponents[identity] = struct{}{}
 	}
 
+	declarations := set.Declarations()
+	seenDeclarations := make(map[plugin.DeclarationKey]plugin.Declaration, len(declarations))
+	for _, declaration := range declarations {
+		if !declaration.Valid() {
+			items = append(items, diagnostic.NewItem("catalog.invalid-declaration", diagnostic.ErrorSeverity, diagnostic.Path{}, "composition declaration is invalid", nil))
+			continue
+		}
+		key := declaration.Key()
+		if previous, exists := seenDeclarations[key]; exists && !previous.SameTargets(declaration) {
+			items = append(items, diagnostic.NewItem("catalog.declaration-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "composition key points to different component targets", nil))
+		}
+		seenDeclarations[key] = declaration
+		for _, target := range declaration.Targets() {
+			if _, exists := seenComponents[target]; !exists {
+				items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: target.String(), Descriptor: key.String()}, "composition declaration target is not in the catalog", map[string]string{"target": target.String()}))
+			}
+		}
+	}
 	if hasError(items) {
 		return Index{}, diagnostic.NewError(items...)
 	}
-	bindings := set.Bindings()
-	seenBindings := make(map[string]codec.Target, len(bindings))
-	for _, binding := range bindings {
-		if !binding.Valid() {
-			items = append(items, diagnostic.NewItem("catalog.invalid-binding", diagnostic.ErrorSeverity, diagnostic.Path{}, "codec binding is invalid", nil))
-			continue
+
+	sort.Slice(declarations, func(left, right int) bool {
+		if declarations[left].Key() != declarations[right].Key() {
+			return declarations[left].Key().String() < declarations[right].Key().String()
 		}
-		key := binding.Key().String()
-		target := binding.Target()
-		if previous, exists := seenBindings[key]; exists && previous != target {
-			items = append(items, diagnostic.NewItem("catalog.binding-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key}, "codec binding key points to different targets", nil))
-			continue
+		leftTargets := declarations[left].Targets()
+		rightTargets := declarations[right].Targets()
+		for index := 0; index < len(leftTargets) && index < len(rightTargets); index++ {
+			if leftTargets[index] != rightTargets[index] {
+				return leftTargets[index].String() < rightTargets[index].String()
+			}
 		}
-		seenBindings[key] = target
-	}
-	if hasError(items) {
-		return Index{}, diagnostic.NewError(items...)
-	}
-	sort.Slice(bindings, func(left, right int) bool {
-		if bindings[left].Key() != bindings[right].Key() {
-			return bindings[left].Key().String() < bindings[right].Key().String()
-		}
-		if bindings[left].Target().Codec != bindings[right].Target().Codec {
-			return bindings[left].Target().Codec.String() < bindings[right].Target().Codec.String()
-		}
-		return bindings[left].Target().Parser.String() < bindings[right].Target().Parser.String()
+		return len(leftTargets) < len(rightTargets)
 	})
-	// Set.Components is already sorted, but sort here as a defense against
-	// future set adapters that do not preserve that property.
+
 	sort.Slice(components, func(left, right int) bool {
 		return components[left].Identity().String() < components[right].Identity().String()
 	})
 	byID := make(map[plugin.Identity]int, len(components))
 	for index, component := range components {
 		byID[component.Identity()] = index
-		components[index] = component
 	}
 	return Index{
-		components:  copyComponents(components),
-		bindings:    append([]codec.Binding(nil), bindings...),
-		byID:        byID,
-		fingerprint: catalogFingerprint(definitions, components, bindings),
+		components:   copyComponents(components),
+		declarations: append([]plugin.Declaration(nil), declarations...),
+		byID:         byID,
+		fingerprint:  catalogFingerprint(definitions, components, declarations),
 	}, nil
 }
 
-func (i Index) Bindings() []codec.Binding { return append([]codec.Binding(nil), i.bindings...) }
+func (i Index) Declarations() []plugin.Declaration {
+	return append([]plugin.Declaration(nil), i.declarations...)
+}
 
 // Components returns copied component definitions in stable identity order.
 func (i Index) Components() []plugin.Component {

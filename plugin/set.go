@@ -5,16 +5,14 @@ import (
 	"strings"
 
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/media/codec"
-	"github.com/godexture/godec/media/format"
 )
 
 // Set is an immutable persistent collection of plugin definitions. Operations
 // return a new Set and never mutate the receiver.
 type Set struct {
-	definitions []Definition
-	problems    []diagnostic.Item
-	bindings    []codec.Binding
+	definitions  []Definition
+	problems     []diagnostic.Item
+	declarations []Declaration
 }
 
 // NewSet creates a set. Composition problems are retained until the set is
@@ -44,9 +42,9 @@ func (s Set) Add(definition Definition) Set {
 		}
 	}
 	result := Set{
-		definitions: make([]Definition, len(s.definitions)+1),
-		problems:    cloneItems(s.problems),
-		bindings:    append([]codec.Binding(nil), s.bindings...),
+		definitions:  make([]Definition, len(s.definitions)+1),
+		problems:     cloneItems(s.problems),
+		declarations: append([]Declaration(nil), s.declarations...),
 	}
 	for index, existing := range s.definitions {
 		result.definitions[index] = existing.clone()
@@ -55,14 +53,14 @@ func (s Set) Add(definition Definition) Set {
 	return result
 }
 
-// AddBinding adds a composition binding. Conflicting keys are retained so
-// host construction can report the complete conflict; it never applies an
-// implicit last-wins rule.
-func (s Set) AddBinding(binding codec.Binding) Set {
+// AddDeclaration adds a composition declaration. Conflicting keys are
+// retained so host construction can report the complete conflict; it never
+// applies an implicit last-wins rule.
+func (s Set) AddDeclaration(declaration Declaration) Set {
 	result := Set{
-		definitions: make([]Definition, len(s.definitions)),
-		problems:    cloneItems(s.problems),
-		bindings:    append(append([]codec.Binding(nil), s.bindings...), binding),
+		definitions:  make([]Definition, len(s.definitions)),
+		problems:     cloneItems(s.problems),
+		declarations: append(append([]Declaration(nil), s.declarations...), declaration),
 	}
 	for index, definition := range s.definitions {
 		result.definitions[index] = definition.clone()
@@ -70,37 +68,40 @@ func (s Set) AddBinding(binding codec.Binding) Set {
 	return result
 }
 
-// Bindings returns the immutable composition bindings in registration order.
-func (s Set) Bindings() []codec.Binding { return append([]codec.Binding(nil), s.bindings...) }
+// Declarations returns immutable composition declarations in registration
+// order.
+func (s Set) Declarations() []Declaration {
+	return append([]Declaration(nil), s.declarations...)
+}
 
-// OverrideBinding explicitly replaces all bindings for one key.
-func (s Set) OverrideBinding(target format.Tag, replacement codec.Binding) Set {
+// OverrideDeclaration explicitly replaces all declarations for one key.
+func (s Set) OverrideDeclaration(target DeclarationKey, replacement Declaration) Set {
 	if !replacement.Valid() || replacement.Key() != target {
-		return s.withProblem(diagnostic.NewItem("plugin.binding-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "binding override key and replacement key must match", nil))
+		return s.withProblem(diagnostic.NewItem("plugin.declaration-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "declaration override key and replacement key must match", nil))
 	}
-	result := Set{problems: cloneItems(s.problems), bindings: make([]codec.Binding, 0, len(s.bindings)+1)}
+	result := Set{problems: cloneItems(s.problems), declarations: make([]Declaration, 0, len(s.declarations)+1)}
 	for _, definition := range s.definitions {
 		result.definitions = append(result.definitions, definition.clone())
 	}
 	replaced := false
-	for _, binding := range s.bindings {
-		if binding.Key() == target {
+	for _, declaration := range s.declarations {
+		if declaration.Key() == target {
 			replaced = true
 			continue
 		}
-		result.bindings = append(result.bindings, binding)
+		result.declarations = append(result.declarations, declaration)
 	}
 	if !replaced {
-		return s.withProblem(diagnostic.NewItem("plugin.binding-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "binding override target is not present", nil))
+		return s.withProblem(diagnostic.NewItem("plugin.declaration-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "declaration override target is not present", nil))
 	}
-	result.bindings = append(result.bindings, replacement)
+	result.declarations = append(result.declarations, replacement)
 	return result
 }
 
 // Remove returns a new set with identity removed. A plugin identity removes
 // the whole definition; a component identity removes only that component.
 func (s Set) Remove(identity Identity) Set {
-	result := Set{problems: cloneItems(s.problems), bindings: append([]codec.Binding(nil), s.bindings...)}
+	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
 	removed := false
 	for _, definition := range s.definitions {
 		if definition.identity == identity {
@@ -139,7 +140,7 @@ func (s Set) Override(target Identity, replacement Component) Set {
 	if target.IsZero() || replacement.identity != target {
 		return s.withProblem(invalidOverrideItem("override target and replacement component identities must match"))
 	}
-	result := Set{problems: cloneItems(s.problems), bindings: append([]codec.Binding(nil), s.bindings...)}
+	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
 	replaced := false
 	for _, definition := range s.definitions {
 		updated, ok := definition.replaceComponent(target, replacement)
@@ -160,7 +161,7 @@ func (s Set) OverridePlugin(target Identity, replacement Definition) Set {
 	if target.IsZero() || replacement.identity != target {
 		return s.withProblem(invalidOverrideItem("override target and replacement plugin identities must match"))
 	}
-	result := Set{problems: cloneItems(s.problems), bindings: append([]codec.Binding(nil), s.bindings...)}
+	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
 	replaced := false
 	for _, definition := range s.definitions {
 		if definition.identity == target {
@@ -236,9 +237,9 @@ func (s Set) identityNames() []string {
 
 func (s Set) withProblem(item diagnostic.Item) Set {
 	result := Set{
-		definitions: make([]Definition, len(s.definitions)),
-		problems:    cloneItems(s.problems),
-		bindings:    append([]codec.Binding(nil), s.bindings...),
+		definitions:  make([]Definition, len(s.definitions)),
+		problems:     cloneItems(s.problems),
+		declarations: append([]Declaration(nil), s.declarations...),
 	}
 	for index, definition := range s.definitions {
 		result.definitions[index] = definition.clone()

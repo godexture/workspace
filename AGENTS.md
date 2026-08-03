@@ -45,6 +45,7 @@
     - 最大 8 分かかるため、広範な変更、milestone の完了確認、release 前に使う。通常は対象 package の test を優先する
     - scalar/SIMD 横断の診断が必要な場合は `go run ./tools/cmd/differential ./...` を使う。通常の必須 gate ではない
 - 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)。generator、入力、生成物に関係する変更、または milestone/release の確認時に使う
+- docs の link/anchor 検査: `go run ./tools/cmd/docs-check` (at the workspace root)。設計文書を変更した時、または milestone の完了確認時に使う
 - nested module (`tools`、`bindings/wasm`、`example/go`、`example/web/server`) が root module への暗黙の local source 解決に依存していないことを確認する場合は、各 module 内で `GOWORK=off go build ./...` を実行する（`replace` directive 経由の明示的な依存は解決されるが、`go.work` がなければ解決できない参照があれば失敗する）。
 - WASM target のビルド確認: `bindings/wasm` module 内で `GOOS=js GOARCH=wasm go build ./...`。
 

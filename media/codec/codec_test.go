@@ -1,20 +1,22 @@
 package codec
 
 import (
-	"context"
 	"testing"
 
 	"github.com/godexture/godec/media/format"
-	"github.com/godexture/godec/media/packet"
+	"github.com/godexture/godec/plugin"
 )
 
+type fixtureCodecID struct{}
+type fixtureParserID struct{}
+
 func TestBindingKeepsParserIndependentFromFormat(t *testing.T) {
-	parser := NewParser("fixture:parser", func(context.Context, packet.Chunk) ([]packet.Packet, error) { return nil, nil })
-	binding := Bind(format.NewTag("fixture", "tag"), New("fixture:codec"), parser)
-	if !binding.Valid() || binding.Target().Codec != "fixture:codec" {
+	parser := DefineParser[fixtureParserID]()
+	binding := Bind(format.NewTag("fixture", "tag"), Define[fixtureCodecID](), parser)
+	if !binding.Valid() || len(binding.Targets()) != 2 || binding.Targets()[0] != plugin.IdentityOf[fixtureCodecID]() {
 		t.Fatalf("binding = %#v", binding)
 	}
-	if got, ok := binding.Parser(); !ok || got.Identity() != "fixture:parser" {
-		t.Fatalf("parser = %#v, %v", got, ok)
+	if binding.Targets()[1] != plugin.IdentityOf[fixtureParserID]() {
+		t.Fatalf("parser target = %#v", binding.Targets())
 	}
 }
