@@ -66,7 +66,7 @@ func Build(set plugin.Set) (Index, error) {
 	return Index{
 		components:  copyComponents(components),
 		byID:        byID,
-		fingerprint: catalogFingerprint(components),
+		fingerprint: catalogFingerprint(definitions, components),
 	}, nil
 }
 

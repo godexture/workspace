@@ -85,6 +85,16 @@ func TestCatalogFingerprintTracksCompositionAndSurface(t *testing.T) {
 	if first.Catalog().Fingerprint() == third.Catalog().Fingerprint() {
 		t.Fatal("surface descriptor change did not change catalog fingerprint")
 	}
+
+	pluginOnlyChange := plugin.Define[hostPluginA](plugin.Descriptor{DisplayName: "a plugin", Version: "2.0.0"},
+		plugin.NewComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "1.0.0"}, hostSchema(1)))
+	fourth, err := New(Plugins(plugin.NewSet(pluginOnlyChange)))
+	if err != nil {
+		t.Fatalf("plugin-only changed host: %v", err)
+	}
+	if first.Catalog().Fingerprint() == fourth.Catalog().Fingerprint() {
+		t.Fatal("plugin descriptor change did not change catalog fingerprint")
+	}
 }
 
 func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
