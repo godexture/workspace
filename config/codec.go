@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"reflect"
@@ -8,33 +9,6 @@ import (
 
 	"github.com/godexture/godec/diagnostic"
 )
-
-// Description is the read-only surface description of a field codec.
-type Description struct {
-	Type     string
-	Help     string
-	Unit     string
-	Secret   bool
-	Optional bool
-	Auto     bool
-	Ordered  bool
-	Range    *Range
-	Choices  []ChoiceDescription
-}
-
-// Range describes a numeric field constraint. Step is zero when no step was
-// declared.
-type Range struct {
-	Min  float64
-	Max  float64
-	Step float64
-}
-
-// ChoiceDescription is the stable surface representation of an enum choice.
-type ChoiceDescription struct {
-	ID    string
-	Label string
-}
 
 // CodecSpec describes a field codec. Canonical is required: a schema cannot
 // be registered for a type that has no deterministic fingerprint encoding.
@@ -266,13 +240,20 @@ func formatNumber(value float64) string {
 	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
-func cloneDescription(description Description) Description {
-	description.Choices = append([]ChoiceDescription(nil), description.Choices...)
-	if description.Range != nil {
-		rangeCopy := *description.Range
-		description.Range = &rangeCopy
+func canonicalSequence(tag string, values ...[]byte) []byte {
+	result := []byte(tag)
+	result = append(result, 0)
+	for _, value := range values {
+		result = appendLength(result, value)
 	}
-	return description
+	return result
+}
+
+func appendLength(destination, value []byte) []byte {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	destination = append(destination, length[:]...)
+	return append(destination, value...)
 }
 
 // mutableType identifies values whose shallow copy can preserve shared mutable
