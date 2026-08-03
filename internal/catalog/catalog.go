@@ -7,12 +7,14 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
 // Index is an immutable, validated component index.
 type Index struct {
 	components  []plugin.Component
+	bindings    []codec.Binding
 	byID        map[plugin.Identity]int
 	fingerprint [32]byte
 }
@@ -64,6 +66,33 @@ func Build(set plugin.Set) (Index, error) {
 	if hasError(items) {
 		return Index{}, diagnostic.NewError(items...)
 	}
+	bindings := set.Bindings()
+	seenBindings := make(map[string]codec.Target, len(bindings))
+	for _, binding := range bindings {
+		if !binding.Valid() {
+			items = append(items, diagnostic.NewItem("catalog.invalid-binding", diagnostic.ErrorSeverity, diagnostic.Path{}, "codec binding is invalid", nil))
+			continue
+		}
+		key := binding.Key().String()
+		target := binding.Target()
+		if previous, exists := seenBindings[key]; exists && previous != target {
+			items = append(items, diagnostic.NewItem("catalog.binding-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key}, "codec binding key points to different targets", nil))
+			continue
+		}
+		seenBindings[key] = target
+	}
+	if hasError(items) {
+		return Index{}, diagnostic.NewError(items...)
+	}
+	sort.Slice(bindings, func(left, right int) bool {
+		if bindings[left].Key() != bindings[right].Key() {
+			return bindings[left].Key().String() < bindings[right].Key().String()
+		}
+		if bindings[left].Target().Codec != bindings[right].Target().Codec {
+			return bindings[left].Target().Codec.String() < bindings[right].Target().Codec.String()
+		}
+		return bindings[left].Target().Parser.String() < bindings[right].Target().Parser.String()
+	})
 	// Set.Components is already sorted, but sort here as a defense against
 	// future set adapters that do not preserve that property.
 	sort.Slice(components, func(left, right int) bool {
@@ -76,10 +105,13 @@ func Build(set plugin.Set) (Index, error) {
 	}
 	return Index{
 		components:  copyComponents(components),
+		bindings:    append([]codec.Binding(nil), bindings...),
 		byID:        byID,
-		fingerprint: catalogFingerprint(definitions, components),
+		fingerprint: catalogFingerprint(definitions, components, bindings),
 	}, nil
 }
+
+func (i Index) Bindings() []codec.Binding { return append([]codec.Binding(nil), i.bindings...) }
 
 // Components returns copied component definitions in stable identity order.
 func (i Index) Components() []plugin.Component {

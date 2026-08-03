@@ -4,9 +4,13 @@ package host
 
 import (
 	"encoding/hex"
+	"errors"
+	"fmt"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/catalog"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -79,6 +83,25 @@ func (c Catalog) Lookup(identity plugin.Identity) (plugin.ComponentView, bool) {
 		return plugin.ComponentView{}, false
 	}
 	return component.View(), true
+}
+
+// Open selects a validated component and creates its operator.
+func (c Catalog) Open(identity plugin.Identity) (flow.Operator, error) {
+	component, ok := c.index.Lookup(identity)
+	if !ok {
+		return nil, fmt.Errorf("component %q is not in the host catalog", identity)
+	}
+	return component.Open()
+}
+
+func (c Catalog) Bindings() []codec.Binding { return c.index.Bindings() }
+
+// Open selects a validated component and creates its operator.
+func (h *Host) Open(identity plugin.Identity) (flow.Operator, error) {
+	if h == nil {
+		return nil, errors.New("nil host")
+	}
+	return h.Catalog().Open(identity)
 }
 
 // Len reports the number of catalog components.

@@ -1,12 +1,19 @@
 package plugin
 
 import (
+	"errors"
+
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 )
 
-// Component is an opaque M2 component definition. Port shape, Compile, Open,
-// and runtime interfaces are intentionally added in later milestones.
+var ErrComponentNotOpen = errors.New("component has no Open implementation")
+
+type OpenFunc func() (flow.Operator, error)
+
+// Component is a component definition with optional M3 static shape and Open
+// contract. Compile and Suggest remain planner contracts for M4.
 type Component struct {
 	identity   Identity
 	plugin     Identity
@@ -15,11 +22,19 @@ type Component struct {
 	aliases    []string
 	provenance Provenance
 	problems   []diagnostic.Item
+	shape      flow.Shape
+	open       OpenFunc
+	hasShape   bool
+	hasOpen    bool
 }
 
 type componentOptions struct {
 	aliases    []string
 	provenance Provenance
+	shape      flow.Shape
+	open       OpenFunc
+	hasShape   bool
+	hasOpen    bool
 }
 
 // ComponentOption changes non-identity component metadata.
@@ -33,6 +48,23 @@ func Aliases(values ...string) ComponentOption {
 // WithProvenance attaches build provenance to a component.
 func WithProvenance(value Provenance) ComponentOption {
 	return func(options *componentOptions) { options.provenance = value }
+}
+
+// WithPorts attaches a static typed port shape to a component.
+func WithPorts(value flow.Shape) ComponentOption {
+	return func(options *componentOptions) {
+		options.shape = value.Clone()
+		options.hasShape = true
+	}
+}
+
+// WithOpen attaches the one-time runtime operator factory. M3 has no service
+// argument because no M3 service contract exists yet.
+func WithOpen(value OpenFunc) ComponentOption {
+	return func(options *componentOptions) {
+		options.open = value
+		options.hasOpen = true
+	}
 }
 
 // NewComponent constructs a typed component definition without package-level
@@ -53,6 +85,10 @@ func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema
 		schema:     schema.View(),
 		aliases:    append([]string(nil), componentOptionsValue.aliases...),
 		provenance: componentOptionsValue.provenance,
+		shape:      componentOptionsValue.shape.Clone(),
+		open:       componentOptionsValue.open,
+		hasShape:   componentOptionsValue.hasShape,
+		hasOpen:    componentOptionsValue.hasOpen,
 	}
 	if identityErr != nil {
 		result.problems = append(result.problems, diagnostic.NewItem("plugin.marker", diagnostic.ErrorSeverity, diagnostic.Path{}, identityErr.Error(), nil))
@@ -94,6 +130,25 @@ func (c Component) Aliases() []string { return append([]string(nil), c.aliases..
 // Provenance returns build provenance.
 func (c Component) Provenance() Provenance { return c.provenance }
 
+// Ports returns a copied static port shape.
+func (c Component) Ports() flow.Shape { return c.shape.Clone() }
+
+// Open creates the selected component's operator exactly once per call to
+// Open. Host/catalog code is responsible for selecting the component.
+func (c Component) Open() (flow.Operator, error) {
+	if !c.hasOpen || c.open == nil {
+		return nil, ErrComponentNotOpen
+	}
+	operator, err := c.open()
+	if err != nil {
+		return nil, err
+	}
+	if operator == nil {
+		return nil, errors.New("component Open returned a nil operator")
+	}
+	return operator, nil
+}
+
 // Diagnostics returns definition-time diagnostics without exposing mutable
 // storage. Schema and descriptor validation is performed here so a zero or
 // adapter-created component is still rejected by Host construction.
@@ -108,6 +163,16 @@ func (c Component) Diagnostics() []diagnostic.Item {
 	}
 	if !c.schema.Valid() {
 		items = append(items, c.schema.Diagnostics()...)
+	}
+	if c.hasShape {
+		if err := c.shape.Validate(); err != nil {
+			items = append(items, diagnostic.NewItem("plugin.port-shape", diagnostic.ErrorSeverity, componentPath, err.Error(), nil))
+		}
+		if !c.hasOpen || c.open == nil {
+			items = append(items, diagnostic.NewItem("plugin.open", diagnostic.ErrorSeverity, componentPath, "component with a port shape must define Open", nil))
+		}
+	} else if c.hasOpen {
+		items = append(items, diagnostic.NewItem("plugin.port-shape", diagnostic.ErrorSeverity, componentPath, "component with Open must define a port shape", nil))
 	}
 	for index, item := range items {
 		if item.Path.Component == "" && !c.identity.IsZero() {
@@ -130,6 +195,8 @@ func (c Component) View() ComponentView {
 		Schema:     c.schema.Description(),
 		Aliases:    c.Aliases(),
 		Provenance: c.provenance,
+		Ports:      c.Ports(),
+		HasOpen:    c.hasOpen,
 	}
 }
 
@@ -137,6 +204,7 @@ func (c Component) withPlugin(identity Identity) Component {
 	c.plugin = identity
 	c.aliases = append([]string(nil), c.aliases...)
 	c.problems = cloneItems(c.problems)
+	c.shape = c.shape.Clone()
 	return c
 }
 
@@ -150,6 +218,8 @@ type ComponentView struct {
 	Schema     config.SchemaDescription
 	Aliases    []string
 	Provenance Provenance
+	Ports      flow.Shape
+	HasOpen    bool
 }
 
 // Definition is a plugin composition returned by a plugin function such as

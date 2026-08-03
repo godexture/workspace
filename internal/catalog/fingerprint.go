@@ -7,6 +7,8 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -18,6 +20,16 @@ type fingerprintComponent struct {
 	Schema     config.SchemaDescription
 	Aliases    []string
 	Provenance plugin.Provenance
+	Ports      []fingerprintPort
+	HasOpen    bool
+}
+
+type fingerprintPort struct {
+	ID           string
+	Direction    flow.Direction
+	Schema       string
+	Required     bool
+	Multiplicity flow.Multiplicity
 }
 
 type fingerprintDefinition struct {
@@ -26,7 +38,7 @@ type fingerprintDefinition struct {
 	Descriptor plugin.Descriptor
 }
 
-func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component) [32]byte {
+func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, bindings []codec.Binding) [32]byte {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v1\x00"))
 	sort.Slice(definitions, func(left, right int) bool {
@@ -50,12 +62,30 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 			Schema:     component.Schema().Description(),
 			Aliases:    aliases,
 			Provenance: component.Provenance(),
+			Ports:      fingerprintPorts(component.Ports()),
+			HasOpen:    component.View().HasOpen,
 		}
 		writeFingerprintEntry(hash, canonical)
+	}
+	for _, binding := range bindings {
+		writeFingerprintEntry(hash, struct {
+			Kind   string
+			Key    string
+			Target codec.Target
+		}{Kind: "codec-binding", Key: binding.Key().String(), Target: binding.Target()})
 	}
 	var result [32]byte
 	copy(result[:], hash.Sum(nil))
 	return result
+}
+
+func fingerprintPorts(shape flow.Shape) []fingerprintPort {
+	ports := make([]fingerprintPort, 0, len(shape.Inputs)+len(shape.Outputs))
+	for _, port := range append(append([]flow.Port(nil), shape.Inputs...), shape.Outputs...) {
+		ports = append(ports, fingerprintPort{ID: port.ID(), Direction: port.Direction(), Schema: port.Schema().String(), Required: port.Required(), Multiplicity: port.Multiplicity()})
+	}
+	sort.Slice(ports, func(left, right int) bool { return ports[left].ID < ports[right].ID })
+	return ports
 }
 
 func writeFingerprintEntry(hash interface{ Write([]byte) (int, error) }, entry any) {
