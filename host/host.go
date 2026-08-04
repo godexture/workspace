@@ -85,6 +85,10 @@ func (c Catalog) Lookup(identity plugin.Identity) (plugin.ComponentView, bool) {
 }
 
 // Open selects a validated component and creates its operator.
+//
+// This bypasses Plan, Program, and the output transaction, so it exists only
+// for the M3 walking skeleton. M4/M5 open operators in dependency order from a
+// built Program, with rollback on partial failure, and remove this method.
 func (c Catalog) Open(identity plugin.Identity) (flow.Operator, error) {
 	component, ok := c.index.Lookup(identity)
 	if !ok {
@@ -95,7 +99,8 @@ func (c Catalog) Open(identity plugin.Identity) (flow.Operator, error) {
 
 func (c Catalog) Declarations() []plugin.Declaration { return c.index.Declarations() }
 
-// Open selects a validated component and creates its operator.
+// Open selects a validated component and creates its operator. It carries the
+// same M3-only restriction as Catalog.Open.
 func (h *Host) Open(identity plugin.Identity) (flow.Operator, error) {
 	if h == nil {
 		return nil, errors.New("nil host")

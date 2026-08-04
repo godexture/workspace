@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/snapshot"
 )
 
 // CodecSpec describes a field codec. Canonical is required: a schema cannot
@@ -52,7 +53,7 @@ func NewCodec[T any](spec CodecSpec[T]) Codec[T] {
 	var construction []diagnostic.Item
 	if spec.Clone == nil {
 		spec.Clone = func(value T) T { return value }
-		if mutableType(reflect.TypeFor[T]()) {
+		if snapshot.NeedsClone(reflect.TypeFor[T]()) {
 			construction = append(construction, diagnostic.NewItem(codeMissingClone, diagnostic.ErrorSeverity, diagnostic.Path{}, "reference-valued codec must provide a Clone operation", nil))
 		}
 	}
@@ -254,34 +255,4 @@ func appendLength(destination, value []byte) []byte {
 	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
 	destination = append(destination, length[:]...)
 	return append(destination, value...)
-}
-
-// mutableType identifies values whose shallow copy can preserve shared mutable
-// state. It is used only during schema construction; data-plane code never
-// performs reflection-based value dispatch.
-func mutableType(typ reflect.Type) bool {
-	return mutableTypeSeen(typ, make(map[reflect.Type]bool))
-}
-
-func mutableTypeSeen(typ reflect.Type, seen map[reflect.Type]bool) bool {
-	if typ == nil {
-		return false
-	}
-	switch typ.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return true
-	case reflect.Array:
-		return mutableTypeSeen(typ.Elem(), seen)
-	case reflect.Struct:
-		if seen[typ] {
-			return false
-		}
-		seen[typ] = true
-		for index := 0; index < typ.NumField(); index++ {
-			if mutableTypeSeen(typ.Field(index).Type, seen) {
-				return true
-			}
-		}
-	}
-	return false
 }

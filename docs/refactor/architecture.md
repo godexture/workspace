@@ -134,7 +134,9 @@ internal/
 ├─ memory/    allocator, pools, queue storage
 ├─ task/      tracked task groups
 ├─ commit/    output transaction coordination
-└─ observe/   local counters, event snapshots
+├─ observe/   local counters, event snapshots
+├─ marker/    shared marker type to canonical identity derivation
+└─ snapshot/  shared rule for when a declared clone is required
 ```
 
 この境界により、queue、scheduler、fusion、allocator、metrics accumulator、panic boundary を変更しても plugin source を変更せずに済む。

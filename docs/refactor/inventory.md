@@ -190,7 +190,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `standard` | official component と codec/metadata Binding の composition | M6 |
 | `integration` | cross-module、reference adaptor、surface end-to-end test | M6 |
 | `integration/corpus` | external conformance/benchmark corpus の data submodule または manifest/cache、license、size、任意取得の test tier | M10 |
-| `internal/{catalog,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}` | host implementation | `catalog` は M2 完了、他は M4/M5 |
+| `internal/{catalog,marker,snapshot,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}` | host implementation | `catalog` は M2、`marker`/`snapshot` は M3 完了、他は M4/M5 |
 
 `component` package は新設しない。component Spec は `plugin.Component` が持つ。理由は [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) を参照する。
 

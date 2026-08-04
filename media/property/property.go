@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+
+	"github.com/godexture/godec/internal/marker"
+	"github.com/godexture/godec/internal/snapshot"
 )
 
 var ErrPropertyType = errors.New("property value has the wrong type for its key")
@@ -25,30 +28,24 @@ type Key[T any] struct {
 // Define creates an open property key. Reference-valued properties must
 // provide a clone function; immutable values use a shallow value copy.
 func Define[Marker any, T any](clones ...func(T) T) Key[T] {
-	typ := reflect.TypeFor[Marker]()
-	if typ == nil || typ.Kind() == reflect.Interface || typ.Name() == "" || typ.PkgPath() == "" {
-		return Key[T]{problem: "property marker must be a named concrete type declared by a package"}
+	canonical, err := marker.Canonical[Marker]()
+	if err != nil {
+		return Key[T]{problem: "property " + err.Error()}
 	}
+	key := Key[T]{id: ID{canonical: canonical}, valueType: reflect.TypeFor[T]()}
 	if len(clones) > 1 || (len(clones) == 1 && clones[0] == nil) {
-		return Key[T]{problem: "property clone must be supplied at most once and must not be nil"}
+		key.problem = "property clone must be supplied at most once and must not be nil"
+		return key
 	}
-	var clone func(T) T
-	if len(clones) == 1 {
-		clone = clones[0]
-	} else if propertyNeedsClone(reflect.TypeFor[T]()) {
-		return Key[T]{
-			id:        ID{canonical: typ.PkgPath() + "." + typ.Name()},
-			valueType: reflect.TypeFor[T](),
-			problem:   fmt.Sprintf("property key %s requires a declared clone for reference-valued type %s", typ.PkgPath()+"."+typ.Name(), reflect.TypeFor[T]()),
-		}
-	} else {
-		clone = func(value T) T { return value }
+	switch {
+	case len(clones) == 1:
+		key.clone = clones[0]
+	case snapshot.NeedsClone(key.valueType):
+		key.problem = fmt.Sprintf("property key %s requires a declared clone for reference-valued type %s", canonical, key.valueType)
+	default:
+		key.clone = func(value T) T { return value }
 	}
-	return Key[T]{
-		id:        ID{canonical: typ.PkgPath() + "." + typ.Name()},
-		valueType: reflect.TypeFor[T](),
-		clone:     clone,
-	}
+	return key
 }
 
 func IdentityOf[Marker any]() ID {
@@ -200,31 +197,4 @@ func (k Key[T]) cloneAny(value any) (any, bool) {
 		return nil, false
 	}
 	return k.clone(typed), true
-}
-
-func propertyNeedsClone(typ reflect.Type) bool {
-	return propertyNeedsCloneSeen(typ, make(map[reflect.Type]bool))
-}
-
-func propertyNeedsCloneSeen(typ reflect.Type, seen map[reflect.Type]bool) bool {
-	if typ == nil {
-		return false
-	}
-	switch typ.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return true
-	case reflect.Array:
-		return propertyNeedsCloneSeen(typ.Elem(), seen)
-	case reflect.Struct:
-		if seen[typ] {
-			return false
-		}
-		seen[typ] = true
-		for index := 0; index < typ.NumField(); index++ {
-			if propertyNeedsCloneSeen(typ.Field(index).Type, seen) {
-				return true
-			}
-		}
-	}
-	return false
 }

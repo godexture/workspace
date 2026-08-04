@@ -100,7 +100,13 @@ M3-1 の walking skeleton が data path の consumer として使う contract �
 
 同じ skeleton の host 構築では、`plugin.Set` の一般化された declaration、`media/codec` の codec/parser identity と Binding、`host.New` の declaration conflict/target 検証も consumer として使う。`media/format.Format` は marker 由来 identity を持つ宣言を作り `Valid()` を確認するだけで、tag は Binding key/data として使う。`media/codec.Codec`/`Parser` 自身は I/O や parse/decode を実行せず、data path の trivial parser/decoder/encoder は `plugin.Component` の `flow.Processor` fixture として実装する。第三者 schema では erased descriptor から typed queue/fan-out を Open 時に一度だけ検証し、実際に item を通す。
 
-M3-1 で data-path consumer を持たず宣言・検証に留める contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、実 Format/Codec の decode/encode、metadata/side data、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-2/M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
+M3-1 で data-path consumer を持たず宣言・検証に留める contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、実 Format/Codec の decode/encode、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
+
+### M3-2 の contract 分類
+
+M3-2 の data-path consumer は、`media/metadata` の immutable `Document`/`Builder`、ordered entry、`Origin`、`RawBlock`、immutable `Blob`、`Mapping`、metadata Binding と、`media/tag` の共通 key、部分日付、Blob-backed picture である。foundation の trivial metadata encoding が carrier payload を Document へ parse/marshal し、未知 record の raw bytes、同一 key の複数値と順序を検査する。`host.New` は metadata Binding の target 実在と carrier conflict を codec Binding と同じ declaration 経路で検証する。
+
+時刻に沿って変化する metadata は static `Document` の entry ではなく、`schema.Define` で宣言した typed event の port へ接続する。`stream.Descriptor.Metadata` は static document の immutable attachment として保持し、loss report の surface 表示、実 ID3/Vorbis/RIFF encoding への移行、mapping の planner 適用は後続 milestone に残す。
 
 M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
 

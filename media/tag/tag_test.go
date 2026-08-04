@@ -1,0 +1,66 @@
+package tag
+
+import (
+	"testing"
+
+	"github.com/godexture/godec/media/metadata"
+)
+
+func TestVocabularyContainsOnlyOpenDeclaredKeys(t *testing.T) {
+	keys := []metadata.KeyID{
+		Title.ID(), Artist.ID(), Album.ID(), DateKey.ID(), Genre.ID(), Comment.ID(),
+		Composer.ID(), Lyrics.ID(), Website.ID(), TrackNumber.ID(), TotalTracks.ID(),
+		DiscNumber.ID(), TotalDiscs.ID(), Copyright.ID(), License.ID(), Encoder.ID(),
+		PictureKey.ID(),
+	}
+	seen := make(map[metadata.KeyID]struct{}, len(keys))
+	for _, key := range keys {
+		if key.IsZero() {
+			t.Fatal("vocabulary contains an invalid key")
+		}
+		if _, exists := seen[key]; exists {
+			t.Fatalf("vocabulary key repeated: %s", key)
+		}
+		seen[key] = struct{}{}
+	}
+	if !DateKey.Valid() || !PictureKey.Valid() {
+		t.Fatalf("reference-free shared keys are invalid: date=%v picture=%v", DateKey.Problem(), PictureKey.Problem())
+	}
+}
+
+func TestDatePreservesPartialPrecision(t *testing.T) {
+	year, err := ParseDate("1985")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := ParseDate("1985-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if year.ToISOString() != "1985" || full.ToISOString() != "1985-01-01" {
+		t.Fatalf("dates = %q, %q", year, full)
+	}
+	if _, ok := year.Month(); ok {
+		t.Fatal("year-only date gained a month")
+	}
+	if month, ok := full.Month(); !ok || month != 1 {
+		t.Fatalf("full date month = %d, %v", month, ok)
+	}
+}
+
+func TestPictureUsesImmutableBlob(t *testing.T) {
+	source := []byte{1, 2, 3}
+	picture := Picture{Data: metadata.NewBlob("image/png", source), PictureType: PictureTypeFrontCover}
+	document, err := metadata.Add(metadata.NewBuilder(metadata.AssetScope), PictureKey, picture, metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source[0] = 9
+	value, ok := PictureKey.First(document)
+	if !ok || !value.Valid() {
+		t.Fatalf("picture = %#v, %v", value, ok)
+	}
+	if got := value.Data.AppendTo(nil); got[0] != 1 {
+		t.Fatalf("picture payload = %v", got)
+	}
+}

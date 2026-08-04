@@ -35,7 +35,7 @@ func TestTypedTraitsRemainOnTypedSchema(t *testing.T) {
 	}
 }
 
-func TestDescriptorIsComparableAndBuildsTypedFactories(t *testing.T) {
+func TestDescriptorIdentityDecidesEqualityAndBuildsTypedFactories(t *testing.T) {
 	typ := Define[thirdPartyUnitID](Traits[alternatePayload]{
 		Fork: func(value alternatePayload) alternatePayload { return value },
 	})
@@ -43,8 +43,11 @@ func TestDescriptorIsComparableAndBuildsTypedFactories(t *testing.T) {
 	if !descriptor.Valid() || descriptor.Identity() != typ.Identity() {
 		t.Fatalf("descriptor = %#v", descriptor)
 	}
-	if descriptor != typ.Descriptor() {
-		t.Fatal("descriptor is not comparable")
+	// A second Define for the same marker captures a different factory, so
+	// equality must be decided by Identity rather than by the descriptor value.
+	again := Define[thirdPartyUnitID](Traits[alternatePayload]{})
+	if again.Identity() != descriptor.Identity() {
+		t.Fatalf("repeated Define identity = %v, want %v", again.Identity(), descriptor.Identity())
 	}
 	if descriptor.Payload() == nil || descriptor.Payload().Name() != "alternatePayload" {
 		t.Fatalf("payload = %v", descriptor.Payload())

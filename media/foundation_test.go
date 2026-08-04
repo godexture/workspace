@@ -1,6 +1,7 @@
 package media_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,8 +14,10 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 )
@@ -26,6 +29,10 @@ type skeletonParserID struct{}
 type skeletonCodecID struct{}
 type skeletonEncoderID struct{}
 type skeletonMuxerID struct{}
+type skeletonMetadataEncodingID struct{}
+type skeletonMetadataDocumentID struct{}
+type skeletonMetadataEventID struct{}
+type skeletonMissingMetadataID struct{}
 type skeletonFormatID struct{}
 type skeletonBytesID struct{}
 type skeletonChunkID struct{}
@@ -49,6 +56,8 @@ var (
 		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
 		Drop: func(value audio.Frame[int16]) { value.Release() },
 	})
+	skeletonMetadataDocumentSchema = schema.Define[skeletonMetadataDocumentID, metadata.Document](schema.Traits[metadata.Document]{})
+	skeletonMetadataEventSchema    = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
 )
 
 type skeletonSourceOperator struct {
@@ -244,6 +253,141 @@ func (o *skeletonMuxerOperator) Flush(context.Context, flow.Emitter[packet.Chunk
 	return nil
 }
 
+type skeletonMetadataOperator struct{ shape flow.Shape }
+
+func (o *skeletonMetadataOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonMetadataOperator) Close() error      { return nil }
+
+type skeletonMetadataEncodingOperator interface {
+	flow.Operator
+	Parse([]byte) (metadata.Document, error)
+	Marshal(metadata.Document) ([]byte, error)
+}
+
+func (o *skeletonMetadataOperator) Parse(payload []byte) (metadata.Document, error) {
+	return newSkeletonMetadataEncoding().Parse(payload)
+}
+
+func (o *skeletonMetadataOperator) Marshal(document metadata.Document) ([]byte, error) {
+	return newSkeletonMetadataEncoding().Marshal(document)
+}
+
+func (o *skeletonMetadataOperator) Process(ctx context.Context, input flow.Input[metadata.Document], output flow.Emitter[metadata.Document]) error {
+	item := flow.NewInput(input.Value(), skeletonMetadataDocumentSchema)
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	input.Drop()
+	return nil
+}
+
+func (o *skeletonMetadataOperator) Flush(context.Context, flow.Emitter[metadata.Document]) error {
+	return nil
+}
+
+const (
+	skeletonMetadataCarrier format.CarrierID = "fixture.metadata"
+	skeletonMetadataTitle   byte             = 1
+	skeletonMetadataArtist  byte             = 2
+	skeletonMetadataDate    byte             = 3
+)
+
+type skeletonMetadataEvent struct {
+	At    timing.PTS
+	Key   metadata.KeyID
+	Value string
+}
+
+type skeletonMetadataEncoding struct {
+	identity plugin.Identity
+	carrier  format.CarrierID
+}
+
+func newSkeletonMetadataEncoding() skeletonMetadataEncoding {
+	return skeletonMetadataEncoding{
+		identity: plugin.IdentityOf[skeletonMetadataEncodingID](),
+		carrier:  skeletonMetadataCarrier,
+	}
+}
+
+func (e skeletonMetadataEncoding) Parse(payload []byte) (metadata.Document, error) {
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	for offset := 0; offset < len(payload); {
+		if len(payload)-offset < 2 {
+			return metadata.Document{}, fmt.Errorf("metadata record at %d is truncated", offset)
+		}
+		kind := payload[offset]
+		length := int(payload[offset+1])
+		end := offset + 2 + length
+		if end > len(payload) {
+			return metadata.Document{}, fmt.Errorf("metadata record at %d exceeds payload", offset)
+		}
+		record := append([]byte(nil), payload[offset:end]...)
+		value := payload[offset+2 : end]
+		switch kind {
+		case skeletonMetadataTitle:
+			metadata.Add(builder, tag.Title, string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "TITLE"})
+		case skeletonMetadataArtist:
+			metadata.Add(builder, tag.Artist, string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "ARTIST"})
+		case skeletonMetadataDate:
+			date, err := tag.ParseDate(string(value))
+			if err != nil {
+				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
+				break
+			}
+			metadata.Add(builder, tag.DateKey, date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
+		default:
+			builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
+		}
+		offset = end
+	}
+	return builder.Build()
+}
+
+func (e skeletonMetadataEncoding) Marshal(document metadata.Document) ([]byte, error) {
+	result := make([]byte, 0, document.Len()*8)
+	for _, entry := range document.Entries() {
+		switch entry.Key() {
+		case tag.Title.ID():
+			value, ok := entry.Value().(string)
+			if !ok {
+				return nil, fmt.Errorf("metadata title entry has type %T", entry.Value())
+			}
+			result = appendSkeletonMetadataRecord(result, skeletonMetadataTitle, []byte(value))
+		case tag.Artist.ID():
+			value, ok := entry.Value().(string)
+			if !ok {
+				return nil, fmt.Errorf("metadata artist entry has type %T", entry.Value())
+			}
+			result = appendSkeletonMetadataRecord(result, skeletonMetadataArtist, []byte(value))
+		case tag.DateKey.ID():
+			value, ok := entry.Value().(tag.Date)
+			if !ok {
+				return nil, fmt.Errorf("metadata date entry has type %T", entry.Value())
+			}
+			result = appendSkeletonMetadataRecord(result, skeletonMetadataDate, []byte(value.ToISOString()))
+		default:
+			return nil, fmt.Errorf("metadata key %s cannot be represented by fixture encoding", entry.Key())
+		}
+	}
+	for _, block := range document.Blocks() {
+		if block.Carrier() != e.carrier || block.Encoding() != e.identity {
+			return nil, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
+		}
+		result = append(result, block.Payload().AppendTo(nil)...)
+	}
+	return result, nil
+}
+
+func appendSkeletonMetadataRecord(destination []byte, kind byte, value []byte) []byte {
+	if len(value) > 255 {
+		panic("foundation metadata fixture value exceeds one-byte length")
+	}
+	destination = append(destination, kind, byte(len(value)))
+	return append(destination, value...)
+}
+
 type skeletonByteWriter struct {
 	bytes []byte
 }
@@ -309,6 +453,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 	decoderShape := flow.NewShape([]flow.Port{flow.In("packets", skeletonPacketSchema)}, []flow.Port{flow.Out("frames", skeletonFrameSchema)})
 	encoderShape := flow.NewShape([]flow.Port{flow.In("frames", skeletonFrameSchema)}, []flow.Port{flow.Out("packets", skeletonPacketSchema)})
 	muxerShape := flow.NewShape([]flow.Port{flow.In("packets", skeletonPacketSchema)}, []flow.Port{flow.Out("chunks", skeletonChunkSchema)})
+	metadataShape := flow.NewShape([]flow.Port{flow.In("document-in", skeletonMetadataDocumentSchema)}, []flow.Port{flow.Out("document-out", skeletonMetadataDocumentSchema)})
 	configSchema := skeletonConfigSchema()
 	return plugin.Define[skeletonPluginID](plugin.Descriptor{DisplayName: "foundation skeleton", Version: "1"},
 		plugin.NewComponent[skeletonSourceID](plugin.Descriptor{DisplayName: "source"}, configSchema, plugin.WithPorts(sourceShape), plugin.WithOpen(func() (flow.Operator, error) {
@@ -329,11 +474,18 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 		plugin.NewComponent[skeletonMuxerID](plugin.Descriptor{DisplayName: "muxer"}, configSchema, plugin.WithPorts(muxerShape), plugin.WithOpen(func() (flow.Operator, error) {
 			return &skeletonMuxerOperator{shape: muxerShape, trace: trace}, nil
 		})),
+		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, plugin.WithPorts(metadataShape), plugin.WithOpen(func() (flow.Operator, error) {
+			return &skeletonMetadataOperator{shape: metadataShape}, nil
+		})),
 	)
 }
 
 func skeletonBinding() codec.Binding {
 	return codec.Bind(format.NewTag("fixture", "bytes"), codec.Define[skeletonCodecID](), codec.DefineParser[skeletonParserID]())
+}
+
+func skeletonMetadataBinding() metadata.Binding {
+	return metadata.Bind(skeletonMetadataCarrier, plugin.IdentityOf[skeletonMetadataEncodingID]())
 }
 
 func openQueue[T any](descriptor schema.Descriptor) (schema.Queue[T], error) {
@@ -368,7 +520,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}
-	instance, err := host.New(host.Plugins(plugin.NewSet(definition).AddDeclaration(skeletonBinding())))
+	instance, err := host.New(host.Plugins(plugin.NewSet(definition).AddDeclaration(skeletonBinding()).AddDeclaration(skeletonMetadataBinding())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,6 +651,98 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	}
 }
 
+func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
+	instance, err := host.New(host.Plugins(plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonMetadataBinding())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := instance.Open(plugin.IdentityOf[skeletonMetadataEncodingID]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operator.Close()
+	encoding, ok := operator.(skeletonMetadataEncodingOperator)
+	if !ok {
+		t.Fatalf("metadata component has type %T, want encoding operator", operator)
+	}
+	rawRecord := []byte{0xfe, 3, 0xde, 0xad, 0xbe}
+	payload := appendSkeletonMetadataRecord(nil, skeletonMetadataTitle, []byte("Song"))
+	payload = appendSkeletonMetadataRecord(payload, skeletonMetadataArtist, []byte("First"))
+	payload = appendSkeletonMetadataRecord(payload, skeletonMetadataArtist, []byte("Second"))
+	payload = append(payload, rawRecord...)
+
+	document, err := encoding.Parse(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Scope() != metadata.StreamScope || document.Len() != 3 {
+		t.Fatalf("metadata document = scope %v, len %d", document.Scope(), document.Len())
+	}
+	if values := tag.Artist.Values(document); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+		t.Fatalf("artist order = %v", values)
+	}
+	if title, ok := tag.Title.First(document); !ok || title != "Song" {
+		t.Fatalf("title = %q, %v", title, ok)
+	}
+	blocks := document.Blocks()
+	if len(blocks) != 1 || !bytes.Equal(blocks[0].Payload().AppendTo(nil), rawRecord) {
+		t.Fatalf("raw blocks = %#v", blocks)
+	}
+
+	reencoded, err := encoding.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(reencoded, rawRecord) {
+		t.Fatalf("reencoded metadata lost raw record: %x", reencoded)
+	}
+	parsedAgain, err := encoding.Parse(reencoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values := tag.Artist.Values(parsedAgain); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+		t.Fatalf("roundtrip artist order = %v", values)
+	}
+}
+
+func TestMetadataBindingUsesHostConflictAndTargetChecks(t *testing.T) {
+	base := plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonMetadataBinding())
+	if _, err := host.New(host.Plugins(base)); err != nil {
+		t.Fatalf("valid metadata binding rejected: %v", err)
+	}
+
+	conflict := metadata.Bind(skeletonMetadataCarrier, plugin.IdentityOf[skeletonDemuxerID]())
+	if _, err := host.New(host.Plugins(base.AddDeclaration(conflict))); err == nil {
+		t.Fatal("host accepted conflicting metadata binding")
+	}
+
+	missing := metadata.Bind(skeletonMetadataCarrier, plugin.IdentityOf[skeletonMissingMetadataID]())
+	if _, err := host.New(host.Plugins(plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(missing))); err == nil {
+		t.Fatal("host accepted metadata binding with missing target")
+	}
+}
+
+func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
+	shape := flow.NewShape([]flow.Port{flow.In("metadata-events", skeletonMetadataEventSchema, flow.Many())}, nil)
+	if err := shape.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if shape.Inputs[0].Schema().Identity() != skeletonMetadataEventSchema.Identity() {
+		t.Fatal("metadata event port lost its schema identity")
+	}
+	queue, err := openQueue[skeletonMetadataEvent](shape.Inputs[0].Schema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := skeletonMetadataEvent{At: timing.PTS(7), Key: tag.Title.ID(), Value: "live"}
+	if !queue.Push(event) {
+		t.Fatal("metadata event was not accepted")
+	}
+	if got, ok := queue.Pop(); !ok || got.At != event.At || got.Key != event.Key || got.Value != event.Value {
+		t.Fatalf("metadata event = %#v, %v", got, ok)
+	}
+}
+
 func TestWalkingSkeletonRejectsConflictingBindingInHostBuild(t *testing.T) {
 	base := plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonBinding())
 	conflict := codec.BindWithoutParser(format.NewTag("fixture", "bytes"), codec.New(plugin.IdentityOf[skeletonDemuxerID]()))
@@ -523,8 +767,8 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 	if video.Identity() == subtitle.Identity() || video.Identity().IsZero() || subtitle.Identity().IsZero() {
 		t.Fatal("third-party schema identities are not open and distinct")
 	}
-	if video.Descriptor() != video.Descriptor() {
-		t.Fatal("schema descriptor is not comparable")
+	if shape.Inputs[0].Schema().Identity() != video.Identity() {
+		t.Fatal("port did not carry the declaring schema identity")
 	}
 	queue, err := openQueue[videoUnit](shape.Inputs[0].Schema())
 	if err != nil {

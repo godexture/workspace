@@ -1,9 +1,7 @@
 package plugin
 
 import (
-	"fmt"
-	"reflect"
-	"strings"
+	"github.com/godexture/godec/internal/marker"
 )
 
 // Identity is the canonical identity derived from a named Go marker type.
@@ -21,14 +19,11 @@ func IdentityOf[Marker any]() Identity {
 }
 
 func identityOf[Marker any]() (Identity, error) {
-	typ := reflect.TypeFor[Marker]()
-	if typ == nil || typ.Kind() == reflect.Interface || typ.Name() == "" || typ.PkgPath() == "" {
-		return Identity{}, fmt.Errorf("marker must be a named concrete type declared by a package")
+	canonical, err := marker.Canonical[Marker]()
+	if err != nil {
+		return Identity{}, err
 	}
-	if strings.Contains(typ.Name(), "[") {
-		return Identity{}, fmt.Errorf("generic marker instantiations are not stable marker declarations")
-	}
-	return Identity{canonical: typ.PkgPath() + "." + typ.Name()}, nil
+	return Identity{canonical: canonical}, nil
 }
 
 // IsZero reports whether i is invalid or absent.
@@ -38,17 +33,7 @@ func (i Identity) IsZero() bool { return i.canonical == "" }
 func (i Identity) String() string { return i.canonical }
 
 // PackagePath returns the marker's declaring package path.
-func (i Identity) PackagePath() string {
-	if index := strings.LastIndexByte(i.canonical, '.'); index >= 0 {
-		return i.canonical[:index]
-	}
-	return ""
-}
+func (i Identity) PackagePath() string { return marker.PackagePath(i.canonical) }
 
 // Name returns the marker type name.
-func (i Identity) Name() string {
-	if index := strings.LastIndexByte(i.canonical, '.'); index >= 0 {
-		return i.canonical[index+1:]
-	}
-	return i.canonical
-}
+func (i Identity) Name() string { return marker.Name(i.canonical) }

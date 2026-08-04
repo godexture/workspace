@@ -199,7 +199,11 @@ M3-2 の `metadata.Document`（entry value、artwork blob）はこの規則の�
 
 - `schema.Define[ID, T]` が `T` を捕捉した factory を `Descriptor` に残す。factory は `any` を返し、受け取り側が **Open 時に一度だけ** typed 値へ assert する。
 - factory の product は unexported にする。項目 11 で削除した public `Pipe[T]`/`Tee[T]` を戻さない。queue の実装は M5 の `internal/` が持つ責務のままとする。
-- `flow.Port` が `schema.ID` ではなく `schema.Descriptor` を保持する。port から factory へ到達できなければ機構が使えない。`Descriptor` は比較可能・複製可能なまま保ち、項目 11 で削除した item ごとの `any` API（`Drop`/`Size`/`Time`）を復活させない。
+- `flow.Port` が `schema.ID` ではなく `schema.Descriptor` を保持する。port から factory へ到達できなければ機構が使えない。`Descriptor` は複製可能なまま保ち、項目 11 で削除した item ごとの `any` API（`Drop`/`Size`/`Time`）を復活させない。
+
+  **訂正（適用済み）。** この項目は当初「`Descriptor` は比較可能・複製可能なまま保ち」と書いていたが、比較可能性の要求は誤りだったので取り消す。factory を持たせた結果、同じ marker と payload に対して `Define` を 2 回呼ぶと `Identity()` は等しいのに `==` は false になる（factory pointer が異なる）。`flow/flow_test.go` の `flowSchema()` のように呼び出しごとに `Define` する書き方は既にあるため、M4 の planner が port 間の schema 一致を `Descriptor` の `==` で判定すると、その書き方をした plugin の接続を静かに拒否する。
+
+  `Descriptor` を非比較にする。zero-size の非比較 field を一つ持たせ、schema の一致判定が `Identity()` を使うことを型で強制する。`flow.Port` も非比較になるが、`Shape` は既に slice を含むため非比較であり、新しいコードで `Descriptor` と `Port` の比較に依存しているのは comparability を確認する test の 1 行だけである。この訂正は今なら何も壊さない。
 - **M3 で consumer を与える。** foundation test で、core が事前に知らない第三者型について erased な `Descriptor` から typed な fan-out を組み立て、実際に item を通す。宣言だけの contract にしない。
 - **queue policy を凍結しない。** factory の引数は機構の成立を示す最小限に留める。`Limit` の bytes/time window、backpressure、drain 規則は実 consumer である execution island を作る M5 が決める。
 

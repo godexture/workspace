@@ -42,7 +42,8 @@
 以下のコマンドは事前 build した local binary を前提にせず、tracked source から起動する。同じコマンドを AGENTS.md、開発手順、CI で使う。
 
 - 全モジュールのテスト: `go run ./tools/cmd/test-runner --simd` (at the workspace root)
-    - 最大 8 分かかるため、広範な変更、milestone の完了確認、release 前に使う。通常は対象 package の test を優先する
+    - 広範な変更、milestone の完了確認、release 前に使う。通常は対象 package の test を優先する
+    - cache が効かない cold run では 30 分近くかかることがある。大半は `plugin/flac/test` の conformance corpus が占める。関係する package を変更していない再実行は `go test` の cache により数分で終わる
     - scalar/SIMD 横断の診断が必要な場合は `go run ./tools/cmd/differential ./...` を使う。通常の必須 gate ではない
 - 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)。generator、入力、生成物に関係する変更、または milestone/release の確認時に使う
 - docs の link/anchor 検査: `go run ./tools/cmd/docs-check` (at the workspace root)。設計文書を変更した時、または milestone の完了確認時に使う

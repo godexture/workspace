@@ -3,32 +3,19 @@ package schema
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
+
+	"github.com/godexture/godec/internal/marker"
 )
 
 // ID is the stable identity of a schema. It is derived from a marker type,
 // never from the payload type.
 type ID struct{ canonical string }
 
-func (id ID) IsZero() bool   { return id.canonical == "" }
-func (id ID) String() string { return id.canonical }
-func (id ID) PackagePath() string {
-	for index := len(id.canonical) - 1; index >= 0; index-- {
-		if id.canonical[index] == '.' {
-			return id.canonical[:index]
-		}
-	}
-	return ""
-}
-func (id ID) Name() string {
-	for index := len(id.canonical) - 1; index >= 0; index-- {
-		if id.canonical[index] == '.' {
-			return id.canonical[index+1:]
-		}
-	}
-	return id.canonical
-}
+func (id ID) IsZero() bool        { return id.canonical == "" }
+func (id ID) String() string      { return id.canonical }
+func (id ID) PackagePath() string { return marker.PackagePath(id.canonical) }
+func (id ID) Name() string        { return marker.Name(id.canonical) }
 
 // Traits are optional typed operations used when a data path needs the
 // operation. A linear path never needs to call Size or Time just to transport
@@ -96,11 +83,11 @@ func IdentityOf[IDMarker any]() ID {
 }
 
 func identityWithProblem[IDMarker any]() (ID, error) {
-	typ := reflect.TypeFor[IDMarker]()
-	if typ == nil || typ.Kind() == reflect.Interface || typ.Name() == "" || typ.PkgPath() == "" {
-		return ID{}, fmt.Errorf("marker must be a named concrete type declared by a package")
+	canonical, err := marker.Canonical[IDMarker]()
+	if err != nil {
+		return ID{}, err
 	}
-	return ID{canonical: typ.PkgPath() + "." + typ.Name()}, nil
+	return ID{canonical: canonical}, nil
 }
 
 func (t Type[T]) Valid() bool            { return t.descriptor.Valid() }
@@ -140,10 +127,17 @@ func (t Type[T]) Time(value T) (int64, bool) {
 	return t.traits.Time(value)
 }
 
-// Descriptor is the comparable, erased schema representation held by ports
-// and components. Typed operations remain on Type[T] so an erased descriptor
+// noCompare makes Descriptor non-comparable. Two Define calls for the same
+// marker and payload capture different factory closures, so == would report
+// them as different schemas while Identity reports them as the same one.
+// Equality must go through Identity.
+type noCompare [0]func()
+
+// Descriptor is the erased schema representation held by ports and
+// components. Typed operations remain on Type[T] so an erased descriptor
 // cannot guess how to clone, release, measure, or timestamp an arbitrary T.
 type Descriptor struct {
+	_        noCompare
 	identity ID
 	payload  reflect.Type
 	problem  string
