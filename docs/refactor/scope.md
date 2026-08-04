@@ -104,9 +104,11 @@ M3-1 で data-path consumer を持たず宣言・検証に留める contract は
 
 ### M3-2 の contract 分類
 
-M3-2 の data-path consumer は、`media/metadata` の immutable `Document`/`Builder`、ordered entry、`Origin`、`RawBlock`、immutable `Blob`、`Mapping`、metadata Binding と、`media/tag` の共通 key、部分日付、Blob-backed picture である。foundation の trivial metadata encoding が carrier payload を Document へ parse/marshal し、未知 record の raw bytes、同一 key の複数値と順序を検査する。`host.New` は metadata Binding の target 実在と carrier conflict を codec Binding と同じ declaration 経路で検証する。
+M3-2 の data-path consumer は、`media/metadata` の immutable `Document`/`Builder`、ordered entry、`Origin`、`RawBlock`、immutable `Blob`、metadata Binding と、`media/tag` の共通 key、部分日付、Blob-backed artwork である。foundation の trivial metadata encoding が carrier payload を Document へ parse/marshal し、未知 record の raw bytes、同一 key の複数値と順序を検査する。`host.New` は metadata Binding の target 実在と carrier conflict を codec Binding と同じ declaration 経路で検証する。
 
-時刻に沿って変化する metadata は static `Document` の entry ではなく、`schema.Define` で宣言した typed event の port へ接続する。`stream.Descriptor.Metadata` は static document の immutable attachment として保持し、loss report の surface 表示、実 ID3/Vorbis/RIFF encoding への移行、mapping の planner 適用は後続 milestone に残す。
+時刻に沿って変化する metadata は static `Document` の entry ではなく、`schema.Define` で宣言した typed event の port へ接続する。`stream.Descriptor.Metadata` は static document の immutable attachment として保持する。
+
+M3-2 で宣言・検証に留める contract は `metadata.Mapping` である。source/target key、lossiness、priority、全順序の tie-break を型で表し、その規則を unit test で検査するが、mapping を適用する consumer は planner が入る M4 まで存在しない。詳細を今凍結せず、loss report の surface 表示は M7、実 ID3/Vorbis/RIFF encoding への移行は M8 に残す。`media/side` は M3-3 が担当し、この時点では型が存在しない。
 
 M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
 

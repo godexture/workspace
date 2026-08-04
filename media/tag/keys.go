@@ -29,7 +29,7 @@ var (
 	Title       = metadata.DefineKey[titleID, string]()
 	Artist      = metadata.DefineKey[artistID, string]()
 	Album       = metadata.DefineKey[albumID, string]()
-	DateKey     = metadata.DefineKey[dateID, Date]()
+	Date        = metadata.DefineKey[dateID, PartialDate]()
 	Genre       = metadata.DefineKey[genreID, string]()
 	Comment     = metadata.DefineKey[commentID, string]()
 	Composer    = metadata.DefineKey[composerID, string]()
@@ -42,5 +42,7 @@ var (
 	Copyright   = metadata.DefineKey[copyrightID, string]()
 	License     = metadata.DefineKey[licenseID, string]()
 	Encoder     = metadata.DefineKey[encoderID, string]()
-	PictureKey  = metadata.DefineKey[pictureID, Picture](func(value Picture) Picture { return value })
+	// Artwork holds an immutable Blob, so copying the value is already a
+	// snapshot. The clone is declared to say so, not to duplicate anything.
+	Picture = metadata.DefineKey[pictureID, Artwork](func(value Artwork) Artwork { return value })
 )

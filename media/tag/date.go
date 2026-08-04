@@ -6,9 +6,10 @@ import (
 	"time"
 )
 
-// Date preserves the precision of a metadata date. A source that only says
-// "1985" stays distinct from one that says "1985-01-01".
-type Date struct {
+// PartialDate preserves the precision of a metadata date. A source that only
+// says "1985" stays distinct from one that says "1985-01-01". The vocabulary
+// key carrying this value is Date.
+type PartialDate struct {
 	year, month, day     int
 	hour, minute, second int
 	hasYear, hasMonth    bool
@@ -18,16 +19,16 @@ type Date struct {
 
 // ParseDate parses the date forms used by the existing metadata encodings.
 // Missing components remain absent instead of being filled with zero values.
-func ParseDate(value string) (Date, error) {
+func ParseDate(value string) (PartialDate, error) {
 	if value == "" {
-		return Date{}, fmt.Errorf("empty date")
+		return PartialDate{}, fmt.Errorf("empty date")
 	}
 	for _, layout := range dateLayouts {
 		parsed, err := time.Parse(layout.layout, value)
 		if err != nil {
 			continue
 		}
-		return Date{
+		return PartialDate{
 			year:      parsed.Year(),
 			month:     int(parsed.Month()),
 			day:       parsed.Day(),
@@ -42,30 +43,24 @@ func ParseDate(value string) (Date, error) {
 			hasSecond: layout.second,
 		}, nil
 	}
-	return Date{}, fmt.Errorf("failed to parse date %q", value)
+	return PartialDate{}, fmt.Errorf("failed to parse date %q", value)
 }
 
-// Parse is an alias with a conventional parser name for metadata decoders.
-func Parse(value string) (Date, error) { return ParseDate(value) }
-
-// NewDate constructs a Date by parsing an encoding value.
-func NewDate(value string) (Date, error) { return ParseDate(value) }
-
-func (d Date) HasValue() bool {
+func (d PartialDate) HasValue() bool {
 	return d.hasYear || d.hasMonth || d.hasDay || d.hasHour || d.hasMinute || d.hasSecond
 }
 
-func (d Date) Year() (int, bool)   { return d.year, d.hasYear }
-func (d Date) Month() (int, bool)  { return d.month, d.hasMonth }
-func (d Date) Day() (int, bool)    { return d.day, d.hasDay }
-func (d Date) Hour() (int, bool)   { return d.hour, d.hasHour }
-func (d Date) Minute() (int, bool) { return d.minute, d.hasMinute }
-func (d Date) Second() (int, bool) { return d.second, d.hasSecond }
+func (d PartialDate) Year() (int, bool)   { return d.year, d.hasYear }
+func (d PartialDate) Month() (int, bool)  { return d.month, d.hasMonth }
+func (d PartialDate) Day() (int, bool)    { return d.day, d.hasDay }
+func (d PartialDate) Hour() (int, bool)   { return d.hour, d.hasHour }
+func (d PartialDate) Minute() (int, bool) { return d.minute, d.hasMinute }
+func (d PartialDate) Second() (int, bool) { return d.second, d.hasSecond }
 
 // ToISOString writes the most precise ISO-like representation available. It
 // intentionally omits timezone information because the old metadata contract
 // stores calendar components, not an instant.
-func (d Date) ToISOString() string {
+func (d PartialDate) ToISOString() string {
 	if !d.hasYear {
 		return ""
 	}
@@ -88,7 +83,7 @@ func (d Date) ToISOString() string {
 	return result
 }
 
-func (d Date) String() string { return d.ToISOString() }
+func (d PartialDate) String() string { return d.ToISOString() }
 
 type dateLayout struct {
 	layout               string

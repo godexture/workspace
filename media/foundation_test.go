@@ -253,37 +253,29 @@ func (o *skeletonMuxerOperator) Flush(context.Context, flow.Emitter[packet.Chunk
 	return nil
 }
 
-type skeletonMetadataOperator struct{ shape flow.Shape }
-
-func (o *skeletonMetadataOperator) Ports() flow.Shape { return o.shape }
-func (o *skeletonMetadataOperator) Close() error      { return nil }
-
+// A metadata encoding does not move items along an edge: it converts a carrier
+// payload at the format boundary. Its operator therefore implements Parse and
+// Marshal rather than flow.Processor.
 type skeletonMetadataEncodingOperator interface {
 	flow.Operator
 	Parse([]byte) (metadata.Document, error)
 	Marshal(metadata.Document) ([]byte, error)
 }
 
+type skeletonMetadataOperator struct {
+	shape    flow.Shape
+	encoding skeletonMetadataEncoding
+}
+
+func (o *skeletonMetadataOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonMetadataOperator) Close() error      { return nil }
+
 func (o *skeletonMetadataOperator) Parse(payload []byte) (metadata.Document, error) {
-	return newSkeletonMetadataEncoding().Parse(payload)
+	return o.encoding.Parse(payload)
 }
 
 func (o *skeletonMetadataOperator) Marshal(document metadata.Document) ([]byte, error) {
-	return newSkeletonMetadataEncoding().Marshal(document)
-}
-
-func (o *skeletonMetadataOperator) Process(ctx context.Context, input flow.Input[metadata.Document], output flow.Emitter[metadata.Document]) error {
-	item := flow.NewInput(input.Value(), skeletonMetadataDocumentSchema)
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	input.Drop()
-	return nil
-}
-
-func (o *skeletonMetadataOperator) Flush(context.Context, flow.Emitter[metadata.Document]) error {
-	return nil
+	return o.encoding.Marshal(document)
 }
 
 const (
@@ -336,7 +328,7 @@ func (e skeletonMetadataEncoding) Parse(payload []byte) (metadata.Document, erro
 				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
 				break
 			}
-			metadata.Add(builder, tag.DateKey, date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
+			metadata.Add(builder, tag.Date, date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
 		default:
 			builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
 		}
@@ -361,8 +353,8 @@ func (e skeletonMetadataEncoding) Marshal(document metadata.Document) ([]byte, e
 				return nil, fmt.Errorf("metadata artist entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataArtist, []byte(value))
-		case tag.DateKey.ID():
-			value, ok := entry.Value().(tag.Date)
+		case tag.Date.ID():
+			value, ok := entry.Value().(tag.PartialDate)
 			if !ok {
 				return nil, fmt.Errorf("metadata date entry has type %T", entry.Value())
 			}
@@ -475,7 +467,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 			return &skeletonMuxerOperator{shape: muxerShape, trace: trace}, nil
 		})),
 		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, plugin.WithPorts(metadataShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonMetadataOperator{shape: metadataShape}, nil
+			return &skeletonMetadataOperator{shape: metadataShape, encoding: newSkeletonMetadataEncoding()}, nil
 		})),
 	)
 }
