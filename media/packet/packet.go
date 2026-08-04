@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
 
@@ -14,19 +15,22 @@ type Chunk struct {
 	sequence uint64
 	pts      timing.OptionalPTS
 	payload  buffer.Handle
+	sideData side.Data
 }
 
-func NewChunk(sequence uint64, payload buffer.Handle) Chunk {
-	return Chunk{sequence: sequence, payload: payload}
-}
-
-func NewTimestampedChunk(sequence uint64, pts timing.OptionalPTS, payload buffer.Handle) Chunk {
+// NewChunk builds a container chunk. A chunk whose source states no time
+// passes timing.UnknownPTS, which stays distinct from a PTS of zero.
+func NewChunk(sequence uint64, pts timing.OptionalPTS, payload buffer.Handle) Chunk {
 	return Chunk{sequence: sequence, pts: pts, payload: payload}
 }
 
 func (c Chunk) Valid() bool             { return c.payload.Valid() }
 func (c Chunk) Sequence() uint64        { return c.sequence }
 func (c Chunk) PTS() timing.OptionalPTS { return c.pts }
+func (c Chunk) SideData() side.Data     { return c.sideData }
+
+// WithSideData returns a copy carrying immutable side data.
+func (c Chunk) WithSideData(value side.Data) Chunk { c.sideData = value; return c }
 
 // Payload returns a borrowed view valid until the chunk owner is released.
 // Call View.Share when the payload must outlive this chunk.
@@ -43,6 +47,7 @@ type Packet struct {
 	dts      timing.OptionalDTS
 	duration timing.OptionalDuration
 	payload  buffer.Handle
+	sideData side.Data
 }
 
 func NewPacket(sequence uint64, pts timing.OptionalPTS, dts timing.OptionalDTS, duration timing.OptionalDuration, payload buffer.Handle) Packet {
@@ -54,6 +59,10 @@ func (p Packet) Sequence() uint64                  { return p.sequence }
 func (p Packet) PTS() timing.OptionalPTS           { return p.pts }
 func (p Packet) DTS() timing.OptionalDTS           { return p.dts }
 func (p Packet) Duration() timing.OptionalDuration { return p.duration }
+func (p Packet) SideData() side.Data               { return p.sideData }
+
+// WithSideData returns a copy carrying immutable side data.
+func (p Packet) WithSideData(value side.Data) Packet { p.sideData = value; return p }
 
 // Payload returns a borrowed view valid until the packet owner is released.
 // Call View.Share when the payload must outlive this packet.

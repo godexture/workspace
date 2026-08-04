@@ -110,6 +110,29 @@ M3-2 の data-path consumer は、`media/metadata` の immutable `Document`/`Bui
 
 M3-2 で宣言・検証に留める contract は `metadata.Mapping` である。source/target key、lossiness、priority、全順序の tie-break を型で表し、その規則を unit test で検査するが、mapping を適用する consumer は planner が入る M4 まで存在しない。詳細を今凍結せず、loss report の surface 表示は M7、実 ID3/Vorbis/RIFF encoding への移行は M8 に残す。`media/side` は M3-3 が担当し、この時点では型が存在しない。
 
+### M3-3 の contract 分類
+
+M3-3 の data-path consumer は、`media/side` の immutable side data と、`media/stream.Event` による stream add/remove/property change である。第三者が `metadata.Key` と同じ clone 規則で packet/frame の side data を追加でき、空の item は追加 allocation や間接参照を負わない。`side.Data` は key 宣言と clone 規則だけを `media/metadata` と共有し、`Document` の scope、carrier origin、raw block は持たない。それらは stream や asset を記述する control plane の概念で、単一 item に付く値には意味がないためである。Event の follow/ignore/fail は `Undecided` を初期値とし、live topology の既定 policy を暗黙に決めない。
+
+`stream.Descriptor` は `stream.ID` を持つ。`schema.ID` は unit の種類を表すため、同じ schema を運ぶ 2 本の audio stream を区別できず、removal と property change が対象を指せない。topology を inspect した側が採番し、core は値を解釈しない。M4 の descriptor fingerprint と M7 の multi-stream mapping はこの identity の上に乗る。
+
+宣言・検証に留める contract は、`access.Reference` の canonical/redacted 表現、`access.Provider` の scheme declaration、transaction class、spool specification、immutable bounded probe view/range request、snapshot identity、`endpoint` の topology/realtime trait、Device descriptor/reference、明示 opt-in の `DeviceQuery` である。Provider の scheme conflict は既存の `plugin.Declaration`/catalog に載せ、独自 registry は作らない。Host/package import や型の構築は device scan、permission prompt、network access を起こさない。
+
+M4 が Provider/Endpoint declaration の planner binding、acquire/probe/inspect と capability diagnostic を担当し、M5 が transaction execution/rollback と spool insertion、M6 が file/HTTP 等の具体 Provider/Format 接続、M9 が device/session Endpoint 実装を担当する。clock/timestamp origin、latency/buffer、drop/reconnect/discontinuity、exclusive/shared、hotplug、multi-output `AllOrNothing` は consumer が現れる milestone まで型を増やさず、M3 では設計文書だけを正本とする。
+
+### M3 時点で型を持たない capability matrix の行
+
+M3 完了条件が求める「型が存在しない行の担当明示」である。他の 13 行は上の分類節に挙げた型で満たしている。
+
+| 行 | 状態 | 担当 |
+|---|---|---|
+| stream/program/chapter mapping | `job` package が無い。mapping と selector は Job の正規化に属する | M4。planner pipeline の Normalize Job が最初の consumer になる |
+| hardware/native implementation | variant 型が無い | M4 が型と hard filter（accuracy/repeatability/platform で候補を絞る側）を持ち、M8 が実 variant を公式 plugin へ入れる |
+| analysis/report branch | 専用の型は作らない | 出力 port を持たない通常 component として既に表現でき、core の closed role を増やさない。read-only branch が診断を出すための `Diagnostics` service は M5 が host service として用意する |
+| Go library、CLI、WASM | `host` だけが存在し、`job`・`Plan`・`Result`・surface DTO が無い | `job`/`Plan` は M4、`Result` と実行 event は M5、CLI/WASM/library surface は M9 |
+
+いずれも core の closed enum や switch を増やさずに追加できることが条件であり、担当 milestone が書けない行は残さない。
+
 M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
 
 - capability matrix の各行に対応する拡張点の型が foundation に存在し、追加時に core の closed enum や switch を編集する必要がない。M3 時点で型が存在しない行があれば、どの milestone が担当するかを明示する。
@@ -117,6 +140,8 @@ M3 はこの文書の capability matrix が要求する拡張点のうち、cont
 - 初期実装が対応しない capability を、false capability や隠れた type assertion ではなく、宣言された requirement として表現できる。
 - `FiniteStatic`、`LiveStatic`、`LiveDynamic` と stream event を表現でき、[D3](decisions.md) の未決事項を暗黙の既定で埋めていない。
 - seek を Demuxer の optional method として表現していない。graph operation として扱う前提が型の上で崩れていない。
+- object Access、typed session/device Endpoint、packet/frame side data、live stream event、Format/Codec/Metadata の各拡張点が、第三者の型・declaration として追加できる。
+- M3 時点で consumer を持たない詳細を最小型へ閉じ込め、担当 milestone と実行 consumer を checkpoint に残している。
 
 ## 文書全体の完了条件
 

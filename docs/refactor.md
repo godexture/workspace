@@ -70,6 +70,8 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 - **M11 の 2 つの成果は独立している。** 未知 video/subtitle plugin による拡張性の実証は旧経路の削除を待たない。むしろ削除前に通しておくほうが、削除で失われた能力がないことを示せる。
 - **旧/新 runtime の比較は M5 で harness に接続する。** M0 baseline は旧 pipeline を測っているため、M11 で旧経路が消えた後では比較対象が失われる。
 - **seek は機構と format 実装を分けて担当する。** graph operation としての seek plan は M7 が持ち、format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC の seek 実装が M11 の削除で置き換えなしに消えることを避けるため、M8 完了時点で同等の能力が新経路に存在することを確認する。
+- **完了条件は着手前に書く。** milestone の固有条件が詳細資料に存在しない状態で実装へ入らない。条件は「何を作るか」だけでなく「何を作らないか」と「未完了として残すもの」を明示する。M3 の 3 単位で最も効いたのは [media](refactor/media.md#m3-完了条件) と [access](refactor/access.md#m3-完了条件) の「M3 では最小の型だけを置き、詳細は実際の consumer を作る milestone で決める」という明文だった。実装がまだ見えていない先の milestone まで条件を先取りすると、書き直しが増えて正本の信頼が落ちるため、着手直前の milestone を対象にする。
+- **consumer を持たない export を残さない。** 各 milestone の完了条件に「新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](refactor/scope.md) の分類節へ consumer を作る milestone とともに記載する」を含める。M3 の 3 単位すべてで、呼び出し元も実装者もない public API が繰り返し発生した。宣言だけの contract 自体は milestone の性質上必要だが、担当を書けないものは今置くべきでない印である。
 
 ## 読み方
 

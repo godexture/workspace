@@ -4,8 +4,12 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
+
+type frameSideKey struct{}
 
 func TestFrameValidatesPlanarPlanesAtConstruction(t *testing.T) {
 	planes, err := buffer.Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}, {Size: 6}}})
@@ -49,5 +53,26 @@ func TestFramePlanesAreBorrowed(t *testing.T) {
 	frame.Release()
 	if view.Valid() {
 		t.Fatal("frame planes accessor retained storage implicitly")
+	}
+}
+
+func TestFrameCarriesSideDataWithoutChangingPlaneOwnership(t *testing.T) {
+	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := NewFrame[int16](timing.UnknownPTS(), 1, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer frame.Release()
+	key := metadata.DefineKey[frameSideKey, string]()
+	data, err := side.Add(side.Data{}, key, "marker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSide := frame.WithSideData(data)
+	if value, ok := side.First(withSide.SideData(), key); !ok || value != "marker" {
+		t.Fatalf("frame side data = %q, %v", value, ok)
 	}
 }

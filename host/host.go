@@ -4,11 +4,8 @@ package host
 
 import (
 	"encoding/hex"
-	"errors"
-	"fmt"
 
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/plugin"
 )
@@ -84,29 +81,7 @@ func (c Catalog) Lookup(identity plugin.Identity) (plugin.ComponentView, bool) {
 	return component.View(), true
 }
 
-// Open selects a validated component and creates its operator.
-//
-// This bypasses Plan, Program, and the output transaction, so it exists only
-// for the M3 walking skeleton. M4/M5 open operators in dependency order from a
-// built Program, with rollback on partial failure, and remove this method.
-func (c Catalog) Open(identity plugin.Identity) (flow.Operator, error) {
-	component, ok := c.index.Lookup(identity)
-	if !ok {
-		return nil, fmt.Errorf("component %q is not in the host catalog", identity)
-	}
-	return component.Open()
-}
-
 func (c Catalog) Declarations() []plugin.Declaration { return c.index.Declarations() }
-
-// Open selects a validated component and creates its operator. It carries the
-// same M3-only restriction as Catalog.Open.
-func (h *Host) Open(identity plugin.Identity) (flow.Operator, error) {
-	if h == nil {
-		return nil, errors.New("nil host")
-	}
-	return h.Catalog().Open(identity)
-}
 
 // Len reports the number of catalog components.
 func (c Catalog) Len() int { return c.index.Len() }

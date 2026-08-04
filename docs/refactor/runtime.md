@@ -332,3 +332,44 @@ Result {
 12. exclusive audio frame は in-place で ownership move し、fan-out 後の変更 branch だけ copy-on-write する。
 
 この契約を満たすため、拡張性は control plane の typed registration に置き、runtime は `Program` で specialization する。
+
+## M5 完了条件
+
+M5 は execution island、ownership、queue、cancel、Finalize、transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
+
+- 同期的な一入力一出力 Processor の linear chain が一つの execution island に fuse され、node ごとの goroutine と buffered channel を要求しない。queue が置かれるのは「queue と backpressure」に列挙した境界だけである。
+- plugin contract に channel、scheduler、queue 実装が露出しない。runtime internal を交換しても公式・第三者 plugin の public API が変わらない。
+- ownership 契約が conformance test される。Reader 返却で consumer へ move、Writer 成功で writer へ move、Writer 失敗で呼び出し元が保持、drop/cancel/queue drain は owner が破棄。linear path で refcount increment が起きず、fan-out のときだけ `Fork`/retain を通る。
+- M3 が値型として置いた `flow.Input`/`Owned`/`Shared` の上で、linear 1 hop の allocation がゼロであることを test で固定する。M3 で失った double `Take`・use-after-`Take` の検出を conformance testkit が担当し、既定 build の hot path に検出用 state を持たせない。
+- payload allocator が Host/Job の grant に属し、`sync.Pool` を resource manager や correctness の根拠にしない。`Overwrite` lease は Commit 前に read/publication できず、error/cancel で破棄される。
+- 実 queue が bounded で、`Limit` の items/bytes/time を扱う。byte limit は schema が安価な `Size` trait を提供する場合だけ使う。M3 の `schema.Queue`/`Fanout` を実 queue contract へ置き換えるか、factory の返り値型を変えるかをここで確定する。
+- resource accounting が packet/frame ごとに中央 manager を呼ばない。局所 counter に蓄積し、metrics export 時に集約する。
+- job context cancel が source、queue、operator、sink、host task group へ伝播し、block 中の read/write を解除する。edge close が idempotent で、send-after-close と double-close を plugin の責任にしない。join できない task を「停止した」と偽らず diagnostic にする。
+- EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は `Finalize` の明示 contract で渡り、data packet に混ざらない。
+- Open が transaction として行われ、途中失敗で既に開いた component/Endpoint/resource/output transaction を逆順に閉じ、sink を Abort し、Open 中に作った goroutine を cancel/join する。
+- 成功時に Finalize → Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
+- primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、temporary file 削除、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。
+- multi-input component が fan-in policy を宣言し、goroutine の到着順で入力を選ばない（[F22](findings.md)）。必要な buffering と watermark が Plan に現れる。
+- panic recovery が execution island または長寿命 task の最上位に一度だけ置かれ、item loop に `defer` が入らない。plugin/component identity、plan node ID、phase、stack、primary/cancel status を記録する。
+- observation off で hot path に metric 用 atomic、clock read、size 計算が現れない。observation の各段階が同じ event model から集約される。
+- `Fast`/`Stable`/`Portable`/`Realtime` が Run の分岐にならず、Host が Compile 前に policy vector へ展開する。item loop が preset、CPU feature、catalog を参照しない。
+- **hot-path 性能契約の 12 条を代表 benchmark と test で確認する。** 特に hop ごとの必須 allocation、linear ownership の refcount、node ごとの goroutine/channel、observation off の atomic を数値で示す。
+- **旧 pipeline と新 runtime の paired benchmark を同一 harness へ接続する。** M0 baseline は旧 pipeline を測っており、旧経路が消える M11 の後では比較対象が失われる（[refactor.md](../refactor.md#実装ロードマップ)）。
+- **walking skeleton が新 runtime で通る。** M4 が planner 経由にした経路を、island、queue、cancel、Finalize を含む実行で流し、bytes、item 数、順序、timestamp が同じであることを検査する。
+- M3 専用の `host.Open(identity)` が残っていない。M4 で置き換えられていなければここで削除する。
+- **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
+- 上記を unit/property/race test で検査する。cancel、panic、partial Open、fan-out、Finalize/Commit failure で item、goroutine、resource、temporary output が leak しないことを含める。
+
+M5 では次を未完了事項として残す。実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形は M6。metadata loss report の surface 表示と seek plan は M7。variant selection と並列 codec の移行は M8。device/session Endpoint の実装は M9。
+
+## 文書全体の完了条件
+
+この節は runtime contract の最終状態を示す gate であり、M5 単独の完了判定には上記「M5 完了条件」だけを用いる。
+
+- plan 用の変換と実行開始時の変換が重複せず、`Compile` の結果を `Open` が消費する。
+- node ごとの goroutine/channel を要求せず、queue が必要な境界にだけ現れる。
+- ownership、cancel、rollback、cleanup が contract として test され、plugin author が手動 refcount を扱わない。
+- mutable state が Host → Job → component/worker → item lease の最小 owner に置かれ、package-level mutable state を暗黙の owner にしない。
+- Finalize、flush/sync、commit/abort が一つの failure-safe lifecycle になり、primary と cleanup の failure を区別して報告する。
+- observability が同じ event model から集約され、observation off が hot path に追加コストを持ち込まない。
+- runtime internal を交換しても公式・第三者 plugin の public API を変更しない。

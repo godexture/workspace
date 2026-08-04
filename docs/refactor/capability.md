@@ -33,9 +33,9 @@
 | ID3v1 / ID3v2 | parse/marshal | 維持 | M8 | 仕様 vector |
 | Vorbis Comment | parse/marshal | 維持 | M8 | 仕様 vector |
 | RIFF INFO | parse/marshal | 維持 | M6 | 仕様 vector |
-| multi-value の順序保持 | WAVE で固定済み | 維持 | M3/M7 | Document の順序 test |
-| 重複 key の保持 | WAVE で固定済み | 維持 | M3/M7 | Document の重複 test |
-| 未知 payload の raw 保持 | WAVE で固定済み | 維持 | M3/M7 | RawBlock の roundtrip |
+| multi-value の順序保持 | WAVE で固定済み | 維持 | M3/M7 | Document の順序 test。M3 分は `media/metadata` の `TestDocumentKeepsOrderDuplicateKeysAndOrigin` で確認済み |
+| 重複 key の保持 | WAVE で固定済み | 維持 | M3/M7 | Document の重複 test。M3 分は同上の test で確認済み |
+| 未知 payload の raw 保持 | WAVE で固定済み | 維持 | M3/M7 | RawBlock の roundtrip。M3 分は `TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite` で確認済み |
 | 未知項目の欠落報告 | 現状は黙って落ちる経路がある | 変更 | M7 | loss report の test |
 
 ## 音声処理

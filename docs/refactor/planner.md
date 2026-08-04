@@ -349,3 +349,41 @@ planning は cold path だが、component が増える ecosystem では UX に�
 - simple copy job、one bridge、long bridge、unsatisfied、budget exhaustion、multi-input fixpoint を測る。
 
 planning benchmark は wall time だけでなく、Compile 回数、expanded state、allocation、diagnostic size を report する。
+
+## M4 完了条件
+
+M4 は `Compile`、solver、graph validation、public `Plan`、private `Program` を新設する milestone である。実行、ownership、queue、cancel、Finalize は M5、実 Format/Codec は M6 の担当であり、M4 には要求しない。runtime 側の条件は [runtime](runtime.md#m5-完了条件) を参照する。
+
+- `Compile` が I/O、goroutine、allocator、clock、global registry を使わず、同じ input/config/policy から同じ canonical result を返し、繰り返し呼べる。満たせない入力は文字列 error ではなく構造化 `Requirement` として返る。
+- `Suggest` が deterministic order、有限、duplicate canonical config なし、宣言した上限以内で、I/O と instance 作成をしない。変換規則は `Compile` にだけあり、`Suggest` と `Open` に重複しない。
+- 候補評価が component の `Open`/`Close` を呼ばない。現行 resolver の「Factory を試し起動して出力を調べる」経路（[F7](findings.md)）が構造的に不可能になっている。
+- descriptor state が format 済み文字列ではなく canonical fingerprint で表され、未知の第三者 property も marker identity と canonical value を通じて state に参加できる。
+- component が `Effect` と `Estimate` を返し、比較順は Host policy が決める。lossy generation、content/timeline/stream loss、numerical difference を単一の `QualityLoss` 整数へ潰さない。
+- lexicographic rank が実装され、plugin が申告する一つの cost 数値で hard requirement、pinned request、stream/metadata 保持、copy 優先を逆転できない。
+- 探索が priority queue と visited best rank を使い、catalog が accepted schema/property key で候補を索引する。同じ fingerprint を出す non-progress component を expansion しない。
+- planning budget が Host policy にあり、budget exhaustion が unsupported と区別され、最も近い unmet Need、探索済み state、制限値を diagnostic に含む。
+- graph validation が schema 不一致、required port 未接続、one port への重複接続、不正な fan-in/fan-out、許可されない cycle、到達不能 node、sink へ到達しない出力、duplicate mapping、finalizer を必要とする経路の欠落、time base 未解決をすべて compile 時に拒否する。
+- 動的 `Shape` phase を持ち、config が port 数を決める component を表現できる。[checkpoint](checkpoint.md) が M3 から送った `plugin/audio` の mixer 相当（現在は空 config と実行時入力数）がこの形で表せることを確認する。実際の plugin 移行は M8。
+- `Plan` が requested node/edge と auto-insert の区別、component canonical identity、canonical config、input/output descriptor、insertion reason、Effect/loss、expanded policy、budget 使用量、Plan fingerprint を持ち、versioned DTO へ変換できる。raw secret、pointer、function を含まない。
+- `Program` が private で serialize されず、dense index と typed call path を持つ。public API から取り出せない。
+- 同じ normalized Job、Catalog、input snapshot、platform snapshot なら、catalog insertion order、map seed、並行 Compile の完了順を変えても同じ Plan fingerprint になる。
+- Prepare が Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、output transaction を開始しない。dry-run が output を作成・truncate しない。
+- M3 が declaration に留めた `access.Provider` と `endpoint` の宣言が planner に binding され、capability 不足が Open 後の type assertion ではなく Compile diagnostic になる。
+- **walking skeleton が planner 経由で通る。** M3 の直結 test が planner の作る `Plan`/`Program` 経由に置き換わり、bytes、item 数、順序、timestamp が同じであることを検査する。M3 専用の `host.Open(identity)` はこの時点で削除する。
+- erased schema descriptor から typed edge を組み立てる方式を確定する。M3 の `schema.Queue`/`Fanout` は Open 時 assert 用の最小 interface であり、bounded 化と backpressure を持つ実 queue は M5 が持つ。M4 は planner がその factory へ到達できることまでを確認する。
+- **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
+- 上記を unit/property test で検査する。公式 plugin を import しない。determinism は map iteration、catalog insertion、候補評価の完了順を意図的に乱して検査する。
+
+M4 では次を未完了事項として残す。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。variant selection の実装は M8 の family 移行に乗せる。
+
+## 文書全体の完了条件
+
+この節は planner contract の最終状態を示す gate であり、M4 単独の完了判定には上記「M4 完了条件」だけを用いる。
+
+- semantic transformation が `Compile` にだけ実装され、plan 用と実行開始時の変換が重複しない。
+- 自動挿入がすべて Plan に理由・入力・出力・effect とともに現れ、利用者が要求していない content transformation を planner が発明しない。
+- 無指定出力で copy/remux が優先され、不可能な場合の codec 選択理由が diagnostic に出る。
+- 候補探索が component instance を作らず、budget 内で決定的に終わる。
+- 同じ入力 snapshot から同じ Plan fingerprint が得られ、`auto` 解決の差は入力 snapshot の差として説明できる。
+- unsupported と budget exhaustion が区別され、最も近い unmet Need が示される。
+- planning cost が component 数に対して索引で抑えられ、代表 catalog size で benchmark されている。

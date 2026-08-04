@@ -10,33 +10,52 @@ import (
 	"github.com/godexture/godec/media/timing"
 )
 
-var ErrInvalidDescriptor = errors.New("stream descriptor has an invalid schema or time base")
+var (
+	ErrInvalidDescriptor = errors.New("stream descriptor has an invalid schema or time base")
+	ErrInvalidID         = errors.New("stream id must not be empty")
+)
+
+// ID names one stream within the topology a source exposes.
+//
+// It is deliberately not a schema.ID: a schema names the kind of unit a stream
+// carries, so two audio streams share one schema identity and could not be told
+// apart by it. Whoever inspects the topology assigns these; core never
+// interprets the value.
+type ID string
+
+func (i ID) IsZero() bool   { return i == "" }
+func (i ID) String() string { return string(i) }
 
 // Descriptor contains immutable information shared by all items in one
 // stream. It intentionally has no media-kind enum.
 type Descriptor struct {
+	id         ID
 	schema     schema.ID
 	timeBase   timing.Base
 	properties property.Set
 	metadata   metadata.Document
 }
 
-func NewDescriptor(identity schema.ID, timeBase timing.Base, properties property.Set) (Descriptor, error) {
+func NewDescriptor(id ID, identity schema.ID, timeBase timing.Base, properties property.Set) (Descriptor, error) {
+	if id.IsZero() {
+		return Descriptor{}, ErrInvalidID
+	}
 	if identity.IsZero() || !timeBase.Valid() {
 		return Descriptor{}, ErrInvalidDescriptor
 	}
-	return Descriptor{schema: identity, timeBase: timeBase, properties: properties}, nil
+	return Descriptor{id: id, schema: identity, timeBase: timeBase, properties: properties}, nil
 }
 
-func MustDescriptor(identity schema.ID, timeBase timing.Base, properties property.Set) Descriptor {
-	descriptor, err := NewDescriptor(identity, timeBase, properties)
+func MustDescriptor(id ID, identity schema.ID, timeBase timing.Base, properties property.Set) Descriptor {
+	descriptor, err := NewDescriptor(id, identity, timeBase, properties)
 	if err != nil {
 		panic(err)
 	}
 	return descriptor
 }
 
-func (d Descriptor) Valid() bool              { return !d.schema.IsZero() && d.timeBase.Valid() }
+func (d Descriptor) Valid() bool              { return !d.id.IsZero() && !d.schema.IsZero() && d.timeBase.Valid() }
+func (d Descriptor) ID() ID                   { return d.id }
 func (d Descriptor) Schema() schema.ID        { return d.schema }
 func (d Descriptor) TimeBase() timing.Base    { return d.timeBase }
 func (d Descriptor) Properties() property.Set { return d.properties }

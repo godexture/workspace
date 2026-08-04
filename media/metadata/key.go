@@ -102,6 +102,23 @@ func (k Key[T]) First(document Document) (T, bool) {
 	return values[0], true
 }
 
+// Erased returns a key's identity and its declared clone in erased form.
+//
+// It exists so a package that stores typed values outside a Document, such as
+// per-item side data, can reuse one key declaration and its C17 clone rule
+// instead of repeating them. One ReplayGain key is then usable both as document
+// metadata and as side data. The returned clone accepts only values of the
+// key's type and is the only way to snapshot them from outside this package.
+func Erased[T any](key Key[T]) (KeyID, func(any) (any, bool), error) {
+	if problem := key.Problem(); problem != nil {
+		return KeyID{}, nil, problem
+	}
+	if !key.Valid() {
+		return KeyID{}, nil, errors.New("metadata key is not declared")
+	}
+	return key.id, key.cloneAny, nil
+}
+
 // keyLike is the erased view a Builder needs. Its unexported method keeps a
 // third party from supplying a key that only claims to be valid.
 type keyLike interface {

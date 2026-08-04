@@ -7,6 +7,13 @@ import (
 	"sync"
 )
 
+// Sequential and Random are the narrow views a component receives instead of a
+// struct whose unavailable operations are nil. A component declares what it
+// needs through Requirements and is handed only that.
+//
+// Only these two exist today. The views for stable size, reopen, cancel, and
+// the write side are added by the milestone that first hands one out, so their
+// shape is decided against a real caller rather than guessed here.
 type Sequential interface {
 	Read(context.Context, []byte) (int, error)
 }
@@ -15,29 +22,9 @@ type Random interface {
 	ReadAt(context.Context, []byte, int64) (int, error)
 }
 
-type Sized interface {
-	Size(context.Context) (int64, error)
-}
-
-type Reopener interface {
-	Reopen(context.Context) (Sequential, error)
-}
-
-type Canceler interface {
-	Cancel() error
-}
-
-type Source interface{ Sequential }
-
-type RandomSource interface {
-	Source
-	Random
-}
-
-type Sink interface {
-	Write(context.Context, []byte) (int, error)
-}
-
+// Capability is the declaration vocabulary. It stays separate from the view
+// interfaces above because requirements must be comparable and recorded in a
+// Plan, which an interface type cannot be.
 type Capability string
 
 const (

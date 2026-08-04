@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
@@ -99,7 +100,7 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[
 		if err != nil {
 			return err
 		}
-		chunk := packet.NewTimestampedChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence))), payload)
+		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence))), payload)
 		item := flow.NewInput(chunk, skeletonChunkSchema)
 		if err := output.Emit(ctx, item); err != nil {
 			item.Drop()
@@ -235,7 +236,7 @@ func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[pa
 	}
 	value := owner.Value()
 	payload := value.Payload().Share()
-	chunk := packet.NewTimestampedChunk(value.Sequence(), value.PTS(), payload)
+	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
 	owner.Release()
 	if o.trace != nil {
 		o.trace.sequences = append(o.trace.sequences, chunk.Sequence())
@@ -480,6 +481,21 @@ func skeletonMetadataBinding() metadata.Binding {
 	return metadata.Bind(skeletonMetadataCarrier, plugin.IdentityOf[skeletonMetadataEncodingID]())
 }
 
+// skeletonCatalog validates a composition the same way host.New does. The
+// skeleton builds the index directly because opening one component by identity
+// is not a public capability: M4/M5 open operators in dependency order from a
+// built Program, so exporting a shortcut here would ship an API that has to be
+// deleted again.
+func skeletonCatalog(set plugin.Set) (catalog.Index, error) { return catalog.Build(set) }
+
+func openSkeleton(index catalog.Index, identity plugin.Identity) (flow.Operator, error) {
+	component, ok := index.Lookup(identity)
+	if !ok {
+		return nil, fmt.Errorf("component %q is not in the catalog", identity)
+	}
+	return component.Open()
+}
+
 func openQueue[T any](descriptor schema.Descriptor) (schema.Queue[T], error) {
 	erased, err := descriptor.NewPipe()
 	if err != nil {
@@ -512,32 +528,32 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}
-	instance, err := host.New(host.Plugins(plugin.NewSet(definition).AddDeclaration(skeletonBinding()).AddDeclaration(skeletonMetadataBinding())))
+	index, err := skeletonCatalog(plugin.NewSet(definition).AddDeclaration(skeletonBinding()).AddDeclaration(skeletonMetadataBinding()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	sourceValue, err := instance.Open(plugin.IdentityOf[skeletonSourceID]())
+	sourceValue, err := openSkeleton(index, plugin.IdentityOf[skeletonSourceID]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	demuxerValue, err := instance.Open(plugin.IdentityOf[skeletonDemuxerID]())
+	demuxerValue, err := openSkeleton(index, plugin.IdentityOf[skeletonDemuxerID]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	parserValue, err := instance.Open(plugin.IdentityOf[skeletonParserID]())
+	parserValue, err := openSkeleton(index, plugin.IdentityOf[skeletonParserID]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoderValue, err := instance.Open(plugin.IdentityOf[skeletonCodecID]())
+	decoderValue, err := openSkeleton(index, plugin.IdentityOf[skeletonCodecID]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoderValue, err := instance.Open(plugin.IdentityOf[skeletonEncoderID]())
+	encoderValue, err := openSkeleton(index, plugin.IdentityOf[skeletonEncoderID]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	muxerValue, err := instance.Open(plugin.IdentityOf[skeletonMuxerID]())
+	muxerValue, err := openSkeleton(index, plugin.IdentityOf[skeletonMuxerID]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -644,11 +660,11 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 }
 
 func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
-	instance, err := host.New(host.Plugins(plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonMetadataBinding())))
+	index, err := skeletonCatalog(plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonMetadataBinding()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	operator, err := instance.Open(plugin.IdentityOf[skeletonMetadataEncodingID]())
+	operator, err := openSkeleton(index, plugin.IdentityOf[skeletonMetadataEncodingID]())
 	if err != nil {
 		t.Fatal(err)
 	}

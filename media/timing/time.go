@@ -89,18 +89,6 @@ func (v Duration) Rescale(from, to Base, mode Rounding) (Duration, error) {
 	return Duration(value), err
 }
 
-func RescalePTS(value PTS, from, to Base, mode Rounding) (PTS, error) {
-	return value.Rescale(from, to, mode)
-}
-
-func RescaleDTS(value DTS, from, to Base, mode Rounding) (DTS, error) {
-	return value.Rescale(from, to, mode)
-}
-
-func RescaleDuration(value Duration, from, to Base, mode Rounding) (Duration, error) {
-	return value.Rescale(from, to, mode)
-}
-
 type OptionalPTS struct {
 	value PTS
 	valid bool

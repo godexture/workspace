@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
 
@@ -26,9 +27,10 @@ var (
 // Frame is a typed, planar sample frame. Sample rate, channel layout, and
 // valid bits belong to stream.Descriptor properties and are not repeated here.
 type Frame[S Sample] struct {
-	pts     timing.OptionalPTS
-	samples int
-	planes  buffer.Handle
+	pts      timing.OptionalPTS
+	samples  int
+	planes   buffer.Handle
+	sideData side.Data
 }
 
 func NewFrame[S Sample](pts timing.OptionalPTS, samples int, planes buffer.Handle) (Frame[S], error) {
@@ -55,6 +57,10 @@ func NewFrame[S Sample](pts timing.OptionalPTS, samples int, planes buffer.Handl
 func (f Frame[S]) Valid() bool             { return f.planes.Valid() }
 func (f Frame[S]) PTS() timing.OptionalPTS { return f.pts }
 func (f Frame[S]) Samples() int            { return f.samples }
+func (f Frame[S]) SideData() side.Data     { return f.sideData }
+
+// WithSideData returns a copy carrying immutable side data.
+func (f Frame[S]) WithSideData(value side.Data) Frame[S] { f.sideData = value; return f }
 
 // Planes returns a borrowed view valid until the frame owner is released.
 // Call View.Share when the planes must outlive this frame.

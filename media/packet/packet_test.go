@@ -4,8 +4,12 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
+
+type packetSideKey struct{}
 
 func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	base := timing.MustBase(1, 1)
@@ -16,7 +20,7 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := NewTimestampedChunk(4, pts, payload)
+	chunk := NewChunk(4, pts, payload)
 	packetPayload := chunk.Payload().Share()
 	packet := NewPacket(chunk.Sequence(), chunk.PTS(), dts, duration, packetPayload)
 	chunk.Release()
@@ -51,10 +55,29 @@ func TestChunkPayloadIsBorrowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := NewChunk(0, payload)
+	chunk := NewChunk(0, timing.UnknownPTS(), payload)
 	view := chunk.Payload()
 	chunk.Release()
 	if view.Valid() {
 		t.Fatal("chunk payload accessor retained storage implicitly")
+	}
+}
+
+func TestPacketCarriesImmutableSideData(t *testing.T) {
+	key := metadata.DefineKey[packetSideKey, string]()
+	data, err := side.Add(side.Data{}, key, "frame")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := buffer.FromBytes([]byte{1}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload).WithSideData(data)
+	defer packet.Release()
+	clone := packet.Share()
+	defer clone.Release()
+	if value, ok := side.First(clone.SideData(), key); !ok || value != "frame" {
+		t.Fatalf("packet side data = %q, %v", value, ok)
 	}
 }

@@ -124,6 +124,7 @@ stream kind の closed enum と全属性を詰め込んだ `MediaAttributes` を
 
 ```go
 type Descriptor struct {
+    ID         stream.ID
     Schema     schema.ID
     TimeBase   timing.Base
     Properties property.Set
@@ -397,6 +398,7 @@ typed frame は `media/audio` だけを M3 で実装する。`media/video` と `
 - container chunk と codec packet が別の型で、Parser を第一級 component として宣言できる。bitstream filter を `Packet -> Packet` として表現できる。
 - codec Binding と metadata Binding を composition 時に登録でき、同じ binding key が異なる対象を指す場合に host 構築を失敗させる。意図的な置換は明示 override だけで行う。
 - `metadata.Document` が順序付き entry、`Origin`、未解釈 `RawBlock` を保持し、slice の直接 mutation を許さない。第三者が core を変更せず固有 key を定義でき、共通 vocabulary は `tag` package が持つ。
+- `media/side` が packet/frame の immutable side data を提供し、第三者 key の clone 規則を `media/metadata` と共有する。side data を持たない item は追加 allocation や間接参照を必要とせず、`media/stream.Event` は live topology の既定 policy を暗黙に選ばない。
 - metadata Mapping が source key、target key、lossiness、priority を宣言でき、host が曖昧な変換を推測しない。
 - metadata scope（asset/program/stream/chapter）を表現でき、時刻に沿って変化する metadata は static document ではなく typed event stream として宣言できる。
 - artwork 等の大きな byte slice が entry の複製ごとに copy されず、immutable blob 参照を共有する。
@@ -407,3 +409,17 @@ typed frame は `media/audio` だけを M3 で実装する。`media/video` と `
 M3 では次を未完了事項として残す。descriptor から実際の Format/Codec を駆動する経路は M6/M8、`Compile` が capability 不足を structured diagnostic にする経路は M4、loss report の surface 表示は M7 で扱う。
 
 walking skeleton を要求する理由は、consumer のいない contract を M3〜M5 の 3 段積み上げないためである。M2 では `config.SchemaView` に resolver が必要だと判明したのが「M4 がどう使うか」を検討した時点であり、それまでの review では検出できなかった。M3 は package 数がさらに多く、同じ失敗の影響が大きい。
+
+## 文書全体の完了条件
+
+この節は media/metadata contract の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。
+
+- 第三者が core を変更せず、新しい schema、unit 型、Format、Codec、Parser、Carrier、Metadata Encoding、key、Binding、Mapping を追加できる。
+- 万能 `Frame` と閉じた stream kind enum が存在せず、port が schema の具体型で結ばれる。
+- 型消去が control plane の登録と factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。
+- container chunk、codec packet、decoded unit、side data、static metadata、timed event が別の型として分かれている。
+- timestamp が integer time base で表され、rescale が overflow と rounding policy を明示し、不明を `0` と混同しない。
+- Format が Access Provider、decoder 実装、metadata parser を import せず、Binding だけが composition 時に結ぶ。
+- metadata が順序、重複 key、origin、未解釈 raw block を保持し、artwork を entry 複製ごとに copy しない。
+- 表現できない metadata が黙って消えず、raw preservation、明示 Mapping、loss report のいずれかになる。
+- 無指定出力で copy/remux と情報保持が優先される判断材料を descriptor が提供する。

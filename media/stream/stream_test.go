@@ -21,7 +21,7 @@ func TestDescriptorKeepsStreamLocalPropertiesOutOfItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor, err := NewDescriptor(typ.Identity(), timing.MustBase(1, 48000), properties)
+	descriptor, err := NewDescriptor("audio-0", typ.Identity(), timing.MustBase(1, 48000), properties)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestDescriptorKeepsStreamLocalPropertiesOutOfItems(t *testing.T) {
 
 func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
 	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
-	descriptor, err := NewDescriptor(typ.Identity(), timing.MustBase(1, 48000), property.New())
+	descriptor, err := NewDescriptor("audio-0", typ.Identity(), timing.MustBase(1, 48000), property.New())
 	if err != nil {
 		t.Fatal(err)
 	}
