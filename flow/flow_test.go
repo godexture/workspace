@@ -33,6 +33,10 @@ func TestShapeValidatesTypedPorts(t *testing.T) {
 	if err := NewShape([]Port{In("required-many", typ, Many())}, nil).Validate(); err != nil {
 		t.Fatalf("required many port rejected: %v", err)
 	}
+	optional := In("optional", typ, Optional())
+	if optional.Required() || optional.Multiplicity() != One {
+		t.Fatalf("optional port = required %v, multiplicity %v", optional.Required(), optional.Multiplicity())
+	}
 }
 
 func TestShapeReportsInvalidSchemaMarker(t *testing.T) {

@@ -96,11 +96,11 @@ live topology は static descriptor の mutationではなく `stream.Event` と�
 
 ### M3-1 の contract 分類
 
-M3-1 の walking skeleton が data path の consumer として使う contract は、`media/schema` の marker 由来 typed schema/traits、`media/timing` の optional PTS、`flow` の静的 port shape・`Input` ownership・`Reader`/`Writer`・`Processor`/`Emitter`・operator lifecycle、`plugin.Component` の `Open`、`media/buffer` の ownership handle/view、`media/packet` の Chunk/Packet 境界、`media/audio` の planar frame である。test fixture の駆動 loop は `bytes → chunk → frame → bytes` を接続し、muxer 内の packet/chunk 変換で payload の共有 ownership と timestamp を検査する。
+M3-1 の walking skeleton が data path の consumer として使う contract は、`media/schema` の marker 由来 typed schema/traits と erased descriptor factory、`media/timing` の optional PTS、`flow` の静的 port shape・`Input` ownership・`Reader`/`Writer`・`Processor`/`Emitter`・operator lifecycle、`plugin.Component` の `Open`、`media/buffer` の ownership handle/view、`media/packet` の Chunk/Packet 境界、`media/audio` の planar frame である。test fixture の駆動 loop は `bytes → chunk → packet → frame → packet → chunk → bytes` を接続し、demux/parser/decoder/encoder/muxer 間で payload ownership、sequence、timestamp を検査する。
 
-同じ skeleton の host 構築では、`plugin.Set` の一般化された declaration、`media/codec` の codec/parser identity と Binding、`host.New` の declaration conflict/target 検証も consumer として使う。`media/format.Format` は marker 由来 identity を持つ宣言を作り `Valid()` を確認するだけで、tag は Binding key/data として使う。Format/Codec/Parser は data path の I/O や parse/decode を実行しない。
+同じ skeleton の host 構築では、`plugin.Set` の一般化された declaration、`media/codec` の codec/parser identity と Binding、`host.New` の declaration conflict/target 検証も consumer として使う。`media/format.Format` は marker 由来 identity を持つ宣言を作り `Valid()` を確認するだけで、tag は Binding key/data として使う。`media/codec.Codec`/`Parser` 自身は I/O や parse/decode を実行せず、data path の trivial parser/decoder/encoder は `plugin.Component` の `flow.Processor` fixture として実装する。第三者 schema では erased descriptor から typed queue/fan-out を Open 時に一度だけ検証し、実際に item を通す。
 
-M3-1 で data-path consumer を持たず宣言・検証に留める contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、Codec/Parser の実 decode/encode、metadata/side data、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-2/M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
+M3-1 で data-path consumer を持たず宣言・検証に留める contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、実 Format/Codec の decode/encode、metadata/side data、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-2/M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
 
 M3 はこの文書の capability matrix が要求する拡張点のうち、contract として表現できる範囲を満たす milestone である。各行の実装は M6 以降が担当する。個別の条件は [media](media.md#m3-完了条件) と [access](access.md#m3-完了条件) を参照し、この節は網羅性だけを見る。
 

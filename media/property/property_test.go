@@ -39,8 +39,12 @@ func TestTypedPropertySetIsImmutableAndOpen(t *testing.T) {
 
 func TestReferencePropertyRequiresDeclaredClone(t *testing.T) {
 	type pointerID struct{}
-	if Define[pointerID, []int]().Valid() {
+	missing := Define[pointerID, []int]()
+	if missing.Valid() {
 		t.Fatal("reference property without clone was accepted")
+	}
+	if missing.Problem() == nil {
+		t.Fatal("reference property problem was discarded")
 	}
 	key := Define[pointerID, []int](func(value []int) []int {
 		return append([]int(nil), value...)

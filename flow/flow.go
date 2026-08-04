@@ -21,7 +21,6 @@ type Multiplicity uint8
 
 const (
 	One Multiplicity = iota + 1
-	OptionalMultiplicity
 	ManyMultiplicity
 )
 
@@ -52,38 +51,38 @@ func WithMultiplicity(value Multiplicity) PortOption {
 	return func(options *portOptions) { options.multiplicity = value }
 }
 
-// Port is an erased static port declaration. The schema identity is retained
-// on the port; the typed constructors ensure it is created while T is known.
+// Port is an erased static port declaration. The schema descriptor, including
+// its typed factory closure, is retained on the port; typed constructors ensure
+// it is captured while T is known.
 type Port struct {
-	id            string
-	direction     Direction
-	schema        schema.ID
-	schemaProblem error
-	required      bool
-	multiplicity  Multiplicity
+	id           string
+	direction    Direction
+	descriptor   schema.Descriptor
+	required     bool
+	multiplicity Multiplicity
 }
 
 func In[T any](id string, typ schema.Type[T], options ...PortOption) Port {
-	return newPort(id, InputDirection, typ.Identity(), typ.Problem(), options...)
+	return newPort(id, InputDirection, typ.Descriptor(), options...)
 }
 
 func Out[T any](id string, typ schema.Type[T], options ...PortOption) Port {
-	return newPort(id, OutputDirection, typ.Identity(), typ.Problem(), options...)
+	return newPort(id, OutputDirection, typ.Descriptor(), options...)
 }
 
-func newPort(id string, direction Direction, identity schema.ID, schemaProblem error, options ...PortOption) Port {
+func newPort(id string, direction Direction, descriptor schema.Descriptor, options ...PortOption) Port {
 	state := portOptions{required: true, multiplicity: One}
 	for _, option := range options {
 		if option != nil {
 			option(&state)
 		}
 	}
-	return Port{id: id, direction: direction, schema: identity, schemaProblem: schemaProblem, required: state.required, multiplicity: state.multiplicity}
+	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity}
 }
 
 func (p Port) ID() string                 { return p.id }
 func (p Port) Direction() Direction       { return p.direction }
-func (p Port) Schema() schema.ID          { return p.schema }
+func (p Port) Schema() schema.Descriptor  { return p.descriptor }
 func (p Port) Required() bool             { return p.required }
 func (p Port) Multiplicity() Multiplicity { return p.multiplicity }
 
@@ -116,10 +115,10 @@ func (s Shape) Validate() error {
 				return fmt.Errorf("port id %q is repeated", port.id)
 			}
 			seen[port.id] = struct{}{}
-			if port.schemaProblem != nil {
-				return fmt.Errorf("port %q has an invalid schema: %w", port.id, port.schemaProblem)
+			if problem := port.descriptor.Problem(); problem != nil {
+				return fmt.Errorf("port %q has an invalid schema: %w", port.id, problem)
 			}
-			if port.schema.IsZero() {
+			if !port.descriptor.Valid() {
 				return fmt.Errorf("port %q has an undefined schema", port.id)
 			}
 			if port.multiplicity < One || port.multiplicity > ManyMultiplicity {

@@ -21,11 +21,11 @@ import (
 
 type skeletonPluginID struct{}
 type skeletonSourceID struct{}
-type skeletonDecoderID struct{}
+type skeletonDemuxerID struct{}
+type skeletonParserID struct{}
+type skeletonCodecID struct{}
 type skeletonEncoderID struct{}
 type skeletonMuxerID struct{}
-type skeletonCodecID struct{}
-type skeletonParserID struct{}
 type skeletonFormatID struct{}
 type skeletonBytesID struct{}
 type skeletonChunkID struct{}
@@ -68,15 +68,15 @@ func (o *skeletonSourceOperator) Read(context.Context) (flow.Input[[]byte], erro
 	return flow.NewInput(append([]byte(nil), o.data...), skeletonBytesSchema), nil
 }
 
-type skeletonDecoderOperator struct{ shape flow.Shape }
+type skeletonDemuxerOperator struct{ shape flow.Shape }
 
-func (o *skeletonDecoderOperator) Ports() flow.Shape { return o.shape }
-func (o *skeletonDecoderOperator) Close() error      { return nil }
+func (o *skeletonDemuxerOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonDemuxerOperator) Close() error      { return nil }
 
-func (o *skeletonDecoderOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
+func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
 	owner := input.Take()
 	if !owner.Valid() {
-		return fmt.Errorf("decoder input was not owned")
+		return fmt.Errorf("demuxer input was not owned")
 	}
 	data := owner.Value()
 	owner.Release()
@@ -100,51 +100,104 @@ func (o *skeletonDecoderOperator) Process(ctx context.Context, input flow.Input[
 	return nil
 }
 
-func (o *skeletonDecoderOperator) Flush(context.Context, flow.Emitter[packet.Chunk]) error {
+func (o *skeletonDemuxerOperator) Flush(context.Context, flow.Emitter[packet.Chunk]) error {
 	return nil
 }
 
-type skeletonEncoderOperator struct {
-	shape      flow.Shape
-	pending    audio.Frame[int16]
-	hasPending bool
-}
+type skeletonParserOperator struct{ shape flow.Shape }
 
-func (o *skeletonEncoderOperator) Ports() flow.Shape { return o.shape }
-func (o *skeletonEncoderOperator) Close() error      { return nil }
+func (o *skeletonParserOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonParserOperator) Close() error      { return nil }
 
-func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[audio.Frame[int16]]) error {
+func (o *skeletonParserOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[packet.Packet]) error {
 	owner := input.Take()
 	if !owner.Valid() {
-		return fmt.Errorf("encoder input was not owned")
+		return fmt.Errorf("parser input was not owned")
 	}
 	chunk := owner.Value()
 	payload := chunk.Payload().Share()
-	frame, err := audio.NewFrame[int16](chunk.PTS(), len(chunk.Bytes())/2, payload)
+	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes())/2))), payload)
+	owner.Release()
+	item := flow.NewInput(value, skeletonPacketSchema)
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (o *skeletonParserOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error {
+	return nil
+}
+
+type skeletonCodecOperator struct{ shape flow.Shape }
+
+func (o *skeletonCodecOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonCodecOperator) Close() error      { return nil }
+
+func (o *skeletonCodecOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
+	owner := input.Take()
+	if !owner.Valid() {
+		return fmt.Errorf("decoder input was not owned")
+	}
+	value := owner.Value()
+	payload := value.Payload().Share()
+	frame, err := audio.NewFrame[int16](value.PTS(), len(value.Bytes())/2, payload)
 	if err != nil {
 		payload.Release()
 		owner.Release()
 		return err
 	}
 	owner.Release()
+	item := flow.NewInput(frame, skeletonFrameSchema)
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (o *skeletonCodecOperator) Flush(context.Context, flow.Emitter[audio.Frame[int16]]) error {
+	return nil
+}
+
+type skeletonEncoderOperator struct {
+	shape      flow.Shape
+	pending    packet.Packet
+	hasPending bool
+}
+
+func (o *skeletonEncoderOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonEncoderOperator) Close() error      { return nil }
+
+func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
+	owner := input.Take()
+	if !owner.Valid() {
+		return fmt.Errorf("encoder input was not owned")
+	}
+	frame := owner.Value()
+	payload := frame.Planes().Share()
+	value := packet.NewPacket(uint64(frame.PTS().Value()), frame.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))), payload)
+	owner.Release()
 	if o.hasPending {
-		item := flow.NewInput(o.pending, skeletonFrameSchema)
+		item := flow.NewInput(o.pending, skeletonPacketSchema)
 		o.hasPending = false
 		if err := output.Emit(ctx, item); err != nil {
 			item.Drop()
+			value.Release()
 			return err
 		}
 	}
-	o.pending = frame
+	o.pending = value
 	o.hasPending = true
 	return nil
 }
 
-func (o *skeletonEncoderOperator) Flush(ctx context.Context, output flow.Emitter[audio.Frame[int16]]) error {
+func (o *skeletonEncoderOperator) Flush(ctx context.Context, output flow.Emitter[packet.Packet]) error {
 	if !o.hasPending {
 		return nil
 	}
-	item := flow.NewInput(o.pending, skeletonFrameSchema)
+	item := flow.NewInput(o.pending, skeletonPacketSchema)
 	o.hasPending = false
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
@@ -159,38 +212,27 @@ type skeletonTrace struct {
 }
 
 type skeletonMuxerOperator struct {
-	shape *flow.Shape
+	shape flow.Shape
 	trace *skeletonTrace
 }
 
-func (o *skeletonMuxerOperator) Ports() flow.Shape {
-	if o.shape == nil {
-		return flow.Shape{}
-	}
-	return o.shape.Clone()
-}
+func (o *skeletonMuxerOperator) Ports() flow.Shape { return o.shape }
+func (o *skeletonMuxerOperator) Close() error      { return nil }
 
-func (o *skeletonMuxerOperator) Close() error { return nil }
-
-func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[[]byte]) error {
+func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[packet.Chunk]) error {
 	owner := input.Take()
 	if !owner.Valid() {
 		return fmt.Errorf("muxer input was not owned")
 	}
-	frame := owner.Value()
-	payload := frame.Planes().Share()
-	packetValue := packet.NewPacket(uint64(frame.PTS().Value()), frame.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))), payload)
-	chunkPayload := packetValue.Payload().Share()
-	chunk := packet.NewTimestampedChunk(packetValue.Sequence(), packetValue.PTS(), chunkPayload)
-	value := append([]byte(nil), chunk.Bytes()...)
+	value := owner.Value()
+	payload := value.Payload().Share()
+	chunk := packet.NewTimestampedChunk(value.Sequence(), value.PTS(), payload)
+	owner.Release()
 	if o.trace != nil {
 		o.trace.sequences = append(o.trace.sequences, chunk.Sequence())
 		o.trace.timestamps = append(o.trace.timestamps, chunk.PTS().Value())
 	}
-	chunk.Release()
-	packetValue.Release()
-	owner.Release()
-	item := flow.NewInput(value, skeletonBytesSchema)
+	item := flow.NewInput(chunk, skeletonChunkSchema)
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -198,28 +240,42 @@ func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[au
 	return nil
 }
 
-func (o *skeletonMuxerOperator) Flush(context.Context, flow.Emitter[[]byte]) error {
+func (o *skeletonMuxerOperator) Flush(context.Context, flow.Emitter[packet.Chunk]) error {
 	return nil
 }
 
-type skeletonDeclarationOperator struct{ shape flow.Shape }
-
-func (o *skeletonDeclarationOperator) Ports() flow.Shape { return o.shape }
-func (o *skeletonDeclarationOperator) Close() error      { return nil }
-
 type skeletonByteWriter struct {
 	bytes []byte
-	items int
 }
 
 func (w *skeletonByteWriter) Write(_ context.Context, input flow.Input[[]byte]) error {
 	owner := input.Take()
 	if !owner.Valid() {
-		return fmt.Errorf("writer input was not owned")
+		return fmt.Errorf("byte writer input was not owned")
 	}
 	w.bytes = append(w.bytes, owner.Value()...)
-	w.items++
 	owner.Release()
+	return nil
+}
+
+type skeletonChunkWriter struct {
+	sink  flow.Writer[[]byte]
+	items int
+}
+
+func (w *skeletonChunkWriter) Write(ctx context.Context, input flow.Input[packet.Chunk]) error {
+	if !input.Valid() {
+		return fmt.Errorf("chunk writer input was not owned")
+	}
+	value := input.Value()
+	bytes := append([]byte(nil), value.Bytes()...)
+	byteInput := flow.NewInput(bytes, skeletonBytesSchema)
+	if err := w.sink.Write(ctx, byteInput); err != nil {
+		byteInput.Drop()
+		return err
+	}
+	input.Drop()
+	w.items++
 	return nil
 }
 
@@ -248,35 +304,60 @@ func skeletonConfigSchema() config.Schema[skeletonConfig] {
 
 func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", skeletonBytesSchema)})
-	decoderShape := flow.NewShape([]flow.Port{flow.In("bytes", skeletonBytesSchema)}, []flow.Port{flow.Out("chunks", skeletonChunkSchema, flow.Many())})
-	encoderShape := flow.NewShape([]flow.Port{flow.In("chunks", skeletonChunkSchema)}, []flow.Port{flow.Out("frames", skeletonFrameSchema)})
-	muxerShape := flow.NewShape([]flow.Port{flow.In("frames", skeletonFrameSchema)}, []flow.Port{flow.Out("bytes", skeletonBytesSchema)})
-	declarationShape := flow.NewShape([]flow.Port{flow.In("input", skeletonPacketSchema)}, []flow.Port{flow.Out("output", skeletonPacketSchema)})
+	demuxerShape := flow.NewShape([]flow.Port{flow.In("bytes", skeletonBytesSchema)}, []flow.Port{flow.Out("chunks", skeletonChunkSchema, flow.Many())})
+	parserShape := flow.NewShape([]flow.Port{flow.In("chunks", skeletonChunkSchema)}, []flow.Port{flow.Out("packets", skeletonPacketSchema)})
+	decoderShape := flow.NewShape([]flow.Port{flow.In("packets", skeletonPacketSchema)}, []flow.Port{flow.Out("frames", skeletonFrameSchema)})
+	encoderShape := flow.NewShape([]flow.Port{flow.In("frames", skeletonFrameSchema)}, []flow.Port{flow.Out("packets", skeletonPacketSchema)})
+	muxerShape := flow.NewShape([]flow.Port{flow.In("packets", skeletonPacketSchema)}, []flow.Port{flow.Out("chunks", skeletonChunkSchema)})
 	configSchema := skeletonConfigSchema()
 	return plugin.Define[skeletonPluginID](plugin.Descriptor{DisplayName: "foundation skeleton", Version: "1"},
 		plugin.NewComponent[skeletonSourceID](plugin.Descriptor{DisplayName: "source"}, configSchema, plugin.WithPorts(sourceShape), plugin.WithOpen(func() (flow.Operator, error) {
 			return &skeletonSourceOperator{shape: sourceShape, data: append([]byte(nil), data...)}, nil
 		})),
-		plugin.NewComponent[skeletonDecoderID](plugin.Descriptor{DisplayName: "decoder"}, configSchema, plugin.WithPorts(decoderShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonDecoderOperator{shape: decoderShape}, nil
+		plugin.NewComponent[skeletonDemuxerID](plugin.Descriptor{DisplayName: "demuxer"}, configSchema, plugin.WithPorts(demuxerShape), plugin.WithOpen(func() (flow.Operator, error) {
+			return &skeletonDemuxerOperator{shape: demuxerShape}, nil
+		})),
+		plugin.NewComponent[skeletonParserID](plugin.Descriptor{DisplayName: "parser"}, configSchema, plugin.WithPorts(parserShape), plugin.WithOpen(func() (flow.Operator, error) {
+			return &skeletonParserOperator{shape: parserShape}, nil
+		})),
+		plugin.NewComponent[skeletonCodecID](plugin.Descriptor{DisplayName: "decoder"}, configSchema, plugin.WithPorts(decoderShape), plugin.WithOpen(func() (flow.Operator, error) {
+			return &skeletonCodecOperator{shape: decoderShape}, nil
 		})),
 		plugin.NewComponent[skeletonEncoderID](plugin.Descriptor{DisplayName: "encoder"}, configSchema, plugin.WithPorts(encoderShape), plugin.WithOpen(func() (flow.Operator, error) {
 			return &skeletonEncoderOperator{shape: encoderShape}, nil
 		})),
 		plugin.NewComponent[skeletonMuxerID](plugin.Descriptor{DisplayName: "muxer"}, configSchema, plugin.WithPorts(muxerShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonMuxerOperator{shape: &muxerShape, trace: trace}, nil
-		})),
-		plugin.NewComponent[skeletonCodecID](plugin.Descriptor{DisplayName: "codec"}, configSchema, plugin.WithPorts(declarationShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonDeclarationOperator{shape: declarationShape}, nil
-		})),
-		plugin.NewComponent[skeletonParserID](plugin.Descriptor{DisplayName: "parser"}, configSchema, plugin.WithPorts(declarationShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonDeclarationOperator{shape: declarationShape}, nil
+			return &skeletonMuxerOperator{shape: muxerShape, trace: trace}, nil
 		})),
 	)
 }
 
 func skeletonBinding() codec.Binding {
 	return codec.Bind(format.NewTag("fixture", "bytes"), codec.Define[skeletonCodecID](), codec.DefineParser[skeletonParserID]())
+}
+
+func openQueue[T any](descriptor schema.Descriptor) (schema.Queue[T], error) {
+	erased, err := descriptor.NewPipe()
+	if err != nil {
+		return nil, err
+	}
+	queue, ok := erased.(schema.Queue[T])
+	if !ok {
+		return nil, fmt.Errorf("schema queue product has type %T", erased)
+	}
+	return queue, nil
+}
+
+func openFanout[T any](descriptor schema.Descriptor, outputs int) (schema.Fanout[T], error) {
+	erased, err := descriptor.NewTee(outputs)
+	if err != nil {
+		return nil, err
+	}
+	fanout, ok := erased.(schema.Fanout[T])
+	if !ok {
+		return nil, fmt.Errorf("schema fan-out product has type %T", erased)
+	}
+	return fanout, nil
 }
 
 func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
@@ -296,7 +377,15 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoderValue, err := instance.Open(plugin.IdentityOf[skeletonDecoderID]())
+	demuxerValue, err := instance.Open(plugin.IdentityOf[skeletonDemuxerID]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parserValue, err := instance.Open(plugin.IdentityOf[skeletonParserID]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoderValue, err := instance.Open(plugin.IdentityOf[skeletonCodecID]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,10 +398,12 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sourceValue.Close()
+	defer demuxerValue.Close()
+	defer parserValue.Close()
 	defer decoderValue.Close()
 	defer encoderValue.Close()
 	defer muxerValue.Close()
-	for _, operator := range []flow.Operator{sourceValue, decoderValue, encoderValue, muxerValue} {
+	for _, operator := range []flow.Operator{sourceValue, demuxerValue, parserValue, decoderValue, encoderValue, muxerValue} {
 		if err := operator.Ports().Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -321,61 +412,85 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if !ok {
 		t.Fatal("source did not implement flow.Reader[[]byte]")
 	}
-	decoder, ok := decoderValue.(flow.Processor[[]byte, packet.Chunk])
+	demuxer, ok := demuxerValue.(flow.Processor[[]byte, packet.Chunk])
 	if !ok {
-		t.Fatal("decoder did not implement flow.Processor[[]byte, packet.Chunk]")
+		t.Fatal("demuxer did not implement flow.Processor[[]byte, packet.Chunk]")
 	}
-	encoder, ok := encoderValue.(flow.Processor[packet.Chunk, audio.Frame[int16]])
+	parser, ok := parserValue.(flow.Processor[packet.Chunk, packet.Packet])
 	if !ok {
-		t.Fatal("encoder did not implement flow.Processor[packet.Chunk, audio.Frame[int16]]")
+		t.Fatal("parser did not implement flow.Processor[packet.Chunk, packet.Packet]")
 	}
-	muxer, ok := muxerValue.(flow.Processor[audio.Frame[int16], []byte])
+	decoder, ok := decoderValue.(flow.Processor[packet.Packet, audio.Frame[int16]])
 	if !ok {
-		t.Fatal("muxer did not implement flow.Processor[audio.Frame[int16], []byte]")
+		t.Fatal("decoder did not implement flow.Processor[packet.Packet, audio.Frame[int16]]")
 	}
-	writer := &skeletonByteWriter{}
-	var sink flow.Writer[[]byte] = writer
-	emitter := skeletonWriterEmitter[[]byte]{sink: sink}
+	encoder, ok := encoderValue.(flow.Processor[audio.Frame[int16], packet.Packet])
+	if !ok {
+		t.Fatal("encoder did not implement flow.Processor[audio.Frame[int16], packet.Packet]")
+	}
+	muxer, ok := muxerValue.(flow.Processor[packet.Packet, packet.Chunk])
+	if !ok {
+		t.Fatal("muxer did not implement flow.Processor[packet.Packet, packet.Chunk]")
+	}
+	byteWriter := &skeletonByteWriter{}
+	var byteSink flow.Writer[[]byte] = byteWriter
+	chunkWriter := &skeletonChunkWriter{sink: byteSink}
+	var chunkSink flow.Writer[packet.Chunk] = chunkWriter
+	var chunkEmitter flow.Emitter[packet.Chunk] = skeletonWriterEmitter[packet.Chunk]{sink: chunkSink}
 	chunkOutput := &skeletonEmitter[packet.Chunk]{}
+	packetOutput := &skeletonEmitter[packet.Packet]{}
 	frameOutput := &skeletonEmitter[audio.Frame[int16]]{}
+	encodedPacketOutput := &skeletonEmitter[packet.Packet]{}
 	byteInput, err := source.Read(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := decoder.Process(ctx, byteInput, chunkOutput); err != nil {
+	if err := demuxer.Process(ctx, byteInput, chunkOutput); err != nil {
 		t.Fatal(err)
 	}
 	for _, chunk := range chunkOutput.items {
-		frameOutput.items = frameOutput.items[:0]
-		if err := encoder.Process(ctx, chunk, frameOutput); err != nil {
+		packetOutput.items = packetOutput.items[:0]
+		if err := parser.Process(ctx, chunk, packetOutput); err != nil {
 			t.Fatal(err)
 		}
-		for _, frame := range frameOutput.items {
-			if err := muxer.Process(ctx, frame, emitter); err != nil {
+		for _, packetValue := range packetOutput.items {
+			frameOutput.items = frameOutput.items[:0]
+			if err := decoder.Process(ctx, packetValue, frameOutput); err != nil {
 				t.Fatal(err)
+			}
+			for _, frame := range frameOutput.items {
+				encodedPacketOutput.items = encodedPacketOutput.items[:0]
+				if err := encoder.Process(ctx, frame, encodedPacketOutput); err != nil {
+					t.Fatal(err)
+				}
+				for _, encodedPacket := range encodedPacketOutput.items {
+					if err := muxer.Process(ctx, encodedPacket, chunkEmitter); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 		}
 	}
-	frameOutput.items = frameOutput.items[:0]
-	if err := encoder.Flush(ctx, frameOutput); err != nil {
+	encodedPacketOutput.items = encodedPacketOutput.items[:0]
+	if err := encoder.Flush(ctx, encodedPacketOutput); err != nil {
 		t.Fatal(err)
 	}
-	for _, frame := range frameOutput.items {
-		if err := muxer.Process(ctx, frame, emitter); err != nil {
+	for _, encodedPacket := range encodedPacketOutput.items {
+		if err := muxer.Process(ctx, encodedPacket, chunkEmitter); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := muxer.Flush(ctx, emitter); err != nil {
+	if err := muxer.Flush(ctx, chunkEmitter); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := source.Read(ctx); err != io.EOF {
 		t.Fatalf("second source read = %v, want EOF", err)
 	}
-	if string(writer.bytes) != string(inputBytes) {
-		t.Fatalf("round trip bytes = %v, want %v", writer.bytes, inputBytes)
+	if string(byteWriter.bytes) != string(inputBytes) {
+		t.Fatalf("round trip bytes = %v, want %v", byteWriter.bytes, inputBytes)
 	}
-	if writer.items != 4 || len(trace.sequences) != 4 {
-		t.Fatalf("output items = %d, trace = %d, want 4", writer.items, len(trace.sequences))
+	if chunkWriter.items != 4 || len(trace.sequences) != 4 {
+		t.Fatalf("output items = %d, trace = %d, want 4", chunkWriter.items, len(trace.sequences))
 	}
 	for index := range trace.sequences {
 		if trace.sequences[index] != uint64(index) || trace.timestamps[index] != timing.PTS(index) {
@@ -386,7 +501,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 
 func TestWalkingSkeletonRejectsConflictingBindingInHostBuild(t *testing.T) {
 	base := plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonBinding())
-	conflict := codec.BindWithoutParser(format.NewTag("fixture", "bytes"), codec.New(plugin.IdentityOf[skeletonDecoderID]()))
+	conflict := codec.BindWithoutParser(format.NewTag("fixture", "bytes"), codec.New(plugin.IdentityOf[skeletonDemuxerID]()))
 	if _, err := host.New(host.Plugins(base.AddDeclaration(conflict))); err == nil {
 		t.Fatal("host accepted conflicting codec declaration")
 	}
@@ -397,7 +512,9 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 	type videoUnit struct{ Width int }
 	type subtitleID struct{}
 	type subtitleCue struct{ Text string }
-	video := schema.Define[videoID, videoUnit](schema.Traits[videoUnit]{})
+	video := schema.Define[videoID, videoUnit](schema.Traits[videoUnit]{
+		Fork: func(value videoUnit) videoUnit { return value },
+	})
 	subtitle := schema.Define[subtitleID, subtitleCue](schema.Traits[subtitleCue]{})
 	shape := flow.NewShape([]flow.Port{flow.In("video", video)}, []flow.Port{flow.Out("subtitle", subtitle)})
 	if err := shape.Validate(); err != nil {
@@ -405,5 +522,29 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 	}
 	if video.Identity() == subtitle.Identity() || video.Identity().IsZero() || subtitle.Identity().IsZero() {
 		t.Fatal("third-party schema identities are not open and distinct")
+	}
+	if video.Descriptor() != video.Descriptor() {
+		t.Fatal("schema descriptor is not comparable")
+	}
+	queue, err := openQueue[videoUnit](shape.Inputs[0].Schema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queue.Push(videoUnit{Width: 128}) {
+		t.Fatal("typed queue rejected an item")
+	}
+	if value, ok := queue.Pop(); !ok || value.Width != 128 {
+		t.Fatalf("typed queue value = %#v, %v", value, ok)
+	}
+	fanout, err := openFanout[videoUnit](shape.Inputs[0].Schema(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := fanout.Split(videoUnit{Width: 1920})
+	if len(values) != 2 || values[1].Width != 1920 {
+		t.Fatalf("typed fan-out values = %#v", values)
+	}
+	for _, value := range values {
+		fanout.Drop(value)
 	}
 }

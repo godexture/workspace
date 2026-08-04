@@ -3,6 +3,7 @@ package property
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 )
@@ -18,6 +19,7 @@ type Key[T any] struct {
 	id        ID
 	valueType reflect.Type
 	clone     func(T) T
+	problem   string
 }
 
 // Define creates an open property key. Reference-valued properties must
@@ -25,16 +27,20 @@ type Key[T any] struct {
 func Define[Marker any, T any](clones ...func(T) T) Key[T] {
 	typ := reflect.TypeFor[Marker]()
 	if typ == nil || typ.Kind() == reflect.Interface || typ.Name() == "" || typ.PkgPath() == "" {
-		return Key[T]{}
+		return Key[T]{problem: "property marker must be a named concrete type declared by a package"}
 	}
 	if len(clones) > 1 || (len(clones) == 1 && clones[0] == nil) {
-		return Key[T]{}
+		return Key[T]{problem: "property clone must be supplied at most once and must not be nil"}
 	}
 	var clone func(T) T
 	if len(clones) == 1 {
 		clone = clones[0]
 	} else if propertyNeedsClone(reflect.TypeFor[T]()) {
-		return Key[T]{}
+		return Key[T]{
+			id:        ID{canonical: typ.PkgPath() + "." + typ.Name()},
+			valueType: reflect.TypeFor[T](),
+			problem:   fmt.Sprintf("property key %s requires a declared clone for reference-valued type %s", typ.PkgPath()+"."+typ.Name(), reflect.TypeFor[T]()),
+		}
 	} else {
 		clone = func(value T) T { return value }
 	}
@@ -52,6 +58,14 @@ func IdentityOf[Marker any]() ID {
 func (k Key[T]) Valid() bool             { return !k.id.IsZero() && k.valueType != nil && k.clone != nil }
 func (k Key[T]) ID() ID                  { return k.id }
 func (k Key[T]) ValueType() reflect.Type { return k.valueType }
+
+// Problem returns the key construction problem, if any.
+func (k Key[T]) Problem() error {
+	if k.problem == "" {
+		return nil
+	}
+	return errors.New(k.problem)
+}
 
 func (k Key[T]) Get(set Set) (T, bool) {
 	entry, ok := set.values[k.id]
@@ -74,6 +88,7 @@ func (k Key[T]) Set(set Set, value T) (Set, error) {
 type keyLike interface {
 	ID() ID
 	ValueType() reflect.Type
+	Problem() error
 	cloneAny(any) (any, bool)
 }
 
@@ -90,7 +105,13 @@ type Set struct{ values map[ID]entry }
 func New() Set { return Set{values: make(map[ID]entry)} }
 
 func (s Set) With(key keyLike, value any) (Set, error) {
-	if key == nil || key.ID().IsZero() || key.ValueType() == nil {
+	if key == nil {
+		return s, errors.New("invalid property key")
+	}
+	if problem := key.Problem(); problem != nil {
+		return s, problem
+	}
+	if key.ID().IsZero() || key.ValueType() == nil {
 		return s, errors.New("invalid property key")
 	}
 	cloned, ok := key.cloneAny(value)
