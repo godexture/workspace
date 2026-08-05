@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/marker"
 )
 
 const (
@@ -52,17 +53,19 @@ type Builder[C any] struct {
 
 // Struct starts a schema builder with a fresh default factory. Every
 // top-level field in C must be registered with AddField.
-func Struct[C any](defaults func() C) *Builder[C] {
-	return &Builder[C]{defaults: defaults}
-}
-
-// Identity sets a stable schema identity independent from the Go config type.
-func (b *Builder[C]) Identity(value string) *Builder[C] {
-	if b == nil {
-		return b
+//
+// Marker is an empty type whose package path and name become the schema
+// identity, the same rule plugins, components, schemas, properties, and
+// metadata keys follow. It is separate from C so renaming the config struct
+// does not change the identity a surface or fingerprint already recorded, and
+// it saves third parties from inventing a collision-free string.
+func Struct[Marker, C any](defaults func() C) *Builder[C] {
+	canonical, err := marker.Canonical[Marker]()
+	builder := &Builder[C]{defaults: defaults, identity: canonical}
+	if err != nil {
+		builder.problems = append(builder.problems, diagnostic.NewItem(codeMissingIdentity, diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: "identity"}, "config schema "+err.Error(), nil))
 	}
-	b.identity = value
-	return b
+	return builder
 }
 
 // Version sets the schema decoder/fingerprint version.

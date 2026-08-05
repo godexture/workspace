@@ -12,10 +12,9 @@ type encoderConfig struct {
 }
 
 func encoderSchema() config.Schema[encoderConfig] {
-	return config.Struct(func() encoderConfig {
+	return config.Struct[encoderConfig](func() encoderConfig {
 		return encoderConfig{Compression: 5}
 	}).
-		Identity("example.encoder").
 		Version("1").
 		AddField(config.Field(
 			"compression",

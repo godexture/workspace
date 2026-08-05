@@ -172,3 +172,36 @@ Transform/Start、core/SDK、CLI/runtime 等に同じ判断を重複実装しな
 - scheduler/queue の代替実装で公式 plugin source を変更しない。
 - CLI/WASM/HTTP が同一 Job から同一 Plan を得る。
 - observation off の linear path が hot-path 性能契約を満たす。
+
+## M6 完了条件
+
+M6 は最初の実 container 経路が動く milestone であり、利用者と plugin 開発者の体験が初めて実測できる時点である。この節はその 2 者を対象にする。core 開発者向けの gate は各領域文書の完了条件が担う。
+
+- **利用者の最短経路が一行である。** [surfaces](surfaces.md#最短経路の-convenience) の `standard.Convert(ctx, "in.flac", "out.wav")` 相当が動く。path から Reference への解決は convenience が行い、URL 構文を要求しない。この convenience は `Job` を組み立てて同じ `Host` を呼ぶだけとし、別経路の planner や既定を持たない。
+- **2 段目へ連続的に移行できる。** codec 指定、filter、mapping、policy、custom Set へ進む時に、1 段目で書いた code を捨てずに `Job` を露出させて拡張できる。[progressive disclosure](#progressive-disclosure) の段差が「作り直し」にならない。
+- **plugin 開発者の最小 component を実測し、目標との差を記録する。** M6 で実 WAVE/PCM component を書いた時点で、gain 相当の最小 processor に必要な概念数を数える。[最小 component](#最小-component) が目標とする水準に対して差が大きい場合、helper を追加するか、追加しない理由を記録する。放置しない。
+- **通常 Processor が実装しなくてよいものを実際に実装していない。** global registration、衝突しない文字列 ID、goroutine/channel、scheduler、手動 `Release`、CLI flag parser、wire DTO、metrics 集約、candidate routing のいずれも、公式 WAVE/PCM component の source に現れない。
+- **識別子を手で考えさせない。** 公式 plugin を書く過程で、第三者が一意性を保証しなければならない文字列が新たに必要にならなかったことを確認する。必要になった箇所は marker 由来へ移すか、一意性が不要である理由を記録する。
+- **error が最初の利用者を助ける。** 存在しない component selector、範囲外の config 値、満たせない mapping に対し、最も近い候補または有効な範囲が示される。[config](config.md#validation-と-diagnostic) の構造化 diagnostic が実 plugin でも成立する。
+
+## M9 完了条件
+
+M9 は library、CLI、WASM、demo を同じ Host へ移す milestone であり、三者の体験が揃う時点である。
+
+- **[受け入れ test](#受け入れ-test) の各項目が自動 test として存在する。** 特に「初めての利用者が input/output だけで same-format/same-codec job を実行できる」「custom host example が通常の短い Go `main` で完結する」「third-party fixture が marker、config、Processor、test 一つで追加できる」を実行可能な形にする。
+- **[complexity budget](#complexity-budget) の左列と中央列が実測で満たされている。** 通常利用者が cancel/progress 以外の並行性を意識せず、plugin 開発者が ownership、scheduler、surface DTO を書かない。表の項目ごとに、実際の利用側 code を根拠として示す。
+- **同じ Job から CLI、WASM、library が同じ Plan を得る。** 表現だけが違い、既定や解決結果が surface ごとにずれない。
+- **説明可能性が surface に届く。** [説明可能性](#説明可能性) の一覧が `Plan` から実際に読め、CLI と WASM の両方で表示できる。
+- **利用者向け文書が新経路と一致する。** README と godoc の example が現在の API で compile し、旧 global registry や audio-only model を示さない（[F45](findings.md)）。
+- **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。**
+
+## 文書全体の完了条件
+
+この節は三者の体験の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。
+
+- 通常利用者が input/output だけで開始でき、必要になった段階だけ上位概念を学べる。
+- 実行前に `Plan` で何が起きるかを確認でき、error がどの port/property/capability を満たせないかを示す。
+- plugin 開発者が marker、config、Processor と test だけで component を追加でき、衝突しない文字列 ID を考えない。
+- 高度な component が同じ port/schema/lifecycle の上で段階的に機能を足せ、別の runtime/API family にならない。
+- core 開発者が scheduler、queue、allocator、fusion を交換しても公式・第三者 plugin の source を変更しない。
+- complexity budget 表の左列と中央列へ core 内部の複雑性が漏れていない。

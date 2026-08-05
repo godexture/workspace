@@ -369,12 +369,14 @@ M4 は `Compile`、solver、graph validation、public `Plan`、private `Program`
 - 同じ normalized Job、Catalog、input snapshot、platform snapshot なら、catalog insertion order、map seed、並行 Compile の完了順を変えても同じ Plan fingerprint になる。
 - Prepare が Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、output transaction を開始しない。dry-run が output を作成・truncate しない。
 - M3 が declaration に留めた `access.Provider` と `endpoint` の宣言が planner に binding され、capability 不足が Open 後の type assertion ではなく Compile diagnostic になる。
-- **walking skeleton が planner 経由で通る。** M3 の直結 test が planner の作る `Plan`/`Program` 経由に置き換わり、bytes、item 数、順序、timestamp が同じであることを検査する。M3 専用の `host.Open(identity)` はこの時点で削除する。
+- **walking skeleton が planner 経由で通る。** M3 の直結 test が planner の作る `Plan`/`Program` 経由に置き換わり、bytes、item 数、順序、timestamp が同じであることを検査する。
+- **container を持たない実 PCM が通る。** trivial component は自分で作った要求にしか答えないため、skeleton だけでは contract が現実の規格に耐えるか分からない。raw PCM を最初の実 codec として planner 経由で流し、sample format、bit depth、channel layout、endian が `property.Set` と `stream.Descriptor` で表せること、Format が capability alternative を宣言して narrow view を受け取れること、Parser が identity として振る舞えることを実データで確認する。ここで判明した contract の不足は M5 と M6 の前に直す。M6 はこの PCM へ WAVE container を足す。
+- **合成 filter chain で audio.md の設計仮定を測る。** [audio](audio.md#benchmark-contract) の受け入れ条件のうち「compatible な N filter region の sample format conversion が入口/出口の最大二回で N に比例しない」は、実 filter が揃う M8 まで検証できない。M4 では合成 filter を N = 1/4/16 で並べ、planner が挿入した converter の数と Plan 上の selected sample schema を数える。数が N に比例するなら converter 配置の設計が誤っているので、runtime を積む前に直す。速度ではなく挿入数を見る gate であり、[performance](performance.md#開発時の性能回帰方針) の 2 倍目安とは別である。
 - erased schema descriptor から typed edge を組み立てる方式を確定する。M3 の `schema.Queue`/`Fanout` は Open 時 assert 用の最小 interface であり、bounded 化と backpressure を持つ実 queue は M5 が持つ。M4 は planner がその factory へ到達できることまでを確認する。
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
 - 上記を unit/property test で検査する。公式 plugin を import しない。determinism は map iteration、catalog insertion、候補評価の完了順を意図的に乱して検査する。
 
-M4 では次を未完了事項として残す。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。variant selection の実装は M8 の family 移行に乗せる。
+M4 では次を未完了事項として残す。実 container format は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。variant selection の実装は M8 の family 移行に乗せる。
 
 ## 文書全体の完了条件
 

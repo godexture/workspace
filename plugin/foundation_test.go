@@ -18,8 +18,7 @@ type pluginConfig struct {
 }
 
 func pluginSchema(defaultLevel int) config.Schema[pluginConfig] {
-	return config.Struct(func() pluginConfig { return pluginConfig{Level: defaultLevel} }).
-		Identity("plugin.test.config").
+	return config.Struct[pluginConfig](func() pluginConfig { return pluginConfig{Level: defaultLevel} }).
 		Version("1").
 		AddField(config.Field("level", func(value *pluginConfig) *int { return &value.Level }, config.Int().Range(0, 10))).
 		Build()
@@ -210,7 +209,7 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 }
 
 func TestInvalidComponentKeepsAggregateDiagnostics(t *testing.T) {
-	badSchema := config.Struct(func() pluginConfig { return pluginConfig{} }).
+	badSchema := config.Struct[pluginConfig](func() pluginConfig { return pluginConfig{} }).
 		AddField(config.Field("level", func(value *pluginConfig) *int { return &value.Level }, config.Int(), config.DependsOn("missing"))).
 		AddField(config.Field("level", func(value *pluginConfig) *int { return &value.Level }, config.Int())).
 		Build()

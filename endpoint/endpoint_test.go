@@ -26,7 +26,7 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 	typ := schema.Define[endpointSchemaID, endpointPayload](schema.Traits[endpointPayload]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	var opens atomic.Int32
-	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct(func() endpointConfig { return endpointConfig{} }).Build(), plugin.WithPorts(shape), plugin.WithOpen(func() (flow.Operator, error) {
+	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Build(), plugin.WithPorts(shape), plugin.WithOpen(func() (flow.Operator, error) {
 		opens.Add(1)
 		return endpointOperator{shape: shape}, nil
 	}))

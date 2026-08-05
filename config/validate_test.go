@@ -12,7 +12,7 @@ func TestInvalidSchemaIsAggregated(t *testing.T) {
 		Encode: func(func()) string { return "function" },
 		Clone:  func(value func()) func() { return value },
 	})
-	schema := Struct(func() invalidConfig { return invalidConfig{} }).
+	schema := Struct[invalidConfig](func() invalidConfig { return invalidConfig{} }).
 		AddField(Field("value", func(value *invalidConfig) *int { return &value.Value }, Int(), DependsOn("missing"))).
 		AddField(Field("value", func(value *invalidConfig) *int { return &value.Value }, Int())).
 		AddField(Field("fn", func(value *invalidConfig) *func() { return new(func()) }, badCodec)).
@@ -38,15 +38,14 @@ func TestSchemaRequiresIdentityVersionAndRegisteredFields(t *testing.T) {
 		Count  int
 	}
 
-	missingMetadata := Struct(func() struct{ Count int } { return struct{ Count int }{} }).
+	missingMetadata := Struct[metadataMarker](func() struct{ Count int } { return struct{ Count int }{} }).
 		AddField(Field("count", func(value *struct{ Count int }) *int { return &value.Count }, Int())).
 		Build()
 	if missingMetadata.Valid() {
 		t.Fatal("schema without identity/version reported valid")
 	}
 
-	schema := Struct(func() invalidConfig { return invalidConfig{Values: []int{1}} }).
-		Identity("test.unregistered").
+	schema := Struct[invalidConfig](func() invalidConfig { return invalidConfig{Values: []int{1}} }).
 		Version("1").
 		AddField(Field("count", func(value *invalidConfig) *int { return &value.Count }, Int())).
 		Build()
@@ -70,10 +69,9 @@ func TestSchemaRejectsUnregisteredScalarField(t *testing.T) {
 		Registered int
 		Forgotten  string
 	}
-	schema := Struct(func() scalarConfig {
+	schema := Struct[scalarConfig](func() scalarConfig {
 		return scalarConfig{Registered: 1, Forgotten: "not registered"}
 	}).
-		Identity("test.unregistered.scalar").
 		Version("1").
 		AddField(Field("registered", func(value *scalarConfig) *int { return &value.Registered }, Int())).
 		Build()
@@ -95,8 +93,7 @@ func TestSchemaAllowsBlankAndZeroSizeFields(t *testing.T) {
 		_      struct{}
 		Marker struct{}
 	}
-	schema := Struct(func() markerConfig { return markerConfig{Level: 1} }).
-		Identity("test.blank-fields").
+	schema := Struct[markerConfig](func() markerConfig { return markerConfig{Level: 1} }).
 		Version("1").
 		AddField(Field("level", func(value *markerConfig) *int { return &value.Level }, Int())).
 		Build()
@@ -105,3 +102,5 @@ func TestSchemaAllowsBlankAndZeroSizeFields(t *testing.T) {
 		t.Fatalf("schema with blank and zero-size fields is invalid: %v", schema.Err())
 	}
 }
+
+type metadataMarker struct{}

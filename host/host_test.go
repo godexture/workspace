@@ -17,8 +17,7 @@ type hostComponentB struct{}
 type hostConfig struct{ Value int }
 
 func hostSchema(value int) config.Schema[hostConfig] {
-	return config.Struct(func() hostConfig { return hostConfig{Value: value} }).
-		Identity("host.test.config").
+	return config.Struct[hostConfig](func() hostConfig { return hostConfig{Value: value} }).
 		Version("1").
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int())).
 		Build()
@@ -98,7 +97,7 @@ func TestCatalogFingerprintTracksCompositionAndSurface(t *testing.T) {
 }
 
 func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
-	badSchema := config.Struct(func() hostConfig { return hostConfig{} }).
+	badSchema := config.Struct[hostConfig](func() hostConfig { return hostConfig{} }).
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int(), config.DependsOn("missing"))).
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int())).
 		Build()

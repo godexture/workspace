@@ -15,8 +15,7 @@ type catalogSecondID struct{}
 type catalogConfig struct{ Value int }
 
 func catalogSchema() config.Schema[catalogConfig] {
-	return config.Struct(func() catalogConfig { return catalogConfig{Value: 1} }).
-		Identity("catalog.test.config").
+	return config.Struct[catalogConfig](func() catalogConfig { return catalogConfig{Value: 1} }).
 		Version("1").
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int().Range(0, 10))).
 		Build()
@@ -50,7 +49,7 @@ func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
 }
 
 func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
-	badSchema := config.Struct(func() catalogConfig { return catalogConfig{} }).
+	badSchema := config.Struct[catalogConfig](func() catalogConfig { return catalogConfig{} }).
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int(), config.DependsOn("unknown"))).
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int())).
 		Build()

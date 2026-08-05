@@ -105,7 +105,7 @@ type providerPluginB struct{}
 type providerConfig struct{}
 
 func providerSchema() config.Schema[providerConfig] {
-	return config.Struct(func() providerConfig { return providerConfig{} }).Identity("test.provider").Version("1").Build()
+	return config.Struct[providerConfig](func() providerConfig { return providerConfig{} }).Version("1").Build()
 }
 
 func TestProviderSchemeConflictUsesHostDeclarationValidation(t *testing.T) {

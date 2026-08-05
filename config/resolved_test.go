@@ -17,13 +17,11 @@ func TestSchemaSnapshotsFactorySourceAndSecret(t *testing.T) {
 		Nested:   nested{Values: []int{3}},
 		Secret:   NewSecret([]int{4}),
 	}
-	nestedSchema := Struct(func() nested { return nested{Values: []int{3}} }).
-		Identity("test.shared.nested").
+	nestedSchema := Struct[nested](func() nested { return nested{Values: []int{3}} }).
 		Version("1").
 		AddField(Field("values", func(value *nested) *[]int { return &value.Values }, Slice(Int()))).
 		Build()
-	schema := Struct(func() shared { return source }).
-		Identity("test.shared").
+	schema := Struct[shared](func() shared { return source }).
 		Version("1").
 		AddField(Field("exported", func(value *shared) *[]int { return &value.Exported }, Slice(Int()))).
 		AddField(Field("hidden", func(value *shared) *[]int { return &value.hidden }, Slice(Int()))).

@@ -14,8 +14,7 @@ type exampleCodecID struct{}
 type codecConfig struct{ Compression int }
 
 func codecSchema() config.Schema[codecConfig] {
-	return config.Struct(func() codecConfig { return codecConfig{Compression: 5} }).
-		Identity("example.codec").
+	return config.Struct[codecConfig](func() codecConfig { return codecConfig{Compression: 5} }).
 		Version("1").
 		AddField(config.Field(
 			"compression",

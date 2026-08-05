@@ -13,8 +13,7 @@ type exampleComponentID struct{}
 type exampleConfig struct{ Level int }
 
 func Codec() plugin.Definition {
-	schema := config.Struct(func() exampleConfig { return exampleConfig{Level: 5} }).
-		Identity("example.config").
+	schema := config.Struct[exampleConfig](func() exampleConfig { return exampleConfig{Level: 5} }).
 		Version("1").
 		AddField(config.Field("level", func(value *exampleConfig) *int { return &value.Level }, config.Int().Range(0, 10))).
 		Build()

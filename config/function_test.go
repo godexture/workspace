@@ -14,10 +14,9 @@ func TestFunctionValuedFieldIsRejected(t *testing.T) {
 		Windows   []window
 	}
 
-	schema := Struct(func() encoderConfig {
+	schema := Struct[encoderConfig](func() encoderConfig {
 		return encoderConfig{BlockSize: 4096, Windows: []window{func([]float64) {}}}
 	}).
-		Identity("test.function-field").
 		Version("1").
 		AddField(Field("blockSize", func(c *encoderConfig) *int { return &c.BlockSize }, Int())).
 		AddField(Field("windows", func(c *encoderConfig) *[]window { return &c.Windows },
@@ -52,8 +51,7 @@ func TestNestedSliceOfSpecsHasStableFingerprint(t *testing.T) {
 	type encoderConfig struct{ Windows []spec }
 
 	specSchema := func(reverse bool) Schema[spec] {
-		builder := Struct(func() spec { return spec{Kind: "tukey", Parameter: 0.5} }).
-			Identity("test.window-spec").Version("1")
+		builder := Struct[spec](func() spec { return spec{Kind: "tukey", Parameter: 0.5} }).Version("1")
 		kind := Field("kind", func(s *spec) *string { return &s.Kind }, String())
 		parameter := Field("parameter", func(s *spec) *float64 { return &s.Parameter }, Float64())
 		if reverse {
@@ -65,10 +63,9 @@ func TestNestedSliceOfSpecsHasStableFingerprint(t *testing.T) {
 	}
 
 	makeSchema := func(reverse bool) Schema[encoderConfig] {
-		return Struct(func() encoderConfig {
+		return Struct[encoderConfig](func() encoderConfig {
 			return encoderConfig{Windows: []spec{{Kind: "tukey", Parameter: 0.5}}}
-		}).
-			Identity("test.window-list").Version("1").
+		}).Version("1").
 			AddField(Field("windows", func(c *encoderConfig) *[]spec { return &c.Windows },
 				Slice(Nested(specSchema(reverse))))).
 			Build()

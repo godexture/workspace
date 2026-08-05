@@ -33,7 +33,7 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 		t.Fatal("unknown preset unexpectedly resolved")
 	}
 
-	builder := Struct(defaultTestConfig).Identity("test.config").Version("1")
+	builder := Struct[testConfig](defaultTestConfig).Version("1")
 	// Reuse the same field contract while adding a named preset.
 	// Rebuild the typed builder explicitly so the test exercises the public
 	// registration path rather than reaching into schema internals.
@@ -100,9 +100,9 @@ func TestCanonicalFingerprintIgnoresMapAndRegistrationOrder(t *testing.T) {
 		Number int
 	}
 	makeSchema := func(reverse bool) Schema[orderConfig] {
-		builder := Struct(func() orderConfig {
+		builder := Struct[orderConfig](func() orderConfig {
 			return orderConfig{Labels: map[string]int{"z": 26, "a": 1}, Number: 3}
-		}).Identity("order.config").Version("1")
+		}).Version("1")
 		if reverse {
 			builder.AddField(Field("number", func(value *orderConfig) *int { return &value.Number }, Int()))
 			builder.AddField(Field("labels", func(value *orderConfig) *map[string]int { return &value.Labels }, Map(String(), Int())))
@@ -141,10 +141,9 @@ func TestCanonicalEncodingGoldenDigest(t *testing.T) {
 		Count  int
 		Labels map[string]int
 	}
-	schema := Struct(func() goldenConfig {
+	schema := Struct[goldenConfig](func() goldenConfig {
 		return goldenConfig{Count: 3, Labels: map[string]int{"b": 2, "a": 1}}
 	}).
-		Identity("test.golden").
 		Version("1").
 		AddField(Field("labels", func(value *goldenConfig) *map[string]int { return &value.Labels }, Map(String(), Int()))).
 		AddField(Field("count", func(value *goldenConfig) *int { return &value.Count }, Int())).
@@ -153,10 +152,10 @@ func TestCanonicalEncodingGoldenDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonical failed: %v", err)
 	}
-	if got := fmt.Sprintf("%x", canonical); got != "676f6465632f636f6e6669672f63616e6f6e6963616c2f763100000000000000000b746573742e676f6c64656e0000000000000001310000000000000005636f756e740000000000000003696e740000000000000005696e743a3300000000000000066c6162656c73000000000000000f6d61703c737472696e672c696e743e000000000000003e6d6170000000000000000008737472696e673a610000000000000005696e743a310000000000000008737472696e673a620000000000000005696e743a32" {
+	if got := fmt.Sprintf("%x", canonical); got != "676f6465632f636f6e6669672f63616e6f6e6963616c2f763100000000000000002e6769746875622e636f6d2f676f646578747572652f676f6465632f636f6e6669672e676f6c64656e436f6e6669670000000000000001310000000000000005636f756e740000000000000003696e740000000000000005696e743a3300000000000000066c6162656c73000000000000000f6d61703c737472696e672c696e743e000000000000003e6d6170000000000000000008737472696e673a610000000000000005696e743a310000000000000008737472696e673a620000000000000005696e743a32" {
 		t.Fatalf("canonical digest = %s", got)
 	}
-	if got := hashCanonical(canonical).String(); got != "06e37b07f8bdefaf27b30c9ab4d8cda747f13e47760a46152db548c047baf0bf" {
+	if got := hashCanonical(canonical).String(); got != "d1b87eaa4ac17774a1448612ea8b923a2f3d1a688514d78924779d7a52c7f451" {
 		t.Fatalf("fingerprint digest = %s", got)
 	}
 }

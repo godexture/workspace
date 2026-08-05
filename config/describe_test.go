@@ -6,7 +6,7 @@ import (
 )
 
 func TestDescriptionIsImmutable(t *testing.T) {
-	builder := Struct(func() struct{ Mode int } { return struct{ Mode int }{} }).Identity("test.description").Version("1")
+	builder := Struct[describeMarker](func() struct{ Mode int } { return struct{ Mode int }{} }).Version("1")
 	field := Field("mode", func(value *struct{ Mode int }) *int { return &value.Mode }, Int().Help("mode"), Alias("m"))
 	schema := builder.AddField(field).Build()
 	description := schema.Description()
@@ -25,3 +25,5 @@ func TestDescriptionIsImmutable(t *testing.T) {
 		t.Fatalf("description choices unexpectedly changed")
 	}
 }
+
+type describeMarker struct{}

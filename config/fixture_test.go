@@ -17,9 +17,9 @@ type testConfig struct {
 }
 
 func testSchema() Schema[testConfig] {
-	builder := Struct(func() testConfig {
+	builder := Struct[testConfig](func() testConfig {
 		return defaultTestConfig()
-	}).Identity("test.config").Version("1")
+	}).Version("1")
 
 	builder.AddField(Field("number", func(value *testConfig) *int { return &value.Number }, Int().Range(0, 10).Help("number")))
 	builder.AddField(Field("verify", func(value *testConfig) *bool { return &value.Verify }, Bool()))
@@ -32,8 +32,7 @@ func testSchema() Schema[testConfig] {
 }
 
 func testNestedSchema() Schema[nestedConfig] {
-	return Struct(func() nestedConfig { return nestedConfig{Limit: 3} }).
-		Identity("test.config.nested").
+	return Struct[nestedConfig](func() nestedConfig { return nestedConfig{Limit: 3} }).
 		Version("1").
 		AddField(Field("limit", func(value *nestedConfig) *int { return &value.Limit }, Int())).
 		Build()

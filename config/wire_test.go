@@ -12,8 +12,7 @@ func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
 	type mapSurface struct{ Values map[string]nestedSurface }
 
 	makeNested := func() Schema[nestedSurface] {
-		return Struct(func() nestedSurface { return nestedSurface{Value: 1} }).
-			Identity("test.surface.nested").
+		return Struct[nestedSurface](func() nestedSurface { return nestedSurface{Value: 1} }).
 			Version("1").
 			AddField(Field("value", func(value *nestedSurface) *int { return &value.Value }, Int())).
 			Build()
@@ -36,8 +35,7 @@ func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
 	}
 
 	nestedSchema := makeNested()
-	nested := Struct(func() struct{ Value nestedSurface } { return struct{ Value nestedSurface }{} }).
-		Identity("test.surface.direct").
+	nested := Struct[nestedMarker](func() struct{ Value nestedSurface } { return struct{ Value nestedSurface }{} }).
 		Version("1").
 		AddField(Field("value", func(value *struct{ Value nestedSurface }) *nestedSurface { return &value.Value }, Nested(nestedSchema))).
 		Build()
@@ -46,8 +44,7 @@ func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
 		return err
 	})
 
-	slice := Struct(func() sliceSurface { return sliceSurface{} }).
-		Identity("test.surface.slice").
+	slice := Struct[sliceSurface](func() sliceSurface { return sliceSurface{} }).
 		Version("1").
 		AddField(Field("value", func(value *sliceSurface) *[]nestedSurface { return &value.Values }, Slice(Nested(nestedSchema)))).
 		Build()
@@ -56,8 +53,7 @@ func TestSurfaceDecodeRejectsUnknownNestedSliceAndMapFields(t *testing.T) {
 		return err
 	})
 
-	mapSchema := Struct(func() mapSurface { return mapSurface{} }).
-		Identity("test.surface.map").
+	mapSchema := Struct[mapSurface](func() mapSurface { return mapSurface{} }).
 		Version("1").
 		AddField(Field("value", func(value *mapSurface) *map[string]nestedSurface { return &value.Values }, Map(String(), Nested(nestedSchema)))).
 		Build()
@@ -73,8 +69,7 @@ func TestStructuredCodecsRoundTripSurface(t *testing.T) {
 		Tags   []string
 		Labels map[string]string
 	}
-	nestedSchema := Struct(func() nestedSurface { return nestedSurface{} }).
-		Identity("test.round-trip.nested").
+	nestedSchema := Struct[nestedSurface](func() nestedSurface { return nestedSurface{} }).
 		Version("1").
 		AddField(Field("level", func(value *nestedSurface) *int { return &value.Level }, Int())).
 		AddField(Field("labels", func(value *nestedSurface) *map[string]string { return &value.Labels }, Map(String(), String()))).
@@ -105,3 +100,5 @@ func assertCodecRoundTrip[T any](t *testing.T, name string, codec Codec[T], valu
 		t.Fatalf("%s round trip = %#v, want %#v; encoded=%s", name, decoded, value, encoded)
 	}
 }
+
+type nestedMarker struct{}

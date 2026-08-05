@@ -21,7 +21,7 @@ func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
 		t.Fatalf("secret reveal = %q, want original value", got)
 	}
 
-	invalid := Struct(func() struct{ Secret SecretValue[int] } {
+	invalid := Struct[secretMarker](func() struct{ Secret SecretValue[int] } {
 		return struct{ Secret SecretValue[int] }{Secret: NewSecret(0)}
 	}).AddField(Field("secret", func(value *struct{ Secret SecretValue[int] }) *SecretValue[int] { return &value.Secret }, SecretCodec(Int().Range(1, 10)))).Build()
 	_, err = invalid.Resolve(NewPatch())
@@ -35,10 +35,9 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 		Endpoint string
 		Token    SecretValue[string]
 	}
-	schema := Struct(func() secretConfig {
+	schema := Struct[secretConfig](func() secretConfig {
 		return secretConfig{Token: NewSecret("default-secret")}
 	}).
-		Identity("test.secret.surface").
 		Version("1").
 		AddField(Field("endpoint", func(value *secretConfig) *string { return &value.Endpoint }, String())).
 		AddField(Field("token", func(value *secretConfig) *SecretValue[string] { return &value.Token }, SecretCodec(String()))).
@@ -91,3 +90,5 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 		t.Fatalf("secret redaction diagnostic missing: %v", items)
 	}
 }
+
+type secretMarker struct{}

@@ -6,8 +6,7 @@ import (
 )
 
 func TestUnknownFieldAndPresetSuggestAlternatives(t *testing.T) {
-	schema := Struct(func() testConfig { return defaultTestConfig() }).
-		Identity("suggest.config").Version("1").
+	schema := Struct[testConfig](func() testConfig { return defaultTestConfig() }).Version("1").
 		AddField(Field("number", func(value *testConfig) *int { return &value.Number }, Int(), Alias("num"))).
 		AddField(Field("verify", func(value *testConfig) *bool { return &value.Verify }, Bool())).
 		AddField(Field("values", func(value *testConfig) *[]int { return &value.Values }, Slice(Int()))).

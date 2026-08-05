@@ -432,8 +432,7 @@ func (e *skeletonEmitter[T]) Emit(_ context.Context, input flow.Input[T]) error 
 }
 
 func skeletonConfigSchema() config.Schema[skeletonConfig] {
-	return config.Struct(func() skeletonConfig { return skeletonConfig{} }).
-		Identity("media.foundation.skeleton").
+	return config.Struct[skeletonConfig](func() skeletonConfig { return skeletonConfig{} }).
 		Version("1").
 		AddField(config.Field("value", func(value *skeletonConfig) *int { return &value.Value }, config.Int())).
 		Build()
