@@ -1,13 +1,19 @@
 package property
 
-import "testing"
+import (
+	"errors"
+	"math"
+	"testing"
+)
 
 type sampleRateID struct{}
 type unknownPropertyID struct{}
 
 func TestTypedPropertySetIsImmutableAndOpen(t *testing.T) {
-	rate := Define[sampleRateID, int]()
-	unknown := Define[unknownPropertyID, []byte](func(value []byte) []byte {
+	rate := Define[sampleRateID](Scalar[int]())
+	unknown := Define[unknownPropertyID](func(value []byte) ([]byte, error) {
+		return append([]byte("bytes:"), value...), nil
+	}, func(value []byte) []byte {
 		return append([]byte(nil), value...)
 	})
 	first, err := rate.Set(New(), 48000)
@@ -39,14 +45,15 @@ func TestTypedPropertySetIsImmutableAndOpen(t *testing.T) {
 
 func TestReferencePropertyRequiresDeclaredClone(t *testing.T) {
 	type pointerID struct{}
-	missing := Define[pointerID, []int]()
+	encoder := func(value []int) ([]byte, error) { return []byte("slice"), nil }
+	missing := Define[pointerID](encoder)
 	if missing.Valid() {
 		t.Fatal("reference property without clone was accepted")
 	}
 	if missing.Problem() == nil {
 		t.Fatal("reference property problem was discarded")
 	}
-	key := Define[pointerID, []int](func(value []int) []int {
+	key := Define[pointerID](encoder, func(value []int) []int {
 		return append([]int(nil), value...)
 	})
 	if !key.Valid() {
@@ -56,7 +63,14 @@ func TestReferencePropertyRequiresDeclaredClone(t *testing.T) {
 
 func TestInterfacePropertyUsesItsDeclaredClone(t *testing.T) {
 	type interfaceID struct{}
-	key := Define[interfaceID, any](func(value any) any {
+	key := Define[interfaceID](func(value any) ([]byte, error) {
+		switch typed := value.(type) {
+		case []byte:
+			return append([]byte("bytes:"), typed...), nil
+		default:
+			return nil, errors.New("unsupported property value")
+		}
+	}, func(value any) any {
 		switch typed := value.(type) {
 		case []byte:
 			return append([]byte(nil), typed...)
@@ -80,12 +94,25 @@ func TestInterfacePropertyUsesItsDeclaredClone(t *testing.T) {
 }
 
 func TestPropertyTypeAndUnknownLookup(t *testing.T) {
-	rate := Define[sampleRateID, int]()
+	rate := Define[sampleRateID](Scalar[int]())
 	if _, err := New().With(rate, "48000"); err == nil {
 		t.Fatal("wrong property type accepted")
 	}
 	set, _ := rate.Set(New(), 44100)
-	if _, ok := set.Lookup(IdentityOf[unknownPropertyID]()); ok {
+	unknown := Define[unknownPropertyID](Scalar[int]())
+	if _, ok := set.Lookup(unknown.ID()); ok {
 		t.Fatal("unknown property unexpectedly present")
+	}
+}
+
+func TestPropertyRequiresCanonicalEncoderAndRejectsNonFiniteFloat(t *testing.T) {
+	type missingEncoderID struct{}
+	missing := Define[missingEncoderID, int](nil)
+	if missing.Valid() || missing.Problem() == nil {
+		t.Fatalf("missing encoder = valid %v, problem %v", missing.Valid(), missing.Problem())
+	}
+	float := Define[sampleRateID](Scalar[float64]())
+	if _, err := float.Canonical(math.Inf(1)); err == nil {
+		t.Fatal("non-finite property value accepted")
 	}
 }

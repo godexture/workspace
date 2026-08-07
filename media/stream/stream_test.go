@@ -16,7 +16,7 @@ type streamMetadataID struct{}
 
 func TestDescriptorKeepsStreamLocalPropertiesOutOfItems(t *testing.T) {
 	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
-	rate := property.Define[streamPropertyID, int]()
+	rate := property.Define[streamPropertyID](property.Scalar[int]())
 	properties, err := rate.Set(property.New(), 48000)
 	if err != nil {
 		t.Fatal(err)

@@ -14,7 +14,7 @@ type eventPropertyID struct{}
 
 func TestStreamEventsKeepFollowPolicyUndecided(t *testing.T) {
 	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{})
-	properties, err := property.Define[eventPropertyID, int]().Set(property.New(), 2)
+	properties, err := property.Define[eventPropertyID](property.Scalar[int]()).Set(property.New(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
