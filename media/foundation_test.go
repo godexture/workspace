@@ -1,5 +1,10 @@
 package media_test
 
+// The walking skeleton is the permanent end-to-end regression harness for
+// later milestones. It carries both typed items and stream descriptors so new
+// control-plane contracts have to work through the same path as data-plane
+// ownership and timing.
+
 import (
 	"bytes"
 	"context"
@@ -20,7 +25,9 @@ import (
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/packet"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
@@ -40,6 +47,7 @@ type skeletonMissingMetadataID struct{}
 type skeletonFormatID struct{}
 type skeletonPayloadCarrierID struct{}
 type skeletonMetadataCarrierID struct{}
+type skeletonSampleRateID struct{}
 type skeletonBytesID struct{}
 type skeletonChunkID struct{}
 type skeletonPacketID struct{}
@@ -65,6 +73,9 @@ var (
 	skeletonMetadataDocumentSchema = schema.Define[skeletonMetadataDocumentID, metadata.Document](schema.Traits[metadata.Document]{})
 	skeletonMetadataEventSchema    = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
 	skeletonMetadataCarrier        = carrier.Define[skeletonMetadataCarrierID]()
+	skeletonSampleRate             = property.Define[skeletonSampleRateID](property.Scalar[int]())
+	skeletonDecodedTimeBase        = timing.MustBase(1, 48000)
+	skeletonEncodedTimeBase        = timing.MustBase(1, 1000)
 )
 
 type skeletonSourceOperator struct {
@@ -106,7 +117,7 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[
 		if err != nil {
 			return err
 		}
-		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence))), payload)
+		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence)*48)), payload)
 		item := flow.NewInput(chunk, skeletonChunkSchema)
 		if err := output.Emit(ctx, item); err != nil {
 			item.Drop()
@@ -181,6 +192,8 @@ type skeletonEncoderOperator struct {
 	shape      flow.Shape
 	pending    packet.Packet
 	hasPending bool
+	inputBase  timing.Base
+	outputBase timing.Base
 }
 
 func (o *skeletonEncoderOperator) Ports() flow.Shape { return o.shape }
@@ -192,8 +205,18 @@ func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[
 		return fmt.Errorf("encoder input was not owned")
 	}
 	frame := owner.Value()
+	pts, err := frame.PTS().Rescale(o.inputBase, o.outputBase, timing.RoundNearestEven)
+	if err != nil {
+		owner.Release()
+		return err
+	}
+	duration, err := timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))).Rescale(o.inputBase, o.outputBase, timing.RoundNearestEven)
+	if err != nil {
+		owner.Release()
+		return err
+	}
 	payload := frame.Planes().Share()
-	value := packet.NewPacket(uint64(frame.PTS().Value()), frame.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))), payload)
+	value := packet.NewPacket(uint64(pts.Value()), pts, timing.UnknownDTS(), duration, payload)
 	owner.Release()
 	if o.hasPending {
 		item := flow.NewInput(o.pending, skeletonPacketSchema)
@@ -223,8 +246,150 @@ func (o *skeletonEncoderOperator) Flush(ctx context.Context, output flow.Emitter
 }
 
 type skeletonTrace struct {
-	sequences  []uint64
-	timestamps []timing.PTS
+	sequences     []uint64
+	timestamps    []timing.PTS
+	propertyReads []skeletonPropertyRead
+}
+
+type skeletonPropertyRead struct {
+	component string
+	id        key.ID
+}
+
+type skeletonDescriptorPorts struct {
+	component string
+	inputs    map[string]stream.Descriptor
+	outputs   map[string]stream.Descriptor
+	reads     map[key.ID]struct{}
+}
+
+func (p skeletonDescriptorPorts) validate(shape flow.Shape) error {
+	if err := validateSkeletonDescriptorPorts(p.component, "input", shape.Inputs, p.inputs); err != nil {
+		return err
+	}
+	return validateSkeletonDescriptorPorts(p.component, "output", shape.Outputs, p.outputs)
+}
+
+func validateSkeletonDescriptorPorts(component, direction string, ports []flow.Port, descriptors map[string]stream.Descriptor) error {
+	if len(ports) != len(descriptors) {
+		return fmt.Errorf("%s has %d %s descriptor(s), want %d", component, len(descriptors), direction, len(ports))
+	}
+	for _, port := range ports {
+		descriptor, ok := descriptors[port.ID()]
+		if !ok {
+			return fmt.Errorf("%s %s port %q has no descriptor", component, direction, port.ID())
+		}
+		if !descriptor.Valid() || descriptor.Schema() != port.Schema().Identity() {
+			return fmt.Errorf("%s %s port %q descriptor does not match its schema", component, direction, port.ID())
+		}
+	}
+	return nil
+}
+
+func (p skeletonDescriptorPorts) accept(port string, descriptor stream.Descriptor) error {
+	expected, ok := p.inputs[port]
+	if !ok {
+		return fmt.Errorf("%s has no input descriptor for port %q", p.component, port)
+	}
+	if descriptor.ID() != expected.ID() || descriptor.Schema() != expected.Schema() || descriptor.TimeBase() != expected.TimeBase() {
+		return fmt.Errorf("%s input descriptor for port %q changed in transit", p.component, port)
+	}
+	return nil
+}
+
+func readSkeletonProperty[T any](stage skeletonDescriptorPorts, descriptor stream.Descriptor, declaration property.Key[T], trace *skeletonTrace) (T, error) {
+	if _, ok := stage.reads[declaration.ID()]; !ok {
+		var zero T
+		return zero, fmt.Errorf("%s read undeclared property %s", stage.component, declaration.ID())
+	}
+	value, ok := declaration.Get(descriptor.Properties())
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("%s did not receive declared property %s", stage.component, declaration.ID())
+	}
+	if trace != nil {
+		trace.propertyReads = append(trace.propertyReads, skeletonPropertyRead{component: stage.component, id: declaration.ID()})
+	}
+	return value, nil
+}
+
+type skeletonDescriptorPath struct {
+	source   skeletonDescriptorPorts
+	demuxer  skeletonDescriptorPorts
+	parser   skeletonDescriptorPorts
+	decoder  skeletonDescriptorPorts
+	encoder  skeletonDescriptorPorts
+	muxer    skeletonDescriptorPorts
+	metadata skeletonDescriptorPorts
+}
+
+func newSkeletonDescriptorPath() (skeletonDescriptorPath, error) {
+	source, err := newSkeletonDescriptor("source-0", skeletonBytesSchema.Identity(), timing.MustBase(1, 1), property.New(), metadata.Document{})
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	chunks, err := newSkeletonDemuxedDescriptor(source)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	packets, err := deriveSkeletonDescriptor(chunks, skeletonPacketSchema.Identity(), skeletonDecodedTimeBase)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	frames, err := deriveSkeletonDescriptor(packets, skeletonFrameSchema.Identity(), skeletonDecodedTimeBase)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	encoded, err := deriveSkeletonDescriptor(frames, skeletonPacketSchema.Identity(), skeletonEncodedTimeBase)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	muxed, err := deriveSkeletonDescriptor(encoded, skeletonChunkSchema.Identity(), skeletonEncodedTimeBase)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	metadataDescriptor, err := newSkeletonDescriptor("metadata-0", skeletonMetadataDocumentSchema.Identity(), timing.MustBase(1, 1000), property.New(), chunks.Metadata())
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	return skeletonDescriptorPath{
+		source:   skeletonDescriptorPorts{component: "source", outputs: map[string]stream.Descriptor{"bytes": source}},
+		demuxer:  skeletonDescriptorPorts{component: "demuxer", inputs: map[string]stream.Descriptor{"bytes": source}, outputs: map[string]stream.Descriptor{"chunks": chunks}},
+		parser:   skeletonDescriptorPorts{component: "parser", inputs: map[string]stream.Descriptor{"chunks": chunks}, outputs: map[string]stream.Descriptor{"packets": packets}},
+		decoder:  skeletonDescriptorPorts{component: "decoder", inputs: map[string]stream.Descriptor{"packets": packets}, outputs: map[string]stream.Descriptor{"frames": frames}, reads: map[key.ID]struct{}{skeletonSampleRate.ID(): {}}},
+		encoder:  skeletonDescriptorPorts{component: "encoder", inputs: map[string]stream.Descriptor{"frames": frames}, outputs: map[string]stream.Descriptor{"packets": encoded}},
+		muxer:    skeletonDescriptorPorts{component: "muxer", inputs: map[string]stream.Descriptor{"packets": encoded}, outputs: map[string]stream.Descriptor{"chunks": muxed}},
+		metadata: skeletonDescriptorPorts{component: "metadata", inputs: map[string]stream.Descriptor{"document-in": metadataDescriptor}, outputs: map[string]stream.Descriptor{"document-out": metadataDescriptor}},
+	}, nil
+}
+
+// newSkeletonDemuxedDescriptor is test wiring, not a component contract. M4-2
+// assigns descriptor transformation rules to Compile.
+func newSkeletonDemuxedDescriptor(source stream.Descriptor) (stream.Descriptor, error) {
+	if source.Schema() != skeletonBytesSchema.Identity() {
+		return stream.Descriptor{}, fmt.Errorf("demuxer source schema = %s", source.Schema())
+	}
+	properties, err := skeletonSampleRate.Set(property.New(), 48000)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), tag.Title, "skeleton stream", metadata.Origin{}).Build()
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return newSkeletonDescriptor("audio-0", skeletonChunkSchema.Identity(), skeletonDecodedTimeBase, properties, document)
+}
+
+func newSkeletonDescriptor(id stream.ID, identity schema.ID, base timing.Base, properties property.Set, document metadata.Document) (stream.Descriptor, error) {
+	descriptor, err := stream.NewDescriptor(id, identity, base, properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return descriptor.WithMetadata(document), nil
+}
+
+func deriveSkeletonDescriptor(input stream.Descriptor, identity schema.ID, base timing.Base) (stream.Descriptor, error) {
+	return newSkeletonDescriptor(input.ID(), identity, base, input.Properties(), input.Metadata())
 }
 
 type skeletonMuxerOperator struct {
@@ -436,6 +601,11 @@ func (e *skeletonEmitter[T]) Emit(_ context.Context, input flow.Input[T]) error 
 	return nil
 }
 
+type skeletonItem[T any] struct {
+	input      flow.Input[T]
+	descriptor stream.Descriptor
+}
+
 func skeletonConfigSchema() config.Schema[skeletonConfig] {
 	return config.Struct[skeletonConfig](func() skeletonConfig { return skeletonConfig{} }).
 		Version("1").
@@ -466,7 +636,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 			return &skeletonCodecOperator{shape: decoderShape}, nil
 		})),
 		plugin.NewComponent[skeletonEncoderID](plugin.Descriptor{DisplayName: "encoder"}, configSchema, plugin.WithPorts(encoderShape), plugin.WithOpen(func() (flow.Operator, error) {
-			return &skeletonEncoderOperator{shape: encoderShape}, nil
+			return &skeletonEncoderOperator{shape: encoderShape, inputBase: skeletonDecodedTimeBase, outputBase: skeletonEncodedTimeBase}, nil
 		})),
 		plugin.NewComponent[skeletonMuxerID](plugin.Descriptor{DisplayName: "muxer"}, configSchema, plugin.WithPorts(muxerShape), plugin.WithOpen(func() (flow.Operator, error) {
 			return &skeletonMuxerOperator{shape: muxerShape, trace: trace}, nil
@@ -532,6 +702,10 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}
+	descriptors, err := newSkeletonDescriptorPath()
+	if err != nil {
+		t.Fatal(err)
+	}
 	index, err := skeletonCatalog(plugin.NewSet(definition).AddDeclaration(skeletonBinding()).AddDeclaration(skeletonMetadataBinding()))
 	if err != nil {
 		t.Fatal(err)
@@ -561,14 +735,34 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	metadataValue, err := openSkeleton(index, plugin.IdentityOf[skeletonMetadataEncodingID]())
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer sourceValue.Close()
 	defer demuxerValue.Close()
 	defer parserValue.Close()
 	defer decoderValue.Close()
 	defer encoderValue.Close()
 	defer muxerValue.Close()
-	for _, operator := range []flow.Operator{sourceValue, demuxerValue, parserValue, decoderValue, encoderValue, muxerValue} {
-		if err := operator.Ports().Validate(); err != nil {
+	defer metadataValue.Close()
+	for _, component := range []struct {
+		operator    flow.Operator
+		descriptors skeletonDescriptorPorts
+	}{
+		{sourceValue, descriptors.source},
+		{demuxerValue, descriptors.demuxer},
+		{parserValue, descriptors.parser},
+		{decoderValue, descriptors.decoder},
+		{encoderValue, descriptors.encoder},
+		{muxerValue, descriptors.muxer},
+		{metadataValue, descriptors.metadata},
+	} {
+		shape := component.operator.Ports()
+		if err := shape.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := component.descriptors.validate(shape); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -609,26 +803,56 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := demuxer.Process(ctx, byteInput, chunkOutput); err != nil {
+	byteItem := skeletonItem[[]byte]{input: byteInput, descriptor: descriptors.source.outputs["bytes"]}
+	if _, ok := skeletonSampleRate.Get(byteItem.descriptor.Properties()); ok {
+		t.Fatal("demuxer input unexpectedly had the generated sample-rate property")
+	}
+	if err := descriptors.demuxer.accept("bytes", byteItem.descriptor); err != nil {
 		t.Fatal(err)
 	}
-	for _, chunk := range chunkOutput.items {
+	if err := demuxer.Process(ctx, byteItem.input, chunkOutput); err != nil {
+		t.Fatal(err)
+	}
+	rate, err := readSkeletonProperty(descriptors.decoder, descriptors.decoder.inputs["packets"], skeletonSampleRate, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate != 48000 || descriptors.decoder.inputs["packets"].TimeBase().Denominator != int64(rate) {
+		t.Fatalf("decoder descriptor rate = %d, time base = %s", rate, descriptors.decoder.inputs["packets"].TimeBase())
+	}
+	for _, chunkInput := range chunkOutput.items {
+		chunk := skeletonItem[packet.Chunk]{input: chunkInput, descriptor: descriptors.demuxer.outputs["chunks"]}
 		packetOutput.items = packetOutput.items[:0]
-		if err := parser.Process(ctx, chunk, packetOutput); err != nil {
+		if err := descriptors.parser.accept("chunks", chunk.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		for _, packetValue := range packetOutput.items {
+		if err := parser.Process(ctx, chunk.input, packetOutput); err != nil {
+			t.Fatal(err)
+		}
+		for _, packetInput := range packetOutput.items {
+			packetValue := skeletonItem[packet.Packet]{input: packetInput, descriptor: descriptors.parser.outputs["packets"]}
 			frameOutput.items = frameOutput.items[:0]
-			if err := decoder.Process(ctx, packetValue, frameOutput); err != nil {
+			if err := descriptors.decoder.accept("packets", packetValue.descriptor); err != nil {
 				t.Fatal(err)
 			}
-			for _, frame := range frameOutput.items {
+			if err := decoder.Process(ctx, packetValue.input, frameOutput); err != nil {
+				t.Fatal(err)
+			}
+			for _, frameInput := range frameOutput.items {
+				frame := skeletonItem[audio.Frame[int16]]{input: frameInput, descriptor: descriptors.decoder.outputs["frames"]}
 				encodedPacketOutput.items = encodedPacketOutput.items[:0]
-				if err := encoder.Process(ctx, frame, encodedPacketOutput); err != nil {
+				if err := descriptors.encoder.accept("frames", frame.descriptor); err != nil {
 					t.Fatal(err)
 				}
-				for _, encodedPacket := range encodedPacketOutput.items {
-					if err := muxer.Process(ctx, encodedPacket, chunkEmitter); err != nil {
+				if err := encoder.Process(ctx, frame.input, encodedPacketOutput); err != nil {
+					t.Fatal(err)
+				}
+				for _, encodedPacketInput := range encodedPacketOutput.items {
+					encodedPacket := skeletonItem[packet.Packet]{input: encodedPacketInput, descriptor: descriptors.encoder.outputs["packets"]}
+					if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
+						t.Fatal(err)
+					}
+					if err := muxer.Process(ctx, encodedPacket.input, chunkEmitter); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -639,8 +863,12 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err := encoder.Flush(ctx, encodedPacketOutput); err != nil {
 		t.Fatal(err)
 	}
-	for _, encodedPacket := range encodedPacketOutput.items {
-		if err := muxer.Process(ctx, encodedPacket, chunkEmitter); err != nil {
+	for _, encodedPacketInput := range encodedPacketOutput.items {
+		encodedPacket := skeletonItem[packet.Packet]{input: encodedPacketInput, descriptor: descriptors.encoder.outputs["packets"]}
+		if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
+			t.Fatal(err)
+		}
+		if err := muxer.Process(ctx, encodedPacket.input, chunkEmitter); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -660,6 +888,19 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if trace.sequences[index] != uint64(index) || trace.timestamps[index] != timing.PTS(index) {
 			t.Fatalf("item %d = sequence %d, pts %d", index, trace.sequences[index], trace.timestamps[index])
 		}
+	}
+	terminal := descriptors.muxer.outputs["chunks"]
+	if terminal.Schema() != skeletonChunkSchema.Identity() || terminal.TimeBase() != skeletonEncodedTimeBase {
+		t.Fatalf("terminal descriptor = schema %s, time base %s", terminal.Schema(), terminal.TimeBase())
+	}
+	if value, ok := skeletonSampleRate.Get(terminal.Properties()); !ok || value != 48000 {
+		t.Fatalf("terminal sample rate = %d, %v", value, ok)
+	}
+	if title, ok := metadata.First(terminal.Metadata(), tag.Title); !ok || title != "skeleton stream" {
+		t.Fatalf("terminal metadata title = %q, %v", title, ok)
+	}
+	if len(trace.propertyReads) != 1 || trace.propertyReads[0] != (skeletonPropertyRead{component: "decoder", id: skeletonSampleRate.ID()}) {
+		t.Fatalf("component property reads = %#v", trace.propertyReads)
 	}
 }
 
