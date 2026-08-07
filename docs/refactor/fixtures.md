@@ -55,7 +55,7 @@ repository は Tier 0 の total size budget を manifest で監視する。閾�
 公式 plugin、format、metadata、surface を横断する。
 
 - representative multi-stream media
-- WAVE/PCM、MP3、FLAC vertical path
+- WAVE/PCM、MP4、MP3、FLAC vertical path
 - metadata/unknown block preservation
 - browser/WASM small streaming fixture
 - third-party video/subtitle/schema fixture
@@ -73,7 +73,9 @@ code と少数の小型 media は `integration` nested module に置ける。fou
 
 Tier 2 を要求する job だけが、data submoduleまたはmanifestが固定するcorpusを明示取得する。通常の change-scoped test には含めない。network がない環境では `corpus unavailable` と `not requested` を structured result で区別し、release conformance job では unavailable を failure にする。
 
-**format family を新経路へ移す milestone の完了確認では、その family の Tier 2 を必ず実行する。** 正式 release 前は旧実装との出力一致を求めないため、新経路の正しさを示す根拠が仕様と conformance corpus しかない。M6 は WAVE/PCM、M8 は MP3/FLAC が対象で、この時 unavailable を成功扱いにしない。
+**format family を新経路へ移す milestone の完了確認では、その family の Tier 2 を必ず実行する。** 正式 release 前は旧実装との出力一致を求めないため、新経路の正しさを示す根拠が仕様と conformance corpus しかない。M5 の切断後は旧実装を実行して比較することもできない。M6 は WAVE/PCM、M7 は MP4、M8 は MP3/FLAC が対象で、この時 unavailable を成功扱いにしない。
+
+MP4 は video/subtitle track を stream copy でしか扱わないため、corpus に必要なのは decode 可能な video ではなく、複数 track、per-track timescale、未知 box、edit list、fragmented/non-fragmented の両形式を含む小型 fixture である。conformance corpus 相当は仕様由来の手書き vector と procedural generator で構成でき、大容量の外部 corpus を必須にしない。
 
 ### Tier 3: benchmark/stress
 

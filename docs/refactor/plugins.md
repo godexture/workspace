@@ -325,4 +325,4 @@ M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract �
 - reflection の使用が `Define` 時の identity 取得、config schema 構築、catalog 構築に限定される。
 - 上記を marker identity、duplicate、explicit override、invalid definition、複数 Host isolation の unit/race test で検査する。公式 plugin を import しない。
 
-M2 では次を未完了事項として残す。`plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 の時点で marker ベースの test へ置き換える。各 plugin の `register.go` は M6/M8 の family 移行で、旧 `core/registry` は M11 で削除する。`sdk/catalog` は surface と一緒に移す [M9](../refactor.md#実装ロードマップ) が担当する。
+M2 では次を未完了事項として残す。`plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 の時点で marker ベースの test へ置き換える。各 plugin の `register.go`、旧 `core/registry`、`sdk/catalog` は M5 末尾の切断で一括削除する（[inventory](inventory.md#m5-の切断)）。

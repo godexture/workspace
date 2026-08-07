@@ -99,9 +99,10 @@ M1 は repository、package identity、module/workspace topology を固定する
 
 | 領域 | package path | 責務 |
 |---|---|---|
+| 共有機構 | `media/key` | marker 由来 typed key、宣言 clone 規則、erased accessor |
 | media control plane | `media/schema`、`media/property`、`media/timing`、`media/stream`、`media/metadata`、`media/tag` | open identity、immutable property、time base、stream descriptor、semantic metadata |
 | media data plane | `media/packet`、`media/side`、`media/buffer`、`media/audio`、`media/video`、`media/subtitle` | typed unit、side data、ownership |
-| media extension | `media/format`、`media/codec` | Probe/Inspect、Carrier、Parser/Binding |
+| media extension | `media/carrier`、`media/format`、`media/codec` | payload slot、Probe/Inspect、Parser/Binding |
 | graph contract | `flow` | typed port、Reader/Writer、Processor/Operator |
 | identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、component Spec、typed schema、構造化診断 |
 | I/O extension | `access`、`endpoint` | byte object capability/transaction、live/session/device trait |
@@ -116,6 +117,31 @@ media 領域だけを `media/` 配下へ置き、それ以外は root に置く�
 [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) のとおり `component` package は新設せず、component Spec は `plugin.Component` が持つ。`plugin -> flow` の一方向依存だけを作り、port shape と `Open` を `plugin.Component` へ足す。
 
 public package を増やすのは、第三者が実装・宣言・検証する contract がある場合だけとする。codec 内部の bitstream/parser table、Host scheduler、surface helper の都合で public package を作らない。
+
+### foundation 内部の依存方向
+
+[media](media.md#二つの層) の control plane と data plane の分離は概念の説明ではなく、package 依存の制約である。**data plane の package は control plane の package を import しない。**
+
+```text
+data plane の閉包（これ以外を import しない）
+    media/packet、media/audio
+      <- media/side <- media/key
+      <- media/buffer、media/timing
+      <- internal/marker、internal/snapshot
+
+control plane（data plane から参照されない）
+    media/schema <- flow <- plugin <- access、media/metadata
+    media/carrier <- media/format <- media/codec
+    media/property、media/metadata <- media/stream、media/tag
+    config、diagnostic、endpoint
+```
+
+この制約は次を保証する。第三者が data unit schema を一つ宣言するために `config` や `plugin` を import せずに済むこと。`plugin`、`config`、`flow` が packet/frame 型を名指ししても import cycle にならないこと。hot-path 型の推移的依存が小さく保たれ、[runtime](runtime.md#hot-path-性能契約) の性能契約の検証範囲が閉じること。
+
+二つの package がこの制約を成立させるために存在する。
+
+- `media/key` は marker 由来 typed key の機構を持つ唯一の package である。identity 導出、[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) の宣言 clone 規則、erased accessor、偽装 key を排除する非公開 method を提供する。`metadata.Document` と `side.Data` はこの `key.Key[T]` をそのまま使い、一つの宣言が document metadata と side data の両方で通る。`property.Key[T]` は同じ機構の上に canonical encoder の宣言義務を加えた別型とする。理由は [media](media.md#key-機構は一つ容器は三つkey-型は二つ) を正本とする。
+- `media/carrier` は payload を置く物理 slot を表す。[media](media.md#carrier) のとおり carrier は format が所有するとは限らず codec/bitstream も所有するため、`media/format` の内部型にすると codec 所有の carrier が format 由来に見え、`media/metadata` が carrier 一つのために `media/format` を import することになる。
 
 ## private Host runtime
 
@@ -155,6 +181,7 @@ plugin/
 │  └─ internal/{codec,format,parser,bitstream}
 ├─ pcm/
 ├─ wave/
+├─ mp4/
 ├─ audio/
 ├─ id3/
 └─ vorbiscomment/
@@ -223,7 +250,8 @@ Job + input snapshot + Catalog
 ## 移行規則
 
 - 現行 package の rename だけで新境界を装わず、最小の新縦断経路を先に作る。
-- 公式利用側を新経路へ移した時点で旧 package と wrapper を削除する。
+- 旧 contract 層は M5 の末尾で一括削除する。同じ概念の実装が二つ compile される期間を作らない。範囲は [inventory](inventory.md#m5-の切断) を正本とする。
+- 未移植の algorithm は `_legacy/` へ移す。`_` 始まりの directory は go tool が無視するため build されず import できない。移植参照としてだけ読み、M8 で削除する。
 - deprecated alias、互換 module、二重 registry、旧新 planner を残さない。
 - reusable algorithm と Host-specific mechanism を同じ utility package に混在させない。
 - module split 前でも、規格 family は foundation の public package だけに依存させる。
@@ -234,6 +262,7 @@ Job + input snapshot + Catalog
 この節は最終 architecture の gate であり、M1 単独の完了判定には上記「M1 完了条件」だけを用いる。
 
 - foundation から plugin/standard/surface への依存がない。
+- foundation 内部で data plane の package が control plane の package を import していない。marker 由来 typed key の機構が `media/key` に一つだけ存在する。
 - plugin family と surface を foundation contract から独立して build/test できる。
 - monorepo 内の source module graph が一方向で、source code の Git submodule を必要としない。data submodule は任意取得の test/demo asset に限る。
 - public package が第三者 contract、private package が Host/implementation detail に対応する。

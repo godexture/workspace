@@ -50,29 +50,32 @@ application / CLI / WASM
 | M2 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | media・metadata・I/O contract と walking skeleton | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint。test 用の trivial な schema/format/codec で bytes → packet → frame → packet → bytes が新 contract だけで通る | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program`。walking skeleton を planner 経由で通す。あわせて container を持たない実 PCM を最初の実 codec として通し、trivial component が自分で作った要求にしか答えない状態を抜ける | [planner](refactor/planner.md)、[runtime](refactor/runtime.md)、[media](refactor/media.md) |
-| M5 | runtime と ownership | execution island、move/fan-out/COW、cancel、queue、Finalize、transactional Open/Close。walking skeleton を新 runtime で通し、旧/新 runtime を同一 harness で比較する paired benchmark を持つ | [runtime](refactor/runtime.md)、[performance](refactor/performance.md) |
-| M6 | 最初の実 container 経路 | M4 の実 PCM へ WAVE container を足し、demux → decode → encode → mux が新設計だけで動く。`standard` composition、`integration` module、public testkit の最小形を含み、conformance corpus を通した後に旧 WAVE/PCM 経路を削除する。out-of-tree 相当 plugin による拡張性 gate を最初に通す | [media](refactor/media.md)、[plugins](refactor/plugins.md)、[quality](refactor/quality.md)、[capability](refactor/capability.md)、[experience](refactor/experience.md) |
-| M7 | multi-stream・保存優先の既定動作・seek | 複数入出力、mapping、stream copy、metadata raw preservation、loss report、graph operation としての seek。metadata と seek の対象は M6 で移した family に限り、MP3/FLAC への拡大は M8 が担う | [planner](refactor/planner.md)、[surfaces](refactor/surfaces.md)、[media](refactor/media.md)、[scope](refactor/scope.md) |
-| M8 | 公式 plugin contract の移行 | M1で固定したfamily path上で、MP3、FLAC、audio processor が Parser/Binding/variant/typed audio contract を使い、公式plugin間の直接依存を解消する。旧 MP3/FLAC/audio 経路と config generator を削除する | [audio](refactor/audio.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md)、[capability](refactor/capability.md) |
-| M9 | 利用 surface の移行 | library、CLI、WASM、非 production demo が同じ Host/Job/Plan/Result を使う。playback は typed Endpoint と専用 command へ分離し、利用者向け文書も同時に更新する。旧 surface 経路と `sdk/conversion`・`sdk/catalog` を削除する。M6 の拡張性 gate を surface 越しに再実行する | [surfaces](refactor/surfaces.md)、[web](refactor/web.md)、[experience](refactor/experience.md) |
+| M5 | runtime と ownership、旧 contract 層の切断 | execution island、move/fan-out/COW、cancel、queue、Finalize、transactional Open/Close。walking skeleton を新 runtime で通し、旧/新 runtime を同一 harness で比較する paired benchmark を取る。その直後に旧 contract 層を一括削除し、未移植の algorithm を `_legacy/` へ隔離する | [runtime](refactor/runtime.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md) |
+| M6 | 最初の実 container 経路と最短 surface | M4 の実 PCM へ WAVE container を足し、demux → decode → encode → mux が新設計だけで動く。`standard` composition、`integration` module、public testkit の最小形と、`standard.Convert` および `cmd/godec` の最短経路を含む。out-of-tree 相当 plugin による拡張性 gate を最初に通す | [media](refactor/media.md)、[plugins](refactor/plugins.md)、[quality](refactor/quality.md)、[capability](refactor/capability.md)、[experience](refactor/experience.md) |
+| M7 | multi-stream・保存優先の既定動作・seek | MP4 (ISO BMFF) を実 consumer として、複数入出力、mapping、stream copy、metadata raw preservation、loss report、graph operation としての seek を通す。音声は PCM を bind し、video/subtitle track は stream copy のみ扱う。未 bind の codec tag は raw carrier と diagnostic になる | [planner](refactor/planner.md)、[surfaces](refactor/surfaces.md)、[media](refactor/media.md)、[scope](refactor/scope.md) |
+| M8 | 公式 plugin contract の移行 | M1で固定したfamily path上で、MP3、FLAC、audio processor が Parser/Binding/variant/typed audio contract を使い、公式plugin間の直接依存を解消する。移行完了とともに `_legacy/` を削除する | [audio](refactor/audio.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md)、[capability](refactor/capability.md) |
+| M9 | 利用 surface の完成 | library、CLI、WASM、非 production demo が同じ Host/Job/Plan/Result を使う。M6 の最短経路を全 flag、versioned DTO、catalog 駆動 editor へ広げる。playback は typed Endpoint と専用 command へ分離し、利用者向け文書も同時に更新する。M6 の拡張性 gate を surface 越しに再実行する | [surfaces](refactor/surfaces.md)、[web](refactor/web.md)、[experience](refactor/experience.md) |
 | M10 | 品質・配布基盤 | conformance testkit の完成、root CI、外部 corpus/asset の取得tier・provenance、hermetic build、SBOM/NOTICE、release plan | [quality](refactor/quality.md)、[fixtures](refactor/fixtures.md)、[supply](refactor/supply.md) |
-| M11 | 残骸の掃除と拡張性の維持確認 | M6/M8/M9 で削除しきれなかった旧 core/SDK/registry の残骸と不要 export を除去する。M6/M9 で通した拡張性 gate が旧経路削除後も通ること、全 finding が閉じたことを確認する | [inventory](refactor/inventory.md)、[findings](refactor/findings.md)、[architecture](refactor/architecture.md)、[capability](refactor/capability.md) |
+| M11 | 拡張性の維持確認と module 境界の確定 | M6/M9 で通した拡張性 gate が維持されていること、全 finding が閉じたこと、不要 export が残っていないことを確認する。stable v1 前に必要な family module split を実施または不要と判断する | [findings](refactor/findings.md)、[architecture](refactor/architecture.md)、[capability](refactor/capability.md)、[inventory](refactor/inventory.md) |
 
-M0〜M5 は foundation を固めるための先行作業である。M1 は将来の reflection/marker identity を変えないために最終 family package path までを固定するが、foundation package の責務分割と plugin 間の contract 分離までは要求しない。それらは M2/M3/M8 で行う。M6 で最小の実用経路を完成させ、その経路を壊さず M7〜M9 へ広げる。M10 は各段階と並行して整備するが、release gate を満たすまでは完了としない。M11 では旧新二経路を残さず、stable v1 前に必要な module split を確定する。
+M0〜M5 は foundation を固めるための先行作業である。M1 は将来の reflection/marker identity を変えないために最終 family package path までを固定するが、foundation package の責務分割と plugin 間の contract 分離までは要求しない。それらは M2/M3/M8 で行う。M5 の末尾で旧 contract 層を切断し、以後は tree に compile される実装が常に一つだけになる。M6 で最小の実用経路を完成させ、その経路を壊さず M7〜M9 へ広げる。M10 は各段階と並行して整備するが、release gate を満たすまでは完了としない。M11 は削除作業ではなく、拡張性が維持されていることの確認と module 境界の確定に充てる。
+
+この製品は未 release であるため、移行期間中に main が全機能を提供し続けることを要求しない。同じ完成形へ至る複数の経路があるとき、優先するのは (1) 実装時の安全性、(2) 変更差分の小ささである。
 
 milestone ID は追加・再採番しない。粒度と担当の調整は次の規則で行う。
 
 - **contract より先に動く経路を作る。** [architecture](refactor/architecture.md#移行規則) の「最小の新縦断経路を先に作る」に従い、M3 は test 用の trivial component で端から端まで通す walking skeleton を成果に含める。M4 と M5 はその skeleton を壊さずに planner と runtime を差し込む。consumer のいない contract を積み上げない。
 - **risk の高い仮定を早く現実に当てる。** trivial component は自分で作った要求にしか答えないため、skeleton は「部品が噛み合うか」を示しても「現実の規格に耐えるか」は示さない。したがって container を持たない実 PCM を M4 の成果に含め、実 codec が planner と contract の最初の consumer になるようにする。M6 はその PCM へ WAVE container を足す形になり、書き直しではなく拡張になる。設計の妥当性を議論だけで決める区間を短くする。
-- **旧経路は移行した milestone で削除する。** [C12](refactor/decisions.md) の「公式利用側を同時に移して旧経路を削除する」に従い、削除を M11 へ溜めない。M6 が旧 WAVE/PCM、M8 が旧 MP3/FLAC/audio と config generator、M9 が旧 surface を削除し、M11 は残骸の掃除に限る。2 経路の並存期間を最小にする。
-- **削除は milestone 内の最後に置く。** 上の規則は削除を早めるが、新経路が正しいと分かる前に旧経路を消してはならない。family を移す milestone は (1) 新経路が対象 family の conformance corpus と roundtrip を通る、(2) `standard`/`integration`/testkit が揃う、(3) 旧経路を削除する、の順で進める。M6 は contract が実 container に耐えるか初めて分かる milestone であり、同時に旧 WAVE/PCM を消すため、この順序を守らないと戻る先がなくなる。
-- **拡張性は M11 を待たずに実証する。** 「第三者が core を変更せず追加できる」はこの計画の中心目標であり、最後の milestone で初めて確かめる対象にしない。foundation test 内の第三者相当 fixture は planner、runtime、surface を通っていない。実 container 経路が動く M6 で out-of-tree 相当 plugin による拡張性 gate を最初に通し、M9 で surface 越しに再実行し、M11 は旧経路削除後もそれが維持されていることの確認に充てる。投資の対価が可視化される時期も早まる。
-- **正しさは旧実装ではなく仕様で確認する。** 正式 release 前のため旧実装との出力一致は要求しない。代わりに M6 と M8 の完了確認で対象 family の conformance corpus と lossless roundtrip exact を実行する。旧実装は削除されるまで、差異が意図的か bug かを判断する diagnostic として使う。意図的な差異は [capability](refactor/capability.md#挙動変更の記録) へ記録する。
+- **機構を作る milestone は、その機構の実 consumer を同じ milestone 内に持つ。** 上の規則を全 milestone へ一般化したものである。M7 の multi-stream、mapping、stream copy、loss report、seek は、WAVE/MP3/FLAC がいずれも単一 audio stream であるため公式 family に consumer を持たない。したがって MP4 (ISO BMFF) を M7 の成果に含める。音声は PCM を bind し、video/subtitle は stream copy のみ扱うため `media/video`/`media/subtitle` の frame 型は不要である。MP4 は per-track timescale が `timing` の rescale を、moov/mdat 順序が [access](refactor/access.md#source-capability) の capability alternative を、sample entry が codec Binding を、未知 box が raw preservation を、それぞれ実規格で検証する。
+- **旧 contract 層は M5 の末尾で一括削除する。** [C12](refactor/decisions.md) の「後方互換層を残さない」を、milestone ごとの部分削除ではなく一度の切断で満たす。実装事故の主因は同じ概念の実装が 2 つ compile されていることであり、`core/node` と `flow`、`core/registry` と `plugin.Set`、`core/domain/media` と `media/*`、`sdk/engine` と `flow.Processor`、`sdk/config` と `config` がそれに当たる。旧 stack の最後の用途は M5 完了条件の paired benchmark なので、それを取り終えた時点が切断点になる。削除対象と `_legacy/` 隔離の範囲は [inventory](refactor/inventory.md#m5-の切断) を正本とする。
+- **移植参照は `_legacy/` に置き、compile 対象から外す。** 旧実装には規格上の細部（RIFF chunk の境界処理、MP3 header の quirk、FLAC の LPC/rice 実装）が残っており、移植時に読む価値がある。一方その価値は algorithm 層にあり、contract 層にはない。未移植の algorithm は `_legacy/` へ移す。`_` 始まりの directory は go tool が完全に無視するため、build されず、import できず、`go list ./...` にも現れない。`go build ./...` と `go test ./...` の green は常に新 stack だけを意味する。`_legacy/` は M8 の family 移行完了とともに削除する。
+- **拡張性は M11 を待たずに実証する。** 「第三者が core を変更せず追加できる」はこの計画の中心目標であり、最後の milestone で初めて確かめる対象にしない。foundation test 内の第三者相当 fixture は planner、runtime、surface を通っていない。実 container 経路が動く M6 で out-of-tree 相当 plugin による拡張性 gate を最初に通し、M9 で surface 越しに再実行し、M11 はそれが維持されていることの確認に充てる。投資の対価が可視化される時期も早まる。
+- **正しさは旧実装ではなく仕様で確認する。** 正式 release 前のため旧実装との出力一致は要求しない。代わりに M6、M7、M8 の完了確認で対象 family の conformance corpus と lossless roundtrip exact を実行する。M0 baseline は commit `4429711a` に固定されており、`_legacy/` と併せて差異が意図的か bug かを判断する参照として使える。意図的な差異は [capability](refactor/capability.md#挙動変更の記録) へ記録する。
 - **消える機能を決めてから消す。** 現行機能の維持/変更/廃止は [capability](refactor/capability.md) で管理する。`未定` の行が残っている機能の旧経路を削除しない。
 - **M10 の一部は M6 より前に必要になる。** 公式 plugin も第三者と同じ public testkit を使う以上、testkit と `integration` module の最小形は M6 の成果に含める。M10 は CI matrix、corpus tier、hermetic build、release plan の完成を担当する。
 - **finding には担当 milestone を書く。** [findings](refactor/findings.md) の規則は「finding を完了扱いにするのは、対応するロードマップのマイルストーンと詳細資料の完了条件を満たした時」と定めており、担当が分かっている前提に立つ。担当列のない finding は完了判定ができないため、全 finding に担当 milestone を持たせる。
-- **旧/新 runtime の比較は M5 で harness に接続する。** M0 baseline は旧 pipeline を測っているため、M11 で旧経路が消えた後では比較対象が失われる。
-- **seek は機構と format 実装を分けて担当する。** graph operation としての seek plan は M7 が持ち、format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC の seek 実装が M11 の削除で置き換えなしに消えることを避けるため、M8 完了時点で同等の能力が新経路に存在することを確認する。
+- **旧/新 runtime の比較は M5 で harness に接続する。** M0 baseline は旧 pipeline を測っているため、旧 contract 層を切断した後では比較対象が失われる。この paired benchmark を取り終えることが切断の前提条件であり、M5 完了条件の一部である。
+- **seek は機構と format 実装を分けて担当する。** graph operation としての seek plan は M7 が持ち、その最初の実装 consumer は同じ M7 の MP4 index である。format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC の seek 実装が `_legacy/` の削除で置き換えなしに消えることを避けるため、M8 完了時点で同等の能力が新経路に存在することを確認する。
 - **完了条件は着手前に書く。** milestone の固有条件が詳細資料に存在しない状態で実装へ入らない。条件は「何を作るか」だけでなく「何を作らないか」と「未完了として残すもの」を明示する。M3 の 3 単位で最も効いたのは [media](refactor/media.md#m3-完了条件) と [access](refactor/access.md#m3-完了条件) の「M3 では最小の型だけを置き、詳細は実際の consumer を作る milestone で決める」という明文だった。実装がまだ見えていない先の milestone まで条件を先取りすると、書き直しが増えて正本の信頼が落ちるため、着手直前の milestone を対象にする。
 - **consumer を持たない export を残さない。** 各 milestone の完了条件に「新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](refactor/scope.md) の分類節へ consumer を作る milestone とともに記載する」を含める。M3 の 3 単位すべてで、呼び出し元も実装者もない public API が繰り返し発生した。宣言だけの contract 自体は milestone の性質上必要だが、担当を書けないものは今置くべきでない印である。
 
@@ -108,6 +111,16 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 
 設計の背景を追う場合は、`decisions → architecture → 対象領域の資料` の順で読む。実装対象を探す場合は、上のロードマップから対象マイルストーンを選び、`findings` と `inventory` で現行コードへの対応を確認する。
 
+## 文書の終端
+
+これらの資料は二種類に分かれ、M11 で処遇が変わる。
+
+**移行文書**（現行コードまたは移行過程を記述する。M11 で削除する）: この `refactor.md`、[checkpoint](refactor/checkpoint.md)、[findings](refactor/findings.md)、[inventory](refactor/inventory.md)、[capability](refactor/capability.md)、[baseline](refactor/baseline.md)、`baseline.manifest.json`、[task/](refactor/task/)。
+
+**設計文書**（目標設計を記述する。M11 で `docs/design/` へ移し恒久化する）: [decisions](refactor/decisions.md)、[architecture](refactor/architecture.md)、[media](refactor/media.md)、[audio](refactor/audio.md)、[access](refactor/access.md)、[config](refactor/config.md)、[plugins](refactor/plugins.md)、[planner](refactor/planner.md)、[runtime](refactor/runtime.md)、[performance](refactor/performance.md)、[quality](refactor/quality.md)、[fixtures](refactor/fixtures.md)、[supply](refactor/supply.md)、[surfaces](refactor/surfaces.md)、[web](refactor/web.md)、[experience](refactor/experience.md)、[scope](refactor/scope.md)。移す際に「現行実装の監査結果」節と milestone 完了条件節を落とし、目標設計だけを残す。
+
+設計文書に残すのは、godoc では表現できない横断的な判断（policy vector、planner の探索規則、reproducibility contract、依存方向の原則）に限る。個々の API の形は [experience](refactor/experience.md) の規則どおり各 package の `Example` 関数を正本とし、文書からは参照する。実装済み package を説明する Go code block を文書に残さない。
+
 ## 確定済みの境界
 
 詳細は [decision ledger](refactor/decisions.md) の Confirmed 判断を正本とする。特に実装中に崩してはならない境界は次である。
@@ -119,7 +132,8 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 - Access contract は I/O capability を表すが、Godec 固有の権限管理 system は提供しない。
 - HTTP server は固定公式 plugin を使う小さな demo/reference であり、production service ではない。
 - 設計期間は monorepo・単一 product release trainとし、contract 安定後に規格 family 単位の独立 release を可能にする。
-- 後方互換 shim を残さず、公式利用側を同時に移して旧経路を削除する。
+- 後方互換 shim を残さない。旧 contract 層は M5 の末尾で一括削除し、未移植の algorithm だけを compile 対象外の `_legacy/` に移植参照として残す。
+- 公式 family は WAVE、PCM、MP4、MP3、FLAC とし、MP4 の video/subtitle は stream copy のみ扱う。video/audio codec の網羅は目標にせず、第三者が同じ contract で追加できることを目標にする。
 
 初期実装を妨げず延期した事項は dynamic install、remote plugin protocol、live dynamic topology の既定 policy、公式 hardware accelerator 範囲である。これらは [Deferred decisions](refactor/decisions.md#deferred-without-blocking-the-first-implementation) に記録する。
 
@@ -133,7 +147,8 @@ M0〜M11 に加え、少なくとも次をすべて満たした時にリファ�
 - linear data path は reflection、hop ごとの allocation/refcount、node ごとの goroutine/channel、観測用 atomic を必須にしない。
 - cancel、panic、partial Open、fan-out、Finalize/Commit failure で item、goroutine、resource、temporary output を leak しない。
 - 無指定出力は copy/remux と情報保持を優先し、metadata/stream loss を黙って発生させない。
+- 複数 stream を持つ実 container で mapping、stream copy、seek、loss report が動作し、decode 実装を持たない video/subtitle stream も情報を失わずに通過できる。
 - 公式 standard distribution は CGO なしで build でき、性能・再現性 contract を対象別 differential test と代表 benchmark で検証できる。
 - full corpus を通常 module download へ含めず、toolchain、dependency、asset、license、SBOM、artifact provenance を release ごとに追跡できる。
 - CLI、WASM、demo web は Host の planner/runtime を再実装せず、未知の第三者 component/schema を固定 role の変更なしに扱える。
-- 旧 factory/resolver/routing/registry/SDK 経路、互換 wrapper、不要 export、source code の Git submodule が残っておらず、data/asset submodule は任意取得の test/demo dependency に限定されている。
+- 旧 factory/resolver/routing/registry/SDK 経路、互換 wrapper、`_legacy/`、不要 export、source code の Git submodule が残っておらず、data/asset submodule は任意取得の test/demo dependency に限定されている。

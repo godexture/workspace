@@ -168,24 +168,27 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `config` | typed Schema、Patch、Resolved、field Codec、canonical fingerprint | M2 完了 |
 | `plugin` | marker identity、descriptor、immutable Set、component Spec | M2 完了（Spec は M3） |
 | `host` | public Catalog/Plan/Run façade | M2 完了（Plan/Run は M4/M5） |
+| `media/key` | marker 由来 typed key、宣言 clone 規則、erased accessor | M4-1（`property`/`metadata`/`side` の重複機構を統合する） |
+| `media/carrier` | payload slot の identity と owner | M4-1（`media/format` から分離する） |
 | `media/schema` | open typed schema、trait、typed runtime factory | M3 |
-| `media/property` | immutable open property key/set | M3 |
+| `media/property` | immutable open property key/set | M3（key 機構は M4-1 で `media/key` へ移す） |
 | `media/timing` | integer time base、typed PTS/DTS/duration、checked rescale | M3 |
 | `media/stream` | open descriptor、program/stream scope、dynamic event | M3 |
 | `media/packet` | container chunk と codec packet | M3 |
 | `media/buffer` | aligned backing buffer、plane layout、ownership handle | M3 |
 | `media/audio` | typed sample frame `Frame[S]` | M3 |
-| `media/metadata` | Document、Origin、RawBlock、Mapping、metadata Binding | M3 |
+| `media/metadata` | Document、Origin、RawBlock、Mapping、metadata Binding | M3（key 機構は M4-1 で `media/key` へ移す） |
 | `media/tag` | shared semantic vocabulary | M3 |
-| `media/format` | Probe/Inspect/Carrier contract | M3 |
+| `media/format` | Probe/Inspect contract、capability alternative | M3（Carrier は M4-1 で分離、`access` の alias 再 export は M4-1 で削除） |
 | `media/codec` | Parser、Parameters、container codec Binding | M3 |
-| `media/side` | packet/frame side data | M3 |
+| `media/side` | packet/frame side data | M3（key 機構は M4-1 で `media/key` へ移す） |
 | `flow` | typed port、Reader/Writer、Processor/Operator、Input/Emitter | M3 |
 | `access` | Reference、Provider、byte Source/Sink capability、ownership、transaction | M3 |
 | `endpoint` | realtime/session/device clock、topology、backpressure trait | M3 |
-| `media/video`、`media/subtitle` | typed frame/cue | 実 consumer を持つ milestone |
-| `resource` | coarse Request/Grant | M4/M5 |
-| `job` | normalized source/sink/mapping/policy | M4 |
+| `media/video`、`media/subtitle` | typed frame/cue | 実 consumer を持つ milestone。M7 の MP4 は video/subtitle を stream copy でしか扱わず decode しないため、この 2 package を必要としない |
+| `resource` | coarse Request/Grant | M4-2 |
+| `job` | normalized source/sink/mapping/policy | M4-2 |
+| `plugin/mp4` | ISO BMFF Format。multi-stream、per-track timescale、sample entry binding、moov/mdat の capability alternative | M7 |
 | `testkit` | public plugin conformance | M6（最小形）、M10（完成） |
 | `standard` | official component と codec/metadata Binding の composition | M6 |
 | `integration` | cross-module、reference adaptor、surface end-to-end test | M6 |
@@ -193,6 +196,40 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `internal/{catalog,marker,snapshot,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}` | host implementation | `catalog` は M2、`marker`/`snapshot` は M3 完了、他は M4/M5 |
 
 `component` package は新設しない。component Spec は `plugin.Component` が持つ。理由は [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) を参照する。
+
+## M5 の切断
+
+M5 の最終単位で旧 contract 層を一括削除する。理由と規則は [refactor.md](../refactor.md#実装ロードマップ) の移行規則、依存方向の帰結は [architecture](architecture.md#移行規則) を参照する。切断の前提条件は M5 完了条件の paired benchmark を取り終えていることであり、それが旧 pipeline の最後の用途である。
+
+判定は「新 stack に同じ概念の実装があるか」と「新 stack だけで compile できるか」の二つで行う。
+
+| 区分 | 判定 | 処置 |
+|---|---|---|
+| 旧 contract 層 | 新 stack に対応する実装があり、二重に compile されると取り違えの原因になる | **削除** |
+| 未移植の algorithm | 規格上の細部に移植参照としての価値があるが、旧 contract 型に束縛されて compile できない | **`_legacy/` へ移す** |
+| 独立 utility | 旧 contract に依存せず compile でき、移行後も使う | **現在地に残す** |
+
+### 削除
+
+`core` 全体。`core/domain/*` は `media/*` が、`core/{registry,resolver,routing,pipeline,node,factory,core.go}` は `plugin`/`internal/{catalog,solve,plan,graph,run}`/`flow` が、`core/internal/{clone,xsync}` は `internal/snapshot` と immutable value がそれぞれ置換済みである。
+
+`sdk/{engine,conversion,catalog,config,cliflag,buffer,timer,profiling,testutil,optional,pool}`。`sdk/date` は `media/tag.Date` が置換済みのため同じく削除する。
+
+`cli/internal` と `cli/internal/play`、`bindings/wasm` と `bindings/js` の旧 surface、`example/{go,web}` の旧 wiring。
+
+全 plugin の `register.go`、`config_options.go`、`config_resolve.go`、`bridge.go`、`execution.go`、`format_config*.go`。`tools/cmd/config-generator` と `tools/internal/config-generator`（[F13](findings.md)、[config](config.md#generator-の扱い)）。
+
+### `_legacy/` へ移す
+
+`_legacy/` は repository path を鏡像で保つ。compile されないため、旧 import path を含んだままでよい。
+
+`plugin/wave/internal`、`plugin/pcm/internal` の package 本体、`plugin/mp3/internal/*`、`plugin/flac/internal/*`、`plugin/audio/internal/*`、`plugin/id3/*`、`plugin/vorbiscomment/*`、`sdk/audio`、`core/domain/media/pcm`、`core/domain/metadata`。いずれも旧 domain 型に束縛されているが、規格処理・数値 algorithm・bitstream 実装に移植価値がある。
+
+M6 が WAVE/PCM を、M7 が必要な metadata 経路を、M8 が MP3/FLAC/audio/ID3/Vorbis Comment を `_legacy/` から移し終えた時点で `_legacy/` ごと削除する。M8 完了時に `_legacy/` が空でなければ、残っている内容の処遇を [capability](capability.md) で決めてから削除する。
+
+### 現在地に残す
+
+`sdk/{bits,dsp,dsp/fft,parallel,hash}` と `plugin/pcm/internal/{adpcm,g711}` は旧 contract への依存を持たず、そのまま compile できる。最終的な配置換え（`sdk/hash` → `plugin/flac/internal/crc`、`sdk/parallel` → FLAC internal または host task primitive、`sdk/{bits,dsp}` → public utility として整理）は M8 が担当し、切断時には移動しない。切断で扱う対象を「compile される実装が一つになること」に限定し、配置換えを混ぜない。
 
 ## M1 で使う棚卸し条件
 
@@ -206,7 +243,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 この節は棚卸し対象をすべて新 architecture へ移し終えた時の gate であり、M1 単独には適用しない。
 
 - 現行 production package は上記のいずれかへ割り当てられている。
-- `sdk`、旧 factory/resolver/routing/registry、global façade は互換層として残らない。
+- `sdk`、旧 factory/resolver/routing/registry、global façade、`_legacy/` が残らない。
 - reusable algorithm と host-specific mechanism を同じ「SDK utility」に混在させない。
 - plugin の数学的 algorithm は contract 置換と独立して検証できる。
 - test/native/reference tool は production dependency graph に入らない。

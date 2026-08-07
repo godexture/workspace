@@ -51,7 +51,11 @@ foundation の Access contract は permission system ではない。file/network
 
 ## 初期実装と将来拡張
 
-最初の縦断経路は finite/static な WAVE + PCM と direct/local byte Access で作る。ただし public contract は次を閉じない。
+最初の縦断経路は finite/static な WAVE + PCM と direct/local byte Access で作る（M6）。次に MP4 (ISO BMFF) を加え、複数 stream、per-track timescale、sample entry binding、moov/mdat の capability alternative、未知 box の raw preservation を実規格で通す（M7）。MP4 の音声は PCM を bind し、video/subtitle track は stream copy のみ扱う。copy は decode しないため `media/video`/`media/subtitle` の frame 型を必要とせず、両 package は実 consumer が現れるまで作らない。
+
+公式実装がこの 5 family（WAVE、PCM、MP4、MP3、FLAC）に限られることは制限ではなく境界である。目標は規格の網羅ではなく、第三者が同じ contract で追加できることであり、MP4 はその主張が fixture ではなく実装で成立することを示すために置く。
+
+ただし public contract は次を閉じない。
 
 - non-seekable sequential source
 - 複数 input/output と複数 stream
@@ -68,7 +72,7 @@ foundation の Access contract は permission system ではない。file/network
 
 seek は Demuxer 一つの optional method ではない。source capability、format index、codec preroll、filter state、timeline、sink/device clock を含む graph operation である。
 
-担当は分ける。graph operation としての seek plan は M7、format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC には seek 実装があるため、M11 で旧経路を削除する前に、新経路が同等の能力を持つことを M8 完了時点で確認する。
+担当は分ける。graph operation としての seek plan は M7 が持ち、その最初の実装 consumer は同じ M7 の MP4 index（`stbl`/`stss`）である。format ごとの index/preroll 実装は M6 と M8 の family 移行に乗せる。現行 MP3/FLAC には seek 実装があるため、`_legacy/` を削除する前に、新経路が同等の能力を持つことを M8 完了時点で確認する。
 
 実装する時は次を一つの seek plan に記録する。
 
@@ -126,10 +130,10 @@ M3 完了条件が求める「型が存在しない行の担当明示」であ�
 
 | 行 | 状態 | 担当 |
 |---|---|---|
-| stream/program/chapter mapping | `job` package が無い。mapping と selector は Job の正規化に属する | M4。planner pipeline の Normalize Job が最初の consumer になる |
+| stream/program/chapter mapping | `job` package が無い。mapping と selector は Job の正規化に属する | 型は M4-2 の `job`。実 consumer は M7 の MP4 であり、WAVE/MP3/FLAC はいずれも単一 stream のため mapping を実規格で検証できない |
 | hardware/native implementation | variant 型が無い | M4 が型と hard filter（accuracy/repeatability/platform で候補を絞る側）を持ち、M8 が実 variant を公式 plugin へ入れる |
 | analysis/report branch | 専用の型は作らない | 出力 port を持たない通常 component として既に表現でき、core の closed role を増やさない。read-only branch が診断を出すための `Diagnostics` service は M5 が host service として用意する |
-| Go library、CLI、WASM | `host` だけが存在し、`job`・`Plan`・`Result`・surface DTO が無い | `job`/`Plan` は M4、`Result` と実行 event は M5、CLI/WASM/library surface は M9 |
+| Go library、CLI、WASM | `host` だけが存在し、`job`・`Plan`・`Result`・surface DTO が無い | `job`/`Plan` は M4、`Result` と実行 event は M5、library と CLI の最短経路は M6、全 surface の完成は M9 |
 
 いずれも core の closed enum や switch を増やさずに追加できることが条件であり、担当 milestone が書けない行は残さない。
 
@@ -151,3 +155,4 @@ M3 はこの文書の capability matrix が要求する拡張点のうち、cont
 - object Access、session Endpoint、Device Endpoint、Format の責務が混ざらない。
 - 初期未対応 capability が runtime panic ではなく Compile diagnostic になる。
 - video/subtitle/custom schema と live/device fixture が、同じ Host/planner/runtime へ参加できる。
+- decode 実装を持たない stream（MP4 の video/subtitle track など）が、raw carrier と structured diagnostic を通じて情報を失わずに copy される。

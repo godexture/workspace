@@ -22,6 +22,7 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 検証は変更範囲とリスクに合わせ、日常開発の待ち時間を full repository gate に固定しない。
 
 - 日常の変更では、変更した package と直接影響する contract の correctness test を優先する。無関係な module、browser、full corpus まで毎回実行しない。
+- M5 の切断以降、`go build ./...` と `go test ./...` の対象は新 stack だけになる。`_legacy/` は `_` 始まりの directory として go tool が無視するため build も test もされない。移植参照として読む対象であり、検証対象にしない。
 - benchmark/profile は hot path、allocation、並行処理、runtime 構造に影響し得る変更、または性能回帰の調査時だけ行う。代表 case による短い smoke から始める。
 - milestone の完了確認、release 前、広範な contract/module 変更では repository-wide gate を実行する。新しい optimized variant の採用時は、その variant に必要な differential/benchmark を追加する。
 - 選択した gate の失敗や skip は成功扱いにしない。一方、日常 tier で選択していない full tier は「未検証」と記録すればよく、日常 job 自体を失敗にしない。
@@ -126,6 +127,7 @@ foundation が公式 plugin を importして testする構成をやめ、depende
 ```text
 integration/
 ├─ wave_pcm
+├─ mp4
 ├─ mp3
 ├─ flac
 ├─ metadata

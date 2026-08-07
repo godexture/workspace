@@ -3,6 +3,8 @@
 拡張性は API の自由度だけで評価しない。通常の利用者、plugin 開発者、core 開発者のそれぞれに complexity budget を設ける。
 
 > この文書の code は**目標の形**であり、現在の API と一致するとは限らない。実際に動く code は各 package の `Example` 関数を正本とする。文書に code を直書きすると API 変更で静かに嘘になるため、helper が目標形に追いついた時点で例を Example 関数へ移し、この文書からは参照する。M2 の `plugin/example_test.go` がその形である。
+>
+> この規則は設計文書全体に適用する。実装済み package を説明する Go code block は Example への参照へ置き換える。M4-1 で全 foundation package へ Example を用意し、以後は package を実装した milestone がその package の文書 code block を Example へ移す。未実装 contract の概念例は残してよい。
 
 ## 利用者
 
@@ -177,7 +179,10 @@ Transform/Start、core/SDK、CLI/runtime 等に同じ判断を重複実装しな
 
 M6 は最初の実 container 経路が動く milestone であり、利用者と plugin 開発者の体験が初めて実測できる時点である。この節はその 2 者を対象にする。core 開発者向けの gate は各領域文書の完了条件が担う。
 
-- **利用者の最短経路が一行である。** [surfaces](surfaces.md#最短経路の-convenience) の `standard.Convert(ctx, "in.flac", "out.wav")` 相当が動く。path から Reference への解決は convenience が行い、URL 構文を要求しない。この convenience は `Job` を組み立てて同じ `Host` を呼ぶだけとし、別経路の planner や既定を持たない。
+M5 の切断により、M6 の開始時点で repository には利用 surface が存在しない。したがって M6 は library と CLI の最短経路を新しく書く。全 flag、WASM、web editor への拡張は M9 が担当する。
+
+- **利用者の最短経路が一行である。** [surfaces](surfaces.md#最短経路の-convenience) の `standard.Convert(ctx, "in.wav", "out.wav")` 相当が動く。path から Reference への解決は convenience が行い、URL 構文を要求しない。この convenience は `Job` を組み立てて同じ `Host` を呼ぶだけとし、別経路の planner や既定を持たない。
+- **`cmd/godec` が新 Host の上で動く。** WAVE/PCM の範囲に限り、入力と出力を指定した変換が公式 binary から実行できる。`cli.Run(ctx, h, args)` の形で `Host` を注入され、CLI layer に planner、registry、plugin factory を持たない。この時点の CLI が持つのは入出力指定、`Plan` preview、progress 表示、cancel、exit code の分類だけでよい。
 - **2 段目へ連続的に移行できる。** codec 指定、filter、mapping、policy、custom Set へ進む時に、1 段目で書いた code を捨てずに `Job` を露出させて拡張できる。[progressive disclosure](#progressive-disclosure) の段差が「作り直し」にならない。
 - **plugin 開発者の最小 component を実測し、目標との差を記録する。** M6 で実 WAVE/PCM component を書いた時点で、gain 相当の最小 processor に必要な概念数を数える。[最小 component](#最小-component) が目標とする水準に対して差が大きい場合、helper を追加するか、追加しない理由を記録する。放置しない。
 - **通常 Processor が実装しなくてよいものを実際に実装していない。** global registration、衝突しない文字列 ID、goroutine/channel、scheduler、手動 `Release`、CLI flag parser、wire DTO、metrics 集約、candidate routing のいずれも、公式 WAVE/PCM component の source に現れない。
@@ -186,7 +191,7 @@ M6 は最初の実 container 経路が動く milestone であり、利用者と 
 
 ## M9 完了条件
 
-M9 は library、CLI、WASM、demo を同じ Host へ移す milestone であり、三者の体験が揃う時点である。
+M9 は M6 で書いた最短経路を全 surface へ広げる milestone であり、三者の体験が揃う時点である。移行ではなく完成であり、library、CLI、WASM、demo が同じ Host/Job/Plan/Result を使う状態にする。
 
 - **[受け入れ test](#受け入れ-test) の各項目が自動 test として存在する。** 特に「初めての利用者が input/output だけで same-format/same-codec job を実行できる」「custom host example が通常の短い Go `main` で完結する」「third-party fixture が marker、config、Processor、test 一つで追加できる」を実行可能な形にする。
 - **[complexity budget](#complexity-budget) の左列と中央列が実測で満たされている。** 通常利用者が cancel/progress 以外の並行性を意識せず、plugin 開発者が ownership、scheduler、surface DTO を書かない。表の項目ごとに、実際の利用側 code を根拠として示す。

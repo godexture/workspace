@@ -354,13 +354,24 @@ M5 は execution island、ownership、queue、cancel、Finalize、transactional 
 - observation off で hot path に metric 用 atomic、clock read、size 計算が現れない。observation の各段階が同じ event model から集約される。
 - `Fast`/`Stable`/`Portable`/`Realtime` が Run の分岐にならず、Host が Compile 前に policy vector へ展開する。item loop が preset、CPU feature、catalog を参照しない。
 - **hot-path 性能契約の 12 条を代表 benchmark と test で確認する。** 特に hop ごとの必須 allocation、linear ownership の refcount、node ごとの goroutine/channel、observation off の atomic を数値で示す。
-- **旧 pipeline と新 runtime の paired benchmark を同一 harness へ接続する。** M0 baseline は旧 pipeline を測っており、旧経路が消える M11 の後では比較対象が失われる（[refactor.md](../refactor.md#実装ロードマップ)）。
+- **旧 pipeline と新 runtime の paired benchmark を同一 harness へ接続する。** M0 baseline は旧 pipeline を測っており、旧 contract 層を切断した後では比較対象が失われる（[refactor.md](../refactor.md#実装ロードマップ)）。この benchmark を取り終えることが次項の切断の前提条件である。
 - **walking skeleton が新 runtime で通る。** M4 が planner 経由にした経路を、island、queue、cancel、Finalize を含む実行で流し、bytes、item 数、順序、timestamp が同じであることを検査する。
 - M3 専用の `host.Open(identity)` が残っていない。M4 で置き換えられていなければここで削除する。
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
 - 上記を unit/property/race test で検査する。cancel、panic、partial Open、fan-out、Finalize/Commit failure で item、goroutine、resource、temporary output が leak しないことを含める。
 
-M5 では次を未完了事項として残す。実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形は M6。metadata loss report の surface 表示と seek plan は M7。variant selection と並列 codec の移行は M8。device/session Endpoint の実装は M9。
+### M5 最終単位: 旧 contract 層の切断
+
+上の全条件を満たした後、最後の作業単位として旧 contract 層を一括削除する。範囲と判定規則は [inventory](inventory.md#m5-の切断) を正本とする。この単位は新機能を作らず、削除と移動だけを行う。
+
+- 旧 contract 層が削除され、`core` と `sdk/{engine,conversion,catalog,config,cliflag,buffer,timer,profiling,testutil,optional,pool,date,audio}` が repository に存在しない。
+- 未移植の algorithm が `_legacy/` にあり、`go list ./...` に現れない。`go build ./...` と `go test ./...` が新 stack だけを対象にして成功する。
+- 同じ概念の実装が二つ compile される箇所が残っていない。`flow` と `core/node`、`plugin.Set` と `core/registry`、`media/*` と `core/domain/*`、`config` と `sdk/config` のような対が消えている。
+- 旧 contract に依存しない utility（`sdk/{bits,dsp,dsp/fft,parallel,hash}`、`plugin/pcm/internal/{adpcm,g711}`）が現在地で compile できる。この単位では配置換えをしない。
+- [findings](findings.md) の「新経路で解消（旧経路は M5 の切断で削除）」注記が付いた行を完了へ更新する。
+- この時点で repository は WAVE、MP3、FLAC、audio filter、CLI、WASM、demo web の機能を持たない。M6 以降が `_legacy/` から順に移す。未 release 製品として意図した状態であり、回帰ではない。
+
+M5 では次を未完了事項として残す。実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形、`standard.Convert` と `cmd/godec` の最短経路は M6。multi-stream、metadata loss report、seek plan、MP4 は M7。variant selection と並列 codec の移行は M8。device/session Endpoint の実装と surface の完成は M9。
 
 ## 文書全体の完了条件
 

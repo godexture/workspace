@@ -354,6 +354,35 @@ planning benchmark は wall time だけでなく、Compile 回数、expanded sta
 
 M4 は `Compile`、solver、graph validation、public `Plan`、private `Program` を新設する milestone である。実行、ownership、queue、cancel、Finalize は M5、実 Format/Codec は M6 の担当であり、M4 には要求しない。runtime 側の条件は [runtime](runtime.md#m5-完了条件) を参照する。
 
+### 作業単位
+
+M4 は新規 package 数が最も多く、descriptor fingerprint のような一つの設計誤りが複数 package を無効化する最初の milestone である。したがって着手前に単位を分ける。分割の判定規則は **各単位が walking skeleton を端から端まで green のまま残すこと** とする。
+
+| 単位 | 内容 | 単位終了時の skeleton |
+|---|---|---|
+| M4-1 | foundation の是正（`media/key`、`media/carrier`、`media/format` の alias 再 export 削除、Example 整備）と walking skeleton の control plane 化 | descriptor を伴って流れる。planner はまだ無い |
+| M4-2 | `job`、`resource`、`plugin.Component` の `Compile`/`Suggest`/動的 `Shape`、graph validation | pinned/explicit graph として compile され、検証を通って流れる |
+| M4-3 | solver、descriptor fingerprint、budget、lexicographic rank、`Plan`、private `Program` | 自動挿入を含む `Plan`/`Program` 経由で流れる |
+| M4-4 | 実 PCM component、Provider/Endpoint の planner binding、合成 filter chain の converter 数 gate | 実 PCM が planner 経由で流れる |
+
+M4-4 は議論ではなく実規格が contract を制約する唯一の単位なので、圧縮しない。ここで判明した不足は M5 へ送らずこの milestone 内で直す。
+
+### M4-1 の条件
+
+M4-1 は新しい contract を作らず、M3 の成果に対する構造是正と skeleton の拡張だけを行う。
+
+- marker 由来 typed key の機構（identity 導出、[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) の宣言 clone 規則、erased accessor、偽装 key を排除する非公開 method）が `media/key` に一つだけ存在する。`property.Set`、`metadata.Document`、`side.Data` はその上の容器であり、機構を各自で複製しない。
+- `metadata.Document` と `side.Data` が `key.Key[T]` を共有し、一つの marker 宣言が両方で通る。`property.Key[T]` は canonical encoder を宣言必須とする別型であり、canonical 表現を持たない key を `property.Set` へ入れる経路が実行時ではなく宣言時に閉じている。区分の根拠は [media](media.md#key-機構は一つ容器は三つkey-型は二つ) を参照する。
+- 同じ marker を異なる payload 型で宣言した key が `host.New` の aggregate diagnostic として報告される。検出は既存の `plugin.Declaration` と `internal/catalog` に載り、key 専用の registry を新設していない。宣言しない key も動作する。
+- `Carrier`/`CarrierID` が `media/carrier` にあり、`media/format` の内部型ではない。`media/metadata` が carrier identity のために `media/format` を import しない。
+- `media/format` が `access` の capability 語彙を alias で再 export しない。同じ概念に import path が二つ存在しない。
+- `media/packet` と `media/audio` の推移的依存が `media/{buffer,timing,side,key}` と `internal/{marker,snapshot}` に閉じている。data plane から `config`、`plugin`、`access`、`diagnostic`、`media/format` へ到達しない。この条件を test で固定する。
+- **walking skeleton が control plane を通る。** 各 component の port が `stream.Descriptor`（schema identity、time base、`property.Set`、`metadata.Document`）を伴い、駆動 loop が item と descriptor を並走させる。M3 の skeleton は `media/stream` と `media/property` を一度も構築しておらず、両 package は repository 全体で consumer を持たない。M4-2 以降の planner はこの descriptor の上に載るため、solver を積む前に実際に流して検証する。
+- skeleton を M3 の成果物ではなく、以後の全 milestone が自分の contract を通す恒久 harness として位置付ける。
+- 実装済みの foundation package が `Example` 関数を持ち、[experience](experience.md) の「動く code は各 package の `Example` 関数を正本とする」規則が全 package で成立する。設計文書中の Go code block のうち実装済み package を説明するものを Example への参照へ置き換える。
+
+### M4 全体の条件
+
 - `Compile` が I/O、goroutine、allocator、clock、global registry を使わず、同じ input/config/policy から同じ canonical result を返し、繰り返し呼べる。満たせない入力は文字列 error ではなく構造化 `Requirement` として返る。
 - `Suggest` が deterministic order、有限、duplicate canonical config なし、宣言した上限以内で、I/O と instance 作成をしない。変換規則は `Compile` にだけあり、`Suggest` と `Open` に重複しない。
 - 候補評価が component の `Open`/`Close` を呼ばない。現行 resolver の「Factory を試し起動して出力を調べる」経路（[F7](findings.md)）が構造的に不可能になっている。
@@ -376,7 +405,7 @@ M4 は `Compile`、solver、graph validation、public `Plan`、private `Program`
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
 - 上記を unit/property test で検査する。公式 plugin を import しない。determinism は map iteration、catalog insertion、候補評価の完了順を意図的に乱して検査する。
 
-M4 では次を未完了事項として残す。実 container format は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。variant selection の実装は M8 の family 移行に乗せる。
+M4 では次を未完了事項として残す。実 container format は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。multi-stream の mapping と selector 解決は M7 が MP4 を consumer として確定する。variant selection の実装は M8 の family 移行に乗せる。
 
 ## 文書全体の完了条件
 

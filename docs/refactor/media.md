@@ -23,6 +23,8 @@ Data plane:
 
 control plane では open property set や一部 type erasure を許容する。data plane では具体型と compile 済み edge を使う。
 
+この分離は概念の説明ではなく package 依存の制約である。data plane の package は control plane の package を import しない。両者が共有するのは `media/buffer`、`media/timing`、`media/key` だけであり、いずれも `internal/{marker,snapshot}` にしか依存しない。詳細は [architecture](architecture.md#foundation-内部の依存方向) を正本とする。
+
 ## open typed schema
 
 現在の `LinkAny` は `Packet` と `Frame` に分岐し、`MediaAttributes.Video` は未実装である。この形で stream kind を増やすたびに core を編集すると、第三者拡張という目標を満たせない。
@@ -187,6 +189,8 @@ format または codec bitstream 内にある、外部 payload を置く物理�
 
 Carrier は payload の意味を決めない。format-owned carrier だけでなく codec/bitstream-owned carrier もあるため、`ContainerID` 一つを owner として埋め込まない。
 
+同じ理由により Carrier は `media/carrier` という独立 package に置き、`media/format` の内部型にしない。format の内部型にすると codec/bitstream が所有する carrier が format 由来に見え、`media/metadata` が carrier identity 一つのために `media/format` を import することになる。format と codec は対等に carrier を宣言し、metadata Binding はその identity を key として使う。
+
 ### Metadata Encoding
 
 carrier payload の byte 表現を semantic document へ parse/marshal する規格である。例: ID3v2.4、Vorbis Comment、RIFF INFO。
@@ -304,6 +308,56 @@ var ReplayGain = metadata.DefineKey[replayGainID, Gain]()
 
 現行 `Bundle` の `single`/`multiple` が unexported method を要求する方式は、外部 package に key family を追加させられないため置換する。
 
+### key 機構は一つ、容器は三つ、key 型は二つ
+
+marker から identity を導き、[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) の宣言 clone 規則を課し、erased accessor を提供する機構は `media/key` に一つだけ置く。この機構を容器ごとに書き写さない。
+
+容器は三つあり、意味が違うので分離を維持する。
+
+| 容器 | 表すもの | scope | 多重度 |
+|---|---|---|---|
+| `property.Set` | stream の control-plane 属性 | stream/descriptor | 単一値 |
+| `metadata.Document` | 順序、重複、origin、raw block を持つ semantic document | asset/program/stream/chapter | 順序付き複数値 |
+| `side.Data` | 単一 packet/frame に付く値 | item | 順序付き複数値 |
+
+`Document` の scope、carrier origin、raw block は stream や asset を記述する control-plane の概念なので `side.Data` には現れない。逆に `side.Data` は item ごとの hot path に載るため、値を持たない item が追加 allocation も間接参照も負わない表現にする。
+
+key 型は三つではなく二つにする。**容器が key へ要求するものが二種類しかないためである。**
+
+| | 宣言 clone | canonical encoder | 理由 |
+|---|---|---|---|
+| `property.Set` | 必要 | **必要** | [planner](planner.md#descriptor-state) の descriptor fingerprint に canonical property key/value として参加する |
+| `metadata.Document` | 必要 | 不要 | Plan に載るのは Binding、Mapping、loss であって entry の値ではない |
+| `side.Data` | 必要 | 不要 | item 局所であり control plane に出ない |
+
+したがって `metadata.Document` と `side.Data` は `key.Key[T]` をそのまま共有する。同じ marker 宣言が document metadata と side data の両方で通ることは、別途 API を足すのではなくこの構造から従う。第三者の `ReplayGain` を、asset の metadata としても frame ごとの side data としても、一度の宣言で使える。
+
+`property.Key[T]` は同じ機構の上に canonical encoder の宣言義務を加えた別型とする。canonical 表現を作れない property は fingerprint を不安定にし、planner の memoization と Plan の再現性を壊す。これは [config](config.md#immutability-と-canonicalization) が「canonical form を作れない field は schema 登録を失敗させる」として config field に課している規則と同一であり、規則の適用条件は同じ「値が fingerprint に入るか」である。config field と stream property は入り、metadata entry と side data は入らない。
+
+canonical encoder を全 key へ義務付けると、artwork のように canonical 表現を持たない metadata key が宣言できなくなる。逆に optional にすると、canonical を持たない key を `property.Set` へ入れた時点で初めて失敗する。宣言時に検出できるものを実行時へ送らない。
+
+### key identity の重複を検出する
+
+`key.Define[gainID, float64]` と `key.Define[gainID, string]` のように、同じ marker を異なる payload 型で宣言することは bug である。identity は marker からのみ導き payload 型を含めないため（[C8](decisions.md)、payload 型の refactor で identity を変えないための規則）、この重複を Go の型で防ぐことはできない。
+
+容器側は既に fail-closed である。`property.Set`、`metadata.Document`、`side.Data` はいずれも格納時の型を保持し、key の型と一致しない entry を返さない。したがって誤った型の値が読み出されることはない。残る害は、Plan と diagnostic に同じ名前で別物が現れること、`key.ID` の一致が実在しない Mapping を可能に見せることである。
+
+検出は、二つの宣言を同時に見られる唯一の場所、すなわち host 構築時に行う。key は既存の `plugin.Declaration` に載せ、`internal/catalog` が codec Binding や Provider scheme と同じ経路で conflict を報告する。key 専用の registry を新設しない。
+
+- `key.Declare(k)` と `property.Declare(k)` は `plugin.Declaration` を返す。`plugin.Set` へ加えた key は `host.New` が検証する。
+- 同じ marker を同じ payload 型で複数回宣言することは無害とし、異なる payload 型で宣言した場合を host 構築 error とする。namespace は `property` と `metadata`/`side` で共有し、容器をまたいだ重複も検出する。
+- 宣言しない key も動作する。その場合は検証と catalog 表示の対象にならない。公開しない private key に宣言を強制しない。
+
+`media/tag` の共通 vocabulary は宣言をまとめて公開し、`standard` composition がそれを含める。
+
+### 多重度の宣言は持たない
+
+`Title` は単一値、`Artist` は複数値、という規格上の差を key は宣言しない。
+
+この情報の consumer は、出力 carrier が一値しか持てない時に畳み込みが loss かどうかを判断する metadata encoding であり、それが現れるのは実 ID3/Vorbis Comment を移す M8 である。それ以前に凍結しない理由は、多重度が二値とは限らないためである。ID3 は言語違いの `TIT2` を、Vorbis Comment は複数の `TITLE` を正当に持てるため、実際に必要な区分は「単一 / 複数 / 修飾子付き複数」になり得る。実 encoding を前にせずに選ぶと作り直しになる。
+
+M8 が [capability](capability.md) の ID3/Vorbis Comment 移行でこれを決める。それまで `Values` と `First` の両方を全 key に提供し、規格上の制約は encoding 側が持つ。
+
 ## metadata binding と変換
 
 carrier と encoding を binding する。
@@ -416,6 +470,8 @@ walking skeleton を要求する理由は、consumer のいない contract を M
 
 - 第三者が core を変更せず、新しい schema、unit 型、Format、Codec、Parser、Carrier、Metadata Encoding、key、Binding、Mapping を追加できる。
 - 万能 `Frame` と閉じた stream kind enum が存在せず、port が schema の具体型で結ばれる。
+- data plane の package が control plane の package を import せず、marker 由来 typed key の機構が `media/key` に一つだけ存在する。canonical encoder を要求するのは fingerprint に参加する key だけである。Carrier が `media/format` の内部型になっていない。
+- 同じ marker を異なる payload 型で宣言した key が host 構築 error になり、専用 registry を持たない。
 - 型消去が control plane の登録と factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。
 - container chunk、codec packet、decoded unit、side data、static metadata、timed event が別の型として分かれている。
 - timestamp が integer time base で表され、rescale が overflow と rounding policy を明示し、不明を `0` と混同しない。

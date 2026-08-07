@@ -541,6 +541,8 @@ M3 は Access と Endpoint の contract を foundation package として新設�
 
 M3 では次を未完了事項として残す。prepared job の acquire/probe/inspect 実行順は M4、transaction の実行と rollback は M5、file/HTTP Provider と device Endpoint の実装は M6/M9、conformance testkit は M10 で扱う。
 
+capability alternative は M6 の WAVE が最初の consumer になる（`data` chunk size の後追い patch が random-write と sequential の選択を要求する）。設計上の代表例である「random-write OR sequential + fragmented-mode」は M7 の MP4 が moov/mdat 順序として実際に通す。ここで spool 挿入の判断と Plan への表示も初めて実データで検証される。
+
 **consumer を持たない contract は M3 で凍結しない。** clock domain と timestamp origin、latency/buffer range、block/drop/duplicate/conceal policy、reconnect/discontinuity semantics、exclusive/shared resource、hotplug event、multi-output の `AllOrNothing` 共同 transaction は、この文書に設計として記述するが、実装する Endpoint も Provider も現時点の roadmap に存在しない。M3 では最小の型だけを置き、詳細は実際の Endpoint を作る milestone で決める。現行 `MediaAttributes` が「使われないまま形だけ先に決めて後で作り直す」失敗をした構造を繰り返さないためである。
 
 ## 文書全体の完了条件
