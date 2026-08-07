@@ -25,23 +25,6 @@ func NewTag(namespace, value string) Tag {
 func (t Tag) Valid() bool    { return t != "" }
 func (t Tag) String() string { return string(t) }
 
-type Capability = access.Capability
-
-const (
-	SequentialRead = access.SequentialRead
-	RandomRead     = access.RandomRead
-	StableSize     = access.StableSize
-	Reopen         = access.Reopen
-	ConcurrentRead = access.ConcurrentRead
-	CancelableRead = access.CancelableRead
-)
-
-type Alternative = access.Alternative
-
-func AnyOf(capabilities ...Capability) Alternative {
-	return access.AnyOf(capabilities...)
-}
-
 // Format is a declarative format contract. It does not own byte locations,
 // decoder implementations, metadata parsers, or access providers.
 type Format struct {
