@@ -360,10 +360,14 @@ M4 は新規 package 数が最も多く、descriptor fingerprint のような一
 
 | 単位 | 内容 | 単位終了時の skeleton |
 |---|---|---|
-| M4-1 | foundation の是正（`media/key`、`media/carrier`、`media/format` の alias 再 export 削除、Example 整備）と walking skeleton の control plane 化 | descriptor を伴って流れる。planner はまだ無い |
+| M4-1 | foundation の構造是正（`media/key` の機構統合、`media/carrier` 分離、`media/format` の alias 再 export 削除、依存制約の test 固定）と walking skeleton の control plane 化 | descriptor を伴って流れる。planner はまだ無い |
+| M4-1b | key identity の重複検出。`plugin.Declaration` の target 一般化と `internal/catalog` の検出 | 変わらない。宣言経路が増えるだけ |
+| M4-1c | 実装済み foundation package の `Example` 整備と設計文書 code block の置換 | 変わらない。実装に変更を入れない |
 | M4-2 | `job`、`resource`、`plugin.Component` の `Compile`/`Suggest`/動的 `Shape`、graph validation | pinned/explicit graph として compile され、検証を通って流れる |
 | M4-3 | solver、descriptor fingerprint、budget、lexicographic rank、`Plan`、private `Program` | 自動挿入を含む `Plan`/`Program` 経由で流れる |
 | M4-4 | 実 PCM component、Provider/Endpoint の planner binding、合成 filter chain の converter 数 gate | 実 PCM が planner 経由で流れる |
+
+M4-1 を 3 分割したのは、当初 1 単位に置いていた三つの作業が、対象も受け入れ基準も互いに独立だったためである。構造是正（M4-1）は data plane の閉包を test で固定することが成否であり、key の重複検出（M4-1b）は `plugin.Declaration` の contract を広げる判断を含み、Example と文書整備（M4-1c）は実装に一切触れない。順序は依存関係で決まる。M4-1b は M4-1 が作る `media/key` の erased view を必要とし、M4-1c は両者が確定させた API を写すため最後に置く。
 
 M4-4 は議論ではなく実規格が contract を制約する唯一の単位なので、圧縮しない。ここで判明した不足は M5 へ送らずこの milestone 内で直す。
 
@@ -373,13 +377,26 @@ M4-1 は新しい contract を作らず、M3 の成果に対する構造是正�
 
 - marker 由来 typed key の機構（identity 導出、[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) の宣言 clone 規則、erased accessor、偽装 key を排除する非公開 method）が `media/key` に一つだけ存在する。`property.Set`、`metadata.Document`、`side.Data` はその上の容器であり、機構を各自で複製しない。
 - `metadata.Document` と `side.Data` が `key.Key[T]` を共有し、一つの marker 宣言が両方で通る。`property.Key[T]` は canonical encoder を宣言必須とする別型であり、canonical 表現を持たない key を `property.Set` へ入れる経路が実行時ではなく宣言時に閉じている。区分の根拠は [media](media.md#key-機構は一つ容器は三つkey-型は二つ) を参照する。
-- 同じ marker を異なる payload 型で宣言した key が `host.New` の aggregate diagnostic として報告される。検出は既存の `plugin.Declaration` と `internal/catalog` に載り、key 専用の registry を新設していない。宣言しない key も動作する。
-- `Carrier`/`CarrierID` が `media/carrier` にあり、`media/format` の内部型ではない。`media/metadata` が carrier identity のために `media/format` を import しない。
+- `media/key` が `internal/{marker,snapshot}` と stdlib しか import しない。`plugin` を import しない。
+- carrier identity が marker 由来で `media/carrier` にあり、`media/format` の内部型ではない。`media/metadata` が carrier identity 一つのために `media/format` を import しない。carrier が owner field を持たない。
 - `media/format` が `access` の capability 語彙を alias で再 export しない。同じ概念に import path が二つ存在しない。
 - `media/packet` と `media/audio` の推移的依存が `media/{buffer,timing,side,key}` と `internal/{marker,snapshot}` に閉じている。data plane から `config`、`plugin`、`access`、`diagnostic`、`media/format` へ到達しない。この条件を test で固定する。
 - **walking skeleton が control plane を通る。** 各 component の port が `stream.Descriptor`（schema identity、time base、`property.Set`、`metadata.Document`）を伴い、駆動 loop が item と descriptor を並走させる。M3 の skeleton は `media/stream` と `media/property` を一度も構築しておらず、両 package は repository 全体で consumer を持たない。M4-2 以降の planner はこの descriptor の上に載るため、solver を積む前に実際に流して検証する。
 - skeleton を M3 の成果物ではなく、以後の全 milestone が自分の contract を通す恒久 harness として位置付ける。
-- 実装済みの foundation package が `Example` 関数を持ち、[experience](experience.md) の「動く code は各 package の `Example` 関数を正本とする」規則が全 package で成立する。設計文書中の Go code block のうち実装済み package を説明するものを Example への参照へ置き換える。
+
+### M4-1b の条件
+
+- 同じ marker を異なる payload 型で宣言した key が `host.New` の aggregate diagnostic として報告される。検出は既存の `plugin.Declaration` と `internal/catalog` に載り、key 専用の registry を新設していない。宣言しない key も動作する。
+- 宣言の構築子が `plugin` にあり、`media/key` は `plugin` を import しない。M4-1 が固定した data plane の閉包 test が引き続き green である。
+- `plugin.Declaration` の target が「catalog に実在すべき component」と「payload を識別する Go 型」を区別でき、conflict 判定は両者で一つの経路を通る。codec Binding、metadata Binding、Provider scheme の意味が変わらない。
+- namespace を `property` と `metadata`/`side` で共有し、容器をまたいだ重複を検出する。`property.Key[T]` と `key.Key[T]` が一つの構築子を共有する。
+- `media/tag` の共通 vocabulary が宣言をまとめて公開する。`standard` composition への組み込みは M6。
+
+### M4-1c の条件
+
+- 実装済みの foundation package が `Example` 関数を持ち、[experience](experience.md) の「動く code は各 package の `Example` 関数を正本とする」規則が全 package で成立する。
+- 設計文書中の Go code block のうち実装済み package を説明するものが Example への参照へ置き換わっている。未実装 contract の概念例は残す。
+- この単位で production code の意味を変えない。API 変更が必要になった場合は Example を歪めず、該当 package を実装した単位へ差し戻す。
 
 ### M4 全体の条件
 

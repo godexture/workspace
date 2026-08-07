@@ -191,6 +191,10 @@ Carrier は payload の意味を決めない。format-owned carrier だけでな
 
 同じ理由により Carrier は `media/carrier` という独立 package に置き、`media/format` の内部型にしない。format の内部型にすると codec/bitstream が所有する carrier が format 由来に見え、`media/metadata` が carrier identity 一つのために `media/format` を import することになる。format と codec は対等に carrier を宣言し、metadata Binding はその identity を key として使う。
 
+carrier identity は [C8](decisions.md) に従い marker 型から導出する。carrier は第三者が宣言する identity であり、`metadata.Bind` はその値をそのまま composition の declaration key に使うため、手書き文字列のままでは二つの plugin が同じ `"id3"` を選んだだけで衝突する。foundation の identity で第三者に一意な文字列を考えさせる箇所を残さない。これは `config.Schema` の identity を marker 由来へ移したのと同じ適用であり、carrier だけを例外にしない。規格側の値である `format.Tag`（WAVE の `0x0055` 等）は identity ではなく data なので対象外である。
+
+carrier は owner field を持たない。owner を表す文字列は読む側が存在せず、marker から導いた identity の package path が宣言元をそのまま示す。format と codec のどちらが所有するかを型で区別する必要が生じるのは、MP3 の先頭 tag area のように codec bitstream 側が carrier を宣言する M8 であり、その実 consumer を前にして決める。宣言だけの field を先に凍結しない。
+
 ### Metadata Encoding
 
 carrier payload の byte 表現を semantic document へ parse/marshal する規格である。例: ID3v2.4、Vorbis Comment、RIFF INFO。
@@ -344,11 +348,30 @@ canonical encoder を全 key へ義務付けると、artwork のように canoni
 
 検出は、二つの宣言を同時に見られる唯一の場所、すなわち host 構築時に行う。key は既存の `plugin.Declaration` に載せ、`internal/catalog` が codec Binding や Provider scheme と同じ経路で conflict を報告する。key 専用の registry を新設しない。
 
-- `key.Declare(k)` と `property.Declare(k)` は `plugin.Declaration` を返す。`plugin.Set` へ加えた key は `host.New` が検証する。
 - 同じ marker を同じ payload 型で複数回宣言することは無害とし、異なる payload 型で宣言した場合を host 構築 error とする。namespace は `property` と `metadata`/`side` で共有し、容器をまたいだ重複も検出する。
 - 宣言しない key も動作する。その場合は検証と catalog 表示の対象にならない。公開しない private key に宣言を強制しない。
 
 `media/tag` の共通 vocabulary は宣言をまとめて公開し、`standard` composition がそれを含める。
+
+#### 宣言の構築は `media/key` に置かない
+
+`key.Declare(k)` が `plugin.Declaration` を返す形は採らない。`media/key` は data plane の閉包に属し、[architecture](architecture.md#foundation-内部の依存方向) が依存を `internal/{marker,snapshot}` だけに制限しているため、`plugin` を import した時点で `media/packet -> media/side -> media/key -> plugin -> {config, flow, diagnostic}` となり、control plane と data plane の分離が崩れる。
+
+宣言は composition 時の行為であり、その呼び出し元は常に control plane の plugin package である。したがって構築子は composition を所有する `plugin` に置き、`plugin` が `media/key` を import する。依存は一方向で、`media/key` は何も import し返さない。
+
+```text
+media/key   機構（identity、宣言 clone、erased view）。plugin を import しない
+plugin      Declaration の構築。media/key を import する
+catalog     conflict の検出と報告
+```
+
+`property.Key[T]` と `key.Key[T]` は同じ erased view を返し、一つの構築子と一つの namespace を共有する。容器ごとに構築子を分けない。
+
+#### `plugin.Declaration` の target を一般化する
+
+現在の `Declaration` は target を component identity の列とし、`internal/catalog` が全 target の catalog 実在を検査する。key 宣言の target は component ではなく payload の Go 型なので、この形のままでは載せられない。payload 型を marker 由来 identity として表すこともできない。`string` や `[]byte` のような predeclared/unnamed 型は package path を持たず、[C8](decisions.md) の canonical identity を導けないためである。
+
+したがって `Declaration` の target を「catalog に実在すべき component」と「payload を識別する Go 型」を区別できる形へ一般化する。conflict の判定規則は両者で同一（同じ key に異なる target 集合が現れたら error）なので、検出経路は一つのままである。target が component かどうかを暗黙の前提にしていた箇所を明示にする変更であり、codec Binding、metadata Binding、Provider scheme の意味は変わらない。
 
 ### 多重度の宣言は持たない
 

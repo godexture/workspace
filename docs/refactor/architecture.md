@@ -102,7 +102,7 @@ M1 は repository、package identity、module/workspace topology を固定する
 | 共有機構 | `media/key` | marker 由来 typed key、宣言 clone 規則、erased accessor |
 | media control plane | `media/schema`、`media/property`、`media/timing`、`media/stream`、`media/metadata`、`media/tag` | open identity、immutable property、time base、stream descriptor、semantic metadata |
 | media data plane | `media/packet`、`media/side`、`media/buffer`、`media/audio`、`media/video`、`media/subtitle` | typed unit、side data、ownership |
-| media extension | `media/carrier`、`media/format`、`media/codec` | payload slot、Probe/Inspect、Parser/Binding |
+| media extension | `media/carrier`、`media/format`、`media/codec` | payload slot identity、Probe/Inspect、Parser/Binding |
 | graph contract | `flow` | typed port、Reader/Writer、Processor/Operator |
 | identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、component Spec、typed schema、構造化診断 |
 | I/O extension | `access`、`endpoint` | byte object capability/transaction、live/session/device trait |
@@ -141,7 +141,9 @@ control plane（data plane から参照されない）
 二つの package がこの制約を成立させるために存在する。
 
 - `media/key` は marker 由来 typed key の機構を持つ唯一の package である。identity 導出、[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) の宣言 clone 規則、erased accessor、偽装 key を排除する非公開 method を提供する。`metadata.Document` と `side.Data` はこの `key.Key[T]` をそのまま使い、一つの宣言が document metadata と side data の両方で通る。`property.Key[T]` は同じ機構の上に canonical encoder の宣言義務を加えた別型とする。理由は [media](media.md#key-機構は一つ容器は三つkey-型は二つ) を正本とする。
-- `media/carrier` は payload を置く物理 slot を表す。[media](media.md#carrier) のとおり carrier は format が所有するとは限らず codec/bitstream も所有するため、`media/format` の内部型にすると codec 所有の carrier が format 由来に見え、`media/metadata` が carrier 一つのために `media/format` を import することになる。
+- `media/carrier` は payload を置く物理 slot の identity を表す。[media](media.md#carrier) のとおり carrier は format が所有するとは限らず codec/bitstream も所有するため、`media/format` の内部型にすると codec 所有の carrier が format 由来に見え、`media/metadata` が carrier 一つのために `media/format` を import することになる。identity は marker 由来とするため `internal/marker` に依存する。carrier は control plane にあり data plane の閉包には入らない。
+
+`media/key` は両 plane から参照される共有機構なので、**`plugin` が `media/key` を import し、その逆は行わない**。key 宣言の構築子を `media/key` に置くと `media/packet -> media/side -> media/key -> plugin` となり上の閉包が成立しなくなる。宣言は composition 時の行為であり、呼び出し元は常に control plane の plugin package なので、構築子は composition を所有する `plugin` に置く。理由と `plugin.Declaration` の target 一般化は [media](media.md#key-identity-の重複を検出する) を正本とする。
 
 ## private Host runtime
 
