@@ -19,14 +19,17 @@ type Set struct{ values map[key.ID]entry }
 
 func New() Set { return Set{values: make(map[key.ID]entry)} }
 
-func (s Set) With(declaration keyLike, value any) (Set, error) {
+func (s Set) With(declaration propertyDeclaration, value any) (Set, error) {
 	if declaration == nil {
 		return s, errors.New("invalid property key")
 	}
-	if problem := declaration.Problem(); problem != nil {
+	if problem := declaration.propertyProblem(); problem != nil {
 		return s, problem
 	}
 	erased := declaration.Erased()
+	if problem := erased.Problem(); problem != nil {
+		return s, problem
+	}
 	if !erased.Valid() {
 		return s, errors.New("invalid property key")
 	}

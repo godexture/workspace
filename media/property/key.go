@@ -83,10 +83,11 @@ func (k Key[T]) Set(set Set, value T) (Set, error) {
 	return set.With(k, value)
 }
 
-func (Key[T]) propertyKey() {}
+func (Key[T]) propertyDeclaration()     {}
+func (k Key[T]) propertyProblem() error { return k.Problem() }
 
-type keyLike interface {
+type propertyDeclaration interface {
 	Erased() key.Erased
-	Problem() error
-	propertyKey()
+	propertyDeclaration()
+	propertyProblem() error
 }

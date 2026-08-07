@@ -111,6 +111,9 @@ func TestPropertyRequiresCanonicalEncoderAndRejectsNonFiniteFloat(t *testing.T) 
 	if missing.Valid() || missing.Problem() == nil {
 		t.Fatalf("missing encoder = valid %v, problem %v", missing.Valid(), missing.Problem())
 	}
+	if _, err := missing.Set(New(), 1); err == nil {
+		t.Fatal("property without a canonical encoder entered a set")
+	}
 	float := Define[sampleRateID](Scalar[float64]())
 	if _, err := float.Canonical(math.Inf(1)); err == nil {
 		t.Fatal("non-finite property value accepted")
