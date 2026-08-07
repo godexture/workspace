@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/buffer"
-	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
@@ -64,7 +64,7 @@ func TestChunkPayloadIsBorrowed(t *testing.T) {
 }
 
 func TestPacketCarriesImmutableSideData(t *testing.T) {
-	key := metadata.DefineKey[packetSideKey, string]()
+	key := key.Define[packetSideKey, string]()
 	data, err := side.Add(side.Data{}, key, "frame")
 	if err != nil {
 		t.Fatal(err)

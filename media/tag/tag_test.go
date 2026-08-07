@@ -3,17 +3,18 @@ package tag
 import (
 	"testing"
 
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 )
 
 func TestVocabularyContainsOnlyOpenDeclaredKeys(t *testing.T) {
-	keys := []metadata.KeyID{
+	keys := []key.ID{
 		Title.ID(), Artist.ID(), Album.ID(), Date.ID(), Genre.ID(), Comment.ID(),
 		Composer.ID(), Lyrics.ID(), Website.ID(), TrackNumber.ID(), TotalTracks.ID(),
 		DiscNumber.ID(), TotalDiscs.ID(), Copyright.ID(), License.ID(), Encoder.ID(),
 		Picture.ID(),
 	}
-	seen := make(map[metadata.KeyID]struct{}, len(keys))
+	seen := make(map[key.ID]struct{}, len(keys))
 	for _, key := range keys {
 		if key.IsZero() {
 			t.Fatal("vocabulary contains an invalid key")
@@ -56,7 +57,7 @@ func TestPictureUsesImmutableBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 	source[0] = 9
-	value, ok := Picture.First(document)
+	value, ok := metadata.First(document, Picture)
 	if !ok || !value.Valid() {
 		t.Fatalf("picture = %#v, %v", value, ok)
 	}

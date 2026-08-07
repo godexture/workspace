@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/buffer"
-	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/side"
 	"github.com/godexture/godec/media/timing"
 )
@@ -66,7 +66,7 @@ func TestFrameCarriesSideDataWithoutChangingPlaneOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer frame.Release()
-	key := metadata.DefineKey[frameSideKey, string]()
+	key := key.Define[frameSideKey, string]()
 	data, err := side.Add(side.Data{}, key, "marker")
 	if err != nil {
 		t.Fatal(err)

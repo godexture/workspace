@@ -3,6 +3,7 @@ package side_test
 import (
 	"testing"
 
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/side"
 )
@@ -16,7 +17,7 @@ func cloneSideValue(value sideValue) sideValue {
 }
 
 func TestThirdPartySideDataUsesMetadataCloneRules(t *testing.T) {
-	key := metadata.DefineKey[thirdPartySideKey, sideValue](cloneSideValue)
+	key := key.Define[thirdPartySideKey, sideValue](cloneSideValue)
 	original := sideValue{Bytes: []byte{1, 2, 3}}
 	data, err := side.Add(side.Data{}, key, original)
 	if err != nil {
@@ -39,7 +40,7 @@ func TestZeroSideDataIsEmptyAndCostsNothing(t *testing.T) {
 	if zero.Valid() || !zero.Empty() || zero.Len() != 0 || zero.Keys() != nil {
 		t.Fatal("zero side data is not empty")
 	}
-	key := metadata.DefineKey[thirdPartySideKey, sideValue](cloneSideValue)
+	key := key.Define[thirdPartySideKey, sideValue](cloneSideValue)
 	if _, ok := side.First(zero, key); ok {
 		t.Fatal("empty side data reported a value")
 	}
@@ -47,7 +48,7 @@ func TestZeroSideDataIsEmptyAndCostsNothing(t *testing.T) {
 
 // Adding must not change side data another item already holds.
 func TestAddLeavesTheReceiverUnchanged(t *testing.T) {
-	key := metadata.DefineKey[thirdPartySideKey, sideValue](cloneSideValue)
+	key := key.Define[thirdPartySideKey, sideValue](cloneSideValue)
 	first, err := side.Add(side.Data{}, key, sideValue{Bytes: []byte{1}})
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +67,26 @@ func TestAddLeavesTheReceiverUnchanged(t *testing.T) {
 
 func TestUndeclaredKeyIsRejected(t *testing.T) {
 	type unusableID struct{}
-	undeclared := metadata.DefineKey[unusableID, []string]()
+	undeclared := key.Define[unusableID, []string]()
 	if _, err := side.Add(side.Data{}, undeclared, []string{"a"}); err == nil {
 		t.Fatal("key without a declared clone accepted")
+	}
+}
+
+func TestOneKeyWorksInDocumentAndSideData(t *testing.T) {
+	declaration := key.Define[thirdPartySideKey, string]()
+	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), declaration, "stream", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := side.Add(side.Data{}, declaration, "item")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values := metadata.Values(document, declaration); len(values) != 1 || values[0] != "stream" {
+		t.Fatalf("document values = %v", values)
+	}
+	if value, ok := side.First(data, declaration); !ok || value != "item" {
+		t.Fatalf("side value = %q, %v", value, ok)
 	}
 }

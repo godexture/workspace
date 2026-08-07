@@ -19,7 +19,7 @@ func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
 	if document.Scope() != StreamScope || document.Len() != 3 {
 		t.Fatalf("document scope = %v, len = %d", document.Scope(), document.Len())
 	}
-	if values := artist.Values(document); len(values) != 2 || values[0] != "A" || values[1] != "B" {
+	if values := Values(document, artist); len(values) != 2 || values[0] != "A" || values[1] != "B" {
 		t.Fatalf("duplicate key values = %v", values)
 	}
 	entries := document.Entries()
@@ -29,7 +29,7 @@ func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
 	if entries[0].Origin().Native != "TIT2" || entries[0].Origin().Encoding != encodingIdentity() {
 		t.Fatalf("origin = %#v", entries[0].Origin())
 	}
-	if value, ok := title.First(document); !ok || value != "First" {
+	if value, ok := First(document, title); !ok || value != "First" {
 		t.Fatalf("first title = %q, %v", value, ok)
 	}
 }
@@ -46,7 +46,7 @@ func TestDocumentCannotBeChangedThroughTheSlicesItReturns(t *testing.T) {
 	entries[0] = Entry{}
 	blocks := document.Blocks()
 	blocks[0] = RawBlock{}
-	if value, ok := title.First(document); !ok || value != "Original" {
+	if value, ok := First(document, title); !ok || value != "Original" {
 		t.Fatalf("entry survived through returned slice: %q, %v", value, ok)
 	}
 	if _, ok := document.Block("block-1"); !ok {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/godexture/godec/media/key"
 )
 
 func TestThirdPartyKeysAreOpenAndDistinctWithoutCoreChanges(t *testing.T) {
@@ -13,21 +15,21 @@ func TestThirdPartyKeysAreOpenAndDistinctWithoutCoreChanges(t *testing.T) {
 	if title.ID().Name() != "titleID" || !strings.HasSuffix(title.ID().PackagePath(), "media/metadata") {
 		t.Fatalf("key identity = %q", title.ID())
 	}
-	if KeyIdentityOf[titleID]() != title.ID() {
+	if key.Define[titleID, string]().ID() != title.ID() {
 		t.Fatal("key identity is not reproducible from its marker")
 	}
 }
 
 func TestReferenceValuedKeyRequiresADeclaredClone(t *testing.T) {
 	type sliceKeyID struct{}
-	undeclared := DefineKey[sliceKeyID, []string]()
+	undeclared := key.Define[sliceKeyID, []string]()
 	if undeclared.Valid() {
 		t.Fatal("reference-valued key without a clone was accepted")
 	}
 	if problem := undeclared.Problem(); problem == nil || !strings.Contains(problem.Error(), "clone") {
 		t.Fatalf("problem = %v", problem)
 	}
-	declared := DefineKey[sliceKeyID, []string](func(value []string) []string {
+	declared := key.Define[sliceKeyID, []string](func(value []string) []string {
 		return append([]string(nil), value...)
 	})
 	if !declared.Valid() {
@@ -39,13 +41,13 @@ func TestReferenceValuedKeyRequiresADeclaredClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	source[0] = "changed"
-	if values := declared.Values(document); values[0][0] != "a" {
+	if values := Values(document, declared); values[0][0] != "a" {
 		t.Fatalf("stored value tracked the caller's slice: %v", values)
 	}
 }
 
 func TestKeyWithAnInvalidMarkerIsReportedNotSilentlyDropped(t *testing.T) {
-	invalid := DefineKey[struct{}, string]()
+	invalid := key.Define[struct{}, string]()
 	if invalid.Valid() {
 		t.Fatal("anonymous marker accepted")
 	}
@@ -63,10 +65,10 @@ func TestValuesIgnoreEntriesOfAnotherKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values := rating.Values(document); len(values) != 1 || values[0] != 5 {
+	if values := Values(document, rating); len(values) != 1 || values[0] != 5 {
 		t.Fatalf("typed values = %v", values)
 	}
-	if _, ok := mood.First(document); ok {
+	if _, ok := First(document, mood); ok {
 		t.Fatal("absent key reported a value")
 	}
 }
@@ -89,9 +91,9 @@ func TestEntryValueSnapshotsThroughTheKeyClone(t *testing.T) {
 
 func TestWrongValueTypeIsRejected(t *testing.T) {
 	builder := NewBuilder(AssetScope)
-	builder.add(title, 42, Origin{})
+	builder.add(title.Erased(), 42, Origin{})
 	_, err := builder.Build()
-	if !errors.Is(err, ErrKeyType) {
+	if !errors.Is(err, key.ErrType) {
 		t.Fatalf("type mismatch error = %v", err)
 	}
 }

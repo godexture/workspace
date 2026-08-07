@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -79,24 +80,19 @@ func (b RawBlock) Valid() bool               { return b.id != "" && b.payload.Va
 // Entry is one ordered semantic value. The same key may appear more than once,
 // and the order entries were parsed in is preserved.
 type Entry struct {
-	key       KeyID
-	valueType reflect.Type
-	value     any
-	clone     func(any) (any, bool)
-	origin    Origin
+	declaration key.Erased
+	value       any
+	origin      Origin
 }
 
-func (e Entry) Key() KeyID              { return e.key }
-func (e Entry) ValueType() reflect.Type { return e.valueType }
+func (e Entry) Key() key.ID             { return e.declaration.ID() }
+func (e Entry) ValueType() reflect.Type { return e.declaration.ValueType() }
 func (e Entry) Origin() Origin          { return e.origin }
 
 // Value returns a snapshot of the entry value for surfaces and diagnostics.
 // Typed access goes through Key.Values, which avoids the erasure entirely.
 func (e Entry) Value() any {
-	if e.clone == nil {
-		return nil
-	}
-	value, ok := e.clone(e.value)
+	value, ok := e.declaration.Clone(e.value)
 	if !ok {
 		return nil
 	}
@@ -159,11 +155,11 @@ func NewBuilder(scope Scope) *Builder {
 
 // Add appends one typed value. It is a function rather than a method because
 // the value type belongs to the key, not to the builder.
-func Add[T any](builder *Builder, key Key[T], value T, origin Origin) *Builder {
+func Add[T any](builder *Builder, declaration key.Key[T], value T, origin Origin) *Builder {
 	if builder == nil {
 		return builder
 	}
-	return builder.add(key, value, origin)
+	return builder.add(declaration.Erased(), value, origin)
 }
 
 // AddBlock appends a raw block. Blocks keep their parse order too.
@@ -185,26 +181,24 @@ func (b *Builder) AddBlock(block RawBlock) *Builder {
 	return b
 }
 
-func (b *Builder) add(key keyLike, value any, origin Origin) *Builder {
-	if problem := key.Problem(); problem != nil {
+func (b *Builder) add(declaration key.Erased, value any, origin Origin) *Builder {
+	if problem := declaration.Problem(); problem != nil {
 		b.problems = append(b.problems, problem)
 		return b
 	}
-	if key.ID().IsZero() || key.ValueType() == nil {
+	if !declaration.Valid() {
 		b.problems = append(b.problems, errors.New("metadata key is not declared"))
 		return b
 	}
-	cloned, ok := key.cloneAny(value)
+	cloned, ok := declaration.Clone(value)
 	if !ok {
-		b.problems = append(b.problems, fmt.Errorf("%w: key %s wants %s", ErrKeyType, key.ID(), key.ValueType()))
+		b.problems = append(b.problems, fmt.Errorf("%w: key %s wants %s", key.ErrType, declaration.ID(), declaration.ValueType()))
 		return b
 	}
 	b.entries = append(b.entries, Entry{
-		key:       key.ID(),
-		valueType: key.ValueType(),
-		value:     cloned,
-		clone:     key.cloneAny,
-		origin:    origin,
+		declaration: declaration,
+		value:       cloned,
+		origin:      origin,
 	})
 	return b
 }
@@ -220,7 +214,7 @@ func (b *Builder) Build() (Document, error) {
 			continue
 		}
 		if _, ok := b.block(entry.origin.Block); !ok {
-			problems = append(problems, fmt.Errorf("metadata entry %s names raw block %q, which is not in the document", entry.key, entry.origin.Block))
+			problems = append(problems, fmt.Errorf("metadata entry %s names raw block %q, which is not in the document", entry.Key(), entry.origin.Block))
 		}
 	}
 	if len(problems) > 0 {

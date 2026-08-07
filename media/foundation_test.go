@@ -15,6 +15,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/schema"
@@ -288,7 +289,7 @@ const (
 
 type skeletonMetadataEvent struct {
 	At    timing.PTS
-	Key   metadata.KeyID
+	Key   key.ID
 	Value string
 }
 
@@ -685,10 +686,10 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if document.Scope() != metadata.StreamScope || document.Len() != 3 {
 		t.Fatalf("metadata document = scope %v, len %d", document.Scope(), document.Len())
 	}
-	if values := tag.Artist.Values(document); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+	if values := metadata.Values(document, tag.Artist); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
 		t.Fatalf("artist order = %v", values)
 	}
-	if title, ok := tag.Title.First(document); !ok || title != "Song" {
+	if title, ok := metadata.First(document, tag.Title); !ok || title != "Song" {
 		t.Fatalf("title = %q, %v", title, ok)
 	}
 	blocks := document.Blocks()
@@ -707,7 +708,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values := tag.Artist.Values(parsedAgain); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+	if values := metadata.Values(parsedAgain, tag.Artist); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
 		t.Fatalf("roundtrip artist order = %v", values)
 	}
 }

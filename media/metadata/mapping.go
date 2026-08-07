@@ -3,6 +3,8 @@ package metadata
 import (
 	"errors"
 	"fmt"
+
+	"github.com/godexture/godec/media/key"
 )
 
 // Lossiness states how much of the source value survives a mapping. The host
@@ -42,8 +44,8 @@ func (l Lossiness) String() string {
 // hub. A mapping is always declared, never inferred, because whether two
 // third-party keys mean the same thing is not decidable from their types.
 type Mapping struct {
-	source    KeyID
-	target    KeyID
+	source    key.ID
+	target    key.ID
 	lossiness Lossiness
 	priority  int
 	convert   func(any) (any, bool)
@@ -53,7 +55,7 @@ type Mapping struct {
 // Map declares a typed conversion from source to target. Priority orders
 // competing mappings for the same target; higher wins, and ties are resolved by
 // the source key identity so selection stays deterministic.
-func Map[S, T any](source Key[S], target Key[T], lossiness Lossiness, priority int, convert func(S) (T, bool)) Mapping {
+func Map[S, T any](source key.Key[S], target key.Key[T], lossiness Lossiness, priority int, convert func(S) (T, bool)) Mapping {
 	mapping := Mapping{source: source.ID(), target: target.ID(), lossiness: lossiness, priority: priority}
 	switch {
 	case source.Problem() != nil:
@@ -76,14 +78,14 @@ func Map[S, T any](source Key[S], target Key[T], lossiness Lossiness, priority i
 			if !ok {
 				return nil, false
 			}
-			return target.clone(converted), true
+			return target.Erased().Clone(converted)
 		}
 	}
 	return mapping
 }
 
-func (m Mapping) Source() KeyID        { return m.source }
-func (m Mapping) Target() KeyID        { return m.target }
+func (m Mapping) Source() key.ID       { return m.source }
+func (m Mapping) Target() key.ID       { return m.target }
 func (m Mapping) Lossiness() Lossiness { return m.lossiness }
 func (m Mapping) Priority() int        { return m.priority }
 func (m Mapping) Valid() bool          { return m.convert != nil && m.problem == "" }

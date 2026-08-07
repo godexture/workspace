@@ -3,6 +3,7 @@ package stream
 import (
 	"testing"
 
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
@@ -39,7 +40,7 @@ func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	title := metadata.DefineKey[streamMetadataID, string]()
+	title := key.Define[streamMetadataID, string]()
 	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), title, "stream title", metadata.Origin{}).Build()
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +49,7 @@ func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
 	if descriptor.Metadata().Len() != 0 || withMetadata.Metadata().Len() != 1 {
 		t.Fatalf("metadata lengths = %d, %d", descriptor.Metadata().Len(), withMetadata.Metadata().Len())
 	}
-	if value, ok := title.First(withMetadata.Metadata()); !ok || value != "stream title" {
+	if value, ok := metadata.First(withMetadata.Metadata(), title); !ok || value != "stream title" {
 		t.Fatalf("metadata title = %q, %v", value, ok)
 	}
 }
