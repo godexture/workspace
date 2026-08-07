@@ -7,12 +7,14 @@ import (
 	"io"
 	"testing"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/key"
@@ -36,6 +38,8 @@ type skeletonMetadataDocumentID struct{}
 type skeletonMetadataEventID struct{}
 type skeletonMissingMetadataID struct{}
 type skeletonFormatID struct{}
+type skeletonPayloadCarrierID struct{}
+type skeletonMetadataCarrierID struct{}
 type skeletonBytesID struct{}
 type skeletonChunkID struct{}
 type skeletonPacketID struct{}
@@ -60,6 +64,7 @@ var (
 	})
 	skeletonMetadataDocumentSchema = schema.Define[skeletonMetadataDocumentID, metadata.Document](schema.Traits[metadata.Document]{})
 	skeletonMetadataEventSchema    = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
+	skeletonMetadataCarrier        = carrier.Define[skeletonMetadataCarrierID]()
 )
 
 type skeletonSourceOperator struct {
@@ -281,10 +286,9 @@ func (o *skeletonMetadataOperator) Marshal(document metadata.Document) ([]byte, 
 }
 
 const (
-	skeletonMetadataCarrier format.CarrierID = "fixture.metadata"
-	skeletonMetadataTitle   byte             = 1
-	skeletonMetadataArtist  byte             = 2
-	skeletonMetadataDate    byte             = 3
+	skeletonMetadataTitle  byte = 1
+	skeletonMetadataArtist byte = 2
+	skeletonMetadataDate   byte = 3
 )
 
 type skeletonMetadataEvent struct {
@@ -295,7 +299,7 @@ type skeletonMetadataEvent struct {
 
 type skeletonMetadataEncoding struct {
 	identity plugin.Identity
-	carrier  format.CarrierID
+	carrier  carrier.ID
 }
 
 func newSkeletonMetadataEncoding() skeletonMetadataEncoding {
@@ -524,7 +528,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	inputBytes := []byte{1, 0, 2, 0, 3, 0, 4, 0}
 	trace := &skeletonTrace{}
 	definition := skeletonComponents(inputBytes, trace)
-	trivialFormat, err := format.Define[skeletonFormatID]([]format.Alternative{format.AnyOf(format.SequentialRead)}, []format.Carrier{format.NewCarrier("fixture.payload", "format:fixture")})
+	trivialFormat, err := format.Define[skeletonFormatID]([]access.Alternative{access.AnyOf(access.SequentialRead)}, []carrier.ID{carrier.Define[skeletonPayloadCarrierID]()})
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}

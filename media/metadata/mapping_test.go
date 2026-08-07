@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -81,16 +80,15 @@ func TestMappingOrderIsTotalAndIndependentOfDeclarationOrder(t *testing.T) {
 }
 
 func TestBindingNamesTheEncodingThatInterpretsACarrier(t *testing.T) {
-	carrier := format.CarrierID("wave.id3")
-	binding := Bind(carrier, encodingIdentity())
+	binding := Bind(testCarrier, encodingIdentity())
 	if !binding.Valid() {
 		t.Fatalf("binding = %v", binding)
 	}
 	if targets := binding.Targets(); len(targets) != 1 || targets[0] != encodingIdentity() {
 		t.Fatalf("binding targets = %v", targets)
 	}
-	if binding.Key() != BindingKey(carrier) {
-		t.Fatalf("binding key = %v, want %v", binding.Key(), BindingKey(carrier))
+	if binding.Key() != BindingKey(testCarrier) {
+		t.Fatalf("binding key = %v, want %v", binding.Key(), BindingKey(testCarrier))
 	}
 	// A codec binding and a metadata binding that happen to share a key string
 	// live in different namespaces, so they never collide.
@@ -100,9 +98,8 @@ func TestBindingNamesTheEncodingThatInterpretsACarrier(t *testing.T) {
 }
 
 func TestConflictingBindingsForOneCarrierKeepTheirDistinctTargets(t *testing.T) {
-	carrier := format.CarrierID("wave.id3")
-	first := Bind(carrier, encodingIdentity())
-	second := Bind(carrier, otherEncodingIdentity())
+	first := Bind(testCarrier, encodingIdentity())
+	second := Bind(testCarrier, otherEncodingIdentity())
 	if first.Key() != second.Key() {
 		t.Fatal("same carrier produced different declaration keys")
 	}

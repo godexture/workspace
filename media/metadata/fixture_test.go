@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/plugin"
 )
@@ -8,14 +9,15 @@ import (
 // These markers stand in for a shared vocabulary package and for a third-party
 // plugin that adds its own keys without changing core.
 type (
-	titleID   struct{}
-	artistID  struct{}
-	artworkID struct{}
-	moodID    struct{}
-	genreID   struct{}
-	ratingID  struct{}
-	encodingA struct{}
-	encodingB struct{}
+	titleID       struct{}
+	artistID      struct{}
+	artworkID     struct{}
+	moodID        struct{}
+	genreID       struct{}
+	ratingID      struct{}
+	testCarrierID struct{}
+	encodingA     struct{}
+	encodingB     struct{}
 )
 
 // Picture is the shape a vocabulary package would give artwork: a description
@@ -34,7 +36,8 @@ var (
 	// A Picture holds a Blob, whose backing is immutable, so copying the value
 	// is already a snapshot. The clone is declared to say so rather than to
 	// duplicate anything.
-	artwork = key.Define[artworkID, Picture](func(value Picture) Picture { return value })
+	artwork     = key.Define[artworkID, Picture](func(value Picture) Picture { return value })
+	testCarrier = carrier.Define[testCarrierID]()
 )
 
 func encodingIdentity() plugin.Identity      { return plugin.IdentityOf[encodingA]() }

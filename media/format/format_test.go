@@ -1,20 +1,26 @@
 package format
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/media/carrier"
+)
 
 type fixtureFormatID struct{}
 type fixturePacketizedFormatID struct{}
+type fixtureCarrierID struct{}
 
 func TestFormatDeclaresAlternativeAndOpenCarriers(t *testing.T) {
-	carrier := NewCarrier("wave.data", "format:wave")
-	value, err := Define[fixtureFormatID]([]Alternative{AnyOf(SequentialRead), AnyOf(RandomRead, StableSize)}, []Carrier{carrier})
+	declared := carrier.Define[fixtureCarrierID]()
+	value, err := Define[fixtureFormatID]([]access.Alternative{access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead, access.StableSize)}, []carrier.ID{declared})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !value.Valid() || len(value.Alternatives()) != 2 || value.Carriers()[0].Owner != "format:wave" {
+	if !value.Valid() || len(value.Alternatives()) != 2 || value.Carriers()[0] != declared {
 		t.Fatalf("format = %#v", value)
 	}
-	if _, err := Define[struct{}]([]Alternative{AnyOf(SequentialRead)}, nil); err == nil {
+	if _, err := Define[struct{}]([]access.Alternative{access.AnyOf(access.SequentialRead)}, nil); err == nil {
 		t.Fatal("empty format identity accepted")
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/plugin"
 )
@@ -50,7 +50,7 @@ type Origin struct {
 	// Encoding is the metadata encoding component that produced the entry.
 	Encoding plugin.Identity
 	// Carrier is the format or bitstream slot the payload was read from.
-	Carrier format.CarrierID
+	Carrier carrier.ID
 	// Block links to a RawBlock in the same document.
 	Block BlockID
 	// Native is the key name in the source encoding, such as an ID3 frame ID.
@@ -62,17 +62,17 @@ type Origin struct {
 // an unchanged carrier be written back losslessly.
 type RawBlock struct {
 	id       BlockID
-	carrier  format.CarrierID
+	carrier  carrier.ID
 	encoding plugin.Identity
 	payload  Blob
 }
 
-func NewRawBlock(id BlockID, carrier format.CarrierID, encoding plugin.Identity, payload Blob) RawBlock {
-	return RawBlock{id: id, carrier: carrier, encoding: encoding, payload: payload}
+func NewRawBlock(id BlockID, slot carrier.ID, encoding plugin.Identity, payload Blob) RawBlock {
+	return RawBlock{id: id, carrier: slot, encoding: encoding, payload: payload}
 }
 
 func (b RawBlock) ID() BlockID               { return b.id }
-func (b RawBlock) Carrier() format.CarrierID { return b.carrier }
+func (b RawBlock) Carrier() carrier.ID       { return b.carrier }
 func (b RawBlock) Encoding() plugin.Identity { return b.encoding }
 func (b RawBlock) Payload() Blob             { return b.payload }
 func (b RawBlock) Valid() bool               { return b.id != "" && b.payload.Valid() }

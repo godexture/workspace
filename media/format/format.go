@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -23,22 +24,6 @@ func NewTag(namespace, value string) Tag {
 
 func (t Tag) Valid() bool    { return t != "" }
 func (t Tag) String() string { return string(t) }
-
-type CarrierID string
-
-func (id CarrierID) Valid() bool    { return id != "" }
-func (id CarrierID) String() string { return string(id) }
-
-// CarrierOwner is an open string rather than a closed owner enum. A carrier
-// can be declared by a format or by a codec/bitstream family.
-type Carrier struct {
-	Identity CarrierID
-	Owner    string
-}
-
-func NewCarrier(identity CarrierID, owner string) Carrier {
-	return Carrier{Identity: identity, Owner: owner}
-}
 
 type Capability = access.Capability
 
@@ -61,12 +46,12 @@ func AnyOf(capabilities ...Capability) Alternative {
 // decoder implementations, metadata parsers, or access providers.
 type Format struct {
 	identity     plugin.Identity
-	alternatives []Alternative
-	carriers     []Carrier
+	alternatives []access.Alternative
+	carriers     []carrier.ID
 	packetized   bool
 }
 
-func Define[Marker any](alternatives []Alternative, carriers []Carrier) (Format, error) {
+func Define[Marker any](alternatives []access.Alternative, carriers []carrier.ID) (Format, error) {
 	result := Format{identity: plugin.IdentityOf[Marker]()}
 	if err := result.set(alternatives, carriers); err != nil {
 		return Format{}, err
@@ -74,7 +59,7 @@ func Define[Marker any](alternatives []Alternative, carriers []Carrier) (Format,
 	return result, nil
 }
 
-func DefinePacketized[Marker any](carriers []Carrier) (Format, error) {
+func DefinePacketized[Marker any](carriers []carrier.ID) (Format, error) {
 	result := Format{identity: plugin.IdentityOf[Marker](), packetized: true}
 	if err := result.set(nil, carriers); err != nil {
 		return Format{}, err
@@ -82,7 +67,7 @@ func DefinePacketized[Marker any](carriers []Carrier) (Format, error) {
 	return result, nil
 }
 
-func (f *Format) set(alternatives []Alternative, carriers []Carrier) error {
+func (f *Format) set(alternatives []access.Alternative, carriers []carrier.ID) error {
 	if f.identity.IsZero() {
 		return errors.New("format marker identity must be valid")
 	}
@@ -94,29 +79,29 @@ func (f *Format) set(alternatives []Alternative, carriers []Carrier) error {
 			return fmt.Errorf("format capability alternative %d is empty", index)
 		}
 	}
-	seen := make(map[CarrierID]struct{}, len(carriers))
-	for _, carrier := range carriers {
-		if !carrier.Identity.Valid() || carrier.Owner == "" {
-			return errors.New("format carrier identity and owner are required")
+	seen := make(map[carrier.ID]struct{}, len(carriers))
+	for _, id := range carriers {
+		if !id.Valid() {
+			return errors.New("format carrier identity is required")
 		}
-		if _, ok := seen[carrier.Identity]; ok {
-			return fmt.Errorf("format carrier %q is repeated", carrier.Identity)
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("format carrier %q is repeated", id)
 		}
-		seen[carrier.Identity] = struct{}{}
+		seen[id] = struct{}{}
 	}
 	f.alternatives = cloneAlternatives(alternatives)
-	f.carriers = append([]Carrier(nil), carriers...)
+	f.carriers = append([]carrier.ID(nil), carriers...)
 	return nil
 }
 
-func (f Format) Valid() bool                 { return !f.identity.IsZero() }
-func (f Format) Identity() plugin.Identity   { return f.identity }
-func (f Format) Alternatives() []Alternative { return cloneAlternatives(f.alternatives) }
-func (f Format) Carriers() []Carrier         { return append([]Carrier(nil), f.carriers...) }
-func (f Format) Packetized() bool            { return f.packetized }
+func (f Format) Valid() bool                        { return !f.identity.IsZero() }
+func (f Format) Identity() plugin.Identity          { return f.identity }
+func (f Format) Alternatives() []access.Alternative { return cloneAlternatives(f.alternatives) }
+func (f Format) Carriers() []carrier.ID             { return append([]carrier.ID(nil), f.carriers...) }
+func (f Format) Packetized() bool                   { return f.packetized }
 
-func cloneAlternatives(values []Alternative) []Alternative {
-	result := make([]Alternative, len(values))
+func cloneAlternatives(values []access.Alternative) []access.Alternative {
+	result := make([]access.Alternative, len(values))
 	for index, value := range values {
 		result[index] = value.Clone()
 	}

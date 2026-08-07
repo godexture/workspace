@@ -1,7 +1,7 @@
 package metadata
 
 import (
-	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -16,12 +16,12 @@ type bindingNamespace struct{}
 // Bind declares that payloads found in carrier are parsed and marshalled by the
 // encoding component. Neither the format that owns the carrier nor the encoding
 // imports the other; composition is what joins them.
-func Bind(carrier format.CarrierID, encoding plugin.Identity) Binding {
-	return plugin.Declare[bindingNamespace](string(carrier), encoding)
+func Bind(slot carrier.ID, encoding plugin.Identity) Binding {
+	return plugin.Declare[bindingNamespace](slot.String(), encoding)
 }
 
 // BindingKey returns the declaration key a carrier binds under, for callers
 // that need to override an existing binding.
-func BindingKey(carrier format.CarrierID) plugin.DeclarationKey {
-	return Bind(carrier, plugin.Identity{}).Key()
+func BindingKey(slot carrier.ID) plugin.DeclarationKey {
+	return Bind(slot, plugin.Identity{}).Key()
 }

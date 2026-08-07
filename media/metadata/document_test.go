@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/carrier"
 )
 
 func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
@@ -37,7 +37,7 @@ func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
 func TestDocumentCannotBeChangedThroughTheSlicesItReturns(t *testing.T) {
 	builder := NewBuilder(AssetScope)
 	Add(builder, title, "Original", Origin{})
-	builder.AddBlock(NewRawBlock("block-1", format.CarrierID("wave.id3"), encodingIdentity(), NewBlob("application/octet-stream", []byte{1, 2})))
+	builder.AddBlock(NewRawBlock("block-1", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1, 2})))
 	document, err := builder.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestEditProducesANewDocumentAndLeavesTheOriginal(t *testing.T) {
 
 func TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite(t *testing.T) {
 	payload := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	block := NewRawBlock("unknown-frame", format.CarrierID("mp3.leading"), otherEncodingIdentity(), NewBlob("", payload))
+	block := NewRawBlock("unknown-frame", testCarrier, otherEncodingIdentity(), NewBlob("", payload))
 	document, err := NewBuilder(AssetScope).AddBlock(block).Build()
 	if err != nil {
 		t.Fatal(err)
@@ -85,14 +85,14 @@ func TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite(t *testing.T) {
 	if got := stored.Payload().AppendTo(nil); string(got) != string([]byte{0xDE, 0xAD, 0xBE, 0xEF}) {
 		t.Fatalf("raw payload = %v", got)
 	}
-	if stored.Encoding() != otherEncodingIdentity() || stored.Carrier() != format.CarrierID("mp3.leading") {
+	if stored.Encoding() != otherEncodingIdentity() || stored.Carrier() != testCarrier {
 		t.Fatalf("raw block provenance = %#v", stored)
 	}
 }
 
 func TestBuildReportsEveryProblemAtOnce(t *testing.T) {
 	builder := NewBuilder(Scope(0))
-	builder.AddBlock(NewRawBlock("", "", encodingIdentity(), NewBlob("", nil)))
+	builder.AddBlock(NewRawBlock("", carrier.ID{}, encodingIdentity(), NewBlob("", nil)))
 	Add(builder, title, "value", Origin{Block: "missing"})
 	_, err := builder.Build()
 	if err == nil {
@@ -108,7 +108,7 @@ func TestBuildReportsEveryProblemAtOnce(t *testing.T) {
 
 func TestDuplicateRawBlockIdentityIsRejected(t *testing.T) {
 	builder := NewBuilder(AssetScope)
-	block := NewRawBlock("same", "carrier", encodingIdentity(), NewBlob("", []byte{1}))
+	block := NewRawBlock("same", testCarrier, encodingIdentity(), NewBlob("", []byte{1}))
 	builder.AddBlock(block).AddBlock(block)
 	if _, err := builder.Build(); err == nil {
 		t.Fatal("repeated raw block identity accepted")
