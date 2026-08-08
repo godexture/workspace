@@ -44,8 +44,8 @@
 | `core/node` | 置換 | public `flow` contract。typed schema port と Processor/Operator を提供 |
 | `core/pipeline` | 非公開・置換 | `internal/graph`、`run`、`observe`。channel-per-node を execution island へ置換 |
 | `core/registry` | 分割・置換 | marker identity/Set は `plugin`、validated index は `internal/catalog` |
-| `core/resolver` | 非公開・置換 | pure Compile を評価する `internal/solve` と shared bounded `internal/probe`。候補ごとの `Seek(0)` を削除 |
-| `core/routing` | 非公開・置換 | `internal/plan`/`graph`。negotiation と runtime object 生成を分離 |
+| `core/resolver` | 非公開・置換 | pure Compile を評価する `internal/solve`。候補ごとの `Seek(0)` は削除し、shared bounded probe は M6 の実 consumer と同時に配置 |
+| `core/routing` | 非公開・置換 | `internal/{solve,graph,program}`。negotiation と runtime object 生成を分離 |
 | `core/test` | 移動 | 公式 plugin 横断 test を最上位 `integration` module へ移す |
 
 `core` の package は既存名を rename して残すのではなく、foundation contract の縦断経路を新設した後に旧 package ごと削除する。
@@ -177,6 +177,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `media/packet` | container chunk と codec packet | M3 |
 | `media/buffer` | aligned backing buffer、plane layout、ownership handle | M3 |
 | `media/audio` | typed sample frame `Frame[S]` | M3 |
+| `media/sample` | stream-level sample property vocabulary と canonical typed frame schema | M4-4 |
 | `media/metadata` | Document、Origin、RawBlock、Mapping、metadata Binding | M3（key 機構は M4-1 で `media/key` へ移す） |
 | `media/tag` | shared semantic vocabulary | M3 |
 | `media/format` | Probe/Inspect contract、capability alternative | M3（Carrier は M4-1 で分離、`access` の alias 再 export は M4-1 で削除） |
@@ -193,7 +194,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `standard` | official component と codec/metadata Binding の composition | M6 |
 | `integration` | cross-module、reference adaptor、surface end-to-end test | M6 |
 | `integration/corpus` | external conformance/benchmark corpus の data submodule または manifest/cache、license、size、任意取得の test tier | M10 |
-| `internal/{catalog,marker,snapshot,access,probe,inspect,plan,solve,graph,run,memory,task,commit,observe}` | host implementation | `catalog` は M2、`marker`/`snapshot` は M3 完了、他は M4/M5 |
+| `internal/{catalog,marker,snapshot,bind,bound,solve,graph,program,gotype,run/{drive,queue},memory,task,observe}` | M5 時点の host implementation | `catalog` は M2、`marker`/`snapshot` は M3、`bind`/`bound`/`solve`/`graph`/`program` は M4、`gotype`/`run`/`memory`/`task`/`observe` は M5。transaction coordinator は `host` の unexported 実装 |
 
 `component` package は新設しない。component Spec は `plugin.Component` が持つ。理由は [C21](decisions.md#c21-foundation-package-は-media-領域だけを-grouping-する) を参照する。
 
@@ -213,7 +214,7 @@ M5 の最終単位で旧 contract 層を一括削除する。理由と規則は 
 
 ### 削除
 
-`core` 全体。`core/domain/*` は `media/*` が、`core/{registry,resolver,routing,pipeline,node,factory,core.go}` は `plugin`/`internal/{catalog,solve,plan,graph,run}`/`flow` が、`core/internal/{clone,xsync}` は `internal/snapshot` と immutable value がそれぞれ置換済みである。
+`core` 全体。`core/domain/*` は `media/*` が、`core/{registry,resolver,routing,pipeline,node,factory,core.go}` は `plugin`/`internal/{catalog,solve,graph,program,run}`/`flow` が、`core/internal/{clone,xsync}` は `internal/snapshot` と immutable value がそれぞれ置換済みである。
 
 `sdk/{engine,conversion,catalog,config,cliflag,buffer,timer,profiling,testutil,optional,pool}`。`sdk/date` は `media/tag.Date` が置換済みのため同じく削除する。
 

@@ -393,8 +393,8 @@ M4-1 は新しい contract を作らず、M3 の成果に対する構造是正�
 - `Plan` が requested node/edge と auto-insert の区別、component canonical identity、canonical config、input/output descriptor、insertion reason、Effect/loss、expanded policy、budget 使用量、Plan fingerprint を持ち、versioned DTO へ変換できる。raw secret、pointer、function を含まない。
 - `Program` が private で serialize されず、dense index と typed call path を持つ。public API から取り出せない。
 - 同じ normalized Job、Catalog、input snapshot、platform snapshot なら、catalog insertion order、map seed、並行 Compile の完了順を変えても同じ Plan fingerprint になる。
-- Prepare が Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、output transaction を開始しない。dry-run が output を作成・truncate しない。
-- M3 が declaration に留めた `access.Provider` と `endpoint` の宣言が planner に binding され、capability 不足が Open 後の type assertion ではなく Compile diagnostic になる。
+- M4 の runtime-free 経路が Normalize/Bind → Shape/Compile → Solve/Validate → Describe/Build の順を明示し、operator や output transaction を開かない。dry-run が output を作成・truncate しない。Provider session の Acquire、共有 Probe、Format Inspect は M6 がこの前段へ追加する。
+- M3 が declaration に留めた `access.Provider` と `endpoint` が planner に binding され、manifest が宣言した capability の不足を Open 後の type assertion ではなく Compile diagnostic にする。実 session capability の再検証は M6 が担当する。
 - **walking skeleton が planner 経由で通る。** M3 の直結 test が planner の作る `Plan`/`Program` 経由に置き換わり、bytes、item 数、順序、timestamp が同じであることを検査する。
 - **container を持たない実 PCM が通る。** trivial component は自分で作った要求にしか答えないため、skeleton だけでは contract が現実の規格に耐えるか分からない。raw PCM を最初の実 codec として planner 経由で流し、sample format、bit depth、channel layout、endian が `property.Set` と `stream.Descriptor` で表せること、Format が capability alternative を宣言して narrow view を受け取れること、Parser が identity として振る舞えることを実データで確認する。ここで判明した contract の不足は M5 と M6 の前に直す。M6 はこの PCM へ WAVE container を足す。
 - **合成 filter chain で audio.md の設計仮定を測る。** [audio](audio.md#benchmark-contract) の受け入れ条件のうち「compatible な N filter region の sample format conversion が入口/出口の最大二回で N に比例しない」は、実 filter が揃う M8 まで検証できない。M4 では合成 filter を N = 1/4/16 で並べ、planner が挿入した converter の数と Plan 上の selected sample schema を数える。数が N に比例するなら converter 配置の設計が誤っているので、runtime を積む前に直す。速度ではなく挿入数を見る gate であり、[performance](performance.md#開発時の性能回帰方針) の 2 倍目安とは別である。
@@ -402,7 +402,7 @@ M4-1 は新しい contract を作らず、M3 の成果に対する構造是正�
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
 - 上記を unit/property test で検査する。公式 plugin を import しない。determinism は map iteration、catalog insertion、候補評価の完了順を意図的に乱して検査する。
 
-M4 では次を未完了事項として残す。実 container format は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。実 Format/Codec の駆動は M6。multi-stream の mapping と selector 解決は M7 が MP4 を consumer として確定する。variant selection の実装は M8 の family 移行に乗せる。
+M4 では次を未完了事項として残す。Provider session の acquire、共有 probe、Format inspect、実 capability の再検証、spool insertion と実 container/Format/Codec の駆動は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。multi-stream の mapping と selector 解決は M7 が MP4 を consumer として確定する。variant selection の実装は M8 の family 移行に乗せる。
 
 ## 文書全体の完了条件
 

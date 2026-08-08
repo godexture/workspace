@@ -18,7 +18,7 @@ func (s SpoolStorage) Valid() bool { return s >= MemorySpool && s <= DiskSpool }
 var ErrInvalidSpoolSpec = errors.New("access spool specification is invalid")
 
 // SpoolSpec makes a capability adaptation visible to planning. It does not
-// allocate storage or start I/O; insertion and cleanup belong to M4/M5.
+// allocate storage or start I/O; the first insertion and cleanup consumer is M6.
 type SpoolSpec struct {
 	predictedBytes int64
 	storage        SpoolStorage

@@ -35,7 +35,7 @@ package を分けるためだけに repository/module を分けない。import p
 
 ### 設計・pre-v1期間
 
-source を一つの monorepo に統合し、source code の Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。code と独立して更新・配布される任意取得の test/demo asset は data submodule として維持できる。現在は `example/assets` と FLAC conformance corpus がこれに該当する。通常 build/test の必須入力や production dependency にせず、新しい source submodule は追加しない。M1 時点で同一 commit を指していた `example/web/assets` は、web hiatus に入った M5 で重複を解消した。
+source を一つの monorepo に統合し、source code の Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。code と独立して更新・配布される任意取得の test/demo asset は data submodule として維持できる。現在は `example/assets` と `testdata/flac/conformance` がこれに該当する。通常 build/test の必須入力や production dependency にせず、新しい source submodule は追加しない。M1 時点で同一 commit を指していた `example/web/assets` は、web hiatus に入った M5 で重複を解消した。
 
 ```text
 module github.com/godexture/godec
@@ -102,6 +102,7 @@ M1 は repository、package identity、module/workspace topology を固定する
 | 共有機構 | `media/key` | marker 由来 typed key、宣言 clone 規則、erased accessor |
 | media control plane | `media/schema`、`media/property`、`media/timing`、`media/stream`、`media/metadata`、`media/tag` | open identity、immutable property、time base、stream descriptor、semantic metadata |
 | media data plane | `media/packet`、`media/side`、`media/buffer`、`media/audio`、`media/video`、`media/subtitle` | typed unit、side data、ownership |
+| media schema vocabulary | `media/sample` | stream-level sample properties と canonical typed audio frame schema |
 | media extension | `media/carrier`、`media/format`、`media/codec` | payload slot identity、Probe/Inspect、Parser/Binding |
 | graph contract | `flow` | typed port、Reader/Writer、Processor/Operator |
 | identity/config | `plugin`、`config`、`diagnostic` | marker identity、Set、component Spec、typed schema、構造化診断 |
@@ -133,6 +134,7 @@ control plane（data plane から参照されない）
     media/schema <- flow <- plugin <- access、media/metadata
     media/carrier <- media/format <- media/codec
     media/property、media/metadata <- media/stream、media/tag
+    media/sample -> media/schema、media/property、media/audio
     config、diagnostic、endpoint
 ```
 
@@ -147,27 +149,30 @@ control plane（data plane から参照されない）
 
 ## private Host runtime
 
-次は foundation module 内に置いても public contract にしない。
+次は foundation module 内に置いても public contract にしない。M5 完了時点の実配置を正本として示す。
 
 ```text
 internal/
 ├─ catalog/   validated immutable component index
-├─ access/    Provider binding, prepared sessions, spool
-├─ probe/     bounded shared probing
-├─ inspect/   source topology inspection
-├─ plan/      public Plan construction
+├─ bind/      declarative Access/Endpoint normalization
+├─ bound/     immutable node-local boundary projection
 ├─ solve/     constraint solving and bridge selection
 ├─ graph/     validated compiled graph
-├─ run/       scheduler, execution islands, lifecycle
+├─ program/   private Plan-to-runtime capsule
+├─ gotype/    payload Go-type token used at Open-time binding
+├─ run/
+│  ├─ drive/  typed delivery, ownership, fan-in/fan-out
+│  └─ queue/  bounded edge storage and wakeup
 ├─ memory/    allocator, pools, queue storage
-├─ task/      tracked task groups
-├─ commit/    output transaction coordination
+├─ task/      tracked groups and worker-grant-limited starters
 ├─ observe/   local counters, event snapshots
 ├─ marker/    shared marker type to canonical identity derivation
 └─ snapshot/  shared rule for when a declared clone is required
 ```
 
-この境界により、queue、scheduler、fusion、allocator、metrics accumulator、panic boundary を変更しても plugin source を変更せずに済む。
+public `host` package は façade だけでなく、その façade に密着した unexported orchestration を持つ。M5 review で 475 行の実行fileを `runner.go`、`opening.go`、`data.go`、`commit.go`、`failure.go` と既存 `cleanup.go` に責務分割した。output transaction coordination は public contract ではなく、`host/commit.go` と `host/cleanup.go` の非公開実装である。別 package に移すためだけに runner state を export しない。
+
+M6 の prepared Provider session、共有 probe/inspect、spool は実 consumer と同時に配置を決める。存在しない `internal/access`、`internal/probe`、`internal/inspect` を実装済み tree として先に約束しない。この境界により、queue、scheduler、fusion、allocator、metrics accumulator、panic boundary を変更しても plugin source を変更せずに済む。
 
 ## 公式 plugin の凝集単位
 

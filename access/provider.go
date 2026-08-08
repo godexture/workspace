@@ -65,8 +65,8 @@ func WithProviderRequirements(requirements Requirements) ProviderOption {
 	return func(provider *Provider) { provider.requirements = cloneRequirements(requirements) }
 }
 
-// WithProviderCapabilities declares the source capabilities guaranteed before
-// acquisition. Prepare revalidates actual session capabilities in M5.
+// WithProviderCapabilities declares planning capabilities before acquisition.
+// M6 provider sessions revalidate the capabilities they actually open.
 func WithProviderCapabilities(capabilities Capabilities) ProviderOption {
 	return func(provider *Provider) { provider.capabilities = capabilities }
 }

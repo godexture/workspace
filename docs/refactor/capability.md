@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | processor 17 種 | compressor、convert、convolver、dcoffset、delay、equalizer、fade、gain、gate、linear、mixer、normalize、remix、resample、retime、reverb、trim | 維持 | M8 | impulse/step/sine/noise と chunk 境界不変性 |
 | filter ごとの byte↔float 変換 | 各 filter が個別に実施 | 廃止 | M8 | 変換回数が filter 数に比例しないことを benchmark counter で確認 |
-| 並列 convolver / FLAC | worker 数指定 | 維持 | M5/M8 | M5 は `resource.Grant` と `TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen` で Job-local grant を確認済み。worker 1/N の出力不変 test は実 codec を戻す M8 |
+| 並列 convolver / FLAC | worker 数指定 | 維持 | M5/M8 | M5 は `resource.Grant`、`TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen`、node-local task starter で Job-local grant の予約と実消費上限を確認済み。worker 1/N の出力不変 test は実 codec を戻す M8 |
 
 ## runtime と観測
 
@@ -54,6 +54,7 @@
 | cancel 伝播 | pipeline 全体 | 維持 | M5 | queue wait、peer task、PCM Host Run の cancel/leak test で確認済み |
 | seek | MP3 demuxer、FLAC seektable | 維持 | M7 + M6/M8 | seek 精度と preroll の test |
 | worker pool | `registry.NewWorkerPool(N)` | 変更 | M5 | `resource.Grant`、runtime projection、aggregate reservation test で Job-local resource として確認済み |
+| CPU/SIMD dispatch | exported mutable flag と process-wide env 切替 | 変更 | M5/M8 | M5 review で exported mutable state を削除。M8 は immutable `plan.Platform` から Compile/Open 時に direct function を固定し、item loop が feature/env を読まず、Plan fingerprint が選択を説明することを検査 |
 
 ## I/O と surface
 

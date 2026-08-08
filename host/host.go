@@ -1,5 +1,5 @@
-// Package host is the public foundation façade for constructing an immutable
-// validated catalog. Runtime resources and planning APIs are added later.
+// Package host provides the public façade for immutable catalog construction,
+// planning, preparation, and failure-safe job execution.
 package host
 
 import (

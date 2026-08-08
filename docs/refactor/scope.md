@@ -122,7 +122,7 @@ M3-3 の data-path consumer は、`media/side` の immutable side data と、`me
 
 宣言・検証に留める contract は、`access.Reference` の canonical/redacted 表現、`access.Provider` の scheme declaration、transaction class、spool specification、immutable bounded probe view/range request、snapshot identity、`endpoint` の topology/realtime trait、Device descriptor/reference、明示 opt-in の `DeviceQuery` である。Provider の scheme conflict は既存の `plugin.Declaration`/catalog に載せ、独自 registry は作らない。Host/package import や型の構築は device scan、permission prompt、network access を起こさない。
 
-M4 が Provider/Endpoint declaration の planner binding、acquire/probe/inspect と capability diagnostic を担当し、M5 が transaction execution/rollback と spool insertion、M6 が file/HTTP 等の具体 Provider/Format 接続、M9 が device/session Endpoint 実装を担当する。clock/timestamp origin、latency/buffer、drop/reconnect/discontinuity、exclusive/shared、hotplug、multi-output `AllOrNothing` は consumer が現れる milestone まで型を増やさず、M3 では設計文書だけを正本とする。
+M4 は Provider/Endpoint declaration の planner binding と、宣言 capability に基づく Open 前 diagnostic を担当する。M5 は既に bound 済み operator/output の transaction execution/rollback を担当する。session acquire、候補間で共有する bounded probe、Format inspect、実 capability の再検証、spool insertion と temporary quota/cleanup は、file Provider と WAVE Format が最初の実 consumer になる M6 が一体で担当する。M9 は device/session Endpoint と clock を実装する。timestamp origin、latency/buffer、drop/reconnect/discontinuity、exclusive/shared、hotplug、multi-output `AllOrNothing` は consumer が現れる milestone まで型を増やさず、M3 では設計文書だけを正本とする。
 
 ### M3 時点で型を持たない capability matrix の行
 
@@ -158,6 +158,8 @@ M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prep
 `buffer.Edit` と `audio.Editor` は shared/read-only payload の transactional copy-on-write consumerである。exclusive frame は backing をそのまま move し、fan-out 後は変更 branch だけ Job-local allocator から複製する。buffer/audio unit test と typed runtime fan-out test が commit/discard、0-allocation linear edit、branch isolation、grant repayment を検査する。将来の公式 audio filter は M8 で同じ API を使用する。
 
 `internal/{run,memory,task,observe,bound}` の export は `internal` import rule の内側だけにあり、Host/Program と対象 test が全ての caller である。plugin/surface の public contract ではない。M5 で追加した export に consumer 未定の宣言は残していない。
+
+先行 milestone から引き継いだ宣言は別に監査する。M3 の `access.SpoolSpec` と M4 の `job.ResourcePolicy.AllowSpool` は M5 の transaction coordinator の consumer ではなく、M6 の WAVE/file 経路が Plan node、temporary storage、cancel/rollback cleanup を初めて実装する。M5 の `resource.Request.Workers` は grant で制限された node-local `OpenContext.Tasks()` が実消費し、component が grant を超えて task を開始できない。consumer の無い `Temporary` resource dimension は M5 review で削除し、M6 が spool storage interface と課金単位を同時に決める。realtime `Clock` は M9 の Endpoint と同時に追加する。
 
 ## 文書全体の完了条件
 

@@ -178,14 +178,14 @@ mixer は `inputIDs` の明示順で accumulation し、normalize は逐次 peak
 
 ### build/runtime dispatch
 
-SIMD file は `goexperiment.simd && amd64` build constraint と、mutable な `dsp.HasAVX2`/`HasAVX2FMA` global で dispatch している。この方式では次が不明確になる。
+SIMD file は `goexperiment.simd && amd64` build constraint と、package 初期化時の private な CPU feature snapshot で dispatch している。M5 review で exported mutable flag は read-only function に置き換えたが、維持 utility は変換呼び出しごとにその process snapshot を参照する。この方式のまま新 runtime の item loop へ接続すると次が不明確になる。
 
 - 同じ binary 内で `Stable`/`Portable` が scalar を要求する方法
 - Plan 時と Run 時の selected variant
 - CPU feature が cache/fingerprint に入るか
-- test が global flag mutation に依存すること
+- `GODEC_FORCE_SCALAR` の process-wide 初期化値と Job policy の関係
 
-build constraint は「variant が binary に存在するか」だけに使い、selection は Host が immutable CPU feature snapshot と policy を使って Compile 時に行うべきである。
+build constraint は「variant が binary に存在するか」だけに使い、selection は Host が immutable CPU feature snapshot と policy を使って Compile 時に行うべきである。`GODEC_FORCE_SCALAR` は scalar/SIMD differential harness の process input に限定し、利用者向け runtime policy にしない。M8 は component Compile/Open が選択済み direct function を Program に保持し、Run の item loop が `sdk/dsp` の feature functionや環境変数を読まないこと、選択 feature/variant が Plan fingerprint に入ることを検査する。
 
 `sdk/bits` には別に、通常buildでprogrammer assertionを有効、`production` tagでno-opにする独自build modeがある。現行Docker buildやroot test commandはこのtagをrelease contractとして固定・比較していない。利用者が知らないtagでcorrectness checkとhot-path costを変えない。
 
@@ -401,7 +401,7 @@ selection は Compile/Optimize 時に一度行い、private `Program` に direct
 - CPU/device/resource requirement が Plan 後に満たせなければ stale Plan/Prepare error にする
 - fallback が必要なら再 Compile して新しい Plan を得る
 
-CPU feature は Host construction/Prepare 時の immutable snapshot とする。`dsp.HasAVX2` のような exported mutable global は削除し、test は injected feature set/catalog を使う。
+CPU feature は Host construction/Prepare 時の immutable snapshot とする。`dsp.HasAVX2` のような exported mutable global は M5 review で削除済みであり、M8 の新経路 test は injected feature set/catalog を使う。維持 utility の process snapshot を Program selection の代用にしない。
 
 worker 数、block/partition、fusion が output に影響し得る場合は Plan fingerprint に含める。`parallelism=auto` は実 worker grantへ解決してから Plan を確定する。
 

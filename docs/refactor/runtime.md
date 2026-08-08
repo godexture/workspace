@@ -46,7 +46,7 @@ solver の tie-break は deterministic にする。catalog identity、component 
 
 bridge の自動挿入範囲、Effect と Host policy、探索 budget、default copy 優先の詳細は [planner の探索規則](planner.md) に定義する。
 
-Prepare 全体は input I/O を含むが、各 component の `Compile` は pure のままである。prepared session が Plan と input snapshot を所有し、Run まで同じ session を使う。output transaction は dry-run/Plan 時に開始しない。Access/Endpoint の詳細は [access と endpoint contract](access.md) に定義する。
+これは完成時の pipeline である。M4/M5 が実装した現在の経路は宣言を Normalize/Bind した後の Shape/Compile/Solve/Validate/Describe/Build と runtime lifecycle で、段階 3〜5 と spool bridge の最初の実装は M6 の file/WAVE consumer が担当する。M6 以降の Prepare は input I/O を含むが、各 component の `Compile` は pure のままである。prepared session が Plan と input snapshot を所有し、Run まで同じ session を使う。output transaction は dry-run/Plan 時に開始しない。Access/Endpoint の詳細は [access と endpoint contract](access.md) に定義する。
 
 ## graph model
 
@@ -78,7 +78,7 @@ cycle を将来 filter feedback 等で許可する場合も、delay/queue semant
 
 ## Plan と Open transaction
 
-候補 component の `Open` は行わない。input Access session は probe/inspect のため Prepare 中に取得済みだが、media operator、live Endpoint、output transaction は最終 `Program` が確定した後に依存順で一度だけ開く。
+候補 component の `Open` は行わない。M6 以降は input Access session を probe/inspect のため Prepare 中に取得するが、media operator、live Endpoint、output transaction は最終 `Program` が確定した後に依存順で一度だけ開く。M5 時点は application supplied direct resource と宣言済み boundary だけを扱い、session acquire 済みとは主張しない。
 
 ```text
 begin output transactions
@@ -199,22 +199,24 @@ type Limit struct {
 }
 ```
 
-schema が安価な `Size` trait を提供する場合だけ byte limit を使う。timestamp のある stream は time window を使える。どれも指定されなければ item count の固定 queue を使う。
+`job.ResourcePolicy.Queue` が per-edge policy を Plan/Program へ固定する。既定の Fast/Stable/Portable は 4 item の item-only queue、Realtime は 2 item、16 MiB、250 ms を既定とする。schema が安価な `Size` trait を提供する場合だけ byte limit を、`Time` trait と stream time base がある場合だけ time window を有効にする。wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない dimension は無視して item limit を必ず残す。
 
-resource manager は Open 時に codec workspace、worker 数、大きな ring、temporary storage 等の粗粒度 grant を与える。packet/frame ごとの acquire/release を中央 manager に送らない。
+fan-in は接続 edge の limit/time base が一致する場合だけ compile し、timestamp/zip policy に必要な watermark を同じ tick 単位で Plan に投影する。runtime queue は items/bytes/time と watermark を同じ policy snapshot から強制する。
+
+resource manager は Open 時に codec workspace、worker 数、大きな ring 等の粗粒度 grant を与える。M6 で spool consumer を入れる時に temporary storage の quota と cleanup authority を同じ manager へ追加する。packet/frame ごとの acquire/release を中央 manager に送らない。
 
 局所 counter は cache line を意識し、metrics export 時に集約する。resource tracking を無効にした経路では追加 atomic を発生させない。
 
 ## host service
 
-component に渡す service は用途別の narrow interface にする。
+component に渡す service は用途別の narrow interface にする。M5 の `OpenContext` が実際に渡すものは次である。
 
 - `Buffers`: allocator、blob、workspace grant
-- `Tasks`: cancel と join が追跡される task group
-- `Temp`: host 管理の temporary storage
+- `Tasks`: cancel と join が追跡され、node の worker grant を超えて開始できない task starter
 - `Diagnostics`: structured event の sink
-- `Clock`: realtime component 用 clock
-- source/sink I/O: component の宣言に合う capability view
+- `Boundary`: planner が選んだ一つの source/sink/Endpoint capability view
+
+`Temp` は spool/file の実 consumer と同じ M6、realtime component 用 `Clock` は Endpoint の実 consumer と同じ M9 で追加する。使えない service に resource request だけを先行させない。
 
 全 service や catalog を自由に取得できる `Host`/service locator は渡さない。component が別 component を runtime に検索・生成することも許可しない。依存 component は planner が graph に表す。
 
@@ -335,7 +337,7 @@ Result {
 
 ## M5 完了条件
 
-M5 は execution island、ownership、queue、cancel、Finalize、transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
+M5 は execution island、ownership、queue、cancel、Finalize、既に bound 済み operator/output の transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、Provider session の acquire、共有 probe、Format inspect、spool と実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
 
 > **2026-08-08 完了。** 下記条件を ownership/queue/task/Host failure matrix、PCM public Host walking skeleton、hot-path allocation test、同一 process paired benchmark で逐条確認した。その後に最終 cut を適用し、scalar/SIMD 全 package test、対象 race/vet、generator、docs check を新 stack だけで通した。性能証拠は [performance](performance.md#m5-runtime-performance-gate)、切断結果は [inventory](inventory.md#m5-の切断) を正本とする。
 
@@ -344,13 +346,14 @@ M5 は execution island、ownership、queue、cancel、Finalize、transactional 
 - ownership 契約が conformance test される。Reader 返却で consumer へ move、Writer 成功で writer へ move、Writer 失敗で呼び出し元が保持、drop/cancel/queue drain は owner が破棄。linear path で refcount increment が起きず、fan-out のときだけ `Fork`/retain を通る。
 - M3 が値型として置いた `flow.Input`/`Owned`/`Shared` の上で、linear 1 hop の allocation がゼロであることを test で固定する。M3 で失った double `Take`・use-after-`Take` の検出を conformance testkit が担当し、既定 build の hot path に検出用 state を持たせない。
 - payload allocator が Host/Job の grant に属し、`sync.Pool` を resource manager や correctness の根拠にしない。`Overwrite` lease は Commit 前に read/publication できず、error/cancel で破棄される。
-- 実 queue が bounded で、`Limit` の items/bytes/time を扱う。byte limit は schema が安価な `Size` trait を提供する場合だけ使う。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
+- `resource.Request.Workers` が node-local task starter の同時実行上限として消費され、component が grant を超えて worker task を開始できない。consumer の無い temporary dimension を resource request/grant に残さない。
+- 実 queue が bounded で、`job.QueuePolicy` から Plan/Program に固定した `Limit` の items/bytes/time を扱う。byte/time は対応 trait がある edge だけで有効にし、window は planning 時に stream-local tick へ変換する。Fast の既定は item-only、Realtime は byte/time も有効にする。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
 - resource accounting が packet/frame ごとに中央 manager を呼ばない。局所 counter に蓄積し、metrics export 時に集約する。
 - job context cancel が source、queue、operator、sink、host task group へ伝播し、block 中の read/write を解除する。edge close が idempotent で、send-after-close と double-close を plugin の責任にしない。join できない task を「停止した」と偽らず diagnostic にする。
 - EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は `Finalize` の明示 contract で渡り、data packet に混ざらない。
 - Open が transaction として行われ、途中失敗で既に開いた component/Endpoint/resource/output transaction を逆順に閉じ、sink を Abort し、Open 中に作った goroutine を cancel/join する。
 - 成功時に Finalize → Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
-- primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、temporary file 削除、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。
+- primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、output rollback、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。M6 の temporary storage も同じ集約へ接続する。
 - multi-input component が fan-in policy を宣言し、goroutine の到着順で入力を選ばない（[F22](findings.md)）。必要な buffering と watermark が Plan に現れる。
 - panic recovery が execution island または長寿命 task の最上位に一度だけ置かれ、item loop に `defer` が入らない。plugin/component identity、plan node ID、phase、stack、primary/cancel status を記録する。
 - observation off で hot path に metric 用 atomic、clock read、size 計算が現れない。observation の各段階が同じ event model から集約される。
@@ -373,7 +376,7 @@ M5 は execution island、ownership、queue、cancel、Finalize、transactional 
   - [findings](findings.md) の M5 cut 対象を完了へ更新し、複数 milestone にまたがる行は残件を明示する。
 - この時点で repository は WAVE、MP3、FLAC、audio filter、CLI、WASM、demo web の機能を持たない。M6 以降が `_legacy/` から順に移す。未 release 製品として意図した状態であり、回帰ではない。
 
-M5 では次を未完了事項として残す。実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形、`standard.Convert` と `cmd/godec` の最短経路は M6。multi-stream、metadata loss report、seek plan、MP4 は M7。variant selection と並列 codec の移行は M8。device/session Endpoint の実装と surface の完成は M9。
+M5 では次を未完了事項として残す。Provider session の acquire、候補間で共有する bounded probe、Format inspect、実 capability の再検証、spool insertion、temporary quota/cleanup、実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形、`standard.Convert` と `cmd/godec` の最短経路は M6。multi-stream、metadata loss report、seek plan、MP4 は M7。Plan snapshot からの variant selection と並列 codec の移行は M8。device/session Endpoint、Clock と surface の完成は M9。
 
 ## 文書全体の完了条件
 

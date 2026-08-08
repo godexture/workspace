@@ -57,9 +57,8 @@ func (g Graph) Lookup(id job.NodeID) (Node, bool) {
 	return g.nodes[index], true
 }
 
-// Open is an internal bridge used by the M4 explicit skeleton. M4-3 replaces
-// direct graph access with a private Program, while preserving the same
-// Compilation-to-Open binding.
+// Open applies the graph's validated Compilation-to-Open binding. Program is
+// the production owner of this private bridge.
 func (g Graph) Open(ctx plugin.OpenContext, id job.NodeID) (flow.Operator, error) {
 	node, ok := g.Lookup(id)
 	if !ok {

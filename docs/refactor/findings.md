@@ -35,7 +35,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F15 | `sdk/engine`、`conversion`、`catalog`、`config` が core contract を再抽象化し、plugin authoring、application API、utility、test helper を一層に抱えている。 | [architecture](architecture.md)、[plugins](plugins.md)、[inventory](inventory.md)。**完了（M5 cut）** | M5 |
 | F16 | config の意味が struct/tag、default variable、`Validate`、dynamic resolver、CLI reflection、preset、generated option、catalog description に分散する。 | [config](config.md)。**完了（M5 cut）** | M2/M8 |
 | F17 | role ごとの boolean/callback capability と plugin 自己申告の単純 cost では、open schema、I/O requirement、variant、loss/effect を構造的に比較できない。 | [planner](planner.md)、[performance](performance.md) | M4/M8 |
-| F18 | Format 候補が同じ cursor を rewind して probe し、read budget、range共有、non-seekable input、capability不足が明示されない。 | [access](access.md)。**完了（M4）** | M3/M4 |
+| F18 | Format 候補が同じ cursor を rewind して probe し、read budget、range共有、non-seekable input、capability不足が明示されない。 | [access](access.md)。**一部完了**: M3 の bounded probe 宣言と M4 の manifest binding/診断は完了。session acquire、共有 probe cache、実 capability 再検証、spool consumer は M6 | M3/M4/M6 |
 | F19 | metadata key が core の閉じた method set に依存し、format plugin が ID3/Vorbis Comment 実装を直接 import するため、第三者規格の追加に既存 package の変更が必要になる。 | [media](media.md)。**完了（M5 cut）** | M3 |
 | F20 | format が codec tag、parameter、packetization を直接知る箇所があり、WAVE と MP3/PCM 等が直接依存する。container chunk と codec packet の境界も独立していない。 | [media](media.md)。**完了（M5 cut）** | M3/M6 |
 | F21 | item ごとに中央 resource accounting を行う設計へ拡張すると atomic/lock contention が hot path のボトルネックになる。現行 pool も resource owner/上限を表さない。 | [runtime](runtime.md)、[performance](performance.md)。**完了（M5）** | M5 |
@@ -75,7 +75,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F50 | `Seek` 復元、metadata parse、DSP conversion、Close/remove、shutdown、random ID 等で error を捨てる経路があり、primary failure と cleanup failure を区別できない。 | [runtime](runtime.md)、[quality](quality.md)。**current runtime 完了（M5）** | M5 |
 | F51 | floating container tag、root lockを使わないclient build、published旧moduleへfallbackし得るserver build、remote asset、未固定 toolchain が network-off rebuild を妨げる。 | [supply](supply.md) | M10 |
 | F52 | `sdk/bits` の独自 `production` tag が assertion semantics を変える一方、release/CIで同値性と使用条件が固定されていない。 | [performance](performance.md)、[quality](quality.md) | M8 |
-| F53 | global registry、mutable CPU feature、shallow-copy default、process-wide pool/WASM job map が Host/Job の owner、resource budget、test isolation を迂回する。 | [runtime](runtime.md)、[config](config.md)。**Host/Job owner と旧 global surface は完了（M5 cut）**。維持した `sdk/dsp` の exported CPU feature は M8 | M2/M8 |
+| F53 | global registry、mutable CPU feature、shallow-copy default、process-wide pool/WASM job map が Host/Job の owner、resource budget、test isolation を迂回する。 | [runtime](runtime.md)、[config](config.md)。**Host/Job owner と旧 global surface、`sdk/dsp` の exported mutable feature は完了（M5 review）**。process snapshot を新 item loop から参照せず、Plan/Program に direct variant を固定する責務は M8 | M2/M5/M8 |
 
 ## 監査結果の利用規則
 

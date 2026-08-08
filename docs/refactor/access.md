@@ -434,17 +434,18 @@ benchmark:
 - observation off/basic
 - device source/sink の steady-state latency と underrun
 
-## package/distribution 案
+## package/distribution
 
-[C13](decisions.md) の monorepo方針に従う概念配置:
+[C13](decisions.md) の monorepo方針に従う。M5 時点で存在する配置は次である。
 
 ```text
 access/              Reference, Provider, Source/Sink capability, transaction
 endpoint/            clock, realtime, topology and endpoint traits
 job/                 typed Input/Output choices and policy
-internal/probe/      bounded shared probe cache
-internal/access/     provider binding, session and spool
-internal/commit/     multi-output coordination
+internal/bind/       declarative Provider/Endpoint normalization
+internal/bound/      immutable node-local boundary projection
+host/commit.go       unexported multi-output coordination
+host/cleanup.go      unexported rollback and cleanup aggregation
 
 plugin/file/         local file Provider
 plugin/http/         optional HTTP Provider
@@ -452,6 +453,8 @@ plugin/memory/       library/test adaptors if public value isある場合
 plugin/oto/          optional playback Endpoint
 plugin/<camera>/     optional capture Endpoint
 ```
+
+下段の具体 Provider は将来配置であり、まだ存在しない。M6 の session owner、bounded shared probe/inspect、spool は file/WAVE consumer と同時に責務境界を決める。実装前から `internal/access`、`internal/probe`、`internal/commit` という package 名を正本にしない。
 
 `io.Reader`/`io.Writer` adaptor は foundation `access` に置けるが、filesystem/network/device 実装は foundation に置かない。stdin/stdout は CLI が `Borrow` adaptor で注入する。
 
@@ -511,7 +514,7 @@ Host integration:
 
 ## M3 完了条件
 
-M3 は Access と Endpoint の contract を foundation package として新設する milestone である。具体的な file/HTTP/S3/device 実装、prepared job の実行、spool の実挿入は M5/M6/M9 の担当であり、M3 には要求しない。media 側の条件は [media](media.md#m3-完了条件) を参照する。
+M3 は Access と Endpoint の contract を foundation package として新設する milestone である。output transaction の実行は M5、file Provider/session の acquire、probe、inspect と spool の実挿入は M6、HTTP/S3 と device の実装は需要に応じた M6 以降/M9 の担当であり、M3 には要求しない。media 側の条件は [media](media.md#m3-完了条件) を参照する。
 
 - `access.Reference`、`access.Provider`、byte `Source`/`Sink` capability、transaction が別々の型として存在し、一つの汎用 protocol interface に潰れていない。
 - source capability が巨大な boolean struct ではなく、sequential read、position-independent random read、stable size、reopen、snapshot identity、concurrent range read、cancel 等の小さな contract の組み合わせで表現される。
@@ -527,7 +530,7 @@ M3 は Access と Endpoint の contract を foundation package として新設�
 - foundation package が filesystem、network、device の具体実装を import しない。
 - 上記を unit/property test で検査する。第三者相当の Provider/Endpoint fixture を含め、公式 plugin と OS/network 依存を持ち込まない。
 
-M3 では次を未完了事項として残す。prepared job の acquire/probe/inspect 実行順は M4、transaction の実行と rollback は M5、file/HTTP Provider と device Endpoint の実装は M6/M9、conformance testkit は M10 で扱う。
+M3 では次を未完了事項として残す。M4 は Provider/Endpoint declaration の binding と宣言 capability の診断、M5 は transaction の実行と rollback を扱う。prepared job の acquire/probe/inspect、実 capability の再検証、spool insertion、file Provider は WAVE が consumer になる M6、device Endpoint は M9、完成した conformance testkit は M10 が扱う。
 
 capability alternative は M6 の WAVE が最初の consumer になる（`data` chunk size の後追い patch が random-write と sequential の選択を要求する）。設計上の代表例である「random-write OR sequential + fragmented-mode」は M7 の MP4 が moov/mdat 順序として実際に通す。ここで spool 挿入の判断と Plan への表示も初めて実データで検証される。
 
