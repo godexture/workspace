@@ -33,6 +33,7 @@ type Gap struct {
 func (g Gap) Node() job.NodeID                            { return g.node }
 func (g Gap) Port() string                                { return g.port }
 func (g Gap) Need() plugin.Need[stream.Descriptor]        { return g.need }
+func (g Gap) ExpectedSchema() schema.ID                   { return g.expected }
 func (g Gap) Component() plugin.Component                 { return g.component }
 func (g Gap) Config() config.ResolvedView                 { return g.config }
 func (g Gap) Inputs() flow.Descriptors[stream.Descriptor] { return copyDescriptors(g.inputs) }

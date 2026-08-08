@@ -22,7 +22,7 @@ type Evaluation struct {
 func (e Evaluation) Graph() (Graph, bool) { return e.graph, e.graph.Valid() }
 func (e Evaluation) Gaps() []Gap          { return append([]Gap(nil), e.gaps...) }
 
-func evaluate(index catalog.Index, requested job.Graph, allowGaps bool) (Evaluation, error) {
+func evaluate(index catalog.Index, requested job.Graph, allowGaps bool, beforeCompile func() error) (Evaluation, error) {
 	if !requested.Valid() {
 		return Evaluation{}, diagnostic.NewError(diagnostic.NewItem("graph.invalid-request", diagnostic.ErrorSeverity, diagnostic.Path{}, "requested graph is invalid", nil))
 	}
@@ -78,6 +78,11 @@ func evaluate(index catalog.Index, requested job.Graph, allowGaps bool) (Evaluat
 			if len(schemaGaps) != 0 {
 				gaps = append(gaps, schemaGaps...)
 				continue
+			}
+		}
+		if beforeCompile != nil {
+			if err := beforeCompile(); err != nil {
+				return Evaluation{}, err
 			}
 		}
 		compilation, err := plugin.Compile(component, plugin.CompileContext{}, configValue, inputs)
