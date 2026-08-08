@@ -1,0 +1,44 @@
+package plan
+
+import "github.com/godexture/godec/media/stream"
+
+// Descriptor is an inert stream-state projection. It deliberately does not
+// retain schema factories, metadata values, or property values.
+type Descriptor struct {
+	Stream              string
+	Schema              string
+	TimeBaseNumerator   int64
+	TimeBaseDenominator int64
+	PropertyFingerprint string
+	MetadataScope       string
+	Fingerprint         string
+}
+
+func (d Descriptor) Valid() bool {
+	return d.Stream != "" && d.Schema != "" && d.TimeBaseNumerator > 0 && d.TimeBaseDenominator > 0 && d.PropertyFingerprint != "" && d.MetadataScope != "" && d.Fingerprint != ""
+}
+
+// ProjectDescriptor removes runtime factories and values from a descriptor.
+func ProjectDescriptor(value stream.Descriptor) (Descriptor, error) {
+	fingerprint, err := value.Fingerprint()
+	if err != nil {
+		return Descriptor{}, err
+	}
+	timeBase := value.TimeBase()
+	return Descriptor{
+		Stream:              value.ID().String(),
+		Schema:              value.Schema().String(),
+		TimeBaseNumerator:   timeBase.Numerator,
+		TimeBaseDenominator: timeBase.Denominator,
+		PropertyFingerprint: value.Properties().Fingerprint().String(),
+		MetadataScope:       value.Metadata().Scope().String(),
+		Fingerprint:         fingerprint.String(),
+	}, nil
+}
+
+type PortDescriptor struct {
+	Port       string
+	Descriptor Descriptor
+}
+
+func (d PortDescriptor) Valid() bool { return d.Port != "" && d.Descriptor.Valid() }

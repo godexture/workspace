@@ -1,0 +1,62 @@
+// Package program owns the private, executable result of planning.
+package program
+
+import (
+	"context"
+	"errors"
+
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/graph"
+	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/plan"
+)
+
+type Program struct {
+	graph graph.Graph
+	plan  plan.Plan
+	nodes []graph.Node
+	byID  map[job.NodeID]int
+}
+
+func New(compiled graph.Graph, public plan.Plan) (Program, error) {
+	if !compiled.Valid() || !public.Valid() {
+		return Program{}, errors.New("program requires a compiled graph and valid Plan")
+	}
+	nodes := compiled.Nodes()
+	described := public.Nodes()
+	if len(nodes) != len(described) {
+		return Program{}, errors.New("program graph and Plan have different node counts")
+	}
+	byID := make(map[job.NodeID]int, len(nodes))
+	planned := make(map[string]string, len(described))
+	for _, node := range described {
+		planned[node.ID] = node.Component
+	}
+	for index, node := range nodes {
+		component, ok := planned[node.ID().String()]
+		if !ok || component != node.Component().String() {
+			return Program{}, errors.New("program graph and Plan select different nodes")
+		}
+		byID[node.ID()] = index
+	}
+	return Program{graph: compiled, plan: public, nodes: nodes, byID: byID}, nil
+}
+
+func (p Program) Valid() bool {
+	return p.graph.Valid() && p.plan.Valid() && len(p.nodes) == len(p.byID)
+}
+func (p Program) Plan() plan.Plan     { return p.plan }
+func (p Program) Nodes() []graph.Node { return append([]graph.Node(nil), p.nodes...) }
+func (p Program) Edges() []job.Edge   { return p.graph.Edges() }
+func (p Program) Lookup(id job.NodeID) (graph.Node, bool) {
+	index, ok := p.byID[id]
+	if !ok {
+		return graph.Node{}, false
+	}
+	return p.nodes[index], true
+}
+
+// Open binds only the private Compilation selected for id.
+func (p Program) Open(ctx context.Context, id job.NodeID) (flow.Operator, error) {
+	return p.graph.Open(ctx, id)
+}
