@@ -15,6 +15,56 @@ type EndpointRequest struct {
 	config    config.Patch
 }
 
+// Adaptor explicitly selects the component and config that translate a
+// direct Go resource into one typed graph boundary.
+type Adaptor struct {
+	component plugin.Identity
+	config    config.Patch
+}
+
+func NewAdaptor(component plugin.Identity, patch config.Patch) (Adaptor, error) {
+	if component.IsZero() {
+		return Adaptor{}, errors.New("job direct adaptor component identity is required")
+	}
+	return Adaptor{component: component, config: patch}, nil
+}
+
+func (a Adaptor) Valid() bool                { return !a.component.IsZero() }
+func (a Adaptor) Component() plugin.Identity { return a.component }
+func (a Adaptor) Config() config.Patch       { return a.config }
+
+// Direct is the type-erased Job control-plane binding. Opening remains a
+// typed access.Direct[T] value and is handed only to its selected adaptor.
+type Direct struct {
+	adaptor   Adaptor
+	opening   any
+	ownership access.Ownership
+	close     func() error
+}
+
+func directOf[T any](resource access.Resource[T], adaptor Adaptor) Direct {
+	owned := resource
+	return Direct{
+		adaptor:   adaptor,
+		opening:   resource.Direct(),
+		ownership: resource.Ownership(),
+		close:     owned.Close,
+	}
+}
+
+func (d Direct) Valid() bool {
+	return d.adaptor.Valid() && d.opening != nil && d.ownership.Valid() && d.close != nil
+}
+func (d Direct) Adaptor() Adaptor            { return d.adaptor }
+func (d Direct) Opening() any                { return d.opening }
+func (d Direct) Ownership() access.Ownership { return d.ownership }
+func (d Direct) Close() error {
+	if d.close == nil {
+		return nil
+	}
+	return d.close()
+}
+
 func NewEndpoint(component plugin.Identity, patch config.Patch) (EndpointRequest, error) {
 	if component.IsZero() {
 		return EndpointRequest{}, errors.New("job endpoint component identity is required")
@@ -52,11 +102,11 @@ func InputFromReference(reference access.Reference) (Input, error) {
 	return Input{kind: ReferenceInput, reference: reference}, nil
 }
 
-func InputFromSource[T any](source access.Resource[T]) (Input, error) {
-	if !source.Valid() {
+func InputFromSource[T any](source access.Resource[T], adaptor Adaptor) (Input, error) {
+	if !source.Valid() || !adaptor.Valid() {
 		return Input{}, errors.New("job input source ownership is invalid")
 	}
-	return Input{kind: SourceInput, direct: source}, nil
+	return Input{kind: SourceInput, direct: directOf(source, adaptor)}, nil
 }
 
 func InputFromEndpoint(request EndpointRequest) (Input, error) {
@@ -73,8 +123,9 @@ func (i Input) Kind() InputKind {
 func (i Input) Reference() (access.Reference, bool) {
 	return i.reference, i.kind == ReferenceInput && i.reference.Valid()
 }
-func (i Input) Source() (any, bool) {
-	return i.direct, i.kind == SourceInput && i.direct != nil
+func (i Input) Direct() (Direct, bool) {
+	value, ok := i.direct.(Direct)
+	return value, i.kind == SourceInput && ok && value.Valid()
 }
 func (i Input) Endpoint() (EndpointRequest, bool) {
 	return i.endpoint, i.kind == EndpointInput && i.endpoint.Valid()
@@ -106,11 +157,11 @@ func OutputToReference(reference access.Reference) (Output, error) {
 	return Output{kind: ReferenceOutput, reference: reference}, nil
 }
 
-func OutputToSink[T any](sink access.Resource[T]) (Output, error) {
-	if !sink.Valid() {
+func OutputToSink[T any](sink access.Resource[T], adaptor Adaptor) (Output, error) {
+	if !sink.Valid() || !adaptor.Valid() {
 		return Output{}, errors.New("job output sink ownership is invalid")
 	}
-	return Output{kind: SinkOutput, direct: sink}, nil
+	return Output{kind: SinkOutput, direct: directOf(sink, adaptor)}, nil
 }
 
 func OutputToEndpoint(request EndpointRequest) (Output, error) {
@@ -127,8 +178,9 @@ func (o Output) Kind() OutputKind {
 func (o Output) Reference() (access.Reference, bool) {
 	return o.reference, o.kind == ReferenceOutput && o.reference.Valid()
 }
-func (o Output) Sink() (any, bool) {
-	return o.direct, o.kind == SinkOutput && o.direct != nil
+func (o Output) Direct() (Direct, bool) {
+	value, ok := o.direct.(Direct)
+	return value, o.kind == SinkOutput && ok && value.Valid()
 }
 func (o Output) Endpoint() (EndpointRequest, bool) {
 	return o.endpoint, o.kind == EndpointOutput && o.endpoint.Valid()

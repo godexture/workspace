@@ -142,7 +142,8 @@ func (r Registry) bindInput(input job.Input, index int, used map[job.NodeID]stru
 		request, _ := input.Endpoint()
 		return r.endpointSelection(request, index, plan.InputBoundary, used)
 	case job.SourceInput:
-		return selected{}, diagnostic.NewError(bindItem("bind.direct-resource", plugin.Identity{}, "direct Source adaptors are built by Prepare in M5", map[string]string{"direction": "input"}))
+		direct, _ := input.Direct()
+		return r.directSelection(direct, index, plan.InputBoundary, used)
 	default:
 		return selected{}, diagnostic.NewError(bindItem("bind.input-kind", plugin.Identity{}, "Job input kind is invalid", nil))
 	}
@@ -164,10 +165,41 @@ func (r Registry) bindOutput(output job.Output, index int, used map[job.NodeID]s
 		request, _ := output.Endpoint()
 		return r.endpointSelection(request, index, plan.OutputBoundary, used)
 	case job.SinkOutput:
-		return selected{}, diagnostic.NewError(bindItem("bind.direct-resource", plugin.Identity{}, "direct Sink adaptors are built by Prepare in M5", map[string]string{"direction": "output"}))
+		direct, _ := output.Direct()
+		return r.directSelection(direct, index, plan.OutputBoundary, used)
 	default:
 		return selected{}, diagnostic.NewError(bindItem("bind.output-kind", plugin.Identity{}, "Job output kind is invalid", nil))
 	}
+}
+
+func (r Registry) directSelection(direct job.Direct, index int, direction plan.BoundaryDirection, used map[job.NodeID]struct{}) (selected, error) {
+	if !direct.Valid() {
+		return selected{}, diagnostic.NewError(bindItem("bind.direct-resource", plugin.Identity{}, "direct resource binding is invalid", nil))
+	}
+	adaptor := direct.Adaptor()
+	component, ok := r.index.Lookup(adaptor.Component())
+	if !ok {
+		return selected{}, diagnostic.NewError(bindItem("bind.direct-adaptor", adaptor.Component(), "direct resource adaptor is not in the Host catalog", nil))
+	}
+	port, err := boundaryPort(component, adaptor.Config(), direction)
+	if err != nil {
+		return selected{}, err
+	}
+	id := boundaryNodeID(direction, index, adaptor.Component(), used)
+	projection := plan.Boundary{
+		Direction: direction,
+		Kind:      plan.DirectBoundary,
+		Choice:    index,
+		Node:      id.String(),
+		Port:      port,
+		Component: adaptor.Component().String(),
+		Ownership: direct.Ownership(),
+	}
+	return selected{
+		node:  job.NewNode(id, adaptor.Component(), adaptor.Config()),
+		port:  port,
+		entry: bound.Direct(projection, direct.Opening(), direct.Close),
+	}, nil
 }
 
 func (r Registry) providerSelection(provider access.Provider, reference access.Reference, capability access.Selection, index int, direction plan.BoundaryDirection, used map[job.NodeID]struct{}) (selected, error) {

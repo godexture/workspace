@@ -40,6 +40,18 @@ type Resource[T any] struct {
 	state     *resourceState
 }
 
+// Direct is the non-owning view handed to one explicitly selected adaptor.
+// It exposes the typed handle but no Close operation; Host remains the sole
+// owner of Resource cleanup.
+type Direct[T any] struct {
+	value     T
+	ownership Ownership
+}
+
+func (d Direct[T]) Value() T             { return d.value }
+func (d Direct[T]) Ownership() Ownership { return d.ownership }
+func (d Direct[T]) Valid() bool          { return d.ownership.Valid() }
+
 type resourceState struct {
 	once     sync.Once
 	close    func() error
@@ -57,6 +69,7 @@ func Borrow[T any](value T) Resource[T] {
 func (r Resource[T]) Value() T             { return r.value }
 func (r Resource[T]) Ownership() Ownership { return r.ownership }
 func (r Resource[T]) Valid() bool          { return r.ownership.Valid() }
+func (r Resource[T]) Direct() Direct[T]    { return Direct[T]{value: r.value, ownership: r.ownership} }
 
 func (r *Resource[T]) Close() error {
 	if r == nil || r.state == nil {

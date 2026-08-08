@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
@@ -17,6 +21,7 @@ import (
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type (
@@ -25,6 +30,7 @@ type (
 	lifecycleSourceID    struct{}
 	lifecycleProcessorID struct{}
 	lifecycleSinkID      struct{}
+	lifecycleSinkBID     struct{}
 	lifecycleSchemaID    struct{}
 	lifecycleConfig      struct{}
 )
@@ -32,12 +38,27 @@ type (
 var lifecycleType = schema.Define[lifecycleSchemaID](schema.Traits[int]{})
 
 type lifecycleState struct {
-	mu      sync.Mutex
-	entries []string
-	values  []int
-	fail    map[string]error
-	task    func(context.Context) error
-	block   bool
+	mu           sync.Mutex
+	entries      []string
+	values       []int
+	fail         map[string]error
+	task         func(context.Context) error
+	block        bool
+	bound        bool
+	multi        bool
+	access       access.Opening
+	endpoint     endpoint.Opening
+	panicAt      string
+	direct       bool
+	sourceHandle *lifecycleHandle
+	sinkHandle   *lifecycleHandle
+}
+
+type lifecycleHandle struct{ closed atomic.Int32 }
+
+func (h *lifecycleHandle) Close() error {
+	h.closed.Add(1)
+	return nil
 }
 
 func (s *lifecycleState) add(value string) {
@@ -58,6 +79,12 @@ func (s *lifecycleState) snapshot() ([]string, []int) {
 	return append([]string(nil), s.entries...), append([]int(nil), s.values...)
 }
 
+func (s *lifecycleState) panicIf(name string) {
+	if s.panicAt == name {
+		panic(name)
+	}
+}
+
 type lifecycleBase struct {
 	shape flow.Shape
 	name  string
@@ -67,6 +94,7 @@ type lifecycleBase struct {
 func (o *lifecycleBase) Ports() flow.Shape { return o.shape.Clone() }
 func (o *lifecycleBase) Close() error {
 	o.state.add("close/" + o.name)
+	o.state.panicIf("close/" + o.name)
 	return o.state.failure("close/" + o.name)
 }
 
@@ -94,6 +122,7 @@ type lifecycleProcessor struct{ *lifecycleBase }
 
 func (p *lifecycleProcessor) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
 	p.state.add("process/processor")
+	p.state.panicIf("process/processor")
 	item := flow.NewInput(input.Value()*2, lifecycleType)
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
@@ -105,19 +134,22 @@ func (p *lifecycleProcessor) Process(ctx context.Context, input flow.Input[int],
 
 func (p *lifecycleProcessor) Finalize(context.Context) error {
 	p.state.add("finalize/processor")
+	p.state.panicIf("finalize/processor")
 	return p.state.failure("finalize/processor")
 }
 
 func (p *lifecycleProcessor) Flush(context.Context, flow.Emitter[int]) error {
 	p.state.add("flow-flush/processor")
+	p.state.panicIf("flow-flush/processor")
 	return p.state.failure("flow-flush/processor")
 }
 
 type lifecycleSink struct{ *lifecycleBase }
 
 func (s *lifecycleSink) Write(_ context.Context, input flow.Input[int]) error {
-	s.state.add("write/sink")
-	if err := s.state.failure("write/sink"); err != nil {
+	phase := "write/" + s.name
+	s.state.add(phase)
+	if err := s.state.failure(phase); err != nil {
 		return err
 	}
 	s.state.mu.Lock()
@@ -128,28 +160,33 @@ func (s *lifecycleSink) Write(_ context.Context, input flow.Input[int]) error {
 }
 
 func (s *lifecycleSink) Flush(context.Context) error {
-	s.state.add("flush/sink")
-	return s.state.failure("flush/sink")
+	phase := "flush/" + s.name
+	s.state.add(phase)
+	return s.state.failure(phase)
 }
 
 func (s *lifecycleSink) Sync(context.Context) error {
-	s.state.add("sync/sink")
-	return s.state.failure("sync/sink")
+	phase := "sync/" + s.name
+	s.state.add(phase)
+	return s.state.failure(phase)
 }
 
 func (s *lifecycleSink) PrepareCommit(context.Context) error {
-	s.state.add("prepare-commit/sink")
-	return s.state.failure("prepare-commit/sink")
+	phase := "prepare-commit/" + s.name
+	s.state.add(phase)
+	return s.state.failure(phase)
 }
 
 func (s *lifecycleSink) Commit(context.Context) error {
-	s.state.add("commit/sink")
-	return s.state.failure("commit/sink")
+	phase := "commit/" + s.name
+	s.state.add(phase)
+	return s.state.failure(phase)
 }
 
 func (s *lifecycleSink) Abort(context.Context) error {
-	s.state.add("abort/sink")
-	return s.state.failure("abort/sink")
+	phase := "abort/" + s.name
+	s.state.add(phase)
+	return s.state.failure(phase)
 }
 
 func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*Host, job.Job) {
@@ -159,7 +196,11 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	}
 	configuration := config.Struct[lifecycleConfigID](func() lifecycleConfig { return lifecycleConfig{} }).Version("1").Build()
 	descriptor := stream.MustDescriptor("fixture", lifecycleType.Identity(), timing.MustBase(1, 1000), property.New())
-	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", lifecycleType)})
+	sourcePort := flow.Out("out", lifecycleType)
+	if state.multi {
+		sourcePort = flow.Out("out", lifecycleType, flow.Many())
+	}
+	sourceShape := flow.NewShape(nil, []flow.Port{sourcePort})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, []flow.Port{flow.Out("out", lifecycleType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, nil)
 
@@ -173,8 +214,22 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/source")
+				state.panicIf("open/source")
 				if err := state.failure("open/source"); err != nil {
 					return nil, err
+				}
+				if state.bound {
+					opening, ok := plugin.Boundary[endpoint.Opening](ctx)
+					if !ok || !opening.Valid() {
+						return nil, errors.New("source endpoint opening is missing")
+					}
+					state.endpoint = opening
+				}
+				if state.direct {
+					opening, ok := plugin.Boundary[access.Direct[*lifecycleHandle]](ctx)
+					if !ok || !opening.Valid() || opening.Value() != state.sourceHandle {
+						return nil, errors.New("source direct opening is missing")
+					}
 				}
 				if state.task != nil {
 					if err := ctx.Tasks().Start("fixture/background", state.task); err != nil {
@@ -201,6 +256,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 			},
 			Open: func(_ plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/processor")
+				state.panicIf("open/processor")
 				if err := state.failure("open/processor"); err != nil {
 					return nil, err
 				}
@@ -210,46 +266,149 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		}),
 		plugin.WithProcessor("in", lifecycleType, "out", lifecycleType),
 	)
-	sink := plugin.NewComponent[lifecycleSinkID](
-		plugin.Descriptor{DisplayName: "sink", Version: "1"},
-		configuration,
-		plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
+	sinkOption := func(name string) plugin.ComponentOption {
+		return plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
 			Shape: plugin.StaticShape[lifecycleConfig](sinkShape),
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 			},
-			Open: func(_ plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
-				state.add("open/sink")
-				if err := state.failure("open/sink"); err != nil {
+			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
+				state.add("open/" + name)
+				state.panicIf("open/" + name)
+				if err := state.failure("open/" + name); err != nil {
 					return nil, err
 				}
-				return &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: "sink", state: state}}, nil
+				if state.bound {
+					opening, ok := plugin.Boundary[access.Opening](ctx)
+					if !ok || !opening.Valid() {
+						return nil, errors.New("sink access opening is missing")
+					}
+					state.access = opening
+				}
+				if state.direct {
+					opening, ok := plugin.Boundary[access.Direct[*lifecycleHandle]](ctx)
+					if !ok || !opening.Valid() || opening.Value() != state.sinkHandle {
+						return nil, errors.New("sink direct opening is missing")
+					}
+				}
+				return &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: name, state: state}}, nil
 			},
-		}),
+		})
+	}
+	sink := plugin.NewComponent[lifecycleSinkID](
+		plugin.Descriptor{DisplayName: "sink", Version: "1"},
+		configuration,
+		sinkOption("sink"),
 		plugin.WithWriter("in", lifecycleType),
 	)
-	definition := plugin.Define[lifecyclePluginID](plugin.Descriptor{DisplayName: "lifecycle", Version: "1"}, source, processor, sink)
+	components := []plugin.Component{source, processor, sink}
+	var sinkB plugin.Component
+	if state.multi {
+		sinkB = plugin.NewComponent[lifecycleSinkBID](
+			plugin.Descriptor{DisplayName: "sink b", Version: "1"},
+			configuration,
+			sinkOption("sink-b"),
+			plugin.WithWriter("in", lifecycleType),
+		)
+		components = append(components, sinkB)
+	}
+	definition := plugin.Define[lifecyclePluginID](plugin.Descriptor{DisplayName: "lifecycle", Version: "1"}, components...)
 	hostOptions := []Option{
 		Plugins(plugin.NewSet(definition)),
 		PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 		Observe(ObservationBasic),
+	}
+	if state.bound {
+		capabilities, capabilityErr := access.NewCapabilities(access.SequentialRead)
+		if capabilityErr != nil {
+			t.Fatal(capabilityErr)
+		}
+		provider, providerErr := access.DefineProvider[lifecycleSinkID](
+			[]string{"memory"},
+			access.WithProviderRole(access.SinkRole),
+			access.WithProviderCapabilities(capabilities),
+			access.WithTransactionClass(access.StagedCommit),
+		)
+		if providerErr != nil {
+			t.Fatal(providerErr)
+		}
+		trait, traitErr := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
+		if traitErr != nil {
+			t.Fatal(traitErr)
+		}
+		sourceEndpoint, endpointErr := endpoint.New(source, trait)
+		if endpointErr != nil {
+			t.Fatal(endpointErr)
+		}
+		hostOptions = append(hostOptions, Providers(provider), Endpoints(sourceEndpoint))
 	}
 	hostOptions = append(hostOptions, options...)
 	instance, err := New(hostOptions...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("source", source.Identity(), config.NewPatch()),
-			job.NewNode("processor", processor.Identity(), config.NewPatch()),
-			job.NewNode("sink", sink.Identity(), config.NewPatch()),
-		},
-		[]job.Edge{
-			job.Connect(job.At("source", "out"), job.At("processor", "in")),
-			job.Connect(job.At("processor", "out"), job.At("sink", "in")),
-		},
-	)
+	if state.direct {
+		state.sourceHandle = &lifecycleHandle{}
+		state.sinkHandle = &lifecycleHandle{}
+		sourceAdaptor, adaptorErr := job.NewAdaptor(source.Identity(), config.NewPatch())
+		if adaptorErr != nil {
+			t.Fatal(adaptorErr)
+		}
+		sinkAdaptor, adaptorErr := job.NewAdaptor(sink.Identity(), config.NewPatch())
+		if adaptorErr != nil {
+			t.Fatal(adaptorErr)
+		}
+		input, inputErr := job.InputFromSource(access.Own(state.sourceHandle), sourceAdaptor)
+		if inputErr != nil {
+			t.Fatal(inputErr)
+		}
+		output, outputErr := job.OutputToSink(access.Own(state.sinkHandle), sinkAdaptor)
+		if outputErr != nil {
+			t.Fatal(outputErr)
+		}
+		request, requestErr := job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		return instance, request
+	}
+	if state.bound {
+		inputRequest, inputErr := job.NewEndpoint(source.Identity(), config.NewPatch())
+		if inputErr != nil {
+			t.Fatal(inputErr)
+		}
+		input, inputErr := job.InputFromEndpoint(inputRequest)
+		if inputErr != nil {
+			t.Fatal(inputErr)
+		}
+		reference, referenceErr := access.Parse("memory://user:secret@example/output?token=secret")
+		if referenceErr != nil {
+			t.Fatal(referenceErr)
+		}
+		output, outputErr := job.OutputToReference(reference)
+		if outputErr != nil {
+			t.Fatal(outputErr)
+		}
+		request, requestErr := job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		return instance, request
+	}
+	nodes := []job.Node{
+		job.NewNode("source", source.Identity(), config.NewPatch()),
+		job.NewNode("processor", processor.Identity(), config.NewPatch()),
+		job.NewNode("sink", sink.Identity(), config.NewPatch()),
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("processor", "in")),
+		job.Connect(job.At("processor", "out"), job.At("sink", "in")),
+	}
+	if state.multi {
+		nodes = append(nodes, job.NewNode("sink-b", sinkB.Identity(), config.NewPatch()))
+		edges = append(edges, job.Connect(job.At("source", "out"), job.At("sink-b", "in")))
+	}
+	graph, err := job.NewGraph(nodes, edges)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +417,82 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		t.Fatal(err)
 	}
 	return instance, request
+}
+
+func TestPreparedRunHandsOnlySelectedBoundaryViewsToComponents(t *testing.T) {
+	state := &lifecycleState{bound: true}
+	instance, request := lifecycleFixture(t, state)
+	result, err := instance.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.endpoint.Direction() != endpoint.SourceDirection || state.endpoint.Trait().Topology() != endpoint.FiniteStatic {
+		t.Fatalf("endpoint opening = %#v", state.endpoint)
+	}
+	if state.access.Direction() != access.SinkDirection || state.access.Reference().Scheme() != "memory" || state.access.TransactionClass() != access.StagedCommit {
+		t.Fatalf("access opening = %#v", state.access)
+	}
+	if len(result.Outputs) != 1 || result.Outputs[0].Class != access.StagedCommit || result.Outputs[0].State != OutputCommitted {
+		t.Fatalf("output = %#v", result.Outputs)
+	}
+	for _, boundary := range resultPlan(t, instance, request).Boundaries() {
+		if strings.Contains(boundary.Reference, "secret") {
+			t.Fatalf("public Plan exposed a private reference: %#v", boundary)
+		}
+	}
+}
+
+func TestPreparedRunOwnsDirectResourcesAndUsesExplicitAdaptors(t *testing.T) {
+	state := &lifecycleState{direct: true}
+	instance, request := lifecycleFixture(t, state)
+	prepared, err := instance.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := prepared.Plan().Boundaries()
+	if len(boundaries) != 2 || boundaries[0].Kind != plan.DirectBoundary || boundaries[0].Ownership != access.Owned || boundaries[1].Kind != plan.DirectBoundary || boundaries[1].Ownership != access.Owned {
+		t.Fatalf("direct boundaries = %#v", boundaries)
+	}
+	result, err := prepared.Run(context.Background())
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if state.sourceHandle.closed.Load() != 1 || state.sinkHandle.closed.Load() != 1 {
+		t.Fatalf("direct close counts = source %d sink %d", state.sourceHandle.closed.Load(), state.sinkHandle.closed.Load())
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if state.sourceHandle.closed.Load() != 1 || state.sinkHandle.closed.Load() != 1 {
+		t.Fatal("idempotent Prepared.Close closed direct resources twice")
+	}
+}
+
+func TestPreparedCloseBeforeRunReleasesDirectResources(t *testing.T) {
+	state := &lifecycleState{direct: true}
+	instance, request := lifecycleFixture(t, state)
+	prepared, err := instance.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if state.sourceHandle.closed.Load() != 1 || state.sinkHandle.closed.Load() != 1 {
+		t.Fatalf("direct close counts = source %d sink %d", state.sourceHandle.closed.Load(), state.sinkHandle.closed.Load())
+	}
+	if entries, _ := state.snapshot(); len(entries) != 0 {
+		t.Fatalf("Close before Run opened operators: %v", entries)
+	}
+}
+
+func resultPlan(t *testing.T, instance *Host, request job.Job) plan.Plan {
+	t.Helper()
+	result, err := instance.Plan(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestPreparedRunOrdersFinalizeFlushAndCommit(t *testing.T) {
@@ -341,6 +576,43 @@ func TestPreparedRunSeparatesCommitAbortAndCloseFailures(t *testing.T) {
 	}
 }
 
+func TestPreparedRunReportsPartialMultiOutputCommit(t *testing.T) {
+	state := &lifecycleState{multi: true, fail: map[string]error{"commit/sink-b": errors.New("second commit failed")}}
+	instance, request := lifecycleFixture(t, state)
+	result, err := instance.Run(context.Background(), request)
+	if err == nil || result.Primary == nil || result.Primary.Phase != CommitPhase {
+		t.Fatalf("primary = %#v, err = %v", result.Primary, err)
+	}
+	if len(result.Outputs) != 2 || result.Outputs[0].Node != "sink" || result.Outputs[0].State != OutputCommitted || result.Outputs[1].Node != "sink-b" || result.Outputs[1].State != OutputUnknown || !result.Outputs[1].RollbackAttempted {
+		t.Fatalf("outputs = %#v", result.Outputs)
+	}
+	entries, _ := state.snapshot()
+	assertOrder(t, entries,
+		"prepare-commit/sink", "prepare-commit/sink-b",
+		"commit/sink", "commit/sink-b", "abort/sink-b",
+	)
+}
+
+func TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen(t *testing.T) {
+	state := &lifecycleState{}
+	instance, request := lifecycleFixture(t, state)
+	policy := request.Policy()
+	policy.Resources = job.ResourcePolicy{Limited: true, Limit: resource.Grant{Queue: 7}}
+	graph, _ := request.Graph()
+	limited, err := job.New(request.Inputs(), request.Outputs(), graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = instance.Prepare(context.Background(), limited)
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Phase != ResourcePhase {
+		t.Fatalf("resource error = %v", err)
+	}
+	if entries, _ := state.snapshot(); len(entries) != 0 {
+		t.Fatalf("resource rejection opened operators: %v", entries)
+	}
+}
+
 func TestPreparedRunDoesNotFlushAfterFinalizeFailure(t *testing.T) {
 	state := &lifecycleState{fail: map[string]error{"finalize/processor": errors.New("finalize failed")}}
 	instance, request := lifecycleFixture(t, state)
@@ -351,6 +623,36 @@ func TestPreparedRunDoesNotFlushAfterFinalizeFailure(t *testing.T) {
 	entries, _ := state.snapshot()
 	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") || contains(entries, "commit/sink") {
 		t.Fatalf("failure path ran success finalization: %v", entries)
+	}
+}
+
+func TestPreparedRunRetainsNodeAndStackForLifecyclePanic(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		phase Phase
+		node  string
+	}{
+		{name: "open/processor", phase: OpenPhase, node: "processor"},
+		{name: "process/processor", phase: RunPhase, node: "processor"},
+		{name: "finalize/processor", phase: FinalizePhase, node: "processor"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &lifecycleState{panicAt: test.name}
+			instance, request := lifecycleFixture(t, state)
+			result, err := instance.Run(context.Background(), request)
+			if err == nil || result.Primary == nil || result.Primary.Phase != test.phase || result.Primary.Node != test.node || len(result.Primary.Stack) == 0 {
+				t.Fatalf("primary = %#v, err = %v", result.Primary, err)
+			}
+		})
+	}
+}
+
+func TestPreparedRunReportsClosePanicAsCleanup(t *testing.T) {
+	state := &lifecycleState{panicAt: "close/sink"}
+	instance, request := lifecycleFixture(t, state)
+	result, err := instance.Run(context.Background(), request)
+	if err == nil || result.Primary != nil || len(result.Cleanup) != 1 || result.Cleanup[0].Phase != ClosePhase || result.Cleanup[0].Node != "sink" || len(result.Cleanup[0].Stack) == 0 {
+		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 }
 

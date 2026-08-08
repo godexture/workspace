@@ -191,6 +191,7 @@ type canonicalBoundary struct {
 	Selected             []access.Capability
 	Topology             endpoint.Topology
 	Mode                 endpoint.Mode
+	Ownership            access.Ownership
 }
 
 type canonicalPlan struct {
@@ -242,6 +243,7 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Selected:             append([]access.Capability(nil), boundary.Selected...),
 			Topology:             boundary.Topology,
 			Mode:                 boundary.Mode,
+			Ownership:            boundary.Ownership,
 		}
 	}
 	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime)}

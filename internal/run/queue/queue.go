@@ -104,7 +104,7 @@ func (q *Queue[T]) Push(ctx context.Context, value T) error {
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-changed:
 		}
 	}
@@ -135,7 +135,7 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return zero, ctx.Err()
+			return zero, context.Cause(ctx)
 		case <-changed:
 		}
 	}
@@ -176,7 +176,7 @@ func (q *Queue[T]) WaitIdle(ctx context.Context) error {
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-changed:
 		}
 	}

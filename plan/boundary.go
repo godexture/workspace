@@ -19,9 +19,10 @@ type BoundaryKind uint8
 const (
 	ProviderBoundary BoundaryKind = iota + 1
 	EndpointBoundary
+	DirectBoundary
 )
 
-func (k BoundaryKind) Valid() bool { return k == ProviderBoundary || k == EndpointBoundary }
+func (k BoundaryKind) Valid() bool { return k >= ProviderBoundary && k <= DirectBoundary }
 
 // Boundary is an inert projection of one Job input/output binding. Reference
 // carries only a redacted display and a hash of its private canonical form.
@@ -39,6 +40,7 @@ type Boundary struct {
 	Selected             []access.Capability
 	Topology             endpoint.Topology
 	Mode                 endpoint.Mode
+	Ownership            access.Ownership
 }
 
 func (b Boundary) Valid() bool {
@@ -47,14 +49,18 @@ func (b Boundary) Valid() bool {
 	}
 	switch b.Kind {
 	case ProviderBoundary:
-		if b.Scheme == "" || b.Reference == "" || b.ReferenceFingerprint == "" || b.Topology != 0 || b.Mode != 0 {
+		if b.Scheme == "" || b.Reference == "" || b.ReferenceFingerprint == "" || b.Topology != 0 || b.Mode != 0 || b.Ownership != 0 {
 			return false
 		}
 		if !canonicalCapabilities(b.Available) || !canonicalCapabilities(b.Selected) || !subsetCapabilities(b.Selected, b.Available) {
 			return false
 		}
 	case EndpointBoundary:
-		if b.Scheme != "" || b.Reference != "" || b.ReferenceFingerprint != "" || len(b.Available) != 0 || len(b.Selected) != 0 || !b.Topology.Valid() || !b.Mode.Valid() {
+		if b.Scheme != "" || b.Reference != "" || b.ReferenceFingerprint != "" || len(b.Available) != 0 || len(b.Selected) != 0 || !b.Topology.Valid() || !b.Mode.Valid() || b.Ownership != 0 {
+			return false
+		}
+	case DirectBoundary:
+		if b.Scheme != "" || b.Reference != "" || b.ReferenceFingerprint != "" || len(b.Available) != 0 || len(b.Selected) != 0 || b.Topology != 0 || b.Mode != 0 || !b.Ownership.Valid() {
 			return false
 		}
 	}

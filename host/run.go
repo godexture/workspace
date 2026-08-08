@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/bound"
@@ -251,6 +252,8 @@ func (r *runner) opening(node string) (any, error) {
 			direction = endpoint.SinkDirection
 		}
 		return endpoint.NewOpening(direction, entry.EndpointTrait())
+	case plan.DirectBoundary:
+		return entry.DirectOpening(), nil
 	default:
 		return nil, errors.New("unsupported prepared boundary")
 	}
@@ -339,6 +342,7 @@ func (r *runner) finishOutputs() *Failure {
 	}
 	for _, output := range r.outputs {
 		if output.transaction == nil {
+			output.committed = true
 			r.result.Outputs[output.outcome].State = OutputCommitted
 			continue
 		}
@@ -394,7 +398,14 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 		}
 		return Failure{Phase: phase, Node: node, Task: taskName, Err: err, Stack: append([]byte(nil), panicError.Stack...)}
 	}
-	return Failure{Phase: phase, Node: node, Task: taskName, Err: err}
+	failure := Failure{Phase: phase, Node: node, Task: taskName, Err: err}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if stack := item.Detail["stack"]; stack != "" {
+			failure.Stack = []byte(stack)
+			break
+		}
+	}
+	return failure
 }
 
 func resultError(result Result) error {

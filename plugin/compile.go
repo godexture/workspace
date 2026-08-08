@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
@@ -65,7 +66,7 @@ func (c Component) Shape(ctx ShapeContext, resolved config.ResolvedView) (shape 
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = c.phaseError("plugin.shape-panic", "component Shape panicked", fmt.Sprint(recovered))
+			err = c.panicError("plugin.shape-panic", "component Shape panicked", recovered)
 			shape = flow.Shape{}
 		}
 	}()
@@ -99,7 +100,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	var compiled compiledErased
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = component.phaseError("plugin.compile-panic", "component Compile panicked", fmt.Sprint(recovered))
+			err = component.panicError("plugin.compile-panic", "component Compile panicked", recovered)
 			compilation = Compilation{}
 		}
 	}()
@@ -189,7 +190,7 @@ func Suggest[D any](component Component, ctx SuggestContext, input D, need Need[
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = component.phaseError("plugin.suggest-panic", "component Suggest panicked", fmt.Sprint(recovered))
+			err = component.panicError("plugin.suggest-panic", "component Suggest panicked", recovered)
 			candidates = nil
 		}
 	}()
@@ -225,7 +226,7 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = c.phaseError("plugin.open-panic", "component Open panicked", fmt.Sprint(recovered))
+			err = c.panicError("plugin.open-panic", "component Open panicked", recovered)
 			operator = nil
 		}
 	}()
@@ -278,6 +279,16 @@ func (c Component) phaseError(code, message, detail string) error {
 		metadata = map[string]string{"cause": detail}
 	}
 	return diagnostic.NewError(diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{Component: c.identity.String()}, message, metadata))
+}
+
+func (c Component) panicError(code, message string, recovered any) error {
+	return diagnostic.NewError(diagnostic.NewItem(
+		code,
+		diagnostic.ErrorSeverity,
+		diagnostic.Path{Component: c.identity.String()},
+		message,
+		map[string]string{"cause": fmt.Sprint(recovered), "stack": string(debug.Stack())},
+	))
 }
 
 func validateDescriptorPorts[D any](phase string, ports []flow.Port, bindings []flow.PortDescriptor[D]) []diagnostic.Item {

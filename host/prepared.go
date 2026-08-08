@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/memory"
 	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/job"
@@ -34,6 +35,7 @@ type Prepared struct {
 	manager        *memory.Manager
 	reservations   []reservation
 	byNode         map[job.NodeID]*memory.Lease
+	direct         []bound.Entry
 	observation    Observation
 	cleanupTimeout time.Duration
 
@@ -51,25 +53,27 @@ type Prepared struct {
 func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) {
 	selected, err := h.resolve(ctx, request)
 	if err != nil {
-		failure := Failure{Phase: PreparePhase, Err: err}
+		failure := Failure{Phase: PreparePhase, Err: errors.Join(err, closeRequestDirects(request))}
+		return nil, &failure
+	}
+	entries := selected.Boundaries().Entries()
+	failSelection := func(phase Phase, err error) (*Prepared, error) {
+		failure := Failure{Phase: phase, Err: errors.Join(err, closeBoundDirects(entries))}
 		return nil, &failure
 	}
 	if !selected.Executable() {
-		failure := Failure{Phase: PreparePhase, Err: errors.New("selected Plan has no complete typed execution binding")}
-		return nil, &failure
+		return failSelection(PreparePhase, errors.New("selected Plan has no complete typed execution binding"))
 	}
 	total, err := selected.Resources()
 	if err != nil {
-		failure := Failure{Phase: ResourcePhase, Err: err}
-		return nil, &failure
+		return failSelection(ResourcePhase, err)
 	}
 	limit := grantOf(total)
 	policy := selected.Plan().EffectivePolicy().Resources
 	if policy.Limited {
 		limit = policy.Limit
 		if !limit.Satisfies(total) {
-			failure := Failure{Phase: ResourcePhase, Err: fmt.Errorf("job resource limit does not satisfy compiled request")}
-			return nil, &failure
+			return failSelection(ResourcePhase, fmt.Errorf("job resource limit does not satisfy compiled request"))
 		}
 	}
 	manager := memory.New(limit)
@@ -82,9 +86,13 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		state:          preparedReady,
 		done:           make(chan struct{}),
 	}
+	for _, entry := range entries {
+		if entry.Projection().Kind == plan.DirectBoundary {
+			prepared.direct = append(prepared.direct, entry)
+		}
+	}
 	fail := func(err error) (*Prepared, error) {
-		prepared.releaseReservations()
-		failure := Failure{Phase: ResourcePhase, Err: err}
+		failure := Failure{Phase: ResourcePhase, Err: errors.Join(err, joinFailures(prepared.releaseReservations()))}
 		return nil, &failure
 	}
 	runtimeRequest, err := selected.RuntimeResources()
@@ -188,8 +196,39 @@ func (p *Prepared) releaseReservations() (failures []Failure) {
 		if len(snapshot.Active) != 0 {
 			failures = append(failures, Failure{Phase: ResourcePhase, Err: fmt.Errorf("resource manager retained %d reservations", len(snapshot.Active))})
 		}
+		for index := len(p.direct) - 1; index >= 0; index-- {
+			entry := p.direct[index]
+			if err := entry.Close(); err != nil {
+				failures = append(failures, Failure{Phase: ClosePhase, Node: entry.Projection().Node, Err: err})
+			}
+		}
 	})
 	return failures
+}
+
+func closeRequestDirects(request job.Job) error {
+	var failures []error
+	for _, input := range request.Inputs() {
+		if direct, ok := input.Direct(); ok {
+			failures = append(failures, direct.Close())
+		}
+	}
+	for _, output := range request.Outputs() {
+		if direct, ok := output.Direct(); ok {
+			failures = append(failures, direct.Close())
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func closeBoundDirects(entries []bound.Entry) error {
+	var failures []error
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].Projection().Kind == plan.DirectBoundary {
+			failures = append(failures, entries[index].Close())
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func (p *Prepared) complete(err error) {

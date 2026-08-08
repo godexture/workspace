@@ -1,6 +1,7 @@
 package job
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/godexture/godec/access"
@@ -12,6 +13,13 @@ import (
 
 type jobSourceID struct{}
 type jobSinkID struct{}
+
+type jobDirectHandle struct{ closed atomic.Int32 }
+
+func (h *jobDirectHandle) Close() error {
+	h.closed.Add(1)
+	return nil
+}
 
 func TestChoicesAreExclusiveAndReferencesStayRedacted(t *testing.T) {
 	reference, err := access.Parse("https://user:secret@example.com/in?token=secret")
@@ -26,11 +34,37 @@ func TestChoicesAreExclusiveAndReferencesStayRedacted(t *testing.T) {
 	if !ok {
 		t.Fatal("reference input lost its reference")
 	}
-	if _, ok := input.Source(); ok {
+	if _, ok := input.Direct(); ok {
 		t.Fatal("reference input also exposed a source")
 	}
 	if got.String() == reference.Canonical() {
 		t.Fatal("ordinary reference rendering exposed canonical secret")
+	}
+}
+
+func TestDirectChoiceCarriesTypedResourceAndExplicitAdaptor(t *testing.T) {
+	handle := &jobDirectHandle{}
+	adaptor, err := NewAdaptor(plugin.IdentityOf[jobSourceID](), config.NewPatch().Set("mode", "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := InputFromSource(access.Own(handle), adaptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, ok := input.Direct()
+	if !ok || direct.Adaptor().Component() != plugin.IdentityOf[jobSourceID]() || direct.Ownership() != access.Owned {
+		t.Fatalf("direct choice = %#v", direct)
+	}
+	opening, ok := direct.Opening().(access.Direct[*jobDirectHandle])
+	if !ok || opening.Value() != handle || opening.Ownership() != access.Owned {
+		t.Fatalf("typed opening = %#v", direct.Opening())
+	}
+	if err := direct.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := direct.Close(); err != nil || handle.closed.Load() != 1 {
+		t.Fatalf("direct close = %v, count = %d", err, handle.closed.Load())
 	}
 }
 

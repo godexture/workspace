@@ -5,6 +5,7 @@ package host
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"runtime"
 	"sort"
 	"time"
@@ -126,9 +127,9 @@ func New(options ...Option) (*Host, error) {
 func (h *Host) Plan(ctx context.Context, request job.Job) (plan.Plan, error) {
 	program, err := h.resolve(ctx, request)
 	if err != nil {
-		return plan.Plan{}, err
+		return plan.Plan{}, errors.Join(err, closeRequestDirects(request))
 	}
-	return program.Plan(), nil
+	return program.Plan(), closeBoundDirects(program.Boundaries().Entries())
 }
 
 func (h *Host) resolve(ctx context.Context, request job.Job) (program.Program, error) {
