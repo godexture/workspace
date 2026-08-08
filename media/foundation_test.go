@@ -17,7 +17,8 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/internal/catalog"
-	planGraph "github.com/godexture/godec/internal/graph"
+	"github.com/godexture/godec/internal/program"
+	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
@@ -32,6 +33,7 @@ import (
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/media/timing"
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -316,46 +318,51 @@ func readSkeletonProperty[T any](stage skeletonDescriptorPorts, descriptor strea
 }
 
 type skeletonDescriptorPath struct {
-	source  skeletonDescriptorPorts
-	demuxer skeletonDescriptorPorts
-	parser  skeletonDescriptorPorts
-	decoder skeletonDescriptorPorts
-	encoder skeletonDescriptorPorts
-	muxer   skeletonDescriptorPorts
+	source   skeletonDescriptorPorts
+	demuxer  skeletonDescriptorPorts
+	parser   skeletonDescriptorPorts
+	parserID job.NodeID
+	decoder  skeletonDescriptorPorts
+	encoder  skeletonDescriptorPorts
+	muxer    skeletonDescriptorPorts
 }
 
-func compiledSkeletonDescriptorPath(graph planGraph.Graph) (skeletonDescriptorPath, error) {
-	source, err := compiledSkeletonPorts(graph, "source", "source", nil)
+func compiledSkeletonDescriptorPath(compiled program.Program) (skeletonDescriptorPath, error) {
+	source, err := compiledSkeletonPorts(compiled, "source", "source", nil)
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	demuxer, err := compiledSkeletonPorts(graph, "demuxer", "demuxer", nil)
+	demuxer, err := compiledSkeletonPorts(compiled, "demuxer", "demuxer", nil)
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	parser, err := compiledSkeletonPorts(graph, "parser", "parser", nil)
+	parserID, err := compiledSkeletonNode(compiled, plugin.IdentityOf[skeletonParserID]())
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	decoder, err := compiledSkeletonPorts(graph, "decoder", "decoder", map[key.ID]struct{}{skeletonSampleRate.ID(): {}})
+	parser, err := compiledSkeletonPorts(compiled, parserID, "parser", nil)
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	encoder, err := compiledSkeletonPorts(graph, "encoder", "encoder", nil)
+	decoder, err := compiledSkeletonPorts(compiled, "decoder", "decoder", map[key.ID]struct{}{skeletonSampleRate.ID(): {}})
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	muxer, err := compiledSkeletonPorts(graph, "muxer", "muxer", nil)
+	encoder, err := compiledSkeletonPorts(compiled, "encoder", "encoder", nil)
 	if err != nil {
 		return skeletonDescriptorPath{}, err
 	}
-	return skeletonDescriptorPath{source: source, demuxer: demuxer, parser: parser, decoder: decoder, encoder: encoder, muxer: muxer}, nil
+	muxer, err := compiledSkeletonPorts(compiled, "muxer", "muxer", nil)
+	if err != nil {
+		return skeletonDescriptorPath{}, err
+	}
+	return skeletonDescriptorPath{source: source, demuxer: demuxer, parser: parser, parserID: parserID, decoder: decoder, encoder: encoder, muxer: muxer}, nil
 }
 
-func compiledSkeletonPorts(graph planGraph.Graph, id job.NodeID, component string, reads map[key.ID]struct{}) (skeletonDescriptorPorts, error) {
-	node, ok := graph.Lookup(id)
+func compiledSkeletonPorts(compiled program.Program, id job.NodeID, component string, reads map[key.ID]struct{}) (skeletonDescriptorPorts, error) {
+	node, ok := compiled.Lookup(id)
 	if !ok {
-		return skeletonDescriptorPorts{}, fmt.Errorf("compiled graph has no %s node", id)
+		return skeletonDescriptorPorts{}, fmt.Errorf("compiled Program has no %s node", id)
 	}
 	inputs, err := skeletonDescriptorMap(node.Inputs())
 	if err != nil {
@@ -366,6 +373,15 @@ func compiledSkeletonPorts(graph planGraph.Graph, id job.NodeID, component strin
 		return skeletonDescriptorPorts{}, fmt.Errorf("%s outputs: %w", component, err)
 	}
 	return skeletonDescriptorPorts{component: component, inputs: inputs, outputs: outputs, reads: reads}, nil
+}
+
+func compiledSkeletonNode(compiled program.Program, component plugin.Identity) (job.NodeID, error) {
+	for _, node := range compiled.Nodes() {
+		if node.Component() == component {
+			return node.ID(), nil
+		}
+	}
+	return "", fmt.Errorf("compiled Program has no component %s", component)
 }
 
 func skeletonDescriptorMap(descriptors flow.Descriptors[stream.Descriptor]) (map[string]stream.Descriptor, error) {
@@ -790,18 +806,15 @@ func skeletonMetadataBinding() metadata.Binding {
 }
 
 // skeletonCatalog validates a composition the same way host.New does. The
-// skeleton builds the index directly because opening one component by identity
-// is not a public capability: M4/M5 open operators in dependency order from a
-// built Program, so exporting a shortcut here would ship an API that has to be
-// deleted again.
+// skeleton retains the private index so it can inspect the Program selected by
+// the planner without exposing executable state from Host.
 func skeletonCatalog(set plugin.Set) (catalog.Index, error) { return catalog.Build(set) }
 
-func compileSkeleton(index catalog.Index) (planGraph.Graph, error) {
+func compileSkeleton(index catalog.Index) (program.Program, error) {
 	request, err := job.NewGraph(
 		[]job.Node{
 			job.NewNode("source", plugin.IdentityOf[skeletonSourceID](), config.NewPatch()),
 			job.NewNode("demuxer", plugin.IdentityOf[skeletonDemuxerID](), config.NewPatch()),
-			job.NewNode("parser", plugin.IdentityOf[skeletonParserID](), config.NewPatch()),
 			job.NewNode("decoder", plugin.IdentityOf[skeletonCodecID](), config.NewPatch()),
 			job.NewNode("encoder", plugin.IdentityOf[skeletonEncoderID](), config.NewPatch()),
 			job.NewNode("muxer", plugin.IdentityOf[skeletonMuxerID](), config.NewPatch()),
@@ -809,20 +822,23 @@ func compileSkeleton(index catalog.Index) (planGraph.Graph, error) {
 		},
 		[]job.Edge{
 			job.Connect(job.At("source", "bytes"), job.At("demuxer", "bytes")),
-			job.Connect(job.At("demuxer", "chunks"), job.At("parser", "chunks")),
-			job.Connect(job.At("parser", "packets"), job.At("decoder", "packets")),
+			job.Connect(job.At("demuxer", "chunks"), job.At("decoder", "packets")),
 			job.Connect(job.At("decoder", "frames"), job.At("encoder", "frames")),
 			job.Connect(job.At("encoder", "packets"), job.At("muxer", "packets")),
 			job.Connect(job.At("muxer", "chunks"), job.At("sink", "chunks")),
 		},
 	)
 	if err != nil {
-		return planGraph.Graph{}, err
+		return program.Program{}, err
 	}
-	return planGraph.Compile(index, request)
+	jobRequest, err := job.New(nil, nil, request)
+	if err != nil {
+		return program.Program{}, err
+	}
+	return solve.Resolve(context.Background(), index, jobRequest, plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
 }
 
-func compileSkeletonMetadata(index catalog.Index) (planGraph.Graph, error) {
+func compileSkeletonMetadata(index catalog.Index) (program.Program, error) {
 	request, err := job.NewGraph(
 		[]job.Node{
 			job.NewNode("metadata-source", plugin.IdentityOf[skeletonMetadataSourceID](), config.NewPatch()),
@@ -835,9 +851,13 @@ func compileSkeletonMetadata(index catalog.Index) (planGraph.Graph, error) {
 		},
 	)
 	if err != nil {
-		return planGraph.Graph{}, err
+		return program.Program{}, err
 	}
-	return planGraph.Compile(index, request)
+	jobRequest, err := job.New(nil, nil, request)
+	if err != nil {
+		return program.Program{}, err
+	}
+	return solve.Resolve(context.Background(), index, jobRequest, plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
 }
 
 func openQueue[T any](descriptor schema.Descriptor) (schema.Queue[T], error) {
@@ -880,6 +900,18 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	automatic := 0
+	for _, node := range compiled.Plan().Nodes() {
+		if node.Origin == plan.Automatic {
+			automatic++
+			if node.Component != plugin.IdentityOf[skeletonParserID]().String() || node.Reason != "graph.schema-mismatch" {
+				t.Fatalf("automatic Plan node = %#v", node)
+			}
+		}
+	}
+	if automatic != 1 {
+		t.Fatalf("automatic Plan nodes = %d, want parser only", automatic)
+	}
 	descriptors, err := compiledSkeletonDescriptorPath(compiled)
 	if err != nil {
 		t.Fatal(err)
@@ -893,7 +925,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parserValue, err := compiled.Open(ctx, "parser")
+	parserValue, err := compiled.Open(ctx, descriptors.parserID)
 	if err != nil {
 		t.Fatal(err)
 	}
