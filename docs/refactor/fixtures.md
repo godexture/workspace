@@ -31,7 +31,7 @@ PCM の五つの `.snapshot` は各約53 MiBで、decoded sample を `0.000000` 
 
 FLAC conformance corpus は専用 Git submoduleで、license/source information がある一方、最大約87 MiBの単体 fileを含む。これは codec conformance には価値があるが、foundation/product module の download や通常 unit test に含める理由にはならない。
 
-M1 後は data/asset gitlink として `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3件を意図的に残した。M5 で web wiring を削除した際、前二者が同じ repository の同じ commit を指す重複であることを再評価し、`example/assets` へ統合した。現在の2件は product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
+M1 後は data/asset gitlink として `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3件を意図的に残した。M5 で web wiring を削除した際、前二者が同じ repository の同じ commit を指す重複であることを再評価し、`example/assets` へ統合した。M5 review では Go code を持たない `plugin/flac` tree から corpus を `testdata/flac/conformance` へ移した。現在の2件は product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
 
 PCM corpus には同じ水準の README/license/origin file が見当たらない。生成物であっても source media と期待値の由来、生成 tool/version、再配布条件を明示する必要がある。
 

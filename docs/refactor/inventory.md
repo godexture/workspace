@@ -225,7 +225,7 @@ M5 の最終単位で旧 contract 層を一括削除する。理由と規則は 
 
 `_legacy/` は repository path を鏡像で保つ。compile されないため、旧 import path を含んだままでよい。
 
-`plugin/wave/internal`、`plugin/pcm/internal` の package 本体、`plugin/mp3/internal/*`、`plugin/flac/internal/*`、`plugin/audio/internal/*`、`plugin/id3/*`、`plugin/vorbiscomment/*`、`sdk/audio`、`core/domain/media/pcm`、`core/domain/metadata`。いずれも旧 domain 型に束縛されているが、規格処理・数値 algorithm・bitstream 実装に移植価値がある。切断前の paired benchmark source も実施証拠として `_legacy/internal/run/performance_test.go` に置き、current runtime の `BenchmarkLinear` から旧 import を除いた。
+`plugin/wave/internal`、`plugin/pcm/internal` の package 本体、`plugin/mp3/internal/*`、`plugin/flac/internal/*`、`plugin/audio/internal/*`、`plugin/id3/*`、`plugin/vorbiscomment/*`、`sdk/audio`、`core/domain/media/pcm`、`core/domain/metadata`。いずれも旧 domain 型に束縛されているが、規格処理・数値 algorithm・bitstream 実装に移植価値がある。切断前の paired benchmark は algorithm ではなく旧 contract 全体に依存する一回限りの harness なので current tree へ隔離せず、実施時点の source と結果を Git commit `f11fc1a` と [performance](performance.md#m5-runtime-performance-gate) に固定する。
 
 M6 が WAVE/PCM を、M7 が必要な metadata 経路を、M8 が MP3/FLAC/audio/ID3/Vorbis Comment を `_legacy/` から移し終えた時点で `_legacy/` ごと削除する。M8 完了時に `_legacy/` が空でなければ、残っている内容の処遇を [capability](capability.md) で決めてから削除する。
 
