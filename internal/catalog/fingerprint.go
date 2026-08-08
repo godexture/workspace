@@ -12,15 +12,19 @@ import (
 )
 
 type fingerprintComponent struct {
-	Kind       string
-	Identity   string
-	Plugin     string
-	Descriptor plugin.Descriptor
-	Schema     config.SchemaDescription
-	Aliases    []string
-	Provenance plugin.Provenance
-	Ports      []fingerprintPort
-	HasOpen    bool
+	Kind            string
+	Identity        string
+	Plugin          string
+	Descriptor      plugin.Descriptor
+	Schema          config.SchemaDescription
+	Aliases         []string
+	Provenance      plugin.Provenance
+	Ports           []fingerprintPort
+	HasSpec         bool
+	DynamicShape    bool
+	HasSuggest      bool
+	SuggestionLimit int
+	Finalizes       bool
 }
 
 type fingerprintPort struct {
@@ -54,15 +58,19 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 		aliases := component.Aliases()
 		sort.Strings(aliases)
 		canonical := fingerprintComponent{
-			Kind:       "component",
-			Identity:   component.Identity().String(),
-			Plugin:     component.PluginIdentity().String(),
-			Descriptor: component.Descriptor(),
-			Schema:     component.Schema().Description(),
-			Aliases:    aliases,
-			Provenance: component.Provenance(),
-			Ports:      fingerprintPorts(component.Ports()),
-			HasOpen:    component.View().HasOpen,
+			Kind:            "component",
+			Identity:        component.Identity().String(),
+			Plugin:          component.PluginIdentity().String(),
+			Descriptor:      component.Descriptor(),
+			Schema:          component.Schema().Description(),
+			Aliases:         aliases,
+			Provenance:      component.Provenance(),
+			Ports:           fingerprintPorts(component.Ports()),
+			HasSpec:         component.View().HasSpec,
+			DynamicShape:    component.View().DynamicShape,
+			HasSuggest:      component.View().HasSuggest,
+			SuggestionLimit: component.View().SuggestionLimit,
+			Finalizes:       component.View().Finalizes,
 		}
 		writeFingerprintEntry(hash, canonical)
 	}

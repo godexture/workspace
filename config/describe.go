@@ -84,6 +84,7 @@ func cloneSchemaDescription(description SchemaDescription) SchemaDescription {
 // ResolvedView is the type-erased result of resolving a component patch. Value
 // contains the schema's concrete configuration behind an any boundary.
 type ResolvedView struct {
+	Schema      string
 	Value       any
 	Provenance  Provenance
 	Diagnostics []diagnostic.Item
@@ -93,10 +94,11 @@ type ResolvedView struct {
 // SchemaView is the type-erased control-plane view stored by catalog. Its
 // fields are private so only Schema[C].View can create a valid resolver.
 type SchemaView struct {
-	valid       bool
-	diagnostics []diagnostic.Item
-	description SchemaDescription
-	resolve     func(Patch) (ResolvedView, error)
+	valid        bool
+	diagnostics  []diagnostic.Item
+	description  SchemaDescription
+	resolve      func(Patch) (ResolvedView, error)
+	resolveValue func(any) (ResolvedView, error)
 }
 
 // Valid reports whether the captured schema was built without errors.
@@ -120,9 +122,19 @@ func (v SchemaView) Description() SchemaDescription { return cloneSchemaDescript
 func (v SchemaView) Resolve(patch Patch) (ResolvedView, error) {
 	if v.resolve == nil {
 		items := v.Diagnostics()
-		return ResolvedView{Diagnostics: cloneItems(items)}, diagnosticError(items)
+		return ResolvedView{Schema: v.description.Identity, Diagnostics: cloneItems(items)}, diagnosticError(items)
 	}
 	return v.resolve(patch)
+}
+
+// ResolveValue validates and snapshots a complete type-erased value. It is
+// used for typed config candidates returned by plugin Suggest.
+func (v SchemaView) ResolveValue(value any) (ResolvedView, error) {
+	if v.resolveValue == nil {
+		items := v.Diagnostics()
+		return ResolvedView{Schema: v.description.Identity, Diagnostics: cloneItems(items)}, diagnosticError(items)
+	}
+	return v.resolveValue(value)
 }
 
 // Description returns a frozen read-only schema description.
@@ -148,6 +160,22 @@ func (s Schema[C]) View() SchemaView {
 		resolve: func(patch Patch) (ResolvedView, error) {
 			resolved, err := s.Resolve(patch)
 			return ResolvedView{
+				Schema:      s.identity,
+				Value:       resolved.Value,
+				Provenance:  cloneProvenance(resolved.Provenance),
+				Diagnostics: cloneItems(resolved.Diagnostics),
+				Fingerprint: resolved.Fingerprint,
+			}, err
+		},
+		resolveValue: func(value any) (ResolvedView, error) {
+			typed, ok := value.(C)
+			if !ok {
+				item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "complete config value has the wrong type", nil)
+				return ResolvedView{Schema: s.identity, Diagnostics: []diagnostic.Item{item}}, diagnostic.NewError(item)
+			}
+			resolved, err := s.ResolveValue(typed)
+			return ResolvedView{
+				Schema:      s.identity,
 				Value:       resolved.Value,
 				Provenance:  cloneProvenance(resolved.Provenance),
 				Diagnostics: cloneItems(resolved.Diagnostics),

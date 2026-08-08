@@ -26,4 +26,24 @@ func TestDescriptionIsImmutable(t *testing.T) {
 	}
 }
 
+func TestSchemaViewResolvesCompleteTypedValue(t *testing.T) {
+	type value struct{ Mode int }
+	type marker struct{}
+	schema := Struct[marker](func() value { return value{} }).
+		Version("1").
+		AddField(Field("mode", func(item *value) *int { return &item.Mode }, Int().Range(0, 4))).
+		Build()
+	view := schema.View()
+	resolved, err := view.ResolveValue(value{Mode: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Schema != schema.Description().Identity || resolved.Fingerprint.IsZero() || resolved.Value.(value).Mode != 3 {
+		t.Fatalf("resolved view = %#v", resolved)
+	}
+	if _, err := view.ResolveValue(struct{ Mode int }{Mode: 3}); err == nil {
+		t.Fatal("wrong complete config type was accepted")
+	}
+}
+
 type describeMarker struct{}

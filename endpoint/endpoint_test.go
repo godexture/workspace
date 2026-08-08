@@ -26,10 +26,17 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 	typ := schema.Define[endpointSchemaID, endpointPayload](schema.Traits[endpointPayload]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	var opens atomic.Int32
-	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Build(), plugin.WithPorts(shape), plugin.WithOpen(func() (flow.Operator, error) {
-		opens.Add(1)
-		return endpointOperator{shape: shape}, nil
-	}))
+	spec := plugin.Spec[endpointConfig, struct{}, int]{
+		Shape: plugin.StaticShape[endpointConfig](shape),
+		Compile: func(plugin.CompileContext, endpointConfig, flow.Descriptors[int]) (plugin.Compiled[struct{}, int], error) {
+			return plugin.Compiled[struct{}, int]{Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
+		},
+		Open: func(plugin.OpenContext, struct{}) (flow.Operator, error) {
+			opens.Add(1)
+			return endpointOperator{shape: shape}, nil
+		},
+	}
+	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Build(), plugin.WithSpec(spec))
 	trait, err := NewTrait(LiveDynamic, Realtime)
 	if err != nil {
 		t.Fatal(err)
