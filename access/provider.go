@@ -3,12 +3,14 @@ package access
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/godexture/godec/plugin"
 )
 
 type providerDeclarationNamespace struct{}
+type providerManifestNamespace struct{}
 
 // ProviderRole declares which byte-object directions a provider can resolve.
 type ProviderRole uint8
@@ -20,6 +22,22 @@ const (
 )
 
 func (r ProviderRole) Valid() bool { return r >= SourceRole && r <= SourceSinkRole }
+
+func (r ProviderRole) String() string {
+	switch r {
+	case SourceRole:
+		return "source"
+	case SinkRole:
+		return "sink"
+	case SourceSinkRole:
+		return "source-sink"
+	default:
+		return "unknown"
+	}
+}
+
+func (r ProviderRole) AllowsSource() bool { return r == SourceRole || r == SourceSinkRole }
+func (r ProviderRole) AllowsSink() bool   { return r == SinkRole || r == SourceSinkRole }
 
 var (
 	ErrInvalidProvider           = errors.New("access provider is invalid")
@@ -33,6 +51,7 @@ type Provider struct {
 	schemes      []string
 	role         ProviderRole
 	requirements Requirements
+	capabilities Capabilities
 	transaction  TransactionClass
 }
 
@@ -44,6 +63,12 @@ func WithProviderRole(role ProviderRole) ProviderOption {
 
 func WithProviderRequirements(requirements Requirements) ProviderOption {
 	return func(provider *Provider) { provider.requirements = cloneRequirements(requirements) }
+}
+
+// WithProviderCapabilities declares the source capabilities guaranteed before
+// acquisition. Prepare revalidates actual session capabilities in M5.
+func WithProviderCapabilities(capabilities Capabilities) ProviderOption {
+	return func(provider *Provider) { provider.capabilities = capabilities }
 }
 
 func WithTransactionClass(class TransactionClass) ProviderOption {
@@ -73,7 +98,7 @@ func NewProvider(identity plugin.Identity, schemes []string, options ...Provider
 			option(&result)
 		}
 	}
-	if !result.role.Valid() || (result.transaction != 0 && !result.transaction.Valid()) {
+	if !result.role.Valid() || !result.capabilities.Valid() || !result.requirements.Empty() && !result.requirements.Valid() || (result.transaction != 0 && !result.transaction.Valid()) {
 		return Provider{}, ErrInvalidProvider
 	}
 	return result, nil
@@ -85,13 +110,15 @@ func DefineProvider[Marker any](schemes []string, options ...ProviderOption) (Pr
 }
 
 func (p Provider) Valid() bool {
-	return !p.identity.IsZero() && len(p.schemes) > 0 && p.role.Valid() && (p.transaction == 0 || p.transaction.Valid())
+	return !p.identity.IsZero() && len(p.schemes) > 0 && p.role.Valid() && p.capabilities.Valid() &&
+		(p.requirements.Empty() || p.requirements.Valid()) && (p.transaction == 0 || p.transaction.Valid())
 }
 
 func (p Provider) Identity() plugin.Identity          { return p.identity }
 func (p Provider) Schemes() []string                  { return append([]string(nil), p.schemes...) }
 func (p Provider) Role() ProviderRole                 { return p.role }
 func (p Provider) Requirements() Requirements         { return cloneRequirements(p.requirements) }
+func (p Provider) Capabilities() Capabilities         { return Capabilities{values: p.capabilities.Values()} }
 func (p Provider) TransactionClass() TransactionClass { return p.transaction }
 
 // Declaration returns the plugin declaration used by host catalog conflict
@@ -112,6 +139,40 @@ func (p Provider) Declaration(scheme string) (plugin.Declaration, error) {
 		}
 	}
 	return plugin.Declaration{}, fmt.Errorf("%w: %s", ErrUnsupportedProviderScheme, scheme)
+}
+
+// Declarations returns the conflict key and canonical static manifest for
+// every scheme. Host adds these to the same catalog validation path used by
+// codec, metadata, and property declarations.
+func (p Provider) Declarations() []plugin.Declaration {
+	if !p.Valid() {
+		return nil
+	}
+	result := make([]plugin.Declaration, 0, len(p.schemes)*2)
+	for _, scheme := range p.schemes {
+		declaration, err := p.Declaration(scheme)
+		if err != nil {
+			return nil
+		}
+		result = append(result, declaration, plugin.Declare[providerManifestNamespace](p.manifest(scheme), p.identity))
+	}
+	return result
+}
+
+func (p Provider) manifest(scheme string) string {
+	capabilities := make([]string, 0, len(p.capabilities.values))
+	for _, capability := range p.capabilities.values {
+		capabilities = append(capabilities, string(capability))
+	}
+	alternatives := make([]string, 0, len(p.requirements.Alternatives))
+	for _, alternative := range p.requirements.Alternatives {
+		values := make([]string, 0, len(alternative.Capabilities))
+		for _, capability := range alternative.Capabilities {
+			values = append(values, string(capability))
+		}
+		alternatives = append(alternatives, strings.Join(values, "+"))
+	}
+	return scheme + "|role=" + p.role.String() + "|cap=" + strings.Join(capabilities, ",") + "|need=" + strings.Join(alternatives, ",") + "|transaction=" + strconv.Itoa(int(p.transaction))
 }
 
 func cloneRequirements(value Requirements) Requirements {

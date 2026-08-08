@@ -58,7 +58,7 @@ func (f *Format) set(alternatives []access.Alternative, carriers []carrier.ID) e
 		return errors.New("format must declare a capability alternative")
 	}
 	for index, alternative := range alternatives {
-		if len(alternative.Capabilities) == 0 {
+		if !alternative.Valid() {
 			return fmt.Errorf("format capability alternative %d is empty", index)
 		}
 	}

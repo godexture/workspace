@@ -4,9 +4,12 @@ package endpoint
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/godexture/godec/plugin"
 )
+
+type declarationNamespace struct{}
 
 // Topology describes whether an endpoint has a finite or live stream shape.
 type Topology uint8
@@ -19,6 +22,19 @@ const (
 
 func (t Topology) Valid() bool { return t >= FiniteStatic && t <= LiveDynamic }
 
+func (t Topology) String() string {
+	switch t {
+	case FiniteStatic:
+		return "finite-static"
+	case LiveStatic:
+		return "live-static"
+	case LiveDynamic:
+		return "live-dynamic"
+	default:
+		return "unknown"
+	}
+}
+
 // Mode separates realtime presentation from offline processing.
 type Mode uint8
 
@@ -28,6 +44,17 @@ const (
 )
 
 func (m Mode) Valid() bool { return m >= Realtime && m <= Offline }
+
+func (m Mode) String() string {
+	switch m {
+	case Realtime:
+		return "realtime"
+	case Offline:
+		return "offline"
+	default:
+		return "unknown"
+	}
+}
 
 var (
 	ErrInvalidTrait     = errors.New("endpoint trait is invalid")
@@ -74,3 +101,18 @@ func (c Component) Valid() bool                       { return !c.component.Iden
 func (c Component) Identity() plugin.Identity         { return c.component.Identity() }
 func (c Component) PluginComponent() plugin.Component { return c.component }
 func (c Component) Trait() Trait                      { return c.trait }
+
+// Declaration projects the endpoint trait into Host catalog identity. The
+// typed manifest remains on Host; this inert declaration makes composition
+// and catalog fingerprints account for it without a second registry.
+func (c Component) Declaration() plugin.Declaration {
+	name := c.identityName() + "|topology=" + strconv.Itoa(int(c.trait.topology)) + "|mode=" + strconv.Itoa(int(c.trait.mode))
+	return plugin.Declare[declarationNamespace](name, c.Identity())
+}
+
+func (c Component) identityName() string {
+	if c.Identity().IsZero() {
+		return "invalid"
+	}
+	return c.Identity().String()
+}

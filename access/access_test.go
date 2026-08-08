@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
-	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
@@ -79,8 +80,39 @@ func TestFactoryCreatesOwnedSessionEachTime(t *testing.T) {
 
 func TestRequirementsAreCombinationsOfSmallCapabilities(t *testing.T) {
 	requirements := NewRequirements(AnyOf(SequentialRead), AnyOf(RandomRead, StableSize))
-	if len(requirements.Alternatives) != 2 || len(requirements.Alternatives[1].Capabilities) != 2 {
+	if !requirements.Valid() || len(requirements.Alternatives) != 2 || len(requirements.Alternatives[1].Capabilities) != 2 {
 		t.Fatalf("requirements = %#v", requirements)
+	}
+}
+
+func TestCapabilitySelectionUsesDeclaredAlternativeOrderAndNarrows(t *testing.T) {
+	available, err := NewCapabilities(StableSize, SequentialRead, RandomRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements := NewRequirements(
+		AnyOf(SequentialRead),
+		AnyOf(RandomRead, StableSize),
+	)
+	selection, ok := Select(available, requirements)
+	if !ok || !selection.Valid() {
+		t.Fatal("available source did not satisfy its first alternative")
+	}
+	selected := selection.Capabilities()
+	if len(selected) != 1 || selected[0] != SequentialRead {
+		t.Fatalf("narrow selection = %v", selected)
+	}
+	selected[0] = RandomRead
+	if selection.Capabilities()[0] != SequentialRead {
+		t.Fatal("Selection exposed mutable capability storage")
+	}
+
+	insufficient, err := NewCapabilities(RandomRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Select(insufficient, requirements); ok {
+		t.Fatal("incomplete random capability alternative was accepted")
 	}
 }
 
@@ -155,16 +187,40 @@ func TestProviderSchemeConflictUsesHostDeclarationValidation(t *testing.T) {
 		plugin.Define[providerPluginA](plugin.Descriptor{DisplayName: "plugin-a"}, first),
 		plugin.Define[providerPluginB](plugin.Descriptor{DisplayName: "plugin-b"}, second),
 	).AddDeclaration(firstDeclaration).AddDeclaration(secondDeclaration)
-	_, err = host.New(host.Plugins(set))
+	_, err = catalog.Build(set)
 	if err == nil {
 		t.Fatal("host accepted duplicate provider scheme")
 	}
-	for _, item := range host.Diagnostics(err) {
+	for _, item := range diagnostic.ItemsOf(err) {
 		if item.Code == "catalog.declaration-conflict" {
 			return
 		}
 	}
 	t.Fatalf("provider conflict diagnostic missing: %v", err)
+}
+
+func TestProviderManifestCarriesCapabilitiesRequirementsAndRole(t *testing.T) {
+	capabilities, err := NewCapabilities(StableSize, RandomRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := DefineProvider[providerComponentA](
+		[]string{"memory"},
+		WithProviderRole(SourceSinkRole),
+		WithProviderCapabilities(capabilities),
+		WithProviderRequirements(NewRequirements(AnyOf(RandomRead, StableSize))),
+		WithTransactionClass(AtomicReplace),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !provider.Role().AllowsSource() || !provider.Role().AllowsSink() || len(provider.Declarations()) != 2 {
+		t.Fatalf("provider manifest = %#v", provider)
+	}
+	selection, ok := Select(provider.Capabilities(), provider.Requirements())
+	if !ok || len(selection.Capabilities()) != 2 {
+		t.Fatalf("provider selection = %v, %v", selection.Capabilities(), ok)
+	}
 }
 
 func TestSpoolProbeAndSnapshotAreDeclarations(t *testing.T) {

@@ -22,38 +22,6 @@ type Random interface {
 	ReadAt(context.Context, []byte, int64) (int, error)
 }
 
-// Capability is the declaration vocabulary. It stays separate from the view
-// interfaces above because requirements must be comparable and recorded in a
-// Plan, which an interface type cannot be.
-type Capability string
-
-const (
-	SequentialRead Capability = "sequential-read"
-	RandomRead     Capability = "random-read"
-	StableSize     Capability = "stable-size"
-	Reopen         Capability = "reopen"
-	ConcurrentRead Capability = "concurrent-read"
-	CancelableRead Capability = "cancelable-read"
-)
-
-type Alternative struct{ Capabilities []Capability }
-
-func AnyOf(capabilities ...Capability) Alternative {
-	return Alternative{Capabilities: append([]Capability(nil), capabilities...)}
-}
-
-func (a Alternative) Clone() Alternative { return AnyOf(a.Capabilities...) }
-
-type Requirements struct{ Alternatives []Alternative }
-
-func NewRequirements(alternatives ...Alternative) Requirements {
-	result := Requirements{Alternatives: make([]Alternative, len(alternatives))}
-	for index, alternative := range alternatives {
-		result.Alternatives[index] = Alternative{Capabilities: append([]Capability(nil), alternative.Capabilities...)}
-	}
-	return result
-}
-
 type Ownership uint8
 
 const (

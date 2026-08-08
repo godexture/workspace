@@ -38,6 +38,20 @@ func ExampleNewRequirements() {
 	// 128 fLaC
 }
 
+// Select fixes one declared alternative before Open, so a later Format sees
+// only the operations it requested even when the source supports more.
+func ExampleSelect() {
+	available, _ := access.NewCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
+	requirements := access.NewRequirements(
+		access.AnyOf(access.SequentialRead),
+		access.AnyOf(access.RandomRead, access.StableSize),
+	)
+	selection, ok := access.Select(available, requirements)
+
+	fmt.Println(ok, selection.Capabilities())
+	// Output: true [sequential-read]
+}
+
 // A strong snapshot gives repeated planning and execution a stable source
 // identity; absence of snapshot support is represented explicitly.
 func ExampleNewSnapshot() {

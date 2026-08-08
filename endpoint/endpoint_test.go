@@ -48,6 +48,10 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 	if !endpoint.Valid() || endpoint.Identity() != component.Identity() || endpoint.Trait().Topology() != LiveDynamic {
 		t.Fatalf("endpoint = %#v", endpoint)
 	}
+	declaration := endpoint.Declaration()
+	if !declaration.Valid() || len(declaration.Targets()) != 1 {
+		t.Fatalf("endpoint declaration = %#v", declaration)
+	}
 	if opens.Load() != 0 {
 		t.Fatal("endpoint construction opened component")
 	}
