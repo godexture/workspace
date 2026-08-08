@@ -34,6 +34,10 @@ func (specProcessorOperator) Process(context.Context, flow.Input[specUnit], flow
 
 func (specProcessorOperator) Flush(context.Context, flow.Emitter[specUnit]) error { return nil }
 
+type specFinalizerOperator struct{ specOperator }
+
+func (specFinalizerOperator) Finalize(context.Context) error { return nil }
+
 type trackedSpecOperator struct {
 	shape  flow.Shape
 	closed *atomic.Int32
@@ -428,4 +432,42 @@ func TestOpenRejectsOperatorShapeDifferentFromCompilation(t *testing.T) {
 	if closed.Load() != 1 {
 		t.Fatalf("incompatible operator close count = %d", closed.Load())
 	}
+}
+
+func TestOpenEnforcesDeclaredFinalizerCapability(t *testing.T) {
+	spec := testSpec(nil, nil)
+	spec.Finalizes = true
+	spec.Compile = func(_ CompileContext, value pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		input, _ := inputs.One("in")
+		shape, _ := spec.Shape(ShapeContext{}, value)
+		return Compiled[specPlan, int]{
+			Plan:         specPlan{shape: shape},
+			Outputs:      flow.NewDescriptors(flow.Describe("out", input+value.Level)),
+			Finalization: RequiresFinalization,
+		}, nil
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "finalizer"}, pluginSchema(1), WithSpec(spec))
+	resolved, _ := component.Resolve(config.NewPatch())
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled); !hasDiagnostic(err, "plugin.open-finalizer") {
+		t.Fatalf("missing finalizer error = %v", err)
+	}
+
+	spec.Open = func(_ OpenContext, plan specPlan) (flow.Operator, error) {
+		return specFinalizerOperator{specOperator{shape: plan.shape}}, nil
+	}
+	component = NewComponent[specOtherID](Descriptor{DisplayName: "finalizer"}, pluginSchema(1), WithSpec(spec))
+	resolved, _ = component.Resolve(config.NewPatch())
+	compiled, err = Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = operator.Close()
 }

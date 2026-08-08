@@ -21,6 +21,7 @@ type namedTask struct {
 	name  string
 	task  drive.Task
 	scope *drive.Scope
+	done  chan error
 }
 
 // Execution is a one-shot opened data path. It owns only runtime edge state;
@@ -29,10 +30,12 @@ type Execution struct {
 	edges   []namedTask
 	sources []namedTask
 
-	mu        sync.Mutex
-	started   bool
-	closeOnce sync.Once
-	observer  *observe.Collector
+	mu         sync.Mutex
+	started    bool
+	closeOnce  sync.Once
+	finishOnce sync.Once
+	finishErr  error
+	observer   *observe.Collector
 }
 
 func (t Template) Build(operators []flow.Operator) (*Execution, error) {
@@ -112,7 +115,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			if err != nil {
 				return fail(err)
 			}
-			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, scope: scope})
+			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, scope: scope, done: make(chan error, 1)})
 		default:
 			return fail(ErrTopology)
 		}
@@ -175,7 +178,13 @@ func (e *Execution) Start(group *task.Group) error {
 		}
 	}
 	for _, value := range e.sources {
-		if err := group.StartScoped(value.name, value.scope.Node, value.scope.Cleanup, value.task.Run); err != nil {
+		current := value
+		work := func(ctx context.Context) error {
+			err := current.task.Run(ctx)
+			current.done <- err
+			return err
+		}
+		if err := group.StartScoped(current.name, current.scope.Node, current.scope.Cleanup, work); err != nil {
 			e.Close()
 			group.Cancel(err)
 			return err
@@ -184,12 +193,64 @@ func (e *Execution) Start(group *task.Group) error {
 	return nil
 }
 
+// WaitSources waits for Reader EOF without sealing the shared task group;
+// edge tasks remain live while Host performs Finalize.
+func (e *Execution) WaitSources(ctx context.Context, group *task.Group) error {
+	if e == nil || group == nil {
+		return ErrStarted
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for index := range e.sources {
+		select {
+		case err := <-e.sources[index].done:
+			if err != nil {
+				return err
+			}
+		case <-group.Context().Done():
+			return context.Cause(group.Context())
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// Finish closes every source edge after successful Finalize. Downstream edge
+// tasks then invoke Processor Flush and close in dependency order.
+func (e *Execution) Finish(ctx context.Context) error {
+	if e == nil {
+		return ErrStarted
+	}
+	e.finishOnce.Do(func() {
+		var failures []error
+		for _, source := range e.sources {
+			if err := source.task.Finish(ctx); err != nil {
+				failures = append(failures, err)
+			}
+		}
+		e.finishErr = errors.Join(failures...)
+	})
+	return e.finishErr
+}
+
 func (e *Execution) Run(ctx context.Context) task.Report {
 	group := task.New(ctx)
 	if err := e.Start(group); err != nil {
 		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
 	}
-	return group.Wait(context.Background())
+	if err := e.WaitSources(ctx, group); err != nil {
+		e.Close()
+		group.Cancel(err)
+	} else if err := e.Finish(ctx); err != nil {
+		group.Cancel(err)
+	}
+	report := group.Wait(context.Background())
+	if e.finishErr != nil {
+		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: e.finishErr})
+	}
+	return report
 }
 
 func (e *Execution) Close() {

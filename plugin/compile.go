@@ -252,6 +252,15 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 			return nil, c.phaseError("plugin.open-execution", "component Open returned an incompatible typed operator", detail)
 		}
 	}
+	if compilation.finalization == RequiresFinalization {
+		if _, ok := operator.(flow.Finalizer); !ok {
+			detail := "operator does not implement flow.Finalizer"
+			if closeErr := operator.Close(); closeErr != nil {
+				detail += ": close failed: " + closeErr.Error()
+			}
+			return nil, c.phaseError("plugin.open-finalizer", "component Open returned an operator without its declared finalizer", detail)
+		}
+	}
 	return operator, nil
 }
 

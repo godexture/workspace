@@ -393,9 +393,10 @@ func deliveryOf[T any](link Link) (delivery[T], error) {
 // Task is a top-level execution loop. Host runs it through the tracked task
 // group, which owns panic recovery, cancellation, and join.
 type Task struct {
-	run   func(context.Context) error
-	close func()
-	bind  func(*Scope)
+	run    func(context.Context) error
+	finish func(context.Context) error
+	close  func()
+	bind   func(*Scope)
 }
 
 func (t Task) Valid() bool { return t.run != nil }
@@ -413,6 +414,13 @@ func (t Task) Close() {
 	}
 }
 
+func (t Task) Finish(ctx context.Context) error {
+	if t.finish == nil {
+		return nil
+	}
+	return t.finish(ctx)
+}
+
 func (t Task) BindScope(scope *Scope) {
 	if t.bind != nil {
 		t.bind(scope)
@@ -420,7 +428,7 @@ func (t Task) BindScope(scope *Scope) {
 }
 
 func sourceTask[T any](reader flow.Reader[T], next delivery[T]) Task {
-	return Task{run: func(ctx context.Context) error {
+	return Task{finish: next.close, run: func(ctx context.Context) error {
 		for {
 			input, err := reader.Read(ctx)
 			if errors.Is(err, io.EOF) {
@@ -428,7 +436,7 @@ func sourceTask[T any](reader flow.Reader[T], next delivery[T]) Task {
 					input.Drop()
 					return ErrReadWithItem
 				}
-				return next.close(ctx)
+				return nil
 			}
 			if err != nil {
 				if input.Valid() {

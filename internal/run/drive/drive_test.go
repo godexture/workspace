@@ -143,6 +143,9 @@ func TestTypedSourceProcessorSinkComposeWithoutPerItemErasure(t *testing.T) {
 	if err := task.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := task.Finish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if got := sink.Values(); len(got) != 3 || got[0] != 11 || got[1] != 12 || got[2] != 13 {
 		t.Fatalf("sink values = %v", got)
 	}
@@ -229,10 +232,14 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	results := make(chan error, 2)
 	go func() { results <- bufferTask.Run(ctx) }()
 	go func() { results <- sourceTask.Run(ctx) }()
-	for range 2 {
-		if err := <-results; err != nil {
-			t.Fatal(err)
-		}
+	if err := <-results; err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceTask.Finish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-results; err != nil {
+		t.Fatal(err)
 	}
 	if got := sink.Values(); len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
 		t.Fatalf("buffered values = %v", got)
