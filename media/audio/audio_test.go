@@ -11,8 +11,17 @@ import (
 
 type frameSideKey struct{}
 
+func frameAllocator(t *testing.T) *buffer.Allocator {
+	t.Helper()
+	allocator, err := buffer.NewAllocator(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return allocator
+}
+
 func TestFrameValidatesPlanarPlanesAtConstruction(t *testing.T) {
-	planes, err := buffer.Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}, {Size: 6}}})
+	planes, err := frameAllocator(t).Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}, {Size: 6}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +39,7 @@ func TestFrameValidatesPlanarPlanesAtConstruction(t *testing.T) {
 }
 
 func TestFrameRejectsShortPlane(t *testing.T) {
-	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 3}}})
+	planes, err := frameAllocator(t).Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 3}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +50,7 @@ func TestFrameRejectsShortPlane(t *testing.T) {
 }
 
 func TestFrameExposesValidatedTypedPlane(t *testing.T) {
-	planes, err := buffer.Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}}})
+	planes, err := frameAllocator(t).Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +74,7 @@ func TestFrameExposesValidatedTypedPlane(t *testing.T) {
 }
 
 func TestFramePlanesAreBorrowed(t *testing.T) {
-	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
+	planes, err := frameAllocator(t).Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +90,7 @@ func TestFramePlanesAreBorrowed(t *testing.T) {
 }
 
 func TestFrameCarriesSideDataWithoutChangingPlaneOwnership(t *testing.T) {
-	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
+	planes, err := frameAllocator(t).Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
 	if err != nil {
 		t.Fatal(err)
 	}

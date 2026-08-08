@@ -30,7 +30,7 @@ func TestResolveDirectGraphProducesRequestedProgramWithoutOpening(t *testing.T) 
 	if len(nodes) != 2 || nodes[0].Origin != plan.Requested || nodes[1].Origin != plan.Requested || len(program.Plan().Edges()) != 1 || program.Plan().Edges()[0].Origin != plan.Requested {
 		t.Fatalf("direct Plan nodes=%#v edges=%#v", nodes, program.Plan().Edges())
 	}
-	operator, err := program.Open(context.Background(), "source")
+	operator, err := program.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{}), "source")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestResolveInsertsOneBridgeAndExplainsIt(t *testing.T) {
 			t.Fatalf("edge explanation = %#v", edge)
 		}
 	}
-	operator, err := program.Open(context.Background(), job.NodeID(automatic.ID))
+	operator, err := program.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{}), job.NodeID(automatic.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

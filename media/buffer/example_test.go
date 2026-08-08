@@ -6,10 +6,14 @@ import (
 	"github.com/godexture/godec/media/buffer"
 )
 
-// Allocate creates one aligned backing allocation for all declared planes.
-// A shared handle retains that allocation independently of the first owner.
-func ExampleAllocate() {
-	handle, err := buffer.Allocate(buffer.Spec{
+// An Allocator creates bounded aligned backing allocations for a Job-local
+// owner. A shared handle retains an allocation independently of its first owner.
+func ExampleAllocator_Allocate() {
+	allocator, err := buffer.NewAllocator(1024)
+	if err != nil {
+		panic(err)
+	}
+	handle, err := allocator.Allocate(buffer.Spec{
 		Alignment: 16,
 		Planes: []buffer.PlaneSpec{
 			{Size: 4, Padding: 2},

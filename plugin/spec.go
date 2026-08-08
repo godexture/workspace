@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/resource"
 )
 
@@ -14,13 +15,33 @@ type ShapeContext struct{}
 type CompileContext struct{}
 type SuggestContext struct{}
 
-type OpenContext struct{ context context.Context }
+type TaskStarter interface {
+	Start(string, func(context.Context) error) error
+}
 
-func newOpenContext(ctx context.Context) OpenContext {
+type OpenServices struct {
+	Buffers *buffer.Allocator
+	Tasks   TaskStarter
+	// Boundary is the one node-local Access/Endpoint binding selected by the
+	// planner. It is not a general service bag.
+	Boundary any
+}
+
+// NewOpenContext snapshots the narrow services granted to one component
+// instance. Host runtime is its production consumer; standalone conformance
+// tests can construct the same boundary without a service locator.
+func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return OpenContext{context: ctx}
+	return OpenContext{context: ctx, buffers: services.Buffers, tasks: services.Tasks, boundary: services.Boundary}
+}
+
+type OpenContext struct {
+	context  context.Context
+	buffers  *buffer.Allocator
+	tasks    TaskStarter
+	boundary any
 }
 
 func (c OpenContext) Context() context.Context {
@@ -28,6 +49,17 @@ func (c OpenContext) Context() context.Context {
 		return context.Background()
 	}
 	return c.context
+}
+
+func (c OpenContext) Buffers() *buffer.Allocator { return c.buffers }
+func (c OpenContext) Tasks() TaskStarter         { return c.tasks }
+
+// Boundary recovers the one typed Access/Endpoint binding attached to this
+// node. It is a control-plane assertion performed once during Open; media
+// items never cross this erased boundary.
+func Boundary[T any](c OpenContext) (T, bool) {
+	value, ok := c.boundary.(T)
+	return value, ok
 }
 
 type ShapeFunc[C any] func(ShapeContext, C) (flow.Shape, error)

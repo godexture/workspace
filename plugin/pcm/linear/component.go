@@ -51,8 +51,8 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 			return []configuration{value}
 		},
 		SuggestionLimit: 1,
-		Open: func(_ plugin.OpenContext, plan componentPlan) (flow.Operator, error) {
-			return openOperation(plan)
+		Open: func(ctx plugin.OpenContext, plan componentPlan) (flow.Operator, error) {
+			return openOperation(plan, ctx.Buffers())
 		},
 	}
 	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(), plugin.WithSpec(spec))

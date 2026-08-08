@@ -11,12 +11,21 @@ import (
 
 type packetSideKey struct{}
 
+func packetAllocator(t *testing.T) *buffer.Allocator {
+	t.Helper()
+	allocator, err := buffer.NewAllocator(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return allocator
+}
+
 func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	base := timing.MustBase(1, 1)
 	pts := timing.SomePTS(timing.NewPTS(0))
 	dts := timing.SomeDTS(timing.NewDTS(-1))
 	duration := timing.SomeDuration(timing.NewDuration(2))
-	payload, err := buffer.FromBytes([]byte{1, 2, 3}, 8)
+	payload, err := packetAllocator(t).FromBytes([]byte{1, 2, 3}, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +46,7 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 }
 
 func TestPacketShareRetainsPayload(t *testing.T) {
-	payload, err := buffer.FromBytes([]byte{9}, 1)
+	payload, err := packetAllocator(t).FromBytes([]byte{9}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +60,7 @@ func TestPacketShareRetainsPayload(t *testing.T) {
 }
 
 func TestChunkPayloadIsBorrowed(t *testing.T) {
-	payload, err := buffer.FromBytes([]byte{7}, 1)
+	payload, err := packetAllocator(t).FromBytes([]byte{7}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +78,7 @@ func TestPacketCarriesImmutableSideData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := buffer.FromBytes([]byte{1}, 1)
+	payload, err := packetAllocator(t).FromBytes([]byte{1}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

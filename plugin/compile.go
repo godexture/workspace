@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -212,7 +211,7 @@ func Suggest[D any](component Component, ctx SuggestContext, input D, need Need[
 }
 
 // Open consumes only a Compilation created by this exact component Spec.
-func (c Component) Open(ctx context.Context, compilation Compilation) (operator flow.Operator, err error) {
+func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow.Operator, err error) {
 	if c.implementation == nil || c.implementation.open == nil {
 		return nil, ErrComponentSpec
 	}
@@ -225,7 +224,7 @@ func (c Component) Open(ctx context.Context, compilation Compilation) (operator 
 			operator = nil
 		}
 	}()
-	operator, err = c.implementation.open(newOpenContext(ctx), compilation.plan)
+	operator, err = c.implementation.open(ctx, compilation.plan)
 	if err != nil {
 		return nil, c.phaseError("plugin.open", "component Open failed", err.Error())
 	}

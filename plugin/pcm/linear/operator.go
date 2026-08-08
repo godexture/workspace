@@ -19,13 +19,19 @@ var (
 	ErrPlaneCount    = errors.New("linear PCM frame plane count does not match its channel layout")
 )
 
-type operatorBase struct{ shape flow.Shape }
+type operatorBase struct {
+	shape   flow.Shape
+	buffers *buffer.Allocator
+}
 
 func (o operatorBase) Ports() flow.Shape { return o.shape.Clone() }
 func (operatorBase) Close() error        { return nil }
 
-func openOperation(plan componentPlan) (flow.Operator, error) {
-	base := operatorBase{shape: plan.shape.Clone()}
+func openOperation(plan componentPlan, buffers *buffer.Allocator) (flow.Operator, error) {
+	if buffers == nil {
+		return nil, errors.New("linear PCM requires a payload buffer grant")
+	}
+	base := operatorBase{shape: plan.shape.Clone(), buffers: buffers}
 	switch plan.operation {
 	case readerOperation:
 		return &readerOperator{operatorBase: base, configuration: plan.config}, nil
@@ -66,7 +72,7 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[[]byte], 
 		if end > len(data) {
 			end = len(data)
 		}
-		payload, err := buffer.FromBytes(data[offset:end], 16)
+		payload, err := o.buffers.FromBytes(data[offset:end], 16)
 		if err != nil {
 			return err
 		}
@@ -137,7 +143,32 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 	for index := range planes {
 		planes[index].Size = samples * 2
 	}
-	storage, err := buffer.Allocate(buffer.Spec{Alignment: 16, Planes: planes})
+	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 16, Planes: planes})
+	if err != nil {
+		owner.Release()
+		return err
+	}
+	defer lease.Discard()
+	order := byteOrder(o.configuration.Endian)
+	encoded := value.Bytes()
+	err = lease.Fill(func(storage buffer.Mutable) error {
+		for channel := 0; channel < channels; channel++ {
+			plane, err := storage.Plane(channel)
+			if err != nil {
+				return err
+			}
+			for index := 0; index < samples; index++ {
+				offset := (index*channels + channel) * 2
+				binary.NativeEndian.PutUint16(plane[index*2:index*2+2], order.Uint16(encoded[offset:offset+2]))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		owner.Release()
+		return err
+	}
+	storage, err := lease.Commit()
 	if err != nil {
 		owner.Release()
 		return err
@@ -147,20 +178,6 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 		storage.Release()
 		owner.Release()
 		return err
-	}
-	order := byteOrder(o.configuration.Endian)
-	encoded := value.Bytes()
-	for channel := 0; channel < channels; channel++ {
-		plane, err := frame.PlaneSamples(channel)
-		if err != nil {
-			frame.Release()
-			owner.Release()
-			return err
-		}
-		for index := 0; index < samples; index++ {
-			offset := (index*channels + channel) * 2
-			plane[index] = int16(order.Uint16(encoded[offset : offset+2]))
-		}
 	}
 	frame = frame.WithSideData(value.SideData())
 	owner.Release()
@@ -191,20 +208,32 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 		owner.Release()
 		return ErrPlaneCount
 	}
-	encoded := make([]byte, frame.Samples()*channels*2)
-	order := byteOrder(o.configuration.Endian)
-	for channel := 0; channel < channels; channel++ {
-		plane, err := frame.PlaneSamples(channel)
-		if err != nil {
-			owner.Release()
-			return err
-		}
-		for index, value := range plane {
-			offset := (index*channels + channel) * 2
-			order.PutUint16(encoded[offset:offset+2], uint16(value))
-		}
+	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: frame.Samples() * channels * 2}}})
+	if err != nil {
+		owner.Release()
+		return err
 	}
-	payload, err := buffer.FromBytes(encoded, 16)
+	defer lease.Discard()
+	order := byteOrder(o.configuration.Endian)
+	err = lease.Fill(func(storage buffer.Mutable) error {
+		encoded := storage.Bytes()
+		for channel := 0; channel < channels; channel++ {
+			plane, err := frame.PlaneSamples(channel)
+			if err != nil {
+				return err
+			}
+			for index, value := range plane {
+				offset := (index*channels + channel) * 2
+				order.PutUint16(encoded[offset:offset+2], uint16(value))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		owner.Release()
+		return err
+	}
+	payload, err := lease.Commit()
 	if err != nil {
 		owner.Release()
 		return err

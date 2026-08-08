@@ -11,7 +11,11 @@ import (
 // Frame carries planar samples and item-local timing; stream-wide rate and
 // channel properties live in stream.Descriptor instead.
 func ExampleNewFrame() {
-	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 4}, {Size: 4}}})
+	allocator, err := buffer.NewAllocator(1024)
+	if err != nil {
+		panic(err)
+	}
+	planes, err := allocator.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 4}, {Size: 4}}})
 	if err != nil {
 		panic(err)
 	}

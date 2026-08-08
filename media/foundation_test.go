@@ -120,7 +120,11 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[
 		if end > len(data) {
 			end = len(data)
 		}
-		payload, err := buffer.FromBytes(data[offset:end], 8)
+		allocator, err := buffer.NewAllocator(int64(len(data) + 8))
+		if err != nil {
+			return err
+		}
+		payload, err := allocator.FromBytes(data[offset:end], 8)
 		if err != nil {
 			return err
 		}
@@ -917,27 +921,28 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	sourceValue, err := compiled.Open(ctx, "source")
+	openContext := plugin.NewOpenContext(ctx, plugin.OpenServices{})
+	sourceValue, err := compiled.Open(openContext, "source")
 	if err != nil {
 		t.Fatal(err)
 	}
-	demuxerValue, err := compiled.Open(ctx, "demuxer")
+	demuxerValue, err := compiled.Open(openContext, "demuxer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parserValue, err := compiled.Open(ctx, descriptors.parserID)
+	parserValue, err := compiled.Open(openContext, descriptors.parserID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoderValue, err := compiled.Open(ctx, "decoder")
+	decoderValue, err := compiled.Open(openContext, "decoder")
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoderValue, err := compiled.Open(ctx, "encoder")
+	encoderValue, err := compiled.Open(openContext, "encoder")
 	if err != nil {
 		t.Fatal(err)
 	}
-	muxerValue, err := compiled.Open(ctx, "muxer")
+	muxerValue, err := compiled.Open(openContext, "muxer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1110,7 +1115,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operator, err := compiled.Open(context.Background(), "metadata")
+	operator, err := compiled.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{}), "metadata")
 	if err != nil {
 		t.Fatal(err)
 	}

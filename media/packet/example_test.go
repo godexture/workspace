@@ -11,7 +11,11 @@ import (
 // Packet distinguishes a known zero timestamp from an unknown one and owns
 // its payload until Release.
 func ExampleNewPacket() {
-	payload, err := buffer.FromBytes([]byte{0xaa, 0xbb}, 1)
+	allocator, err := buffer.NewAllocator(1024)
+	if err != nil {
+		panic(err)
+	}
+	payload, err := allocator.FromBytes([]byte{0xaa, 0xbb}, 1)
 	if err != nil {
 		panic(err)
 	}

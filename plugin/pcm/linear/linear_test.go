@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
@@ -347,7 +348,11 @@ func (c *collector[T]) Emit(_ context.Context, value flow.Input[T]) error {
 
 func mustOpen[T any](t *testing.T, compiled program.Program, id job.NodeID) T {
 	t.Helper()
-	operator, err := compiled.Open(context.Background(), id)
+	allocator, err := buffer.NewAllocator(64 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := compiled.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{Buffers: allocator}), id)
 	if err != nil {
 		t.Fatal(err)
 	}

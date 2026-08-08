@@ -2,7 +2,6 @@
 package program
 
 import (
-	"context"
 	"errors"
 
 	"github.com/godexture/godec/flow"
@@ -10,6 +9,7 @@ import (
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
+	"github.com/godexture/godec/plugin"
 )
 
 type Program struct {
@@ -60,6 +60,6 @@ func (p Program) Lookup(id job.NodeID) (graph.Node, bool) {
 }
 
 // Open binds only the private Compilation selected for id.
-func (p Program) Open(ctx context.Context, id job.NodeID) (flow.Operator, error) {
+func (p Program) Open(ctx plugin.OpenContext, id job.NodeID) (flow.Operator, error) {
 	return p.graph.Open(ctx, id)
 }

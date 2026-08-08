@@ -4,7 +4,6 @@
 package graph
 
 import (
-	"context"
 	"sort"
 
 	"github.com/godexture/godec/config"
@@ -61,7 +60,7 @@ func (g Graph) Lookup(id job.NodeID) (Node, bool) {
 // Open is an internal bridge used by the M4 explicit skeleton. M4-3 replaces
 // direct graph access with a private Program, while preserving the same
 // Compilation-to-Open binding.
-func (g Graph) Open(ctx context.Context, id job.NodeID) (flow.Operator, error) {
+func (g Graph) Open(ctx plugin.OpenContext, id job.NodeID) (flow.Operator, error) {
 	node, ok := g.Lookup(id)
 	if !ok {
 		return nil, errUnknownNode(id)

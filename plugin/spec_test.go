@@ -93,7 +93,7 @@ func TestComponentSpecShapesCompilesAndOpensSelectedPlan(t *testing.T) {
 	if opened.Load() != 0 {
 		t.Fatal("Compile opened an operator")
 	}
-	operator, err := component.Open(context.Background(), compiled)
+	operator, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestCompilationCannotOpenThroughAnotherSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Open(context.Background(), compiled); err != ErrCompilationComponent {
+	if _, err := second.Open(NewOpenContext(context.Background(), OpenServices{}), compiled); err != ErrCompilationComponent {
 		t.Fatalf("cross-component Open error = %v", err)
 	}
 }
@@ -342,7 +342,7 @@ func TestOpenRejectsOperatorShapeDifferentFromCompilation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := component.Open(context.Background(), compiled); !hasDiagnostic(err, "plugin.open-shape") {
+	if _, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled); !hasDiagnostic(err, "plugin.open-shape") {
 		t.Fatalf("Open shape error = %v", err)
 	}
 	if closed.Load() != 1 {

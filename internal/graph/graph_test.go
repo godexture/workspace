@@ -151,7 +151,7 @@ func TestCompileBuildsTopologicalGraphWithoutOpeningOperators(t *testing.T) {
 	if !ok || output.ID() != "stream" || output.Schema() != graphSchemaA.Identity() {
 		t.Fatalf("transform output = %#v", output)
 	}
-	operator, err := compiled.Open(context.Background(), "transform")
+	operator, err := compiled.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{}), "transform")
 	if err != nil {
 		t.Fatal(err)
 	}

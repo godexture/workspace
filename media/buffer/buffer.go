@@ -11,8 +11,11 @@ import (
 var (
 	ErrInvalidAlignment = errors.New("buffer alignment must be a positive power of two")
 	ErrInvalidPlane     = errors.New("buffer plane size and padding must be non-negative")
+	ErrInvalidLimit     = errors.New("buffer allocator limit must be positive")
+	ErrLimit            = errors.New("buffer allocator grant is exhausted")
 	ErrReadOnly         = errors.New("buffer is read-only")
 	ErrPlaneIndex       = errors.New("buffer plane index is out of range")
+	ErrLeaseState       = errors.New("buffer overwrite lease is not writable")
 )
 
 type PlaneSpec struct {
@@ -49,6 +52,8 @@ type storage struct {
 	refs   atomic.Int64
 	data   []byte
 	layout Layout
+	charge int64
+	repay  func(int64)
 }
 
 type lease struct {
@@ -65,47 +70,136 @@ type Handle struct{ lease *lease }
 // Handle is needed.
 type View struct{ storage *storage }
 
-func Allocate(spec Spec) (Handle, error) {
+// Allocator owns one bounded payload grant. It is intended to be scoped to a
+// Job component or worker; allocation and release update only this local
+// owner, never a process-wide pool or resource tracker.
+type Allocator struct {
+	limit int64
+	used  atomic.Int64
+}
+
+func NewAllocator(limit int64) (*Allocator, error) {
+	if limit <= 0 {
+		return nil, ErrInvalidLimit
+	}
+	return &Allocator{limit: limit}, nil
+}
+
+func (a *Allocator) Limit() int64 {
+	if a == nil {
+		return 0
+	}
+	return a.limit
+}
+
+func (a *Allocator) Used() int64 {
+	if a == nil {
+		return 0
+	}
+	return a.used.Load()
+}
+
+func (a *Allocator) Allocate(spec Spec) (Handle, error) {
+	layout, rawSize, err := layoutOf(spec)
+	if err != nil {
+		return Handle{}, err
+	}
+	charge := int64(rawSize)
+	if err := a.reserve(charge); err != nil {
+		return Handle{}, err
+	}
+	state := allocateStorage(layout, rawSize)
+	state.charge = charge
+	state.repay = a.release
+	return Handle{lease: &lease{storage: state}}, nil
+}
+
+func (a *Allocator) FromBytes(value []byte, alignment int) (Handle, error) {
+	result, err := a.Allocate(Spec{Alignment: alignment, Planes: []PlaneSpec{{Size: len(value)}}})
+	if err != nil {
+		return Handle{}, err
+	}
+	mutable, err := result.MutableBytes()
+	if err != nil {
+		result.Release()
+		return Handle{}, err
+	}
+	copy(mutable, value)
+	return result, nil
+}
+
+// Overwrite reserves private backing memory without publishing a readable
+// Handle. The caller can access it only inside WriteLease.Fill and receives an
+// owned Handle only after a successful Commit.
+func (a *Allocator) Overwrite(spec Spec) (*WriteLease, error) {
+	handle, err := a.Allocate(spec)
+	if err != nil {
+		return nil, err
+	}
+	return &WriteLease{handle: handle}, nil
+}
+
+func (a *Allocator) reserve(size int64) error {
+	if a == nil || size <= 0 {
+		return ErrInvalidLimit
+	}
+	for {
+		used := a.used.Load()
+		if size > a.limit-used {
+			return ErrLimit
+		}
+		if a.used.CompareAndSwap(used, used+size) {
+			return nil
+		}
+	}
+}
+
+func (a *Allocator) release(size int64) {
+	if a != nil && size > 0 {
+		a.used.Add(-size)
+	}
+}
+
+func layoutOf(spec Spec) (Layout, int, error) {
 	alignment := spec.Alignment
 	if alignment == 0 {
 		alignment = 1
 	}
 	if alignment < 1 || alignment&(alignment-1) != 0 {
-		return Handle{}, ErrInvalidAlignment
+		return Layout{}, 0, ErrInvalidAlignment
 	}
 	planes := make([]Plane, len(spec.Planes))
 	position := 0
 	for index, plane := range spec.Planes {
 		if plane.Size < 0 || plane.Padding < 0 {
-			return Handle{}, fmt.Errorf("plane %d: %w", index, ErrInvalidPlane)
+			return Layout{}, 0, fmt.Errorf("plane %d: %w", index, ErrInvalidPlane)
 		}
 		position = align(position, alignment)
 		planes[index] = Plane{Offset: position, Size: plane.Size, Padding: plane.Padding}
 		position += plane.Size + plane.Padding
 		if position < 0 {
-			return Handle{}, errors.New("buffer size overflow")
+			return Layout{}, 0, errors.New("buffer size overflow")
 		}
 	}
 	rawSize := position
 	if rawSize == 0 {
 		rawSize = 1
 	}
+	if rawSize > int(^uint(0)>>1)-(alignment-1) {
+		return Layout{}, 0, errors.New("buffer size overflow")
+	}
+	return Layout{Alignment: alignment, Size: position, Planes: planes, ReadOnly: spec.ReadOnly, Shared: spec.Shared}, rawSize, nil
+}
+
+func allocateStorage(layout Layout, rawSize int) *storage {
+	alignment := layout.Alignment
 	raw := make([]byte, rawSize+alignment-1)
 	base := uintptr(unsafe.Pointer(&raw[0]))
 	offset := int((uintptr(alignment) - base%uintptr(alignment)) % uintptr(alignment))
-	data := raw[offset : offset+position : offset+position]
-	state := &storage{data: data, layout: Layout{Alignment: alignment, Size: position, Planes: planes, ReadOnly: spec.ReadOnly, Shared: spec.Shared}}
+	data := raw[offset : offset+layout.Size : offset+layout.Size]
+	state := &storage{data: data, layout: layout}
 	state.refs.Store(1)
-	return Handle{lease: &lease{storage: state}}, nil
-}
-
-func FromBytes(value []byte, alignment int) (Handle, error) {
-	result, err := Allocate(Spec{Alignment: alignment, Planes: []PlaneSpec{{Size: len(value)}}})
-	if err != nil {
-		return Handle{}, err
-	}
-	copy(result.lease.storage.data, value)
-	return result, nil
+	return state
 }
 
 func align(value, alignment int) int {
@@ -160,7 +254,12 @@ func (h Handle) Release() {
 		return
 	}
 	if h.lease.storage.refs.Add(-1) == 0 {
-		h.lease.storage.data = nil
+		state := h.lease.storage
+		state.data = nil
+		if state.repay != nil {
+			state.repay(state.charge)
+			state.repay = nil
+		}
 	}
 }
 
@@ -220,6 +319,88 @@ func (state *storage) retain() bool {
 		}
 		if state.refs.CompareAndSwap(refs, refs+1) {
 			return true
+		}
+	}
+}
+
+// Mutable is a write view whose lifetime is restricted to a WriteLease.Fill
+// callback. Retaining one of its slices beyond the callback violates the
+// overwrite contract and is checked by conformance tests.
+type Mutable struct{ storage *storage }
+
+func (m Mutable) Bytes() []byte {
+	if m.storage == nil {
+		return nil
+	}
+	return m.storage.data
+}
+
+func (m Mutable) Plane(index int) ([]byte, error) {
+	if m.storage == nil {
+		return nil, ErrLeaseState
+	}
+	planes := m.storage.layout.Planes
+	if index < 0 || index >= len(planes) {
+		return nil, ErrPlaneIndex
+	}
+	plane := planes[index]
+	return m.storage.data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+}
+
+type writeLeaseState uint32
+
+const (
+	leaseWritable writeLeaseState = iota
+	leaseFilling
+	leaseFilled
+	leaseCommitted
+	leaseDiscarded
+)
+
+// WriteLease prevents a partially initialized allocation from becoming a
+// readable payload. Fill may be called once; Commit is available only after a
+// successful Fill. Discard is idempotent.
+type WriteLease struct {
+	handle Handle
+	state  atomic.Uint32
+}
+
+func (l *WriteLease) Fill(write func(Mutable) error) error {
+	if l == nil || write == nil || !l.state.CompareAndSwap(uint32(leaseWritable), uint32(leaseFilling)) {
+		return ErrLeaseState
+	}
+	if err := write(Mutable{storage: l.handle.lease.storage}); err != nil {
+		l.Discard()
+		return err
+	}
+	if !l.state.CompareAndSwap(uint32(leaseFilling), uint32(leaseFilled)) {
+		return ErrLeaseState
+	}
+	return nil
+}
+
+func (l *WriteLease) Commit() (Handle, error) {
+	if l == nil || !l.state.CompareAndSwap(uint32(leaseFilled), uint32(leaseCommitted)) {
+		return Handle{}, ErrLeaseState
+	}
+	handle := l.handle
+	l.handle = Handle{}
+	return handle, nil
+}
+
+func (l *WriteLease) Discard() {
+	if l == nil {
+		return
+	}
+	for {
+		state := writeLeaseState(l.state.Load())
+		if state == leaseCommitted || state == leaseDiscarded {
+			return
+		}
+		if l.state.CompareAndSwap(uint32(state), uint32(leaseDiscarded)) {
+			l.handle.Release()
+			l.handle = Handle{}
+			return
 		}
 	}
 }
