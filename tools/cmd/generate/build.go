@@ -12,7 +12,7 @@ import (
 
 // exeName returns base with the platform's executable suffix, so binaries
 // built into a PATH-prepended tmpDir resolve under bare //go:generate
-// invocations (config-generator, enum-generator) on every platform: Windows
+// invocations (enum-generator) on every platform: Windows
 // PATH lookup requires the .exe suffix, but Unix PATH lookup requires its
 // absence -- a hardcoded ".exe" broke generate on Unix even though the
 // binary built and ran fine when invoked directly.
@@ -27,22 +27,7 @@ func exeName(base string) string {
 // and prepends that directory to the PATH.
 func buildTools(goCommand, goWork, tmpDir string) error {
 	var buildWg sync.WaitGroup
-	buildErrs := make(chan error, 3)
-
-	buildWg.Add(1)
-	go func() {
-		defer buildWg.Done()
-		log.Printf("building config-generator...")
-		buildConfigCmd := exec.Command(goCommand, "build", "-o", filepath.Join(tmpDir, exeName("config-generator")), "github.com/godexture/godec/tools/cmd/config-generator")
-		buildConfigCmd.Env = append(os.Environ(), "GOWORK="+goWork)
-		buildConfigCmd.Stdout = os.Stdout
-		buildConfigCmd.Stderr = os.Stderr
-		if err := buildConfigCmd.Run(); err != nil {
-			buildErrs <- fmt.Errorf("failed to build config-generator: %w", err)
-			return
-		}
-		log.Printf("built config-generator to %s", tmpDir)
-	}()
+	buildErrs := make(chan error, 2)
 
 	buildWg.Add(1)
 	go func() {

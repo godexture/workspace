@@ -1,6 +1,4 @@
-// Package generator emits Valid() bool methods for string-backed enum types,
-// derived from the same const scan that config-generator uses for
-// FieldChoices, so an enum's set of legal values is authored exactly once.
+// Package generator emits Valid methods for string-backed enum types.
 package generator
 
 import (

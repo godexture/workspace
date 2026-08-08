@@ -31,7 +31,7 @@ profile.cov
 # env file
 .env
 
-# JS workspace (root package.json links bindings/js and example/web/web)
+# Local JavaScript dependencies
 node_modules/
 
 # Editor/IDE

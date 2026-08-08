@@ -1,8 +1,6 @@
 // Package enumscan discovers string-backed enum types and their constant
 // values from Go source, and loads a package's files for that purpose. It is
-// shared by generators that need to read enum definitions (config-generator's
-// FieldChoices, enum-generator's Valid) from the same AST so the discovery
-// rules never drift between them.
+// shared by generators that need to read enum definitions from Go syntax.
 package enumscan
 
 import (

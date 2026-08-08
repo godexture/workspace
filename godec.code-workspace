@@ -1,34 +1,6 @@
 {
     "folders": [
         {
-            "name": "CLI",
-            "path": "cli"
-        },
-        {
-            "name": "Core",
-            "path": "core"
-        },
-        {
-            "name": "Example",
-            "path": "example"
-        },
-        {
-            "name": "Plugins",
-            "path": "plugins"
-        },
-        {
-            "name": "SDK",
-            "path": "pkg"
-        },
-        {
-            "name": "Tools",
-            "path": "tools"
-        },
-        {
-            "name": "Bindings",
-            "path": "bindings"
-        },
-        {
             "name": "Godec",
             "path": "."
         }
