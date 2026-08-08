@@ -137,10 +137,15 @@ func (d Description) Valid() bool {
 // Properties encodes the description into an immutable descriptor property
 // set. Every field participates in the canonical descriptor fingerprint.
 func (d Description) Properties() (property.Set, error) {
+	return d.Apply(property.New())
+}
+
+// Apply replaces the five sample properties while preserving every unknown
+// third-party property already present in the set.
+func (d Description) Apply(result property.Set) (property.Set, error) {
 	if !d.Valid() {
 		return property.Set{}, ErrInvalidDescription
 	}
-	result := property.New()
 	var err error
 	result, err = property.Put(result, SampleFormat, d.Format)
 	if err != nil {

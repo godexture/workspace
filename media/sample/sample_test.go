@@ -4,7 +4,10 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/property"
 )
+
+type foreignPropertyID struct{}
 
 func TestDescriptionRoundTripAndCanonicalState(t *testing.T) {
 	description := Description{Format: S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: Stereo, Endian: LittleEndian}
@@ -28,6 +31,22 @@ func TestDescriptionRoundTripAndCanonicalState(t *testing.T) {
 	}
 	if properties.Fingerprint() == bigProperties.Fingerprint() {
 		t.Fatal("wire endian did not participate in canonical property state")
+	}
+}
+
+func TestApplyPreservesUnknownProperties(t *testing.T) {
+	foreign := property.Define[foreignPropertyID](property.Scalar[string]())
+	properties, err := property.Put(property.New(), foreign, "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := Description{Format: S16Planar, ValidBits: 16, Rate: 44_100, Layout: Mono, Endian: NoEndian}
+	properties, err = description.Apply(properties)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := foreign.Get(properties); !ok || value != "kept" || properties.Len() != 6 {
+		t.Fatalf("foreign property = %q, %v; count = %d", value, ok, properties.Len())
 	}
 }
 
