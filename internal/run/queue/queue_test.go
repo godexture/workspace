@@ -189,3 +189,25 @@ func TestQueueConcurrentProducersDoNotLoseOrDuplicateItems(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitIdleIncludesDownstreamProcessing(t *testing.T) {
+	queue, err := New[item](Limit{Items: 1}, Traits[item]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Push(context.Background(), item{value: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Pop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wait, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	if err := queue.WaitIdle(wait); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitIdle before Complete = %v", err)
+	}
+	queue.Complete()
+	if err := queue.WaitIdle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -217,6 +217,22 @@ func (e *Execution) WaitSources(ctx context.Context, group *task.Group) error {
 	return nil
 }
 
+// Drain establishes a quiescent data barrier after every Reader has reached
+// EOF. Boundaries are visited upstream-to-downstream, so all ordinary Process
+// calls finish before Host invokes Finalize while queues remain able to accept
+// delayed Flush output.
+func (e *Execution) Drain(ctx context.Context) error {
+	if e == nil {
+		return ErrStarted
+	}
+	for index := len(e.edges) - 1; index >= 0; index-- {
+		if err := e.edges[index].task.Barrier(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Finish closes every source edge after successful Finalize. Downstream edge
 // tasks then invoke Processor Flush and close in dependency order.
 func (e *Execution) Finish(ctx context.Context) error {
@@ -227,6 +243,11 @@ func (e *Execution) Finish(ctx context.Context) error {
 		var failures []error
 		for _, source := range e.sources {
 			if err := source.task.Finish(ctx); err != nil {
+				failures = append(failures, err)
+			}
+		}
+		for index := len(e.edges) - 1; index >= 0; index-- {
+			if err := e.edges[index].task.Finish(ctx); err != nil {
 				failures = append(failures, err)
 			}
 		}
@@ -241,6 +262,9 @@ func (e *Execution) Run(ctx context.Context) task.Report {
 		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
 	}
 	if err := e.WaitSources(ctx, group); err != nil {
+		e.Close()
+		group.Cancel(err)
+	} else if err := e.Drain(group.Context()); err != nil {
 		e.Close()
 		group.Cancel(err)
 	} else if err := e.Finish(ctx); err != nil {

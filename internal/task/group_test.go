@@ -93,3 +93,16 @@ func TestEmptyGroupWaitIsIdempotent(t *testing.T) {
 		t.Fatalf("second report = %#v", report)
 	}
 }
+
+func TestLinkedFailureCancelsOwningContext(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	want := errors.New("linked failure")
+	group := NewLinked(ctx, cancel)
+	if err := group.Start("failure", func(context.Context) error { return want }); err != nil {
+		t.Fatal(err)
+	}
+	report := group.Wait(context.Background())
+	if len(report.Failures) != 1 || !errors.Is(context.Cause(ctx), want) {
+		t.Fatalf("report = %#v, cause = %v", report, context.Cause(ctx))
+	}
+}

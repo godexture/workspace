@@ -1,0 +1,101 @@
+package host
+
+import (
+	"context"
+	"errors"
+)
+
+func (r *runner) cleanup() {
+	cause := context.Canceled
+	if r.result.Primary != nil {
+		cause = r.result.Primary
+	}
+	r.cancel(cause)
+	cleanupContext, cancel := context.WithTimeout(context.Background(), r.prepared.cleanupTimeout)
+	defer cancel()
+
+	if r.execution != nil {
+		if failure := invoke(cleanupContext, ClosePhase, "", "runtime", func(context.Context) error {
+			r.execution.Close()
+			return nil
+		}); failure != nil {
+			r.addCleanup(*failure)
+		}
+	}
+	r.data.Cancel(cause)
+	r.plugins.Cancel(cause)
+	r.acceptTaskReport(r.data.Wait(cleanupContext), true)
+	r.acceptTaskReport(r.plugins.Wait(cleanupContext), true)
+	r.abortOutputs(cleanupContext)
+	r.closeOperators(cleanupContext)
+}
+
+func (r *runner) abortOutputs(ctx context.Context) {
+	for index := len(r.outputs) - 1; index >= 0; index-- {
+		output := r.outputs[index]
+		outcome := &r.result.Outputs[output.outcome]
+		if output.committed {
+			continue
+		}
+		if output.transaction == nil {
+			if output.opened {
+				outcome.State = OutputUnknown
+			} else {
+				outcome.State = OutputAborted
+			}
+			continue
+		}
+		if output.commitAttempted {
+			outcome.RollbackAttempted = true
+		}
+		failure := invoke(ctx, AbortPhase, outcome.Node, "", output.transaction.Abort)
+		if failure != nil {
+			outcome.State = OutputUnknown
+			r.addCleanup(*failure)
+			continue
+		}
+		if output.commitAttempted {
+			// Commit may have become visible before returning its error. A
+			// successful Abort attempt cannot prove the external outcome.
+			outcome.State = OutputUnknown
+		} else {
+			outcome.State = OutputAborted
+		}
+	}
+}
+
+func (r *runner) closeOperators(ctx context.Context) {
+	for index := len(r.opened) - 1; index >= 0; index-- {
+		nodeIndex := r.opened[index]
+		node := r.nodes[nodeIndex]
+		operator := r.operators[nodeIndex]
+		failure := invoke(ctx, ClosePhase, node.ID().String(), "", func(context.Context) error {
+			return operator.Close()
+		})
+		if failure != nil {
+			r.addCleanup(*failure)
+		}
+	}
+}
+
+func (r *runner) setPrimary(failure Failure) {
+	if r.result.Primary == nil {
+		value := failure
+		r.result.Primary = &value
+		r.diag.failure("host."+string(failure.Phase), failure)
+		return
+	}
+	r.addSecondary(failure)
+}
+
+func (r *runner) addCleanup(failure Failure) {
+	if r.result.Primary != nil && (errors.Is(r.result.Primary.Err, failure.Err) || errors.Is(failure.Err, r.result.Primary.Err)) {
+		return
+	}
+	r.result.Cleanup = append(r.result.Cleanup, failure)
+	r.diag.failure("host.cleanup."+string(failure.Phase), failure)
+}
+
+func (r *runner) addSecondary(failure Failure) {
+	r.diag.failure("host.secondary."+string(failure.Phase), failure)
+}

@@ -65,9 +65,13 @@ func (m *Manager) Reserve(name string, request resource.Request) (*Lease, error)
 	if !fits(m.limit, m.used, grant) {
 		return nil, fmt.Errorf("%w: %s", ErrExhausted, name)
 	}
-	allocator, err := buffer.NewAllocator(int64(grant.Memory))
-	if err != nil {
-		return nil, err
+	var allocator *buffer.Allocator
+	if grant.Memory != 0 {
+		var err error
+		allocator, err = buffer.NewAllocator(int64(grant.Memory))
+		if err != nil {
+			return nil, err
+		}
 	}
 	id := m.next
 	m.next++

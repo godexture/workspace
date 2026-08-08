@@ -52,6 +52,7 @@ type Queue[T any] struct {
 	values  []entry[T]
 	head    int
 	count   int
+	active  int
 	bytes   int64
 	minTime int64
 	maxTime int64
@@ -121,6 +122,7 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 		q.mu.Lock()
 		if q.count != 0 {
 			item := q.pop()
+			q.active++
 			q.signal()
 			q.mu.Unlock()
 			return item.value, nil
@@ -134,6 +136,47 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 		select {
 		case <-ctx.Done():
 			return zero, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Complete acknowledges that the consumer has finished processing one value
+// returned by Pop. It lets the runtime establish a quiescent barrier without
+// closing the queue or placing control sentinels in the media stream.
+func (q *Queue[T]) Complete() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	if q.active > 0 {
+		q.active--
+		q.signal()
+	}
+	q.mu.Unlock()
+}
+
+// WaitIdle waits until every value pushed before the call has both left the
+// ring and completed downstream processing. Producers must already be
+// quiescent when this barrier is used.
+func (q *Queue[T]) WaitIdle(ctx context.Context) error {
+	if q == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		q.mu.Lock()
+		if q.count == 0 && q.active == 0 {
+			q.mu.Unlock()
+			return nil
+		}
+		changed := q.changed
+		q.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-changed:
 		}
 	}
@@ -179,6 +222,7 @@ func (q *Queue[T]) Drain() int {
 
 type Snapshot struct {
 	Items  int
+	Active int
 	Bytes  int64
 	Time   int64
 	Closed bool
@@ -192,7 +236,7 @@ func (q *Queue[T]) Snapshot() Snapshot {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return Snapshot{Items: q.count, Bytes: q.bytes, Time: q.span(), Closed: q.closed}
+	return Snapshot{Items: q.count, Active: q.active, Bytes: q.bytes, Time: q.span(), Closed: q.closed}
 }
 
 func (q *Queue[T]) describe(value T) (entry[T], error) {

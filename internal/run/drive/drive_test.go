@@ -396,6 +396,9 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
+	if err := task.Finish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if got := sink.Values(); len(got) != 2 || got[0] != 11 || got[1] != 22 {
 		t.Fatalf("zip values = %v", got)
 	}

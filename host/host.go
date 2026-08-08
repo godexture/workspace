@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"runtime"
 	"sort"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/catalog"
+	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -20,10 +22,12 @@ import (
 )
 
 type options struct {
-	plugins   plugin.Set
-	platform  plan.Platform
-	providers []access.Provider
-	endpoints []endpoint.Component
+	plugins        plugin.Set
+	platform       plan.Platform
+	providers      []access.Provider
+	endpoints      []endpoint.Component
+	observation    Observation
+	cleanupTimeout time.Duration
 }
 
 // Option configures Host construction.
@@ -52,18 +56,33 @@ func PlatformSnapshot(platform plan.Platform) Option {
 	return func(options *options) { options.platform = platform }
 }
 
+// Observe selects the runtime observation strategy when a prepared Job runs.
+func Observe(mode Observation) Option {
+	return func(options *options) { options.observation = mode }
+}
+
+// CleanupTimeout bounds cancellation joins and context-aware rollback work.
+func CleanupTimeout(timeout time.Duration) Option {
+	return func(options *options) { options.cleanupTimeout = timeout }
+}
+
 // Host owns one immutable catalog and platform snapshot. It has no
 // process-global registry or mutable resource state.
 type Host struct {
-	index    catalog.Index
-	platform plan.Platform
-	bindings bind.Registry
+	index          catalog.Index
+	platform       plan.Platform
+	bindings       bind.Registry
+	observation    Observation
+	cleanupTimeout time.Duration
 }
 
 // New validates the supplied plugin set and returns a host only when every
 // definition is valid. Errors retain all component/field diagnostics.
 func New(options ...Option) (*Host, error) {
 	configuration := optionsState(options)
+	if !configuration.observation.Valid() || configuration.cleanupTimeout <= 0 {
+		return nil, diagnostic.NewError(diagnostic.NewItem("host.runtime-policy", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host runtime policy is invalid", nil))
+	}
 	configuration.platform.Features = append([]string(nil), configuration.platform.Features...)
 	sort.Strings(configuration.platform.Features)
 	if !configuration.platform.Valid() {
@@ -93,24 +112,38 @@ func New(options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Host{index: index, platform: configuration.platform, bindings: bindings}, nil
+	return &Host{
+		index:          index,
+		platform:       configuration.platform,
+		bindings:       bindings,
+		observation:    configuration.observation,
+		cleanupTimeout: configuration.cleanupTimeout,
+	}, nil
 }
 
 // Plan binds declarative Access/Endpoint choices and resolves the resulting
 // graph without opening operators or starting output transactions.
 func (h *Host) Plan(ctx context.Context, request job.Job) (plan.Plan, error) {
-	if h == nil {
-		return plan.Plan{}, diagnostic.NewError(diagnostic.NewItem("host.nil", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host is nil", nil))
-	}
-	bound, err := bind.Normalize(h.bindings, request)
-	if err != nil {
-		return plan.Plan{}, err
-	}
-	program, err := solve.ResolveBound(ctx, h.index, bound.Request(), h.platform, bound.Boundaries())
+	program, err := h.resolve(ctx, request)
 	if err != nil {
 		return plan.Plan{}, err
 	}
 	return program.Plan(), nil
+}
+
+func (h *Host) resolve(ctx context.Context, request job.Job) (program.Program, error) {
+	if h == nil {
+		return program.Program{}, diagnostic.NewError(diagnostic.NewItem("host.nil", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host is nil", nil))
+	}
+	bound, err := bind.Normalize(h.bindings, request)
+	if err != nil {
+		return program.Program{}, err
+	}
+	result, err := solve.ResolveBound(ctx, h.index, bound.Request(), h.platform, bound.Boundaries())
+	if err != nil {
+		return program.Program{}, err
+	}
+	return result, nil
 }
 
 // Catalog is an immutable public view of the host's component descriptions.
@@ -170,7 +203,11 @@ func (c Catalog) Fingerprint() CatalogFingerprint {
 func Diagnostics(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }
 
 func optionsState(values []Option) options {
-	result := options{platform: plan.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH, Toolchain: runtime.Version()}}
+	result := options{
+		platform:       plan.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH, Toolchain: runtime.Version()},
+		observation:    ObservationOff,
+		cleanupTimeout: 5 * time.Second,
+	}
 	for _, option := range values {
 		if option != nil {
 			option(&result)

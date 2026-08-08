@@ -55,6 +55,7 @@ func (r Report) Complete() bool { return r.WaitErr == nil && len(r.Running) == 0
 type Group struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
+	fail   func(error)
 
 	mu        sync.Mutex
 	accepting bool
@@ -67,6 +68,12 @@ type Group struct {
 }
 
 func New(parent context.Context) *Group {
+	return NewLinked(parent, nil)
+}
+
+// NewLinked reports the first-class failure of any task to the owner of a
+// larger cancellation tree. The callback must not wait on this Group.
+func NewLinked(parent context.Context, fail func(error)) *Group {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -74,6 +81,7 @@ func New(parent context.Context) *Group {
 	return &Group{
 		ctx:       ctx,
 		cancel:    cancel,
+		fail:      fail,
 		accepting: true,
 		running:   make(map[uint64]string),
 		done:      make(chan struct{}),
@@ -150,13 +158,17 @@ func (g *Group) finish(id uint64, name string, failure error) {
 	g.mu.Lock()
 	delete(g.running, id)
 	g.active--
-	if failure != nil && !cancellationEcho(failure, g.ctx) {
+	report := failure != nil && !cancellationEcho(failure, g.ctx)
+	if report {
 		g.failures = append(g.failures, Failure{Name: name, Err: failure})
 	}
 	done := !g.accepting && g.active == 0
 	g.mu.Unlock()
 	if failure != nil {
 		g.cancel(failure)
+	}
+	if report && g.fail != nil {
+		g.fail(failure)
 	}
 	if done {
 		g.closeDone()

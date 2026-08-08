@@ -71,3 +71,17 @@ func TestCloseReportsLiveReservationsAndRejectsNewOnes(t *testing.T) {
 		t.Fatalf("late release = %#v", used)
 	}
 }
+
+func TestReservationWithoutPayloadMemoryHasNoAllocator(t *testing.T) {
+	manager := New(resource.Grant{Workers: 1, Queue: 2})
+	lease, err := manager.Reserve("scheduler", resource.Request{Workers: 1, Queue: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Buffers() != nil {
+		t.Fatal("zero-memory reservation created a payload allocator")
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

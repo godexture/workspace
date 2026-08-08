@@ -393,10 +393,11 @@ func deliveryOf[T any](link Link) (delivery[T], error) {
 // Task is a top-level execution loop. Host runs it through the tracked task
 // group, which owns panic recovery, cancellation, and join.
 type Task struct {
-	run    func(context.Context) error
-	finish func(context.Context) error
-	close  func()
-	bind   func(*Scope)
+	run     func(context.Context) error
+	barrier func(context.Context) error
+	finish  func(context.Context) error
+	close   func()
+	bind    func(*Scope)
 }
 
 func (t Task) Valid() bool { return t.run != nil }
@@ -419,6 +420,13 @@ func (t Task) Finish(ctx context.Context) error {
 		return nil
 	}
 	return t.finish(ctx)
+}
+
+func (t Task) Barrier(ctx context.Context) error {
+	if t.barrier == nil {
+		return nil
+	}
+	return t.barrier(ctx)
 }
 
 func (t Task) BindScope(scope *Scope) {
@@ -708,7 +716,8 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			return Link{}, Task{}, err
 		}
 		task := Task{
-			close: edge.Close,
+			close:   edge.Close,
+			barrier: edge.WaitIdle,
 			run: func(ctx context.Context) error {
 				defer edge.Drain()
 				for {
@@ -719,9 +728,11 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 					if err != nil {
 						return err
 					}
-					if err := target.Emit(ctx, input); err != nil {
+					emitErr := target.Emit(ctx, input)
+					edge.Complete()
+					if emitErr != nil {
 						input.Drop()
-						return err
+						return emitErr
 					}
 				}
 			},
@@ -822,11 +833,13 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next, done: make(chan struct{})}
 	task := Task{
-		close: state.close,
-		run:   state.run,
-		bind:  func(scope *Scope) { scope.add(state) },
+		close:   state.close,
+		barrier: state.barrier,
+		finish:  state.finish,
+		run:     state.run,
+		bind:    func(scope *Scope) { scope.add(state) },
 	}
 	return links, task, nil
 }
@@ -837,6 +850,9 @@ type zipState[I, O any] struct {
 	inputs []flow.Input[I]
 	read   int
 	next   delivery[O]
+	done   chan struct{}
+	once   sync.Once
+	err    error
 }
 
 func (s *zipState[I, O]) close() {
@@ -851,6 +867,7 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 		for _, edge := range s.edges {
 			edge.Drain()
 		}
+		close(s.done)
 	}()
 	for {
 		s.read = 0
@@ -858,7 +875,7 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 			input, err := edge.Pop(ctx)
 			if errors.Is(err, io.EOF) {
 				s.cleanup()
-				return errors.Join(s.joiner.Flush(ctx, s.next), s.next.close(ctx))
+				return nil
 			}
 			if err != nil {
 				s.cleanup()
@@ -877,8 +894,26 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 
 func (s *zipState[I, O]) cleanup() {
 	dropInputs(s.inputs[:s.read])
+	for index := 0; index < s.read; index++ {
+		s.edges[index].Complete()
+	}
 	clear(s.inputs)
 	s.read = 0
+}
+
+func (s *zipState[I, O]) barrier(ctx context.Context) error {
+	s.close()
+	select {
+	case <-s.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *zipState[I, O]) finish(ctx context.Context) error {
+	s.once.Do(func() { s.err = errors.Join(s.joiner.Flush(ctx, s.next), s.next.close(ctx)) })
+	return s.err
 }
 
 func dropInputs[T any](inputs []flow.Input[T]) {
