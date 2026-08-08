@@ -94,6 +94,12 @@ func TestQueueWaitsRespectCancellationAndClose(t *testing.T) {
 	if err := queue.Push(context.Background(), item{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("push after close error = %v", err)
 	}
+	closedCause := errors.New("shutdown")
+	closedContext, cancelClosed := context.WithCancelCause(context.Background())
+	cancelClosed(closedCause)
+	if err := queue.Push(closedContext, item{}); !errors.Is(err, closedCause) {
+		t.Fatalf("canceled push after close error = %v", err)
+	}
 	value, err := queue.Pop(context.Background())
 	if err != nil || value.value != 1 {
 		t.Fatalf("closed queue retained value = %#v, %v", value, err)

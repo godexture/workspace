@@ -123,6 +123,7 @@ var (
 
 func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	group := task.New(ctx)
+	var finishErr error
 	if err := execution.Start(group); err != nil {
 		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
 	}
@@ -132,13 +133,13 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	} else if err := execution.Quiesce(group.Context()); err != nil {
 		execution.Close()
 		group.Cancel(err)
-	} else if err := execution.Finish(ctx); err != nil {
-		group.Cancel(err)
+	} else if finishErr = execution.Finish(ctx); finishErr != nil {
+		group.Cancel(finishErr)
 	}
 	report := group.Wait(context.Background())
 	execution.Discard()
-	if execution.finishErr != nil {
-		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: execution.finishErr})
+	if finishErr != nil {
+		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: finishErr})
 	}
 	return report
 }

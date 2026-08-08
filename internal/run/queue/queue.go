@@ -96,6 +96,9 @@ func (q *Queue[T]) Push(ctx context.Context, value T) error {
 		q.mu.Lock()
 		if q.closed {
 			q.mu.Unlock()
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
+			}
 			return ErrClosed
 		}
 		if q.fits(item) {
