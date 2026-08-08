@@ -211,3 +211,23 @@ func TestWaitIdleIncludesDownstreamProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQueueTransferAllocatesZero(t *testing.T) {
+	queue, err := New[int](Limit{Items: 1}, Traits[int]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	allocations := testing.AllocsPerRun(1000, func() {
+		if err := queue.Push(ctx, 1); err != nil {
+			panic(err)
+		}
+		if _, err := queue.Pop(ctx); err != nil {
+			panic(err)
+		}
+		queue.Complete()
+	})
+	if allocations != 0 {
+		t.Fatalf("queue transfer allocations = %v", allocations)
+	}
+}

@@ -45,18 +45,20 @@ type entry[T any] struct {
 // owns every successfully pushed value until Pop succeeds. Drain releases all
 // remaining owners through the captured Drop trait.
 type Queue[T any] struct {
-	mu      sync.Mutex
-	changed chan struct{}
-	limit   Limit
-	traits  Traits[T]
-	values  []entry[T]
-	head    int
-	count   int
-	active  int
-	bytes   int64
-	minTime int64
-	maxTime int64
-	closed  bool
+	mu       sync.Mutex
+	notEmpty chan struct{}
+	notFull  chan struct{}
+	idle     chan struct{}
+	limit    Limit
+	traits   Traits[T]
+	values   []entry[T]
+	head     int
+	count    int
+	active   int
+	bytes    int64
+	minTime  int64
+	maxTime  int64
+	closed   bool
 }
 
 func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
@@ -70,10 +72,12 @@ func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
 		return nil, ErrTimeTrait
 	}
 	return &Queue[T]{
-		changed: make(chan struct{}),
-		limit:   limit,
-		traits:  traits,
-		values:  make([]entry[T], limit.Items),
+		notEmpty: make(chan struct{}, 1),
+		notFull:  make(chan struct{}, 1),
+		idle:     make(chan struct{}, 1),
+		limit:    limit,
+		traits:   traits,
+		values:   make([]entry[T], limit.Items),
 	}, nil
 }
 
@@ -96,16 +100,16 @@ func (q *Queue[T]) Push(ctx context.Context, value T) error {
 		}
 		if q.fits(item) {
 			q.push(item)
-			q.signal()
+			q.notify(q.notEmpty)
 			q.mu.Unlock()
 			return nil
 		}
-		changed := q.changed
+		notFull := q.notFull
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return context.Cause(ctx)
-		case <-changed:
+		case <-notFull:
 		}
 	}
 }
@@ -123,7 +127,9 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 		if q.count != 0 {
 			item := q.pop()
 			q.active++
-			q.signal()
+			if !q.closed {
+				q.notify(q.notFull)
+			}
 			q.mu.Unlock()
 			return item.value, nil
 		}
@@ -131,12 +137,12 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 			q.mu.Unlock()
 			return zero, io.EOF
 		}
-		changed := q.changed
+		notEmpty := q.notEmpty
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return zero, context.Cause(ctx)
-		case <-changed:
+		case <-notEmpty:
 		}
 	}
 }
@@ -151,7 +157,9 @@ func (q *Queue[T]) Complete() {
 	q.mu.Lock()
 	if q.active > 0 {
 		q.active--
-		q.signal()
+		if q.count == 0 && q.active == 0 {
+			q.notify(q.idle)
+		}
 	}
 	q.mu.Unlock()
 }
@@ -169,15 +177,16 @@ func (q *Queue[T]) WaitIdle(ctx context.Context) error {
 	for {
 		q.mu.Lock()
 		if q.count == 0 && q.active == 0 {
+			q.notify(q.idle)
 			q.mu.Unlock()
 			return nil
 		}
-		changed := q.changed
+		idle := q.idle
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return context.Cause(ctx)
-		case <-changed:
+		case <-idle:
 		}
 	}
 }
@@ -192,7 +201,8 @@ func (q *Queue[T]) Close() {
 	q.mu.Lock()
 	if !q.closed {
 		q.closed = true
-		q.signal()
+		close(q.notEmpty)
+		close(q.notFull)
 	}
 	q.mu.Unlock()
 }
@@ -211,7 +221,12 @@ func (q *Queue[T]) Drain() int {
 			return dropped
 		}
 		item := q.pop()
-		q.signal()
+		if !q.closed {
+			q.notify(q.notFull)
+		}
+		if q.count == 0 && q.active == 0 {
+			q.notify(q.idle)
+		}
 		q.mu.Unlock()
 		if q.traits.Drop != nil {
 			q.traits.Drop(item.value)
@@ -332,7 +347,9 @@ func (q *Queue[T]) span() int64 {
 	return q.maxTime - q.minTime
 }
 
-func (q *Queue[T]) signal() {
-	close(q.changed)
-	q.changed = make(chan struct{})
+func (q *Queue[T]) notify(condition chan struct{}) {
+	select {
+	case condition <- struct{}{}:
+	default:
+	}
 }
