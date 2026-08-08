@@ -256,28 +256,6 @@ func (e *Execution) Finish(ctx context.Context) error {
 	return e.finishErr
 }
 
-func (e *Execution) Run(ctx context.Context) task.Report {
-	group := task.New(ctx)
-	if err := e.Start(group); err != nil {
-		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
-	}
-	if err := e.WaitSources(ctx, group); err != nil {
-		e.Close()
-		group.Cancel(err)
-	} else if err := e.Quiesce(group.Context()); err != nil {
-		e.Close()
-		group.Cancel(err)
-	} else if err := e.Finish(ctx); err != nil {
-		group.Cancel(err)
-	}
-	report := group.Wait(context.Background())
-	e.Discard()
-	if e.finishErr != nil {
-		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: e.finishErr})
-	}
-	return report
-}
-
 // Discard releases every owner still queued after data tasks have joined.
 // Close must be called first on failure so producers can no longer publish.
 func (e *Execution) Discard() {

@@ -25,8 +25,8 @@ type Program struct {
 	runtime run.Template
 }
 
-func Project(compiled graph.Graph) (plan.Runtime, error) {
-	template, err := compileRuntime(compiled)
+func Project(compiled graph.Graph, policy job.Policy) (plan.Runtime, error) {
+	template, err := compileRuntime(compiled, policy)
 	if err != nil {
 		return plan.Runtime{}, err
 	}
@@ -54,7 +54,7 @@ func New(compiled graph.Graph, public plan.Plan, boundaries bound.State) (Progra
 		}
 		byID[node.ID()] = index
 	}
-	template, err := compileRuntime(compiled)
+	template, err := compileRuntime(compiled, public.EffectivePolicy())
 	if err != nil {
 		return Program{}, err
 	}
@@ -146,12 +146,12 @@ func addRequest(total *resource.Request, value resource.Request) error {
 	return nil
 }
 
-func compileRuntime(compiled graph.Graph) (run.Template, error) {
+func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, error) {
 	nodes := compiled.Nodes()
 	values := make([]run.Node, len(nodes))
 	for index, node := range nodes {
 		execution, _ := plugin.ExecutionOf(node.Compilation())
-		values[index] = run.Node{ID: node.ID(), Shape: node.Shape(), Execution: execution}
+		values[index] = run.Node{ID: node.ID(), Shape: node.Shape(), Outputs: node.Outputs(), Execution: execution}
 	}
-	return run.Compile(values, compiled.Edges())
+	return run.Compile(values, compiled.Edges(), policy.Resources.Queue)
 }

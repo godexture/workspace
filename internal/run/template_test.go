@@ -14,7 +14,10 @@ import (
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/task"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 )
 
@@ -115,7 +118,30 @@ var (
 	templateInput  = schema.Define[templateInputID](schema.Traits[int]{})
 	templateMiddle = schema.Define[templateMiddleID](schema.Traits[int]{})
 	templateOutput = schema.Define[templateOutputID](schema.Traits[int]{})
+	templateQueue  = job.QueuePolicy{Items: 4}
 )
+
+func runTestExecution(ctx context.Context, execution *Execution) task.Report {
+	group := task.New(ctx)
+	if err := execution.Start(group); err != nil {
+		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
+	}
+	if err := execution.WaitSources(ctx, group); err != nil {
+		execution.Close()
+		group.Cancel(err)
+	} else if err := execution.Quiesce(group.Context()); err != nil {
+		execution.Close()
+		group.Cancel(err)
+	} else if err := execution.Finish(ctx); err != nil {
+		group.Cancel(err)
+	}
+	report := group.Wait(context.Background())
+	execution.Discard()
+	if execution.finishErr != nil {
+		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: execution.finishErr})
+	}
+	return report
+}
 
 func TestCompileFusesMaximalLinearProcessorIsland(t *testing.T) {
 	nodes := []Node{
@@ -129,7 +155,7 @@ func TestCompileFusesMaximalLinearProcessorIsland(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges)
+	template, err := Compile(nodes, edges, templateQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +184,7 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 		job.Connect(job.At("a", "out"), job.At("join", "in")),
 		job.Connect(job.At("join", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges)
+	template, err := Compile(nodes, edges, templateQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +197,55 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 	}
 }
 
+func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
+	type timedID struct{}
+	typ := schema.Define[timedID](schema.Traits[int]{
+		Size: func(int) int { return 8 },
+		Time: func(value int) (int64, bool) { return int64(value), true },
+	})
+	base := timing.MustBase(1, 1_000)
+	descriptor := stream.MustDescriptor("timed", typ.Identity(), base, property.New())
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", typ)},
+	)
+	nodes := []Node{
+		{ID: "a", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Execution: drive.NewSource("out", typ)},
+		{ID: "b", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Execution: drive.NewSource("out", typ)},
+		{ID: "join", Shape: joinShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Execution: drive.NewJoiner("in", typ, flow.ZipFanIn, "out", typ)},
+		{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	template, err := Compile(nodes, []job.Edge{
+		job.Connect(job.At("a", "out"), job.At("join", "in")),
+		job.Connect(job.At("b", "out"), job.At("join", "in")),
+		job.Connect(job.At("join", "out"), job.At("sink", "in")),
+	}, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Window: 250 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := template.Projection()
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Watermark != 250 {
+		t.Fatalf("fan-in watermark = %#v", runtime.FanIns)
+	}
+	for _, buffer := range runtime.Buffers {
+		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20, Time: 250}) {
+			t.Fatalf("buffer limit = %#v", buffer.Limit)
+		}
+	}
+}
+
+func TestCompileRejectsNodesOutsideTopologicalOrder(t *testing.T) {
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)
+	_, err := Compile([]Node{
+		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateInput)},
+		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
+	}, []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}, templateQueue)
+	if !errors.Is(err, ErrTopologyOrder) {
+		t.Fatalf("topological order error = %v", err)
+	}
+}
+
 func TestCompileKeepsPlanningOnlyGraphNonExecutable(t *testing.T) {
 	template, err := Compile(
 		[]Node{
@@ -178,6 +253,7 @@ func TestCompileKeepsPlanningOnlyGraphNonExecutable(t *testing.T) {
 			{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)},
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+		templateQueue,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +279,7 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges)
+	template, err := Compile(nodes, edges, templateQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +297,7 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 	if sources != 1 || edgeTasks != 2 {
 		t.Fatalf("task counts = sources %d edges %d", sources, edgeTasks)
 	}
-	report := execution.Run(context.Background())
+	report := runTestExecution(context.Background(), execution)
 	if !report.Complete() || len(report.Failures) != 0 {
 		t.Fatalf("run report = %#v", report)
 	}
@@ -247,6 +323,7 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 			job.Connect(job.At("source", "out"), job.At("panic", "in")),
 			job.Connect(job.At("panic", "out"), job.At("sink", "in")),
 		},
+		templateQueue,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +336,7 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := execution.Run(context.Background())
+	report := runTestExecution(context.Background(), execution)
 	var panicErr *task.PanicError
 	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) || panicErr.Location != "panic" {
 		t.Fatalf("panic report = %#v", report)
@@ -283,6 +360,7 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 				{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 			},
 			[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+			templateQueue,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -290,7 +368,7 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 		reader := &templateReader{
 			templateOperator: templateOperator{shape: sourceShape},
 			typ:              typ,
-			values:           make([]int, failAt+defaultQueueItems*2),
+			values:           make([]int, failAt+templateQueue.Items*2),
 		}
 		execution, err := template.Build([]flow.Operator{
 			reader,
@@ -299,7 +377,7 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		report := execution.Run(context.Background())
+		report := runTestExecution(context.Background(), execution)
 		if len(report.Failures) == 0 {
 			t.Fatalf("run %d unexpectedly succeeded", run)
 		}
@@ -331,6 +409,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+		templateQueue,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -348,7 +427,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report := execution.Run(context.Background()); !report.Complete() || len(report.Failures) != 0 {
+		if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Failures) != 0 {
 			t.Fatalf("mode %v report = %#v", mode, report)
 		}
 		events := collector.Snapshot()
@@ -371,7 +450,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report := execution.Run(context.Background()); !report.Complete() || len(report.Failures) != 0 {
+	if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Failures) != 0 {
 		t.Fatalf("Detailed report = %#v", report)
 	}
 	events := collector.Snapshot()

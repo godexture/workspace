@@ -93,13 +93,20 @@ var (
 		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
 		Drop: func(value audio.Frame[int16]) { value.Release() },
 		Size: func(value audio.Frame[int16]) int { return value.Planes().Layout().Size },
+		Time: frameTime[int16],
 	})
 	f32 = schema.Define[f32SchemaID](schema.Traits[audio.Frame[float32]]{
 		Fork: func(value audio.Frame[float32]) audio.Frame[float32] { return value.Share() },
 		Drop: func(value audio.Frame[float32]) { value.Release() },
 		Size: func(value audio.Frame[float32]) int { return value.Planes().Layout().Size },
+		Time: frameTime[float32],
 	})
 )
+
+func frameTime[S audio.Sample](value audio.Frame[S]) (int64, bool) {
+	pts, ok := value.PTS().Get()
+	return pts.Int64(), ok
+}
 
 // S16 returns the canonical signed 16-bit planar frame schema.
 func S16() schema.Type[audio.Frame[int16]] { return s16 }

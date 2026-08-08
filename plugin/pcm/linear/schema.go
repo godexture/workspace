@@ -20,11 +20,19 @@ var (
 		Fork: func(value packet.Chunk) packet.Chunk { return value.Share() },
 		Drop: func(value packet.Chunk) { value.Release() },
 		Size: func(value packet.Chunk) int { return len(value.Bytes()) },
+		Time: func(value packet.Chunk) (int64, bool) {
+			pts, ok := value.PTS().Get()
+			return pts.Int64(), ok
+		},
 	})
 	packetSchema = schema.Define[packetSchemaID](schema.Traits[packet.Packet]{
 		Fork: func(value packet.Packet) packet.Packet { return value.Share() },
 		Drop: func(value packet.Packet) { value.Release() },
 		Size: func(value packet.Packet) int { return len(value.Bytes()) },
+		Time: func(value packet.Packet) (int64, bool) {
+			pts, ok := value.PTS().Get()
+			return pts.Int64(), ok
+		},
 	})
 )
 

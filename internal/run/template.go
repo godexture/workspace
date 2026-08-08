@@ -7,24 +7,27 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 )
 
 var (
 	ErrTopology       = errors.New("runtime topology does not match typed execution bindings")
+	ErrTopologyOrder  = errors.New("runtime nodes are not in topological order")
 	ErrUnsupportedFan = errors.New("fan-in policy has no runtime implementation")
 )
-
-const defaultQueueItems = 4
 
 type Node struct {
 	ID        job.NodeID
 	Shape     flow.Shape
+	Outputs   flow.Descriptors[stream.Descriptor]
 	Execution any
 }
 
@@ -33,6 +36,7 @@ type node struct {
 	shape   flow.Shape
 	binding drive.Binding
 	kind    drive.Kind
+	base    timing.Base
 }
 
 type edge struct {
@@ -52,8 +56,8 @@ type Template struct {
 	executable bool
 }
 
-func Compile(values []Node, connections []job.Edge) (Template, error) {
-	if len(values) == 0 {
+func Compile(values []Node, connections []job.Edge, policy job.QueuePolicy) (Template, error) {
+	if len(values) == 0 || !policy.Valid() {
 		return Template{}, ErrTopology
 	}
 	result := Template{
@@ -83,7 +87,13 @@ func Compile(values []Node, connections []job.Edge) (Template, error) {
 		if token.Kind() == drive.Joiner && token.FanIn() != flow.ZipFanIn {
 			return Template{}, ErrUnsupportedFan
 		}
-		result.nodes[index] = node{id: value.ID, shape: value.Shape.Clone(), binding: token, kind: token.Kind()}
+		var base timing.Base
+		if token.Kind() != drive.Sink {
+			if descriptor, ok := value.Outputs.One(token.Output()); ok {
+				base = descriptor.TimeBase()
+			}
+		}
+		result.nodes[index] = node{id: value.ID, shape: value.Shape.Clone(), binding: token, kind: token.Kind(), base: base}
 	}
 	result.edges = make([]edge, len(connections))
 	for index, connection := range connections {
@@ -92,7 +102,14 @@ func Compile(values []Node, connections []job.Edge) (Template, error) {
 		if !connection.Valid() || !fromOK || !toOK {
 			return Template{}, ErrTopology
 		}
-		result.edges[index] = edge{value: connection, from: from, to: to, limit: queue.Limit{Items: defaultQueueItems}}
+		if from >= to {
+			return Template{}, ErrTopologyOrder
+		}
+		limit, err := result.edgeLimit(from, to, policy)
+		if err != nil {
+			return Template{}, err
+		}
+		result.edges[index] = edge{value: connection, from: from, to: to, limit: limit}
 		result.outgoing[from] = append(result.outgoing[from], index)
 		result.incoming[to] = append(result.incoming[to], index)
 	}
@@ -102,10 +119,58 @@ func Compile(values []Node, connections []job.Edge) (Template, error) {
 	if err := result.validateEdges(); err != nil {
 		return Template{}, err
 	}
+	if err := result.validateFanInLimits(); err != nil {
+		return Template{}, err
+	}
 	result.placeBuffers()
 	result.projection = result.project()
 	result.executable = true
 	return result, nil
+}
+
+func (t Template) validateFanInLimits() error {
+	for index, value := range t.nodes {
+		if value.kind != drive.Joiner {
+			continue
+		}
+		incoming := t.incoming[index]
+		limit := t.edges[incoming[0]].limit
+		base := t.nodes[t.edges[incoming[0]].from].base
+		for _, edgeIndex := range incoming[1:] {
+			edge := t.edges[edgeIndex]
+			if edge.limit != limit || limit.Time != 0 && t.nodes[edge.from].base != base {
+				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical queue limits and time bases"))
+			}
+		}
+	}
+	return nil
+}
+
+func (t Template) edgeLimit(from, to int, policy job.QueuePolicy) (queue.Limit, error) {
+	limit := queue.Limit{Items: policy.Items}
+	measure := t.nodes[from].binding.OutputMeasures()
+	if t.nodes[to].kind == drive.Joiner {
+		measure = t.nodes[to].binding.InputMeasures()
+	}
+	if measure.Size {
+		limit.Bytes = int64(policy.Bytes)
+	}
+	if !measure.Time || policy.Window == 0 {
+		return limit, nil
+	}
+	base := t.nodes[from].base
+	if !base.Valid() {
+		return queue.Limit{}, ErrTopology
+	}
+	ticks, err := timing.MustBase(1, int64(time.Second)).Rescale(int64(policy.Window), base, timing.RoundCeil)
+	if err != nil {
+		return queue.Limit{}, errors.Join(ErrTopology, err)
+	}
+	if ticks < 1 {
+		ticks = 1
+	}
+	limit.Time = ticks
+	return limit, nil
 }
 
 func (t Template) Executable() bool { return t.executable }
@@ -225,12 +290,13 @@ func (t Template) project() plan.Runtime {
 		sort.Slice(incoming, func(left, right int) bool {
 			return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
 		})
+		limit := t.edges[incoming[0]].limit
 		projection := plan.FanIn{
 			Node:      value.id.String(),
 			Port:      value.binding.Input(),
 			Policy:    value.binding.FanIn(),
-			Limit:     projectLimit(queue.Limit{Items: defaultQueueItems}),
-			Watermark: 0,
+			Limit:     projectLimit(limit),
+			Watermark: limit.Time,
 		}
 		for _, edgeIndex := range incoming {
 			from := t.edges[edgeIndex].value.From()

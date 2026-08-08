@@ -228,6 +228,41 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}
 }
 
+func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
+	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	fixture := compilePCMProgram(t, description)
+	graph, ok := fixture.request.Graph()
+	if !ok {
+		t.Fatal("PCM fixture has no graph")
+	}
+	policy, ok := job.PolicyFor(job.Realtime)
+	if !ok {
+		t.Fatal("realtime policy did not expand")
+	}
+	request, err := job.New(nil, nil, graph, job.WithPolicy(policy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := fixture.host.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	var sized bool
+	for _, buffer := range prepared.Plan().Runtime().Buffers {
+		if buffer.Limit.Bytes == int64(policy.Resources.Queue.Bytes) {
+			sized = true
+		}
+	}
+	if !sized {
+		t.Fatalf("realtime runtime limits = %#v", prepared.Plan().Runtime().Buffers)
+	}
+}
+
 func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
 	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
 	fixture := compilePCMProgram(t, description)

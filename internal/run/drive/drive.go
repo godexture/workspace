@@ -24,6 +24,7 @@ var (
 	ErrReadWithItem = errors.New("reader returned an owned item together with an error")
 	ErrUnsupported  = errors.New("execution binding does not support this operation")
 	ErrForkTrait    = errors.New("owned fan-out requires a fork trait")
+	ErrWatermark    = errors.New("fan-in batch exceeds its timestamp watermark")
 )
 
 type Kind uint8
@@ -42,29 +43,38 @@ type port struct {
 	schema schema.Descriptor
 }
 
+type Measures struct {
+	Size bool
+	Time bool
+}
+
 type Binding struct {
-	kind       Kind
-	input      port
-	output     port
-	fanIn      flow.FanInPolicy
-	openSink   func(flow.Operator, string) (Link, error)
-	prepend    func(flow.Operator, Link, string) (Link, error)
-	openSource func(flow.Operator, Link) (Task, error)
-	fanout     func([]Link) (Link, error)
-	buffer     func(queue.Limit, Link) (Link, Task, error)
-	observe    func(Link, *observe.Local) (Link, error)
-	openJoiner func(flow.Operator, int, queue.Limit, Link) ([]Link, Task, error)
-	validate   func(flow.Operator) error
+	kind        Kind
+	input       port
+	output      port
+	inputStats  Measures
+	outputStats Measures
+	fanIn       flow.FanInPolicy
+	openSink    func(flow.Operator, string) (Link, error)
+	prepend     func(flow.Operator, Link, string) (Link, error)
+	openSource  func(flow.Operator, Link) (Task, error)
+	fanout      func([]Link) (Link, error)
+	buffer      func(queue.Limit, Link) (Link, Task, error)
+	observe     func(Link, *observe.Local) (Link, error)
+	openJoiner  func(flow.Operator, int, queue.Limit, Link) ([]Link, Task, error)
+	validate    func(flow.Operator) error
 }
 
 func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) Binding {
 	traits := out.Traits()
 	inputTraits := in.Traits()
 	return Binding{
-		kind:   Joiner,
-		input:  port{id: input, schema: in.Descriptor()},
-		output: port{id: output, schema: out.Descriptor()},
-		fanIn:  policy,
+		kind:        Joiner,
+		input:       port{id: input, schema: in.Descriptor()},
+		output:      port{id: output, schema: out.Descriptor()},
+		inputStats:  measuresOf(inputTraits),
+		outputStats: measuresOf(traits),
+		fanIn:       policy,
 		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
 			if !ok {
@@ -94,8 +104,9 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 func NewSource[T any](output string, typ schema.Type[T]) Binding {
 	traits := typ.Traits()
 	return Binding{
-		kind:   Source,
-		output: port{id: output, schema: typ.Descriptor()},
+		kind:        Source,
+		output:      port{id: output, schema: typ.Descriptor()},
+		outputStats: measuresOf(traits),
 		openSource: func(operator flow.Operator, next Link) (Task, error) {
 			reader, ok := operator.(flow.Reader[T])
 			if !ok {
@@ -121,10 +132,13 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 
 func NewProcessor[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) Binding {
 	traits := out.Traits()
+	inputTraits := in.Traits()
 	return Binding{
-		kind:   Processor,
-		input:  port{id: input, schema: in.Descriptor()},
-		output: port{id: output, schema: out.Descriptor()},
+		kind:        Processor,
+		input:       port{id: input, schema: in.Descriptor()},
+		output:      port{id: output, schema: out.Descriptor()},
+		inputStats:  measuresOf(inputTraits),
+		outputStats: measuresOf(traits),
 		prepend: func(operator flow.Operator, next Link, node string) (Link, error) {
 			processor, ok := operator.(flow.Processor[I, O])
 			if !ok {
@@ -149,9 +163,11 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 }
 
 func NewSink[T any](input string, typ schema.Type[T]) Binding {
+	traits := typ.Traits()
 	return Binding{
-		kind:  Sink,
-		input: port{id: input, schema: typ.Descriptor()},
+		kind:       Sink,
+		input:      port{id: input, schema: typ.Descriptor()},
+		inputStats: measuresOf(traits),
 		openSink: func(operator flow.Operator, node string) (Link, error) {
 			writer, ok := operator.(flow.Writer[T])
 			if !ok {
@@ -220,9 +236,15 @@ func (b Binding) Validate(shape flow.Shape) error {
 	return nil
 }
 
-func (b Binding) Input() string           { return b.input.id }
-func (b Binding) Output() string          { return b.output.id }
-func (b Binding) FanIn() flow.FanInPolicy { return b.fanIn }
+func (b Binding) Input() string            { return b.input.id }
+func (b Binding) Output() string           { return b.output.id }
+func (b Binding) FanIn() flow.FanInPolicy  { return b.fanIn }
+func (b Binding) InputMeasures() Measures  { return b.inputStats }
+func (b Binding) OutputMeasures() Measures { return b.outputStats }
+
+func measuresOf[T any](traits schema.Traits[T]) Measures {
+	return Measures{Size: traits.Size != nil, Time: traits.Time != nil}
+}
 
 func (b Binding) OpenSink(operator flow.Operator) (Link, error) {
 	return b.OpenSinkAt(operator, "")
@@ -557,15 +579,16 @@ func (p *processorDelivery[I, O]) cleanup() {
 }
 
 type fanoutDelivery[T any] struct {
-	outputs  []delivery[T]
-	values   []T
-	pending  []bool
-	fork     func(T) T
-	drop     func(T)
-	original flow.Input[T]
-	active   bool
-	once     sync.Once
-	closeErr error
+	outputs         []delivery[T]
+	values          []T
+	pending         []bool
+	fork            func(T) T
+	drop            func(T)
+	original        flow.Input[T]
+	originalPending bool
+	active          bool
+	once            sync.Once
+	closeErr        error
 }
 
 func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
@@ -592,8 +615,8 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 		}
 		return linkOf[T](&fanoutDelivery[T]{
 			outputs: outputs,
-			values:  make([]T, len(outputs)),
-			pending: make([]bool, len(outputs)),
+			values:  make([]T, len(outputs)-1),
+			pending: make([]bool, len(outputs)-1),
 			fork:    traits.Fork,
 			drop:    traits.Drop,
 		}), nil
@@ -602,6 +625,7 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 
 func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
 	f.original = input
+	f.originalPending = true
 	f.active = true
 	value := input.Value()
 	for index := range f.values {
@@ -611,7 +635,7 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error
 		}
 		f.pending[index] = true
 	}
-	for index, output := range f.outputs {
+	for index, output := range f.outputs[:len(f.outputs)-1] {
 		branch := flow.NewInputWithTraits(f.values[index], f.fork, f.drop)
 		f.pending[index] = false
 		if err := output.Emit(ctx, branch); err != nil {
@@ -623,12 +647,19 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error
 			}
 			f.clearValues()
 			f.active = false
+			f.originalPending = false
 			f.original = flow.Input[T]{}
 			return err
 		}
 	}
+	f.originalPending = false
+	if err := f.outputs[len(f.outputs)-1].Emit(ctx, input); err != nil {
+		f.clearValues()
+		f.active = false
+		f.original = flow.Input[T]{}
+		return err
+	}
 	f.clearValues()
-	input.Drop()
 	f.active = false
 	f.original = flow.Input[T]{}
 	return nil
@@ -660,7 +691,9 @@ func (f *fanoutDelivery[T]) cleanup() {
 	if !f.active {
 		return
 	}
-	f.original.Drop()
+	if f.originalPending {
+		f.original.Drop()
+	}
 	for index, pending := range f.pending {
 		if pending && f.drop != nil {
 			f.drop(f.values[index])
@@ -669,6 +702,7 @@ func (f *fanoutDelivery[T]) cleanup() {
 	f.clearValues()
 	clear(f.pending)
 	f.original = flow.Input[T]{}
+	f.originalPending = false
 	f.active = false
 }
 
@@ -844,7 +878,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next, done: make(chan struct{})}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
 	task := Task{
 		close:   state.close,
 		discard: state.discard,
@@ -857,14 +891,16 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 }
 
 type zipState[I, O any] struct {
-	joiner flow.Joiner[I, O]
-	edges  []*queue.Queue[flow.Input[I]]
-	inputs []flow.Input[I]
-	read   int
-	next   delivery[O]
-	done   chan struct{}
-	once   sync.Once
-	err    error
+	joiner    flow.Joiner[I, O]
+	edges     []*queue.Queue[flow.Input[I]]
+	inputs    []flow.Input[I]
+	read      int
+	next      delivery[O]
+	time      func(I) (int64, bool)
+	watermark int64
+	done      chan struct{}
+	once      sync.Once
+	err       error
 }
 
 func (s *zipState[I, O]) close() {
@@ -902,12 +938,36 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 			s.inputs[index] = input
 			s.read++
 		}
+		if !s.withinWatermark() {
+			s.cleanup()
+			return ErrWatermark
+		}
 		if err := s.joiner.Process(ctx, flow.NewBatch(s.inputs), s.next); err != nil {
 			s.cleanup()
 			return err
 		}
 		s.cleanup()
 	}
+}
+
+func (s *zipState[I, O]) withinWatermark() bool {
+	if s.watermark == 0 {
+		return true
+	}
+	minimum, maximum := int64(0), int64(0)
+	for index, input := range s.inputs[:s.read] {
+		value, ok := s.time(input.Value())
+		if !ok {
+			return false
+		}
+		if index == 0 || value < minimum {
+			minimum = value
+		}
+		if index == 0 || value > maximum {
+			maximum = value
+		}
+	}
+	return uint64(maximum)-uint64(minimum) <= uint64(s.watermark)
 }
 
 func (s *zipState[I, O]) cleanup() {

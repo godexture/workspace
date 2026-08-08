@@ -597,7 +597,7 @@ func TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen(t *testing.T) {
 	state := &lifecycleState{}
 	instance, request := lifecycleFixture(t, state)
 	policy := request.Policy()
-	policy.Resources = job.ResourcePolicy{Limited: true, Limit: resource.Grant{Queue: 7}}
+	policy.Resources = job.ResourcePolicy{Limited: true, Limit: resource.Grant{Queue: 7}, Queue: policy.Resources.Queue}
 	graph, _ := request.Graph()
 	limited, err := job.New(request.Inputs(), request.Outputs(), graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
 	if err != nil {

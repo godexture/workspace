@@ -187,7 +187,7 @@ func TestFanoutRetainsRollbackOwnerAcrossPartialFailure(t *testing.T) {
 		t.Fatalf("fan-out error = %v", err)
 	}
 	input.Drop()
-	if owners.forks.Load() != 2 || owners.drops.Load() != 3 {
+	if owners.forks.Load() != 1 || owners.drops.Load() != 2 {
 		t.Fatalf("fan-out ownership = forks %d drops %d", owners.forks.Load(), owners.drops.Load())
 	}
 	if got := left.Values(); len(got) != 1 || got[0] != 9 || len(right.Values()) != 0 {
@@ -504,6 +504,44 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	}
 	if joiner.flush.Load() != 1 {
 		t.Fatalf("zip flushes = %d", joiner.flush.Load())
+	}
+}
+
+func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
+	inputOwners := &ownership{}
+	outputOwners := &ownership{}
+	in := ownedSchema[driveInputID](inputOwners)
+	out := ownedSchema[driveOutputID](outputOwners)
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sinkLink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2, Time: 5}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- task.Run(context.Background()) }()
+	left, _ := deliveryOf[owned](inputs[0])
+	right, _ := deliveryOf[owned](inputs[1])
+	if err := left.Emit(context.Background(), flow.NewInput(owned{value: 1}, in)); err != nil {
+		t.Fatal(err)
+	}
+	if err := right.Emit(context.Background(), flow.NewInput(owned{value: 10}, in)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrWatermark) {
+		t.Fatalf("watermark error = %v", err)
+	}
+	task.Discard()
+	if inputOwners.drops.Load() != 2 {
+		t.Fatalf("watermark input drops = %d", inputOwners.drops.Load())
 	}
 }
 

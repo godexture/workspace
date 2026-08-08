@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/timing"
 )
 
 type foreignPropertyID struct{}
@@ -71,6 +73,26 @@ func TestCanonicalSchemasKeepScalarTypeOutOfIdentity(t *testing.T) {
 		t.Fatalf("S16 payload = %v", got)
 	}
 	var _ audio.Frame[int16]
+}
+
+func TestCanonicalFrameSchemasExposePTSForQueueWindows(t *testing.T) {
+	allocator, err := buffer.NewAllocator(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planes, err := allocator.FromBytes([]byte{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := audio.NewFrame[int16](timing.SomePTS(timing.NewPTS(7)), 1, planes)
+	if err != nil {
+		planes.Release()
+		t.Fatal(err)
+	}
+	defer frame.Release()
+	if value, ok := S16().Time(frame); !ok || value != 7 {
+		t.Fatalf("frame time = %d, %v", value, ok)
+	}
 }
 
 func TestDeclarationsCoverVocabulary(t *testing.T) {

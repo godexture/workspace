@@ -1,6 +1,11 @@
 package job
 
-import "github.com/godexture/godec/resource"
+import (
+	"math"
+	"time"
+
+	"github.com/godexture/godec/resource"
+)
 
 // Preset is user-facing shorthand expanded before component compilation.
 type Preset uint8
@@ -98,8 +103,25 @@ func (p ContinuityPolicy) Valid() bool {
 type ResourcePolicy struct {
 	Limited    bool
 	Limit      resource.Grant
+	Queue      QueuePolicy
 	AllowSpool bool
 }
+
+// QueuePolicy selects the per-edge bounds fixed into the executable Plan.
+// Bytes and Window are applied only when the connected schema supplies the
+// corresponding inexpensive trait. Window is converted to stream-local ticks
+// during planning, never in the item loop.
+type QueuePolicy struct {
+	Items  int
+	Bytes  resource.Bytes
+	Window time.Duration
+}
+
+func (p QueuePolicy) Valid() bool {
+	return p.Items > 0 && uint64(p.Bytes) <= math.MaxInt64 && p.Window >= 0
+}
+
+func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() }
 
 // Policy is the expanded vector consumed by the planner. Preset is retained
 // only so a Plan can explain which user-facing shorthand produced the vector.
@@ -115,7 +137,7 @@ type Policy struct {
 }
 
 func (p Policy) Valid() bool {
-	return p.Preset.Valid() && p.Goal.Valid() && p.Accuracy.Valid() && p.Repeatability.Valid() && p.Artifact.Valid() && p.Implementation.Valid() && p.Continuity.Valid()
+	return p.Preset.Valid() && p.Goal.Valid() && p.Accuracy.Valid() && p.Repeatability.Valid() && p.Artifact.Valid() && p.Implementation.Valid() && p.Continuity.Valid() && p.Resources.Valid()
 }
 
 // PolicyFor expands a named preset into an explicit policy vector.
@@ -129,6 +151,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Artifact:       ArtifactNone,
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
+		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}},
 	}
 	switch preset {
 	case Fast:
@@ -139,6 +162,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		policy.Implementation = ImplementationPolicy{PureGo: true}
 	case Realtime:
 		policy.Goal = LatencyGoal
+		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}
 	default:
 		return Policy{}, false
 	}
