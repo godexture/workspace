@@ -201,7 +201,7 @@ type Limit struct {
 
 `job.ResourcePolicy.Queue` が per-edge policy を Plan/Program へ固定する。既定の Fast/Stable/Portable は 4 item の item-only queue、Realtime は 2 item、16 MiB、250 ms を既定とする。schema が安価な `Size` trait を提供する場合だけ byte limit を、`Time` trait と stream time base がある場合だけ time window を有効にする。wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない dimension は無視して item limit を必ず残す。
 
-fan-in は接続 edge の limit/time base が一致する場合だけ compile し、timestamp/zip policy に必要な watermark を同じ tick 単位で Plan に投影する。runtime queue は items/bytes/time と watermark を同じ policy snapshot から強制する。
+fan-in は接続 edge の limit/time base が一致する場合だけ compile し、timestamp/zip policy に必要な watermark を同じ tick 単位で Plan に投影する。runtime queue は items/bytes/time と watermark を同じ policy snapshot から強制する。M5 では `QueuePolicy.Window` を edge queue の timestamp span 上限と zip fan-in の許容ずれの両方へ暫定利用し、超過を `ErrWatermark` で fail-closed にする。M7 の MP4/multi-stream consumer を入れる前に、物理的な buffering 上限と media semantics 上の alignment tolerance を別 policy へ分け、late input の待機、失敗、drop、conceal のどれを選ぶかを fan-in policy ごとに明示する。
 
 resource manager は Open 時に codec workspace、worker 数、大きな ring 等の粗粒度 grant を与える。M6 で spool consumer を入れる時に temporary storage の quota と cleanup authority を同じ manager へ追加する。packet/frame ごとの acquire/release を中央 manager に送らない。
 

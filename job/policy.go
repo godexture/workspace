@@ -111,7 +111,9 @@ type ResourcePolicy struct {
 // QueuePolicy selects the per-edge bounds fixed into the executable Plan.
 // Bytes and Window are applied only when the connected schema supplies the
 // corresponding inexpensive trait. Window is converted to stream-local ticks
-// during planning, never in the item loop.
+// during planning, never in the item loop. In M5 it also supplies the
+// fail-closed timestamp tolerance for zip fan-in; that semantic alignment
+// tolerance is scheduled to become a separate policy in M7.
 type QueuePolicy struct {
 	Items  int
 	Bytes  resource.Bytes

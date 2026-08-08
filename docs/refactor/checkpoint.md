@@ -22,7 +22,7 @@
 | M4 | 完了 | M4-1〜M4-4 で typed Compile/Suggest、graph validation、bounded solver、public `Plan`/private `Program`、Provider/Endpoint binding、実 linear PCM、N=1/4/16 filter region の二 converter gate を完了した。対象 race/vet、全 package build、docs check、全 module scalar/SIMD gate を通過した。 |
 | M5 | 完了 | typed execution island、ownership/COW、policy-driven bounded queue、cancel/task、Finalize、transactional Host lifecycle、structured Result、PCM walking skeleton、cut 前 paired measurement と production Host performance gate を完成し、旧 contract を削除して未移植 algorithm を `_legacy/` へ隔離した。証拠は [runtime.md](runtime.md#m5-完了条件) と [performance.md](performance.md#m5-runtime-performance-gate) を参照する。 |
 | M6 | 未着手 | 着手前の引継ぎ gate は、file Provider/session の acquire、候補間で共有する bounded probe、Format inspect、capability 再検証、明示 spool insertion、temporary quota/cleanup を WAVE の最初の実 consumerへ接続すること。`standard`/`integration`/`testkit` と最短 surface の固有条件と併せて逐条化してから実装する。 |
-| M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含む。 |
+| M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含め、`QueuePolicy.Window` が兼ねる queue bound と fan-in alignment tolerance を分離して late-input policy を明示する。 |
 | M8 | 未着手 | 完了時に `_legacy/` を削除する。 |
 | M9 | 未着手 | — |
 | M10 | 未着手 | 各 milestone と並行して品質・配布基盤へ着手した時点で更新する。 |

@@ -10,7 +10,6 @@ type outputRuntime struct {
 	flusher         access.Flusher
 	syncer          access.Syncer
 	opened          bool
-	prepared        bool
 	commitAttempted bool
 	committed       bool
 }
@@ -42,7 +41,6 @@ func (r *runner) finishOutputs() *Failure {
 		if failure := r.invoke(PrepareCommitPhase, node, "", output.transaction.PrepareCommit); failure != nil {
 			return failure
 		}
-		output.prepared = true
 	}
 	for _, output := range r.outputs {
 		if output.transaction == nil {
