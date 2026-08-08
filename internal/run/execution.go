@@ -217,11 +217,11 @@ func (e *Execution) WaitSources(ctx context.Context, group *task.Group) error {
 	return nil
 }
 
-// Drain establishes a quiescent data barrier after every Reader has reached
+// Quiesce establishes a data barrier after every Reader has reached
 // EOF. Boundaries are visited upstream-to-downstream, so all ordinary Process
 // calls finish before Host invokes Finalize while queues remain able to accept
 // delayed Flush output.
-func (e *Execution) Drain(ctx context.Context) error {
+func (e *Execution) Quiesce(ctx context.Context) error {
 	if e == nil {
 		return ErrStarted
 	}
@@ -264,17 +264,32 @@ func (e *Execution) Run(ctx context.Context) task.Report {
 	if err := e.WaitSources(ctx, group); err != nil {
 		e.Close()
 		group.Cancel(err)
-	} else if err := e.Drain(group.Context()); err != nil {
+	} else if err := e.Quiesce(group.Context()); err != nil {
 		e.Close()
 		group.Cancel(err)
 	} else if err := e.Finish(ctx); err != nil {
 		group.Cancel(err)
 	}
 	report := group.Wait(context.Background())
+	e.Discard()
 	if e.finishErr != nil {
 		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: e.finishErr})
 	}
 	return report
+}
+
+// Discard releases every owner still queued after data tasks have joined.
+// Close must be called first on failure so producers can no longer publish.
+func (e *Execution) Discard() {
+	if e == nil {
+		return
+	}
+	for index := len(e.sources) - 1; index >= 0; index-- {
+		e.sources[index].task.Discard()
+	}
+	for index := len(e.edges) - 1; index >= 0; index-- {
+		e.edges[index].task.Discard()
+	}
 }
 
 func (e *Execution) Close() {

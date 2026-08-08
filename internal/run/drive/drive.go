@@ -397,6 +397,7 @@ type Task struct {
 	barrier func(context.Context) error
 	finish  func(context.Context) error
 	close   func()
+	discard func()
 	bind    func(*Scope)
 }
 
@@ -412,6 +413,15 @@ func (t Task) Run(ctx context.Context) error {
 func (t Task) Close() {
 	if t.close != nil {
 		t.close()
+	}
+}
+
+// Discard releases queued owners after every producer and consumer using the
+// task has joined. It is deliberately separate from Close: closing wakes
+// tasks, while discarding is only race-free after they have stopped.
+func (t Task) Discard() {
+	if t.discard != nil {
+		t.discard()
 	}
 }
 
@@ -717,6 +727,7 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 		}
 		task := Task{
 			close:   edge.Close,
+			discard: func() { edge.Drain() },
 			barrier: edge.WaitIdle,
 			run: func(ctx context.Context) error {
 				defer edge.Drain()
@@ -836,6 +847,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next, done: make(chan struct{})}
 	task := Task{
 		close:   state.close,
+		discard: state.discard,
 		barrier: state.barrier,
 		finish:  state.finish,
 		run:     state.run,
@@ -858,6 +870,12 @@ type zipState[I, O any] struct {
 func (s *zipState[I, O]) close() {
 	for _, edge := range s.edges {
 		edge.Close()
+	}
+}
+
+func (s *zipState[I, O]) discard() {
+	for _, edge := range s.edges {
+		edge.Drain()
 	}
 }
 

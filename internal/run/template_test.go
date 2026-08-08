@@ -51,6 +51,21 @@ func (*panickingProcessor) Process(context.Context, flow.Input[int], flow.Emitte
 
 func (*panickingProcessor) Flush(context.Context, flow.Emitter[int]) error { return nil }
 
+type failingWriter struct {
+	templateOperator
+	failAt int
+	writes int
+}
+
+func (w *failingWriter) Write(_ context.Context, input flow.Input[int]) error {
+	if w.writes == w.failAt {
+		return errors.New("sink failure")
+	}
+	w.writes++
+	input.Drop()
+	return nil
+}
+
 type templateProcessor struct {
 	templateOperator
 	in  schema.Type[int]
@@ -251,6 +266,47 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 	}
 	if drops.Load() != 1 {
 		t.Fatalf("panic drop count = %d", drops.Load())
+	}
+}
+
+func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
+	type failureSchemaID struct{}
+	const failAt = 50_000
+	for run := range 40 {
+		var dropped atomic.Int64
+		typ := schema.Define[failureSchemaID](schema.Traits[int]{Drop: func(int) { dropped.Add(1) }})
+		sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+		sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+		template, err := Compile(
+			[]Node{
+				{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
+				{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
+			},
+			[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader := &templateReader{
+			templateOperator: templateOperator{shape: sourceShape},
+			typ:              typ,
+			values:           make([]int, failAt+defaultQueueItems*2),
+		}
+		execution, err := template.Build([]flow.Operator{
+			reader,
+			&failingWriter{templateOperator: templateOperator{shape: sinkShape}, failAt: failAt},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		report := execution.Run(context.Background())
+		if len(report.Failures) == 0 {
+			t.Fatalf("run %d unexpectedly succeeded", run)
+		}
+		emitted := int64(reader.index)
+		if got := dropped.Load(); got != emitted {
+			t.Fatalf("run %d dropped = %d, want %d emitted items", run, got, emitted)
+		}
 	}
 }
 

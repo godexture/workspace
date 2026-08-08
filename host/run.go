@@ -274,7 +274,7 @@ func (r *runner) runData() *Failure {
 		failure := failureOf(RunPhase, "", "runtime/source", err)
 		return &failure
 	}
-	if failure := r.invoke(RunPhase, "", "runtime/drain", execution.Drain); failure != nil {
+	if failure := r.invoke(RunPhase, "", "runtime/quiesce", execution.Quiesce); failure != nil {
 		return failure
 	}
 	if failure := r.finalize(); failure != nil {
@@ -286,6 +286,7 @@ func (r *runner) runData() *Failure {
 		return failure
 	}
 	report := r.data.Wait(r.ctx)
+	execution.Discard()
 	if failure := r.acceptTaskReport(report, false); failure != nil {
 		return failure
 	}
