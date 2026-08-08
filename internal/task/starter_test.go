@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/godexture/godec/plugin"
 )
 
 func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
@@ -21,7 +23,7 @@ func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	if err := starter.Start("excess", func(context.Context) error { return nil }); !errors.Is(err, ErrWorkerLimit) {
+	if err := starter.Start("excess", func(context.Context) error { return nil }); !errors.Is(err, plugin.ErrWorkerLimit) {
 		t.Fatalf("excess worker error = %v", err)
 	}
 	close(release)
@@ -47,7 +49,7 @@ func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
 }
 
 func TestStarterWithoutWorkerGrantRejectsWork(t *testing.T) {
-	if err := NewStarter(New(context.Background()), 0).Start("work", func(context.Context) error { return nil }); !errors.Is(err, ErrWorkerLimit) {
+	if err := NewStarter(New(context.Background()), 0).Start("work", func(context.Context) error { return nil }); !errors.Is(err, plugin.ErrWorkerLimit) {
 		t.Fatalf("zero worker grant error = %v", err)
 	}
 }

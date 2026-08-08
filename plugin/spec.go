@@ -15,12 +15,22 @@ type ShapeContext struct{}
 type CompileContext struct{}
 type SuggestContext struct{}
 
+// ErrWorkerLimit is returned by TaskStarter.Start when a component has no
+// unused worker capacity in the resource.Request declared by Compile.
+var ErrWorkerLimit = errors.New("component worker grant is exhausted")
+
+// TaskStarter starts component-owned background work under Host cancellation
+// and join ownership. Compile must request at least the maximum number of
+// concurrent tasks through resource.Request.Workers. Start returns
+// ErrWorkerLimit when that grant is exhausted, including when no workers were
+// requested.
 type TaskStarter interface {
 	Start(string, func(context.Context) error) error
 }
 
 type OpenServices struct {
-	Buffers     *buffer.Allocator
+	Buffers *buffer.Allocator
+	// Tasks enforces the Workers grant returned by this component's Compile.
 	Tasks       TaskStarter
 	Diagnostics diagnostic.Sink
 	// Boundary is the one node-local Access/Endpoint binding selected by the
@@ -60,8 +70,12 @@ func (c OpenContext) Context() context.Context {
 }
 
 func (c OpenContext) Buffers() *buffer.Allocator   { return c.buffers }
-func (c OpenContext) Tasks() TaskStarter           { return c.tasks }
 func (c OpenContext) Diagnostics() diagnostic.Sink { return c.diagnostics }
+
+// Tasks returns the node-local task starter. The component's Compile result
+// must declare resource.Request{Workers: N} before Open starts up to N
+// concurrent tasks; otherwise Start returns ErrWorkerLimit.
+func (c OpenContext) Tasks() TaskStarter { return c.tasks }
 
 // Boundary recovers the one typed Access/Endpoint binding attached to this
 // node. It is a control-plane assertion performed once during Open; media

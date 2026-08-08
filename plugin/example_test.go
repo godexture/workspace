@@ -11,15 +11,28 @@ import (
 	"github.com/godexture/godec/media/key"
 	mediaSchema "github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type examplePluginID struct{}
 type exampleComponentID struct{}
+type exampleWorkerComponentID struct{}
 type exampleKeyID struct{}
 type exampleUnitID struct{}
 
 type exampleConfig struct{ Level int }
+type exampleWorkerConfig struct{}
 type exampleUnit int
+
+type exampleTaskStarter struct{ completed chan string }
+
+func (s exampleTaskStarter) Start(name string, work func(context.Context) error) error {
+	go func() {
+		_ = work(context.Background())
+		s.completed <- name
+	}()
+	return nil
+}
 
 type exampleOperator struct{ shape flow.Shape }
 
@@ -84,6 +97,49 @@ func ExampleCompile() {
 	value, _ := outputs.One("output")
 	fmt.Println(value, compiled.Valid())
 	// Output: 7 true
+}
+
+// Background tasks must be declared during Compile so Host can reserve and
+// enforce the corresponding node-local worker grant during Open.
+func ExampleOpenContext_Tasks() {
+	schema := config.Struct[exampleWorkerConfig](func() exampleWorkerConfig { return exampleWorkerConfig{} }).Version("1").Build()
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("output", mediaSchema.Define[exampleUnitID, exampleUnit](mediaSchema.Traits[exampleUnit]{}))})
+	component := plugin.NewComponent[exampleWorkerComponentID](
+		plugin.Descriptor{DisplayName: "Worker example", Version: "1.0.0"},
+		schema,
+		plugin.WithSpec(plugin.Spec[exampleWorkerConfig, flow.Shape, int]{
+			Shape: plugin.StaticShape[exampleWorkerConfig](shape),
+			Compile: func(plugin.CompileContext, exampleWorkerConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+				return plugin.Compiled[flow.Shape, int]{
+					Plan:      shape,
+					Outputs:   flow.NewDescriptors(flow.Describe("output", 1)),
+					Resources: resource.Request{Workers: 1},
+				}, nil
+			},
+			Open: func(ctx plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+				if err := ctx.Tasks().Start("prefetch", func(context.Context) error { return nil }); err != nil {
+					return nil, err
+				}
+				return exampleOperator{shape: plan}, nil
+			},
+		}),
+	)
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		panic(err)
+	}
+	compiled, err := plugin.Compile(component, plugin.CompileContext{}, resolved, flow.NewDescriptors[int]())
+	if err != nil {
+		panic(err)
+	}
+	starter := exampleTaskStarter{completed: make(chan string, 1)}
+	operator, err := component.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{Tasks: starter}), compiled)
+	if err != nil {
+		panic(err)
+	}
+	defer operator.Close()
+	fmt.Println("workers", compiled.Resources().Workers, "task", <-starter.completed)
+	// Output: workers 1 task prefetch
 }
 
 // Public vocabularies can opt into host-time validation. The key itself stays

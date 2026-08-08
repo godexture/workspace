@@ -2,11 +2,12 @@ package task
 
 import (
 	"context"
-	"errors"
 	"sync"
+
+	"github.com/godexture/godec/plugin"
 )
 
-var ErrWorkerLimit = errors.New("component worker grant is exhausted")
+var _ plugin.TaskStarter = (*Starter)(nil)
 
 // Starter is a node-local view of a job task group. It enforces the worker
 // grant selected in the Program while the Group retains cancel, panic, and
@@ -30,7 +31,7 @@ func (s *Starter) Start(name string, work func(context.Context) error) error {
 	s.mu.Lock()
 	if s.active >= s.limit {
 		s.mu.Unlock()
-		return ErrWorkerLimit
+		return plugin.ErrWorkerLimit
 	}
 	s.active++
 	s.mu.Unlock()
