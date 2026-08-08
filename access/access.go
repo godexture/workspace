@@ -62,6 +62,8 @@ const (
 	FactoryOwned
 )
 
+func (o Ownership) Valid() bool { return o >= Owned && o <= FactoryOwned }
+
 // Resource describes a direct handle and whether Host closes it. No provider,
 // filesystem, network, or device implementation is part of this package.
 type Resource[T any] struct {
@@ -86,6 +88,7 @@ func Borrow[T any](value T) Resource[T] {
 
 func (r Resource[T]) Value() T             { return r.value }
 func (r Resource[T]) Ownership() Ownership { return r.ownership }
+func (r Resource[T]) Valid() bool          { return r.ownership.Valid() }
 
 func (r *Resource[T]) Close() error {
 	if r == nil || r.state == nil {

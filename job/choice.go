@@ -1,0 +1,135 @@
+package job
+
+import (
+	"errors"
+
+	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/plugin"
+)
+
+// EndpointRequest selects a typed endpoint component and its sparse config.
+// Constructing it performs no scan, permission request, or I/O.
+type EndpointRequest struct {
+	component plugin.Identity
+	config    config.Patch
+}
+
+func NewEndpoint(component plugin.Identity, patch config.Patch) (EndpointRequest, error) {
+	if component.IsZero() {
+		return EndpointRequest{}, errors.New("job endpoint component identity is required")
+	}
+	return EndpointRequest{component: component, config: patch}, nil
+}
+
+func (r EndpointRequest) Valid() bool                { return !r.component.IsZero() }
+func (r EndpointRequest) Component() plugin.Identity { return r.component }
+func (r EndpointRequest) Config() config.Patch       { return r.config }
+
+type InputKind uint8
+
+const (
+	ReferenceInput InputKind = iota + 1
+	SourceInput
+	EndpointInput
+)
+
+func (k InputKind) Valid() bool { return k >= ReferenceInput && k <= EndpointInput }
+
+// Input is an exclusive tagged choice. Direct source values remain behind an
+// any boundary only in the job control plane; typed media items never do.
+type Input struct {
+	kind      InputKind
+	reference access.Reference
+	direct    any
+	endpoint  EndpointRequest
+}
+
+func InputFromReference(reference access.Reference) (Input, error) {
+	if !reference.Valid() {
+		return Input{}, errors.New("job input reference is invalid")
+	}
+	return Input{kind: ReferenceInput, reference: reference}, nil
+}
+
+func InputFromSource[T any](source access.Resource[T]) (Input, error) {
+	if !source.Valid() {
+		return Input{}, errors.New("job input source ownership is invalid")
+	}
+	return Input{kind: SourceInput, direct: source}, nil
+}
+
+func InputFromEndpoint(request EndpointRequest) (Input, error) {
+	if !request.Valid() {
+		return Input{}, errors.New("job input endpoint is invalid")
+	}
+	return Input{kind: EndpointInput, endpoint: request}, nil
+}
+
+func (i Input) Valid() bool { return i.kind.Valid() }
+func (i Input) Kind() InputKind {
+	return i.kind
+}
+func (i Input) Reference() (access.Reference, bool) {
+	return i.reference, i.kind == ReferenceInput && i.reference.Valid()
+}
+func (i Input) Source() (any, bool) {
+	return i.direct, i.kind == SourceInput && i.direct != nil
+}
+func (i Input) Endpoint() (EndpointRequest, bool) {
+	return i.endpoint, i.kind == EndpointInput && i.endpoint.Valid()
+}
+
+type OutputKind uint8
+
+const (
+	ReferenceOutput OutputKind = iota + 1
+	SinkOutput
+	EndpointOutput
+)
+
+func (k OutputKind) Valid() bool { return k >= ReferenceOutput && k <= EndpointOutput }
+
+// Output is the sink-side tagged choice. A reference does not acquire or
+// truncate its target until the prepared job begins its output transaction.
+type Output struct {
+	kind      OutputKind
+	reference access.Reference
+	direct    any
+	endpoint  EndpointRequest
+}
+
+func OutputToReference(reference access.Reference) (Output, error) {
+	if !reference.Valid() {
+		return Output{}, errors.New("job output reference is invalid")
+	}
+	return Output{kind: ReferenceOutput, reference: reference}, nil
+}
+
+func OutputToSink[T any](sink access.Resource[T]) (Output, error) {
+	if !sink.Valid() {
+		return Output{}, errors.New("job output sink ownership is invalid")
+	}
+	return Output{kind: SinkOutput, direct: sink}, nil
+}
+
+func OutputToEndpoint(request EndpointRequest) (Output, error) {
+	if !request.Valid() {
+		return Output{}, errors.New("job output endpoint is invalid")
+	}
+	return Output{kind: EndpointOutput, endpoint: request}, nil
+}
+
+func (o Output) Valid() bool { return o.kind.Valid() }
+func (o Output) Kind() OutputKind {
+	return o.kind
+}
+func (o Output) Reference() (access.Reference, bool) {
+	return o.reference, o.kind == ReferenceOutput && o.reference.Valid()
+}
+func (o Output) Sink() (any, bool) {
+	return o.direct, o.kind == SinkOutput && o.direct != nil
+}
+func (o Output) Endpoint() (EndpointRequest, bool) {
+	return o.endpoint, o.kind == EndpointOutput && o.endpoint.Valid()
+}
