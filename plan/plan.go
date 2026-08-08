@@ -7,6 +7,8 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
@@ -24,6 +26,12 @@ func New(description Description) (Plan, error) {
 	sort.Strings(description.Platform.Features)
 	sort.Slice(description.Edges, func(left, right int) bool {
 		return edgeKey(description.Edges[left]) < edgeKey(description.Edges[right])
+	})
+	sort.Slice(description.Boundaries, func(left, right int) bool {
+		if description.Boundaries[left].Direction != description.Boundaries[right].Direction {
+			return description.Boundaries[left].Direction < description.Boundaries[right].Direction
+		}
+		return description.Boundaries[left].Choice < description.Boundaries[right].Choice
 	})
 	if err := validate(description); err != nil {
 		return Plan{}, err
@@ -56,6 +64,7 @@ func (p Plan) Budget() job.Budget              { return p.description.Budget }
 func (p Plan) Usage() Usage                    { return p.description.Usage }
 func (p Plan) CatalogFingerprint() string      { return p.description.CatalogFingerprint }
 func (p Plan) Platform() Platform              { return p.Description().Platform }
+func (p Plan) Boundaries() []Boundary          { return p.Description().Boundaries }
 func (p Plan) Warnings() []string              { return append([]string(nil), p.description.Warnings...) }
 
 func validate(description Description) error {
@@ -105,6 +114,20 @@ func validate(description Description) error {
 			return errors.New("plan edge destination is absent")
 		}
 	}
+	seenBoundaries := make(map[[2]int]struct{}, len(description.Boundaries))
+	for _, boundary := range description.Boundaries {
+		if !boundary.Valid() {
+			return errors.New("plan contains an invalid boundary binding")
+		}
+		key := [2]int{int(boundary.Direction), boundary.Choice}
+		if _, exists := seenBoundaries[key]; exists {
+			return errors.New("plan contains duplicate boundary choices")
+		}
+		seenBoundaries[key] = struct{}{}
+		if _, ok := seen[boundary.Node]; !ok {
+			return errors.New("plan boundary node is absent")
+		}
+	}
 	previous := ""
 	for _, feature := range description.Platform.Features {
 		if feature == "" || feature == previous {
@@ -141,11 +164,27 @@ type canonicalNode struct {
 }
 
 type canonicalExecution struct {
-	Catalog  string
-	Policy   job.Policy
-	Platform Platform
-	Nodes    []canonicalNode
-	Edges    []Edge
+	Catalog    string
+	Policy     job.Policy
+	Platform   Platform
+	Nodes      []canonicalNode
+	Edges      []Edge
+	Boundaries []canonicalBoundary
+}
+
+type canonicalBoundary struct {
+	Direction            BoundaryDirection
+	Kind                 BoundaryKind
+	Choice               int
+	Node                 string
+	Port                 string
+	Component            string
+	Scheme               string
+	ReferenceFingerprint string
+	Available            []access.Capability
+	Selected             []access.Capability
+	Topology             endpoint.Topology
+	Mode                 endpoint.Mode
 }
 
 type canonicalPlan struct {
@@ -182,7 +221,24 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 		edges[index].Origin = 0
 		edges[index].Reason = ""
 	}
-	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges}
+	boundaries := make([]canonicalBoundary, len(description.Boundaries))
+	for index, boundary := range description.Boundaries {
+		boundaries[index] = canonicalBoundary{
+			Direction:            boundary.Direction,
+			Kind:                 boundary.Kind,
+			Choice:               boundary.Choice,
+			Node:                 boundary.Node,
+			Port:                 boundary.Port,
+			Component:            boundary.Component,
+			Scheme:               boundary.Scheme,
+			ReferenceFingerprint: boundary.ReferenceFingerprint,
+			Available:            append([]access.Capability(nil), boundary.Available...),
+			Selected:             append([]access.Capability(nil), boundary.Selected...),
+			Topology:             boundary.Topology,
+			Mode:                 boundary.Mode,
+		}
+	}
+	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries}
 }
 
 func canonicalPlanOf(description Description, execution Fingerprint) canonicalPlan {

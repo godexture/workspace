@@ -8,7 +8,10 @@ import (
 	"runtime"
 	"sort"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/endpoint"
+	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
@@ -17,8 +20,10 @@ import (
 )
 
 type options struct {
-	plugins  plugin.Set
-	platform plan.Platform
+	plugins   plugin.Set
+	platform  plan.Platform
+	providers []access.Provider
+	endpoints []endpoint.Component
 }
 
 // Option configures Host construction.
@@ -27,6 +32,17 @@ type Option func(*options)
 // Plugins supplies the explicit immutable plugin set for this Host.
 func Plugins(set plugin.Set) Option {
 	return func(options *options) { options.plugins = set }
+}
+
+// Providers supplies immutable Access Provider manifests. Their declarations
+// are validated through the plugin catalog during Host construction.
+func Providers(values ...access.Provider) Option {
+	return func(options *options) { options.providers = append(options.providers, values...) }
+}
+
+// Endpoints supplies typed Endpoint traits layered on catalog components.
+func Endpoints(values ...endpoint.Component) Option {
+	return func(options *options) { options.endpoints = append(options.endpoints, values...) }
 }
 
 // PlatformSnapshot overrides the immutable platform capability snapshot.
@@ -41,6 +57,7 @@ func PlatformSnapshot(platform plan.Platform) Option {
 type Host struct {
 	index    catalog.Index
 	platform plan.Platform
+	bindings bind.Registry
 }
 
 // New validates the supplied plugin set and returns a host only when every
@@ -57,20 +74,39 @@ func New(options ...Option) (*Host, error) {
 			return nil, diagnostic.NewError(diagnostic.NewItem("host.platform", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host platform features are invalid", nil))
 		}
 	}
-	index, err := catalog.Build(configuration.plugins)
+	set := configuration.plugins
+	for _, provider := range configuration.providers {
+		for _, declaration := range provider.Declarations() {
+			set = set.AddDeclaration(declaration)
+		}
+	}
+	for _, endpoint := range configuration.endpoints {
+		if endpoint.Valid() {
+			set = set.AddDeclaration(endpoint.Declaration())
+		}
+	}
+	index, err := catalog.Build(set)
 	if err != nil {
 		return nil, err
 	}
-	return &Host{index: index, platform: configuration.platform}, nil
+	bindings, err := bind.NewRegistry(index, configuration.providers, configuration.endpoints)
+	if err != nil {
+		return nil, err
+	}
+	return &Host{index: index, platform: configuration.platform, bindings: bindings}, nil
 }
 
-// Plan resolves an explicit Job graph without opening operators. Input/output
-// acquisition and binding are added by the preparation phase in M4-4.
+// Plan binds declarative Access/Endpoint choices and resolves the resulting
+// graph without opening operators or starting output transactions.
 func (h *Host) Plan(ctx context.Context, request job.Job) (plan.Plan, error) {
 	if h == nil {
 		return plan.Plan{}, diagnostic.NewError(diagnostic.NewItem("host.nil", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host is nil", nil))
 	}
-	program, err := solve.Resolve(ctx, h.index, request, h.platform)
+	bound, err := bind.Normalize(h.bindings, request)
+	if err != nil {
+		return plan.Plan{}, err
+	}
+	program, err := solve.ResolveBound(ctx, h.index, bound.Request(), h.platform, bound.Boundaries())
 	if err != nil {
 		return plan.Plan{}, err
 	}

@@ -83,6 +83,7 @@ type Description struct {
 	Platform           Platform
 	Nodes              []Node
 	Edges              []Edge
+	Boundaries         []Boundary
 	Warnings           []string
 }
 
@@ -101,6 +102,10 @@ func cloneDescription(description Description) Description {
 		description.Nodes[index] = cloneNode(description.Nodes[index])
 	}
 	description.Edges = append([]Edge(nil), description.Edges...)
+	description.Boundaries = append([]Boundary(nil), description.Boundaries...)
+	for index := range description.Boundaries {
+		description.Boundaries[index] = cloneBoundary(description.Boundaries[index])
+	}
 	description.Warnings = append([]string(nil), description.Warnings...)
 	description.Platform.Features = append([]string(nil), description.Platform.Features...)
 	return description

@@ -1,6 +1,8 @@
 package access
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,13 @@ type Reference struct {
 	display   string
 	scheme    string
 }
+
+// ReferenceFingerprint identifies the private canonical locator without
+// exposing credentials, signed parameters, or secret path material.
+type ReferenceFingerprint [32]byte
+
+func (f ReferenceFingerprint) IsZero() bool   { return f == ReferenceFingerprint{} }
+func (f ReferenceFingerprint) String() string { return hex.EncodeToString(f[:]) }
 
 // Parse creates a reference from a scheme-qualified locator. Userinfo,
 // query, and fragment values remain available to the resolver through
@@ -71,6 +80,18 @@ func (r Reference) Canonical() string { return r.canonical }
 func (r Reference) Display() string { return r.display }
 
 func (r Reference) String() string { return r.Display() }
+
+func (r Reference) Fingerprint() ReferenceFingerprint {
+	if !r.Valid() {
+		return ReferenceFingerprint{}
+	}
+	digest := sha256.New()
+	_, _ = digest.Write([]byte("godec/access/reference/v1\x00"))
+	_, _ = digest.Write([]byte(r.canonical))
+	var result ReferenceFingerprint
+	copy(result[:], digest.Sum(nil))
+	return result
+}
 
 // Format prevents %#v and other fmt forms from exposing the private
 // canonical locator accidentally.

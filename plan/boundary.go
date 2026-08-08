@@ -1,0 +1,93 @@
+package plan
+
+import (
+	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/endpoint"
+)
+
+type BoundaryDirection uint8
+
+const (
+	InputBoundary BoundaryDirection = iota + 1
+	OutputBoundary
+)
+
+func (d BoundaryDirection) Valid() bool { return d == InputBoundary || d == OutputBoundary }
+
+type BoundaryKind uint8
+
+const (
+	ProviderBoundary BoundaryKind = iota + 1
+	EndpointBoundary
+)
+
+func (k BoundaryKind) Valid() bool { return k == ProviderBoundary || k == EndpointBoundary }
+
+// Boundary is an inert projection of one Job input/output binding. Reference
+// carries only a redacted display and a hash of its private canonical form.
+type Boundary struct {
+	Direction            BoundaryDirection
+	Kind                 BoundaryKind
+	Choice               int
+	Node                 string
+	Port                 string
+	Component            string
+	Scheme               string
+	Reference            string
+	ReferenceFingerprint string
+	Available            []access.Capability
+	Selected             []access.Capability
+	Topology             endpoint.Topology
+	Mode                 endpoint.Mode
+}
+
+func (b Boundary) Valid() bool {
+	if !b.Direction.Valid() || !b.Kind.Valid() || b.Choice < 0 || b.Node == "" || b.Port == "" || b.Component == "" {
+		return false
+	}
+	switch b.Kind {
+	case ProviderBoundary:
+		if b.Scheme == "" || b.Reference == "" || b.ReferenceFingerprint == "" || b.Topology != 0 || b.Mode != 0 {
+			return false
+		}
+		if !canonicalCapabilities(b.Available) || !canonicalCapabilities(b.Selected) || !subsetCapabilities(b.Selected, b.Available) {
+			return false
+		}
+	case EndpointBoundary:
+		if b.Scheme != "" || b.Reference != "" || b.ReferenceFingerprint != "" || len(b.Available) != 0 || len(b.Selected) != 0 || !b.Topology.Valid() || !b.Mode.Valid() {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneBoundary(value Boundary) Boundary {
+	value.Available = append([]access.Capability(nil), value.Available...)
+	value.Selected = append([]access.Capability(nil), value.Selected...)
+	return value
+}
+
+func canonicalCapabilities(values []access.Capability) bool {
+	for index, value := range values {
+		if !value.Valid() || index != 0 && value <= values[index-1] {
+			return false
+		}
+	}
+	return true
+}
+
+func subsetCapabilities(values, available []access.Capability) bool {
+	for _, value := range values {
+		found := false
+		for _, candidate := range available {
+			if value == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

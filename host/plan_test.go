@@ -116,7 +116,7 @@ func TestHostPlanReturnsPublicPlanWithoutOpening(t *testing.T) {
 	}
 }
 
-func TestHostPlanReportsUnboundChoiceJob(t *testing.T) {
+func TestHostPlanReportsMissingProvider(t *testing.T) {
 	host, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestHostPlanReportsUnboundChoiceJob(t *testing.T) {
 	}
 	_, err = host.Plan(context.Background(), request)
 	items := diagnostic.ItemsOf(err)
-	if len(items) != 1 || items[0].Code != "solve.binding-unavailable" {
+	if len(items) != 1 || items[0].Code != "bind.provider-not-found" {
 		t.Fatalf("binding diagnostic = %#v", items)
 	}
 }

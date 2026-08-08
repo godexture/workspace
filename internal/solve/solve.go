@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/internal/program"
@@ -37,15 +38,22 @@ type planner struct {
 	environment string
 	nodes       map[job.NodeID]annotation
 	edges       map[string]annotation
+	bound       bound.State
 }
 
 // Resolve returns a private Program whose public Plan contains every selected
 // requested and automatic node.
 func Resolve(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform) (program.Program, error) {
+	return ResolveBound(ctx, index, request, platform, bound.State{})
+}
+
+// ResolveBound plans a Job whose Access/Endpoint choices have already been
+// normalized into graph nodes by internal/bind.
+func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State) (program.Program, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !request.Valid() || !platform.Valid() {
+	if !request.Valid() || !platform.Valid() || !boundaries.Valid() {
 		return program.Program{}, solveDiagnostic("solve.invalid-request", nil, plan.Usage{}, request.Budget(), "invalid", nil)
 	}
 	requested, ok := request.Graph()
@@ -74,6 +82,7 @@ func Resolve(ctx context.Context, index catalog.Index, request job.Job, platform
 		cache:    make(compileCache),
 		nodes:    make(map[job.NodeID]annotation),
 		edges:    make(map[string]annotation),
+		bound:    boundaries,
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)

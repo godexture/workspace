@@ -18,6 +18,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		Usage:              p.usage,
 		CatalogFingerprint: catalogFingerprint(p.index),
 		Platform:           p.platform,
+		Boundaries:         p.bound.Projections(),
 	}
 	for _, node := range compiled.Nodes() {
 		component, ok := p.index.Lookup(node.Component())
@@ -80,7 +81,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 	if err != nil {
 		return program.Program{}, err
 	}
-	return program.New(compiled, public)
+	return program.New(compiled, public, p.bound)
 }
 
 func projectBindings(bindings flow.Descriptors[stream.Descriptor]) ([]plan.PortDescriptor, error) {

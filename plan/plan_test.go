@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
@@ -21,6 +22,55 @@ type planUnit struct{}
 type planConfig struct {
 	Mode  string
 	Token config.SecretValue[string]
+}
+
+func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T) {
+	description := testDescription(t)
+	description.Boundaries = []Boundary{{
+		Direction:            InputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "source",
+		Port:                 "out",
+		Component:            "fixture.source",
+		Scheme:               "memory",
+		Reference:            "memory://first/redacted",
+		ReferenceFingerprint: "canonical-reference-fingerprint",
+		Available:            []access.Capability{access.RandomRead, access.SequentialRead},
+		Selected:             []access.Capability{access.SequentialRead},
+	}}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	display := testDescription(t)
+	display.Boundaries = description.Boundaries
+	display.Boundaries[0].Reference = "memory://renamed/redacted"
+	second, err := New(display)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint() != second.Fingerprint() || first.ExecutionSignature() != second.ExecutionSignature() {
+		t.Fatal("redacted reference display changed canonical Plan identity")
+	}
+
+	boundaries := first.Boundaries()
+	boundaries[0].Available[0] = access.CancelableRead
+	if first.Boundaries()[0].Available[0] != access.RandomRead {
+		t.Fatal("Plan exposed mutable boundary capability storage")
+	}
+
+	changed := testDescription(t)
+	changed.Boundaries = description.Boundaries
+	changed.Boundaries[0].ReferenceFingerprint = "different-canonical-reference"
+	third, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == third.ExecutionSignature() {
+		t.Fatal("private reference identity did not affect execution signature")
+	}
 }
 
 func testDescription(t *testing.T) Description {

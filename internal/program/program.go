@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -16,10 +17,11 @@ type Program struct {
 	plan  plan.Plan
 	nodes []graph.Node
 	byID  map[job.NodeID]int
+	bound bound.State
 }
 
-func New(compiled graph.Graph, public plan.Plan) (Program, error) {
-	if !compiled.Valid() || !public.Valid() {
+func New(compiled graph.Graph, public plan.Plan, boundaries bound.State) (Program, error) {
+	if !compiled.Valid() || !public.Valid() || !boundaries.Valid() {
 		return Program{}, errors.New("program requires a compiled graph and valid Plan")
 	}
 	nodes := compiled.Nodes()
@@ -39,15 +41,16 @@ func New(compiled graph.Graph, public plan.Plan) (Program, error) {
 		}
 		byID[node.ID()] = index
 	}
-	return Program{graph: compiled, plan: public, nodes: nodes, byID: byID}, nil
+	return Program{graph: compiled, plan: public, nodes: nodes, byID: byID, bound: boundaries}, nil
 }
 
 func (p Program) Valid() bool {
-	return p.graph.Valid() && p.plan.Valid() && len(p.nodes) == len(p.byID)
+	return p.graph.Valid() && p.plan.Valid() && len(p.nodes) == len(p.byID) && p.bound.Valid()
 }
-func (p Program) Plan() plan.Plan     { return p.plan }
-func (p Program) Nodes() []graph.Node { return append([]graph.Node(nil), p.nodes...) }
-func (p Program) Edges() []job.Edge   { return p.graph.Edges() }
+func (p Program) Plan() plan.Plan         { return p.plan }
+func (p Program) Nodes() []graph.Node     { return append([]graph.Node(nil), p.nodes...) }
+func (p Program) Edges() []job.Edge       { return p.graph.Edges() }
+func (p Program) Boundaries() bound.State { return bound.New(p.bound.Entries()...) }
 func (p Program) Lookup(id job.NodeID) (graph.Node, bool) {
 	index, ok := p.byID[id]
 	if !ok {

@@ -130,6 +130,13 @@ func TestReferenceSeparatesCanonicalAndRedactedDisplay(t *testing.T) {
 	if strings.Contains(fmt.Sprintf("%#v", reference), "password") {
 		t.Fatalf("formatted reference leaked secret: %s", fmt.Sprintf("%#v", reference))
 	}
+	second, err := Parse("https://user:other@example.com/file?X-Amz-Signature=other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.Fingerprint().IsZero() || reference.Fingerprint() == second.Fingerprint() {
+		t.Fatal("private canonical references did not receive distinct nonzero fingerprints")
+	}
 }
 
 type providerComponentA struct{}
