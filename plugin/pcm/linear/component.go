@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type operation uint8
@@ -118,10 +119,30 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
 	}
 	return plugin.Compiled[componentPlan, stream.Descriptor]{
-		Plan:    componentPlan{operation: kind, shape: shape.Clone(), config: configuration},
-		Outputs: flow.NewDescriptors(flow.Describe(outputPort.ID(), outputDescriptor)),
-		Effects: []plugin.Effect{operationEffect(kind)},
+		Plan:      componentPlan{operation: kind, shape: shape.Clone(), config: configuration},
+		Outputs:   flow.NewDescriptors(flow.Describe(outputPort.ID(), outputDescriptor)),
+		Effects:   []plugin.Effect{operationEffect(kind)},
+		Resources: operationResources(kind, configuration),
 	}, nil
+}
+
+func operationResources(kind operation, configuration configuration) resource.Request {
+	channels := configuration.Layout.Channels()
+	planeBytes := configuration.ChunkSamples * 2
+	interleavedBytes := planeBytes * channels
+	switch kind {
+	case readerOperation, encoderOperation:
+		return resource.Request{Memory: resource.Bytes(interleavedBytes)}
+	case decoderOperation:
+		bytes := planeBytes
+		for channel := 1; channel < channels; channel++ {
+			bytes = (bytes + 15) &^ 15
+			bytes += planeBytes
+		}
+		return resource.Request{Memory: resource.Bytes(bytes)}
+	default:
+		return resource.Request{}
+	}
 }
 
 func operationDescriptions(kind operation, configuration configuration) (sample.Description, sample.Description) {

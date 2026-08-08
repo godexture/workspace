@@ -3,19 +3,20 @@ package linear
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/internal/catalog"
-	"github.com/godexture/godec/internal/program"
-	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/audio"
-	"github.com/godexture/godec/media/buffer"
-	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -25,10 +26,11 @@ import (
 )
 
 type (
-	fixturePluginID struct{}
-	fixtureConfigID struct{}
-	fixtureSourceID struct{}
-	fixtureSinkID   struct{}
+	fixturePluginID  struct{}
+	fixtureConfigID  struct{}
+	fixtureSourceID  struct{}
+	fixtureObserveID struct{}
+	fixtureSinkID    struct{}
 )
 
 type fixtureConfig struct{}
@@ -39,6 +41,118 @@ type fixtureOperator struct{ shape flow.Shape }
 
 func (o fixtureOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (fixtureOperator) Close() error        { return nil }
+
+type fixtureState struct {
+	mu         sync.Mutex
+	input      []byte
+	read       bool
+	block      bool
+	output     []byte
+	planes     [][]int16
+	timestamps []timing.PTS
+	events     []string
+}
+
+func (s *fixtureState) add(event string) {
+	s.mu.Lock()
+	s.events = append(s.events, event)
+	s.mu.Unlock()
+}
+
+func (s *fixtureState) snapshot() ([]byte, [][]int16, []timing.PTS, []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	planes := make([][]int16, len(s.planes))
+	for index := range s.planes {
+		planes[index] = append([]int16(nil), s.planes[index]...)
+	}
+	return append([]byte(nil), s.output...), planes, append([]timing.PTS(nil), s.timestamps...), append([]string(nil), s.events...)
+}
+
+type fixtureSource struct {
+	fixtureOperator
+	state *fixtureState
+}
+
+func (s *fixtureSource) Read(ctx context.Context) (flow.Input[[]byte], error) {
+	if s.state.block {
+		<-ctx.Done()
+		return flow.Input[[]byte]{}, context.Cause(ctx)
+	}
+	s.state.mu.Lock()
+	if s.state.read {
+		s.state.events = append(s.state.events, "eof")
+		s.state.mu.Unlock()
+		return flow.Input[[]byte]{}, io.EOF
+	}
+	s.state.read = true
+	value := append([]byte(nil), s.state.input...)
+	s.state.events = append(s.state.events, "read")
+	s.state.mu.Unlock()
+	return flow.NewInput(value, Bytes()), nil
+}
+
+type fixtureObserver struct {
+	fixtureOperator
+	state *fixtureState
+}
+
+func (o *fixtureObserver) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[audio.Frame[int16]]) error {
+	frame := input.Value()
+	o.state.mu.Lock()
+	if o.state.planes == nil {
+		o.state.planes = make([][]int16, len(frame.Planes().Layout().Planes))
+	}
+	for index := range o.state.planes {
+		plane, err := frame.PlaneSamples(index)
+		if err != nil {
+			o.state.mu.Unlock()
+			return err
+		}
+		o.state.planes[index] = append(o.state.planes[index], plane...)
+	}
+	if pts, ok := frame.PTS().Get(); ok {
+		o.state.timestamps = append(o.state.timestamps, pts)
+	}
+	o.state.events = append(o.state.events, "frame")
+	o.state.mu.Unlock()
+	forwarded := flow.NewInput(frame.Share(), sample.S16())
+	if err := output.Emit(ctx, forwarded); err != nil {
+		forwarded.Drop()
+		return err
+	}
+	input.Drop()
+	return nil
+}
+
+func (o *fixtureObserver) Finalize(context.Context) error {
+	o.state.add("finalize")
+	return nil
+}
+
+func (o *fixtureObserver) Flush(context.Context, flow.Emitter[audio.Frame[int16]]) error {
+	o.state.add("flow-flush")
+	return nil
+}
+
+type fixtureSink struct {
+	fixtureOperator
+	state *fixtureState
+}
+
+func (s *fixtureSink) Write(_ context.Context, input flow.Input[[]byte]) error {
+	s.state.mu.Lock()
+	s.state.output = append(s.state.output, input.Value()...)
+	s.state.events = append(s.state.events, "write")
+	s.state.mu.Unlock()
+	input.Drop()
+	return nil
+}
+
+func (s *fixtureSink) Flush(context.Context) error {
+	s.state.add("sink-flush")
+	return nil
+}
 
 func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 	index, err := catalog.Build(Set())
@@ -114,6 +228,24 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}
 }
 
+func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
+	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	fixture := compilePCMProgram(t, description)
+	fixture.state.block = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	result, err := fixture.host.Run(ctx, fixture.request)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || result.Primary == nil || result.Primary.Phase != host.RunPhase {
+		t.Fatalf("cancel result = %#v, err = %v", result, err)
+	}
+	_, _, _, events := fixture.state.snapshot()
+	for _, event := range events {
+		if event == "finalize" || event == "flow-flush" || event == "sink-flush" {
+			t.Fatalf("canceled Run performed successful finalization: %v", events)
+		}
+	}
+}
+
 func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) {
 	type foreignID struct{}
 	foreign := property.Define[foreignID](property.Scalar[string]())
@@ -153,16 +285,27 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 	}
 }
 
-func compilePCMProgram(t *testing.T, description sample.Description) program.Program {
+type pcmFixture struct {
+	host    *host.Host
+	request job.Job
+	state   *fixtureState
+}
+
+func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture {
 	t.Helper()
 	properties, err := description.Properties()
 	if err != nil {
 		t.Fatal(err)
 	}
 	descriptor := stream.MustDescriptor("pcm", Bytes().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
-	definition := fixtureDefinition(descriptor)
+	state := &fixtureState{}
+	definition := fixtureDefinition(descriptor, state)
 	set := Set().Add(definition)
-	index, err := catalog.Build(set)
+	instance, err := host.New(
+		host.Plugins(set),
+		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
+		host.Observe(host.ObservationBasic),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +320,7 @@ func compilePCMProgram(t *testing.T, description sample.Description) program.Pro
 			job.NewNode("source", plugin.IdentityOf[fixtureSourceID](), config.NewPatch()),
 			job.NewNode("reader", ReaderIdentity(), patch),
 			job.NewNode("decoder", DecoderIdentity(), patch),
+			job.NewNode("observer", plugin.IdentityOf[fixtureObserveID](), config.NewPatch()),
 			job.NewNode("encoder", EncoderIdentity(), patch),
 			job.NewNode("writer", WriterIdentity(), patch),
 			job.NewNode("sink", plugin.IdentityOf[fixtureSinkID](), config.NewPatch()),
@@ -184,7 +328,8 @@ func compilePCMProgram(t *testing.T, description sample.Description) program.Pro
 		[]job.Edge{
 			job.Connect(job.At("source", "bytes"), job.At("reader", "bytes")),
 			job.Connect(job.At("reader", "chunks"), job.At("decoder", "packets")),
-			job.Connect(job.At("decoder", "frames"), job.At("encoder", "frames")),
+			job.Connect(job.At("decoder", "frames"), job.At("observer", "in")),
+			job.Connect(job.At("observer", "out"), job.At("encoder", "frames")),
 			job.Connect(job.At("encoder", "packets"), job.At("writer", "packets")),
 			job.Connect(job.At("writer", "bytes"), job.At("sink", "bytes")),
 		},
@@ -196,12 +341,13 @@ func compilePCMProgram(t *testing.T, description sample.Description) program.Pro
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := solve.Resolve(context.Background(), index, request, plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	return pcmFixture{host: instance, request: request, state: state}
+}
+
+func assertPCMPlan(t *testing.T, compiled plan.Plan) {
+	t.Helper()
 	automatic := 0
-	for _, node := range compiled.Plan().Nodes() {
+	for _, node := range compiled.Nodes() {
 		if node.ID == "decoder" {
 			if len(node.Outputs) != 1 || node.Outputs[0].Descriptor.Schema != sample.S16().Identity().String() {
 				t.Fatalf("Plan selected decoder schema = %#v", node.Outputs)
@@ -213,94 +359,35 @@ func compilePCMProgram(t *testing.T, description sample.Description) program.Pro
 				t.Fatalf("automatic node = %#v", node)
 			}
 		}
+		if (node.ID == "reader" || node.ID == "decoder" || node.ID == "encoder") && node.Resources.Memory == 0 {
+			t.Fatalf("allocating PCM node has no payload grant: %#v", node)
+		}
 	}
 	if automatic != 1 {
 		t.Fatalf("automatic node count = %d, want identity Parser only", automatic)
 	}
-	decoder, ok := compiled.Lookup("decoder")
-	if !ok {
-		t.Fatal("compiled decoder is missing")
-	}
-	input, inputOK := decoder.Inputs().One("packets")
-	output, outputOK := decoder.Outputs().One("frames")
-	if !inputOK || !outputOK || input.Schema() != Packets().Identity() || output.Schema() != sample.S16().Identity() {
-		t.Fatalf("decoder descriptor path = %#v -> %#v", input, output)
-	}
-	return compiled
 }
 
-func runPCMProgram(t *testing.T, compiled program.Program, input []byte) ([]byte, [][]int16, []timing.PTS) {
+func runPCMProgram(t *testing.T, fixture pcmFixture, input []byte) ([]byte, [][]int16, []timing.PTS) {
 	t.Helper()
-	ctx := context.Background()
-	reader := mustOpen[flow.Processor[[]byte, packet.Chunk]](t, compiled, "reader")
-	parserID := automaticID(t, compiled, ParserIdentity())
-	parser := mustOpen[flow.Processor[packet.Chunk, packet.Packet]](t, compiled, parserID)
-	decoder := mustOpen[flow.Processor[packet.Packet, audio.Frame[int16]]](t, compiled, "decoder")
-	encoder := mustOpen[flow.Processor[audio.Frame[int16], packet.Packet]](t, compiled, "encoder")
-	writer := mustOpen[flow.Processor[packet.Packet, []byte]](t, compiled, "writer")
-	operators := []flow.Operator{reader.(flow.Operator), parser.(flow.Operator), decoder.(flow.Operator), encoder.(flow.Operator), writer.(flow.Operator)}
-	defer func() {
-		for index := len(operators) - 1; index >= 0; index-- {
-			if err := operators[index].Close(); err != nil {
-				t.Errorf("close operator %d: %v", index, err)
-			}
-		}
-	}()
-
-	chunks := &collector[packet.Chunk]{}
-	if err := reader.Process(ctx, flow.NewInput(append([]byte(nil), input...), Bytes()), chunks); err != nil {
+	fixture.state.mu.Lock()
+	fixture.state.input = append([]byte(nil), input...)
+	fixture.state.mu.Unlock()
+	prepared, err := fixture.host.Prepare(context.Background(), fixture.request)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var output []byte
-	var observed [][]int16
-	var timestamps []timing.PTS
-	for _, chunk := range chunks.items {
-		packets := &collector[packet.Packet]{}
-		if err := parser.Process(ctx, chunk, packets); err != nil {
-			t.Fatal(err)
-		}
-		for _, packetInput := range packets.items {
-			frames := &collector[audio.Frame[int16]]{}
-			if err := decoder.Process(ctx, packetInput, frames); err != nil {
-				t.Fatal(err)
-			}
-			for _, frameInput := range frames.items {
-				frame := frameInput.Value()
-				if pts, ok := frame.PTS().Get(); ok {
-					timestamps = append(timestamps, pts)
-				}
-				if observed == nil {
-					observed = make([][]int16, len(frame.Planes().Layout().Planes))
-				}
-				for planeIndex := range observed {
-					plane, err := frame.PlaneSamples(planeIndex)
-					if err != nil {
-						t.Fatal(err)
-					}
-					observed[planeIndex] = append(observed[planeIndex], plane...)
-				}
-				encoded := &collector[packet.Packet]{}
-				if err := encoder.Process(ctx, frameInput, encoded); err != nil {
-					t.Fatal(err)
-				}
-				for _, encodedInput := range encoded.items {
-					bytesOutput := &collector[[]byte]{}
-					if err := writer.Process(ctx, encodedInput, bytesOutput); err != nil {
-						t.Fatal(err)
-					}
-					for _, value := range bytesOutput.items {
-						owner := value.Take()
-						output = append(output, owner.Value()...)
-						owner.Release()
-					}
-				}
-			}
-		}
+	assertPCMPlan(t, prepared.Plan())
+	result, err := prepared.Run(context.Background())
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("PCM Run result = %#v, err = %v", result, err)
 	}
+	output, observed, timestamps, events := fixture.state.snapshot()
+	assertEventOrder(t, events, "eof", "finalize", "flow-flush", "sink-flush")
 	return output, observed, timestamps
 }
 
-func fixtureDefinition(descriptor stream.Descriptor) plugin.Definition {
+func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin.Definition {
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", Bytes())})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("bytes", Bytes())}, nil)
@@ -310,9 +397,28 @@ func fixtureDefinition(descriptor stream.Descriptor) plugin.Definition {
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{Plan: fixturePlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("bytes", descriptor))}, nil
 		},
 		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
-			return fixtureOperator{shape: sourceShape}, nil
+			return &fixtureSource{fixtureOperator: fixtureOperator{shape: sourceShape}, state: state}, nil
 		},
-	}))
+	}), plugin.WithReader("bytes", Bytes()))
+	observeShape := flow.NewShape([]flow.Port{flow.In("in", sample.S16())}, []flow.Port{flow.Out("out", sample.S16())})
+	observer := plugin.NewComponent[fixtureObserveID](plugin.Descriptor{DisplayName: "PCM fixture observer"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
+		Shape: plugin.StaticShape[fixtureConfig](observeShape),
+		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
+			input, ok := inputs.One("in")
+			if !ok {
+				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("pcm.fixture-frame"))}}, nil
+			}
+			return plugin.Compiled[fixturePlan, stream.Descriptor]{
+				Plan:         fixturePlan{shape: observeShape},
+				Outputs:      flow.NewDescriptors(flow.Describe("out", input)),
+				Finalization: plugin.RequiresFinalization,
+			}, nil
+		},
+		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
+			return &fixtureObserver{fixtureOperator: fixtureOperator{shape: observeShape}, state: state}, nil
+		},
+		Finalizes: true,
+	}), plugin.WithProcessor("in", sample.S16(), "out", sample.S16()))
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "PCM fixture sink"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[fixtureConfig](sinkShape),
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
@@ -322,10 +428,10 @@ func fixtureDefinition(descriptor stream.Descriptor) plugin.Definition {
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{Plan: fixturePlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 		},
 		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
-			return fixtureOperator{shape: sinkShape}, nil
+			return &fixtureSink{fixtureOperator: fixtureOperator{shape: sinkShape}, state: state}, nil
 		},
-	}))
-	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "PCM fixture", Version: "1"}, source, sink)
+	}), plugin.WithWriter("bytes", Bytes()))
+	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "PCM fixture", Version: "1"}, source, observer, sink)
 }
 
 func componentByIdentity(t *testing.T, identity plugin.Identity) plugin.Component {
@@ -339,40 +445,17 @@ func componentByIdentity(t *testing.T, identity plugin.Identity) plugin.Componen
 	return plugin.Component{}
 }
 
-type collector[T any] struct{ items []flow.Input[T] }
-
-func (c *collector[T]) Emit(_ context.Context, value flow.Input[T]) error {
-	c.items = append(c.items, value)
-	return nil
-}
-
-func mustOpen[T any](t *testing.T, compiled program.Program, id job.NodeID) T {
+func assertEventOrder(t *testing.T, values []string, expected ...string) {
 	t.Helper()
-	allocator, err := buffer.NewAllocator(64 << 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operator, err := compiled.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{Buffers: allocator}), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typed, ok := operator.(T)
-	if !ok {
-		_ = operator.Close()
-		t.Fatalf("node %s has operator %T", id, operator)
-	}
-	return typed
-}
-
-func automaticID(t *testing.T, compiled program.Program, identity plugin.Identity) job.NodeID {
-	t.Helper()
-	for _, node := range compiled.Plan().Nodes() {
-		if node.Origin == plan.Automatic && node.Component == identity.String() {
-			return job.NodeID(node.ID)
+	position := 0
+	for _, value := range values {
+		if position < len(expected) && value == expected[position] {
+			position++
 		}
 	}
-	t.Fatalf("automatic component %s is missing", identity)
-	return ""
+	if position != len(expected) {
+		t.Fatalf("events %v do not contain %v", values, expected)
+	}
 }
 
 func equalSamples(left, right []int16) bool {

@@ -28,7 +28,7 @@ func (o operatorBase) Ports() flow.Shape { return o.shape.Clone() }
 func (operatorBase) Close() error        { return nil }
 
 func openOperation(plan componentPlan, buffers *buffer.Allocator) (flow.Operator, error) {
-	if buffers == nil {
+	if buffers == nil && operationResources(plan.operation, plan.config).Memory != 0 {
 		return nil, errors.New("linear PCM requires a payload buffer grant")
 	}
 	base := operatorBase{shape: plan.shape.Clone(), buffers: buffers}
