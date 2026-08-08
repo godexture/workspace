@@ -176,9 +176,5 @@ func (p Provider) manifest(scheme string) string {
 }
 
 func cloneRequirements(value Requirements) Requirements {
-	result := Requirements{Alternatives: make([]Alternative, len(value.Alternatives))}
-	for index, alternative := range value.Alternatives {
-		result.Alternatives[index] = alternative.Clone()
-	}
-	return result
+	return value.Clone()
 }

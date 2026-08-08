@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/catalog"
@@ -48,6 +49,14 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 	}
 	if !Binding().Valid() || !Raw().Valid() || len(Raw().Alternatives()) != 2 {
 		t.Fatal("linear PCM declarations are incomplete")
+	}
+	capabilities, err := access.NewCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := access.Select(capabilities, access.NewRequirements(Raw().Alternatives()...))
+	if !ok || len(selection.Capabilities()) != 1 || selection.Capabilities()[0] != access.SequentialRead {
+		t.Fatalf("raw Format narrow selection = %v, %v", selection.Capabilities(), ok)
 	}
 	targets := Binding().Targets()
 	decoder, decoderOK := targets[0].Component()

@@ -314,14 +314,13 @@ func boundaryNodeID(direction plan.BoundaryDirection, index int, identity plugin
 	if _, exists := used[job.NodeID(base)]; !exists {
 		return job.NodeID(base)
 	}
-	digest := sha256.Sum256([]byte("godec/bind/node/v1\x00" + base + "\x00" + identity.String()))
-	for length := 8; length <= len(digest); length += 4 {
-		candidate := job.NodeID(base + "-" + hex.EncodeToString(digest[:length]))
+	for nonce := 0; ; nonce++ {
+		digest := sha256.Sum256([]byte("godec/bind/node/v1\x00" + base + "\x00" + identity.String() + "\x00" + strconv.Itoa(nonce)))
+		candidate := job.NodeID(base + "-" + hex.EncodeToString(digest[:8]))
 		if _, exists := used[candidate]; !exists {
 			return candidate
 		}
 	}
-	return job.NodeID(base + "-" + hex.EncodeToString(digest[:]))
 }
 
 func missingProvider(scheme string) error {

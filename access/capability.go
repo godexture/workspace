@@ -51,7 +51,9 @@ type Requirements struct{ Alternatives []Alternative }
 func NewRequirements(alternatives ...Alternative) Requirements {
 	result := Requirements{Alternatives: make([]Alternative, len(alternatives))}
 	for index, alternative := range alternatives {
-		result.Alternatives[index] = alternative.Clone()
+		capabilities := append([]Capability(nil), alternative.Capabilities...)
+		sort.Slice(capabilities, func(left, right int) bool { return capabilities[left] < capabilities[right] })
+		result.Alternatives[index] = AnyOf(capabilities...)
 	}
 	return result
 }

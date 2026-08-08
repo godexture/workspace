@@ -4,7 +4,6 @@ package endpoint
 
 import (
 	"errors"
-	"strconv"
 
 	"github.com/godexture/godec/plugin"
 )
@@ -106,7 +105,7 @@ func (c Component) Trait() Trait                      { return c.trait }
 // typed manifest remains on Host; this inert declaration makes composition
 // and catalog fingerprints account for it without a second registry.
 func (c Component) Declaration() plugin.Declaration {
-	name := c.identityName() + "|topology=" + strconv.Itoa(int(c.trait.topology)) + "|mode=" + strconv.Itoa(int(c.trait.mode))
+	name := c.identityName() + "|topology=" + c.trait.topology.String() + "|mode=" + c.trait.mode.String()
 	return plugin.Declare[declarationNamespace](name, c.Identity())
 }
 
