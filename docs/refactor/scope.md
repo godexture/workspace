@@ -147,6 +147,18 @@ M3 はこの文書の capability matrix が要求する拡張点のうち、cont
 - object Access、typed session/device Endpoint、packet/frame side data、live stream event、Format/Codec/Metadata の各拡張点が、第三者の型・declaration として追加できる。
 - M3 時点で consumer を持たない詳細を最小型へ閉じ込め、担当 milestone と実行 consumer を checkpoint に残している。
 
+## M5 の contract 分類
+
+M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prepared.Plan`/`Prepared.Run`/`Prepared.Close`、`host.Run`、`Result`/`Failure`/output outcome/event、observation と cleanup timeout は `plugin/pcm/linear` の walking skeleton と `host` の lifecycle/failure matrix が使用する。M6 の `standard.Convert` と CLI はこの façade をそのまま利用し、private `Program`、queue、task group、resource manager を公開しない。
+
+`flow.FanInPolicy`/`Batch`/`Joiner` は private runtime の deterministic zip consumer、`flow.Finalizer` は PCM skeleton と Host の `Finalize -> Flush` lifecycle consumerを持つ。`plan.Runtime` の island/buffer/fan-in projection は `Prepared.Plan` と planner/runtime test が使用する inert snapshot で、実行 closure や resource handle を含まない。
+
+`access.Opening`、`endpoint.Opening`、`access.Direct` は Host が node-local boundary view として component へ渡し、provider/endpoint/direct fixture が「選択された capability 以外を見せない」ことを検査する。`access.Flusher`/`Syncer`/`Transaction` は success/rollback coordinator が実行する。`job.Adaptor` と direct input/output choice は resource と通常 component graph node の間を明示的に接続し、Host binding test と PCM の source/sink adaptor が使用する。raw resource の `Close` authority は component に渡さない。
+
+`buffer.Edit` と `audio.Editor` は shared/read-only payload の transactional copy-on-write consumerである。exclusive frame は backing をそのまま move し、fan-out 後は変更 branch だけ Job-local allocator から複製する。buffer/audio unit test と typed runtime fan-out test が commit/discard、0-allocation linear edit、branch isolation、grant repayment を検査する。将来の公式 audio filter は M8 で同じ API を使用する。
+
+`internal/{run,memory,task,observe,bound}` の export は `internal` import rule の内側だけにあり、Host/Program と対象 test が全ての caller である。plugin/surface の public contract ではない。M5 で追加した export に consumer 未定の宣言は残していない。
+
 ## 文書全体の完了条件
 
 この節は拡張点全体の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。

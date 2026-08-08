@@ -107,6 +107,36 @@ M0 は最終 policy/variant architecture の完成を要求しない。現行実
 
 M0 の完了判定は [quality](quality.md) の「M0 完了条件」とこの節を用いる。以下の最終 policy、Plan fingerprint、Portable/Realtime gate の完成は後続 milestone の責務である。
 
+## M5 runtime performance gate
+
+M5 の切断直前に、旧 `core/pipeline` と新しい specialized runtime を同じ test binary の AB/BA harness へ接続した。workload は 32,768 個の整数 item を `source -> processor -> processor -> sink` に通し、両 processor が 1 ずつ加算する。各 sample は件数と総和を検査してから採用し、静的な graph compile は測定外、one-shot execution の構築・task/queue lifecycle・全 item transfer は測定内とした。旧 edge と新 edge の item limit はともに 4 である。
+
+再現 command:
+
+```bash
+go test ./internal/run -run '^$' -bench 'Benchmark.*Paired|BenchmarkLinear' -benchmem -benchtime=10x -count=5
+```
+
+2026-08-08、`go1.26.4 windows/amd64`、M0 と同じ `13th Gen Intel(R) Core(TM) i7-13620H` 上の同一 process 比較では、5 run の `current/legacy` median ratio は `0.8974`〜`0.9523` だった。絶対時間は保存せず、この範囲を将来の machine と比較しない。`testing.AllocsPerRun` は旧 63、新 72 alloc/run で、差の 9 allocation は execution ごとの固定 lifecycle cost である。queue notification の初期実装で検出した 6 alloc/item は固定通知へ置換し、`TestQueueTransferAllocatesZero` と linear hop test を 0 allocation で固定した。したがって M5 の判定は「2 倍 trigger に該当する architecture regression なし、item/hop に比例する allocation なし」である。小さな速度差を新 runtime 採用の根拠にはしない。
+
+hot-path 12 条の証拠は次を正本とする。benchmark は総合的な回帰検出、test は各構造契約の決定的な gate を担当する。
+
+| 条項 | gate |
+|---|---|
+| 1, 10: item ごとの reflection/lookup/serialize/`any` map なし | `internal/run/drive.TestTypedSourceProcessorSinkComposeWithoutPerItemErasure`。type assertion と `reflect.Type` は binding 時だけで、delivery は型付き closure のまま通す |
+| 2: hop ごとの heap allocation なし | `flow.TestLinearInputTakeHasNoAllocation`、`internal/run/drive.TestLinearProcessorHopAllocatesZero`、`internal/run/queue.TestQueueTransferAllocatesZero`、`BenchmarkLinear` |
+| 3: observation off の追加 work なし | `internal/observe.TestOffCreatesNoCounterAndNeverReadsClock` と `internal/run.TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic` が counter、clock、Size/Time trait 呼出しを 0 で検査する |
+| 4: node ごとの goroutine/channel なし | `internal/run.TestCompileFusesMaximalLinearProcessorIsland` と `TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors`。4 node 中 2 Processor は 1 island、processor task は 0、source 1 task と I/O boundary 2 task だけを持つ |
+| 5: linear ownership の refcount increment なし | `internal/run/drive.TestTypedSourceProcessorSinkComposeWithoutPerItemErasure` と `TestOneOutputFanoutIsLinearMove` が Fork 呼出し 0、複数 fan-out だけを Fork 経路にする |
+| 6: stream property/metadata を item に複製しない | `media/stream.TestDescriptorKeepsStreamLocalPropertiesOutOfItems` と `TestDescriptorCarriesImmutableStaticMetadata` |
+| 7: timestamp rescale に arbitrary precision なし | `media/timing` の fixed 128-bit checked integer 実装、overflow/rounding test、`TestRescaleAllocatesZero` |
+| 8: resource accounting を中央 item loop に置かない | `internal/memory.TestReservationsAreCoarseAndRepaidOnce`、edge-local queue snapshot test、task-local `internal/observe.Local` test。Host manager は Open 前の coarse reservation だけを扱う |
+| 9: item loop に panic-recovery `defer` なし | `internal/run.TestTaskTopPanicIdentifiesNodeAndDropsActiveItem` と Host lifecycle panic matrix。recovery は `internal/task.Group` の task top に一度だけ置く |
+| 11: audio converter は region 境界だけ | `internal/solve.TestCompatibleAudioFilterRegionUsesOnlyBoundaryConverters` が filter N=1/4/16 の全てで converter 2 個を検査する |
+| 12: exclusive in-place / shared branch COW | `media/audio.TestExclusiveFrameEditReusesBackingWithoutAllocation` と `internal/run/drive.TestAudioFanoutCopiesOnlyModifyingBranch`。exclusive は同一 address・0 allocation、2-way fan-out は変更 branch だけ 1 copy |
+
+paired harness は旧 contract の最後の consumer なので、結果を確定した直後の M5 cut で compile 対象から外す。`BenchmarkLinear` は新 runtime の代表 gate として残す。
+
 ## 現行実装の監査結果
 
 現在の最適化は性質が異なるものを同じ build/runtime dispatch で扱っている。

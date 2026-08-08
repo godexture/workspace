@@ -250,8 +250,6 @@ func BenchmarkRuntimePaired(b *testing.B) {
 			panic(err)
 		}
 	})
-	b.ReportMetric(legacyAllocs, "legacy-allocs/run")
-	b.ReportMetric(currentAllocs, "current-allocs/run")
 	b.SetBytes(benchmarkLinearItems * 8)
 	ratios := make([]float64, 0, b.N)
 	b.ResetTimer()
@@ -267,6 +265,8 @@ func BenchmarkRuntimePaired(b *testing.B) {
 		ratios = append(ratios, float64(currentDuration)/float64(legacyDuration))
 	}
 	b.StopTimer()
+	b.ReportMetric(legacyAllocs, "legacy-allocs/run")
+	b.ReportMetric(currentAllocs, "current-allocs/run")
 	b.ReportMetric(medianBenchmarkRatio(ratios), "current/legacy")
 }
 

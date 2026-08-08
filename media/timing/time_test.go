@@ -49,6 +49,20 @@ func TestRescaleOverflowAndNegativeLimits(t *testing.T) {
 	}
 }
 
+func TestRescaleAllocatesZero(t *testing.T) {
+	from := MustBase(1, 48_000)
+	to := MustBase(1, 1_000)
+	allocations := testing.AllocsPerRun(1000, func() {
+		value, err := from.Rescale(48_024, to, RoundNearestEven)
+		if err != nil || value != 1000 {
+			panic("unexpected rescale result")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("timestamp rescale allocations = %v", allocations)
+	}
+}
+
 func TestMultiplyFactorsCarriesAcrossTheLowWord(t *testing.T) {
 	value, ok := multiplyFactors([]uint64{1 << 40, 1 << 30, 1 << 30})
 	if !ok || value.hi != 1<<36 || value.lo != 0 {
