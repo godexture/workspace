@@ -40,6 +40,30 @@ func TestFrameRejectsShortPlane(t *testing.T) {
 	}
 }
 
+func TestFrameExposesValidatedTypedPlane(t *testing.T) {
+	planes, err := buffer.Allocate(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: 6}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := NewFrame[int16](timing.UnknownPTS(), 3, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer frame.Release()
+	samples, err := frame.PlaneSamples(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(samples, []int16{-32768, 0, 32767})
+	again, err := frame.PlaneSamples(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 3 || again[0] != -32768 || again[2] != 32767 {
+		t.Fatalf("samples = %v", again)
+	}
+}
+
 func TestFramePlanesAreBorrowed(t *testing.T) {
 	planes, err := buffer.Allocate(buffer.Spec{Planes: []buffer.PlaneSpec{{Size: 2}}})
 	if err != nil {
