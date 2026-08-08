@@ -19,7 +19,7 @@
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
 | M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` を追加し、[task/m2-fix.md](task/m2-fix.md) の review 指摘 1〜19 を是正した。[plugins.md](plugins.md#m2-完了条件) と [config.md](config.md#m2-完了条件) の完了条件を逐条確認し、build、vet、対象 race、`--simd` gate（71/71 PASS、runner exit 0）を通過した。 |
 | M3 | 完了 | M3-1 の walking skeleton、M3-2 の metadata model/Binding と raw preservation、M3-3 の `media/side`、`stream.Event`、access の Reference/Provider/transaction/spool/probe/snapshot、typed endpoint trait/device/query を実装した。scheme conflict は既存 `plugin.Declaration`/catalog で検証し、device scan・permission・network side effect は追加していない。固有の完了条件は [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) を参照する。 |
-| M4 | 未着手 | 6 単位に分割済み。M4-1 の指示は [task/m4-1.md](task/m4-1.md) を参照する。 |
+| M4 | 進行中 | M4-1 の foundation 構造是正と descriptor-aware skeleton を完了し、次は M4-1b の key 宣言検証を行う。 |
 | M5 | 未着手 | 最終単位で旧 contract 層を切断する。範囲は [inventory.md](inventory.md#m5-の切断)。 |
 | M6 | 未着手 | — |
 | M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含む。 |
@@ -30,6 +30,7 @@
 
 ## 現在の注記
 
+- M4-1 の skeleton は各 port で `stream.Descriptor` を item と並走させた。現在は `NewDescriptor` と `WithMetadata` の組み合わせで schema/time base/property を保った出力を再構築しているため、M4-2 はこれを `Compile` の出力生成だけで担うか、機能的な descriptor 変換 API を置くか決める。
 - M0/M1 を再度開く blocker はない。M0 で把握した後続課題は [baseline.md](baseline.md#既知のギャップm0-完了時点で未解消後続-milestone-へ) に記録している。
 - `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3 gitlinkは、code と独立した任意取得の共有 data/asset として意図的に維持する。source code submodule 禁止には該当しない。
 - repository 全体の scalar/SIMD/forced-scalar differential は必須 gate にしない。`tools/cmd/differential` は任意の診断 tool とし、semantic 差は対象 package の test で検証する。
