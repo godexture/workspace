@@ -29,47 +29,65 @@ type (
 // Vorbis Comment, and RIFF INFO. It deliberately does not include unused
 // legacy Bundle keys.
 var (
-	Title       = key.Define[titleID, string]()
-	Artist      = key.Define[artistID, string]()
-	Album       = key.Define[albumID, string]()
-	Date        = key.Define[dateID, PartialDate]()
-	Genre       = key.Define[genreID, string]()
-	Comment     = key.Define[commentID, string]()
-	Composer    = key.Define[composerID, string]()
-	Lyrics      = key.Define[lyricsID, string]()
-	Website     = key.Define[websiteID, string]()
-	TrackNumber = key.Define[trackNumberID, int64]()
-	TotalTracks = key.Define[totalTracksID, int64]()
-	DiscNumber  = key.Define[discNumberID, int64]()
-	TotalDiscs  = key.Define[totalDiscsID, int64]()
-	Copyright   = key.Define[copyrightID, string]()
-	License     = key.Define[licenseID, string]()
-	Encoder     = key.Define[encoderID, string]()
+	title       = key.Define[titleID, string]()
+	artist      = key.Define[artistID, string]()
+	album       = key.Define[albumID, string]()
+	date        = key.Define[dateID, PartialDate]()
+	genre       = key.Define[genreID, string]()
+	comment     = key.Define[commentID, string]()
+	composer    = key.Define[composerID, string]()
+	lyrics      = key.Define[lyricsID, string]()
+	website     = key.Define[websiteID, string]()
+	trackNumber = key.Define[trackNumberID, int64]()
+	totalTracks = key.Define[totalTracksID, int64]()
+	discNumber  = key.Define[discNumberID, int64]()
+	totalDiscs  = key.Define[totalDiscsID, int64]()
+	copyright   = key.Define[copyrightID, string]()
+	license     = key.Define[licenseID, string]()
+	encoder     = key.Define[encoderID, string]()
 	// Artwork holds an immutable Blob, so copying the value is already a
 	// snapshot. The clone is declared to say so, not to duplicate anything.
-	Picture = key.Define[pictureID, Artwork](func(value Artwork) Artwork { return value })
+	picture = key.Define[pictureID, Artwork](func(value Artwork) Artwork { return value })
 )
+
+func Title() key.Key[string]      { return title }
+func Artist() key.Key[string]     { return artist }
+func Album() key.Key[string]      { return album }
+func Date() key.Key[PartialDate]  { return date }
+func Genre() key.Key[string]      { return genre }
+func Comment() key.Key[string]    { return comment }
+func Composer() key.Key[string]   { return composer }
+func Lyrics() key.Key[string]     { return lyrics }
+func Website() key.Key[string]    { return website }
+func TrackNumber() key.Key[int64] { return trackNumber }
+func TotalTracks() key.Key[int64] { return totalTracks }
+func DiscNumber() key.Key[int64]  { return discNumber }
+func TotalDiscs() key.Key[int64]  { return totalDiscs }
+func Copyright() key.Key[string]  { return copyright }
+func License() key.Key[string]    { return license }
+func Encoder() key.Key[string]    { return encoder }
+func Picture() key.Key[Artwork]   { return picture }
 
 // Declarations exposes the shared vocabulary to host composition validation.
 // Callers may freely modify the returned slice.
 func Declarations() []plugin.Declaration {
 	return []plugin.Declaration{
-		plugin.DeclareKey(Title),
-		plugin.DeclareKey(Artist),
-		plugin.DeclareKey(Album),
-		plugin.DeclareKey(Date),
-		plugin.DeclareKey(Genre),
-		plugin.DeclareKey(Comment),
-		plugin.DeclareKey(Composer),
-		plugin.DeclareKey(Lyrics),
-		plugin.DeclareKey(Website),
-		plugin.DeclareKey(TrackNumber),
-		plugin.DeclareKey(TotalTracks),
-		plugin.DeclareKey(DiscNumber),
-		plugin.DeclareKey(TotalDiscs),
-		plugin.DeclareKey(Copyright),
-		plugin.DeclareKey(License),
-		plugin.DeclareKey(Encoder),
-		plugin.DeclareKey(Picture),
+		plugin.DeclareKey(title),
+		plugin.DeclareKey(artist),
+		plugin.DeclareKey(album),
+		plugin.DeclareKey(date),
+		plugin.DeclareKey(genre),
+		plugin.DeclareKey(comment),
+		plugin.DeclareKey(composer),
+		plugin.DeclareKey(lyrics),
+		plugin.DeclareKey(website),
+		plugin.DeclareKey(trackNumber),
+		plugin.DeclareKey(totalTracks),
+		plugin.DeclareKey(discNumber),
+		plugin.DeclareKey(totalDiscs),
+		plugin.DeclareKey(copyright),
+		plugin.DeclareKey(license),
+		plugin.DeclareKey(encoder),
+		plugin.DeclareKey(picture),
 	}
 }

@@ -23,6 +23,6 @@ func ExampleParseDate() {
 // Declarations exposes the common vocabulary for optional host validation.
 func ExampleDeclarations() {
 	declarations := tag.Declarations()
-	fmt.Println(len(declarations), declarations[0].Key().Name() == tag.Title.ID().String())
+	fmt.Println(len(declarations), declarations[0].Key().Name() == tag.Title().ID().String())
 	// Output: 17 true
 }

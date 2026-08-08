@@ -9,10 +9,10 @@ import (
 
 func TestVocabularyContainsOnlyOpenDeclaredKeys(t *testing.T) {
 	keys := []key.ID{
-		Title.ID(), Artist.ID(), Album.ID(), Date.ID(), Genre.ID(), Comment.ID(),
-		Composer.ID(), Lyrics.ID(), Website.ID(), TrackNumber.ID(), TotalTracks.ID(),
-		DiscNumber.ID(), TotalDiscs.ID(), Copyright.ID(), License.ID(), Encoder.ID(),
-		Picture.ID(),
+		Title().ID(), Artist().ID(), Album().ID(), Date().ID(), Genre().ID(), Comment().ID(),
+		Composer().ID(), Lyrics().ID(), Website().ID(), TrackNumber().ID(), TotalTracks().ID(),
+		DiscNumber().ID(), TotalDiscs().ID(), Copyright().ID(), License().ID(), Encoder().ID(),
+		Picture().ID(),
 	}
 	seen := make(map[key.ID]struct{}, len(keys))
 	for _, key := range keys {
@@ -24,8 +24,8 @@ func TestVocabularyContainsOnlyOpenDeclaredKeys(t *testing.T) {
 		}
 		seen[key] = struct{}{}
 	}
-	if !Date.Valid() || !Picture.Valid() {
-		t.Fatalf("reference-free shared keys are invalid: date=%v picture=%v", Date.Problem(), Picture.Problem())
+	if !Date().Valid() || !Picture().Valid() {
+		t.Fatalf("reference-free shared keys are invalid: date=%v picture=%v", Date().Problem(), Picture().Problem())
 	}
 }
 
@@ -69,12 +69,12 @@ func TestDatePreservesPartialPrecision(t *testing.T) {
 func TestPictureUsesImmutableBlob(t *testing.T) {
 	source := []byte{1, 2, 3}
 	picture := Artwork{Data: metadata.NewBlob("image/png", source), Type: ArtworkFrontCover}
-	document, err := metadata.Add(metadata.NewBuilder(metadata.AssetScope), Picture, picture, metadata.Origin{}).Build()
+	document, err := metadata.Add(metadata.NewBuilder(metadata.AssetScope), Picture(), picture, metadata.Origin{}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	source[0] = 9
-	value, ok := metadata.First(document, Picture)
+	value, ok := metadata.First(document, Picture())
 	if !ok || !value.Valid() {
 		t.Fatalf("picture = %#v, %v", value, ok)
 	}

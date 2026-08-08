@@ -83,11 +83,11 @@ type (
 )
 
 var (
-	SampleFormat  = property.Define[formatKeyID](property.Scalar[Format]())
-	ValidBits     = property.Define[bitsKeyID](property.Scalar[int]())
-	SampleRate    = property.Define[rateKeyID](property.Scalar[int]())
-	ChannelLayout = property.Define[layoutKeyID](property.Scalar[Layout]())
-	ByteOrder     = property.Define[endianKeyID](property.Scalar[Endian]())
+	sampleFormat  = property.Define[formatKeyID](property.Scalar[Format]())
+	validBits     = property.Define[bitsKeyID](property.Scalar[int]())
+	sampleRate    = property.Define[rateKeyID](property.Scalar[int]())
+	channelLayout = property.Define[layoutKeyID](property.Scalar[Layout]())
+	byteOrder     = property.Define[endianKeyID](property.Scalar[Endian]())
 
 	s16 = schema.Define[s16SchemaID](schema.Traits[audio.Frame[int16]]{
 		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
@@ -102,6 +102,12 @@ var (
 		Time: frameTime[float32],
 	})
 )
+
+func SampleFormat() property.Key[Format]  { return sampleFormat }
+func ValidBits() property.Key[int]        { return validBits }
+func SampleRate() property.Key[int]       { return sampleRate }
+func ChannelLayout() property.Key[Layout] { return channelLayout }
+func ByteOrder() property.Key[Endian]     { return byteOrder }
 
 func frameTime[S audio.Sample](value audio.Frame[S]) (int64, bool) {
 	pts, ok := value.PTS().Get()
@@ -154,23 +160,23 @@ func (d Description) Apply(result property.Set) (property.Set, error) {
 		return property.Set{}, ErrInvalidDescription
 	}
 	var err error
-	result, err = property.Put(result, SampleFormat, d.Format)
+	result, err = property.Put(result, sampleFormat, d.Format)
 	if err != nil {
 		return property.Set{}, err
 	}
-	result, err = property.Put(result, ValidBits, d.ValidBits)
+	result, err = property.Put(result, validBits, d.ValidBits)
 	if err != nil {
 		return property.Set{}, err
 	}
-	result, err = property.Put(result, SampleRate, d.Rate)
+	result, err = property.Put(result, sampleRate, d.Rate)
 	if err != nil {
 		return property.Set{}, err
 	}
-	result, err = property.Put(result, ChannelLayout, d.Layout)
+	result, err = property.Put(result, channelLayout, d.Layout)
 	if err != nil {
 		return property.Set{}, err
 	}
-	result, err = property.Put(result, ByteOrder, d.Endian)
+	result, err = property.Put(result, byteOrder, d.Endian)
 	if err != nil {
 		return property.Set{}, err
 	}
@@ -179,11 +185,11 @@ func (d Description) Apply(result property.Set) (property.Set, error) {
 
 // FromProperties decodes and validates a complete sample description.
 func FromProperties(properties property.Set) (Description, error) {
-	format, formatOK := SampleFormat.Get(properties)
-	bits, bitsOK := ValidBits.Get(properties)
-	rate, rateOK := SampleRate.Get(properties)
-	layout, layoutOK := ChannelLayout.Get(properties)
-	endian, endianOK := ByteOrder.Get(properties)
+	format, formatOK := sampleFormat.Get(properties)
+	bits, bitsOK := validBits.Get(properties)
+	rate, rateOK := sampleRate.Get(properties)
+	layout, layoutOK := channelLayout.Get(properties)
+	endian, endianOK := byteOrder.Get(properties)
 	result := Description{Format: format, ValidBits: bits, Rate: rate, Layout: layout, Endian: endian}
 	if !formatOK || !bitsOK || !rateOK || !layoutOK || !endianOK || !result.Valid() {
 		return Description{}, fmt.Errorf("%w: sample properties are incomplete or inconsistent", ErrInvalidDescription)
@@ -195,10 +201,10 @@ func FromProperties(properties property.Set) (Description, error) {
 // validation. The returned slice has independent storage.
 func Declarations() []plugin.Declaration {
 	return []plugin.Declaration{
-		plugin.DeclareKey(SampleFormat),
-		plugin.DeclareKey(ValidBits),
-		plugin.DeclareKey(SampleRate),
-		plugin.DeclareKey(ChannelLayout),
-		plugin.DeclareKey(ByteOrder),
+		plugin.DeclareKey(sampleFormat),
+		plugin.DeclareKey(validBits),
+		plugin.DeclareKey(sampleRate),
+		plugin.DeclareKey(channelLayout),
+		plugin.DeclareKey(byteOrder),
 	}
 }

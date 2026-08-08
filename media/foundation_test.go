@@ -401,7 +401,7 @@ func newSkeletonDemuxedDescriptor(source stream.Descriptor) (stream.Descriptor, 
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), tag.Title, "skeleton stream", metadata.Origin{}).Build()
+	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), tag.Title(), "skeleton stream", metadata.Origin{}).Build()
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
@@ -517,16 +517,16 @@ func (e skeletonMetadataEncoding) Parse(payload []byte) (metadata.Document, erro
 		value := payload[offset+2 : end]
 		switch kind {
 		case skeletonMetadataTitle:
-			metadata.Add(builder, tag.Title, string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "TITLE"})
+			metadata.Add(builder, tag.Title(), string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "TITLE"})
 		case skeletonMetadataArtist:
-			metadata.Add(builder, tag.Artist, string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "ARTIST"})
+			metadata.Add(builder, tag.Artist(), string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "ARTIST"})
 		case skeletonMetadataDate:
 			date, err := tag.ParseDate(string(value))
 			if err != nil {
 				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
 				break
 			}
-			metadata.Add(builder, tag.Date, date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
+			metadata.Add(builder, tag.Date(), date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
 		default:
 			builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
 		}
@@ -539,19 +539,19 @@ func (e skeletonMetadataEncoding) Marshal(document metadata.Document) ([]byte, e
 	result := make([]byte, 0, document.Len()*8)
 	for _, entry := range document.Entries() {
 		switch entry.Key() {
-		case tag.Title.ID():
+		case tag.Title().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
 				return nil, fmt.Errorf("metadata title entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataTitle, []byte(value))
-		case tag.Artist.ID():
+		case tag.Artist().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
 				return nil, fmt.Errorf("metadata artist entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataArtist, []byte(value))
-		case tag.Date.ID():
+		case tag.Date().ID():
 			value, ok := entry.Value().(tag.PartialDate)
 			if !ok {
 				return nil, fmt.Errorf("metadata date entry has type %T", entry.Value())
@@ -1067,7 +1067,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if value, ok := skeletonSampleRate.Get(terminal.Properties()); !ok || value != 48000 {
 		t.Fatalf("terminal sample rate = %d, %v", value, ok)
 	}
-	if title, ok := metadata.First(terminal.Metadata(), tag.Title); !ok || title != "skeleton stream" {
+	if title, ok := metadata.First(terminal.Metadata(), tag.Title()); !ok || title != "skeleton stream" {
 		t.Fatalf("terminal metadata title = %q, %v", title, ok)
 	}
 	if len(trace.propertyReads) != 1 || trace.propertyReads[0] != (skeletonPropertyRead{component: "decoder", id: skeletonSampleRate.ID()}) {
@@ -1106,10 +1106,10 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if document.Scope() != metadata.StreamScope || document.Len() != 3 {
 		t.Fatalf("metadata document = scope %v, len %d", document.Scope(), document.Len())
 	}
-	if values := metadata.Values(document, tag.Artist); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+	if values := metadata.Values(document, tag.Artist()); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
 		t.Fatalf("artist order = %v", values)
 	}
-	if title, ok := metadata.First(document, tag.Title); !ok || title != "Song" {
+	if title, ok := metadata.First(document, tag.Title()); !ok || title != "Song" {
 		t.Fatalf("title = %q, %v", title, ok)
 	}
 	blocks := document.Blocks()
@@ -1128,7 +1128,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values := metadata.Values(parsedAgain, tag.Artist); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
+	if values := metadata.Values(parsedAgain, tag.Artist()); len(values) != 2 || values[0] != "First" || values[1] != "Second" {
 		t.Fatalf("roundtrip artist order = %v", values)
 	}
 }
@@ -1158,8 +1158,8 @@ func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
 	if shape.Inputs[0].Schema().Identity() != skeletonMetadataEventSchema.Identity() {
 		t.Fatal("metadata event port lost its schema identity")
 	}
-	event := skeletonMetadataEvent{At: timing.PTS(7), Key: tag.Title.ID(), Value: "live"}
-	if event.At != 7 || event.Key != tag.Title.ID() || event.Value != "live" {
+	event := skeletonMetadataEvent{At: timing.PTS(7), Key: tag.Title().ID(), Value: "live"}
+	if event.At != 7 || event.Key != tag.Title().ID() || event.Value != "live" {
 		t.Fatalf("metadata event = %#v", event)
 	}
 }
