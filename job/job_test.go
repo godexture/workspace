@@ -3,6 +3,7 @@ package job
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
@@ -144,7 +145,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := request.Policy()
-	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity {
+	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) {
 		t.Fatalf("default policy = %#v", policy)
 	}
 	if request.Budget() != DefaultBudget() {
@@ -154,6 +155,10 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	portable, ok := PolicyFor(Portable)
 	if !ok {
 		t.Fatal("portable policy did not expand")
+	}
+	realtime, ok := PolicyFor(Realtime)
+	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}) {
+		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
 	}
 	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3}
 	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
