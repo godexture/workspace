@@ -4,11 +4,14 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/plugin"
 )
 
 type examplePluginID struct{}
 type exampleComponentID struct{}
+type exampleKeyID struct{}
 
 type exampleConfig struct{ Level int }
 
@@ -25,4 +28,21 @@ func ExampleNewSet() {
 	set := plugin.NewSet(Codec())
 	fmt.Println(len(set.Components()))
 	// Output: 1
+}
+
+// Public vocabularies can opt into host-time validation. The key itself stays
+// usable without registration, but one marker cannot mean two payload types
+// in the same composition.
+func ExampleDeclareKey() {
+	text := key.Define[exampleKeyID, string]()
+	number := key.Define[exampleKeyID, int]()
+	set := plugin.NewSet().
+		AddDeclaration(plugin.DeclareKey(text)).
+		AddDeclaration(plugin.DeclareKey(number))
+
+	_, err := host.New(host.Plugins(set))
+	for _, item := range host.Diagnostics(err) {
+		fmt.Println(item.Code)
+	}
+	// Output: catalog.declaration-conflict
 }
