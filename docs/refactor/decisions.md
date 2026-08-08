@@ -56,7 +56,7 @@ core は Key/Document/Origin/RawBlock contract のみを持ち、共通 vocabula
 
 ### C13. monorepo と段階的な module/release 境界
 
-product sourceは一つのmonorepoに統合し、source codeのGit submoduleを使わない。codeと独立して更新・配布され、通常build/testの必須入力にならないtest/demo assetにはdata submoduleを許容する。現行の`example/assets`、`example/web/assets`、FLAC conformance corpusは維持でき、M10で一律削除しない。repository、module、packageを同じ境界として扱わない。
+product sourceは一つのmonorepoに統合し、source codeのGit submoduleを使わない。codeと独立して更新・配布され、通常build/testの必須入力にならないtest/demo assetにはdata submoduleを許容する。現行の`example/assets`とFLAC conformance corpusは維持でき、M10で一律削除しない。M1 時点の重複 `example/web/assets` は M5 で canonical asset へ統合した。repository、module、packageを同じ境界として扱わない。
 
 設計・pre-v1期間:
 

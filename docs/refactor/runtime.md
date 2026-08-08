@@ -337,6 +337,8 @@ Result {
 
 M5 は execution island、ownership、queue、cancel、Finalize、transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
 
+> **2026-08-08 完了。** 下記条件を ownership/queue/task/Host failure matrix、PCM public Host walking skeleton、hot-path allocation test、同一 process paired benchmark で逐条確認した。その後に最終 cut を適用し、scalar/SIMD 全 package test、対象 race/vet、generator、docs check を新 stack だけで通した。性能証拠は [performance](performance.md#m5-runtime-performance-gate)、切断結果は [inventory](inventory.md#m5-の切断) を正本とする。
+
 - 同期的な一入力一出力 Processor の linear chain が一つの execution island に fuse され、node ごとの goroutine と buffered channel を要求しない。queue が置かれるのは「queue と backpressure」に列挙した境界だけである。
 - plugin contract に channel、scheduler、queue 実装が露出しない。runtime internal を交換しても公式・第三者 plugin の public API が変わらない。
 - ownership 契約が conformance test される。Reader 返却で consumer へ move、Writer 成功で writer へ move、Writer 失敗で呼び出し元が保持、drop/cancel/queue drain は owner が破棄。linear path で refcount increment が起きず、fan-out のときだけ `Fork`/retain を通る。
@@ -368,7 +370,7 @@ M5 は execution island、ownership、queue、cancel、Finalize、transactional 
 - 未移植の algorithm が `_legacy/` にあり、`go list ./...` に現れない。`go build ./...` と `go test ./...` が新 stack だけを対象にして成功する。
 - 同じ概念の実装が二つ compile される箇所が残っていない。`flow` と `core/node`、`plugin.Set` と `core/registry`、`media/*` と `core/domain/*`、`config` と `sdk/config` のような対が消えている。
 - 旧 contract に依存しない utility（`sdk/{bits,dsp,dsp/fft,parallel,hash}`、`plugin/pcm/internal/{adpcm,g711}`）が現在地で compile できる。この単位では配置換えをしない。
-- [findings](findings.md) の「新経路で解消（旧経路は M5 の切断で削除）」注記が付いた行を完了へ更新する。
+  - [findings](findings.md) の M5 cut 対象を完了へ更新し、複数 milestone にまたがる行は残件を明示する。
 - この時点で repository は WAVE、MP3、FLAC、audio filter、CLI、WASM、demo web の機能を持たない。M6 以降が `_legacy/` から順に移す。未 release 製品として意図した状態であり、回帰ではない。
 
 M5 では次を未完了事項として残す。実 Format/Codec の駆動と `standard`/`integration`/`testkit` の最小形、`standard.Convert` と `cmd/godec` の最短経路は M6。multi-stream、metadata loss report、seek plan、MP4 は M7。variant selection と並列 codec の移行は M8。device/session Endpoint の実装と surface の完成は M9。

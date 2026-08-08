@@ -278,7 +278,7 @@ artists := metadata.Enumerate[metadata.KeyArtist](bundle)
 | `metadata.KeyTrackNumber` | `int64` | トラック番号 |
 | `metadata.KeyThumbnail` | `[]Thumbnail` | サムネイル画像 (複数可) |
 
-全キーは [`core/domain/metadata/keys.go`](../../core/domain/metadata/keys.go) を参照してください。
+全キーは [`_legacy/core/domain/metadata/keys.go`](../../_legacy/core/domain/metadata/keys.go) を参照してください。
 
 > キー型はポインタではなく **値型** を使う慣習です。  
 > これにより型安全性が保証され、文字列キーとの衝突を避けられます。

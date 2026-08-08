@@ -136,7 +136,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `example/web/client` | 維持・置換 | catalog-driven Host client。server/WASM capability handshake、requested/resolved graph 表示、generic schema editor を持ち、audio-only wire model を所有しない |
 | `example/web/client/src/graph` | 置換 | descriptor snapshot と独自 semantic `compileGraph` を削除。selector/config patch/catalog fingerprint を保存し、Host Plan を正本にして unresolved node と migration を扱う |
 | `example/web/client/src/conversion/backend` | 維持・整理 | server/worker transport を共通 Event/Plan/Result DTO へ正規化する adaptor。progress/planning semantics を再実装しない |
-| `example/assets`、`example/web/assets` | 維持・整理 | 同一asset repositoryを各exampleが独立して取得できるdata submoduleとして維持できる。固定revisionの関係を明示し、web buildも同じ検証済みsourceを使い、大容量demoはoptionalにする |
+| `example/assets`、`example/web/assets` | 整理 | M1 では同一 asset repository の data submodule として維持した。M5 の web hiatus で独立取得の実益がなくなったため `example/assets` 一つへ統合し、将来の web build も canonical source を使う |
 | `example/web/{client,server}/Dockerfile` | 置換 | root monorepo context、frozen Bun lock、current Go source、digest-pinned base、verified local assetでhermetic build。remote Git `ADD`とfloating tagを使わない |
 | `example/web/compose.yaml`、`Makefile`、`scripts` | 整理 | rootのdocumented dev/build commandへ接続し、platform固有helperは薄いadaptorにする |
 
@@ -201,6 +201,8 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 
 M5 の最終単位で旧 contract 層を一括削除する。理由と規則は [refactor.md](../refactor.md#実装ロードマップ) の移行規則、依存方向の帰結は [architecture](architecture.md#移行規則) を参照する。切断の前提条件は M5 完了条件の paired benchmark を取り終えていることであり、それが旧 pipeline の最後の用途である。
 
+> **2026-08-08 実施済み。** paired benchmark を確定した後、下の三分類を適用した。`go list ./...` には旧 contract と `_legacy/` が現れず、root module は外部 dependency を持たない。CLI/WASM/demo web の source と build manifest は旧 semantic surface の一部として全削除し、重複していた `example/web/assets` gitlink も canonical な `example/assets` へ統合した。
+
 判定は「新 stack に同じ概念の実装があるか」と「新 stack だけで compile できるか」の二つで行う。
 
 | 区分 | 判定 | 処置 |
@@ -223,13 +225,13 @@ M5 の最終単位で旧 contract 層を一括削除する。理由と規則は 
 
 `_legacy/` は repository path を鏡像で保つ。compile されないため、旧 import path を含んだままでよい。
 
-`plugin/wave/internal`、`plugin/pcm/internal` の package 本体、`plugin/mp3/internal/*`、`plugin/flac/internal/*`、`plugin/audio/internal/*`、`plugin/id3/*`、`plugin/vorbiscomment/*`、`sdk/audio`、`core/domain/media/pcm`、`core/domain/metadata`。いずれも旧 domain 型に束縛されているが、規格処理・数値 algorithm・bitstream 実装に移植価値がある。
+`plugin/wave/internal`、`plugin/pcm/internal` の package 本体、`plugin/mp3/internal/*`、`plugin/flac/internal/*`、`plugin/audio/internal/*`、`plugin/id3/*`、`plugin/vorbiscomment/*`、`sdk/audio`、`core/domain/media/pcm`、`core/domain/metadata`。いずれも旧 domain 型に束縛されているが、規格処理・数値 algorithm・bitstream 実装に移植価値がある。切断前の paired benchmark source も実施証拠として `_legacy/internal/run/performance_test.go` に置き、current runtime の `BenchmarkLinear` から旧 import を除いた。
 
 M6 が WAVE/PCM を、M7 が必要な metadata 経路を、M8 が MP3/FLAC/audio/ID3/Vorbis Comment を `_legacy/` から移し終えた時点で `_legacy/` ごと削除する。M8 完了時に `_legacy/` が空でなければ、残っている内容の処遇を [capability](capability.md) で決めてから削除する。
 
 ### 現在地に残す
 
-`sdk/{bits,dsp,dsp/fft,parallel,hash}` と `plugin/pcm/internal/{adpcm,g711}` は旧 contract への依存を持たず、そのまま compile できる。最終的な配置換え（`sdk/hash` → `plugin/flac/internal/crc`、`sdk/parallel` → FLAC internal または host task primitive、`sdk/{bits,dsp}` → public utility として整理）は M8 が担当し、切断時には移動しない。切断で扱う対象を「compile される実装が一つになること」に限定し、配置換えを混ぜない。
+`sdk/{bits,dsp,dsp/fft,parallel,hash}` と `plugin/pcm/internal/{adpcm,g711}` は旧 contract への依存を持たず、そのまま compile できる。ただし実装監査で ADPCM が WAVE/core の parameter 型を import している誤判定を発見したため、codec-local `plugin/pcm/internal/adpcm/param` を作って carrier contract から分離してから残した。最終的な配置換え（`sdk/hash` → `plugin/flac/internal/crc`、`sdk/parallel` → FLAC internal または host task primitive、`sdk/{bits,dsp}` → public utility として整理）は M8 が担当し、切断時には移動しない。切断で扱う対象を「compile される実装が一つになること」に限定し、配置換えを混ぜない。
 
 ## M1 で使う棚卸し条件
 

@@ -44,16 +44,16 @@
 |---|---|---|---|---|
 | processor 17 種 | compressor、convert、convolver、dcoffset、delay、equalizer、fade、gain、gate、linear、mixer、normalize、remix、resample、retime、reverb、trim | 維持 | M8 | impulse/step/sine/noise と chunk 境界不変性 |
 | filter ごとの byte↔float 変換 | 各 filter が個別に実施 | 廃止 | M8 | 変換回数が filter 数に比例しないことを benchmark counter で確認 |
-| 並列 convolver / FLAC | worker 数指定 | 維持 | M5/M8 | worker 1/N の出力不変 test |
+| 並列 convolver / FLAC | worker 数指定 | 維持 | M5/M8 | M5 は `resource.Grant` と `TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen` で Job-local grant を確認済み。worker 1/N の出力不変 test は実 codec を戻す M8 |
 
 ## runtime と観測
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| observation Off / Progress / Metrics | pipeline の 3 mode | 変更 | M5 | observability contract と hot-path 契約 test |
-| cancel 伝播 | pipeline 全体 | 維持 | M5 | leak/cancel test |
+| observation Off / Progress / Metrics | pipeline の 3 mode | 変更 | M5 | `TestOffCreatesNoCounterAndNeverReadsClock` と `TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic` で確認済み |
+| cancel 伝播 | pipeline 全体 | 維持 | M5 | queue wait、peer task、PCM Host Run の cancel/leak test で確認済み |
 | seek | MP3 demuxer、FLAC seektable | 維持 | M7 + M6/M8 | seek 精度と preroll の test |
-| worker pool | `registry.NewWorkerPool(N)` | 変更 | M5 | resource grant として Plan に現れること |
+| worker pool | `registry.NewWorkerPool(N)` | 変更 | M5 | `resource.Grant`、runtime projection、aggregate reservation test で Job-local resource として確認済み |
 
 ## I/O と surface
 
@@ -66,6 +66,8 @@
 | playback | Oto 直結の `PlaybackSink` | 変更 | M9 | typed Endpoint + 専用 command |
 | WASM binding | 8 関数、全量 `[]byte` | 変更 | M9 | versioned DTO と handle 状態機械の test |
 | example web | server + client | 変更 | M9 | catalog 駆動 editor の test |
+
+M5 cut 後はこの表の surface 実装を一時的に置かない。旧 CLI/WASM/demo source を互換層として残さず、M6 の Go 最短経路と M9 の各 surface を同じ Host façade から新設する意図的な capability hiatus である。判断と後続の確認義務は削除せず、この表で維持する。
 
 ## 未定
 

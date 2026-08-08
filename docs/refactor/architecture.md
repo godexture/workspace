@@ -35,7 +35,7 @@ package を分けるためだけに repository/module を分けない。import p
 
 ### 設計・pre-v1期間
 
-source を一つの monorepo に統合し、source code の Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。code と独立して更新・配布される任意取得の test/demo asset は data submodule として維持できる。`example/assets`、`example/web/assets`、FLAC conformance corpus がこれに該当する。通常 build/test の必須入力や production dependency にせず、新しい source submodule は追加しない。
+source を一つの monorepo に統合し、source code の Git submodule を廃止する。foundation、公式 pure-Go plugin、standard、基本 CLI は一つの product module/release train とし、contract と全公式利用側を一 commit で変更できるようにする。code と独立して更新・配布される任意取得の test/demo asset は data submodule として維持できる。現在は `example/assets` と FLAC conformance corpus がこれに該当する。通常 build/test の必須入力や production dependency にせず、新しい source submodule は追加しない。M1 時点で同一 commit を指していた `example/web/assets` は、web hiatus に入った M5 で重複を解消した。
 
 ```text
 module github.com/godexture/godec
@@ -81,7 +81,7 @@ nested module は、次のいずれかに具体的な実益がある場合だけ
 M1 は repository、package identity、module/workspace topology を固定する milestone であり、最終 foundation contract や全 production import の層分離までは要求しない。
 
 - product source とその履歴が monorepo に入り、source code の Git submodule が残っていない。
-- data/asset gitlink は上記3件を独立した任意取得dependencyとして明示し、通常build/testからの分離、固定revision、license、未取得時の挙動が記録されている。
+- M1 時点の data/asset gitlink 3件を独立した任意取得 dependency として明示し、通常 build/test からの分離、固定 revision、license、未取得時の挙動が記録されている。M5 では同一 asset の二重配置を 1 件へ統合した。
 - 公式 plugin の最終 package path が `plugin/<family>` に固定され、後の family module split で import path と reflection/marker identity が変わらない。
 - root product module と target/dependency が独立する nested module だけで一方向の module DAGを作る。
 - clean checkout から、未追跡 `go.work` や事前生成済み実行fileに依存せず、tracked source/manifestを使って全moduleのbuild/test/generateを起動できる。

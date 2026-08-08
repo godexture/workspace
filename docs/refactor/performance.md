@@ -111,7 +111,7 @@ M0 の完了判定は [quality](quality.md) の「M0 完了条件」とこの節
 
 M5 の切断直前に、旧 `core/pipeline` と新しい specialized runtime を同じ test binary の AB/BA harness へ接続した。workload は 32,768 個の整数 item を `source -> processor -> processor -> sink` に通し、両 processor が 1 ずつ加算する。各 sample は件数と総和を検査してから採用し、静的な graph compile は測定外、one-shot execution の構築・task/queue lifecycle・全 item transfer は測定内とした。旧 edge と新 edge の item limit はともに 4 である。
 
-再現 command:
+切断前に使った再現 command（旧 harness は current tree では実行しない）:
 
 ```bash
 go test ./internal/run -run '^$' -bench 'Benchmark.*Paired|BenchmarkLinear' -benchmem -benchtime=10x -count=5
@@ -135,7 +135,11 @@ hot-path 12 条の証拠は次を正本とする。benchmark は総合的な回�
 | 11: audio converter は region 境界だけ | `internal/solve.TestCompatibleAudioFilterRegionUsesOnlyBoundaryConverters` が filter N=1/4/16 の全てで converter 2 個を検査する |
 | 12: exclusive in-place / shared branch COW | `media/audio.TestExclusiveFrameEditReusesBackingWithoutAllocation` と `internal/run/drive.TestAudioFanoutCopiesOnlyModifyingBranch`。exclusive は同一 address・0 allocation、2-way fan-out は変更 branch だけ 1 copy |
 
-paired harness は旧 contract の最後の consumer なので、結果を確定した直後の M5 cut で compile 対象から外す。`BenchmarkLinear` は新 runtime の代表 gate として残す。
+paired harness は旧 contract の最後の consumer だったため、結果を確定した直後の M5 cut で `_legacy/internal/run/performance_test.go` へ隔離した。新 runtime の継続 gate は次で再現できる。
+
+```bash
+go test ./internal/run -run '^$' -bench '^BenchmarkLinear$' -benchmem
+```
 
 ## 現行実装の監査結果
 

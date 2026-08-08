@@ -267,7 +267,7 @@ config は component identity ではない。同じ component marker が異な�
 
 ## generator の扱い
 
-`tools/cmd/config-generator`、`tools/internal/config-generator`、checked-in `config_options.go` は最終設計から削除する。
+`tools/cmd/config-generator`、`tools/internal/config-generator`、checked-in `config_options.go` は M5 cut で削除済みである。
 
 理由:
 

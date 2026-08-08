@@ -160,14 +160,14 @@ func NewX(...) (X, error)
 
 を生成する。これは compile 不能であり、既存生成物との差がある場合は generator source の bug/drift である。
 
-目標設計ではこの generator を恒久修理して残さない。typed [config contract](config.md) へ移した plugin から、次を同時に削除する。
+この generator は恒久修理して残さず、typed [config contract](config.md) への移行後に M5 cut で次を同時に削除した。
 
 - `tools/cmd/config-generator`
 - `tools/internal/config-generator`
 - config 用 `go:generate`
 - checked-in `config_options.go`
 
-移行中に再生成が必要な場合だけ bug を最小修正し、temporary package の compile test を付ける。廃止予定 generator の大規模 test suite は作らない。
+切断前に再生成を必要としなかったため、廃止 generator の修理や大規模 test suite は追加していない。
 
 ### 残す generator
 

@@ -48,18 +48,9 @@
 
 - 全モジュールのテスト: `go run ./tools/cmd/test-runner --simd` (at the workspace root)
     - 広範な変更、milestone の完了確認、release 前に使う。通常は対象 package の test を優先する
-    - cache が効かない cold run では 30 分近くかかることがある。大半は `plugin/flac/test` の conformance corpus が占める。関係する package を変更していない再実行は `go test` の cache により数分で終わる
     - scalar/SIMD 横断の診断が必要な場合は `go run ./tools/cmd/differential ./...` を使う。通常の必須 gate ではない
 - 全 generator の実行: `go run ./tools/cmd/generate` (at the workspace root)。generator、入力、生成物に関係する変更、または milestone/release の確認時に使う
 - docs の link/anchor 検査: `go run ./tools/cmd/docs-check` (at the workspace root)。設計文書を変更した時、または milestone の完了確認時に使う
-- nested module (`tools`、`bindings/wasm`、`example/go`、`example/web/server`) が root module への暗黙の local source 解決に依存していないことを確認する場合は、各 module 内で `GOWORK=off go build ./...` を実行する（`replace` directive 経由の明示的な依存は解決されるが、`go.work` がなければ解決できない参照があれば失敗する）。
-- WASM target のビルド確認: `bindings/wasm` module 内で `GOOS=js GOARCH=wasm go build ./...`。
+- nested module `tools` が root module への暗黙の local source 解決に依存していないことを確認する場合は、`tools` 内で `GOWORK=off go build ./...` を実行する。
 
-### JS/WASM surface
-
-JS/WASM surface に影響する変更、milestone の完了確認、release 前には、root `bun.lock` を使った frozen install から以下を実行する。native Go の test pass だけでこれらの surface を検証済みとしない。
-
-- root で一度: `bun install --frozen-lockfile`
-- `bindings/js`（WASM 本体の build を含む。TinyGo と `go run github.com/13rac1/gowasm-bindgen@...` に依存する）: `bun run build`、続けて `bun run ./test`
-    - `bun run ./test` は Bun の Worker 実装が `importScripts()` に未対応なため、実際の WASM 経路を `"Skipping: ..."` という明示メッセージ付きで skip する（exit code は 0 だが、標準出力に skip 理由が残る）。実ブラウザでの経路検証は M9/M10 の real-browser lifecycle test へ接続する。
-- `example/web/client`（`@godexture/js` の型を要求するため、先に `bindings/js` を build しておく）: `bunx --bun tsc -p tsconfig.app.json --noEmit`（typecheck）、`bun test test`、`bun run build`
+CLI、WASM、JS、demo web は M5 の capability hiatus で repository から外れている。M9 で新 surface を追加した時点で、その toolchain と real-browser lifecycle gate をこの節へ追加する。
