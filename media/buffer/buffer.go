@@ -14,8 +14,11 @@ var (
 	ErrInvalidLimit     = errors.New("buffer allocator limit must be positive")
 	ErrLimit            = errors.New("buffer allocator grant is exhausted")
 	ErrReadOnly         = errors.New("buffer is read-only")
+	ErrShared           = errors.New("buffer is not exclusively writable")
 	ErrPlaneIndex       = errors.New("buffer plane index is out of range")
 	ErrLeaseState       = errors.New("buffer overwrite lease is not writable")
+	ErrInvalidHandle    = errors.New("buffer handle is invalid")
+	ErrEditAllocator    = errors.New("copy-on-write requires a payload allocator")
 )
 
 type PlaneSpec struct {
@@ -231,10 +234,13 @@ func (h Handle) Bytes() []byte { return h.Borrow().Bytes() }
 
 func (h Handle) MutableBytes() ([]byte, error) {
 	if !h.Valid() {
-		return nil, errors.New("invalid buffer handle")
+		return nil, ErrInvalidHandle
 	}
 	if h.lease.storage.layout.ReadOnly {
 		return nil, ErrReadOnly
+	}
+	if h.lease.storage.layout.Shared || h.lease.storage.refs.Load() != 1 {
+		return nil, ErrShared
 	}
 	return h.lease.storage.data, nil
 }
@@ -247,6 +253,103 @@ func (h Handle) ReadOnly() bool {
 
 func (h Handle) Shared() bool {
 	return h.lease != nil && h.lease.storage != nil && h.lease.storage.layout.Shared
+}
+
+// Edit is a transactional mutable view. An exclusive writable Handle reuses
+// its backing storage. A shared or read-only Handle copies into the supplied
+// allocator, and consumes the original owner only when Commit succeeds.
+type Edit struct {
+	original Handle
+	working  Handle
+	copied   bool
+	active   bool
+}
+
+func (h Handle) Edit(allocator *Allocator) (Edit, error) {
+	if !h.Valid() {
+		return Edit{}, ErrInvalidHandle
+	}
+	storage := h.lease.storage
+	if !storage.layout.ReadOnly && !storage.layout.Shared && storage.refs.Load() == 1 {
+		return Edit{original: h, working: h, active: true}, nil
+	}
+	if allocator == nil {
+		return Edit{}, ErrEditAllocator
+	}
+	working, err := allocator.Allocate(editSpec(storage.layout))
+	if err != nil {
+		return Edit{}, err
+	}
+	copy(working.lease.storage.data, storage.data)
+	return Edit{original: h, working: working, copied: true, active: true}, nil
+}
+
+func editSpec(layout Layout) Spec {
+	planes := make([]PlaneSpec, len(layout.Planes))
+	for index, plane := range layout.Planes {
+		planes[index] = PlaneSpec{Size: plane.Size, Padding: plane.Padding}
+	}
+	return Spec{Planes: planes, Alignment: layout.Alignment}
+}
+
+// Handle returns the candidate owner to publish downstream. It does not
+// retain the storage and remains governed by Commit or Discard.
+func (e *Edit) Handle() Handle {
+	if e == nil || !e.active {
+		return Handle{}
+	}
+	return e.working
+}
+
+func (e *Edit) MutableBytes() ([]byte, error) {
+	if e == nil || !e.active || !e.working.Valid() {
+		return nil, ErrLeaseState
+	}
+	return e.working.lease.storage.data, nil
+}
+
+func (e *Edit) Plane(index int) ([]byte, error) {
+	if e == nil || !e.active || !e.working.Valid() {
+		return nil, ErrLeaseState
+	}
+	planes := e.working.lease.storage.layout.Planes
+	if index < 0 || index >= len(planes) {
+		return nil, ErrPlaneIndex
+	}
+	plane := planes[index]
+	return e.working.lease.storage.data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+}
+
+func (e *Edit) Copied() bool { return e != nil && e.active && e.copied }
+
+// Commit transfers the candidate Handle previously returned by Handle to its
+// consumer. For copy-on-write it consumes this branch's original owner.
+func (e *Edit) Commit() error {
+	if e == nil || !e.active {
+		return ErrLeaseState
+	}
+	if e.copied {
+		e.original.Release()
+	}
+	e.original = Handle{}
+	e.working = Handle{}
+	e.active = false
+	return nil
+}
+
+// Discard abandons an edit after a downstream failure. A copied candidate is
+// released while the original owner remains untouched; an exclusive edit
+// leaves that owner for the runtime to release.
+func (e *Edit) Discard() {
+	if e == nil || !e.active {
+		return
+	}
+	if e.copied {
+		e.working.Release()
+	}
+	e.original = Handle{}
+	e.working = Handle{}
+	e.active = false
 }
 
 func (h Handle) Release() {

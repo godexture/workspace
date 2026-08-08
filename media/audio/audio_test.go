@@ -109,3 +109,93 @@ func TestFrameCarriesSideDataWithoutChangingPlaneOwnership(t *testing.T) {
 		t.Fatalf("frame side data = %q, %v", value, ok)
 	}
 }
+
+func TestExclusiveFrameEditReusesBackingWithoutAllocation(t *testing.T) {
+	allocator := frameAllocator(t)
+	planes, err := allocator.FromBytes([]byte{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := NewFrame[int16](timing.UnknownPTS(), 1, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := frame.PlaneSamples(0)
+	beforeAddress := &before[0]
+	allocations := testing.AllocsPerRun(1000, func() {
+		edit, err := frame.Edit(nil)
+		if err != nil {
+			panic(err)
+		}
+		if edit.Copied() {
+			panic("exclusive edit copied")
+		}
+		candidate := edit.Frame()
+		samples, err := edit.PlaneSamples(0)
+		if err != nil {
+			panic(err)
+		}
+		samples[0]++
+		if err := edit.Commit(); err != nil {
+			panic(err)
+		}
+		frame = candidate
+	})
+	if allocations != 0 {
+		t.Fatalf("exclusive frame edit allocations = %v", allocations)
+	}
+	after, _ := frame.PlaneSamples(0)
+	if &after[0] != beforeAddress || after[0] != 1001 {
+		t.Fatalf("exclusive edit = address %p want %p, sample %d", &after[0], beforeAddress, after[0])
+	}
+	frame.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("exclusive edit retained %d bytes", allocator.Used())
+	}
+}
+
+func TestSharedFrameEditCopiesOnlyCandidate(t *testing.T) {
+	allocator := frameAllocator(t)
+	planes, err := allocator.FromBytes([]byte{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := NewFrame[int16](timing.UnknownPTS(), 1, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := frame.Share()
+	edit, err := frame.Edit(allocator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edit.Discard()
+	if !edit.Copied() {
+		t.Fatal("shared frame edit did not copy")
+	}
+	candidate := edit.Frame()
+	samples, err := edit.PlaneSamples(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples[0] = 9
+	sharedSamples, _ := shared.PlaneSamples(0)
+	if sharedSamples[0] != 0 {
+		t.Fatalf("shared branch changed to %d", sharedSamples[0])
+	}
+	if err := edit.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if frame.Valid() {
+		t.Fatal("committed copy did not consume the edited branch owner")
+	}
+	candidateSamples, _ := candidate.PlaneSamples(0)
+	if candidateSamples[0] != 9 {
+		t.Fatalf("candidate sample = %d", candidateSamples[0])
+	}
+	shared.Release()
+	candidate.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("shared edit retained %d bytes", allocator.Used())
+	}
+}

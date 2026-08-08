@@ -95,3 +95,54 @@ func (f Frame[S]) Share() Frame[S] {
 	return f
 }
 func (f Frame[S]) Release() { f.planes.Release() }
+
+// Editor provides transactional mutable access to a frame. Frame returns the
+// candidate owner to emit downstream. Call Commit only after a successful
+// emit; defer Discard so a failed path releases only a copy-on-write candidate.
+type Editor[S Sample] struct {
+	frame Frame[S]
+	edit  buffer.Edit
+}
+
+func (f Frame[S]) Edit(allocator *buffer.Allocator) (Editor[S], error) {
+	edit, err := f.planes.Edit(allocator)
+	if err != nil {
+		return Editor[S]{}, err
+	}
+	f.planes = edit.Handle()
+	return Editor[S]{frame: f, edit: edit}, nil
+}
+
+func (e *Editor[S]) Frame() Frame[S] {
+	if e == nil || !e.edit.Handle().Valid() {
+		return Frame[S]{}
+	}
+	return e.frame
+}
+
+func (e *Editor[S]) PlaneSamples(index int) ([]S, error) {
+	if e == nil {
+		return nil, buffer.ErrLeaseState
+	}
+	plane, err := e.edit.Plane(index)
+	if err != nil {
+		return nil, err
+	}
+	if e.frame.samples == 0 {
+		return []S{}, nil
+	}
+	return unsafe.Slice((*S)(unsafe.Pointer(&plane[0])), e.frame.samples), nil
+}
+
+func (e *Editor[S]) Copied() bool { return e != nil && e.edit.Copied() }
+func (e *Editor[S]) Commit() error {
+	if e == nil {
+		return buffer.ErrLeaseState
+	}
+	return e.edit.Commit()
+}
+func (e *Editor[S]) Discard() {
+	if e != nil {
+		e.edit.Discard()
+	}
+}

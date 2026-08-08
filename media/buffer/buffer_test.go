@@ -65,6 +65,77 @@ func TestHandleSharingAndReadOnlyBoundary(t *testing.T) {
 	if allocator.Used() != 0 {
 		t.Fatalf("released allocation still charges %d bytes", allocator.Used())
 	}
+	writable, err := allocator.Allocate(Spec{Planes: []PlaneSpec{{Size: 4}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := writable.Share()
+	if _, err := writable.MutableBytes(); !errors.Is(err, ErrShared) {
+		t.Fatalf("shared mutable view error = %v", err)
+	}
+	writable.Release()
+	retained.Release()
+}
+
+func TestEditCopiesSharedStorageTransactionally(t *testing.T) {
+	allocator := testAllocator(t, 64)
+	original, err := allocator.FromBytes([]byte{1, 2, 3, 4}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := original.Share()
+	edit, err := original.Edit(allocator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !edit.Copied() {
+		t.Fatal("shared edit reused the original backing")
+	}
+	candidate := edit.Handle()
+	bytes, err := edit.MutableBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes[0] = 9
+	if shared.Bytes()[0] != 1 {
+		t.Fatal("copy-on-write changed the shared original")
+	}
+	if err := edit.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if original.Valid() || !candidate.Valid() || candidate.Bytes()[0] != 9 {
+		t.Fatalf("committed edit = original %v candidate %v bytes %v", original.Valid(), candidate.Valid(), candidate.Bytes())
+	}
+	shared.Release()
+	candidate.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("committed edit retained %d bytes", allocator.Used())
+	}
+}
+
+func TestEditDiscardKeepsOriginalOwner(t *testing.T) {
+	allocator := testAllocator(t, 64)
+	original, err := allocator.FromBytes([]byte{1, 2, 3, 4}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := original.Share()
+	edit, err := original.Edit(allocator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := edit.Handle()
+	bytes, _ := edit.MutableBytes()
+	bytes[0] = 9
+	edit.Discard()
+	if !original.Valid() || !shared.Valid() || candidate.Valid() || original.Bytes()[0] != 1 {
+		t.Fatalf("discarded edit = original %v shared %v candidate %v bytes %v", original.Valid(), shared.Valid(), candidate.Valid(), original.Bytes())
+	}
+	original.Release()
+	shared.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("discarded edit retained %d bytes", allocator.Used())
+	}
 }
 
 func TestFromBytesCopiesInput(t *testing.T) {

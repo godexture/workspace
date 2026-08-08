@@ -10,7 +10,10 @@ import (
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/queue"
+	"github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/media/timing"
 )
 
 type (
@@ -208,6 +211,100 @@ func TestOneOutputFanoutIsLinearMove(t *testing.T) {
 	}
 	if owners.forks.Load() != 0 || owners.drops.Load() != 1 {
 		t.Fatalf("one-output ownership = forks %d drops %d", owners.forks.Load(), owners.drops.Load())
+	}
+}
+
+type editingFrameWriter struct {
+	operatorBase
+	allocator *buffer.Allocator
+	copies    int
+	value     int16
+}
+
+func (w *editingFrameWriter) Write(_ context.Context, input flow.Input[audio.Frame[int16]]) error {
+	edit, err := input.Value().Edit(w.allocator)
+	if err != nil {
+		return err
+	}
+	defer edit.Discard()
+	if edit.Copied() {
+		w.copies++
+	}
+	samples, err := edit.PlaneSamples(0)
+	if err != nil {
+		return err
+	}
+	samples[0] = 9
+	candidate := edit.Frame()
+	w.value = samples[0]
+	if err := edit.Commit(); err != nil {
+		return err
+	}
+	candidate.Release()
+	return nil
+}
+
+type readingFrameWriter struct {
+	operatorBase
+	value int16
+}
+
+func (w *readingFrameWriter) Write(_ context.Context, input flow.Input[audio.Frame[int16]]) error {
+	samples, err := input.Value().PlaneSamples(0)
+	if err != nil {
+		return err
+	}
+	w.value = samples[0]
+	input.Drop()
+	return nil
+}
+
+func TestAudioFanoutCopiesOnlyModifyingBranch(t *testing.T) {
+	type audioFanoutID struct{}
+	allocator, err := buffer.NewAllocator(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planes, err := allocator.FromBytes([]byte{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := audio.NewFrame[int16](timing.UnknownPTS(), 1, planes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typ := schema.Define[audioFanoutID](schema.Traits[audio.Frame[int16]]{
+		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
+		Drop: func(value audio.Frame[int16]) { value.Release() },
+	})
+	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	left := &editingFrameWriter{operatorBase: operatorBase{shape: shape}, allocator: allocator}
+	right := &readingFrameWriter{operatorBase: operatorBase{shape: shape}}
+	sink := NewSink("in", typ)
+	leftLink, err := sink.OpenSink(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightLink, err := sink.OpenSink(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fanout, err := NewSource("out", typ).Fanout([]Link{leftLink, rightLink})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := deliveryOf[audio.Frame[int16]](fanout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Emit(context.Background(), flow.NewInput(frame, typ)); err != nil {
+		t.Fatal(err)
+	}
+	if left.copies != 1 || left.value != 9 || right.value != 0 {
+		t.Fatalf("fan-out edit = copies %d modified %d read-only %d", left.copies, left.value, right.value)
+	}
+	if allocator.Used() != 0 {
+		t.Fatalf("fan-out edit retained %d bytes", allocator.Used())
 	}
 }
 
