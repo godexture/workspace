@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
 func BytesPerPCMBlock(channels int, blockAlign int) int {
@@ -18,14 +18,13 @@ type EncodeState struct {
 	NotFirstBlock bool
 }
 
-func Encode(linear []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
+func Encode(linear []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
+	if err := params.Validate(param.IMA, channels); err != nil {
+		return nil, err
+	}
 	if state == nil {
 		state = &EncodeState{}
 	}
-	if channels != 1 && channels != 2 {
-		return nil, fmt.Errorf("unsupported channel count for IMA ADPCM: %d", channels)
-	}
-
 	numSamples := len(linear) / 2
 	if numSamples == 0 {
 		return nil, nil

@@ -5,18 +5,18 @@ package msadpcm
 import (
 	"simd/archsimd"
 
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 	"github.com/godexture/godec/sdk/dsp"
 )
 
-func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []params.Coefficient) int {
+func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []param.Coefficient) int {
 	if dsp.HasAVX2 && len(coefficients) > 0 && len(coefficients) <= 8 && samplesPerBlock >= 2 {
 		return findBestPredictorSIMD(chunkSamples, samplesPerBlock, step, offset, coefficients)
 	}
 	return findBestPredictorScalar(chunkSamples, samplesPerBlock, step, offset, coefficients)
 }
 
-func findBestPredictorSIMD(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []params.Coefficient) int {
+func findBestPredictorSIMD(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []param.Coefficient) int {
 	var coefficient1, coefficient2 [8]int32
 	for i := range coefficient1 {
 		coefficient1[i] = int32(coefficients[0].Coeff1)

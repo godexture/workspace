@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/plugin/pcm/internal/adpcm/bits"
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
-func Decode(block []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {
-	if channels != 1 && channels != 2 {
-		return nil, fmt.Errorf("unsupported channel count for MS ADPCM: %d", channels)
+func Decode(block []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder) ([]byte, error) {
+	if err := params.Validate(param.Microsoft, channels); err != nil {
+		return nil, err
 	}
 	if len(block) != int(params.BlockAlign) {
 		return nil, fmt.Errorf("MS ADPCM block size mismatch: got %d, want %d", len(block), params.BlockAlign)
@@ -32,7 +32,7 @@ func Decode(block []byte, channels int, params params.ADPCM, byteOrder binary.By
 	}
 }
 
-func decodeMono(block []byte, coefficients []params.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
+func decodeMono(block []byte, coefficients []param.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
 	predictor := int(block[0])
 	if predictor >= len(coefficients) {
 		return nil, fmt.Errorf("MS ADPCM predictor index out of range: %d", predictor)
@@ -68,7 +68,7 @@ func decodeMono(block []byte, coefficients []params.Coefficient, byteOrder binar
 	return out, nil
 }
 
-func decodeStereo(block []byte, coefficients []params.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
+func decodeStereo(block []byte, coefficients []param.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
 	predL := int(block[0])
 	predR := int(block[1])
 

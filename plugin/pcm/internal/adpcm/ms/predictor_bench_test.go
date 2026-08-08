@@ -3,7 +3,7 @@ package msadpcm
 import (
 	"testing"
 
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
 func BenchmarkFindBestPredictor(b *testing.B) {
@@ -12,9 +12,9 @@ func BenchmarkFindBestPredictor(b *testing.B) {
 	for i := range samples {
 		samples[i] = int16((i*7919)%65536 - 32768)
 	}
-	coefficients := make([]params.Coefficient, len(coeffs))
+	coefficients := make([]param.Coefficient, len(coeffs))
 	for i, coefficient := range coeffs {
-		coefficients[i] = params.Coefficient{Coeff1: int16(coefficient[0]), Coeff2: int16(coefficient[1])}
+		coefficients[i] = param.Coefficient{Coeff1: int16(coefficient[0]), Coeff2: int16(coefficient[1])}
 	}
 	b.ReportAllocs()
 	for b.Loop() {

@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
 func BytesPerPCMBlock(channels int, blockAlign int) int {
@@ -17,9 +17,9 @@ func BytesPerPCMBlock(channels int, blockAlign int) int {
 	return samplesPerBlock * channels * 2
 }
 
-func Encode(linear []byte, channels int, params params.ADPCM, byteOrder binary.ByteOrder) ([]byte, error) {
-	if channels != 1 && channels != 2 {
-		return nil, fmt.Errorf("unsupported channel count for MS ADPCM: %d", channels)
+func Encode(linear []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder) ([]byte, error) {
+	if err := params.Validate(param.Microsoft, channels); err != nil {
+		return nil, err
 	}
 
 	numSamples := len(linear) / 2
@@ -72,7 +72,7 @@ func Encode(linear []byte, channels int, params params.ADPCM, byteOrder binary.B
 	return out, nil
 }
 
-func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []params.Coefficient) {
+func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []param.Coefficient) {
 	predictor := findBestPredictor(chunkSamples, samplesPerBlock, 1, 0, coefficients)
 	coeff1 := int32(coefficients[predictor].Coeff1)
 	coeff2 := int32(coefficients[predictor].Coeff2)
@@ -111,7 +111,7 @@ func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16, coeffic
 
 }
 
-func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []params.Coefficient) {
+func encodeStereo(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []param.Coefficient) {
 	predL := findBestPredictor(chunkSamples, samplesPerBlock, 2, 0, coefficients)
 	predR := findBestPredictor(chunkSamples, samplesPerBlock, 2, 1, coefficients)
 	coeff1L, coeff2L := int32(coefficients[predL].Coeff1), int32(coefficients[predL].Coeff2)
@@ -199,7 +199,7 @@ func encodeStep(target, coeff1, coeff2, delta, sample1, sample2 int32) (uint8, i
 	return nybble, restored, delta
 }
 
-func findBestPredictorScalar(chunkSamples []int16, samplesPerBlock int, step int, offset int, coefficients []params.Coefficient) int {
+func findBestPredictorScalar(chunkSamples []int16, samplesPerBlock int, step int, offset int, coefficients []param.Coefficient) int {
 	bestPredictor := 0
 	var minError int64 = -1
 

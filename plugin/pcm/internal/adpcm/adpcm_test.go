@@ -5,24 +5,23 @@ import (
 	"math"
 	"testing"
 
-	"github.com/godexture/godec/core/domain/media"
 	"github.com/godexture/godec/plugin/pcm/internal/adpcm/bits"
 	imaadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ima"
 	msadpcm "github.com/godexture/godec/plugin/pcm/internal/adpcm/ms"
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
 func TestADPCMRoundtrip(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		codec    media.CodecID
+		kind     param.Kind
 		channels int
 	}{
-		{"MS ADPCM Mono", media.CodecMSADPCM, 1},
-		{"MS ADPCM Stereo", media.CodecMSADPCM, 2},
-		{"IMA ADPCM Mono", media.CodecIMAADPCM, 1},
-		{"IMA ADPCM Stereo", media.CodecIMAADPCM, 2},
+		{"MS ADPCM Mono", param.Microsoft, 1},
+		{"MS ADPCM Stereo", param.Microsoft, 2},
+		{"IMA ADPCM Mono", param.IMA, 1},
+		{"IMA ADPCM Stereo", param.IMA, 2},
 	}
 
 	for _, tt := range tests {
@@ -37,13 +36,13 @@ func TestADPCMRoundtrip(t *testing.T) {
 					binary.LittleEndian.PutUint16(pcm[(i*tt.channels+c)*2:(i*tt.channels+c)*2+2], uint16(val))
 				}
 			}
-			params, err := params.Default(tt.codec, tt.channels)
+			params, err := param.Default(tt.kind, tt.channels)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			var encoded []byte
-			if tt.codec == media.CodecMSADPCM {
+			if tt.kind == param.Microsoft {
 				encoded, err = msadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian)
 			} else {
 				state := &imaadpcm.EncodeState{}
@@ -58,7 +57,7 @@ func TestADPCMRoundtrip(t *testing.T) {
 			for offset := 0; offset+blockAlign <= len(encoded); offset += blockAlign {
 				block := encoded[offset : offset+blockAlign]
 				var decBlock []byte
-				if tt.codec == media.CodecMSADPCM {
+				if tt.kind == param.Microsoft {
 					decBlock, err = msadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
 				} else {
 					decBlock, err = imaadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
@@ -94,16 +93,16 @@ func TestADPCMRoundtrip(t *testing.T) {
 
 func TestMSADPCMDecodeUsesConfiguredCoefficients(t *testing.T) {
 	t.Parallel()
-	adpcm, err := params.Default(media.CodecMSADPCM, 1)
+	adpcm, err := param.Default(param.Microsoft, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	adpcm.BlockAlign = 8
-	adpcm.SamplesPerBlock, err = params.SamplesPerBlock(media.CodecMSADPCM, 1, adpcm.BlockAlign)
+	adpcm.SamplesPerBlock, err = param.SamplesPerBlock(param.Microsoft, 1, adpcm.BlockAlign)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adpcm.Coefficients = []params.Coefficient{{Coeff1: 0, Coeff2: 0}}
+	adpcm.Coefficients = []param.Coefficient{{Coeff1: 0, Coeff2: 0}}
 	block := []byte{0, 16, 0, 10, 0, 20, 0, 0}
 
 	decoded, err := msadpcm.Decode(block, 1, adpcm, binary.LittleEndian)

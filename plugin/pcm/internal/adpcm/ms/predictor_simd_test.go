@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/godexture/godec/plugin/wave/params"
+	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 	"github.com/godexture/godec/sdk/dsp"
 )
 
@@ -44,10 +44,10 @@ func TestFindBestPredictorSIMD(t *testing.T) {
 	}
 }
 
-func predictorTestCoefficients() []params.Coefficient {
-	coefficients := make([]params.Coefficient, len(coeffs))
+func predictorTestCoefficients() []param.Coefficient {
+	coefficients := make([]param.Coefficient, len(coeffs))
 	for i, coefficient := range coeffs {
-		coefficients[i] = params.Coefficient{Coeff1: int16(coefficient[0]), Coeff2: int16(coefficient[1])}
+		coefficients[i] = param.Coefficient{Coeff1: int16(coefficient[0]), Coeff2: int16(coefficient[1])}
 	}
 	return coefficients
 }

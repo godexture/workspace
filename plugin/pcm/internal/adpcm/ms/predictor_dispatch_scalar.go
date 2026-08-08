@@ -2,8 +2,8 @@
 
 package msadpcm
 
-import "github.com/godexture/godec/plugin/wave/params"
+import "github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 
-func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []params.Coefficient) int {
+func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []param.Coefficient) int {
 	return findBestPredictorScalar(chunkSamples, samplesPerBlock, step, offset, coefficients)
 }
