@@ -161,6 +161,83 @@ func TestCompileBuildsTopologicalGraphWithoutOpeningOperators(t *testing.T) {
 	}
 }
 
+func TestEvaluateReturnsTypedSchemaGapWithoutOpeningOperators(t *testing.T) {
+	var opened atomic.Int32
+	index := fixtureCatalog(t,
+		fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), &opened, false),
+		fixtureComponent[graphSinkID](sinkShape(graphSchemaB), sinkCompile, &opened, false),
+	)
+	request := fixtureRequest(t,
+		[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("sink")},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+	)
+	evaluation, err := Evaluate(index, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, complete := evaluation.Graph(); complete {
+		t.Fatal("schema-mismatched graph evaluated as complete")
+	}
+	gaps := evaluation.Gaps()
+	if len(gaps) != 1 || gaps[0].Node() != "sink" || gaps[0].Port() != "in" || gaps[0].Need().Code() != "graph.schema-mismatch" {
+		t.Fatalf("gaps = %#v", gaps)
+	}
+	edge, edgeOK := gaps[0].Edge()
+	input, inputOK := gaps[0].Input()
+	desired, desiredOK := gaps[0].Need().Desired()
+	if !edgeOK || edge.From() != job.At("source", "out") || !inputOK || input.Schema() != graphSchemaA.Identity() || !desiredOK || desired.Schema() != graphSchemaB.Identity() {
+		t.Fatalf("gap edge=%#v input=%#v desired=%#v", edge, input, desired)
+	}
+	accepted, err := gaps[0].Accepts(desired)
+	if err != nil || !accepted {
+		t.Fatalf("desired descriptor accepted=%v error=%v", accepted, err)
+	}
+	if accepted, err := gaps[0].Accepts(input); err != nil || accepted {
+		t.Fatalf("mismatched descriptor accepted=%v error=%v", accepted, err)
+	}
+	if opened.Load() != 0 {
+		t.Fatalf("evaluation opened %d operators", opened.Load())
+	}
+}
+
+func TestEvaluateConfirmsConditionGapThroughDownstreamCompile(t *testing.T) {
+	requireAccepted := func(inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[graphPlan, stream.Descriptor] {
+		input, ok := inputs.One("in")
+		if !ok || input.ID() != "accepted" {
+			return plugin.Compiled[graphPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.accepted"))}}
+		}
+		return plugin.Compiled[graphPlan, stream.Descriptor]{Outputs: flow.NewDescriptors(flow.Describe("out", input))}
+	}
+	index := fixtureCatalog(t,
+		fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), nil, false),
+		fixtureComponent[graphTransformID](transformShape(graphSchemaA), requireAccepted, nil, false),
+		fixtureComponent[graphSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
+	)
+	request := fixtureRequest(t,
+		[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphTransformID]("transform"), fixtureNode[graphSinkID]("sink")},
+		[]job.Edge{
+			job.Connect(job.At("source", "out"), job.At("transform", "in")),
+			job.Connect(job.At("transform", "out"), job.At("sink", "in")),
+		},
+	)
+	evaluation, err := Evaluate(index, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gaps := evaluation.Gaps()
+	if len(gaps) != 1 || gaps[0].Need().Code() != "fixture.accepted" {
+		t.Fatalf("condition gaps = %#v", gaps)
+	}
+	original, _ := gaps[0].Input()
+	if accepted, err := gaps[0].Accepts(original); err != nil || accepted {
+		t.Fatalf("original descriptor accepted=%v error=%v", accepted, err)
+	}
+	candidate := stream.MustDescriptor("accepted", graphSchemaA.Identity(), original.TimeBase(), original.Properties()).WithMetadata(original.Metadata())
+	if accepted, err := gaps[0].Accepts(candidate); err != nil || !accepted {
+		t.Fatalf("condition candidate accepted=%v error=%v", accepted, err)
+	}
+}
+
 func TestCompileRejectsTopologyFailuresWithStableCodes(t *testing.T) {
 	tests := []struct {
 		name       string

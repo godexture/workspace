@@ -17,6 +17,10 @@ type shapedNode struct {
 }
 
 func validateTopology(nodes []shapedNode, edges []job.Edge) ([]int, []diagnostic.Item) {
+	return validateTopologyMode(nodes, edges, false)
+}
+
+func validateTopologyMode(nodes []shapedNode, edges []job.Edge, allowSchemaGaps bool) ([]int, []diagnostic.Item) {
 	byID := make(map[job.NodeID]int, len(nodes))
 	for index, node := range nodes {
 		byID[node.request.ID()] = index
@@ -45,7 +49,7 @@ func validateTopology(nodes []shapedNode, edges []job.Edge) ([]int, []diagnostic
 		if !fromPortOK || !toPortOK {
 			continue
 		}
-		if fromPort.Schema().Identity() != toPort.Schema().Identity() || fromPort.Schema().Payload() != toPort.Schema().Payload() {
+		if !allowSchemaGaps && (fromPort.Schema().Identity() != toPort.Schema().Identity() || fromPort.Schema().Payload() != toPort.Schema().Payload()) {
 			items = append(items, graphItem("graph.schema-mismatch", edge.To(), "connected ports declare different schemas", map[string]string{
 				"source":        fromPort.Schema().Identity().String(),
 				"sourcePayload": gotype.Canonical(fromPort.Schema().Payload()),
