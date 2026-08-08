@@ -4,6 +4,8 @@ package job
 import (
 	"errors"
 	"fmt"
+
+	"github.com/godexture/godec/diagnostic"
 )
 
 // Job is a normalized request boundary. Inputs and outputs are optional only
@@ -47,8 +49,8 @@ func New(inputs []Input, outputs []Output, graph Graph, values ...Option) (Job, 
 			option(&configuration)
 		}
 	}
-	if !configuration.policy.Valid() {
-		return Job{}, errors.New("job policy is invalid")
+	if items := configuration.policy.diagnostics(); len(items) != 0 {
+		return Job{}, diagnostic.NewError(items...)
 	}
 	if !configuration.budget.Valid() {
 		return Job{}, errors.New("job planning budget is invalid")

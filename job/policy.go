@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/resource"
 )
 
@@ -118,8 +119,12 @@ type QueuePolicy struct {
 }
 
 func (p QueuePolicy) Valid() bool {
-	return p.Items > 0 && uint64(p.Bytes) <= math.MaxInt64 && p.Window >= 0
+	return p.validItems() && p.validBytes() && p.validWindow()
 }
+
+func (p QueuePolicy) validItems() bool  { return p.Items > 0 }
+func (p QueuePolicy) validBytes() bool  { return uint64(p.Bytes) <= math.MaxInt64 }
+func (p QueuePolicy) validWindow() bool { return p.Window >= 0 }
 
 func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() }
 
@@ -137,7 +142,46 @@ type Policy struct {
 }
 
 func (p Policy) Valid() bool {
-	return p.Preset.Valid() && p.Goal.Valid() && p.Accuracy.Valid() && p.Repeatability.Valid() && p.Artifact.Valid() && p.Implementation.Valid() && p.Continuity.Valid() && p.Resources.Valid()
+	return len(p.diagnostics()) == 0
+}
+
+func (p Policy) diagnostics() (items []diagnostic.Item) {
+	if !p.Preset.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-preset", "policy preset is invalid", "preset"))
+	}
+	if !p.Goal.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-goal", "policy goal is invalid", "goal"))
+	}
+	if !p.Accuracy.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-accuracy", "policy accuracy is invalid", "accuracy"))
+	}
+	if !p.Repeatability.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-repeatability", "policy repeatability is invalid", "repeatability"))
+	}
+	if !p.Artifact.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-artifact", "policy artifact requirement is invalid", "artifact"))
+	}
+	if !p.Implementation.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-implementation", "policy permits no implementation mechanism", "implementation"))
+	}
+	if !p.Continuity.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-continuity", "policy continuity behavior is invalid", "continuity"))
+	}
+	queue := p.Resources.Queue
+	if !queue.validItems() {
+		items = append(items, policyDiagnostic("job.invalid-policy-queue-items", "queue item limit must be positive", "resources", "queue", "items"))
+	}
+	if !queue.validBytes() {
+		items = append(items, policyDiagnostic("job.invalid-policy-queue-bytes", "queue byte limit exceeds the runtime range", "resources", "queue", "bytes"))
+	}
+	if !queue.validWindow() {
+		items = append(items, policyDiagnostic("job.invalid-policy-queue-window", "queue window must not be negative", "resources", "queue", "window"))
+	}
+	return items
+}
+
+func policyDiagnostic(code, message string, fields ...string) diagnostic.Item {
+	return diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.FieldPath(append([]string{"policy"}, fields...)...), message, nil)
 }
 
 // PolicyFor expands a named preset into an explicit policy vector.

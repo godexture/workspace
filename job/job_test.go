@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type jobSourceID struct{}
@@ -173,5 +174,48 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	}
 	if _, err := New(nil, nil, graph, WithBudget(Budget{})); err == nil {
 		t.Fatal("invalid budget was accepted")
+	}
+}
+
+func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := Policy{}
+	policy.Resources.Queue.Bytes = resource.Bytes(1 << 63)
+	policy.Resources.Queue.Window = -time.Nanosecond
+	_, err = New(nil, nil, graph, WithPolicy(policy))
+	if err == nil {
+		t.Fatal("invalid policy was accepted")
+	}
+	want := map[string]string{
+		"job.invalid-policy-preset":         "policy.preset",
+		"job.invalid-policy-goal":           "policy.goal",
+		"job.invalid-policy-accuracy":       "policy.accuracy",
+		"job.invalid-policy-repeatability":  "policy.repeatability",
+		"job.invalid-policy-artifact":       "policy.artifact",
+		"job.invalid-policy-implementation": "policy.implementation",
+		"job.invalid-policy-continuity":     "policy.continuity",
+		"job.invalid-policy-queue-items":    "policy.resources.queue.items",
+		"job.invalid-policy-queue-bytes":    "policy.resources.queue.bytes",
+		"job.invalid-policy-queue-window":   "policy.resources.queue.window",
+	}
+	items := diagnostic.ItemsOf(err)
+	if len(items) != len(want) {
+		t.Fatalf("policy diagnostics = %#v", items)
+	}
+	for _, item := range items {
+		path, ok := want[item.Code]
+		if !ok || item.Path.String() != path {
+			t.Fatalf("unexpected policy diagnostic = %#v", item)
+		}
+		delete(want, item.Code)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing policy diagnostics = %v", want)
 	}
 }
