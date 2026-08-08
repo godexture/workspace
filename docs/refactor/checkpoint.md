@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **4 / 12 マイルストーン完了（M0〜M3）**
+> 実装進捗: **5 / 12 マイルストーン完了（M0〜M4）**
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -19,7 +19,7 @@
 | M1 | 完了 | source monorepo、最終 `plugin/<family>` path、tracked workspace、設計期間の単一 release train、generator bootstrap の `runtime.GOOS` 対応を完了した。 |
 | M2 | 完了 | `diagnostic`、typed `config`、marker identity/immutable `plugin.Set`、検証済み `internal/catalog`、`host.New` を追加し、[task/m2-fix.md](task/m2-fix.md) の review 指摘 1〜19 を是正した。[plugins.md](plugins.md#m2-完了条件) と [config.md](config.md#m2-完了条件) の完了条件を逐条確認し、build、vet、対象 race、`--simd` gate（71/71 PASS、runner exit 0）を通過した。 |
 | M3 | 完了 | M3-1 の walking skeleton、M3-2 の metadata model/Binding と raw preservation、M3-3 の `media/side`、`stream.Event`、access の Reference/Provider/transaction/spool/probe/snapshot、typed endpoint trait/device/query を実装した。scheme conflict は既存 `plugin.Declaration`/catalog で検証し、device scan・permission・network side effect は追加していない。固有の完了条件は [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) を参照する。 |
-| M4 | 進行中 | M4-3 で bounded solver、canonical descriptor state、planning policy/budget、public `Plan`、private `Program`、planner 経由の walking skeleton を完了した。次は [M4-4](task/m4-4.md) で実 PCM と Access/Endpoint binding を実証し、M4 を閉じる。 |
+| M4 | 完了 | M4-1〜M4-4 で typed Compile/Suggest、graph validation、bounded solver、public `Plan`/private `Program`、Provider/Endpoint binding、実 linear PCM、N=1/4/16 filter region の二 converter gate を完了した。対象 race/vet、全 package build、docs check、全 module scalar/SIMD gate を通過した。 |
 | M5 | 未着手 | 最終単位で旧 contract 層を切断する。範囲は [inventory.md](inventory.md#m5-の切断)。 |
 | M6 | 未着手 | — |
 | M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含む。 |
