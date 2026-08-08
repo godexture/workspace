@@ -315,6 +315,19 @@ func TestCompileRejectsIncompleteContractResults(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsDuplicateRequirementsForOnePort(t *testing.T) {
+	spec := testSpec(nil, nil)
+	spec.Compile = func(CompileContext, pluginConfig, flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		need := ConditionNeed[int]("fixture.input")
+		return Compiled[specPlan, int]{Requirements: []Requirement[int]{Require("in", need), Require("in", need)}}, nil
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "duplicate requirements"}, pluginSchema(1), WithSpec(spec))
+	resolved, _ := component.Resolve(config.NewPatch())
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-duplicate-requirement") {
+		t.Fatalf("duplicate requirement error = %v", err)
+	}
+}
+
 func TestOpenRejectsOperatorShapeDifferentFromCompilation(t *testing.T) {
 	var closed atomic.Int32
 	spec := testSpec(nil, nil)

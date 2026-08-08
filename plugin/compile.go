@@ -120,6 +120,9 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		if !requirement.Valid() || !shapeHasPort(shape.Inputs, requirement.Port()) {
 			items = append(items, diagnostic.NewItem("plugin.compile-requirement", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: requirement.Port()}, "component Compile returned an invalid input requirement", nil))
 		}
+		if _, exists := requirementPorts[requirement.Port()]; exists {
+			items = append(items, diagnostic.NewItem("plugin.compile-duplicate-requirement", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: requirement.Port()}, "component Compile returned more than one requirement for an input port", nil))
+		}
 		requirementPorts[requirement.Port()] = struct{}{}
 	}
 	for _, port := range shape.Inputs {

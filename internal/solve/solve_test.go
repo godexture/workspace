@@ -189,9 +189,18 @@ func TestResolveConvergesRequestedMultiInputNode(t *testing.T) {
 			automatic++
 		}
 	}
-	if automatic != 2 || program.Plan().Usage().FixpointIterations != 3 {
+	if automatic != 2 || program.Plan().Usage().FixpointIterations != 3 || program.Plan().Usage().CacheHits == 0 {
 		t.Fatalf("automatic=%d usage=%#v", automatic, program.Plan().Usage())
 	}
+}
+
+func TestResolveHonorsCallerCancellation(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	sink := solveSink(solveSchemaA, false, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Resolve(ctx, solveIndex(t, source, sink), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform())
+	assertSolveCode(t, err, "solve.canceled")
 }
 
 func TestResolveRejectsForbiddenEffectsAndIncompatibleContracts(t *testing.T) {
