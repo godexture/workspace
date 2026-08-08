@@ -89,7 +89,11 @@ type ResolvedView struct {
 	Provenance  Provenance
 	Diagnostics []diagnostic.Item
 	Fingerprint Fingerprint
+	summary     Summary
 }
+
+// Summary returns an inert redacted projection for Plans and surfaces.
+func (v ResolvedView) Summary() Summary { return v.summary.clone() }
 
 // SchemaView is the type-erased control-plane view stored by catalog. Its
 // fields are private so only Schema[C].View can create a valid resolver.
@@ -99,6 +103,7 @@ type SchemaView struct {
 	description  SchemaDescription
 	resolve      func(Patch) (ResolvedView, error)
 	resolveValue func(any) (ResolvedView, error)
+	patch        func(ResolvedView) (Patch, error)
 }
 
 // Valid reports whether the captured schema was built without errors.
@@ -137,6 +142,17 @@ func (v SchemaView) ResolveValue(value any) (ResolvedView, error) {
 	return v.resolveValue(value)
 }
 
+// Patch snapshots every resolved field back into a typed sparse patch. It is
+// used internally when a planner inserts a suggested config into a resolved
+// graph; Patch itself does not expose stored values.
+func (v SchemaView) Patch(resolved ResolvedView) (Patch, error) {
+	if v.patch == nil || resolved.Schema != v.description.Identity || resolved.Fingerprint.IsZero() {
+		item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config does not belong to this schema", nil)
+		return Patch{}, diagnostic.NewError(item)
+	}
+	return v.patch(resolved)
+}
+
 // Description returns a frozen read-only schema description.
 func (s Schema[C]) Description() SchemaDescription {
 	description := SchemaDescription{Identity: s.identity, Version: s.version}
@@ -165,6 +181,7 @@ func (s Schema[C]) View() SchemaView {
 				Provenance:  cloneProvenance(resolved.Provenance),
 				Diagnostics: cloneItems(resolved.Diagnostics),
 				Fingerprint: resolved.Fingerprint,
+				summary:     s.summary(resolved.Value, resolved.Provenance, resolved.Fingerprint),
 			}, err
 		},
 		resolveValue: func(value any) (ResolvedView, error) {
@@ -180,7 +197,16 @@ func (s Schema[C]) View() SchemaView {
 				Provenance:  cloneProvenance(resolved.Provenance),
 				Diagnostics: cloneItems(resolved.Diagnostics),
 				Fingerprint: resolved.Fingerprint,
+				summary:     s.summary(resolved.Value, resolved.Provenance, resolved.Fingerprint),
 			}, err
+		},
+		patch: func(resolved ResolvedView) (Patch, error) {
+			value, ok := resolved.Value.(C)
+			if !ok {
+				item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config value has the wrong type", nil)
+				return Patch{}, diagnostic.NewError(item)
+			}
+			return s.patch(value)
 		},
 	}
 }

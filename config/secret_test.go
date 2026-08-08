@@ -91,4 +91,45 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 	}
 }
 
+func TestResolvedSummaryOmitsSecret(t *testing.T) {
+	type secretConfig struct {
+		Endpoint string
+		Token    SecretValue[string]
+	}
+	schema := Struct[secretMarker](func() secretConfig {
+		return secretConfig{Token: NewSecret("default-secret")}
+	}).
+		Version("1").
+		AddField(Field("endpoint", func(value *secretConfig) *string { return &value.Endpoint }, String())).
+		AddField(Field("token", func(value *secretConfig) *SecretValue[string] { return &value.Token }, SecretCodec(String()))).
+		Build()
+	view := schema.View()
+	resolved, err := view.Resolve(NewPatch().SetText("endpoint", "s3://bucket").SetText("token", "live-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary := resolved.Summary()
+	rendered := fmt.Sprintf("%#v", summary)
+	if strings.Contains(rendered, "live-secret") || strings.Contains(rendered, "default-secret") {
+		t.Fatalf("secret leaked through summary: %s", rendered)
+	}
+	fields := summary.Fields()
+	if len(fields) != 2 || fields[0].Value != "s3://bucket" || fields[1].ID != "token" || !fields[1].Redacted || fields[1].Value != "" {
+		t.Fatalf("summary fields = %#v", fields)
+	}
+
+	patch, err := view.Patch(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := view.Resolve(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Fingerprint != resolved.Fingerprint || roundTrip.Value.(secretConfig).Token.Reveal() != "live-secret" {
+		t.Fatalf("secret round trip failed: %#v", roundTrip)
+	}
+}
+
 type secretMarker struct{}
