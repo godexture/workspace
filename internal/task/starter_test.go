@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
@@ -24,12 +25,16 @@ func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
 		t.Fatalf("excess worker error = %v", err)
 	}
 	close(release)
+	deadline := time.Now().Add(time.Second)
 	for {
 		starter.mu.Lock()
 		active := starter.active
 		starter.mu.Unlock()
 		if active == 0 {
 			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker grant was not repaid")
 		}
 		runtime.Gosched()
 	}
