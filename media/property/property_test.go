@@ -3,6 +3,7 @@ package property
 import (
 	"errors"
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -117,5 +118,41 @@ func TestPropertyRequiresCanonicalEncoderAndRejectsNonFiniteFloat(t *testing.T) 
 	float := Define[sampleRateID](Scalar[float64]())
 	if _, err := float.Canonical(math.Inf(1)); err == nil {
 		t.Fatal("non-finite property value accepted")
+	}
+}
+
+func TestPropertyFingerprintIsCanonicalAndValidatesOnInsertion(t *testing.T) {
+	rate := Define[sampleRateID](Scalar[int]())
+	unknown := Define[unknownPropertyID](func(value []byte) ([]byte, error) {
+		if len(value) == 0 {
+			return nil, errors.New("empty value")
+		}
+		return append([]byte("unknown:"), value...), nil
+	}, func(value []byte) []byte { return append([]byte(nil), value...) })
+
+	left, err := rate.Set(New(), 48000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err = unknown.Set(left, []byte{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, _ := unknown.Set(New(), []byte{1, 2, 3})
+	right, _ = rate.Set(right, 48000)
+	if !left.Equal(right) || left.Fingerprint() != right.Fingerprint() {
+		t.Fatal("property order changed equality or fingerprint")
+	}
+	changed, _ := unknown.Set(right, []byte{1, 2, 4})
+	if left.Equal(changed) || left.Fingerprint() == changed.Fingerprint() {
+		t.Fatal("unknown property value did not change descriptor state")
+	}
+	if _, err := unknown.Set(New(), nil); err == nil {
+		t.Fatal("canonical encoder failure was deferred until planning")
+	}
+	bytes := left.Fingerprint().Bytes()
+	bytes[0] ^= 0xff
+	if reflect.DeepEqual(bytes, left.Fingerprint().Bytes()) {
+		t.Fatal("fingerprint exposed mutable bytes")
 	}
 }

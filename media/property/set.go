@@ -1,6 +1,7 @@
 package property
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 	"sort"
@@ -11,6 +12,7 @@ import (
 type entry struct {
 	declaration key.Erased
 	value       any
+	canonical   []byte
 }
 
 // Set is immutable. With and Delete return a new set and never modify their
@@ -37,8 +39,15 @@ func (s Set) With(declaration propertyDeclaration, value any) (Set, error) {
 	if !ok {
 		return s, key.ErrType
 	}
+	canonical, err := declaration.propertyCanonical(cloned)
+	if err != nil {
+		return s, err
+	}
+	if existing, exists := s.values[erased.ID()]; exists && existing.declaration.ValueType() != erased.ValueType() {
+		return s, errors.New("property identity is already bound to a different value type")
+	}
 	values := cloneEntries(s.values)
-	values[erased.ID()] = entry{declaration: erased, value: cloned}
+	values[erased.ID()] = entry{declaration: erased, value: cloned, canonical: append([]byte(nil), canonical...)}
 	return Set{values: values}, nil
 }
 
@@ -78,6 +87,21 @@ func (s Set) Keys() []key.ID {
 	return result
 }
 
+// Equal compares the canonical property state without inspecting arbitrary
+// Go values. A property's encoder defines semantic equality for planning.
+func (s Set) Equal(other Set) bool {
+	if len(s.values) != len(other.values) {
+		return false
+	}
+	for id, left := range s.values {
+		right, ok := other.values[id]
+		if !ok || left.declaration.ValueType() != right.declaration.ValueType() || !bytes.Equal(left.canonical, right.canonical) {
+			return false
+		}
+	}
+	return true
+}
+
 // Value is a snapshot of one property entry.
 type Value struct {
 	declaration key.Erased
@@ -101,7 +125,7 @@ func cloneEntries(source map[key.ID]entry) map[key.ID]entry {
 		if !ok {
 			continue
 		}
-		result[id] = entry{declaration: value.declaration, value: cloned}
+		result[id] = entry{declaration: value.declaration, value: cloned, canonical: append([]byte(nil), value.canonical...)}
 	}
 	return result
 }

@@ -83,6 +83,14 @@ func (k Key[T]) Set(set Set, value T) (Set, error) {
 	return set.With(k, value)
 }
 
+func (k Key[T]) propertyCanonical(value any) ([]byte, error) {
+	typed, ok := value.(T)
+	if !ok {
+		return nil, key.ErrType
+	}
+	return k.Canonical(typed)
+}
+
 func (Key[T]) propertyDeclaration()     {}
 func (k Key[T]) propertyProblem() error { return k.Problem() }
 
@@ -90,4 +98,5 @@ type propertyDeclaration interface {
 	Erased() key.Erased
 	propertyDeclaration()
 	propertyProblem() error
+	propertyCanonical(any) ([]byte, error)
 }

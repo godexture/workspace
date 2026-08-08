@@ -53,3 +53,31 @@ func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
 		t.Fatalf("metadata title = %q, %v", value, ok)
 	}
 }
+
+func TestDescriptorFingerprintIncludesCanonicalPropertyState(t *testing.T) {
+	rate := property.Define[streamPropertyID](property.Scalar[int]())
+	leftProperties, err := rate.Set(property.New(), 48000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightProperties, _ := rate.Set(property.New(), 44100)
+	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
+	left := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), leftProperties)
+	same := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), leftProperties)
+	right := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 44100), rightProperties)
+	leftFingerprint, err := left.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameFingerprint, _ := same.Fingerprint()
+	rightFingerprint, _ := right.Fingerprint()
+	if leftFingerprint != sameFingerprint || !left.SameState(same) {
+		t.Fatal("equivalent descriptor state changed fingerprint")
+	}
+	if leftFingerprint == rightFingerprint || left.SameState(right) {
+		t.Fatal("time base/property change did not change descriptor state")
+	}
+	if _, err := (Descriptor{}).Fingerprint(); err != ErrInvalidDescriptor {
+		t.Fatalf("invalid descriptor fingerprint error = %v", err)
+	}
+}
