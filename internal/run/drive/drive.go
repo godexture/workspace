@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/media/schema"
 )
@@ -46,11 +47,12 @@ type Binding struct {
 	input      port
 	output     port
 	fanIn      flow.FanInPolicy
-	openSink   func(flow.Operator) (Link, error)
-	prepend    func(flow.Operator, Link) (Link, error)
+	openSink   func(flow.Operator, string) (Link, error)
+	prepend    func(flow.Operator, Link, string) (Link, error)
 	openSource func(flow.Operator, Link) (Task, error)
 	fanout     func([]Link) (Link, error)
 	buffer     func(queue.Limit, Link) (Link, Task, error)
+	observe    func(Link, *observe.Local) (Link, error)
 	openJoiner func(flow.Operator, int, queue.Limit, Link) ([]Link, Task, error)
 	validate   func(flow.Operator) error
 }
@@ -77,8 +79,9 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			}
 			return zipJoiner(joiner, inputs, limit, inputTraits, target)
 		},
-		fanout: fanoutFactory(traits),
-		buffer: bufferFactory(traits),
+		fanout:  fanoutFactory(traits),
+		buffer:  bufferFactory(traits),
+		observe: observeFactory(traits),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Joiner[I, O]); !ok {
 				return fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -104,8 +107,9 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 			}
 			return sourceTask(reader, target), nil
 		},
-		fanout: fanoutFactory(traits),
-		buffer: bufferFactory(traits),
+		fanout:  fanoutFactory(traits),
+		buffer:  bufferFactory(traits),
+		observe: observeFactory(traits),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Reader[T]); !ok {
 				return fmt.Errorf("%w: want flow.Reader[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
@@ -121,7 +125,7 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 		kind:   Processor,
 		input:  port{id: input, schema: in.Descriptor()},
 		output: port{id: output, schema: out.Descriptor()},
-		prepend: func(operator flow.Operator, next Link) (Link, error) {
+		prepend: func(operator flow.Operator, next Link, node string) (Link, error) {
 			processor, ok := operator.(flow.Processor[I, O])
 			if !ok {
 				return Link{}, fmt.Errorf("%w: want flow.Processor[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -130,10 +134,11 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 			if err != nil {
 				return Link{}, err
 			}
-			return linkOf[I](&processorDelivery[I, O]{processor: processor, next: target}), nil
+			return linkOf[I](&processorDelivery[I, O]{processor: processor, next: target, node: node}), nil
 		},
-		fanout: fanoutFactory(traits),
-		buffer: bufferFactory(traits),
+		fanout:  fanoutFactory(traits),
+		buffer:  bufferFactory(traits),
+		observe: observeFactory(traits),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Processor[I, O]); !ok {
 				return fmt.Errorf("%w: want flow.Processor[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -147,12 +152,12 @@ func NewSink[T any](input string, typ schema.Type[T]) Binding {
 	return Binding{
 		kind:  Sink,
 		input: port{id: input, schema: typ.Descriptor()},
-		openSink: func(operator flow.Operator) (Link, error) {
+		openSink: func(operator flow.Operator, node string) (Link, error) {
 			writer, ok := operator.(flow.Writer[T])
 			if !ok {
 				return Link{}, fmt.Errorf("%w: want flow.Writer[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
 			}
-			return linkOf[T](writerDelivery[T]{writer: writer}), nil
+			return linkOf[T](&writerDelivery[T]{writer: writer, node: node}), nil
 		},
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Writer[T]); !ok {
@@ -169,11 +174,11 @@ func (b Binding) Valid() bool {
 	}
 	switch b.kind {
 	case Source:
-		return validPort(b.output) && b.openSource != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
+		return validPort(b.output) && b.openSource != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Processor:
-		return validPort(b.input) && validPort(b.output) && b.prepend != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
+		return validPort(b.input) && validPort(b.output) && b.prepend != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Joiner:
-		return validPort(b.input) && validPort(b.output) && b.openJoiner != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
+		return validPort(b.input) && validPort(b.output) && b.openJoiner != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Sink:
 		return validPort(b.input) && b.openSink != nil && b.validate != nil
 	default:
@@ -220,17 +225,25 @@ func (b Binding) Output() string          { return b.output.id }
 func (b Binding) FanIn() flow.FanInPolicy { return b.fanIn }
 
 func (b Binding) OpenSink(operator flow.Operator) (Link, error) {
+	return b.OpenSinkAt(operator, "")
+}
+
+func (b Binding) OpenSinkAt(operator flow.Operator, node string) (Link, error) {
 	if b.openSink == nil {
 		return Link{}, ErrUnsupported
 	}
-	return b.openSink(operator)
+	return b.openSink(operator, node)
 }
 
 func (b Binding) Prepend(operator flow.Operator, next Link) (Link, error) {
+	return b.PrependAt(operator, next, "")
+}
+
+func (b Binding) PrependAt(operator flow.Operator, next Link, node string) (Link, error) {
 	if b.prepend == nil {
 		return Link{}, ErrUnsupported
 	}
-	return b.prepend(operator, next)
+	return b.prepend(operator, next, node)
 }
 
 func (b Binding) OpenSource(operator flow.Operator, next Link) (Task, error) {
@@ -261,6 +274,16 @@ func (b Binding) Buffer(limit queue.Limit, next Link) (Link, Task, error) {
 	return b.buffer(limit, next)
 }
 
+func (b Binding) Observe(next Link, local *observe.Local) (Link, error) {
+	if local == nil {
+		return next, nil
+	}
+	if b.observe == nil {
+		return Link{}, ErrUnsupported
+	}
+	return b.observe(next, local)
+}
+
 func validPort(value port) bool { return value.id != "" && value.schema.Valid() }
 
 func matches(declared flow.Port, runtime port) bool {
@@ -271,6 +294,55 @@ func matches(declared flow.Port, runtime port) bool {
 
 type closer interface {
 	close(context.Context) error
+}
+
+type scopeBinder interface{ bindScope(*Scope) }
+type cleaner interface{ cleanup() }
+
+// Scope is task-local panic context. It intentionally uses no atomics because
+// the owning execution task is the only writer and panic recovery reads it in
+// that same goroutine.
+type Scope struct {
+	node     string
+	cleaners []cleaner
+}
+
+func NewScope(node string) *Scope { return &Scope{node: node} }
+func (s *Scope) Node() string {
+	if s == nil {
+		return ""
+	}
+	return s.node
+}
+func (s *Scope) set(node string) {
+	if s != nil {
+		s.node = node
+	}
+}
+func (s *Scope) add(value cleaner) {
+	if s != nil && value != nil {
+		s.cleaners = append(s.cleaners, value)
+	}
+}
+func (s *Scope) Cleanup() {
+	if s == nil {
+		return
+	}
+	var first any
+	for index := len(s.cleaners) - 1; index >= 0; index-- {
+		if recovered := cleanupOne(s.cleaners[index]); recovered != nil && first == nil {
+			first = recovered
+		}
+	}
+	if first != nil {
+		panic(first)
+	}
+}
+
+func cleanupOne(value cleaner) (recovered any) {
+	defer func() { recovered = recover() }()
+	value.cleanup()
+	return nil
 }
 
 type delivery[T any] interface {
@@ -294,6 +366,15 @@ func (l Link) Close(ctx context.Context) error {
 	return l.value.(closer).close(ctx)
 }
 
+func (l Link) BindScope(scope *Scope) {
+	if !l.Valid() {
+		return
+	}
+	if value, ok := l.value.(scopeBinder); ok {
+		value.bindScope(scope)
+	}
+}
+
 func linkOf[T any](value delivery[T]) Link {
 	return Link{payload: reflect.TypeFor[T](), value: value}
 }
@@ -314,6 +395,7 @@ func deliveryOf[T any](link Link) (delivery[T], error) {
 type Task struct {
 	run   func(context.Context) error
 	close func()
+	bind  func(*Scope)
 }
 
 func (t Task) Valid() bool { return t.run != nil }
@@ -328,6 +410,12 @@ func (t Task) Run(ctx context.Context) error {
 func (t Task) Close() {
 	if t.close != nil {
 		t.close()
+	}
+}
+
+func (t Task) BindScope(scope *Scope) {
+	if t.bind != nil {
+		t.bind(scope)
 	}
 }
 
@@ -360,37 +448,96 @@ func sourceTask[T any](reader flow.Reader[T], next delivery[T]) Task {
 	}}
 }
 
-type writerDelivery[T any] struct{ writer flow.Writer[T] }
-
-func (w writerDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
-	return w.writer.Write(ctx, input)
+type writerDelivery[T any] struct {
+	writer  flow.Writer[T]
+	node    string
+	scope   *Scope
+	current flow.Input[T]
+	active  bool
 }
 
-func (writerDelivery[T]) close(context.Context) error { return nil }
+func (w *writerDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+	previous := w.scope.Node()
+	w.scope.set(w.node)
+	w.current = input
+	w.active = true
+	err := w.writer.Write(ctx, input)
+	w.active = false
+	w.current = flow.Input[T]{}
+	w.scope.set(previous)
+	return err
+}
+
+func (*writerDelivery[T]) close(context.Context) error { return nil }
+func (w *writerDelivery[T]) bindScope(scope *Scope) {
+	w.scope = scope
+	scope.add(w)
+}
+func (w *writerDelivery[T]) cleanup() {
+	if w.active {
+		w.current.Drop()
+		w.active = false
+		w.current = flow.Input[T]{}
+	}
+}
 
 type processorDelivery[I, O any] struct {
 	processor flow.Processor[I, O]
 	next      delivery[O]
+	node      string
+	scope     *Scope
+	current   flow.Input[I]
+	active    bool
 	once      sync.Once
 	closeErr  error
 }
 
 func (p *processorDelivery[I, O]) Emit(ctx context.Context, input flow.Input[I]) error {
-	return p.processor.Process(ctx, input, p.next)
+	previous := p.scope.Node()
+	p.scope.set(p.node)
+	p.current = input
+	p.active = true
+	err := p.processor.Process(ctx, input, p.next)
+	p.active = false
+	p.current = flow.Input[I]{}
+	p.scope.set(previous)
+	return err
 }
 
 func (p *processorDelivery[I, O]) close(ctx context.Context) error {
 	p.once.Do(func() {
+		previous := p.scope.Node()
+		p.scope.set(p.node)
 		p.closeErr = errors.Join(p.processor.Flush(ctx, p.next), p.next.close(ctx))
+		p.scope.set(previous)
 	})
 	return p.closeErr
+}
+
+func (p *processorDelivery[I, O]) bindScope(scope *Scope) {
+	p.scope = scope
+	scope.add(p)
+	if next, ok := p.next.(scopeBinder); ok {
+		next.bindScope(scope)
+	}
+}
+
+func (p *processorDelivery[I, O]) cleanup() {
+	if p.active {
+		p.current.Drop()
+		p.active = false
+		p.current = flow.Input[I]{}
+	}
 }
 
 type fanoutDelivery[T any] struct {
 	outputs  []delivery[T]
 	values   []T
+	pending  []bool
 	fork     func(T) T
 	drop     func(T)
+	original flow.Input[T]
+	active   bool
 	once     sync.Once
 	closeErr error
 }
@@ -420,6 +567,7 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 		return linkOf[T](&fanoutDelivery[T]{
 			outputs: outputs,
 			values:  make([]T, len(outputs)),
+			pending: make([]bool, len(outputs)),
 			fork:    traits.Fork,
 			drop:    traits.Drop,
 		}), nil
@@ -427,15 +575,19 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 }
 
 func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+	f.original = input
+	f.active = true
 	value := input.Value()
 	for index := range f.values {
 		f.values[index] = value
 		if f.fork != nil {
 			f.values[index] = f.fork(value)
 		}
+		f.pending[index] = true
 	}
 	for index, output := range f.outputs {
 		branch := flow.NewInputWithTraits(f.values[index], f.fork, f.drop)
+		f.pending[index] = false
 		if err := output.Emit(ctx, branch); err != nil {
 			branch.Drop()
 			for remaining := index + 1; remaining < len(f.values); remaining++ {
@@ -444,11 +596,15 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error
 				}
 			}
 			f.clearValues()
+			f.active = false
+			f.original = flow.Input[T]{}
 			return err
 		}
 	}
 	f.clearValues()
 	input.Drop()
+	f.active = false
+	f.original = flow.Input[T]{}
 	return nil
 }
 
@@ -465,6 +621,31 @@ func (f *fanoutDelivery[T]) close(ctx context.Context) error {
 	return f.closeErr
 }
 
+func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
+	scope.add(f)
+	for _, output := range f.outputs {
+		if value, ok := output.(scopeBinder); ok {
+			value.bindScope(scope)
+		}
+	}
+}
+
+func (f *fanoutDelivery[T]) cleanup() {
+	if !f.active {
+		return
+	}
+	f.original.Drop()
+	for index, pending := range f.pending {
+		if pending && f.drop != nil {
+			f.drop(f.values[index])
+		}
+	}
+	f.clearValues()
+	clear(f.pending)
+	f.original = flow.Input[T]{}
+	f.active = false
+}
+
 func (f *fanoutDelivery[T]) clearValues() {
 	var zero T
 	for index := range f.values {
@@ -472,15 +653,33 @@ func (f *fanoutDelivery[T]) clearValues() {
 	}
 }
 
-type bufferDelivery[T any] struct{ queue *queue.Queue[flow.Input[T]] }
-
-func (b bufferDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
-	return b.queue.Push(ctx, input)
+type bufferDelivery[T any] struct {
+	queue   *queue.Queue[flow.Input[T]]
+	current flow.Input[T]
+	active  bool
 }
 
-func (b bufferDelivery[T]) close(context.Context) error {
+func (b *bufferDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+	b.current = input
+	b.active = true
+	err := b.queue.Push(ctx, input)
+	b.active = false
+	b.current = flow.Input[T]{}
+	return err
+}
+
+func (b *bufferDelivery[T]) close(context.Context) error {
 	b.queue.Close()
 	return nil
+}
+
+func (b *bufferDelivery[T]) bindScope(scope *Scope) { scope.add(b) }
+func (b *bufferDelivery[T]) cleanup() {
+	if b.active {
+		b.current.Drop()
+		b.active = false
+		b.current = flow.Input[T]{}
+	}
 }
 
 func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link, Task, error) {
@@ -519,7 +718,75 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 				}
 			},
 		}
-		return linkOf[T](bufferDelivery[T]{queue: edge}), task, nil
+		return linkOf[T](&bufferDelivery[T]{queue: edge}), task, nil
+	}
+}
+
+type observedDelivery[T any] struct {
+	next    delivery[T]
+	local   *observe.Local
+	size    func(T) int
+	time    func(T) (int64, bool)
+	current flow.Input[T]
+	active  bool
+}
+
+func (o *observedDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+	o.current = input
+	o.active = true
+	var bytes uint64
+	if o.size != nil {
+		if value := o.size(input.Value()); value > 0 {
+			bytes = uint64(value)
+		}
+	}
+	var media int64
+	var timed bool
+	if o.time != nil {
+		media, timed = o.time(input.Value())
+	}
+	o.active = false
+	o.current = flow.Input[T]{}
+	if err := o.next.Emit(ctx, input); err != nil {
+		return err
+	}
+	o.local.Add(bytes, media, timed)
+	return nil
+}
+
+func (o *observedDelivery[T]) close(ctx context.Context) error {
+	err := o.next.close(ctx)
+	o.local.Flush()
+	return err
+}
+
+func (o *observedDelivery[T]) bindScope(scope *Scope) {
+	scope.add(o)
+	if next, ok := o.next.(scopeBinder); ok {
+		next.bindScope(scope)
+	}
+}
+
+func (o *observedDelivery[T]) cleanup() {
+	if o.active {
+		o.current.Drop()
+		o.active = false
+		o.current = flow.Input[T]{}
+	}
+}
+
+func observeFactory[T any](traits schema.Traits[T]) func(Link, *observe.Local) (Link, error) {
+	return func(next Link, local *observe.Local) (Link, error) {
+		target, err := deliveryOf[T](next)
+		if err != nil {
+			return Link{}, err
+		}
+		result := &observedDelivery[T]{next: target, local: local}
+		if local.Detailed() {
+			result.size = traits.Size
+			result.time = traits.Time
+		}
+		return linkOf[T](result), nil
 	}
 }
 
@@ -545,51 +812,65 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 			return nil, Task{}, err
 		}
 		edges[index] = edge
-		links[index] = linkOf[I](bufferDelivery[I]{queue: edge})
+		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
 	}
-	inputs := make([]flow.Input[I], count)
-	closeEdges := func() {
-		for _, edge := range edges {
-			edge.Close()
-		}
-	}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next}
 	task := Task{
-		close: closeEdges,
-		run: func(ctx context.Context) error {
-			defer func() {
-				closeEdges()
-				for _, edge := range edges {
-					edge.Drain()
-				}
-			}()
-			for {
-				read := 0
-				for index, edge := range edges {
-					input, err := edge.Pop(ctx)
-					if errors.Is(err, io.EOF) {
-						dropInputs(inputs[:read])
-						clear(inputs)
-						return errors.Join(joiner.Flush(ctx, next), next.close(ctx))
-					}
-					if err != nil {
-						dropInputs(inputs[:read])
-						clear(inputs)
-						return err
-					}
-					inputs[index] = input
-					read++
-				}
-				if err := joiner.Process(ctx, flow.NewBatch(inputs), next); err != nil {
-					dropInputs(inputs)
-					clear(inputs)
-					return err
-				}
-				dropInputs(inputs)
-				clear(inputs)
-			}
-		},
+		close: state.close,
+		run:   state.run,
+		bind:  func(scope *Scope) { scope.add(state) },
 	}
 	return links, task, nil
+}
+
+type zipState[I, O any] struct {
+	joiner flow.Joiner[I, O]
+	edges  []*queue.Queue[flow.Input[I]]
+	inputs []flow.Input[I]
+	read   int
+	next   delivery[O]
+}
+
+func (s *zipState[I, O]) close() {
+	for _, edge := range s.edges {
+		edge.Close()
+	}
+}
+
+func (s *zipState[I, O]) run(ctx context.Context) error {
+	defer func() {
+		s.close()
+		for _, edge := range s.edges {
+			edge.Drain()
+		}
+	}()
+	for {
+		s.read = 0
+		for index, edge := range s.edges {
+			input, err := edge.Pop(ctx)
+			if errors.Is(err, io.EOF) {
+				s.cleanup()
+				return errors.Join(s.joiner.Flush(ctx, s.next), s.next.close(ctx))
+			}
+			if err != nil {
+				s.cleanup()
+				return err
+			}
+			s.inputs[index] = input
+			s.read++
+		}
+		if err := s.joiner.Process(ctx, flow.NewBatch(s.inputs), s.next); err != nil {
+			s.cleanup()
+			return err
+		}
+		s.cleanup()
+	}
+}
+
+func (s *zipState[I, O]) cleanup() {
+	dropInputs(s.inputs[:s.read])
+	clear(s.inputs)
+	s.read = 0
 }
 
 func dropInputs[T any](inputs []flow.Input[T]) {

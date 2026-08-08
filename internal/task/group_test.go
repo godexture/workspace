@@ -51,6 +51,21 @@ func TestPanicIsRecoveredAtTaskBoundary(t *testing.T) {
 	}
 }
 
+func TestScopedPanicRunsCleanupAndRetainsLocation(t *testing.T) {
+	group := New(context.Background())
+	cleaned := false
+	if err := group.StartScoped("island", func() string { return "node" }, func() { cleaned = true }, func(context.Context) error {
+		panic("boom")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report := group.Wait(context.Background())
+	var panicErr *PanicError
+	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) || panicErr.Location != "node" || !cleaned || panicErr.Cleanup != nil {
+		t.Fatalf("scoped panic = %#v, cleaned=%v", report, cleaned)
+	}
+}
+
 func TestWaitTimeoutNamesTasksWithoutClaimingTheyStopped(t *testing.T) {
 	group := New(context.Background())
 	release := make(chan struct{})

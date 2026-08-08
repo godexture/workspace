@@ -82,6 +82,13 @@ func (p Program) Open(ctx plugin.OpenContext, id job.NodeID) (flow.Operator, err
 	return p.graph.Open(ctx, id)
 }
 
+func (p Program) Build(operators []flow.Operator) (*run.Execution, error) {
+	if !p.Executable() {
+		return nil, errors.New("program has no complete typed execution binding")
+	}
+	return p.runtime.Build(operators)
+}
+
 func compileRuntime(compiled graph.Graph) (run.Template, error) {
 	nodes := compiled.Nodes()
 	values := make([]run.Node, len(nodes))

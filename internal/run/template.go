@@ -172,6 +172,9 @@ func (t *Template) placeBuffers() {
 		if to.kind == drive.Joiner || len(t.incoming[value.to]) > 1 {
 			value.reason |= plan.FanInBuffer
 		}
+		if from.kind == drive.Joiner {
+			value.reason |= plan.FanInBuffer
+		}
 	}
 }
 

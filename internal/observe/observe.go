@@ -124,6 +124,8 @@ type Local struct {
 	started   time.Time
 }
 
+func (l *Local) Detailed() bool { return l != nil && l.collector.mode >= Detailed }
+
 func (c *Collector) Local(node, edge string) *Local {
 	if c == nil || c.mode == Off {
 		return nil
