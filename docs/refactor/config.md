@@ -37,42 +37,9 @@ generator の bug だけを修正しても、重複した public API と source 
 
 概念上の API は次のようにする。正確な builder 名は実装時に Go の型推論と error handling を検証して決めるが、責務は変えない。
 
-```go
-type EncoderConfig struct {
-    Compression int
-    Verify      bool
-}
-
-var EncoderSchema = config.Struct(
-    func() EncoderConfig {
-        return EncoderConfig{
-            Compression: 5,
-            Verify:      false,
-        }
-    },
-).
-    Field(
-        "compression",
-        func(c *EncoderConfig) *int { return &c.Compression },
-        config.Int().
-            Range(0, 8).
-            Unit("level").
-            Help("Compression effort"),
-    ).
-    Field(
-        "verify",
-        func(c *EncoderConfig) *bool { return &c.Verify },
-        config.Bool().
-            Help("Verify encoded frames"),
-    ).
-    Preset("fast", func(c *EncoderConfig) {
-        c.Compression = 0
-    }).
-    Preset("balanced", func(c *EncoderConfig) {
-        c.Compression = 5
-    }).
-    Validate(validateEncoderConfig)
-```
+schema の構築、default、preset、patch、validation を通す現行 API は
+[config の Example](../../config/example_test.go) を正本とする。
+`ExampleSchema_Resolve` が明示値と preset の優先順位および provenance を実行検査する。
 
 外部 field ID の `"compression"` は wire/CLI contract なので明示する。Go field rename と wire identity を暗黙に結び付けない。field accessor は型付きにし、対象 field の型変更を compiler が検出できるようにする。
 
@@ -111,14 +78,8 @@ Patch {
 
 解決結果は概念上、次を持つ。
 
-```go
-type Resolved[C any] struct {
-    Value       C
-    Provenance  config.Provenance
-    Diagnostics []diagnostic.Item
-    Fingerprint config.Fingerprint
-}
-```
+実装済み `Resolved` の読み方は
+[config の `ExampleSchema_Resolve`](../../config/example_test.go) を正本とする。
 
 - `Value`: default、preset、明示値を適用し、normalize/validate 済みの immutable snapshot
 - `Provenance`: field ごとの `default`、`preset`、`explicit`、`normalized`

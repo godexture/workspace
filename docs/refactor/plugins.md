@@ -18,23 +18,8 @@ Go の named type identity は package path と type declaration で定まり、
 
 専用の空 marker type を用意し、identity と設定 schema を分ける。
 
-```go
-package acme
-
-type pluginID struct{}
-type decoderID struct{}
-
-type DecoderConfig struct {
-    Quality int
-}
-
-func Plugin() plugin.Definition {
-    return plugin.Define[pluginID](
-        plugin.Descriptor{DisplayName: "Acme", Version: "1.0.0", License: "MIT"},
-        plugin.NewComponent[decoderID](plugin.Descriptor{}, decoderSchema()),
-    )
-}
-```
+marker identity、typed config、component、definition を組み立てる現行 API は
+[plugin の `ExampleNewSet`](../../plugin/example_test.go) を正本とする。
 
 動く code は `plugin` と `host` の `Example` 関数を正本とする。この文書の例は形を示すためのもので、helper が増えれば簡潔になる。
 
@@ -80,15 +65,9 @@ identity に version、display name、設定型を含めない。
 
 global mutable registry と blank import による副作用登録を廃止する。plugin package は definition を返すだけにする。
 
-```go
-set := plugin.NewSet(
-    wave.Plugin(),
-    pcm.Plugin(),
-    audio.Plugin(),
-)
-
-h, err := host.New(host.Plugins(set))
-```
+explicit `plugin.Set` から immutable Host catalog を作る現行 API は
+[host の `ExampleNew`](../../host/example_test.go) を正本とする。公式 plugin family の
+具体 composition は M6 以降で同じ経路へ載せる。
 
 標準利用者向けには公式 composition を提供する。
 
@@ -218,12 +197,9 @@ EOF は edge close で表し、`PacketKindStreamEnd` のような data packet se
 
 通常の plugin 開発者には、一 item の変換を中心にした `Processor` を提供する。
 
-```go
-type Processor[I, O any] interface {
-    Process(Context, Input[I], Emitter[O]) error
-    Flush(Context, Emitter[O]) error
-}
-```
+現行の typed port と ownership の最小経路は
+[flow の Example](../../flow/example_test.go) を正本とする。`Processor` は同じ
+`Input`/`Emitter` 上にあり、scheduler や channel を plugin API へ露出しない。
 
 `Input` は借用 view であり、次を明示する。
 

@@ -37,26 +37,15 @@ AudioFrame byte planes
 
 概念上、decoded frame は scalar type を Go type で表す。
 
-```go
-type Sample interface {
-    ~uint8 | ~int16 | ~int32 | ~float32 | ~float64
-}
-
-type Frame[S Sample] struct {
-    pts    timing.Timestamp
-    planes buffer.Planes[S]
-}
-```
+実装済みの typed frame と backing buffer の正確な構築・ownership API は
+[audio の `ExampleNewFrame`](../../media/audio/example_test.go) と
+[buffer の `ExampleAllocate`](../../media/buffer/example_test.go) を正本とする。
 
 schema identity は Go type だけに依存せず marker で定義できる。
 
-```go
-type f32pID struct{}
-type s32pID struct{}
-
-var F32P = schema.Define[f32pID, *Frame[float32]](...)
-var S32P = schema.Define[s32pID, *Frame[int32]](...)
-```
+schema 宣言と erased descriptor から typed product を一度だけ復元する経路は
+[schema の `ExampleDefine`](../../media/schema/example_test.go) を正本とする。
+sample 型ごとに異なる marker を使い、payload 型を identity に含めない。
 
 `p` は planar representation を表す。packed/interleaved representation を data plane として本当に必要とする場合は別 schema/型を定義する。通常の filter region は planar を canonical representation とする。
 

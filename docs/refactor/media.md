@@ -31,33 +31,15 @@ control plane では open property set や一部 type erasure を許容する。
 
 schema を値型として登録し、port は schema の具体型で結ぶ。
 
-```go
-type framesID struct{}
-
-var Frames = schema.Define[framesID, *audio.Frame[float32]](
-    schema.Fork(audio.Fork),
-    schema.Drop(audio.Drop),
-    schema.Size(audio.Size),
-    schema.Time(audio.Time),
-)
-
-in  := flow.In(Frames)
-out := flow.Out(Frames)
-```
+現行の schema 宣言と typed port の構築は
+[schema の `ExampleDefine`](../../media/schema/example_test.go) と
+[flow の `ExampleNewShape`](../../flow/example_test.go) を正本とする。
 
 第三者も同じ仕組みで独自 unit を宣言できる。
 
-```go
-type Cue struct {
-    Start timing.Timestamp
-    End   timing.Timestamp
-    Text  string
-}
-
-type cuesID struct{}
-
-var Cues = schema.Define[cuesID, Cue](schema.Time(cueTime))
-```
+非 audio payload も同じ `schema.Define` を使う。第三者 payload を通す実行例は
+[schema の `ExampleDefine`](../../media/schema/example_test.go)、audio の具体例は
+[audio の `ExampleNewFrame`](../../media/audio/example_test.go) を正本とする。
 
 `schema.Type[T]` は identity と runtime traits を持つ。traits は fan-out、drop、queue accounting、timestamp scheduling が必要な時だけ呼ぶ。観測や byte limit が無効な linear path では `Size` を毎回計算しない。
 
@@ -90,25 +72,10 @@ planner は異なる `schema.Type[T]` を同じ catalog/graph に格納する必
 
 概念例:
 
-```go
-type Type[T any] struct {
-    descriptor Descriptor
-}
-
-func Define[ID, T any](traits Traits[T]) Type[T] {
-    return Type[T]{
-        descriptor: Descriptor{
-            identity: reflect.TypeFor[ID](),
-            newPipe: func(limit Limit) erasedPipe {
-                return erasePipe(newPipe[T](limit, traits))
-            },
-            newTee: func(outputs int) erasedOperator {
-                return eraseOperator(newTee[T](outputs, traits.Fork, traits.Drop))
-            },
-        },
-    }
-}
-```
+実装は typed closure を `schema.Descriptor` に保持し、Open 境界で一度だけ型を
+復元する。[schema の `ExampleDefine`](../../media/schema/example_test.go) がこの経路を
+公開 API だけで実行する。M5 で bounded queue へ接続する際も item ごとの型消去は
+導入しない。
 
 component definition も、Open 時に erased endpoint を一度だけ `pipe[T]` へ検証して typed Reader/Writer を保持する factory closure を登録する。type assertion は Program の Open 時だけであり、item ごとには行わない。
 
@@ -124,15 +91,8 @@ Run:               Reader[T] -> Processor[I,O] -> Writer[O]
 
 stream kind の closed enum と全属性を詰め込んだ `MediaAttributes` を廃止する。
 
-```go
-type Descriptor struct {
-    ID         stream.ID
-    Schema     schema.ID
-    TimeBase   timing.Base
-    Properties property.Set
-    Metadata   metadata.Document
-}
-```
+現行の immutable descriptor の構築と property 参照は
+[stream の `ExampleNewDescriptor`](../../media/stream/example_test.go) を正本とする。
 
 `property.Set` は immutable な control-plane 値であり、audio sample rate、video pixel format、subtitle language、codec parameters 等を typed key で保持する。未知 property をコピーできるが、component は requirement として宣言した property だけを解釈する。
 
@@ -251,11 +211,9 @@ native FLAC のように一つの規格名が format と codec の両方を含�
 
 format が認識する tag/sample entry と、codec/parser/parameter schema の関係を standard composition で登録する。
 
-```go
-codec.Bind(wave.FormatTag(0x0055), mp3.Codec, mp3.Parser)
-codec.Bind(wave.FormatTag(0x0001), pcm.Codec, pcm.Parameters)
-codec.Bind(mp4.SampleEntry("avc1"), h264.Codec, h264.AVCC)
-```
+binding の現行 API と codec/parser target の保持は
+[codec の `ExampleBind`](../../media/codec/example_test.go) を正本とする。公式 WAVE、
+MP3、PCM、MP4 の具体 binding は各 plugin を移植する milestone で追加する。
 
 このため、第三者 codec を WAVE に追加する際に WAVE plugin も core も編集しなくてよい。第三者は新しい Binding を `Set` に足すだけである。
 
@@ -265,25 +223,9 @@ binding key が重複して異なる codec を指す場合、host build を失�
 
 単純な `map[reflect.Type]any` では、同一 key の複数値、順序、元の frame/block、未知 payload、部分編集を表現しにくい。document は ordered entry と provenance を持つ。
 
-```go
-type Document struct {
-    Entries []Entry
-    Blocks  []RawBlock
-}
-
-type Entry struct {
-    Key    KeyID
-    Value  Value
-    Origin Origin
-}
-
-type Origin struct {
-    Encoding EncodingID
-    Carrier  CarrierID
-    Block    BlockID
-    Native   string
-}
-```
+現行 API は slice の直接 mutation を許さない。ordered/repeated entry を builder から
+構築する経路は [metadata の `ExampleNewBuilder`](../../media/metadata/example_test.go)、
+immutable payload は同じ file の `ExampleNewBlob` を正本とする。
 
 実際の API では slice の直接 mutation を許さず、persistent/immutable value または builder を使う。
 
@@ -297,18 +239,14 @@ core contract は `KeyID`、`Entry`、`Document` の仕組みだけを定義し�
 
 公式の任意 package `tag` が共有 vocabulary を提供する。
 
-```go
-var Title   = metadata.DefineKey[titleID, string]()
-var Artist  = metadata.DefineKey[artistID, string]()
-var Date    = metadata.DefineKey[dateID, tag.Date]()
-var Picture = metadata.DefineKey[pictureID, tag.Picture]()
-```
+[tag の Example](../../media/tag/example_test.go) が、共通 vocabulary、partial date、
+host 検証用 declaration の現行 API を実行する。
 
 第三者も core を変更せず固有 key を定義できる。
 
-```go
-var ReplayGain = metadata.DefineKey[replayGainID, Gain]()
-```
+第三者 key の定義と clone 規則は
+[key の `ExampleDefine`](../../media/key/example_test.go) を正本とする。core の enum や
+registry を変更せず、同じ key を metadata と side data の双方で使える。
 
 現行 `Bundle` の `single`/`multiple` が unexported method を要求する方式は、外部 package に key family を追加させられないため置換する。
 
@@ -352,6 +290,8 @@ canonical encoder を全 key へ義務付けると、artwork のように canoni
 - 宣言しない key も動作する。その場合は検証と catalog 表示の対象にならない。公開しない private key に宣言を強制しない。
 
 `media/tag` の共通 vocabulary は宣言をまとめて公開し、`standard` composition がそれを含める。
+host-time conflict の実行例は
+[plugin の `ExampleDeclareKey`](../../plugin/example_test.go) を正本とする。
 
 #### 宣言の構築は `media/key` に置かない
 
@@ -385,11 +325,9 @@ M8 が [capability](capability.md) の ID3/Vorbis Comment 移行でこれを決�
 
 carrier と encoding を binding する。
 
-```go
-metadata.Bind(wave.ID3Chunk, id3.V24)
-metadata.Bind(flac.VorbisBlock, vorbiscomment.Encoding)
-metadata.Bind(mp3.LeadingTag, id3.Auto)
-```
+carrier と encoding component の binding は
+[metadata の `ExampleBind`](../../media/metadata/example_test.go) を正本とする。公式
+carrier/encoding の組は M6/M8 の standard composition で追加する。
 
 parse の流れ:
 
@@ -421,9 +359,8 @@ RIFF IART -> tag.Artist -> ID3 TPE1
 
 ただし任意の第三者 key が同じ意味かどうかは自動判定できない。必要な場合は optional な Mapping component を追加する。
 
-```go
-metadata.Map(acme.Mood, tag.Genre, mapMood)
-```
+方向、lossiness、priority、typed conversion を明示する現行 API は
+[metadata の `ExampleMap`](../../media/metadata/example_test.go) を正本とする。
 
 Mapping は source key、target key、lossiness、priority を宣言する。曖昧な変換を host が推測しない。
 

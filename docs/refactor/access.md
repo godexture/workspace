@@ -182,22 +182,10 @@ random read は共有 cursor を持つ `Seek` より `ReadAt` 相当を優先す
 
 概念例:
 
-```go
-type Sequential interface {
-    Read([]byte) (int, error)
-}
-
-type Random interface {
-    ReadAt([]byte, int64) (int, error)
-    Size() int64
-}
-
-type Snapshot struct {
-    Identity string
-    Size     Known[int64]
-    Nature   Nature
-}
-```
+現在実装されている capability alternative、bounded `Random` view、snapshot の
+正確な API は [access の Example](../../access/example_test.go) を正本とする。
+特に `ExampleNewRequirements` は、宣言用の comparable capability と component に
+渡す narrow view を混同しない最小経路を実行している。
 
 実際の component `Open` には、宣言した requirement を満たす narrow view だけを渡す。不可能な operation を nil field として渡し、plugin 内で type assertion させない。
 
