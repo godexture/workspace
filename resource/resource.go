@@ -24,10 +24,9 @@ func (c Confidence) Valid() bool { return c <= ExactConfidence }
 
 // Request is the minimum grant needed to open one compiled component.
 type Request struct {
-	Memory    Bytes
-	Temporary Bytes
-	Workers   uint32
-	Queue     uint32
+	Memory  Bytes
+	Workers uint32
+	Queue   uint32
 }
 
 // Estimate describes expected physical cost. It never authorizes allocation.
@@ -45,16 +44,14 @@ func (e Estimate) Valid() bool {
 
 // Grant is the bounded capacity assigned by a Host or Job owner.
 type Grant struct {
-	Memory    Bytes
-	Temporary Bytes
-	Workers   uint32
-	Queue     uint32
+	Memory  Bytes
+	Workers uint32
+	Queue   uint32
 }
 
 // Satisfies reports whether every requested dimension fits in the grant.
 func (g Grant) Satisfies(request Request) bool {
 	return g.Memory >= request.Memory &&
-		g.Temporary >= request.Temporary &&
 		g.Workers >= request.Workers &&
 		g.Queue >= request.Queue
 }

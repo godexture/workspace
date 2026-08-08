@@ -6,11 +6,11 @@ import (
 )
 
 func TestGrantSatisfiesEveryRequestedDimension(t *testing.T) {
-	request := Request{Memory: 1024, Temporary: 4096, Workers: 2, Queue: 8}
-	if !(Grant{Memory: 1024, Temporary: 4096, Workers: 2, Queue: 8}).Satisfies(request) {
+	request := Request{Memory: 1024, Workers: 2, Queue: 8}
+	if !(Grant{Memory: 1024, Workers: 2, Queue: 8}).Satisfies(request) {
 		t.Fatal("exact grant did not satisfy request")
 	}
-	if (Grant{Memory: 1024, Temporary: 4096, Workers: 1, Queue: 8}).Satisfies(request) {
+	if (Grant{Memory: 1024, Workers: 1, Queue: 8}).Satisfies(request) {
 		t.Fatal("undersized worker grant satisfied request")
 	}
 }

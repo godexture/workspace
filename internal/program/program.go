@@ -134,13 +134,11 @@ func (p Program) RuntimeResources() (resource.Request, error) {
 
 func addRequest(total *resource.Request, value resource.Request) error {
 	if uint64(total.Memory) > math.MaxUint64-uint64(value.Memory) ||
-		uint64(total.Temporary) > math.MaxUint64-uint64(value.Temporary) ||
 		uint64(total.Workers)+uint64(value.Workers) > math.MaxUint32 ||
 		uint64(total.Queue)+uint64(value.Queue) > math.MaxUint32 {
 		return errors.New("program resource request overflows")
 	}
 	total.Memory += value.Memory
-	total.Temporary += value.Temporary
 	total.Workers += value.Workers
 	total.Queue += value.Queue
 	return nil

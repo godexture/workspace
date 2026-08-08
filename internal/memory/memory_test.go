@@ -41,12 +41,11 @@ func TestReservationsAreCoarseAndRepaidOnce(t *testing.T) {
 func TestReservationRejectsEachExhaustedDimension(t *testing.T) {
 	tests := []resource.Request{
 		{Memory: 2},
-		{Temporary: 2},
 		{Workers: 2},
 		{Queue: 2},
 	}
 	for _, request := range tests {
-		manager := New(resource.Grant{Memory: 1, Temporary: 1, Workers: 1, Queue: 1})
+		manager := New(resource.Grant{Memory: 1, Workers: 1, Queue: 1})
 		if _, err := manager.Reserve("too-large", request); !errors.Is(err, ErrExhausted) {
 			t.Fatalf("request %#v error = %v", request, err)
 		}

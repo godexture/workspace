@@ -52,7 +52,7 @@ func (r rank) add(result candidateResult, policy job.Policy) rank {
 	request := result.compilation.Resources()
 	cpu := uint64(estimate.CPU)
 	latency := durationValue(estimate.Latency)
-	memory := saturatingAdd(uint64(estimate.Memory), uint64(request.Memory), uint64(request.Temporary))
+	memory := saturatingAdd(uint64(estimate.Memory), uint64(request.Memory))
 	switch policy.Goal {
 	case job.LatencyGoal:
 		r.resource1 = saturatingAdd(r.resource1, latency)

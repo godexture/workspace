@@ -119,10 +119,9 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 
 func grantOf(request resource.Request) resource.Grant {
 	return resource.Grant{
-		Memory:    request.Memory,
-		Temporary: request.Temporary,
-		Workers:   request.Workers,
-		Queue:     request.Queue,
+		Memory:  request.Memory,
+		Workers: request.Workers,
+		Queue:   request.Queue,
 	}
 }
 

@@ -210,7 +210,11 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
 			Shape: plugin.StaticShape[lifecycleConfig](sourceShape),
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
-				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
+				resources := resource.Request{}
+				if state.task != nil {
+					resources.Workers = 1
+				}
+				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Resources: resources}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/source")

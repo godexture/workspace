@@ -204,7 +204,7 @@ func (r *runner) openNode(index int) *Failure {
 	lease := r.prepared.byNode[node.ID()]
 	services := plugin.OpenServices{
 		Buffers:     lease.Buffers(),
-		Tasks:       r.plugins,
+		Tasks:       task.NewStarter(r.plugins, lease.Grant().Workers),
 		Diagnostics: r.diag.sink(node.ID().String()),
 		Boundary:    boundary,
 	}

@@ -52,10 +52,9 @@ func (m *Manager) Reserve(name string, request resource.Request) (*Lease, error)
 		return nil, ErrInvalid
 	}
 	grant := resource.Grant{
-		Memory:    request.Memory,
-		Temporary: request.Temporary,
-		Workers:   request.Workers,
-		Queue:     request.Queue,
+		Memory:  request.Memory,
+		Workers: request.Workers,
+		Queue:   request.Queue,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -154,25 +153,22 @@ func (m *Manager) release(id uint64, grant resource.Grant) {
 
 func fits(limit, used, requested resource.Grant) bool {
 	return requested.Memory <= limit.Memory-used.Memory &&
-		requested.Temporary <= limit.Temporary-used.Temporary &&
 		requested.Workers <= limit.Workers-used.Workers &&
 		requested.Queue <= limit.Queue-used.Queue
 }
 
 func add(left, right resource.Grant) resource.Grant {
 	return resource.Grant{
-		Memory:    left.Memory + right.Memory,
-		Temporary: left.Temporary + right.Temporary,
-		Workers:   left.Workers + right.Workers,
-		Queue:     left.Queue + right.Queue,
+		Memory:  left.Memory + right.Memory,
+		Workers: left.Workers + right.Workers,
+		Queue:   left.Queue + right.Queue,
 	}
 }
 
 func subtract(left, right resource.Grant) resource.Grant {
 	return resource.Grant{
-		Memory:    left.Memory - right.Memory,
-		Temporary: left.Temporary - right.Temporary,
-		Workers:   left.Workers - right.Workers,
-		Queue:     left.Queue - right.Queue,
+		Memory:  left.Memory - right.Memory,
+		Workers: left.Workers - right.Workers,
+		Queue:   left.Queue - right.Queue,
 	}
 }
