@@ -5,7 +5,7 @@ package dsp
 import "simd/archsimd"
 
 func ConvertF32ToS16(destination []int16, source []float32) {
-	if HasAVX2 {
+	if HasAVX2() {
 		convertF32ToS16SIMD(destination, source)
 		return
 	}

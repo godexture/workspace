@@ -11,7 +11,7 @@ import (
 )
 
 func TestFindBestPredictorSIMD(t *testing.T) {
-	if !dsp.HasAVX2 {
+	if !dsp.HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	coefficients := predictorTestCoefficients()

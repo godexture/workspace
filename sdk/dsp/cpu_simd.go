@@ -16,9 +16,12 @@ import (
 const forceScalarEnv = "GODEC_FORCE_SCALAR"
 
 var (
-	HasAVX2    = archsimd.X86.AVX2() && !forcedScalar()
-	HasAVX2FMA = archsimd.X86.AVX2() && archsimd.X86.FMA() && !forcedScalar()
+	hasAVX2    = archsimd.X86.AVX2() && !forcedScalar()
+	hasAVX2FMA = archsimd.X86.AVX2() && archsimd.X86.FMA() && !forcedScalar()
 )
+
+func HasAVX2() bool    { return hasAVX2 }
+func HasAVX2FMA() bool { return hasAVX2FMA }
 
 func forcedScalar() bool {
 	return os.Getenv(forceScalarEnv) != ""

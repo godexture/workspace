@@ -9,7 +9,7 @@ import (
 )
 
 func TestPackS32StereoSIMD(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	for _, blockSize := range []int{0, 1, 2, 3, 4, 5, 7, 8, 9, 4096, 4099} {
@@ -30,14 +30,14 @@ func TestPackS32StereoSIMD(t *testing.T) {
 }
 
 func TestPackS32StereoSIMDMisaligned(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	assertPackS32Equal(t, []int64{1, 2, 3, 4}, []int64{5, 6, 7, 8}, true)
 }
 
 func TestPackS32DispatchesMonoToScalar(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	samples := [][]int64{{1, 2, 3, 4}}

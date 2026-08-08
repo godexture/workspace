@@ -10,7 +10,7 @@ import (
 )
 
 func findBestPredictor(chunkSamples []int16, samplesPerBlock, step, offset int, coefficients []param.Coefficient) int {
-	if dsp.HasAVX2 && len(coefficients) > 0 && len(coefficients) <= 8 && samplesPerBlock >= 2 {
+	if dsp.HasAVX2() && len(coefficients) > 0 && len(coefficients) <= 8 && samplesPerBlock >= 2 {
 		return findBestPredictorSIMD(chunkSamples, samplesPerBlock, step, offset, coefficients)
 	}
 	return findBestPredictorScalar(chunkSamples, samplesPerBlock, step, offset, coefficients)

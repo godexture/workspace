@@ -10,7 +10,7 @@ import (
 )
 
 func TestUnpackS32StereoSIMD(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	for _, samples := range []int{0, 1, 2, 3, 4, 5, 7, 8, 9, 4096, 4099} {
@@ -29,7 +29,7 @@ func TestUnpackS32StereoSIMD(t *testing.T) {
 }
 
 func TestUnpackS32StereoSIMDErrorsMatchScalar(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	for _, invalid := range []int32{-1 << 20, 1 << 20} {
@@ -42,7 +42,7 @@ func TestUnpackS32StereoSIMDErrorsMatchScalar(t *testing.T) {
 }
 
 func TestUnpackS32StereoSIMDMisaligned(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	values := []int32{1000, 2000, 1001, 2001, 1002, 2002, 1003, 2003}
@@ -50,7 +50,7 @@ func TestUnpackS32StereoSIMDMisaligned(t *testing.T) {
 }
 
 func TestUnpackS32DispatchesMonoToScalar(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	plane := packInt32Samples([]int32{1, 2, 3, 4}, false)

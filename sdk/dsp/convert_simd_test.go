@@ -10,7 +10,7 @@ import (
 )
 
 func TestConvertF32ToS16SIMD(t *testing.T) {
-	if !HasAVX2 {
+	if !HasAVX2() {
 		t.Skip("AVX2 unavailable")
 	}
 	boundaries := []float32{

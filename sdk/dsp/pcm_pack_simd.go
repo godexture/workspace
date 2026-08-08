@@ -7,7 +7,7 @@ import "simd/archsimd"
 var packLowInt32LaneIndices = [...]uint32{0, 2, 4, 6, 0, 2, 4, 6}
 
 func packS32(dst []byte, src [][]int64, blockSize, channels int) {
-	if HasAVX2 && channels == 2 && blockSize >= 4 {
+	if HasAVX2() && channels == 2 && blockSize >= 4 {
 		packS32StereoSIMD(dst, src[0], src[1], blockSize)
 		return
 	}

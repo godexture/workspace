@@ -10,7 +10,7 @@ var (
 )
 
 func unpackS32(dst [][]int64, src []byte, writeStart, samples, channels int, minValue, maxValue int64, bitsPerSample int) error {
-	if HasAVX2 && channels == 2 && samples >= 4 {
+	if HasAVX2() && channels == 2 && samples >= 4 {
 		return unpackS32StereoSIMD(dst, src, writeStart, samples, minValue, maxValue, bitsPerSample)
 	}
 	return unpackS32Scalar(dst, src, writeStart, samples, channels, minValue, maxValue, bitsPerSample)

@@ -2,7 +2,5 @@
 
 package dsp
 
-const (
-	HasAVX2    = false
-	HasAVX2FMA = false
-)
+func HasAVX2() bool    { return false }
+func HasAVX2FMA() bool { return false }
