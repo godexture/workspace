@@ -107,21 +107,14 @@ RTSP/HLS/device 等は seekable byte Provider に偽装せず、通常の typed 
 
 component は従来の decoder/demuxer/filter 等の固定 registry 型を増やす方式ではなく、typed port と phase を宣言する `Spec` とする。
 
-概念例:
-
-```go
-type Spec[C, P any] struct {
-    Config  config.Schema[C]
-    Ports   flow.Shape
-    Compile func(CompileContext, C, Inputs) (P, Outputs, error)
-    Open    func(OpenContext, P) (flow.Operator, error)
-    Suggest func(SuggestContext, Need) []C
-}
-```
+構築と pure Compile の実行例は [plugin の Example](../../plugin/example_test.go) を正本とする。
+実装は config 型 `C`、private plan 型 `P`、control-plane descriptor 型 `D` を持つ
+`Spec[C, P, D]` を `WithSpec` で一度だけ type erase する。
 
 - `C`: ユーザー設定。immutable に解決される。
 - `P`: compile 済み component 固有 plan。runtime object ではない。
-- `Ports`: static shape。動的 topology が必要な component だけ `Shape` phase を持つ。
+- `D`: port 間を流れる control-plane descriptor。media graph では `stream.Descriptor`。
+- `Shape`: static shape も config 依存 shape も同じ phase で返す。
 - `Compile`: 入力 descriptor と設定から出力 descriptor、requirements、cost、resource request を計算する純粋関数。
 - `Suggest`: planner が不足 schema を埋める候補設定を列挙する optional hook。
 - `Open`: 選択済み `P` と host service から runtime operator を一度だけ生成する。
@@ -171,13 +164,6 @@ Format component だけが source の shared bounded immutable view を読む。
 semantic transformation を記述する唯一の phase である。副作用を持たず、同じ入力で何度呼ばれても同じ結果になる。planner は候補探索、bridge 挿入、再検証のために繰り返し呼べる。
 
 component が直接満たせない場合は、文字列 error でなく構造化 requirement を返す。
-
-```go
-Unsatisfied{
-    Port: input,
-    Need: schema.Constraint(...),
-}
-```
 
 solver は bridge 候補を挿入して再度同じ `Compile` を呼ぶ。
 

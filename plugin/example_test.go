@@ -33,8 +33,8 @@ func Codec() plugin.Definition {
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("output", typ)})
 	spec := plugin.Spec[exampleConfig, flow.Shape, int]{
 		Shape: plugin.StaticShape[exampleConfig](shape),
-		Compile: func(plugin.CompileContext, exampleConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
-			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("output", 1))}, nil
+		Compile: func(_ plugin.CompileContext, value exampleConfig, _ flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("output", value.Level))}, nil
 		},
 		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
 			return exampleOperator{shape: plan}, nil
@@ -48,6 +48,24 @@ func ExampleNewSet() {
 	set := plugin.NewSet(Codec())
 	fmt.Println(len(set.Components()))
 	// Output: 1
+}
+
+// Compile resolves dynamic semantics without opening a runtime operator. The
+// private plan can only be consumed later by the component that created it.
+func ExampleCompile() {
+	component := Codec().Components()[0]
+	resolved, err := component.Resolve(config.NewPatch().Set("level", 7))
+	if err != nil {
+		panic(err)
+	}
+	compiled, err := plugin.Compile(component, plugin.CompileContext{}, resolved, flow.NewDescriptors[int]())
+	if err != nil {
+		panic(err)
+	}
+	outputs, _ := plugin.OutputsOf[int](compiled)
+	value, _ := outputs.One("output")
+	fmt.Println(value, compiled.Valid())
+	// Output: 7 true
 }
 
 // Public vocabularies can opt into host-time validation. The key itself stays

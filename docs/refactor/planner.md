@@ -32,22 +32,8 @@ advanced API では fully pinned graph を指定できる。この場合も sche
 
 component の semantic transformation は `Compile` だけに実装する。
 
-```go
-type Compiled[P any] struct {
-    Plan         P
-    Outputs      flow.Outputs
-    Requirements []Requirement
-    Effects      []Effect
-    Resources    resource.Request
-    Estimate     Estimate
-}
-
-func Compile(
-    ctx component.CompileContext,
-    config Config,
-    inputs flow.Inputs,
-) (Compiled[Plan], error)
-```
+現行の `Spec[C, P, D]`、`Compiled[P, D]` と type-erased `Compilation` の利用例は
+[plugin の Compile Example](../../plugin/example_test.go) を正本とする。
 
 `Compile` は次を満たす。
 
@@ -63,14 +49,8 @@ func Compile(
 ## Suggest は変換処理を持たない
 
 自動 bridge component は、必要条件に対する有限個の config 候補を提案できる。
-
-```go
-func Suggest(
-    ctx component.SuggestContext,
-    input stream.Descriptor,
-    need component.Need,
-) []config.Value
-```
+現行 API は `plugin.Suggest` が typed input descriptor と `Need[D]` を受け、schema で
+検証済みの canonical config snapshot を返す。
 
 各候補の output/effect/cost は必ず同じ `Compile` を呼んで求める。Suggest と Open/Run に変換規則を重複させない。
 
