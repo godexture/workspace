@@ -133,7 +133,7 @@ ownership は API の慣習でなく contract として固定する。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
 - plugin が call を越えて保持する時だけ `Share` を明示する。
 
-通常の `Processor` は借用 `Input` を受け取るので、単純な filter が `Release` を忘れない。低水準 `Operator` には ownership rule を conformance test する。
+`Processor` は call 中に `Input` を借用し、成功を返す直前にだけ consume する。失敗時は caller が保持するため、runtime が drop できる。低水準 `Operator` には ownership rule を conformance test する。
 
 fan-out が一つなら refcount atomic を通らない設計にする。複数 consumer の時も、一 item につき必要最小限の retained handle だけを作る。
 
@@ -342,7 +342,7 @@ M5 は execution island、ownership、queue、cancel、Finalize、transactional 
 - ownership 契約が conformance test される。Reader 返却で consumer へ move、Writer 成功で writer へ move、Writer 失敗で呼び出し元が保持、drop/cancel/queue drain は owner が破棄。linear path で refcount increment が起きず、fan-out のときだけ `Fork`/retain を通る。
 - M3 が値型として置いた `flow.Input`/`Owned`/`Shared` の上で、linear 1 hop の allocation がゼロであることを test で固定する。M3 で失った double `Take`・use-after-`Take` の検出を conformance testkit が担当し、既定 build の hot path に検出用 state を持たせない。
 - payload allocator が Host/Job の grant に属し、`sync.Pool` を resource manager や correctness の根拠にしない。`Overwrite` lease は Commit 前に read/publication できず、error/cancel で破棄される。
-- 実 queue が bounded で、`Limit` の items/bytes/time を扱う。byte limit は schema が安価な `Size` trait を提供する場合だけ使う。M3 の `schema.Queue`/`Fanout` を実 queue contract へ置き換えるか、factory の返り値型を変えるかをここで確定する。
+- 実 queue が bounded で、`Limit` の items/bytes/time を扱う。byte limit は schema が安価な `Size` trait を提供する場合だけ使う。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
 - resource accounting が packet/frame ごとに中央 manager を呼ばない。局所 counter に蓄積し、metrics export 時に集約する。
 - job context cancel が source、queue、operator、sink、host task group へ伝播し、block 中の read/write を解除する。edge close が idempotent で、send-after-close と double-close を plugin の責任にしない。join できない task を「停止した」と偽らず diagnostic にする。
 - EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は `Finalize` の明示 contract で渡り、data packet に混ざらない。

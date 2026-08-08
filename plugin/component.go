@@ -4,6 +4,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/run/drive"
 )
 
 // Component is a heterogeneous component definition. Its typed Spec is erased
@@ -18,6 +19,8 @@ type Component struct {
 	problems       []diagnostic.Item
 	implementation *componentImplementation
 	defaultShape   flow.Shape
+	execution      drive.Binding
+	executionSet   bool
 }
 
 type componentOptions struct {
@@ -25,6 +28,8 @@ type componentOptions struct {
 	provenance     Provenance
 	implementation *componentImplementation
 	problems       []diagnostic.Item
+	execution      drive.Binding
+	executionSet   bool
 }
 
 // ComponentOption changes non-identity component metadata.
@@ -60,6 +65,8 @@ func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema
 		provenance:     componentOptionsValue.provenance,
 		implementation: componentOptionsValue.implementation,
 		problems:       cloneItems(componentOptionsValue.problems),
+		execution:      componentOptionsValue.execution,
+		executionSet:   componentOptionsValue.executionSet,
 	}
 	if identityErr != nil {
 		result.problems = append(result.problems, diagnostic.NewItem("plugin.marker", diagnostic.ErrorSeverity, diagnostic.Path{}, identityErr.Error(), nil))
@@ -153,6 +160,7 @@ func (c Component) View() ComponentView {
 		HasSuggest:      c.implementation != nil && c.implementation.suggest != nil,
 		SuggestionLimit: c.suggestionLimit(),
 		Finalizes:       c.implementation != nil && c.implementation.finalizes,
+		Executable:      c.executionSet && c.execution.Valid(),
 		Contract:        c.Contract(),
 	}
 }
@@ -189,6 +197,7 @@ type ComponentView struct {
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
+	Executable      bool
 	Contract        Contract
 }
 
@@ -210,6 +219,11 @@ func (c *Component) initializeDefaultShape() {
 		return
 	}
 	c.defaultShape = shape.Clone()
+	if c.executionSet {
+		if err := c.execution.Validate(shape); err != nil {
+			c.problems = append(c.problems, diagnostic.NewItem("plugin.execution-shape", diagnostic.ErrorSeverity, diagnostic.Path{Component: c.identity.String()}, "component execution binding does not match its default Shape", map[string]string{"cause": err.Error()}))
+		}
+	}
 }
 
 func (c Component) suggestionLimit() int {

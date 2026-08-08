@@ -170,7 +170,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `host` | public Catalog/Plan/Run façade | M2 完了（Plan/Run は M4/M5） |
 | `media/key` | marker 由来 typed key、宣言 clone 規則、erased accessor | M4-1（`property`/`metadata`/`side` の重複機構を統合する） |
 | `media/carrier` | payload slot の marker 由来 identity | M4-1（`media/format` から分離する） |
-| `media/schema` | open typed schema、trait、typed runtime factory | M3 |
+| `media/schema` | open typed schema、trait、erased identity/payload descriptor。typed runtime binding は `plugin`/`internal/run` | M3（runtime product は M5） |
 | `media/property` | immutable open property key/set | M3（key 機構は M4-1 で `media/key` へ移す） |
 | `media/timing` | integer time base、typed PTS/DTS/duration、checked rescale | M3 |
 | `media/stream` | open descriptor、program/stream scope、dynamic event | M3 |

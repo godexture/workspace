@@ -55,7 +55,24 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 			return openOperation(plan, ctx.Buffers())
 		},
 	}
-	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(), plugin.WithSpec(spec))
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(), plugin.WithSpec(spec), operationExecution(kind))
+}
+
+func operationExecution(kind operation) plugin.ComponentOption {
+	switch kind {
+	case readerOperation:
+		return plugin.WithProcessor("bytes", Bytes(), "chunks", Chunks())
+	case parserOperation:
+		return plugin.WithProcessor("chunks", Chunks(), "packets", Packets())
+	case decoderOperation:
+		return plugin.WithProcessor("packets", Packets(), "frames", sample.S16())
+	case encoderOperation:
+		return plugin.WithProcessor("frames", sample.S16(), "packets", Packets())
+	case writerOperation:
+		return plugin.WithProcessor("packets", Packets(), "bytes", Bytes())
+	default:
+		return nil
+	}
 }
 
 func operationShape(kind operation) flow.Shape {

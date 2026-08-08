@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/resource"
 )
 
@@ -29,6 +30,8 @@ type Compilation struct {
 	resources      resource.Request
 	estimate       resource.Estimate
 	finalization   Finalization
+	execution      drive.Binding
+	executionSet   bool
 }
 
 func (c Compilation) Valid() bool {
@@ -169,6 +172,8 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		resources:      compiled.resources,
 		estimate:       compiled.estimate,
 		finalization:   compiled.finalization,
+		execution:      component.execution,
+		executionSet:   component.executionSet,
 	}, nil
 }
 
@@ -237,6 +242,15 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 			detail += ": close failed: " + closeErr.Error()
 		}
 		return nil, c.phaseError("plugin.open-shape", "component Open returned an incompatible port shape", detail)
+	}
+	if compilation.executionSet {
+		if err := compilation.execution.ValidateOperator(operator); err != nil {
+			detail := err.Error()
+			if closeErr := operator.Close(); closeErr != nil {
+				detail += ": close failed: " + closeErr.Error()
+			}
+			return nil, c.phaseError("plugin.open-execution", "component Open returned an incompatible typed operator", detail)
+		}
 	}
 	return operator, nil
 }

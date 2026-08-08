@@ -56,12 +56,10 @@ type readerOperator struct {
 }
 
 func (o *readerOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return errors.New("raw PCM reader received unowned bytes")
 	}
-	data := owner.Value()
-	defer owner.Release()
+	data := input.Value()
 	frameBytes := o.configuration.Layout.Channels() * 2
 	if frameBytes == 0 || len(data)%frameBytes != 0 {
 		return ErrPartialSample
@@ -86,6 +84,7 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[[]byte], 
 		o.sequence++
 		o.sampleOffset += samples
 	}
+	input.Drop()
 	return nil
 }
 
@@ -97,25 +96,23 @@ type parserOperator struct {
 }
 
 func (o *parserOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[packet.Packet]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return errors.New("linear PCM parser received an unowned chunk")
 	}
-	chunk := owner.Value()
+	chunk := input.Value()
 	frameBytes := o.configuration.Layout.Channels() * 2
 	if frameBytes == 0 || len(chunk.Bytes())%frameBytes != 0 {
-		owner.Release()
 		return ErrPartialSample
 	}
 	payload := chunk.Payload().Share()
 	duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), duration, payload).WithSideData(chunk.SideData())
-	owner.Release()
 	item := flow.NewInput(value, Packets())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	input.Drop()
 	return nil
 }
 
@@ -127,15 +124,13 @@ type decoderOperator struct {
 }
 
 func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return errors.New("linear PCM decoder received an unowned packet")
 	}
-	value := owner.Value()
+	value := input.Value()
 	channels := o.configuration.Layout.Channels()
 	frameBytes := channels * 2
 	if channels == 0 || len(value.Bytes())%frameBytes != 0 {
-		owner.Release()
 		return ErrPartialSample
 	}
 	samples := len(value.Bytes()) / frameBytes
@@ -145,7 +140,6 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 	}
 	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 16, Planes: planes})
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	defer lease.Discard()
@@ -165,27 +159,24 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 		return nil
 	})
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	storage, err := lease.Commit()
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	frame, err := audio.NewFrame[int16](value.PTS(), samples, storage)
 	if err != nil {
 		storage.Release()
-		owner.Release()
 		return err
 	}
 	frame = frame.WithSideData(value.SideData())
-	owner.Release()
 	item := flow.NewInput(frame, sample.S16())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	input.Drop()
 	return nil
 }
 
@@ -198,19 +189,16 @@ type encoderOperator struct {
 }
 
 func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return errors.New("linear PCM encoder received an unowned frame")
 	}
-	frame := owner.Value()
+	frame := input.Value()
 	channels := o.configuration.Layout.Channels()
 	if len(frame.Planes().Layout().Planes) != channels {
-		owner.Release()
 		return ErrPlaneCount
 	}
 	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 16, Planes: []buffer.PlaneSpec{{Size: frame.Samples() * channels * 2}}})
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	defer lease.Discard()
@@ -230,12 +218,10 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 		return nil
 	})
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	payload, err := lease.Commit()
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	packetValue := packet.NewPacket(
@@ -245,13 +231,13 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 		timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))),
 		payload,
 	).WithSideData(frame.SideData())
-	o.sequence++
-	owner.Release()
 	item := flow.NewInput(packetValue, Packets())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	o.sequence++
+	input.Drop()
 	return nil
 }
 
@@ -260,17 +246,16 @@ func (*encoderOperator) Flush(context.Context, flow.Emitter[packet.Packet]) erro
 type writerOperator struct{ operatorBase }
 
 func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[[]byte]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return errors.New("raw PCM writer received an unowned packet")
 	}
-	value := append([]byte(nil), owner.Value().Bytes()...)
-	owner.Release()
+	value := append([]byte(nil), input.Value().Bytes()...)
 	item := flow.NewInput(value, Bytes())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	input.Drop()
 	return nil
 }
 

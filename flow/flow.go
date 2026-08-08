@@ -51,9 +51,9 @@ func WithMultiplicity(value Multiplicity) PortOption {
 	return func(options *portOptions) { options.multiplicity = value }
 }
 
-// Port is an erased static port declaration. The schema descriptor, including
-// its typed factory closure, is retained on the port; typed constructors ensure
-// it is captured while T is known.
+// Port is an erased static port declaration. The schema descriptor retains
+// marker identity and payload type; typed runtime operations remain on the
+// schema.Type captured by execution binding constructors.
 type Port struct {
 	id           string
 	direction    Direction
@@ -101,9 +101,8 @@ func (s Shape) Clone() Shape { return NewShape(s.Inputs, s.Outputs) }
 
 func (s Shape) Empty() bool { return len(s.Inputs) == 0 && len(s.Outputs) == 0 }
 
-// Equal reports semantic equality without comparing schema factory closures.
-// Identity and payload type together determine whether typed edges can be
-// wired safely.
+// Equal reports semantic equality. Identity and payload type together
+// determine whether typed edges can be wired safely.
 func (s Shape) Equal(other Shape) bool {
 	return equalPorts(s.Inputs, other.Inputs) && equalPorts(s.Outputs, other.Outputs)
 }
@@ -293,8 +292,9 @@ type Emitter[T any] interface {
 	Emit(context.Context, Input[T]) error
 }
 
-// Processor is the common one-item transform contract. Flush handles delayed
-// output without introducing a second runtime model.
+// Processor is the common one-item transform contract. Process consumes its
+// input only when it succeeds; on error the caller retains ownership. Flush
+// handles delayed output without introducing a second runtime model.
 type Processor[I, O any] interface {
 	Process(context.Context, Input[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error

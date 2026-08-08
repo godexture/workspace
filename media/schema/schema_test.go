@@ -35,7 +35,7 @@ func TestTypedTraitsRemainOnTypedSchema(t *testing.T) {
 	}
 }
 
-func TestDescriptorIdentityDecidesEqualityAndBuildsTypedFactories(t *testing.T) {
+func TestDescriptorRetainsIdentityAndPayloadWithoutRuntimeProducts(t *testing.T) {
 	typ := Define[thirdPartyUnitID](Traits[alternatePayload]{
 		Fork: func(value alternatePayload) alternatePayload { return value },
 	})
@@ -43,36 +43,13 @@ func TestDescriptorIdentityDecidesEqualityAndBuildsTypedFactories(t *testing.T) 
 	if !descriptor.Valid() || descriptor.Identity() != typ.Identity() {
 		t.Fatalf("descriptor = %#v", descriptor)
 	}
-	// A second Define for the same marker captures a different factory, so
-	// equality must be decided by Identity rather than by the descriptor value.
+	// A second Define for the same marker has the same semantic identity.
 	again := Define[thirdPartyUnitID](Traits[alternatePayload]{})
 	if again.Identity() != descriptor.Identity() {
 		t.Fatalf("repeated Define identity = %v, want %v", again.Identity(), descriptor.Identity())
 	}
 	if descriptor.Payload() == nil || descriptor.Payload().Name() != "alternatePayload" {
 		t.Fatalf("payload = %v", descriptor.Payload())
-	}
-	erasedQueue, err := descriptor.NewPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	queue, ok := erasedQueue.(Queue[alternatePayload])
-	if !ok || !queue.Push(alternatePayload{Text: "queue"}) {
-		t.Fatalf("queue product = %T", erasedQueue)
-	}
-	if value, ok := queue.Pop(); !ok || value.Text != "queue" {
-		t.Fatalf("queue value = %#v, %v", value, ok)
-	}
-	erasedFanout, err := descriptor.NewTee(2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fanout, ok := erasedFanout.(Fanout[alternatePayload])
-	if !ok || fanout.Outputs() != 2 {
-		t.Fatalf("fan-out product = %T", erasedFanout)
-	}
-	if values := fanout.Split(alternatePayload{Text: "fanout"}); len(values) != 2 || values[1].Text != "fanout" {
-		t.Fatalf("fan-out values = %#v", values)
 	}
 }
 

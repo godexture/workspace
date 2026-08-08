@@ -1,7 +1,9 @@
 package plugin_test
 
 import (
+	"context"
 	"fmt"
+	"io"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
@@ -23,6 +25,9 @@ type exampleOperator struct{ shape flow.Shape }
 
 func (o exampleOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (exampleOperator) Close() error        { return nil }
+func (exampleOperator) Read(context.Context) (flow.Input[exampleUnit], error) {
+	return flow.Input[exampleUnit]{}, io.EOF
+}
 
 func Codec() plugin.Definition {
 	schema := config.Struct[exampleConfig](func() exampleConfig { return exampleConfig{Level: 5} }).
@@ -40,7 +45,12 @@ func Codec() plugin.Definition {
 			return exampleOperator{shape: plan}, nil
 		},
 	}
-	component := plugin.NewComponent[exampleComponentID](plugin.Descriptor{DisplayName: "Example codec", Version: "1.0.0"}, schema, plugin.WithSpec(spec))
+	component := plugin.NewComponent[exampleComponentID](
+		plugin.Descriptor{DisplayName: "Example codec", Version: "1.0.0"},
+		schema,
+		plugin.WithSpec(spec),
+		plugin.WithReader("output", typ),
+	)
 	return plugin.Define[examplePluginID](plugin.Descriptor{DisplayName: "Example plugin", Version: "1.0.0"}, component)
 }
 
@@ -48,6 +58,14 @@ func ExampleNewSet() {
 	set := plugin.NewSet(Codec())
 	fmt.Println(len(set.Components()))
 	// Output: 1
+}
+
+// Typed execution registration captures T once without exposing a queue or
+// scheduler to the component implementation.
+func ExampleWithReader() {
+	component := Codec().Components()[0]
+	fmt.Println(component.View().Executable, component.Ports().Outputs[0].Schema().Payload().Name())
+	// Output: true exampleUnit
 }
 
 // Compile resolves dynamic semantics without opening a runtime operator. The

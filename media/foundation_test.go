@@ -108,12 +108,10 @@ func (o *skeletonDemuxerOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonDemuxerOperator) Close() error      { return nil }
 
 func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return fmt.Errorf("demuxer input was not owned")
 	}
-	data := owner.Value()
-	owner.Release()
+	data := input.Value()
 	const bytesPerChunk = 2
 	for offset, sequence := 0, uint64(0); offset < len(data); offset, sequence = offset+bytesPerChunk, sequence+1 {
 		end := offset + bytesPerChunk
@@ -135,6 +133,7 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[
 			return err
 		}
 	}
+	input.Drop()
 	return nil
 }
 
@@ -148,19 +147,18 @@ func (o *skeletonParserOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonParserOperator) Close() error      { return nil }
 
 func (o *skeletonParserOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[packet.Packet]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return fmt.Errorf("parser input was not owned")
 	}
-	chunk := owner.Value()
+	chunk := input.Value()
 	payload := chunk.Payload().Share()
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes())/2))), payload)
-	owner.Release()
 	item := flow.NewInput(value, skeletonPacketSchema)
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	input.Drop()
 	return nil
 }
 
@@ -174,24 +172,22 @@ func (o *skeletonCodecOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonCodecOperator) Close() error      { return nil }
 
 func (o *skeletonCodecOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return fmt.Errorf("decoder input was not owned")
 	}
-	value := owner.Value()
+	value := input.Value()
 	payload := value.Payload().Share()
 	frame, err := audio.NewFrame[int16](value.PTS(), len(value.Bytes())/2, payload)
 	if err != nil {
 		payload.Release()
-		owner.Release()
 		return err
 	}
-	owner.Release()
 	item := flow.NewInput(frame, skeletonFrameSchema)
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	input.Drop()
 	return nil
 }
 
@@ -211,35 +207,33 @@ func (o *skeletonEncoderOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonEncoderOperator) Close() error      { return nil }
 
 func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return fmt.Errorf("encoder input was not owned")
 	}
-	frame := owner.Value()
+	frame := input.Value()
 	pts, err := frame.PTS().Rescale(o.inputBase, o.outputBase, timing.RoundNearestEven)
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	duration, err := timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))).Rescale(o.inputBase, o.outputBase, timing.RoundNearestEven)
 	if err != nil {
-		owner.Release()
 		return err
 	}
 	payload := frame.Planes().Share()
 	value := packet.NewPacket(uint64(pts.Value()), pts, timing.UnknownDTS(), duration, payload)
-	owner.Release()
 	if o.hasPending {
 		item := flow.NewInput(o.pending, skeletonPacketSchema)
-		o.hasPending = false
 		if err := output.Emit(ctx, item); err != nil {
 			item.Drop()
 			value.Release()
+			o.pending = packet.Packet{}
+			o.hasPending = false
 			return err
 		}
 	}
 	o.pending = value
 	o.hasPending = true
+	input.Drop()
 	return nil
 }
 
@@ -435,23 +429,22 @@ func (o *skeletonMuxerOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonMuxerOperator) Close() error      { return nil }
 
 func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[packet.Chunk]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+	if !input.Valid() {
 		return fmt.Errorf("muxer input was not owned")
 	}
-	value := owner.Value()
+	value := input.Value()
 	payload := value.Payload().Share()
 	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
-	owner.Release()
-	if o.trace != nil {
-		o.trace.sequences = append(o.trace.sequences, chunk.Sequence())
-		o.trace.timestamps = append(o.trace.timestamps, chunk.PTS().Value())
-	}
 	item := flow.NewInput(chunk, skeletonChunkSchema)
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
 	}
+	if o.trace != nil {
+		o.trace.sequences = append(o.trace.sequences, chunk.Sequence())
+		o.trace.timestamps = append(o.trace.timestamps, chunk.PTS().Value())
+	}
+	input.Drop()
 	return nil
 }
 
@@ -864,30 +857,6 @@ func compileSkeletonMetadata(index catalog.Index) (program.Program, error) {
 	return solve.Resolve(context.Background(), index, jobRequest, plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
 }
 
-func openQueue[T any](descriptor schema.Descriptor) (schema.Queue[T], error) {
-	erased, err := descriptor.NewPipe()
-	if err != nil {
-		return nil, err
-	}
-	queue, ok := erased.(schema.Queue[T])
-	if !ok {
-		return nil, fmt.Errorf("schema queue product has type %T", erased)
-	}
-	return queue, nil
-}
-
-func openFanout[T any](descriptor schema.Descriptor, outputs int) (schema.Fanout[T], error) {
-	erased, err := descriptor.NewTee(outputs)
-	if err != nil {
-		return nil, err
-	}
-	fanout, ok := erased.(schema.Fanout[T])
-	if !ok {
-		return nil, fmt.Errorf("schema fan-out product has type %T", erased)
-	}
-	return fanout, nil
-}
-
 func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	inputBytes := []byte{1, 0, 2, 0, 3, 0, 4, 0}
 	trace := &skeletonTrace{}
@@ -1189,16 +1158,9 @@ func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
 	if shape.Inputs[0].Schema().Identity() != skeletonMetadataEventSchema.Identity() {
 		t.Fatal("metadata event port lost its schema identity")
 	}
-	queue, err := openQueue[skeletonMetadataEvent](shape.Inputs[0].Schema())
-	if err != nil {
-		t.Fatal(err)
-	}
 	event := skeletonMetadataEvent{At: timing.PTS(7), Key: tag.Title.ID(), Value: "live"}
-	if !queue.Push(event) {
-		t.Fatal("metadata event was not accepted")
-	}
-	if got, ok := queue.Pop(); !ok || got.At != event.At || got.Key != event.Key || got.Value != event.Value {
-		t.Fatalf("metadata event = %#v, %v", got, ok)
+	if event.At != 7 || event.Key != tag.Title.ID() || event.Value != "live" {
+		t.Fatalf("metadata event = %#v", event)
 	}
 }
 
@@ -1228,26 +1190,5 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 	}
 	if shape.Inputs[0].Schema().Identity() != video.Identity() {
 		t.Fatal("port did not carry the declaring schema identity")
-	}
-	queue, err := openQueue[videoUnit](shape.Inputs[0].Schema())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !queue.Push(videoUnit{Width: 128}) {
-		t.Fatal("typed queue rejected an item")
-	}
-	if value, ok := queue.Pop(); !ok || value.Width != 128 {
-		t.Fatalf("typed queue value = %#v, %v", value, ok)
-	}
-	fanout, err := openFanout[videoUnit](shape.Inputs[0].Schema(), 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	values := fanout.Split(videoUnit{Width: 1920})
-	if len(values) != 2 || values[1].Width != 1920 {
-		t.Fatalf("typed fan-out values = %#v", values)
-	}
-	for _, value := range values {
-		fanout.Drop(value)
 	}
 }

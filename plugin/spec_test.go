@@ -26,6 +26,14 @@ type specOperator struct{ shape flow.Shape }
 func (o specOperator) Ports() flow.Shape { return o.shape }
 func (o specOperator) Close() error      { return nil }
 
+type specProcessorOperator struct{ specOperator }
+
+func (specProcessorOperator) Process(context.Context, flow.Input[specUnit], flow.Emitter[specUnit]) error {
+	return nil
+}
+
+func (specProcessorOperator) Flush(context.Context, flow.Emitter[specUnit]) error { return nil }
+
 type trackedSpecOperator struct {
 	shape  flow.Shape
 	closed *atomic.Int32
@@ -102,6 +110,78 @@ func TestComponentSpecShapesCompilesAndOpensSelectedPlan(t *testing.T) {
 	}
 	if err := operator.Ports().Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecutionBindingValidatesShapeAndOpenedTypedOperator(t *testing.T) {
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	spec := testSpec(nil, nil)
+	spec.Open = func(_ OpenContext, plan specPlan) (flow.Operator, error) {
+		return specProcessorOperator{specOperator{shape: plan.shape}}, nil
+	}
+	component := NewComponent[specUnitID](
+		Descriptor{DisplayName: "typed execution"},
+		pluginSchema(1),
+		WithSpec(spec),
+		WithProcessor("in", typ, "out", typ),
+	)
+	if diagnostics := component.Diagnostics(); len(diagnostics) != 0 {
+		t.Fatalf("component diagnostics = %v", diagnostics)
+	}
+	if !component.View().Executable {
+		t.Fatal("component view did not expose its executable binding")
+	}
+	resolved, _ := component.Resolve(config.NewPatch())
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ExecutionOf(compiled); !ok {
+		t.Fatal("compilation lost its typed execution binding")
+	}
+	operator, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = operator.Close()
+
+	wrong := testSpec(nil, nil)
+	component = NewComponent[specOtherID](
+		Descriptor{DisplayName: "wrong typed execution"},
+		pluginSchema(1),
+		WithSpec(wrong),
+		WithProcessor("in", typ, "out", typ),
+	)
+	resolved, _ = component.Resolve(config.NewPatch())
+	compiled, err = Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled); !hasDiagnostic(err, "plugin.open-execution") {
+		t.Fatalf("typed operator error = %v", err)
+	}
+}
+
+func TestExecutionBindingRejectsDuplicateAndShapeMismatch(t *testing.T) {
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	duplicate := NewComponent[specUnitID](
+		Descriptor{DisplayName: "duplicate execution"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithProcessor("in", typ, "out", typ),
+		WithProcessor("in", typ, "out", typ),
+	)
+	if !hasItem(duplicate.Diagnostics(), "plugin.execution") {
+		t.Fatalf("duplicate execution diagnostics = %v", duplicate.Diagnostics())
+	}
+	mismatch := NewComponent[specOtherID](
+		Descriptor{DisplayName: "mismatched execution"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithProcessor("wrong", typ, "out", typ),
+	)
+	if !hasItem(mismatch.Diagnostics(), "plugin.execution-shape") {
+		t.Fatalf("execution shape diagnostics = %v", mismatch.Diagnostics())
 	}
 }
 

@@ -68,24 +68,26 @@ timestamp shift、trim、segment、rate control は全型へ無条件に適用�
 
 ### Go で control plane だけを型消去する方法
 
-planner は異なる `schema.Type[T]` を同じ catalog/graph に格納する必要があるが、data item を `any` で運ぶ必要はない。schema/component 登録時に、`T` が確定した generic factory closure を descriptor へ格納する。
+planner は異なる `schema.Type[T]` を同じ catalog/graph に格納する必要があるが、data item を `any` で運ぶ必要はない。`schema.Descriptor` は marker identity と payload Go 型だけを control plane へ運び、typed trait は `schema.Type[T]` に残す。component 登録時に `T` が確定した execution closure を捕捉する。
 
 概念例:
 
-実装は typed closure を `schema.Descriptor` に保持し、Open 境界で一度だけ型を
-復元する。[schema の `ExampleDefine`](../../media/schema/example_test.go) がこの経路を
-公開 API だけで実行する。M5 で bounded queue へ接続する際も item ごとの型消去は
-導入しない。
+schema identity、payload 型、typed trait の分離は
+[schema の `ExampleDefine`](../../media/schema/example_test.go) を正本とする。component は
+`plugin.WithReader` / `WithProcessor` / `WithWriter` で `schema.Type[T]` を execution binding へ
+渡し、Program Open 時に operator interface を一度だけ検証する。bounded queue と fan-out は
+この closure の内側で typed のまま構築し、item ごとの型消去を導入しない。
 
-component definition も、Open 時に erased endpoint を一度だけ `pipe[T]` へ検証して typed Reader/Writer を保持する factory closure を登録する。type assertion は Program の Open 時だけであり、item ごとには行わない。
+`schema` package 自身は queue、fan-out、scheduler を構築しない。それらは Host runtime の private 実装であり、plugin contract は typed Reader/Writer/Processor と trait 宣言だけを持つ。type assertion は Program の Open 時だけであり、item ごとには行わない。
 
 ```text
-catalog / planner: schema ID と erased factory
-Open:              endpoint 型を一度検証
+catalog / planner: schema ID と payload type
+registration:      typed execution closure と traits を捕捉
+Open:              operator/link 型を一度検証
 Run:               Reader[T] -> Processor[I,O] -> Writer[O]
 ```
 
-この方式なら、第三者が `schema.Define[unitID, acme.Unit]` を呼んだ build に `pipe[acme.Unit]`、tee、drop 等の型付き実装が含まれる。core が `acme.Unit` を事前に知らなくてもよく、hot path で reflection、string lookup、serialize、`any` map を使わない。専用 marker により、payload 型の refactor と schema identity も分離できる。
+この方式なら、第三者が `schema.Define[unitID, acme.Unit]` と typed execution binding を宣言した build に、`acme.Unit` 用の delivery、bounded edge、fan-out/drop が生成される。core が `acme.Unit` を事前に知らなくてもよく、hot path で reflection、string lookup、serialize、`any` map を使わない。専用 marker により、payload 型の refactor と schema identity も分離できる。
 
 ## stream descriptor
 
@@ -401,11 +403,11 @@ component Spec のうち M3 が確定するのは port shape と `Open` まで�
 
 typed frame は `media/audio` だけを M3 で実装する。`media/video` と `media/subtitle` は実 consumer が現れる milestone まで作らず、第三者相当の schema fixture で拡張性を検査する。`media/audio` を先に作るのは、[audio](audio.md#原則) の「filter が内部で sample format を decode/encode しない」という性能契約が `media/buffer` の plane layout と ownership に依存し、両者を離して決めると M5/M6 で作り直しになるためである。
 
-- 第三者が `schema.Define[ID, T]` で独自 unit を宣言でき、その build に `pipe[T]`、tee、drop 等の型付き実装が含まれる。core は `T` を事前に知らない。
+- 第三者が `schema.Define[ID, T]` で独自 unit を宣言でき、typed component binding から delivery、fan-out、drop 等の型付き実装を作れる。core は `T` を事前に知らない。
 - schema identity が payload の Go 型ではなく marker 型から導出され、payload 型の refactor と identity が分離している。
 - 万能 `Frame` interface と閉じた stream kind enum が新 package に存在しない。`audio.Frame` に加え、`video.Frame`/`subtitle.Cue` 相当の非 audio unit を core 無変更で別 schema として宣言でき、port を schema の具体型で結べる。後者は foundation の test fixture で検査し、`media/video`/`media/subtitle` package は作らない。
 - `plugin.Component` が port shape と `Open` を持ち、`flow` の typed port を宣言できる。`component` package を新設しない。
-- 型消去は catalog/planner が保持する erased factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。type assertion は Open 時に一度だけ行う形になっている。
+- 型消去は catalog/planner の descriptor と Program Open の execution token に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。type assertion は Open 時に一度だけ行う形になっている。
 - `stream.Descriptor` が schema identity、time base、immutable `property.Set`、`metadata.Document` を持ち、未知 property を解釈せずに保持できる。
 - `timing` が integer time base と型を区別した PTS/DTS/duration を持ち、rescale が checked arithmetic で overflow と rounding policy を明示する。timestamp 不明を `0` と混同しない optional/flag を持つ。
 - Format、Codec、Carrier、Metadata Encoding、Metadata Document、Binding が別の型として分かれ、Format が特定の decoder/metadata parser/Access Provider を import しない構造になっている。
@@ -432,7 +434,7 @@ walking skeleton を要求する理由は、consumer のいない contract を M
 - 万能 `Frame` と閉じた stream kind enum が存在せず、port が schema の具体型で結ばれる。
 - data plane の package が control plane の package を import せず、marker 由来 typed key の機構が `media/key` に一つだけ存在する。canonical encoder を要求するのは fingerprint に参加する key だけである。Carrier が `media/format` の内部型になっていない。
 - 同じ marker を異なる payload 型で宣言した key が host 構築 error になり、専用 registry を持たない。
-- 型消去が control plane の登録と factory closure に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。
+- 型消去が control plane の descriptor と typed execution registration に限定され、item ごとの reflection、文字列 lookup、`any` map、serialize を必要としない。
 - container chunk、codec packet、decoded unit、side data、static metadata、timed event が別の型として分かれている。
 - timestamp が integer time base で表され、rescale が overflow と rounding policy を明示し、不明を `0` と混同しない。
 - Format が Access Provider、decoder 実装、metadata parser を import せず、Binding だけが composition 時に結ぶ。
