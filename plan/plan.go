@@ -23,6 +23,7 @@ type Plan struct {
 // New validates and snapshots an inert execution description.
 func New(description Description) (Plan, error) {
 	description = cloneDescription(description)
+	description.Runtime = normalizeRuntime(description.Runtime)
 	sort.Strings(description.Platform.Features)
 	sort.Slice(description.Edges, func(left, right int) bool {
 		return edgeKey(description.Edges[left]) < edgeKey(description.Edges[right])
@@ -65,6 +66,7 @@ func (p Plan) Usage() Usage                    { return p.description.Usage }
 func (p Plan) CatalogFingerprint() string      { return p.description.CatalogFingerprint }
 func (p Plan) Platform() Platform              { return p.Description().Platform }
 func (p Plan) Boundaries() []Boundary          { return p.Description().Boundaries }
+func (p Plan) Runtime() Runtime                { return cloneRuntime(p.description.Runtime) }
 func (p Plan) Warnings() []string              { return append([]string(nil), p.description.Warnings...) }
 
 func validate(description Description) error {
@@ -128,6 +130,9 @@ func validate(description Description) error {
 			return errors.New("plan boundary node is absent")
 		}
 	}
+	if err := validateRuntime(description.Runtime, seen, description.Edges); err != nil {
+		return err
+	}
 	previous := ""
 	for _, feature := range description.Platform.Features {
 		if feature == "" || feature == previous {
@@ -170,6 +175,7 @@ type canonicalExecution struct {
 	Nodes      []canonicalNode
 	Edges      []Edge
 	Boundaries []canonicalBoundary
+	Runtime    Runtime
 }
 
 type canonicalBoundary struct {
@@ -238,7 +244,86 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Mode:                 boundary.Mode,
 		}
 	}
-	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries}
+	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime)}
+}
+
+func validateRuntime(runtime Runtime, nodes map[string]struct{}, edges []Edge) error {
+	if !runtime.Executable {
+		if len(runtime.Islands) != 0 || len(runtime.Buffers) != 0 || len(runtime.FanIns) != 0 {
+			return errors.New("non-executable plan contains runtime topology")
+		}
+		return nil
+	}
+	if len(runtime.Islands) == 0 {
+		return errors.New("executable plan has no execution islands")
+	}
+	covered := make(map[string]struct{}, len(nodes))
+	islandIDs := make(map[string]struct{}, len(runtime.Islands))
+	for _, island := range runtime.Islands {
+		if island.ID == "" || len(island.Nodes) == 0 {
+			return errors.New("plan contains an invalid execution island")
+		}
+		if _, exists := islandIDs[island.ID]; exists {
+			return errors.New("plan contains duplicate execution island IDs")
+		}
+		islandIDs[island.ID] = struct{}{}
+		for _, node := range island.Nodes {
+			if _, exists := nodes[node]; !exists {
+				return errors.New("execution island names an absent node")
+			}
+			if _, exists := covered[node]; exists {
+				return errors.New("execution islands overlap")
+			}
+			covered[node] = struct{}{}
+		}
+	}
+	if len(covered) != len(nodes) {
+		return errors.New("execution islands do not cover every node")
+	}
+	edgeSet := make(map[string]struct{}, len(edges))
+	for _, edge := range edges {
+		edgeSet[edgeKey(edge)] = struct{}{}
+	}
+	bufferIDs := make(map[string]struct{}, len(runtime.Buffers))
+	for _, buffer := range runtime.Buffers {
+		if buffer.ID == "" || !buffer.Limit.Valid() || !buffer.Reason.Valid() {
+			return errors.New("plan contains an invalid runtime buffer")
+		}
+		if _, exists := bufferIDs[buffer.ID]; exists {
+			return errors.New("plan contains duplicate runtime buffer IDs")
+		}
+		bufferIDs[buffer.ID] = struct{}{}
+		key := buffer.FromNode + ":" + buffer.FromPort + "->" + buffer.ToNode + ":" + buffer.ToPort
+		if _, exists := edgeSet[key]; !exists {
+			return errors.New("runtime buffer does not correspond to a plan edge")
+		}
+	}
+	fanInPorts := make(map[string]struct{}, len(runtime.FanIns))
+	for _, fanIn := range runtime.FanIns {
+		if fanIn.Node == "" || fanIn.Port == "" || !fanIn.Policy.Valid() || len(fanIn.Connections) < 2 || !fanIn.Limit.Valid() || fanIn.Watermark < 0 {
+			return errors.New("plan contains an invalid fan-in projection")
+		}
+		if _, exists := nodes[fanIn.Node]; !exists {
+			return errors.New("fan-in names an absent node")
+		}
+		key := fanIn.Node + ":" + fanIn.Port
+		if _, exists := fanInPorts[key]; exists {
+			return errors.New("plan contains duplicate fan-in ports")
+		}
+		fanInPorts[key] = struct{}{}
+		previous := ""
+		for _, connection := range fanIn.Connections {
+			connectionKey := connection.FromNode + ":" + connection.FromPort
+			if connection.FromNode == "" || connection.FromPort == "" || connectionKey <= previous {
+				return errors.New("fan-in connection order is not canonical")
+			}
+			previous = connectionKey
+			if _, exists := edgeSet[connectionKey+"->"+key]; !exists {
+				return errors.New("fan-in connection does not correspond to a plan edge")
+			}
+		}
+	}
+	return nil
 }
 
 func canonicalPlanOf(description Description, execution Fingerprint) canonicalPlan {

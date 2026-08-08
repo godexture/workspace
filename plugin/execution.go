@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/media/schema"
 )
@@ -18,6 +19,13 @@ func WithReader[T any](output string, typ schema.Type[T]) ComponentOption {
 // exposing an execution island or queue to the plugin.
 func WithProcessor[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) ComponentOption {
 	return withExecution(drive.NewProcessor(input, in, output, out))
+}
+
+// WithJoiner binds a homogeneous many-input component. Zip is executable in
+// M5; other declared policies remain explicit planning facts until a real
+// component defines their semantics.
+func WithJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) ComponentOption {
+	return withExecution(drive.NewJoiner(input, in, policy, output, out))
 }
 
 // WithWriter binds a sink component's sole input to flow.Writer[T].

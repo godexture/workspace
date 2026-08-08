@@ -77,6 +77,11 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			Reason:   metadata.reason,
 		})
 	}
+	runtime, err := program.Project(compiled)
+	if err != nil {
+		return program.Program{}, err
+	}
+	description.Runtime = runtime
 	public, err := plan.New(description)
 	if err != nil {
 		return program.Program{}, err

@@ -24,11 +24,27 @@ const (
 	ManyMultiplicity
 )
 
+// FanInPolicy defines the semantic ordering of a many-input port. A policy is
+// mandatory for many input ports and meaningless on outputs or one-input
+// ports.
+type FanInPolicy uint8
+
+const (
+	ZipFanIn FanInPolicy = iota + 1
+	LatestFanIn
+	PrimaryFanIn
+	MergeFanIn
+	WindowFanIn
+)
+
+func (p FanInPolicy) Valid() bool { return p >= ZipFanIn && p <= WindowFanIn }
+
 type PortOption func(*portOptions)
 
 type portOptions struct {
 	required     bool
 	multiplicity Multiplicity
+	fanIn        FanInPolicy
 }
 
 // Required and Optional control whether a port must be connected. They are
@@ -51,6 +67,11 @@ func WithMultiplicity(value Multiplicity) PortOption {
 	return func(options *portOptions) { options.multiplicity = value }
 }
 
+// WithFanIn assigns the semantic policy for a Many input port.
+func WithFanIn(policy FanInPolicy) PortOption {
+	return func(options *portOptions) { options.fanIn = policy }
+}
+
 // Port is an erased static port declaration. The schema descriptor retains
 // marker identity and payload type; typed runtime operations remain on the
 // schema.Type captured by execution binding constructors.
@@ -60,6 +81,7 @@ type Port struct {
 	descriptor   schema.Descriptor
 	required     bool
 	multiplicity Multiplicity
+	fanIn        FanInPolicy
 }
 
 func In[T any](id string, typ schema.Type[T], options ...PortOption) Port {
@@ -77,7 +99,7 @@ func newPort(id string, direction Direction, descriptor schema.Descriptor, optio
 			option(&state)
 		}
 	}
-	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity}
+	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity, fanIn: state.fanIn}
 }
 
 func (p Port) ID() string                 { return p.id }
@@ -85,6 +107,7 @@ func (p Port) Direction() Direction       { return p.direction }
 func (p Port) Schema() schema.Descriptor  { return p.descriptor }
 func (p Port) Required() bool             { return p.required }
 func (p Port) Multiplicity() Multiplicity { return p.multiplicity }
+func (p Port) FanIn() FanInPolicy         { return p.fanIn }
 
 // Shape is a static set of input and output ports. Dynamic topology is a
 // planner phase and is intentionally absent here.
@@ -117,7 +140,8 @@ func equalPorts(left, right []Port) bool {
 			left[index].descriptor.Identity() != right[index].descriptor.Identity() ||
 			left[index].descriptor.Payload() != right[index].descriptor.Payload() ||
 			left[index].required != right[index].required ||
-			left[index].multiplicity != right[index].multiplicity {
+			left[index].multiplicity != right[index].multiplicity ||
+			left[index].fanIn != right[index].fanIn {
 			return false
 		}
 	}
@@ -146,6 +170,13 @@ func (s Shape) Validate() error {
 			}
 			if port.multiplicity < One || port.multiplicity > ManyMultiplicity {
 				return fmt.Errorf("port %q has an invalid multiplicity", port.id)
+			}
+			if port.direction == InputDirection && port.multiplicity == ManyMultiplicity {
+				if !port.fanIn.Valid() {
+					return fmt.Errorf("many input port %q requires a fan-in policy", port.id)
+				}
+			} else if port.fanIn != 0 {
+				return fmt.Errorf("port %q has a fan-in policy without many-input multiplicity", port.id)
 			}
 		}
 	}
@@ -292,11 +323,42 @@ type Emitter[T any] interface {
 	Emit(context.Context, Input[T]) error
 }
 
+// Batch is a call-scoped borrowed view of one deterministic fan-in group. It
+// exposes no consume operation; runtime retains every owner until Process
+// returns and then applies the success/error ownership rule as a unit.
+type Batch[T any] struct{ inputs []Input[T] }
+
+func NewBatch[T any](inputs []Input[T]) Batch[T] { return Batch[T]{inputs: inputs} }
+func (b Batch[T]) Len() int                      { return len(b.inputs) }
+
+func (b Batch[T]) Value(index int) (T, bool) {
+	if index < 0 || index >= len(b.inputs) || !b.inputs[index].Valid() {
+		var zero T
+		return zero, false
+	}
+	return b.inputs[index].Value(), true
+}
+
+func (b Batch[T]) Share(index int) (Shared[T], bool) {
+	if index < 0 || index >= len(b.inputs) || !b.inputs[index].Valid() {
+		return Shared[T]{}, false
+	}
+	return b.inputs[index].Share(), true
+}
+
 // Processor is the common one-item transform contract. Process consumes its
 // input only when it succeeds; on error the caller retains ownership. Flush
 // handles delayed output without introducing a second runtime model.
 type Processor[I, O any] interface {
 	Process(context.Context, Input[I], Emitter[O]) error
+	Flush(context.Context, Emitter[O]) error
+}
+
+// Joiner transforms deterministic groups from a homogeneous many-input port.
+// Inputs are borrowed for the call; runtime consumes the group on success and
+// retains then drops it after a failed call.
+type Joiner[I, O any] interface {
+	Process(context.Context, Batch[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error
 }
 

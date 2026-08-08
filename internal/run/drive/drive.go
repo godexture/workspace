@@ -30,6 +30,7 @@ type Kind uint8
 const (
 	Source Kind = iota + 1
 	Processor
+	Joiner
 	Sink
 )
 
@@ -44,12 +45,47 @@ type Binding struct {
 	kind       Kind
 	input      port
 	output     port
+	fanIn      flow.FanInPolicy
 	openSink   func(flow.Operator) (Link, error)
 	prepend    func(flow.Operator, Link) (Link, error)
 	openSource func(flow.Operator, Link) (Task, error)
 	fanout     func([]Link) (Link, error)
 	buffer     func(queue.Limit, Link) (Link, Task, error)
+	openJoiner func(flow.Operator, int, queue.Limit, Link) ([]Link, Task, error)
 	validate   func(flow.Operator) error
+}
+
+func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) Binding {
+	traits := out.Traits()
+	inputTraits := in.Traits()
+	return Binding{
+		kind:   Joiner,
+		input:  port{id: input, schema: in.Descriptor()},
+		output: port{id: output, schema: out.Descriptor()},
+		fanIn:  policy,
+		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link) ([]Link, Task, error) {
+			joiner, ok := operator.(flow.Joiner[I, O])
+			if !ok {
+				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			target, err := deliveryOf[O](next)
+			if err != nil {
+				return nil, Task{}, err
+			}
+			if policy != flow.ZipFanIn {
+				return nil, Task{}, ErrUnsupported
+			}
+			return zipJoiner(joiner, inputs, limit, inputTraits, target)
+		},
+		fanout: fanoutFactory(traits),
+		buffer: bufferFactory(traits),
+		validate: func(operator flow.Operator) error {
+			if _, ok := operator.(flow.Joiner[I, O]); !ok {
+				return fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			return nil
+		},
+	}
 }
 
 func NewSource[T any](output string, typ schema.Type[T]) Binding {
@@ -136,6 +172,8 @@ func (b Binding) Valid() bool {
 		return validPort(b.output) && b.openSource != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
 	case Processor:
 		return validPort(b.input) && validPort(b.output) && b.prepend != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
+	case Joiner:
+		return validPort(b.input) && validPort(b.output) && b.openJoiner != nil && b.fanout != nil && b.buffer != nil && b.validate != nil
 	case Sink:
 		return validPort(b.input) && b.openSink != nil && b.validate != nil
 	default:
@@ -165,6 +203,10 @@ func (b Binding) Validate(shape flow.Shape) error {
 		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
 			return ErrBinding
 		}
+	case Joiner:
+		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.ManyMultiplicity || shape.Inputs[0].FanIn() != b.fanIn || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
+			return ErrBinding
+		}
 	case Sink:
 		if len(shape.Inputs) != 1 || len(shape.Outputs) != 0 || !matches(shape.Inputs[0], b.input) {
 			return ErrBinding
@@ -172,6 +214,10 @@ func (b Binding) Validate(shape flow.Shape) error {
 	}
 	return nil
 }
+
+func (b Binding) Input() string           { return b.input.id }
+func (b Binding) Output() string          { return b.output.id }
+func (b Binding) FanIn() flow.FanInPolicy { return b.fanIn }
 
 func (b Binding) OpenSink(operator flow.Operator) (Link, error) {
 	if b.openSink == nil {
@@ -192,6 +238,13 @@ func (b Binding) OpenSource(operator flow.Operator, next Link) (Task, error) {
 		return Task{}, ErrUnsupported
 	}
 	return b.openSource(operator, next)
+}
+
+func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, next Link) ([]Link, Task, error) {
+	if b.openJoiner == nil {
+		return nil, Task{}, ErrUnsupported
+	}
+	return b.openJoiner(operator, inputs, limit, next)
 }
 
 func (b Binding) Fanout(outputs []Link) (Link, error) {
@@ -467,5 +520,80 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			},
 		}
 		return linkOf[T](bufferDelivery[T]{queue: edge}), task, nil
+	}
+}
+
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, traits schema.Traits[I], next delivery[O]) ([]Link, Task, error) {
+	if count < 2 {
+		return nil, Task{}, ErrBinding
+	}
+	edges := make([]*queue.Queue[flow.Input[I]], count)
+	links := make([]Link, count)
+	queueTraits := queue.Traits[flow.Input[I]]{Drop: func(input flow.Input[I]) { input.Drop() }}
+	if traits.Size != nil {
+		queueTraits.Size = func(input flow.Input[I]) int { return traits.Size(input.Value()) }
+	}
+	if traits.Time != nil {
+		queueTraits.Time = func(input flow.Input[I]) (int64, bool) { return traits.Time(input.Value()) }
+	}
+	for index := range edges {
+		edge, err := queue.New(limit, queueTraits)
+		if err != nil {
+			for previous := 0; previous < index; previous++ {
+				edges[previous].Close()
+			}
+			return nil, Task{}, err
+		}
+		edges[index] = edge
+		links[index] = linkOf[I](bufferDelivery[I]{queue: edge})
+	}
+	inputs := make([]flow.Input[I], count)
+	closeEdges := func() {
+		for _, edge := range edges {
+			edge.Close()
+		}
+	}
+	task := Task{
+		close: closeEdges,
+		run: func(ctx context.Context) error {
+			defer func() {
+				closeEdges()
+				for _, edge := range edges {
+					edge.Drain()
+				}
+			}()
+			for {
+				read := 0
+				for index, edge := range edges {
+					input, err := edge.Pop(ctx)
+					if errors.Is(err, io.EOF) {
+						dropInputs(inputs[:read])
+						clear(inputs)
+						return errors.Join(joiner.Flush(ctx, next), next.close(ctx))
+					}
+					if err != nil {
+						dropInputs(inputs[:read])
+						clear(inputs)
+						return err
+					}
+					inputs[index] = input
+					read++
+				}
+				if err := joiner.Process(ctx, flow.NewBatch(inputs), next); err != nil {
+					dropInputs(inputs)
+					clear(inputs)
+					return err
+				}
+				dropInputs(inputs)
+				clear(inputs)
+			}
+		},
+	}
+	return links, task, nil
+}
+
+func dropInputs[T any](inputs []flow.Input[T]) {
+	for _, input := range inputs {
+		input.Drop()
 	}
 }

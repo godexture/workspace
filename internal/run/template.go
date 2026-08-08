@@ -1,0 +1,259 @@
+// Package run specializes a compiled graph into dense execution islands and
+// typed edge factories. The public Plan receives only an inert projection.
+package run
+
+import (
+	"errors"
+	"reflect"
+	"sort"
+	"strconv"
+
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/run/drive"
+	"github.com/godexture/godec/internal/run/queue"
+	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/plan"
+)
+
+var (
+	ErrTopology       = errors.New("runtime topology does not match typed execution bindings")
+	ErrUnsupportedFan = errors.New("fan-in policy has no runtime implementation")
+)
+
+const defaultQueueItems = 4
+
+type Node struct {
+	ID        job.NodeID
+	Shape     flow.Shape
+	Execution any
+}
+
+type node struct {
+	id      job.NodeID
+	shape   flow.Shape
+	binding drive.Binding
+	kind    drive.Kind
+}
+
+type edge struct {
+	value  job.Edge
+	from   int
+	to     int
+	limit  queue.Limit
+	reason plan.BufferReason
+}
+
+type Template struct {
+	nodes      []node
+	edges      []edge
+	incoming   [][]int
+	outgoing   [][]int
+	projection plan.Runtime
+	executable bool
+}
+
+func Compile(values []Node, connections []job.Edge) (Template, error) {
+	if len(values) == 0 {
+		return Template{}, ErrTopology
+	}
+	result := Template{
+		nodes:    make([]node, len(values)),
+		incoming: make([][]int, len(values)),
+		outgoing: make([][]int, len(values)),
+	}
+	byID := make(map[job.NodeID]int, len(values))
+	missing := false
+	for index, value := range values {
+		if !value.ID.Valid() || value.Shape.Empty() {
+			return Template{}, ErrTopology
+		}
+		if _, exists := byID[value.ID]; exists {
+			return Template{}, ErrTopology
+		}
+		byID[value.ID] = index
+		token, ok := value.Execution.(drive.Binding)
+		if !ok || !token.Valid() {
+			missing = true
+			result.nodes[index] = node{id: value.ID, shape: value.Shape.Clone()}
+			continue
+		}
+		if err := token.Validate(value.Shape); err != nil {
+			return Template{}, errors.Join(ErrTopology, err)
+		}
+		if token.Kind() == drive.Joiner && token.FanIn() != flow.ZipFanIn {
+			return Template{}, ErrUnsupportedFan
+		}
+		result.nodes[index] = node{id: value.ID, shape: value.Shape.Clone(), binding: token, kind: token.Kind()}
+	}
+	result.edges = make([]edge, len(connections))
+	for index, connection := range connections {
+		from, fromOK := byID[connection.From().Node()]
+		to, toOK := byID[connection.To().Node()]
+		if !connection.Valid() || !fromOK || !toOK {
+			return Template{}, ErrTopology
+		}
+		result.edges[index] = edge{value: connection, from: from, to: to, limit: queue.Limit{Items: defaultQueueItems}}
+		result.outgoing[from] = append(result.outgoing[from], index)
+		result.incoming[to] = append(result.incoming[to], index)
+	}
+	if missing {
+		return result, nil
+	}
+	if err := result.validateEdges(); err != nil {
+		return Template{}, err
+	}
+	result.placeBuffers()
+	result.projection = result.project()
+	result.executable = true
+	return result, nil
+}
+
+func (t Template) Executable() bool { return t.executable }
+func (t Template) Valid() bool {
+	return len(t.nodes) != 0 && len(t.incoming) == len(t.nodes) && len(t.outgoing) == len(t.nodes)
+}
+
+func (t Template) Projection() plan.Runtime { return cloneProjection(t.projection) }
+
+func (t Template) Matches(runtime plan.Runtime) bool {
+	return reflect.DeepEqual(t.Projection(), runtime)
+}
+
+func (t Template) validateEdges() error {
+	for index, value := range t.nodes {
+		switch value.kind {
+		case drive.Source:
+			if len(t.incoming[index]) != 0 || len(t.outgoing[index]) == 0 {
+				return ErrTopology
+			}
+		case drive.Processor:
+			if len(t.incoming[index]) != 1 || len(t.outgoing[index]) == 0 {
+				return ErrTopology
+			}
+		case drive.Joiner:
+			if len(t.incoming[index]) < 2 || len(t.outgoing[index]) == 0 {
+				return ErrTopology
+			}
+		case drive.Sink:
+			if len(t.incoming[index]) != 1 || len(t.outgoing[index]) != 0 {
+				return ErrTopology
+			}
+		default:
+			return ErrTopology
+		}
+		for _, edgeIndex := range t.incoming[index] {
+			if t.edges[edgeIndex].value.To().ID() != value.binding.Input() {
+				return ErrTopology
+			}
+		}
+		for _, edgeIndex := range t.outgoing[index] {
+			if t.edges[edgeIndex].value.From().ID() != value.binding.Output() {
+				return ErrTopology
+			}
+		}
+	}
+	return nil
+}
+
+func (t *Template) placeBuffers() {
+	for index := range t.edges {
+		value := &t.edges[index]
+		from := t.nodes[value.from]
+		to := t.nodes[value.to]
+		if from.kind == drive.Source {
+			value.reason |= plan.SourceBuffer
+		}
+		if to.kind == drive.Sink {
+			value.reason |= plan.SinkBuffer
+		}
+		if len(t.outgoing[value.from]) > 1 {
+			value.reason |= plan.FanOutBuffer
+		}
+		if to.kind == drive.Joiner || len(t.incoming[value.to]) > 1 {
+			value.reason |= plan.FanInBuffer
+		}
+	}
+}
+
+func (t Template) project() plan.Runtime {
+	result := plan.Runtime{Executable: true}
+	assigned := make([]bool, len(t.nodes))
+	for index := range t.nodes {
+		if assigned[index] {
+			continue
+		}
+		island := plan.Island{ID: "island-" + strconv.Itoa(len(result.Islands))}
+		current := index
+		for {
+			assigned[current] = true
+			island.Nodes = append(island.Nodes, t.nodes[current].id.String())
+			if t.nodes[current].kind != drive.Processor || len(t.outgoing[current]) != 1 {
+				break
+			}
+			edgeIndex := t.outgoing[current][0]
+			edge := t.edges[edgeIndex]
+			if edge.reason != 0 || assigned[edge.to] || t.nodes[edge.to].kind != drive.Processor || len(t.incoming[edge.to]) != 1 {
+				break
+			}
+			current = edge.to
+		}
+		result.Islands = append(result.Islands, island)
+	}
+	for _, value := range t.edges {
+		if value.reason == 0 {
+			continue
+		}
+		connection := value.value
+		result.Buffers = append(result.Buffers, plan.Buffer{
+			ID:       edgeKey(connection),
+			FromNode: connection.From().Node().String(),
+			FromPort: connection.From().ID(),
+			ToNode:   connection.To().Node().String(),
+			ToPort:   connection.To().ID(),
+			Limit:    projectLimit(value.limit),
+			Reason:   value.reason,
+		})
+	}
+	for index, value := range t.nodes {
+		if value.kind != drive.Joiner {
+			continue
+		}
+		incoming := append([]int(nil), t.incoming[index]...)
+		sort.Slice(incoming, func(left, right int) bool {
+			return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
+		})
+		projection := plan.FanIn{
+			Node:      value.id.String(),
+			Port:      value.binding.Input(),
+			Policy:    value.binding.FanIn(),
+			Limit:     projectLimit(queue.Limit{Items: defaultQueueItems}),
+			Watermark: 0,
+		}
+		for _, edgeIndex := range incoming {
+			from := t.edges[edgeIndex].value.From()
+			projection.Connections = append(projection.Connections, plan.Connection{FromNode: from.Node().String(), FromPort: from.ID()})
+		}
+		result.FanIns = append(result.FanIns, projection)
+	}
+	return result
+}
+
+func projectLimit(value queue.Limit) plan.Limit {
+	return plan.Limit{Items: value.Items, Bytes: value.Bytes, Time: value.Time}
+}
+
+func cloneProjection(value plan.Runtime) plan.Runtime {
+	result := value
+	result.Islands = append([]plan.Island(nil), value.Islands...)
+	for index := range result.Islands {
+		result.Islands[index].Nodes = append([]string(nil), value.Islands[index].Nodes...)
+	}
+	result.Buffers = append([]plan.Buffer(nil), value.Buffers...)
+	result.FanIns = append([]plan.FanIn(nil), value.FanIns...)
+	for index := range result.FanIns {
+		result.FanIns[index].Connections = append([]plan.Connection(nil), value.FanIns[index].Connections...)
+	}
+	return result
+}
+
+func edgeKey(value job.Edge) string { return value.From().String() + "->" + value.To().String() }

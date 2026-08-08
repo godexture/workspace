@@ -30,8 +30,14 @@ func TestShapeValidatesTypedPorts(t *testing.T) {
 	if err := (Shape{}).Validate(); err == nil {
 		t.Fatal("empty shape accepted")
 	}
-	if err := NewShape([]Port{In("required-many", typ, Many())}, nil).Validate(); err != nil {
+	if err := NewShape([]Port{In("required-many", typ, Many(), WithFanIn(ZipFanIn))}, nil).Validate(); err != nil {
 		t.Fatalf("required many port rejected: %v", err)
+	}
+	if err := NewShape([]Port{In("missing-policy", typ, Many())}, nil).Validate(); err == nil {
+		t.Fatal("many input without fan-in policy accepted")
+	}
+	if err := NewShape([]Port{In("invalid-policy", typ, WithFanIn(ZipFanIn))}, nil).Validate(); err == nil {
+		t.Fatal("one input with fan-in policy accepted")
 	}
 	optional := In("optional", typ, Optional())
 	if optional.Required() || optional.Multiplicity() != One {

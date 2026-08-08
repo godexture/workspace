@@ -163,3 +163,45 @@ func TestPlanFingerprintExcludesDisplayAndIncludesExecutionState(t *testing.T) {
 		t.Fatal("execution descriptor did not change canonical identity")
 	}
 }
+
+func TestPlanRuntimeProjectionIsCanonicalImmutableAndExecutable(t *testing.T) {
+	description := testDescription(t)
+	description.Runtime = Runtime{
+		Executable: true,
+		Islands: []Island{
+			{ID: "island-1", Nodes: []string{"sink"}},
+			{ID: "island-0", Nodes: []string{"source"}},
+		},
+		Buffers: []Buffer{{
+			ID:       "source:out->sink:in",
+			FromNode: "source",
+			FromPort: "out",
+			ToNode:   "sink",
+			ToPort:   "in",
+			Limit:    Limit{Items: 4},
+			Reason:   SourceBuffer | SinkBuffer,
+		}},
+	}
+	planned, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := planned.Runtime()
+	if !runtime.Executable || runtime.Islands[0].ID != "island-0" {
+		t.Fatalf("runtime = %#v", runtime)
+	}
+	runtime.Islands[0].Nodes[0] = "changed"
+	if planned.Runtime().Islands[0].Nodes[0] != "source" {
+		t.Fatal("Plan exposed mutable runtime projection")
+	}
+	changed := testDescription(t)
+	changed.Runtime = description.Runtime
+	changed.Runtime.Buffers[0].Limit.Items = 8
+	other, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.ExecutionSignature() == other.ExecutionSignature() {
+		t.Fatal("runtime buffer change did not affect execution signature")
+	}
+}

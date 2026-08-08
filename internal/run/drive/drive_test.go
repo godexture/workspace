@@ -318,3 +318,104 @@ type intReader struct {
 func (r *intReader) Read(context.Context) (flow.Input[int], error) {
 	return flow.NewInput(1, r.typ), nil
 }
+
+type sumJoiner struct {
+	operatorBase
+	output schema.Type[owned]
+	flush  atomic.Int32
+}
+
+func (j *sumJoiner) Process(ctx context.Context, batch flow.Batch[owned], output flow.Emitter[owned]) error {
+	left, leftOK := batch.Value(0)
+	right, rightOK := batch.Value(1)
+	if !leftOK || !rightOK {
+		return errors.New("invalid zip batch")
+	}
+	item := flow.NewInput(owned{value: left.value + right.value}, j.output)
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (j *sumJoiner) Flush(context.Context, flow.Emitter[owned]) error {
+	j.flush.Add(1)
+	return nil
+}
+
+func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
+	inputOwners := &ownership{}
+	outputOwners := &ownership{}
+	in := ownedSchema[driveInputID](inputOwners)
+	out := ownedSchema[driveOutputID](outputOwners)
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
+	sinkLink, err := NewSink("in", out).OpenSink(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := NewJoiner("in", in, flow.ZipFanIn, "out", out)
+	if err := binding.Validate(joinShape); err != nil {
+		t.Fatal(err)
+	}
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, _ := deliveryOf[owned](inputs[0])
+	right, _ := deliveryOf[owned](inputs[1])
+	result := make(chan error, 1)
+	go func() { result <- task.Run(context.Background()) }()
+	for _, pair := range [][2]int{{1, 10}, {2, 20}} {
+		if err := left.Emit(context.Background(), flow.NewInput(owned{value: pair[0]}, in)); err != nil {
+			t.Fatal(err)
+		}
+		if err := right.Emit(context.Background(), flow.NewInput(owned{value: pair[1]}, in)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := left.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := right.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if got := sink.Values(); len(got) != 2 || got[0] != 11 || got[1] != 22 {
+		t.Fatalf("zip values = %v", got)
+	}
+	if inputOwners.drops.Load() != 4 || outputOwners.drops.Load() != 2 || inputOwners.forks.Load() != 0 {
+		t.Fatalf("zip ownership = inputs drops %d forks %d, outputs drops %d", inputOwners.drops.Load(), inputOwners.forks.Load(), outputOwners.drops.Load())
+	}
+	if joiner.flush.Load() != 1 {
+		t.Fatalf("zip flushes = %d", joiner.flush.Load())
+	}
+}
+
+func TestJoinerRejectsPolicyMismatchAndUnsupportedExecution(t *testing.T) {
+	in := ownedSchema[driveInputID](&ownership{})
+	out := ownedSchema[driveOutputID](&ownership{})
+	shape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.LatestFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	binding := NewJoiner("in", in, flow.ZipFanIn, "out", out)
+	if err := binding.Validate(shape); !errors.Is(err, ErrBinding) {
+		t.Fatalf("policy mismatch = %v", err)
+	}
+	latest := NewJoiner("in", in, flow.LatestFanIn, "out", out)
+	joiner := &sumJoiner{operatorBase: operatorBase{shape}, output: out}
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	sinkLink, _ := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if _, _, err := latest.OpenJoiner(joiner, 2, queue.Limit{Items: 1}, sinkLink); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unsupported policy = %v", err)
+	}
+}
