@@ -119,6 +119,22 @@ type Item struct {
 	Detail   map[string]string
 }
 
+// Sink receives immutable diagnostic snapshots from a component. Host wraps
+// the sink granted to each component so node and phase context cannot be
+// forged by plugin code.
+type Sink interface {
+	Emit(Item)
+}
+
+// SinkFunc adapts a function to Sink.
+type SinkFunc func(Item)
+
+func (f SinkFunc) Emit(item Item) {
+	if f != nil {
+		f(item)
+	}
+}
+
 // NewItem constructs an item and copies its detail map.
 func NewItem(code string, severity Severity, path Path, message string, detail map[string]string) Item {
 	return Item{

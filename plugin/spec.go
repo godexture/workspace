@@ -20,8 +20,9 @@ type TaskStarter interface {
 }
 
 type OpenServices struct {
-	Buffers *buffer.Allocator
-	Tasks   TaskStarter
+	Buffers     *buffer.Allocator
+	Tasks       TaskStarter
+	Diagnostics diagnostic.Sink
 	// Boundary is the one node-local Access/Endpoint binding selected by the
 	// planner. It is not a general service bag.
 	Boundary any
@@ -34,14 +35,21 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return OpenContext{context: ctx, buffers: services.Buffers, tasks: services.Tasks, boundary: services.Boundary}
+	return OpenContext{
+		context:     ctx,
+		buffers:     services.Buffers,
+		tasks:       services.Tasks,
+		diagnostics: services.Diagnostics,
+		boundary:    services.Boundary,
+	}
 }
 
 type OpenContext struct {
-	context  context.Context
-	buffers  *buffer.Allocator
-	tasks    TaskStarter
-	boundary any
+	context     context.Context
+	buffers     *buffer.Allocator
+	tasks       TaskStarter
+	diagnostics diagnostic.Sink
+	boundary    any
 }
 
 func (c OpenContext) Context() context.Context {
@@ -51,8 +59,9 @@ func (c OpenContext) Context() context.Context {
 	return c.context
 }
 
-func (c OpenContext) Buffers() *buffer.Allocator { return c.buffers }
-func (c OpenContext) Tasks() TaskStarter         { return c.tasks }
+func (c OpenContext) Buffers() *buffer.Allocator   { return c.buffers }
+func (c OpenContext) Tasks() TaskStarter           { return c.tasks }
+func (c OpenContext) Diagnostics() diagnostic.Sink { return c.diagnostics }
 
 // Boundary recovers the one typed Access/Endpoint binding attached to this
 // node. It is a control-plane assertion performed once during Open; media
