@@ -6,8 +6,10 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -17,8 +19,15 @@ type hostComponentA struct{}
 type hostComponentB struct{}
 type hostSharedKey struct{}
 type hostSecondKey struct{}
+type hostUnitID struct{}
 
 type hostConfig struct{ Value int }
+type hostUnit int
+
+type hostOperator struct{ shape flow.Shape }
+
+func (o hostOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (hostOperator) Close() error        { return nil }
 
 func hostSchema(value int) config.Schema[hostConfig] {
 	return config.Struct[hostConfig](func() hostConfig { return hostConfig{Value: value} }).
@@ -28,8 +37,23 @@ func hostSchema(value int) config.Schema[hostConfig] {
 }
 
 func hostDefinition[PluginMarker any, ComponentMarker any](name string, value int) plugin.Definition {
-	component := plugin.NewComponent[ComponentMarker](plugin.Descriptor{DisplayName: name, Version: "1.0.0"}, hostSchema(value))
+	component := hostComponent[ComponentMarker](plugin.Descriptor{DisplayName: name, Version: "1.0.0"}, hostSchema(value))
 	return plugin.Define[PluginMarker](plugin.Descriptor{DisplayName: name + " plugin", Version: "1.0.0"}, component)
+}
+
+func hostComponent[Marker any](descriptor plugin.Descriptor, schemaValue config.Schema[hostConfig]) plugin.Component {
+	typ := schema.Define[hostUnitID, hostUnit](schema.Traits[hostUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	spec := plugin.Spec[hostConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[hostConfig](shape),
+		Compile: func(plugin.CompileContext, hostConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return hostOperator{shape: plan}, nil
+		},
+	}
+	return plugin.NewComponent[Marker](descriptor, schemaValue, plugin.WithSpec(spec))
 }
 
 func TestNewCreatesIsolatedHostCatalogs(t *testing.T) {
@@ -80,7 +104,7 @@ func TestCatalogFingerprintTracksCompositionAndSurface(t *testing.T) {
 	}
 
 	changed := plugin.Define[hostPluginA](plugin.Descriptor{DisplayName: "a plugin", Version: "2.0.0"},
-		plugin.NewComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "2.0.0"}, hostSchema(1)))
+		hostComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "2.0.0"}, hostSchema(1)))
 	third, err := New(Plugins(plugin.NewSet(changed)))
 	if err != nil {
 		t.Fatalf("changed host: %v", err)
@@ -90,7 +114,7 @@ func TestCatalogFingerprintTracksCompositionAndSurface(t *testing.T) {
 	}
 
 	pluginOnlyChange := plugin.Define[hostPluginA](plugin.Descriptor{DisplayName: "a plugin", Version: "2.0.0"},
-		plugin.NewComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "1.0.0"}, hostSchema(1)))
+		hostComponent[hostComponentA](plugin.Descriptor{DisplayName: "a", Version: "1.0.0"}, hostSchema(1)))
 	fourth, err := New(Plugins(plugin.NewSet(pluginOnlyChange)))
 	if err != nil {
 		t.Fatalf("plugin-only changed host: %v", err)
@@ -105,7 +129,7 @@ func TestNewReturnsAggregateIdentityAndFieldDiagnostics(t *testing.T) {
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int(), config.DependsOn("missing"))).
 		AddField(config.Field("value", func(value *hostConfig) *int { return &value.Value }, config.Int())).
 		Build()
-	bad := plugin.Define[hostPluginA](plugin.Descriptor{}, plugin.NewComponent[hostComponentA](plugin.Descriptor{}, badSchema))
+	bad := plugin.Define[hostPluginA](plugin.Descriptor{}, hostComponent[hostComponentA](plugin.Descriptor{}, badSchema))
 	set := plugin.NewSet(bad)
 	_, err := New(Plugins(set))
 	if err == nil {
@@ -150,7 +174,7 @@ func TestNewRejectsRetainedSetCompositionDiagnostics(t *testing.T) {
 
 func TestNewRejectsComponentWithZeroSchema(t *testing.T) {
 	bad := plugin.Define[hostPluginB](plugin.Descriptor{DisplayName: "broken", Version: "1.0.0"},
-		plugin.NewComponent[hostComponentB](plugin.Descriptor{DisplayName: "zero schema", Version: "1.0.0"}, config.Schema[hostConfig]{}))
+		hostComponent[hostComponentB](plugin.Descriptor{DisplayName: "zero schema", Version: "1.0.0"}, config.Schema[hostConfig]{}))
 	set := plugin.NewSet(bad)
 	_, err := New(Plugins(set))
 	if err == nil {

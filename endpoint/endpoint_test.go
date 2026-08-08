@@ -36,7 +36,7 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 			return endpointOperator{shape: shape}, nil
 		},
 	}
-	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Build(), plugin.WithSpec(spec))
+	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Version("1").Build(), plugin.WithSpec(spec))
 	trait, err := NewTrait(LiveDynamic, Realtime)
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +50,20 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 	}
 	if opens.Load() != 0 {
 		t.Fatal("endpoint construction opened component")
+	}
+}
+
+func TestEndpointRejectsComponentWithoutSpec(t *testing.T) {
+	component := plugin.NewComponent[endpointComponentID](
+		plugin.Descriptor{DisplayName: "capture"},
+		config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Version("1").Build(),
+	)
+	trait, err := NewTrait(LiveStatic, Realtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(component, trait); err != ErrInvalidComponent {
+		t.Fatalf("invalid component error = %v", err)
 	}
 }
 

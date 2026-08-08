@@ -47,6 +47,20 @@ func TestShapeReportsInvalidSchemaMarker(t *testing.T) {
 	}
 }
 
+func TestShapeEqualityUsesSchemaIdentityAndPayload(t *testing.T) {
+	type alternateUnit struct{}
+	typ := flowSchema()
+	same := flowSchema()
+	otherPayload := schema.Define[flowUnitID, alternateUnit](schema.Traits[alternateUnit]{})
+	left := NewShape(nil, []Port{Out("out", typ)})
+	if !left.Equal(NewShape(nil, []Port{Out("out", same)})) {
+		t.Fatal("equivalent schema declarations produced different shapes")
+	}
+	if left.Equal(NewShape(nil, []Port{Out("out", otherPayload)})) {
+		t.Fatal("same schema marker with a different payload produced an equal shape")
+	}
+}
+
 func TestInputOwnershipMoveFanoutFailureAndDrop(t *testing.T) {
 	var drops atomic.Int32
 	typ := schema.Define[flowValueID, int](schema.Traits[int]{

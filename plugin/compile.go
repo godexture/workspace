@@ -22,6 +22,7 @@ type Compilation struct {
 	component      Identity
 	implementation *componentImplementation
 	config         config.Fingerprint
+	shape          flow.Shape
 	plan           any
 	outputs        any
 	requirements   any
@@ -32,7 +33,7 @@ type Compilation struct {
 }
 
 func (c Compilation) Valid() bool {
-	return !c.component.IsZero() && c.implementation != nil && !c.config.IsZero() && c.outputs != nil && c.requirements != nil
+	return !c.component.IsZero() && c.implementation != nil && !c.config.IsZero() && !c.shape.Empty() && c.outputs != nil && c.requirements != nil
 }
 
 func (c Compilation) Component() Identity                   { return c.component }
@@ -113,9 +114,28 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		return Compilation{}, component.phaseError("plugin.compile-requirement", "component Compile returned the wrong requirement type", "")
 	}
 	items := validateDescriptorPorts("output", shape.Outputs, outputs.Bindings())
+	inputCounts := descriptorCounts(inputs.Bindings())
+	requirementPorts := make(map[string]struct{}, len(requirements))
 	for _, requirement := range requirements {
 		if !requirement.Valid() || !shapeHasPort(shape.Inputs, requirement.Port()) {
 			items = append(items, diagnostic.NewItem("plugin.compile-requirement", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: requirement.Port()}, "component Compile returned an invalid input requirement", nil))
+		}
+		requirementPorts[requirement.Port()] = struct{}{}
+	}
+	for _, port := range shape.Inputs {
+		if !port.Required() || inputCounts[port.ID()] != 0 {
+			continue
+		}
+		if _, exists := requirementPorts[port.ID()]; !exists {
+			items = append(items, diagnostic.NewItem("plugin.compile-missing-requirement", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: port.ID()}, "component Compile accepted a missing required input without returning a requirement", nil))
+		}
+	}
+	if len(requirements) == 0 {
+		outputCounts := descriptorCounts(outputs.Bindings())
+		for _, port := range shape.Outputs {
+			if port.Required() && outputCounts[port.ID()] == 0 {
+				items = append(items, diagnostic.NewItem("plugin.compile-required-output", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: port.ID()}, "component Compile omitted a required output descriptor", nil))
+			}
 		}
 	}
 	for _, effect := range compiled.effects {
@@ -139,6 +159,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		component:      component.identity,
 		implementation: component.implementation,
 		config:         resolved.Fingerprint,
+		shape:          shape.Clone(),
 		plan:           compiled.plan,
 		outputs:        outputs,
 		requirements:   append([]Requirement[D](nil), requirements...),
@@ -208,6 +229,13 @@ func (c Component) Open(ctx context.Context, compilation Compilation) (operator 
 	if operator == nil {
 		return nil, c.phaseError("plugin.open", "component Open returned a nil operator", "")
 	}
+	if openedShape := operator.Ports(); !openedShape.Equal(compilation.shape) {
+		detail := "operator ports differ from the compiled Shape"
+		if closeErr := operator.Close(); closeErr != nil {
+			detail += ": close failed: " + closeErr.Error()
+		}
+		return nil, c.phaseError("plugin.open-shape", "component Open returned an incompatible port shape", detail)
+	}
 	return operator, nil
 }
 
@@ -255,6 +283,14 @@ func shapeHasPort(ports []flow.Port, id string) bool {
 		}
 	}
 	return false
+}
+
+func descriptorCounts[D any](bindings []flow.PortDescriptor[D]) map[string]int {
+	counts := make(map[string]int, len(bindings))
+	for _, binding := range bindings {
+		counts[binding.Port()]++
+	}
+	return counts
 }
 
 func prefixComponent(items []diagnostic.Item, identity Identity) []diagnostic.Item {

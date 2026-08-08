@@ -56,6 +56,30 @@ func TestGraphRejectsDuplicateIdentityAndMapping(t *testing.T) {
 	}
 }
 
+func TestGraphRejectsDuplicateEdgesAndUnknownNodes(t *testing.T) {
+	source := NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch())
+	sink := NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch())
+	edge := Connect(At("source", "out"), At("sink", "in"))
+	_, err := NewGraph(
+		[]Node{source, sink},
+		[]Edge{
+			edge,
+			edge,
+			Connect(At("missing", "out"), At("sink", "in")),
+		},
+	)
+	if err == nil {
+		t.Fatal("invalid edges were accepted")
+	}
+	codes := make(map[string]bool)
+	for _, item := range diagnostic.ItemsOf(err) {
+		codes[item.Code] = true
+	}
+	if !codes["job.duplicate-edge"] || !codes["job.unknown-node"] {
+		t.Fatalf("graph diagnostics = %v", err)
+	}
+}
+
 func TestGraphCopiesCallerSlices(t *testing.T) {
 	nodes := []Node{
 		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),

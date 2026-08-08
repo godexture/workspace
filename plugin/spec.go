@@ -166,7 +166,13 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 			return result, nil
 		}
 	}
-	return func(options *componentOptions) { options.implementation = implementation }
+	return func(options *componentOptions) {
+		if options.implementation != nil {
+			options.problems = append(options.problems, specItem("plugin.spec", "component may declare only one Spec"))
+			return
+		}
+		options.implementation = implementation
+	}
 }
 
 func specItem(code, message string) diagnostic.Item {

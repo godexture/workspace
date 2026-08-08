@@ -5,14 +5,24 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
 
 type catalogPluginID struct{}
 type catalogFirstID struct{}
 type catalogSecondID struct{}
+type catalogUnitID struct{}
 
 type catalogConfig struct{ Value int }
+type catalogUnit int
+type catalogOtherUnit int
+
+type catalogOperator struct{ shape flow.Shape }
+
+func (o catalogOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (catalogOperator) Close() error        { return nil }
 
 func catalogSchema() config.Schema[catalogConfig] {
 	return config.Struct[catalogConfig](func() catalogConfig { return catalogConfig{Value: 1} }).
@@ -22,7 +32,22 @@ func catalogSchema() config.Schema[catalogConfig] {
 }
 
 func catalogComponent[Marker any](name string) plugin.Component {
-	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name, Version: "1.0.0"}, catalogSchema())
+	return catalogComponentWithSchema[Marker](plugin.Descriptor{DisplayName: name, Version: "1.0.0"}, catalogSchema())
+}
+
+func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schemaValue config.Schema[catalogConfig]) plugin.Component {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[catalogConfig](shape),
+		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return catalogOperator{shape: plan}, nil
+		},
+	}
+	return plugin.NewComponent[Marker](descriptor, schemaValue, plugin.WithSpec(spec))
 }
 
 func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
@@ -53,7 +78,7 @@ func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int(), config.DependsOn("unknown"))).
 		AddField(config.Field("value", func(value *catalogConfig) *int { return &value.Value }, config.Int())).
 		Build()
-	bad := plugin.Define[catalogPluginID](plugin.Descriptor{}, plugin.NewComponent[catalogFirstID](plugin.Descriptor{}, badSchema))
+	bad := plugin.Define[catalogPluginID](plugin.Descriptor{}, catalogComponentWithSchema[catalogFirstID](plugin.Descriptor{}, badSchema))
 	set := plugin.NewSet(bad)
 	_, err := Build(set)
 	if err == nil {
@@ -136,4 +161,34 @@ func TestBuildRejectsMarkerSharedByPluginAndComponent(t *testing.T) {
 		}
 	}
 	t.Fatalf("identity conflict diagnostic missing: %v", err)
+}
+
+func TestBuildRejectsSchemaMarkerBoundToDifferentPayloadTypes(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogOtherUnit](schema.Traits[catalogOtherUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[catalogConfig](shape),
+		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return catalogOperator{shape: plan}, nil
+		},
+	}
+	conflicting := plugin.NewComponent[catalogSecondID](plugin.Descriptor{DisplayName: "conflicting", Version: "1"}, catalogSchema(), plugin.WithSpec(spec))
+	definition := plugin.Define[catalogPluginID](
+		plugin.Descriptor{DisplayName: "catalog", Version: "1"},
+		catalogComponent[catalogFirstID]("first"),
+		conflicting,
+	)
+	_, err := Build(plugin.NewSet(definition))
+	if err == nil {
+		t.Fatal("schema payload conflict was accepted")
+	}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "catalog.schema-conflict" {
+			return
+		}
+	}
+	t.Fatalf("schema conflict diagnostic missing: %v", err)
 }

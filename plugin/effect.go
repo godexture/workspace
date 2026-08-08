@@ -1,5 +1,7 @@
 package plugin
 
+import "strings"
+
 // EffectKind classifies what a component changes. Automatic insertion policy
 // is derived by Host from this fact and the requested job; plugins do not
 // grant themselves permission to alter content.
@@ -37,7 +39,9 @@ type Effect struct {
 	Detail string
 }
 
-func (e Effect) Valid() bool { return e.Kind.Valid() && e.Loss.Valid() }
+func (e Effect) Valid() bool {
+	return e.Kind.Valid() && e.Loss.Valid() && strings.TrimSpace(e.Detail) != ""
+}
 
 // Finalization records whether successful output requires the node's explicit
 // finalizer capability. Execution of that capability starts in M5.

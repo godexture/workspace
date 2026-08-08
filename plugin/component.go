@@ -24,6 +24,7 @@ type componentOptions struct {
 	aliases        []string
 	provenance     Provenance
 	implementation *componentImplementation
+	problems       []diagnostic.Item
 }
 
 // ComponentOption changes non-identity component metadata.
@@ -58,6 +59,7 @@ func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema
 		aliases:        append([]string(nil), componentOptionsValue.aliases...),
 		provenance:     componentOptionsValue.provenance,
 		implementation: componentOptionsValue.implementation,
+		problems:       cloneItems(componentOptionsValue.problems),
 	}
 	if identityErr != nil {
 		result.problems = append(result.problems, diagnostic.NewItem("plugin.marker", diagnostic.ErrorSeverity, diagnostic.Path{}, identityErr.Error(), nil))
@@ -119,7 +121,9 @@ func (c Component) Diagnostics() []diagnostic.Item {
 	if !c.schema.Valid() {
 		items = append(items, c.schema.Diagnostics()...)
 	}
-	if c.implementation != nil {
+	if c.implementation == nil {
+		items = append(items, diagnostic.NewItem("plugin.spec", diagnostic.ErrorSeverity, componentPath, "component requires a typed Spec", nil))
+	} else {
 		items = append(items, c.implementation.problems...)
 	}
 	for index, item := range items {

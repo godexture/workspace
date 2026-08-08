@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -103,14 +105,36 @@ type providerComponentB struct{}
 type providerPluginA struct{}
 type providerPluginB struct{}
 type providerConfig struct{}
+type providerUnitID struct{}
+type providerUnit int
+
+type providerOperator struct{ shape flow.Shape }
+
+func (o providerOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (providerOperator) Close() error        { return nil }
 
 func providerSchema() config.Schema[providerConfig] {
 	return config.Struct[providerConfig](func() providerConfig { return providerConfig{} }).Version("1").Build()
 }
 
+func providerFixtureComponent[Marker any](name string) plugin.Component {
+	typ := schema.Define[providerUnitID, providerUnit](schema.Traits[providerUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", typ)})
+	spec := plugin.Spec[providerConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[providerConfig](shape),
+		Compile: func(plugin.CompileContext, providerConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("bytes", 1))}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return providerOperator{shape: plan}, nil
+		},
+	}
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, providerSchema(), plugin.WithSpec(spec))
+}
+
 func TestProviderSchemeConflictUsesHostDeclarationValidation(t *testing.T) {
-	first := plugin.NewComponent[providerComponentA](plugin.Descriptor{DisplayName: "first"}, providerSchema())
-	second := plugin.NewComponent[providerComponentB](plugin.Descriptor{DisplayName: "second"}, providerSchema())
+	first := providerFixtureComponent[providerComponentA]("first")
+	second := providerFixtureComponent[providerComponentB]("second")
 	firstProvider, err := DefineProvider[providerComponentA]([]string{"HTTP"})
 	if err != nil {
 		t.Fatal(err)
@@ -131,9 +155,16 @@ func TestProviderSchemeConflictUsesHostDeclarationValidation(t *testing.T) {
 		plugin.Define[providerPluginA](plugin.Descriptor{DisplayName: "plugin-a"}, first),
 		plugin.Define[providerPluginB](plugin.Descriptor{DisplayName: "plugin-b"}, second),
 	).AddDeclaration(firstDeclaration).AddDeclaration(secondDeclaration)
-	if _, err := host.New(host.Plugins(set)); err == nil {
+	_, err = host.New(host.Plugins(set))
+	if err == nil {
 		t.Fatal("host accepted duplicate provider scheme")
 	}
+	for _, item := range host.Diagnostics(err) {
+		if item.Code == "catalog.declaration-conflict" {
+			return
+		}
+	}
+	t.Fatalf("provider conflict diagnostic missing: %v", err)
 }
 
 func TestSpoolProbeAndSnapshotAreDeclarations(t *testing.T) {

@@ -26,6 +26,17 @@ type specOperator struct{ shape flow.Shape }
 func (o specOperator) Ports() flow.Shape { return o.shape }
 func (o specOperator) Close() error      { return nil }
 
+type trackedSpecOperator struct {
+	shape  flow.Shape
+	closed *atomic.Int32
+}
+
+func (o trackedSpecOperator) Ports() flow.Shape { return o.shape }
+func (o trackedSpecOperator) Close() error {
+	o.closed.Add(1)
+	return nil
+}
+
 func testSpec(opened *atomic.Int32, suggest SuggestFunc[pluginConfig, int]) Spec[pluginConfig, specPlan, int] {
 	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
 	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
@@ -186,6 +197,14 @@ func TestDynamicShapeComesFromResolvedConfig(t *testing.T) {
 }
 
 func TestComponentSpecRejectsMissingPhaseOrInvalidDefaultShape(t *testing.T) {
+	withoutSpec := NewComponent[specUnitID](Descriptor{DisplayName: "missing spec"}, pluginSchema(1))
+	if !hasItem(withoutSpec.Diagnostics(), "plugin.spec") {
+		t.Fatalf("missing Spec diagnostics = %v", withoutSpec.Diagnostics())
+	}
+	duplicate := NewComponent[specUnitID](Descriptor{DisplayName: "duplicate spec"}, pluginSchema(1), WithSpec(testSpec(nil, nil)), WithSpec(testSpec(nil, nil)))
+	if !hasItem(duplicate.Diagnostics(), "plugin.spec") {
+		t.Fatalf("duplicate Spec diagnostics = %v", duplicate.Diagnostics())
+	}
 	missing := NewComponent[specUnitID](Descriptor{DisplayName: "missing"}, pluginSchema(1), WithSpec(Spec[pluginConfig, struct{}, int]{}))
 	if len(missing.Diagnostics()) < 3 {
 		t.Fatalf("missing phase diagnostics = %v", missing.Diagnostics())
@@ -227,5 +246,56 @@ func TestCompileVisibleResultIsRepeatable(t *testing.T) {
 	secondOutputs, _ := OutputsOf[int](second)
 	if !reflect.DeepEqual(firstOutputs.Bindings(), secondOutputs.Bindings()) || !reflect.DeepEqual(first.Effects(), second.Effects()) {
 		t.Fatal("Compile visible result changed across identical calls")
+	}
+}
+
+func TestCompileRejectsIncompleteContractResults(t *testing.T) {
+	missing := testSpec(nil, nil)
+	missing.Compile = func(CompileContext, pluginConfig, flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		return Compiled[specPlan, int]{Outputs: flow.NewDescriptors[int]()}, nil
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "incomplete"}, pluginSchema(1), WithSpec(missing))
+	resolved, _ := component.Resolve(config.NewPatch())
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors[int]()); !hasDiagnostic(err, "plugin.compile-missing-requirement") {
+		t.Fatalf("missing input requirement error = %v", err)
+	}
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-required-output") {
+		t.Fatalf("missing required output error = %v", err)
+	}
+
+	invalidEffect := testSpec(nil, nil)
+	invalidEffect.Compile = func(_ CompileContext, _ pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		input, _ := inputs.One("in")
+		return Compiled[specPlan, int]{
+			Outputs: flow.NewDescriptors(flow.Describe("out", input)),
+			Effects: []Effect{{Kind: RepresentationEffect, Loss: NoLoss}},
+		}, nil
+	}
+	component = NewComponent[specUnitID](Descriptor{DisplayName: "invalid effect"}, pluginSchema(1), WithSpec(invalidEffect))
+	resolved, _ = component.Resolve(config.NewPatch())
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-effect") {
+		t.Fatalf("invalid effect error = %v", err)
+	}
+}
+
+func TestOpenRejectsOperatorShapeDifferentFromCompilation(t *testing.T) {
+	var closed atomic.Int32
+	spec := testSpec(nil, nil)
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	wrongShape := flow.NewShape(nil, []flow.Port{flow.Out("different", typ)})
+	spec.Open = func(OpenContext, specPlan) (flow.Operator, error) {
+		return trackedSpecOperator{shape: wrongShape, closed: &closed}, nil
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "wrong shape"}, pluginSchema(1), WithSpec(spec))
+	resolved, _ := component.Resolve(config.NewPatch())
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := component.Open(context.Background(), compiled); !hasDiagnostic(err, "plugin.open-shape") {
+		t.Fatalf("Open shape error = %v", err)
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("incompatible operator close count = %d", closed.Load())
 	}
 }

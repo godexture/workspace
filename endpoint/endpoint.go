@@ -61,7 +61,7 @@ type Component struct {
 }
 
 func New(component plugin.Component, trait Trait) (Component, error) {
-	if component.Identity().IsZero() {
+	if component.Identity().IsZero() || len(component.Diagnostics()) != 0 {
 		return Component{}, ErrInvalidComponent
 	}
 	if !trait.Valid() {

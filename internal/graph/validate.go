@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/gotype"
 	"github.com/godexture/godec/job"
 )
 
@@ -44,10 +45,12 @@ func validateTopology(nodes []shapedNode, edges []job.Edge) ([]int, []diagnostic
 		if !fromPortOK || !toPortOK {
 			continue
 		}
-		if fromPort.Schema().Identity() != toPort.Schema().Identity() {
+		if fromPort.Schema().Identity() != toPort.Schema().Identity() || fromPort.Schema().Payload() != toPort.Schema().Payload() {
 			items = append(items, graphItem("graph.schema-mismatch", edge.To(), "connected ports declare different schemas", map[string]string{
-				"source": fromPort.Schema().Identity().String(),
-				"target": toPort.Schema().Identity().String(),
+				"source":        fromPort.Schema().Identity().String(),
+				"sourcePayload": gotype.Canonical(fromPort.Schema().Payload()),
+				"target":        toPort.Schema().Identity().String(),
+				"targetPayload": gotype.Canonical(toPort.Schema().Payload()),
 			}))
 		}
 		outputCounts[fromIndex][fromPort.ID()]++

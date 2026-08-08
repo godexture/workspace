@@ -101,6 +101,30 @@ func (s Shape) Clone() Shape { return NewShape(s.Inputs, s.Outputs) }
 
 func (s Shape) Empty() bool { return len(s.Inputs) == 0 && len(s.Outputs) == 0 }
 
+// Equal reports semantic equality without comparing schema factory closures.
+// Identity and payload type together determine whether typed edges can be
+// wired safely.
+func (s Shape) Equal(other Shape) bool {
+	return equalPorts(s.Inputs, other.Inputs) && equalPorts(s.Outputs, other.Outputs)
+}
+
+func equalPorts(left, right []Port) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].id != right[index].id ||
+			left[index].direction != right[index].direction ||
+			left[index].descriptor.Identity() != right[index].descriptor.Identity() ||
+			left[index].descriptor.Payload() != right[index].descriptor.Payload() ||
+			left[index].required != right[index].required ||
+			left[index].multiplicity != right[index].multiplicity {
+			return false
+		}
+	}
+	return true
+}
+
 func (s Shape) Validate() error {
 	if s.Empty() {
 		return errors.New("port shape must contain an input or output")

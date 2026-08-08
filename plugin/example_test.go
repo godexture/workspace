@@ -4,23 +4,43 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/key"
+	mediaSchema "github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
 
 type examplePluginID struct{}
 type exampleComponentID struct{}
 type exampleKeyID struct{}
+type exampleUnitID struct{}
 
 type exampleConfig struct{ Level int }
+type exampleUnit int
+
+type exampleOperator struct{ shape flow.Shape }
+
+func (o exampleOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (exampleOperator) Close() error        { return nil }
 
 func Codec() plugin.Definition {
 	schema := config.Struct[exampleConfig](func() exampleConfig { return exampleConfig{Level: 5} }).
 		Version("1").
 		AddField(config.Field("level", func(value *exampleConfig) *int { return &value.Level }, config.Int().Range(0, 10))).
 		Build()
-	component := plugin.NewComponent[exampleComponentID](plugin.Descriptor{DisplayName: "Example codec", Version: "1.0.0"}, schema)
+	typ := mediaSchema.Define[exampleUnitID, exampleUnit](mediaSchema.Traits[exampleUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("output", typ)})
+	spec := plugin.Spec[exampleConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[exampleConfig](shape),
+		Compile: func(plugin.CompileContext, exampleConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("output", 1))}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return exampleOperator{shape: plan}, nil
+		},
+	}
+	component := plugin.NewComponent[exampleComponentID](plugin.Descriptor{DisplayName: "Example codec", Version: "1.0.0"}, schema, plugin.WithSpec(spec))
 	return plugin.Define[examplePluginID](plugin.Descriptor{DisplayName: "Example plugin", Version: "1.0.0"}, component)
 }
 

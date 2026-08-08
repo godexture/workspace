@@ -30,6 +30,7 @@ type graphCycleBID struct{}
 type graphSchemaAID struct{}
 type graphSchemaBID struct{}
 type graphUnit struct{}
+type graphOtherUnit struct{}
 type graphConfig struct{}
 
 var (
@@ -340,6 +341,19 @@ func TestTopologyDiagnosticsAreCanonical(t *testing.T) {
 	}
 }
 
+func TestTopologyRejectsSameSchemaMarkerWithDifferentPayloadTypes(t *testing.T) {
+	conflicting := schema.Define[graphSchemaAID, graphOtherUnit](schema.Traits[graphOtherUnit]{})
+	nodes := []shapedNode{
+		{request: fixtureNode[graphSourceID]("source"), shape: sourceShape(graphSchemaA)},
+		{request: fixtureNode[graphSinkID]("sink"), shape: flow.NewShape([]flow.Port{flow.In("in", conflicting)}, nil)},
+	}
+	edges := []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}
+	_, items := validateTopology(nodes, edges)
+	if !hasCode(items, "graph.schema-mismatch") {
+		t.Fatalf("schema payload mismatch diagnostics = %v", items)
+	}
+}
+
 func assertCodes(t *testing.T, err error, expected ...string) {
 	t.Helper()
 	if err == nil {
@@ -354,4 +368,13 @@ func assertCodes(t *testing.T, err error, expected ...string) {
 			t.Errorf("missing diagnostic %q in %v", code, err)
 		}
 	}
+}
+
+func hasCode(items []diagnostic.Item, expected string) bool {
+	for _, item := range items {
+		if item.Code == expected {
+			return true
+		}
+	}
+	return false
 }

@@ -6,16 +6,25 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/schema"
 )
 
 type testPluginID struct{}
 type secondPluginID struct{}
 type testComponentID struct{}
 type secondComponentID struct{}
+type foundationUnitID struct{}
 
 type pluginConfig struct {
 	Level int
 }
+
+type foundationUnit int
+type foundationOperator struct{ shape flow.Shape }
+
+func (o foundationOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (foundationOperator) Close() error        { return nil }
 
 func pluginSchema(defaultLevel int) config.Schema[pluginConfig] {
 	return config.Struct[pluginConfig](func() pluginConfig { return pluginConfig{Level: defaultLevel} }).
@@ -28,9 +37,25 @@ func pluginDescriptor(name string) Descriptor {
 	return Descriptor{DisplayName: name, Version: "1.0.0", License: "MIT"}
 }
 
+func foundationComponent[Marker any](descriptor Descriptor, schemaValue config.Schema[pluginConfig], options ...ComponentOption) Component {
+	typ := schema.Define[foundationUnitID, foundationUnit](schema.Traits[foundationUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	spec := Spec[pluginConfig, flow.Shape, int]{
+		Shape: StaticShape[pluginConfig](shape),
+		Compile: func(CompileContext, pluginConfig, flow.Descriptors[int]) (Compiled[flow.Shape, int], error) {
+			return Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
+		},
+		Open: func(_ OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return foundationOperator{shape: plan}, nil
+		},
+	}
+	allOptions := append([]ComponentOption{WithSpec(spec)}, options...)
+	return NewComponent[Marker](descriptor, schemaValue, allOptions...)
+}
+
 func TestIdentityUsesOnlyMarkerType(t *testing.T) {
-	first := NewComponent[testComponentID](pluginDescriptor("first"), pluginSchema(1), Aliases("one"))
-	second := NewComponent[testComponentID](pluginDescriptor("second"), pluginSchema(9), Aliases("two"))
+	first := foundationComponent[testComponentID](pluginDescriptor("first"), pluginSchema(1), Aliases("one"))
+	second := foundationComponent[testComponentID](pluginDescriptor("second"), pluginSchema(9), Aliases("two"))
 	if first.Identity() != second.Identity() {
 		t.Fatalf("same marker produced different identities: %q vs %q", first.Identity(), second.Identity())
 	}
@@ -43,7 +68,7 @@ func TestIdentityUsesOnlyMarkerType(t *testing.T) {
 }
 
 func TestComponentResolvesTypeErasedPatch(t *testing.T) {
-	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	resolved, err := component.Resolve(config.NewPatch().SetText("level", "7"))
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
@@ -68,8 +93,8 @@ func TestComponentResolvesTypeErasedPatch(t *testing.T) {
 }
 
 func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
-	component := NewComponent[testComponentID](Descriptor{DisplayName: "Component display"}, pluginSchema(1))
-	markerFallback := NewComponent[secondComponentID](Descriptor{}, pluginSchema(2))
+	component := foundationComponent[testComponentID](Descriptor{DisplayName: "Component display"}, pluginSchema(1))
+	markerFallback := foundationComponent[secondComponentID](Descriptor{}, pluginSchema(2))
 	parent := Descriptor{
 		DisplayName: "Plugin display",
 		Homepage:    "https://example.com/plugin",
@@ -105,7 +130,7 @@ func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
 	if views[0].Descriptor != expected || views[1].Descriptor != fallbackExpected {
 		t.Fatalf("component view descriptors = %#v, want %#v and %#v", views[0].Descriptor, expected, fallbackExpected)
 	}
-	replaced := NewSet(definition).Override(component.Identity(), NewComponent[testComponentID](Descriptor{}, pluginSchema(2)))
+	replaced := NewSet(definition).Override(component.Identity(), foundationComponent[testComponentID](Descriptor{}, pluginSchema(2)))
 	replacementExpected := parent
 	replacementExpected.DisplayName = component.Identity().Name()
 	var replacement Component
@@ -120,7 +145,7 @@ func TestDefinitionInheritsPluginDescriptor(t *testing.T) {
 		t.Fatalf("overridden component descriptor = %#v, want inherited %#v", got, replacementExpected)
 	}
 
-	standalone := NewComponent[secondComponentID](Descriptor{}, pluginSchema(1))
+	standalone := foundationComponent[secondComponentID](Descriptor{}, pluginSchema(1))
 	if got := standalone.View().Descriptor.DisplayName; got != standalone.Identity().Name() {
 		t.Fatalf("standalone display name = %q, want marker name %q", got, standalone.Identity().Name())
 	}
@@ -151,7 +176,7 @@ func TestDescriptorBuildModeIsExclusive(t *testing.T) {
 }
 
 func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
-	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)
 	set := NewSet(definition)
 	returned := set.Add(definition)
@@ -161,7 +186,7 @@ func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 	if len(returned.Components()) != len(set.Components()) {
 		t.Fatal("Add changed the returned receiver when retaining an error")
 	}
-	other := NewComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2))
+	other := foundationComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2))
 	otherDefinition := Define[secondPluginID](pluginDescriptor("other-plugin"), other)
 	withOther := set.Add(otherDefinition)
 	if len(set.Components()) != 1 || len(withOther.Components()) != 2 {
@@ -174,10 +199,10 @@ func TestSetIsPersistentAndRejectsDuplicateMarkers(t *testing.T) {
 }
 
 func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
-	component := NewComponent[testComponentID](pluginDescriptor("old"), pluginSchema(1))
+	component := foundationComponent[testComponentID](pluginDescriptor("old"), pluginSchema(1))
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component)
 	set := NewSet(definition)
-	replacement := NewComponent[testComponentID](pluginDescriptor("new"), pluginSchema(8))
+	replacement := foundationComponent[testComponentID](pluginDescriptor("new"), pluginSchema(8))
 	overridden := set.Override(component.Identity(), replacement)
 	if set.Components()[0].Descriptor().DisplayName != "old" {
 		t.Fatalf("Override mutated original set")
@@ -185,7 +210,7 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 	if overridden.Components()[0].Descriptor().DisplayName != "new" {
 		t.Fatalf("Override did not replace component")
 	}
-	missingComponent := NewComponent[secondComponentID](pluginDescriptor("missing"), pluginSchema(9))
+	missingComponent := foundationComponent[secondComponentID](pluginDescriptor("missing"), pluginSchema(9))
 	missing := set.Override(missingComponent.Identity(), missingComponent)
 	if len(missing.Diagnostics()) == 0 || len(missing.Components()) != len(set.Components()) {
 		t.Fatalf("Override diagnostic returned the wrong receiver: result=%d source=%d diagnostics=%v", len(missing.Components()), len(set.Components()), missing.Diagnostics())
@@ -213,7 +238,7 @@ func TestInvalidComponentKeepsAggregateDiagnostics(t *testing.T) {
 		AddField(config.Field("level", func(value *pluginConfig) *int { return &value.Level }, config.Int(), config.DependsOn("missing"))).
 		AddField(config.Field("level", func(value *pluginConfig) *int { return &value.Level }, config.Int())).
 		Build()
-	component := NewComponent[testComponentID](Descriptor{}, badSchema, Aliases("bad alias"))
+	component := foundationComponent[testComponentID](Descriptor{}, badSchema, Aliases("bad alias"))
 	definition := Define[testPluginID](Descriptor{}, component)
 	if len(definition.Diagnostics()) < 4 {
 		t.Fatalf("got %d diagnostics, want aggregate: %v", len(definition.Diagnostics()), definition.Diagnostics())
@@ -224,11 +249,11 @@ func TestInvalidComponentKeepsAggregateDiagnostics(t *testing.T) {
 }
 
 func TestMissingCompositionTargetSuggestsAlternatives(t *testing.T) {
-	component := NewComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
 	set := NewSet(Define[testPluginID](pluginDescriptor("plugin"), component))
 
 	missing := IdentityOf[secondComponentID]()
-	overridden := set.Override(missing, NewComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2)))
+	overridden := set.Override(missing, foundationComponent[secondComponentID](pluginDescriptor("other"), pluginSchema(2)))
 	assertTargetDiagnostic(t, overridden.Diagnostics(), "plugin.override", missing, component.Identity())
 
 	removed := set.Remove(missing)

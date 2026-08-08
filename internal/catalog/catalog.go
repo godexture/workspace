@@ -4,9 +4,12 @@
 package catalog
 
 import (
+	"reflect"
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/gotype"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -40,6 +43,12 @@ func Build(set plugin.Set) (Index, error) {
 
 	components := set.Components()
 	seenComponents := make(map[plugin.Identity]struct{}, len(components))
+	type schemaUse struct {
+		payload   reflect.Type
+		component plugin.Identity
+		port      string
+	}
+	seenSchemas := make(map[string]schemaUse)
 	for _, component := range components {
 		identity := component.Identity()
 		if identity.IsZero() {
@@ -58,6 +67,28 @@ func Build(set plugin.Set) (Index, error) {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component has no parent plugin identity", nil))
 		}
 		seenComponents[identity] = struct{}{}
+		shape := component.Ports()
+		for _, port := range append(append([]flow.Port(nil), shape.Inputs...), shape.Outputs...) {
+			descriptor := port.Schema()
+			if !descriptor.Valid() {
+				continue
+			}
+			key := descriptor.Identity().String()
+			previous, exists := seenSchemas[key]
+			if exists && previous.payload != descriptor.Payload() {
+				items = append(items, diagnostic.NewItem("catalog.schema-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String(), Descriptor: port.ID()}, "schema identity is bound to different Go payload types", map[string]string{
+					"identity":          key,
+					"previousComponent": previous.component.String(),
+					"previousPort":      previous.port,
+					"previousPayload":   gotype.Canonical(previous.payload),
+					"payload":           gotype.Canonical(descriptor.Payload()),
+				}))
+				continue
+			}
+			if !exists {
+				seenSchemas[key] = schemaUse{payload: descriptor.Payload(), component: identity, port: port.ID()}
+			}
+		}
 	}
 
 	declarations := set.Declarations()
