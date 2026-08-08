@@ -53,6 +53,7 @@ type Spec[C, P, D any] struct {
 	SuggestionLimit int
 	DynamicShape    bool
 	Finalizes       bool
+	Contract        Contract
 }
 
 // Compiled is the typed result plugin authors return. P remains private inside
@@ -75,6 +76,7 @@ type componentImplementation struct {
 	suggestionLimit int
 	dynamicShape    bool
 	finalizes       bool
+	contract        Contract
 	problems        []diagnostic.Item
 }
 
@@ -94,6 +96,10 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		suggestionLimit: spec.SuggestionLimit,
 		dynamicShape:    spec.DynamicShape,
 		finalizes:       spec.Finalizes,
+		contract:        normalizeContract(spec.Contract),
+	}
+	if !implementation.contract.Valid() {
+		implementation.problems = append(implementation.problems, specItem("plugin.contract", "component Spec has an invalid implementation contract"))
 	}
 	if spec.Shape == nil {
 		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))

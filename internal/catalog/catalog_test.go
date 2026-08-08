@@ -35,7 +35,7 @@ func catalogComponent[Marker any](name string) plugin.Component {
 	return catalogComponentWithSchema[Marker](plugin.Descriptor{DisplayName: name, Version: "1.0.0"}, catalogSchema())
 }
 
-func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schemaValue config.Schema[catalogConfig]) plugin.Component {
+func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schemaValue config.Schema[catalogConfig], contracts ...plugin.Contract) plugin.Component {
 	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
@@ -46,6 +46,9 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
 			return catalogOperator{shape: plan}, nil
 		},
+	}
+	if len(contracts) != 0 {
+		spec.Contract = contracts[0]
 	}
 	return plugin.NewComponent[Marker](descriptor, schemaValue, plugin.WithSpec(spec))
 }
@@ -70,6 +73,29 @@ func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
 	views[0].Aliases = append(views[0].Aliases, "mutated")
 	if len(index.Views()[0].Aliases) != 0 {
 		t.Fatalf("catalog view aliases are mutable")
+	}
+}
+
+func TestImplementationContractChangesCatalogFingerprint(t *testing.T) {
+	descriptor := plugin.Descriptor{DisplayName: "first", Version: "1.0.0"}
+	build := func(contract ...plugin.Contract) Index {
+		component := catalogComponentWithSchema[catalogFirstID](descriptor, catalogSchema(), contract...)
+		definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1.0.0"}, component)
+		index, err := Build(plugin.NewSet(definition))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return index
+	}
+	base := build()
+	stable := build(plugin.Contract{
+		Accuracy:       plugin.ExactContract,
+		Repeatability:  plugin.RepeatableContract,
+		Artifact:       plugin.StableArtifactSupport,
+		Implementation: plugin.PureGoImplementation,
+	})
+	if base.Fingerprint() == stable.Fingerprint() {
+		t.Fatal("implementation contract did not affect catalog fingerprint")
 	}
 }
 

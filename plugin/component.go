@@ -153,7 +153,16 @@ func (c Component) View() ComponentView {
 		HasSuggest:      c.implementation != nil && c.implementation.suggest != nil,
 		SuggestionLimit: c.suggestionLimit(),
 		Finalizes:       c.implementation != nil && c.implementation.finalizes,
+		Contract:        c.Contract(),
 	}
+}
+
+// Contract returns the immutable implementation contract captured by Spec.
+func (c Component) Contract() Contract {
+	if c.implementation == nil {
+		return Contract{}
+	}
+	return c.implementation.contract.clone()
 }
 
 func (c Component) withPlugin(identity Identity) Component {
@@ -180,6 +189,7 @@ type ComponentView struct {
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
+	Contract        Contract
 }
 
 func (c *Component) initializeDefaultShape() {

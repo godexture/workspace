@@ -96,3 +96,43 @@ func TestGraphCopiesCallerSlices(t *testing.T) {
 		t.Fatal("graph retained caller slice storage")
 	}
 }
+
+func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := New(nil, nil, graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := request.Policy()
+	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity {
+		t.Fatalf("default policy = %#v", policy)
+	}
+	if request.Budget() != DefaultBudget() {
+		t.Fatalf("default budget = %#v", request.Budget())
+	}
+
+	portable, ok := PolicyFor(Portable)
+	if !ok {
+		t.Fatal("portable policy did not expand")
+	}
+	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3}
+	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Policy() != portable || request.Budget() != budget {
+		t.Fatalf("configured planning requirements = %#v %#v", request.Policy(), request.Budget())
+	}
+	if _, err := New(nil, nil, graph, WithPolicy(Policy{})); err == nil {
+		t.Fatal("invalid policy was accepted")
+	}
+	if _, err := New(nil, nil, graph, WithBudget(Budget{})); err == nil {
+		t.Fatal("invalid budget was accepted")
+	}
+}

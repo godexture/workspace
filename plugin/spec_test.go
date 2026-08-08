@@ -105,6 +105,43 @@ func TestComponentSpecShapesCompilesAndOpensSelectedPlan(t *testing.T) {
 	}
 }
 
+func TestSpecCapturesCanonicalImplementationContract(t *testing.T) {
+	spec := testSpec(nil, nil)
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "spec"}, pluginSchema(1), WithSpec(spec))
+	if got := component.Contract(); !reflect.DeepEqual(got, DefaultContract()) {
+		t.Fatalf("default contract = %#v", got)
+	}
+
+	features := []string{"sse4.2", "avx2"}
+	spec.Contract = Contract{
+		Accuracy:       BoundedContract,
+		Repeatability:  VariableContract,
+		Artifact:       StableArtifactSupport,
+		Implementation: PureGoImplementation | SIMDImplementation,
+		Platform:       PlatformRequirement{OS: "linux", Arch: "amd64", Features: features},
+	}
+	component = NewComponent[specOtherID](Descriptor{DisplayName: "contract"}, pluginSchema(1), WithSpec(spec))
+	features[0] = "changed"
+	contract := component.Contract()
+	if !contract.Valid() || len(contract.Platform.Features) != 2 || contract.Platform.Features[0] != "avx2" || contract.Platform.Features[1] != "sse4.2" {
+		t.Fatalf("canonical contract = %#v", contract)
+	}
+	contract.Platform.Features[0] = "changed"
+	if component.View().Contract.Platform.Features[0] != "avx2" {
+		t.Fatal("component contract retained caller storage")
+	}
+
+	spec.Contract.Platform.Features = []string{"avx2", "avx2"}
+	invalid := NewComponent[struct{ Invalid bool }](Descriptor{DisplayName: "invalid"}, pluginSchema(1), WithSpec(spec))
+	found := false
+	for _, item := range invalid.Diagnostics() {
+		found = found || item.Code == "plugin.contract"
+	}
+	if !found {
+		t.Fatalf("invalid contract diagnostics = %v", invalid.Diagnostics())
+	}
+}
+
 func TestCompilationCannotOpenThroughAnotherSpec(t *testing.T) {
 	first := NewComponent[specUnitID](Descriptor{DisplayName: "first"}, pluginSchema(1), WithSpec(testSpec(nil, nil)))
 	second := NewComponent[specOtherID](Descriptor{DisplayName: "second"}, pluginSchema(1), WithSpec(testSpec(nil, nil)))

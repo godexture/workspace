@@ -26,6 +26,7 @@ type fingerprintComponent struct {
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
+	Contract        plugin.Contract
 }
 
 type fingerprintPort struct {
@@ -45,7 +46,7 @@ type fingerprintDefinition struct {
 
 func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, declarations []plugin.Declaration) [32]byte {
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v3\x00"))
+	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v4\x00"))
 	sort.Slice(definitions, func(left, right int) bool {
 		return definitions[left].Identity().String() < definitions[right].Identity().String()
 	})
@@ -73,6 +74,7 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 			HasSuggest:      component.View().HasSuggest,
 			SuggestionLimit: component.View().SuggestionLimit,
 			Finalizes:       component.View().Finalizes,
+			Contract:        component.Contract(),
 		}
 		writeFingerprintEntry(hash, canonical)
 	}
