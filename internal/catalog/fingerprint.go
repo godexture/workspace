@@ -39,7 +39,7 @@ type fingerprintDefinition struct {
 
 func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, declarations []plugin.Declaration) [32]byte {
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v1\x00"))
+	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v2\x00"))
 	sort.Slice(definitions, func(left, right int) bool {
 		return definitions[left].Identity().String() < definitions[right].Identity().String()
 	})

@@ -29,6 +29,23 @@ func TestVocabularyContainsOnlyOpenDeclaredKeys(t *testing.T) {
 	}
 }
 
+func TestDeclarationsCoverVocabularyAndReturnIndependentSlices(t *testing.T) {
+	first := Declarations()
+	if len(first) != 17 {
+		t.Fatalf("declaration count = %d, want 17", len(first))
+	}
+	for _, declaration := range first {
+		if !declaration.Valid() {
+			t.Fatalf("invalid vocabulary declaration: %v", declaration.Problem())
+		}
+	}
+	first[0] = first[1]
+	second := Declarations()
+	if second[0].Key() == second[1].Key() {
+		t.Fatal("Declarations returned shared mutable slice storage")
+	}
+}
+
 func TestDatePreservesPartialPrecision(t *testing.T) {
 	year, err := ParseDate("1985")
 	if err != nil {

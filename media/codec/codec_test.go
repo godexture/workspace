@@ -13,10 +13,16 @@ type fixtureParserID struct{}
 func TestBindingKeepsParserIndependentFromFormat(t *testing.T) {
 	parser := DefineParser[fixtureParserID]()
 	binding := Bind(format.NewTag("fixture", "tag"), Define[fixtureCodecID](), parser)
-	if !binding.Valid() || len(binding.Targets()) != 2 || binding.Targets()[0] != plugin.IdentityOf[fixtureCodecID]() {
+	targets := binding.Targets()
+	if !binding.Valid() || len(targets) != 2 {
 		t.Fatalf("binding = %#v", binding)
 	}
-	if binding.Targets()[1] != plugin.IdentityOf[fixtureParserID]() {
-		t.Fatalf("parser target = %#v", binding.Targets())
+	codec, codecTarget := targets[0].Component()
+	if !codecTarget || codec != plugin.IdentityOf[fixtureCodecID]() {
+		t.Fatalf("codec target = %#v", targets)
+	}
+	parserIdentity, parserTarget := targets[1].Component()
+	if !parserTarget || parserIdentity != plugin.IdentityOf[fixtureParserID]() {
+		t.Fatalf("parser target = %#v", targets)
 	}
 }

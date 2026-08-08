@@ -84,7 +84,12 @@ func TestBindingNamesTheEncodingThatInterpretsACarrier(t *testing.T) {
 	if !binding.Valid() {
 		t.Fatalf("binding = %v", binding)
 	}
-	if targets := binding.Targets(); len(targets) != 1 || targets[0] != encodingIdentity() {
+	targets := binding.Targets()
+	if len(targets) != 1 {
+		t.Fatalf("binding targets = %v", targets)
+	}
+	target, componentTarget := targets[0].Component()
+	if !componentTarget || target != encodingIdentity() {
 		t.Fatalf("binding targets = %v", targets)
 	}
 	if binding.Key() != BindingKey(testCarrier) {

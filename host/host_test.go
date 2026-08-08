@@ -6,6 +6,8 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -13,6 +15,8 @@ type hostPluginA struct{}
 type hostPluginB struct{}
 type hostComponentA struct{}
 type hostComponentB struct{}
+type hostSharedKey struct{}
+type hostSecondKey struct{}
 
 type hostConfig struct{ Value int }
 
@@ -159,4 +163,79 @@ func TestNewRejectsComponentWithZeroSchema(t *testing.T) {
 		}
 	}
 	t.Fatalf("zero schema diagnostic lacks component identity: %v", err)
+}
+
+func TestNewAcceptsEquivalentKeyDeclarationsAcrossContainers(t *testing.T) {
+	shared := key.Define[hostSharedKey, string]()
+	streamProperty := property.Define[hostSharedKey, string](func(value string) ([]byte, error) {
+		return []byte(value), nil
+	})
+	set := plugin.NewSet().
+		AddDeclaration(plugin.DeclareKey(shared)).
+		AddDeclaration(plugin.DeclareKey(streamProperty))
+
+	instance, err := New(Plugins(set))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations := instance.Catalog().Declarations()
+	if len(declarations) != 1 {
+		t.Fatalf("equivalent key declarations were not normalized: %#v", declarations)
+	}
+	targets := declarations[0].Targets()
+	if len(targets) != 1 {
+		t.Fatalf("key declaration targets = %#v", targets)
+	}
+	valueType, typeTarget := targets[0].Type()
+	if !typeTarget || valueType != shared.ValueType() {
+		t.Fatalf("key declaration target = %#v", targets)
+	}
+	single, err := New(Plugins(plugin.NewSet().AddDeclaration(plugin.DeclareKey(shared))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instance.Catalog().Fingerprint() != single.Catalog().Fingerprint() {
+		t.Fatal("an equivalent duplicate key declaration changed the catalog fingerprint")
+	}
+}
+
+func TestNewRejectsConflictingKeyPayloadTypes(t *testing.T) {
+	tests := map[string]plugin.Set{
+		"shared key container": plugin.NewSet().
+			AddDeclaration(plugin.DeclareKey(key.Define[hostSharedKey, string]())).
+			AddDeclaration(plugin.DeclareKey(key.Define[hostSharedKey, int64]())),
+		"key and property containers": plugin.NewSet().
+			AddDeclaration(plugin.DeclareKey(key.Define[hostSecondKey, string]())).
+			AddDeclaration(plugin.DeclareKey(property.Define[hostSecondKey, int64](func(value int64) ([]byte, error) {
+				return []byte{byte(value)}, nil
+			}))),
+	}
+	for name, set := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := New(Plugins(set))
+			if err == nil {
+				t.Fatal("conflicting key payload types were accepted")
+			}
+			for _, item := range Diagnostics(err) {
+				if item.Code == "catalog.declaration-conflict" {
+					return
+				}
+			}
+			t.Fatalf("key declaration conflict diagnostic missing: %v", err)
+		})
+	}
+}
+
+func TestNewPreservesInvalidKeyDeclarationProblem(t *testing.T) {
+	invalid := property.Define[hostSharedKey, string](nil)
+	_, err := New(Plugins(plugin.NewSet().AddDeclaration(plugin.DeclareKey(invalid))))
+	if err == nil {
+		t.Fatal("invalid property declaration was accepted")
+	}
+	for _, item := range Diagnostics(err) {
+		if item.Code == "catalog.invalid-declaration" && strings.Contains(item.Message, "canonical encoder") {
+			return
+		}
+	}
+	t.Fatalf("invalid key problem was not preserved: %v", err)
 }

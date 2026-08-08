@@ -62,25 +62,39 @@ func Build(set plugin.Set) (Index, error) {
 
 	declarations := set.Declarations()
 	seenDeclarations := make(map[plugin.DeclarationKey]plugin.Declaration, len(declarations))
+	normalizedDeclarations := make([]plugin.Declaration, 0, len(declarations))
 	for _, declaration := range declarations {
 		if !declaration.Valid() {
-			items = append(items, diagnostic.NewItem("catalog.invalid-declaration", diagnostic.ErrorSeverity, diagnostic.Path{}, "composition declaration is invalid", nil))
+			message := "composition declaration is invalid"
+			if problem := declaration.Problem(); problem != nil {
+				message = problem.Error()
+			}
+			items = append(items, diagnostic.NewItem("catalog.invalid-declaration", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: declaration.Key().String()}, message, nil))
 			continue
 		}
 		key := declaration.Key()
-		if previous, exists := seenDeclarations[key]; exists && !previous.SameTargets(declaration) {
-			items = append(items, diagnostic.NewItem("catalog.declaration-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "composition key points to different component targets", nil))
+		previous, exists := seenDeclarations[key]
+		if exists && !previous.SameTargets(declaration) {
+			items = append(items, diagnostic.NewItem("catalog.declaration-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "composition key has different declaration targets", nil))
 		}
-		seenDeclarations[key] = declaration
 		for _, target := range declaration.Targets() {
-			if _, exists := seenComponents[target]; !exists {
-				items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: target.String(), Descriptor: key.String()}, "composition declaration target is not in the catalog", map[string]string{"target": target.String()}))
+			component, componentTarget := target.Component()
+			if componentTarget {
+				if _, present := seenComponents[component]; !present {
+					items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.String(), Descriptor: key.String()}, "composition declaration target is not in the catalog", map[string]string{"target": component.String()}))
+				}
 			}
 		}
+		if exists {
+			continue
+		}
+		seenDeclarations[key] = declaration
+		normalizedDeclarations = append(normalizedDeclarations, declaration)
 	}
 	if hasError(items) {
 		return Index{}, diagnostic.NewError(items...)
 	}
+	declarations = normalizedDeclarations
 
 	sort.Slice(declarations, func(left, right int) bool {
 		if declarations[left].Key() != declarations[right].Key() {
