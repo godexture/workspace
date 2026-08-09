@@ -16,6 +16,7 @@ import (
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plan"
 	fileplugin "github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -109,6 +110,92 @@ func TestWAVEFileToRawPCMEndToEnd(t *testing.T) {
 	}
 }
 
+func TestRawPCMToWAVEFileEndToEnd(t *testing.T) {
+	payload := []byte{
+		0x01, 0x00, 0xff, 0x7f,
+		0xff, 0xff, 0x00, 0x80,
+		0x34, 0x12, 0xcc, 0xed,
+		0x00, 0x00, 0x01, 0x00,
+	}
+	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
+		t.Run(preset.String(), func(t *testing.T) {
+			directory := t.TempDir()
+			inputPath := filepath.Join(directory, "input.pcm")
+			outputPath := filepath.Join(directory, "output.wav")
+			if err := os.WriteFile(inputPath, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			set := linear.Set().Add(fileplugin.Plugin()).Add(Plugin())
+			instance, err := host.New(
+				host.Plugins(set),
+				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch := config.NewPatch().
+				SetText("rate", strconv.Itoa(48_000)).
+				SetText("validBits", "16").
+				SetText("layout", "stereo").
+				SetText("endian", "little").
+				SetText("chunkSamples", "2")
+			requested, err := job.NewGraph(
+				[]job.Node{
+					job.NewNode("reader", linear.ReaderIdentity(), patch),
+					job.NewNode("parser", linear.ParserIdentity(), patch),
+					job.NewNode("mux", MuxerIdentity(), config.NewPatch()),
+				},
+				[]job.Edge{
+					job.Connect(job.At("reader", "chunks"), job.At("parser", "chunks")),
+					job.Connect(job.At("parser", "packets"), job.At("mux", "packets")),
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input, err := job.InputFromReference(fileReference(t, inputPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := job.OutputToReference(fileReference(t, outputPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy, ok := job.PolicyFor(preset)
+			if !ok {
+				t.Fatalf("policy %s is unavailable", preset)
+			}
+			request, err := job.New([]job.Input{input}, []job.Output{output}, requested, job.WithPolicy(policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := instance.Prepare(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertWAVEWritePlan(t, prepared.Plan())
+			result, err := prepared.Run(context.Background())
+			if err != nil || !result.Succeeded() {
+				t.Fatalf("Run result = %#v, error %v", result, err)
+			}
+			encoded, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inspected, err := inspectHeader(context.Background(), memoryRandom(encoded))
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := int(inspected.dataOffset)
+			end := start + int(inspected.dataSize)
+			want := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian}
+			if inspected.rf64 || inspected.description != want || !bytes.Equal(encoded[start:end], payload) {
+				t.Fatalf("WAVE output = header %#v, payload %v", inspected, encoded[start:end])
+			}
+		})
+	}
+}
+
 func assertWAVEReadPlan(t *testing.T, value plan.Plan) {
 	t.Helper()
 	for _, boundary := range value.Boundaries() {
@@ -128,6 +215,19 @@ func assertWAVEReadPlan(t *testing.T, value plan.Plan) {
 		return
 	}
 	t.Fatal("WAVE demux node is absent from Plan")
+}
+
+func assertWAVEWritePlan(t *testing.T, value plan.Plan) {
+	t.Helper()
+	for _, boundary := range value.Boundaries() {
+		if boundary.Direction == plan.OutputBoundary {
+			if len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomWrite {
+				t.Fatalf("WAVE output selection = %#v", boundary)
+			}
+			return
+		}
+	}
+	t.Fatal("WAVE output boundary is absent from Plan")
 }
 
 func fileReference(t *testing.T, path string) access.Reference {

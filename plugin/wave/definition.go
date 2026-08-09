@@ -9,10 +9,12 @@ import (
 type (
 	pluginID  struct{}
 	demuxerID struct{}
+	muxerID   struct{}
 	waveID    struct{}
 )
 
 func DemuxerIdentity() plugin.Identity { return plugin.IdentityOf[demuxerID]() }
+func MuxerIdentity() plugin.Identity   { return plugin.IdentityOf[muxerID]() }
 
 func WAVE() format.Format {
 	value, err := format.Define[waveID](nil)
@@ -29,5 +31,5 @@ func Plugin() plugin.Definition {
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
-	}, demuxerComponent())
+	}, demuxerComponent(), muxerComponent())
 }
