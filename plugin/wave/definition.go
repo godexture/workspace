@@ -2,7 +2,11 @@
 package wave
 
 import (
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -10,14 +14,20 @@ type (
 	pluginID  struct{}
 	demuxerID struct{}
 	muxerID   struct{}
+	infoID    struct{}
 	waveID    struct{}
+	infoSlot  struct{}
 )
 
-func DemuxerIdentity() plugin.Identity { return plugin.IdentityOf[demuxerID]() }
-func MuxerIdentity() plugin.Identity   { return plugin.IdentityOf[muxerID]() }
+func DemuxerIdentity() plugin.Identity      { return plugin.IdentityOf[demuxerID]() }
+func MuxerIdentity() plugin.Identity        { return plugin.IdentityOf[muxerID]() }
+func InfoEncodingIdentity() plugin.Identity { return plugin.IdentityOf[infoID]() }
+
+// RIFFInfo identifies a LIST/INFO metadata carrier inside WAVE.
+func RIFFInfo() carrier.ID { return carrier.Define[infoSlot]() }
 
 func WAVE() format.Format {
-	value, err := format.Define[waveID](nil)
+	value, err := format.Define[waveID]([]carrier.ID{RIFFInfo()})
 	if err != nil {
 		panic(err)
 	}
@@ -31,5 +41,20 @@ func Plugin() plugin.Definition {
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
-	}, demuxerComponent(), muxerComponent())
+	}, demuxerComponent(), muxerComponent(), infoComponent())
+}
+
+// InfoBinding connects WAVE's LIST/INFO carrier to its standalone Encoding.
+func InfoBinding() metadata.Binding { return metadata.Bind(RIFFInfo(), InfoEncodingIdentity()) }
+
+// Set returns the self-contained WAVE composition and shared metadata keys.
+func Set() plugin.Set {
+	result := plugin.NewSet(Plugin()).AddDeclaration(InfoBinding())
+	for _, declaration := range tag.Declarations() {
+		result = result.AddDeclaration(declaration)
+	}
+	for _, declaration := range sample.Declarations() {
+		result = result.AddDeclaration(declaration)
+	}
+	return result
 }
