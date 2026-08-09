@@ -21,7 +21,7 @@ type Component struct {
 	defaultShape   flow.Shape
 	execution      drive.Binding
 	executionSet   bool
-	traits         map[TraitKey]componentTrait
+	traits         traitStore
 }
 
 type componentOptions struct {
@@ -31,7 +31,7 @@ type componentOptions struct {
 	problems       []diagnostic.Item
 	execution      drive.Binding
 	executionSet   bool
-	traits         map[TraitKey]componentTrait
+	traits         traitStore
 }
 
 // ComponentOption changes non-identity component metadata.
@@ -180,6 +180,8 @@ func (c Component) Contract() Contract {
 	}
 	return c.implementation.contract.clone()
 }
+
+func (c Component) traitSlots() traitStore { return c.traits }
 
 func (c Component) withPlugin(identity Identity) Component {
 	c.plugin = identity

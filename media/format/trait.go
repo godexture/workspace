@@ -1,6 +1,7 @@
 package format
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/godexture/godec/access"
@@ -18,11 +19,21 @@ var (
 type ReadTrait struct {
 	format       Format
 	requirements access.Requirements
+	inspect      InspectFunc
 }
+
+type InspectFunc func(InspectContext) (Inspection, error)
 
 // Read attaches input byte requirements for one Format component.
 func Read(value Format, alternatives ...access.Alternative) plugin.ComponentOption {
 	trait := ReadTrait{format: value, requirements: access.NewRequirements(alternatives...)}
+	return plugin.WithTrait(readKey, trait.manifest("read"), trait)
+}
+
+// ReadWithInspect attaches input byte requirements and the one pre-Compile
+// inspection operation for a Format component.
+func ReadWithInspect(value Format, inspect InspectFunc, alternatives ...access.Alternative) plugin.ComponentOption {
+	trait := ReadTrait{format: value, requirements: access.NewRequirements(alternatives...), inspect: inspect}
 	return plugin.WithTrait(readKey, trait.manifest("read"), trait)
 }
 
@@ -37,6 +48,24 @@ func (t ReadTrait) Format() Format {
 	return t.format
 }
 func (t ReadTrait) Requirements() access.Requirements { return t.requirements.Clone() }
+func (t ReadTrait) HasInspect() bool                  { return t.inspect != nil }
+
+func (t ReadTrait) Inspect(ctx InspectContext) (Inspection, error) {
+	if !t.Valid() || t.inspect == nil {
+		return Inspection{}, ErrInspectUnavailable
+	}
+	if !ctx.Valid() {
+		return Inspection{}, ErrInvalidInspection
+	}
+	value, err := t.inspect(ctx)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if !value.Valid() || value.Format().Identity() != t.format.Identity() {
+		return Inspection{}, errors.Join(ErrInvalidInspection, errors.New("inspection Format does not match its read trait"))
+	}
+	return value, nil
+}
 
 func (t ReadTrait) manifest(direction string) string {
 	return traitManifest(direction, t.format, t.requirements)

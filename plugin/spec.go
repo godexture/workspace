@@ -12,8 +12,10 @@ import (
 )
 
 type ShapeContext struct{}
-type CompileContext struct{}
+type CompileContext struct{ traits traitStore }
 type SuggestContext struct{}
+
+func (c CompileContext) traitSlots() traitStore { return c.traits }
 
 // ErrWorkerLimit is returned by TaskStarter.Start when a component has no
 // unused worker capacity in the resource.Request declared by Compile.

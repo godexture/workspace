@@ -220,6 +220,33 @@ func TestComponentTraitSlotIsTypedAndRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestCompileContextSharesMarkerTraitStore(t *testing.T) {
+	key := TraitKeyOf[specTraitID]()
+	base := CompileContext{}
+	prepared, err := CompileContextWithTrait(base, key, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := TraitValueOf[int](base, key); ok {
+		t.Fatal("base CompileContext was mutated")
+	}
+	value, ok := TraitValueOf[int](prepared, key)
+	if !ok || value != 7 {
+		t.Fatalf("prepared trait = %d/%v", value, ok)
+	}
+	if _, ok := TraitValueOf[string](prepared, key); ok {
+		t.Fatal("prepared trait accepted the wrong type")
+	}
+	duplicate, err := CompileContextWithTrait(prepared, key, 8)
+	if err != ErrDuplicateTrait {
+		t.Fatalf("duplicate error = %v", err)
+	}
+	value, ok = TraitValueOf[int](duplicate, key)
+	if !ok || value != 7 {
+		t.Fatalf("duplicate changed context = %d/%v", value, ok)
+	}
+}
+
 func TestSpecCapturesCanonicalImplementationContract(t *testing.T) {
 	spec := testSpec(nil, nil)
 	component := NewComponent[specUnitID](Descriptor{DisplayName: "spec"}, pluginSchema(1), WithSpec(spec))

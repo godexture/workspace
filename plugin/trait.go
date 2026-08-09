@@ -1,6 +1,14 @@
 package plugin
 
-import "sort"
+import (
+	"errors"
+	"sort"
+)
+
+var (
+	ErrInvalidTrait   = errors.New("plugin trait is invalid")
+	ErrDuplicateTrait = errors.New("plugin trait key is already set")
+)
 
 // TraitKey identifies one component trait namespace by a named marker type.
 // Trait meanings and typed accessors live in the package that owns the key.
@@ -30,31 +38,41 @@ type componentTrait struct {
 	value    any
 }
 
+type traitStore map[TraitKey]componentTrait
+
+type traitSource interface {
+	traitSlots() traitStore
+}
+
 // WithTrait attaches one opaque value to a marker-keyed component slot.
 // Packages such as access and endpoint wrap this low-level function with
 // typed constructors and accessors.
 func WithTrait(key TraitKey, manifest string, value any) ComponentOption {
 	return func(options *componentOptions) {
-		if !key.Valid() || manifest == "" || value == nil {
+		if manifest == "" {
 			options.problems = append(options.problems, specItem("plugin.trait", "component trait is invalid"))
 			return
 		}
-		if options.traits == nil {
-			options.traits = make(map[TraitKey]componentTrait)
-		}
-		if _, exists := options.traits[key]; exists {
+		traits, err := options.traits.with(key, manifest, value)
+		switch {
+		case errors.Is(err, ErrInvalidTrait):
+			options.problems = append(options.problems, specItem("plugin.trait", "component trait is invalid"))
+		case errors.Is(err, ErrDuplicateTrait):
 			options.problems = append(options.problems, specItem("plugin.trait-duplicate", "component may declare a trait key only once"))
-			return
+		case err == nil:
+			options.traits = traits
 		}
-		options.traits[key] = componentTrait{key: key, manifest: manifest, value: value}
 	}
 }
 
 // TraitValueOf returns a typed trait value. Runtime and catalog packages use
 // the accessor supplied by the trait-owning package instead of this bridge.
-func TraitValueOf[T any](component Component, key TraitKey) (T, bool) {
+func TraitValueOf[T any](source traitSource, key TraitKey) (T, bool) {
 	var zero T
-	trait, ok := component.traits[key]
+	if source == nil {
+		return zero, false
+	}
+	trait, ok := source.traitSlots()[key]
 	if !ok {
 		return zero, false
 	}
@@ -65,18 +83,45 @@ func TraitValueOf[T any](component Component, key TraitKey) (T, bool) {
 	return value, true
 }
 
-func cloneTraits(values map[TraitKey]componentTrait) map[TraitKey]componentTrait {
+// CompileContextWithTrait returns an immutable CompileContext with one
+// marker-keyed prepared value attached. Semantic packages wrap this bridge
+// with typed constructors and accessors.
+func CompileContextWithTrait(ctx CompileContext, key TraitKey, value any) (CompileContext, error) {
+	traits, err := ctx.traits.with(key, "", value)
+	if err != nil {
+		return ctx, err
+	}
+	ctx.traits = traits
+	return ctx, nil
+}
+
+func (s traitStore) with(key TraitKey, manifest string, value any) (traitStore, error) {
+	if !key.Valid() || value == nil {
+		return nil, ErrInvalidTrait
+	}
+	if _, exists := s[key]; exists {
+		return nil, ErrDuplicateTrait
+	}
+	result := cloneTraits(s)
+	if result == nil {
+		result = make(traitStore)
+	}
+	result[key] = componentTrait{key: key, manifest: manifest, value: value}
+	return result, nil
+}
+
+func cloneTraits(values traitStore) traitStore {
 	if len(values) == 0 {
 		return nil
 	}
-	result := make(map[TraitKey]componentTrait, len(values))
+	result := make(traitStore, len(values))
 	for key, value := range values {
 		result[key] = value
 	}
 	return result
 }
 
-func traitDescriptors(values map[TraitKey]componentTrait) []TraitDescriptor {
+func traitDescriptors(values traitStore) []TraitDescriptor {
 	result := make([]TraitDescriptor, 0, len(values))
 	for _, value := range values {
 		result = append(result, TraitDescriptor{Key: value.key.String(), Manifest: value.manifest})
