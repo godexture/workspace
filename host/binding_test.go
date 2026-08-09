@@ -308,7 +308,7 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 	}
 	sourceOptions := append([]plugin.ComponentOption{component(sourceShape, func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
-	})}, sourceTraits...)
+	}), plugin.WithReader("out", boundarySchema)}, sourceTraits...)
 	source := plugin.NewComponent[boundarySourceID](plugin.Descriptor{DisplayName: "source"}, configuration, sourceOptions...)
 	transform := plugin.NewComponent[boundaryTransformID](plugin.Descriptor{DisplayName: "transform"}, configuration, component(transformShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		input, ok := inputs.One("in")
@@ -316,13 +316,13 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: transformShape}, Outputs: flow.NewDescriptors(flow.Describe("out", input))}, nil
-	}))
+	}), plugin.WithProcessor("in", boundarySchema, "out", boundarySchema))
 	sinkOptions := append([]plugin.ComponentOption{component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		if _, ok := inputs.One("in"); !ok {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
-	})}, sinkTraits...)
+	}), plugin.WithWriter("in", boundarySchema)}, sinkTraits...)
 	sink := plugin.NewComponent[boundarySinkID](plugin.Descriptor{DisplayName: "sink"}, configuration, sinkOptions...)
 	return source, transform, sink, descriptor
 }

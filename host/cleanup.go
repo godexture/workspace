@@ -36,6 +36,9 @@ func (r *runner) cleanup() {
 	r.acceptTaskReport(r.plugins.Wait(cleanupContext), true)
 	r.abortOutputs(cleanupContext)
 	r.closeOperators(cleanupContext)
+	for _, failure := range r.prepared.releaseResources(cleanupContext) {
+		r.addCleanup(failure)
+	}
 }
 
 func (r *runner) abortOutputs(ctx context.Context) {

@@ -56,9 +56,6 @@ func (p *Prepared) Run(ctx context.Context) (Result, error) {
 
 	r := newRunner(p, jobContext, cancel)
 	r.execute()
-	for _, failure := range p.releaseReservations() {
-		r.addCleanup(failure)
-	}
 	r.finishSnapshots()
 	err := resultError(r.result)
 	p.complete(err)

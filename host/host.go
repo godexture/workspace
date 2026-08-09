@@ -93,14 +93,20 @@ func New(options ...Option) (*Host, error) {
 	}, nil
 }
 
-// Plan binds declarative Access/Endpoint choices and resolves the resulting
-// graph without opening operators or starting output transactions.
+// Plan binds declarative Access/Endpoint choices, resolves the graph, and
+// closes any input session acquired for planning before it returns. It never
+// opens operators or output sessions.
 func (h *Host) Plan(ctx context.Context, request job.Job) (plan.Plan, error) {
 	program, err := h.resolve(ctx, request)
 	if err != nil {
 		return plan.Plan{}, errors.Join(err, closeRequestDirects(request))
 	}
-	return program.Plan(), closeBoundDirects(program.Boundaries().Entries())
+	entries := program.Boundaries().Entries()
+	sessions, acquireErr := acquireSessions(ctx, entries, false)
+	cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
+	defer cancel()
+	closeErr := joinFailures(closeSessions(cleanupContext, sessions))
+	return program.Plan(), errors.Join(acquireErr, closeErr, closeBoundDirects(entries))
 }
 
 func (h *Host) resolve(ctx context.Context, request job.Job) (program.Program, error) {

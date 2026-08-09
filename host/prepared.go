@@ -28,13 +28,16 @@ type reservation struct {
 	lease *memory.Lease
 }
 
-// Prepared is a one-shot executable Program with all coarse resources
-// reserved. It does not open output transactions until Run.
+// Prepared is a one-shot executable Program with coarse resources and Access
+// sessions owned for its lifetime. Output state remains private until Run
+// commits it.
 type Prepared struct {
 	program        program.Program
 	manager        *memory.Manager
 	reservations   []reservation
 	byNode         map[job.NodeID]*memory.Lease
+	sessions       []acquiredSession
+	bySession      map[string]acquiredSession
 	direct         []bound.Entry
 	observation    Observation
 	cleanupTimeout time.Duration
@@ -48,8 +51,8 @@ type Prepared struct {
 	released sync.Once
 }
 
-// Prepare resolves the immutable Program and reserves every compiled node and
-// runtime queue before any output or operator is opened.
+// Prepare resolves the immutable Program, reserves every compiled node and
+// runtime queue, and acquires its Access sessions before any operator opens.
 func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) {
 	selected, err := h.resolve(ctx, request)
 	if err != nil {
@@ -81,6 +84,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		program:        selected,
 		manager:        manager,
 		byNode:         make(map[job.NodeID]*memory.Lease),
+		bySession:      make(map[string]acquiredSession),
 		observation:    h.observation,
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
@@ -91,32 +95,42 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 			prepared.direct = append(prepared.direct, entry)
 		}
 	}
-	fail := func(err error) (*Prepared, error) {
-		failure := Failure{Phase: ResourcePhase, Err: errors.Join(err, joinFailures(prepared.releaseReservations()))}
+	fail := func(phase Phase, err error) (*Prepared, error) {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
+		defer cancel()
+		failure := failureOf(phase, "", "", err)
+		failure.Err = errors.Join(failure.Err, joinFailures(prepared.releaseResources(cleanupContext)))
 		return nil, &failure
 	}
 	runtimeRequest, err := selected.RuntimeResources()
 	if err != nil {
-		return fail(err)
+		return fail(ResourcePhase, err)
 	}
 	if runtimeRequest != (resource.Request{}) {
 		lease, err := manager.Reserve("runtime", runtimeRequest)
 		if err != nil {
-			return fail(err)
+			return fail(ResourcePhase, err)
 		}
 		prepared.reservations = append(prepared.reservations, reservation{name: "runtime", lease: lease})
 	}
 	for _, node := range selected.Nodes() {
 		request, err := selected.NodeResources(node.ID())
 		if err != nil {
-			return fail(err)
+			return fail(ResourcePhase, err)
 		}
 		lease, err := manager.Reserve(node.ID().String(), request)
 		if err != nil {
-			return fail(err)
+			return fail(ResourcePhase, err)
 		}
 		prepared.reservations = append(prepared.reservations, reservation{name: node.ID().String(), lease: lease})
 		prepared.byNode[node.ID()] = lease
+	}
+	prepared.sessions, err = acquireSessions(ctx, entries, true)
+	for _, session := range prepared.sessions {
+		prepared.bySession[session.node] = session
+	}
+	if err != nil {
+		return fail(PreparePhase, err)
 	}
 	return prepared, nil
 }
@@ -148,7 +162,9 @@ func (p *Prepared) Close() error {
 	case preparedReady:
 		p.state = preparedClosed
 		p.mu.Unlock()
-		failures := p.releaseReservations()
+		cleanupContext, cancel := context.WithTimeout(context.Background(), p.cleanupTimeout)
+		failures := p.releaseResources(cleanupContext)
+		cancel()
 		err := joinFailures(failures)
 		p.mu.Lock()
 		p.closeErr = err
@@ -184,8 +200,9 @@ func (p *Prepared) Close() error {
 	}
 }
 
-func (p *Prepared) releaseReservations() (failures []Failure) {
+func (p *Prepared) releaseResources(ctx context.Context) (failures []Failure) {
 	p.released.Do(func() {
+		failures = append(failures, closeSessions(ctx, p.sessions)...)
 		for index := len(p.reservations) - 1; index >= 0; index-- {
 			value := p.reservations[index]
 			if allocator := value.lease.Buffers(); allocator != nil && allocator.Used() != 0 {

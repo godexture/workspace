@@ -38,24 +38,28 @@ type (
 var lifecycleType = schema.Define[lifecycleSchemaID](schema.Traits[int]{})
 
 type lifecycleState struct {
-	mu           sync.Mutex
-	entries      []string
-	values       []int
-	fail         map[string]error
-	task         func(context.Context) error
-	block        bool
-	bound        bool
-	multi        bool
-	access       access.Opening
-	endpoint     endpoint.Opening
-	panicAt      string
-	direct       bool
-	sourceHandle *lifecycleHandle
-	sinkHandle   *lifecycleHandle
+	mu            sync.Mutex
+	entries       []string
+	values        []int
+	fail          map[string]error
+	task          func(context.Context) error
+	block         bool
+	bound         bool
+	multi         bool
+	access        access.Opening
+	endpoint      endpoint.Opening
+	panicAt       string
+	direct        bool
+	sourceHandle  *lifecycleHandle
+	sinkHandle    *lifecycleHandle
+	sessionClosed atomic.Int32
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
-type lifecycleAccessSession struct{ capabilities access.Capabilities }
+type lifecycleAccessSession struct {
+	capabilities access.Capabilities
+	closed       *atomic.Int32
+}
 
 func (h *lifecycleHandle) Close() error {
 	h.closed.Add(1)
@@ -65,7 +69,10 @@ func (s lifecycleAccessSession) Capabilities() access.Capabilities {
 	result, _ := access.NewCapabilities(s.capabilities.Values()...)
 	return result
 }
-func (lifecycleAccessSession) Close() error { return nil }
+func (s lifecycleAccessSession) Close() error {
+	s.closed.Add(1)
+	return nil
+}
 
 func (s *lifecycleState) add(value string) {
 	s.mu.Lock()
@@ -220,7 +227,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 			t.Fatal(err)
 		}
 		acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
-			return lifecycleAccessSession{capabilities: capabilities}, nil
+			return lifecycleAccessSession{capabilities: capabilities, closed: &state.sessionClosed}, nil
 		}
 		sourceTraits = append(sourceTraits, endpoint.WithTrait(trait))
 		sinkTraits = append(sinkTraits, access.Sink("memory", capabilities, access.StagedCommit, acquire))
@@ -436,6 +443,9 @@ func TestPreparedRunHandsOnlySelectedBoundaryViewsToComponents(t *testing.T) {
 	}
 	if len(result.Outputs) != 1 || result.Outputs[0].Class != access.StagedCommit || result.Outputs[0].State != OutputCommitted {
 		t.Fatalf("output = %#v", result.Outputs)
+	}
+	if state.sessionClosed.Load() != 1 {
+		t.Fatalf("Run closed Access session %d times", state.sessionClosed.Load())
 	}
 	for _, boundary := range resultPlan(t, instance, request).Boundaries() {
 		if strings.Contains(boundary.Reference, "secret") {
