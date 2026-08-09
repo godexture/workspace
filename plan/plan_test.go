@@ -37,6 +37,7 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 		Reference:            "memory://first/redacted",
 		ReferenceFingerprint: "canonical-reference-fingerprint",
 		Available:            []access.Capability{access.RandomRead, access.SequentialRead},
+		Effective:            []access.Capability{access.RandomRead, access.SequentialRead},
 		Selected:             []access.Capability{access.SequentialRead},
 	}}
 	first, err := New(description)
@@ -57,7 +58,8 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 
 	boundaries := first.Boundaries()
 	boundaries[0].Available[0] = access.CancelableRead
-	if first.Boundaries()[0].Available[0] != access.RandomRead {
+	boundaries[0].Effective[0] = access.CancelableRead
+	if first.Boundaries()[0].Available[0] != access.RandomRead || first.Boundaries()[0].Effective[0] != access.RandomRead {
 		t.Fatal("Plan exposed mutable boundary capability storage")
 	}
 
@@ -70,6 +72,46 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 	}
 	if first.ExecutionSignature() == third.ExecutionSignature() {
 		t.Fatal("private reference identity did not affect execution signature")
+	}
+}
+
+func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
+	spool, err := access.NewSpoolSpec(4096, 0, access.MemorySpool, 0, true, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := testDescription(t)
+	description.Boundaries = []Boundary{{
+		Direction:            OutputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "sink",
+		Port:                 "in",
+		Component:            "fixture.sink",
+		Scheme:               "memory",
+		Reference:            "memory:redacted",
+		ReferenceFingerprint: "canonical-reference-fingerprint",
+		Available:            []access.Capability{access.SequentialWrite},
+		Effective:            []access.Capability{access.RandomWrite, access.SequentialWrite},
+		Selected:             []access.Capability{access.RandomWrite},
+		Spool:                spool,
+	}}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := testDescription(t)
+	changed.Boundaries = description.Boundaries
+	changed.Boundaries[0].Spool, err = access.NewSpoolSpec(8192, 0, access.MemorySpool, 0, true, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == second.ExecutionSignature() {
+		t.Fatal("spool quota did not affect execution identity")
 	}
 }
 

@@ -104,7 +104,7 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 			edges = append(edges, job.Connect(openOutputs[index], job.At(selection.node.ID(), selection.port)))
 		}
 	}
-	selectedEntries, err := registry.selectCapabilities(nodes, edges, entries)
+	selectedEntries, err := registry.selectCapabilities(nodes, edges, entries, request.Policy().Resources)
 	if err != nil {
 		return Result{}, err
 	}
@@ -214,6 +214,7 @@ func (r Registry) sourceSelection(provider sourceBinding, reference access.Refer
 		Reference:            reference.Display(),
 		ReferenceFingerprint: reference.Fingerprint().String(),
 		Available:            provider.trait.Capabilities().Values(),
+		Effective:            provider.trait.Capabilities().Values(),
 	}
 	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Source(projection, reference, provider.trait)}, nil
 }
@@ -237,6 +238,7 @@ func (r Registry) sinkSelection(provider sinkBinding, reference access.Reference
 		Reference:            reference.Display(),
 		ReferenceFingerprint: reference.Fingerprint().String(),
 		Available:            provider.trait.Capabilities().Values(),
+		Effective:            provider.trait.Capabilities().Values(),
 	}
 	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Sink(projection, reference, provider.trait)}, nil
 }

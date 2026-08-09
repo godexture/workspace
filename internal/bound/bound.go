@@ -102,6 +102,7 @@ func (s State) Projections() []plan.Boundary {
 
 func cloneProjection(value plan.Boundary) plan.Boundary {
 	value.Available = append([]access.Capability(nil), value.Available...)
+	value.Effective = append([]access.Capability(nil), value.Effective...)
 	value.Selected = append([]access.Capability(nil), value.Selected...)
 	return value
 }

@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/resource"
 )
@@ -102,10 +103,12 @@ func (p ContinuityPolicy) Valid() bool {
 // ResourcePolicy bounds planning-visible coarse resources. A zero Limit with
 // Limited false means that the Host decides the grant during preparation.
 type ResourcePolicy struct {
-	Limited    bool
-	Limit      resource.Grant
-	Queue      QueuePolicy
-	AllowSpool bool
+	Limited       bool
+	Limit         resource.Grant
+	Queue         QueuePolicy
+	AllowSpool    bool
+	SpoolMaxBytes resource.Bytes
+	SpoolStorage  access.SpoolStorage
 }
 
 // QueuePolicy selects the per-edge bounds fixed into the executable Plan.
@@ -128,7 +131,14 @@ func (p QueuePolicy) validItems() bool  { return p.Items > 0 }
 func (p QueuePolicy) validBytes() bool  { return uint64(p.Bytes) <= math.MaxInt64 }
 func (p QueuePolicy) validWindow() bool { return p.Window >= 0 }
 
-func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() }
+func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validSpool() }
+
+func (p ResourcePolicy) validSpool() bool {
+	if !p.AllowSpool {
+		return p.SpoolMaxBytes == 0 && p.SpoolStorage == 0
+	}
+	return p.SpoolMaxBytes > 0 && uint64(p.SpoolMaxBytes) <= math.MaxInt64 && p.SpoolStorage.Valid()
+}
 
 // Policy is the expanded vector consumed by the planner. Preset is retained
 // only so a Plan can explain which user-facing shorthand produced the vector.
@@ -178,6 +188,9 @@ func (p Policy) diagnostics() (items []diagnostic.Item) {
 	}
 	if !queue.validWindow() {
 		items = append(items, policyDiagnostic("job.invalid-policy-queue-window", "queue window must not be negative", "resources", "queue", "window"))
+	}
+	if !p.Resources.validSpool() {
+		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, and neither when disabled", "resources", "spool"))
 	}
 	return items
 }

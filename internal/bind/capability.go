@@ -13,7 +13,7 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
-func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries []bound.Entry) ([]bound.Entry, error) {
+func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries []bound.Entry, policy job.ResourcePolicy) ([]bound.Entry, error) {
 	byNode := make(map[job.NodeID]job.Node, len(nodes))
 	for _, node := range nodes {
 		byNode[node.ID()] = node
@@ -60,7 +60,22 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 		}
 		selection, ok := access.Select(available, requirements)
 		if !ok {
-			return nil, unsatisfiedCapabilities(projection, node, formatIdentity, requirements)
+			adapted, adaptedSelection, possible := spoolCapabilities(available, requirements)
+			if projection.Direction != plan.OutputBoundary || !possible {
+				return nil, unsatisfiedCapabilities(projection, node, formatIdentity, requirements)
+			}
+			if !policy.AllowSpool {
+				return nil, spoolDisabled(projection, node, formatIdentity, requirements)
+			}
+			spec, err := access.NewSpoolSpec(int64(policy.SpoolMaxBytes), 0, policy.SpoolStorage, 0, true, entry.SinkTrait().TransactionClass())
+			if err != nil {
+				return nil, err
+			}
+			projection.Effective = adapted.Values()
+			projection.Selected = adaptedSelection.Capabilities()
+			projection.Spool = spec
+			result[index] = bound.Sink(projection, entry.Reference(), entry.SinkTrait())
+			continue
 		}
 		projection.Selected = selection.Capabilities()
 		if projection.Direction == plan.InputBoundary {
@@ -70,6 +85,22 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 		}
 	}
 	return result, nil
+}
+
+func spoolCapabilities(available access.Capabilities, requirements access.Requirements) (access.Capabilities, access.Selection, bool) {
+	if _, ok := access.Select(available, requirements); ok {
+		return access.Capabilities{}, access.Selection{}, false
+	}
+	if !available.Contains(access.SequentialWrite) || available.Contains(access.RandomWrite) {
+		return access.Capabilities{}, access.Selection{}, false
+	}
+	values := append(available.Values(), access.RandomWrite)
+	adapted, err := access.NewCapabilities(values...)
+	if err != nil {
+		return access.Capabilities{}, access.Selection{}, false
+	}
+	selection, ok := access.Select(adapted, requirements)
+	return adapted, selection, ok
 }
 
 // AdjacentBoundaryNode returns the one explicit component connected directly
@@ -101,6 +132,17 @@ func missingFormatRequirements(boundary plan.Boundary, adjacent job.Node) error 
 
 func unsatisfiedCapabilities(boundary plan.Boundary, adjacent job.Node, formatIdentity plugin.Identity, requirements access.Requirements) error {
 	return diagnostic.NewError(bindItem("bind.capability-unsatisfied", adjacent.Component(), "Access Provider does not satisfy any Format capability alternative", map[string]string{
+		"node":         adjacent.ID().String(),
+		"scheme":       boundary.Scheme,
+		"direction":    boundaryDirection(boundary.Direction),
+		"format":       formatIdentity.String(),
+		"available":    capabilityList(boundary.Available),
+		"alternatives": alternativeList(requirements),
+	}))
+}
+
+func spoolDisabled(boundary plan.Boundary, adjacent job.Node, formatIdentity plugin.Identity, requirements access.Requirements) error {
+	return diagnostic.NewError(bindItem("bind.spool-disabled", adjacent.Component(), "Access sink requires capability adaptation but spool is disabled by policy", map[string]string{
 		"node":         adjacent.ID().String(),
 		"scheme":       boundary.Scheme,
 		"direction":    boundaryDirection(boundary.Direction),

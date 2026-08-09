@@ -188,10 +188,22 @@ type canonicalBoundary struct {
 	Scheme               string
 	ReferenceFingerprint string
 	Available            []access.Capability
+	Effective            []access.Capability
 	Selected             []access.Capability
+	Spool                canonicalSpool
 	Topology             endpoint.Topology
 	Mode                 endpoint.Mode
 	Ownership            access.Ownership
+}
+
+type canonicalSpool struct {
+	Present        bool
+	MaximumBytes   int64
+	PredictedBytes int64
+	Storage        access.SpoolStorage
+	StartupLatency int64
+	FinalCopy      bool
+	Rollback       access.TransactionClass
 }
 
 type canonicalPlan struct {
@@ -240,13 +252,30 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Scheme:               boundary.Scheme,
 			ReferenceFingerprint: boundary.ReferenceFingerprint,
 			Available:            append([]access.Capability(nil), boundary.Available...),
+			Effective:            append([]access.Capability(nil), boundary.Effective...),
 			Selected:             append([]access.Capability(nil), boundary.Selected...),
+			Spool:                canonicalSpoolOf(boundary.Spool),
 			Topology:             boundary.Topology,
 			Mode:                 boundary.Mode,
 			Ownership:            boundary.Ownership,
 		}
 	}
 	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime)}
+}
+
+func canonicalSpoolOf(value access.SpoolSpec) canonicalSpool {
+	if value.IsZero() {
+		return canonicalSpool{}
+	}
+	return canonicalSpool{
+		Present:        true,
+		MaximumBytes:   value.MaximumBytes(),
+		PredictedBytes: value.PredictedBytes(),
+		Storage:        value.Storage(),
+		StartupLatency: int64(value.StartupLatency()),
+		FinalCopy:      value.FinalCopy(),
+		Rollback:       value.RollbackClass(),
+	}
 }
 
 func validateRuntime(runtime Runtime, nodes map[string]struct{}, edges []Edge) error {

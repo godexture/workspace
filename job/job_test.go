@@ -175,6 +175,16 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	if _, err := New(nil, nil, graph, WithBudget(Budget{})); err == nil {
 		t.Fatal("invalid budget was accepted")
 	}
+	invalidSpool := portable
+	invalidSpool.Resources.AllowSpool = true
+	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
+		t.Fatal("enabled spool without quota or storage was accepted")
+	}
+	invalidSpool.Resources.AllowSpool = false
+	invalidSpool.Resources.SpoolMaxBytes = 1024
+	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
+		t.Fatal("disabled spool with a quota was accepted")
+	}
 }
 
 func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {

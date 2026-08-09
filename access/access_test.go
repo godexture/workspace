@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -217,8 +218,8 @@ func TestAccessTraitsCarryCapabilitiesAcquireAndTransaction(t *testing.T) {
 }
 
 func TestSpoolProbeAndSnapshotAreDeclarations(t *testing.T) {
-	spool, err := NewSpoolSpec(1024, DiskSpool, 5*time.Millisecond, Rollbackable)
-	if err != nil || spool.PredictedBytes() != 1024 || spool.RollbackClass() != Rollbackable {
+	spool, err := NewSpoolSpec(2048, 1024, DiskSpool, 5*time.Millisecond, true, Rollbackable)
+	if err != nil || spool.MaximumBytes() != 2048 || spool.PredictedBytes() != 1024 || !spool.FinalCopy() || spool.RollbackClass() != Rollbackable {
 		t.Fatalf("spool = %#v, %v", spool, err)
 	}
 	view := NewProbeView([]byte("probe"))
@@ -233,5 +234,14 @@ func TestSpoolProbeAndSnapshotAreDeclarations(t *testing.T) {
 	snapshot, err := NewSnapshot("", NoSnapshot)
 	if err != nil || !snapshot.Valid() || snapshot.Strong() {
 		t.Fatalf("snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestSpoolSpecRejectsMissingQuotaAndPredictionAboveQuota(t *testing.T) {
+	if _, err := NewSpoolSpec(0, 0, MemorySpool, 0, true, AtomicReplace); !errors.Is(err, ErrInvalidSpoolSpec) {
+		t.Fatalf("missing quota error = %v", err)
+	}
+	if _, err := NewSpoolSpec(4, 5, MemorySpool, 0, true, AtomicReplace); !errors.Is(err, ErrInvalidSpoolSpec) {
+		t.Fatalf("prediction above quota error = %v", err)
 	}
 }
