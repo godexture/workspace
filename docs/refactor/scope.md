@@ -171,6 +171,10 @@ M6 でも宣言に留める contract と担当は次である。`metadata.Mappin
 
 M6 が新設する write 側 capability（sink の逐次書きと位置指定書き）と narrow view は、WAVE mux と local file Provider が同時に consumer になる。size 不明 header を書く streaming 出力は M6 では提供せず、需要が確認された milestone が opt-in と `Plan` warning を伴って追加する。
 
+M6-1 は data unit schema の所有者も是正する。Access boundary の byte stream は `access`、container framing（`packet.Chunk`）は `media/format`、codec packet（`packet.Packet`）は `media/codec` が所有し、`plugin/pcm/linear` の固有宣言を削除する。schema identity が plugin 固有だと、WAVE demux と PCM parser のように別 plugin の component 同士が接続できず、codec Binding が format tag から parser を選ぶ設計も成立しない。これは新しい contract の宣言ではなく、既に consumer を持つ宣言の移設である。
+
+canonical byte schema の payload は `media/buffer.Handle` とする。`[]byte` を維持すると、`Reader` が read ごとに所有権を渡す以上 buffer を再利用できず、Access boundary の payload だけが Job grant の外の GC allocation になる。`packet.Chunk`/`packet.Packet`/`audio.Frame` がすべて `buffer.Handle` を包む中で boundary だけを例外にしない。したがって byte を produce する component は `resource.Request.Memory` を宣言し、`OpenContext.Buffers()` から確保する。
+
 M6-1 は Format を方向別の component trait にする。boundary へ要求する capability alternative は方向で異なる（raw PCM の読みは逐次または位置指定+既知 size、書きは逐次で足りる）のに対し、M5 時点の `format.Format` は方向を持たない単一の `[]access.Alternative` を持ち、しかもどの component が消費するかを表せない。したがって alternative を `format.Format` から trait へ移し、`Format` 自体は identity、carrier、packetized だけを持つ方向中立な宣言に戻す。M5 時点の `format.Format` は production consumer を一つも持っていない（`linear.Raw()` は test と Example からしか参照されない）ため、この移動は既存 consumer を壊さない。Probe/Inspect の contract は同じ trait へ後から足すが、形を決めるのは実 consumer が現れる M6-3 とし、M6-1 では宣言しない。
 
 M6-0 で削除する合成 API は `access.ProviderRole`、`access.Provider` の manifest 形とその declaration 生成、`endpoint.Component`、`host.Providers`/`host.Endpoints` である。Access と Endpoint は宣言する component の trait になり、`plugin.Set` が唯一の合成値になる。`plugin` に増えるのは marker key 付きの trait slot 一つで、取り出しは各 package の型付き accessor に閉じる。

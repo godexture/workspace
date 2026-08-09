@@ -453,6 +453,7 @@ M6-0 は M6 着手時の contract 監査で見つかった不整合の是正で�
 
 - WAVE が `media/format` の Format として宣言され、RIFF chunk 境界、`fmt `/`data` chunk、padding、size 上限を実規格として扱う。移植参照は `_legacy/plugin/wave/internal` にある。
 - **`RIFF`/`data` size の後追い patch で header 長が決して変わらない。** mux は先頭に `ds64` と同サイズの `JUNK` chunk を予約し、payload が 4 GiB を超えた場合だけ `JUNK` を `ds64` へ書き換えて RF64 にする。旧実装が持つ「header 長が変わったため patch できない」失敗（`_legacy/plugin/wave/internal/muxer.go`）が新経路に存在しない。sink capability による経路選択は [access](access.md#m6-完了条件) を正本とする。
+- **container framing と codec packet の schema を共有 vocabulary が所有する。** `packet.Chunk` の schema は `media/format`、`packet.Packet` の schema は `media/codec` が持ち、`plugin/pcm/linear` 固有の宣言を削除する。WAVE demux が出した chunk を PCM parser が受け取れること、codec Binding が format tag から任意の parser を選べることは、どちらも schema identity が plugin 横断で一致していることを前提にしている。plugin 固有 identity のままでは接続が `graph.schema-mismatch` になり、埋める bridge も存在しない。Access boundary の byte schema は [access](access.md#m6-完了条件) のとおり `access` が所有する。所有先の分割はこの文書の Format/Codec/Carrier の責務分割にそのまま従う。
 - codec Binding が WAVE の format tag と `plugin/pcm/linear` の Parser/Decoder を結び、PCM component 側を container 向けに書き換えない。container が codec の packetization を直接知る経路（[F20](findings.md)）が新経路に現れない。
 - 未知 chunk が `metadata.RawBlock` として解釈されずに保持され、WAVE → WAVE の roundtrip で byte 列と順序が復元される。
 - RIFF INFO の metadata encoding が `media/metadata` の Document/Origin/RawBlock と `media/carrier` の carrier identity を使い、重複 key と順序を保存する。共通 key への写像は `media/tag` の vocabulary を使う。
