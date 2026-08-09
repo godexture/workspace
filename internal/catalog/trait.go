@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/bound"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -37,6 +38,9 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 		}
 		if trait, ok := mediaformat.WriteOf(component); ok {
 			items = append(items, validateFormatWriteTrait(component, shape, trait)...)
+		}
+		if trait, ok := metadata.EncodingOf(component); ok && !trait.Valid() {
+			items = append(items, traitItem("catalog.metadata-trait", component.Identity(), "Metadata Encoding trait is invalid", nil))
 		}
 		if trait, ok := endpoint.TraitOf(component); ok {
 			if !trait.Valid() {

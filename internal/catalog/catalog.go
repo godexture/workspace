@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/gotype"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -43,6 +44,7 @@ func Build(set plugin.Set) (Index, error) {
 
 	components := set.Components()
 	seenComponents := make(map[plugin.Identity]struct{}, len(components))
+	componentsByID := make(map[plugin.Identity]plugin.Component, len(components))
 	type schemaUse struct {
 		payload   reflect.Type
 		component plugin.Identity
@@ -67,6 +69,7 @@ func Build(set plugin.Set) (Index, error) {
 			items = append(items, diagnostic.NewItem("catalog.plugin-identity", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String()}, "component has no parent plugin identity", nil))
 		}
 		seenComponents[identity] = struct{}{}
+		componentsByID[identity] = component
 		shape := component.Ports()
 		for _, port := range append(append([]flow.Port(nil), shape.Inputs...), shape.Outputs...) {
 			descriptor := port.Schema()
@@ -114,6 +117,19 @@ func Build(set plugin.Set) (Index, error) {
 			if componentTarget {
 				if _, present := seenComponents[component]; !present {
 					items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.String(), Descriptor: key.String()}, "composition declaration target is not in the catalog", map[string]string{"target": component.String()}))
+				}
+			}
+		}
+		if metadata.IsBindingKey(key) {
+			targets := declaration.Targets()
+			if len(targets) != 1 {
+				items = append(items, diagnostic.NewItem("catalog.metadata-binding", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "metadata binding must name exactly one encoding component", nil))
+			} else if identity, componentTarget := targets[0].Component(); componentTarget {
+				if component, present := componentsByID[identity]; present {
+					encoding, ok := metadata.EncodingOf(component)
+					if !ok || !encoding.Valid() {
+						items = append(items, diagnostic.NewItem("catalog.metadata-encoding", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String(), Descriptor: key.String()}, "metadata binding target has no valid Encoding trait", nil))
+					}
 				}
 			}
 		}

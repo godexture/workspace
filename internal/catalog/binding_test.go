@@ -3,15 +3,21 @@ package catalog
 import (
 	"testing"
 
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/plugin"
 )
 
 type bindingPluginID struct{}
 type bindingComponentID struct{}
 type secondBindingComponentID struct{}
+type metadataBindingComponentID struct{}
+type metadataBindingCarrierID struct{}
+type metadataBindingConfigID struct{}
 
 func TestBuildRejectsConflictingCodecBindings(t *testing.T) {
 	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, catalogComponent[bindingComponentID]("binding"))
@@ -43,6 +49,44 @@ func TestBuildRejectsDeclarationWithMissingTarget(t *testing.T) {
 		}
 	}
 	t.Fatalf("missing declaration target diagnostic absent: %v", err)
+}
+
+func TestMetadataBindingTargetRequiresEncodingTrait(t *testing.T) {
+	slot := carrier.Define[metadataBindingCarrierID]()
+	valid := metadataBindingComponent()
+	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, valid)
+	if _, err := Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, valid.Identity()))); err != nil {
+		t.Fatalf("valid metadata encoding rejected: %v", err)
+	}
+
+	invalid := catalogComponent[bindingComponentID]("not an encoding")
+	definition = plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, invalid)
+	_, err := Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, invalid.Identity())))
+	if err == nil || !hasCatalogDiagnostic(err, "catalog.metadata-encoding") {
+		t.Fatalf("metadata trait diagnostic = %v", err)
+	}
+}
+
+func TestBuildRejectsInvalidMetadataEncodingTrait(t *testing.T) {
+	component := plugin.NewComponent[metadataBindingComponentID](
+		plugin.Descriptor{DisplayName: "invalid encoding"},
+		config.Struct[metadataBindingConfigID](func() struct{} { return struct{}{} }).Version("1").Build(),
+		metadata.WithEncoding(nil, nil),
+	)
+	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, component)
+	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "catalog.metadata-trait") {
+		t.Fatalf("invalid metadata trait diagnostic = %v", err)
+	}
+}
+
+func metadataBindingComponent() plugin.Component {
+	schema := config.Struct[metadataBindingConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
+	return plugin.NewComponent[metadataBindingComponentID](plugin.Descriptor{DisplayName: "encoding"}, schema, metadata.WithEncoding(
+		func(ctx metadata.ParseContext) (metadata.Document, error) {
+			return metadata.NewBuilder(ctx.Scope()).Build()
+		},
+		func(metadata.MarshalContext) (metadata.Blob, error) { return metadata.NewBlob("", nil), nil },
+	))
 }
 
 func TestBindingRegistrationOrderDoesNotChangeFingerprint(t *testing.T) {

@@ -25,3 +25,8 @@ func Bind(slot carrier.ID, encoding plugin.Identity) Binding {
 func BindingKey(slot carrier.ID) plugin.DeclarationKey {
 	return Bind(slot, plugin.Identity{}).Key()
 }
+
+// IsBindingKey reports whether key belongs to the metadata carrier namespace.
+func IsBindingKey(key plugin.DeclarationKey) bool {
+	return key.Namespace() == plugin.IdentityOf[bindingNamespace]()
+}

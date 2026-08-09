@@ -45,9 +45,6 @@ type skeletonEncoderID struct{}
 type skeletonMuxerID struct{}
 type skeletonSinkID struct{}
 type skeletonMetadataEncodingID struct{}
-type skeletonMetadataSourceID struct{}
-type skeletonMetadataSinkID struct{}
-type skeletonMetadataDocumentID struct{}
 type skeletonMetadataEventID struct{}
 type skeletonMissingMetadataID struct{}
 type skeletonFormatID struct{}
@@ -76,12 +73,11 @@ var (
 		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
 		Drop: func(value audio.Frame[int16]) { value.Release() },
 	})
-	skeletonMetadataDocumentSchema = schema.Define[skeletonMetadataDocumentID, metadata.Document](schema.Traits[metadata.Document]{})
-	skeletonMetadataEventSchema    = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
-	skeletonMetadataCarrier        = carrier.Define[skeletonMetadataCarrierID]()
-	skeletonSampleRate             = property.Define[skeletonSampleRateID](property.Scalar[int]())
-	skeletonDecodedTimeBase        = timing.MustBase(1, 48000)
-	skeletonEncodedTimeBase        = timing.MustBase(1, 1000)
+	skeletonMetadataEventSchema = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
+	skeletonMetadataCarrier     = carrier.Define[skeletonMetadataCarrierID]()
+	skeletonSampleRate          = property.Define[skeletonSampleRateID](property.Scalar[int]())
+	skeletonDecodedTimeBase     = timing.MustBase(1, 48000)
+	skeletonEncodedTimeBase     = timing.MustBase(1, 1000)
 )
 
 type skeletonSourceOperator struct {
@@ -451,31 +447,6 @@ func (o *skeletonMuxerOperator) Flush(context.Context, flow.Emitter[packet.Chunk
 	return nil
 }
 
-// A metadata encoding does not move items along an edge: it converts a carrier
-// payload at the format boundary. Its operator therefore implements Parse and
-// Marshal rather than flow.Processor.
-type skeletonMetadataEncodingOperator interface {
-	flow.Operator
-	Parse([]byte) (metadata.Document, error)
-	Marshal(metadata.Document) ([]byte, error)
-}
-
-type skeletonMetadataOperator struct {
-	shape    flow.Shape
-	encoding skeletonMetadataEncoding
-}
-
-func (o *skeletonMetadataOperator) Ports() flow.Shape { return o.shape }
-func (o *skeletonMetadataOperator) Close() error      { return nil }
-
-func (o *skeletonMetadataOperator) Parse(payload []byte) (metadata.Document, error) {
-	return o.encoding.Parse(payload)
-}
-
-func (o *skeletonMetadataOperator) Marshal(document metadata.Document) ([]byte, error) {
-	return o.encoding.Marshal(document)
-}
-
 const (
 	skeletonMetadataTitle  byte = 1
 	skeletonMetadataArtist byte = 2
@@ -488,20 +459,9 @@ type skeletonMetadataEvent struct {
 	Value string
 }
 
-type skeletonMetadataEncoding struct {
-	identity plugin.Identity
-	carrier  carrier.ID
-}
-
-func newSkeletonMetadataEncoding() skeletonMetadataEncoding {
-	return skeletonMetadataEncoding{
-		identity: plugin.IdentityOf[skeletonMetadataEncodingID](),
-		carrier:  skeletonMetadataCarrier,
-	}
-}
-
-func (e skeletonMetadataEncoding) Parse(payload []byte) (metadata.Document, error) {
-	builder := metadata.NewBuilder(metadata.StreamScope)
+func parseSkeletonMetadata(ctx metadata.ParseContext) (metadata.Document, error) {
+	payload := ctx.Payload().AppendTo(nil)
+	builder := metadata.NewBuilder(ctx.Scope())
 	for offset := 0; offset < len(payload); {
 		if len(payload)-offset < 2 {
 			return metadata.Document{}, fmt.Errorf("metadata record at %d is truncated", offset)
@@ -514,59 +474,64 @@ func (e skeletonMetadataEncoding) Parse(payload []byte) (metadata.Document, erro
 		}
 		record := append([]byte(nil), payload[offset:end]...)
 		value := payload[offset+2 : end]
+		origin := metadata.Origin{Encoding: ctx.Encoding(), Carrier: ctx.Carrier()}
 		switch kind {
 		case skeletonMetadataTitle:
-			metadata.Add(builder, tag.Title(), string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "TITLE"})
+			origin.Native = "TITLE"
+			metadata.Add(builder, tag.Title(), string(value), origin)
 		case skeletonMetadataArtist:
-			metadata.Add(builder, tag.Artist(), string(value), metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "ARTIST"})
+			origin.Native = "ARTIST"
+			metadata.Add(builder, tag.Artist(), string(value), origin)
 		case skeletonMetadataDate:
 			date, err := tag.ParseDate(string(value))
 			if err != nil {
-				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
+				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("%s-raw-%d", ctx.Block(), offset)), ctx.Carrier(), ctx.Encoding(), metadata.NewBlob("", record)))
 				break
 			}
-			metadata.Add(builder, tag.Date(), date, metadata.Origin{Encoding: e.identity, Carrier: e.carrier, Native: "DATE"})
+			origin.Native = "DATE"
+			metadata.Add(builder, tag.Date(), date, origin)
 		default:
-			builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("raw-%d", offset)), e.carrier, e.identity, metadata.NewBlob("", record)))
+			builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(fmt.Sprintf("%s-raw-%d", ctx.Block(), offset)), ctx.Carrier(), ctx.Encoding(), metadata.NewBlob("", record)))
 		}
 		offset = end
 	}
 	return builder.Build()
 }
 
-func (e skeletonMetadataEncoding) Marshal(document metadata.Document) ([]byte, error) {
+func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, error) {
+	document := ctx.Document()
 	result := make([]byte, 0, document.Len()*8)
 	for _, entry := range document.Entries() {
 		switch entry.Key() {
 		case tag.Title().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
-				return nil, fmt.Errorf("metadata title entry has type %T", entry.Value())
+				return metadata.Blob{}, fmt.Errorf("metadata title entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataTitle, []byte(value))
 		case tag.Artist().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
-				return nil, fmt.Errorf("metadata artist entry has type %T", entry.Value())
+				return metadata.Blob{}, fmt.Errorf("metadata artist entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataArtist, []byte(value))
 		case tag.Date().ID():
 			value, ok := entry.Value().(tag.PartialDate)
 			if !ok {
-				return nil, fmt.Errorf("metadata date entry has type %T", entry.Value())
+				return metadata.Blob{}, fmt.Errorf("metadata date entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataDate, []byte(value.ToISOString()))
 		default:
-			return nil, fmt.Errorf("metadata key %s cannot be represented by fixture encoding", entry.Key())
+			return metadata.Blob{}, fmt.Errorf("metadata key %s cannot be represented by fixture encoding", entry.Key())
 		}
 	}
 	for _, block := range document.Blocks() {
-		if block.Carrier() != e.carrier || block.Encoding() != e.identity {
-			return nil, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
+		if block.Carrier() != ctx.Carrier() || block.Encoding() != ctx.Encoding() {
+			return metadata.Blob{}, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
 		}
 		result = append(result, block.Payload().AppendTo(nil)...)
 	}
-	return result, nil
+	return metadata.NewBlob("application/octet-stream", result), nil
 }
 
 func appendSkeletonMetadataRecord(destination []byte, kind byte, value []byte) []byte {
@@ -724,9 +689,6 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 	encoderShape := flow.NewShape([]flow.Port{flow.In("frames", skeletonFrameSchema)}, []flow.Port{flow.Out("packets", skeletonPacketSchema)})
 	muxerShape := flow.NewShape([]flow.Port{flow.In("packets", skeletonPacketSchema)}, []flow.Port{flow.Out("chunks", skeletonChunkSchema)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("chunks", skeletonChunkSchema)}, nil)
-	metadataSourceShape := flow.NewShape(nil, []flow.Port{flow.Out("document", skeletonMetadataDocumentSchema)})
-	metadataShape := flow.NewShape([]flow.Port{flow.In("document-in", skeletonMetadataDocumentSchema)}, []flow.Port{flow.Out("document-out", skeletonMetadataDocumentSchema)})
-	metadataSinkShape := flow.NewShape([]flow.Port{flow.In("document", skeletonMetadataDocumentSchema)}, nil)
 	configSchema := skeletonConfigSchema()
 	structural := func(detail string) plugin.Effect {
 		return plugin.Effect{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: detail}
@@ -777,19 +739,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 		plugin.NewComponent[skeletonSinkID](plugin.Descriptor{DisplayName: "sink"}, configSchema, plugin.WithSpec(skeletonSpec(sinkShape, structural("sink"), skeletonSinkPlanner("chunks"), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return skeletonNoopOperator{shape: plan.shape}, nil
 		}))),
-		plugin.NewComponent[skeletonMetadataSourceID](plugin.Descriptor{DisplayName: "metadata source"}, configSchema, plugin.WithSpec(skeletonSpec(metadataSourceShape, structural("metadata-source"), skeletonSourcePlanner("document", nil, func() (stream.Descriptor, error) {
-			return newSkeletonDescriptor("metadata-0", skeletonMetadataDocumentSchema.Identity(), timing.MustBase(1, 1000), property.New(), metadata.Document{})
-		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
-			return skeletonNoopOperator{shape: plan.shape}, nil
-		}))),
-		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, plugin.WithSpec(skeletonSpec(metadataShape, plugin.Effect{Kind: plugin.MetadataEffect, Loss: plugin.NoLoss, Detail: "metadata-encoding"}, skeletonTransformPlanner("document-in", "document-out", func(input stream.Descriptor) (stream.Descriptor, skeletonPlan, error) {
-			return input, skeletonPlan{}, nil
-		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
-			return &skeletonMetadataOperator{shape: plan.shape, encoding: newSkeletonMetadataEncoding()}, nil
-		}))),
-		plugin.NewComponent[skeletonMetadataSinkID](plugin.Descriptor{DisplayName: "metadata sink"}, configSchema, plugin.WithSpec(skeletonSpec(metadataSinkShape, structural("metadata-sink"), skeletonSinkPlanner("document"), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
-			return skeletonNoopOperator{shape: plan.shape}, nil
-		}))),
+		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, metadata.WithEncoding(parseSkeletonMetadata, marshalSkeletonMetadata)),
 	)
 }
 
@@ -822,28 +772,6 @@ func compileSkeleton(index catalog.Index) (program.Program, error) {
 			job.Connect(job.At("decoder", "frames"), job.At("encoder", "frames")),
 			job.Connect(job.At("encoder", "packets"), job.At("muxer", "packets")),
 			job.Connect(job.At("muxer", "chunks"), job.At("sink", "chunks")),
-		},
-	)
-	if err != nil {
-		return program.Program{}, err
-	}
-	jobRequest, err := job.New(nil, nil, request)
-	if err != nil {
-		return program.Program{}, err
-	}
-	return solve.Resolve(context.Background(), index, jobRequest, plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
-}
-
-func compileSkeletonMetadata(index catalog.Index) (program.Program, error) {
-	request, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("metadata-source", plugin.IdentityOf[skeletonMetadataSourceID](), config.NewPatch()),
-			job.NewNode("metadata", plugin.IdentityOf[skeletonMetadataEncodingID](), config.NewPatch()),
-			job.NewNode("metadata-sink", plugin.IdentityOf[skeletonMetadataSinkID](), config.NewPatch()),
-		},
-		[]job.Edge{
-			job.Connect(job.At("metadata-source", "document"), job.At("metadata", "document-in")),
-			job.Connect(job.At("metadata", "document-out"), job.At("metadata-sink", "document")),
 		},
 	)
 	if err != nil {
@@ -1079,18 +1007,13 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compileSkeletonMetadata(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operator, err := compiled.Open(plugin.NewOpenContext(context.Background(), plugin.OpenServices{}), "metadata")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer operator.Close()
-	encoding, ok := operator.(skeletonMetadataEncodingOperator)
+	component, ok := index.Lookup(plugin.IdentityOf[skeletonMetadataEncodingID]())
 	if !ok {
-		t.Fatalf("metadata component has type %T, want encoding operator", operator)
+		t.Fatal("metadata encoding component is absent from the catalog")
+	}
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{skeletonMetadataCarrier: component})
+	if err != nil {
+		t.Fatal(err)
 	}
 	rawRecord := []byte{0xfe, 3, 0xde, 0xad, 0xbe}
 	payload := appendSkeletonMetadataRecord(nil, skeletonMetadataTitle, []byte("Song"))
@@ -1098,7 +1021,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	payload = appendSkeletonMetadataRecord(payload, skeletonMetadataArtist, []byte("Second"))
 	payload = append(payload, rawRecord...)
 
-	document, err := encoding.Parse(payload)
+	document, err := resolver.Parse(t.Context(), skeletonMetadataCarrier, "fixture", metadata.StreamScope, metadata.NewBlob("application/octet-stream", payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1116,14 +1039,15 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 		t.Fatalf("raw blocks = %#v", blocks)
 	}
 
-	reencoded, err := encoding.Marshal(document)
+	reencoded, err := resolver.Marshal(t.Context(), skeletonMetadataCarrier, "fixture", document)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(reencoded, rawRecord) {
-		t.Fatalf("reencoded metadata lost raw record: %x", reencoded)
+	reencodedBytes := reencoded.AppendTo(nil)
+	if !bytes.Contains(reencodedBytes, rawRecord) {
+		t.Fatalf("reencoded metadata lost raw record: %x", reencodedBytes)
 	}
-	parsedAgain, err := encoding.Parse(reencoded)
+	parsedAgain, err := resolver.Parse(t.Context(), skeletonMetadataCarrier, "roundtrip", metadata.StreamScope, reencoded)
 	if err != nil {
 		t.Fatal(err)
 	}
