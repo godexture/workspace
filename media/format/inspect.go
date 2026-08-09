@@ -20,15 +20,16 @@ var inspectionKey = plugin.TraitKeyOf[inspectionTraitKey]()
 // InspectContext is the bounded input view for inspecting one selected
 // Format before component compilation.
 type InspectContext struct {
-	context context.Context
-	opening access.Opening
+	context  context.Context
+	opening  access.Opening
+	prepared plugin.CompileContext
 }
 
-func NewInspectContext(ctx context.Context, opening access.Opening) InspectContext {
+func NewInspectContext(ctx context.Context, opening access.Opening, prepared plugin.CompileContext) InspectContext {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return InspectContext{context: ctx, opening: opening}
+	return InspectContext{context: ctx, opening: opening, prepared: prepared}
 }
 
 func (c InspectContext) Context() context.Context {
@@ -39,6 +40,10 @@ func (c InspectContext) Context() context.Context {
 }
 
 func (c InspectContext) Opening() access.Opening { return c.opening }
+
+// Prepared returns the node-local marker-keyed values selected before Inspect.
+// Typed packages such as metadata remain the only supported accessors.
+func (c InspectContext) Prepared() plugin.CompileContext { return c.prepared }
 
 func (c InspectContext) Valid() bool {
 	return c.opening.Valid() && c.opening.Direction() == access.SourceDirection

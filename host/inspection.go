@@ -28,7 +28,10 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 	for _, session := range sessions {
 		openings[session.node] = session.opening
 	}
-	contexts := make(map[job.NodeID]plugin.CompileContext)
+	contexts, err := h.formatCompileContexts(requested)
+	if err != nil {
+		return graph.CompileContexts{}, err
+	}
 	for _, entry := range entries {
 		projection := entry.Projection()
 		if projection.Direction != plan.InputBoundary || projection.Kind == plan.EndpointBoundary {
@@ -66,7 +69,7 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 		var inspection mediaformat.Inspection
 		failure := invoke(ctx, PreparePhase, adjacent.String(), "format/inspect", func(callContext context.Context) error {
 			var inspectErr error
-			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, opening))
+			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, opening, contexts[adjacent]))
 			return inspectErr
 		})
 		if failure != nil {

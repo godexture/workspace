@@ -16,10 +16,11 @@ import (
 
 // Index is an immutable, validated component index.
 type Index struct {
-	components   []plugin.Component
-	declarations []plugin.Declaration
-	byID         map[plugin.Identity]int
-	fingerprint  [32]byte
+	components    []plugin.Component
+	declarations  []plugin.Declaration
+	byID          map[plugin.Identity]int
+	byDeclaration map[plugin.DeclarationKey]int
+	fingerprint   [32]byte
 }
 
 // Build validates every definition and returns an index only when all entries
@@ -165,16 +166,30 @@ func Build(set plugin.Set) (Index, error) {
 	for index, component := range components {
 		byID[component.Identity()] = index
 	}
+	byDeclaration := make(map[plugin.DeclarationKey]int, len(declarations))
+	for index, declaration := range declarations {
+		byDeclaration[declaration.Key()] = index
+	}
 	return Index{
-		components:   copyComponents(components),
-		declarations: append([]plugin.Declaration(nil), declarations...),
-		byID:         byID,
-		fingerprint:  catalogFingerprint(definitions, components, declarations),
+		components:    copyComponents(components),
+		declarations:  append([]plugin.Declaration(nil), declarations...),
+		byID:          byID,
+		byDeclaration: byDeclaration,
+		fingerprint:   catalogFingerprint(definitions, components, declarations),
 	}, nil
 }
 
 func (i Index) Declarations() []plugin.Declaration {
 	return append([]plugin.Declaration(nil), i.declarations...)
+}
+
+// LookupDeclaration returns one validated composition declaration by key.
+func (i Index) LookupDeclaration(key plugin.DeclarationKey) (plugin.Declaration, bool) {
+	index, ok := i.byDeclaration[key]
+	if !ok {
+		return plugin.Declaration{}, false
+	}
+	return i.declarations[index], true
 }
 
 // Components returns copied component definitions in stable identity order.

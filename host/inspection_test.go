@@ -10,7 +10,9 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -25,6 +27,8 @@ type inspectReaderID struct{}
 type inspectBridgeID struct{}
 type inspectSinkID struct{}
 type inspectFormatID struct{}
+type inspectEncodingID struct{}
+type inspectCarrierID struct{}
 type inspectSchemaAID struct{}
 type inspectSchemaBID struct{}
 type inspectUnit int
@@ -42,7 +46,8 @@ func (o inspectOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (inspectOperator) Close() error        { return nil }
 
 func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
-	value, err := format.Define[inspectFormatID](nil)
+	slot := carrier.Define[inspectCarrierID]()
+	value, err := format.Define[inspectFormatID]([]carrier.ID{slot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +80,9 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	reader := plugin.NewComponent[inspectReaderID](plugin.Descriptor{DisplayName: "inspected format"}, configuration,
 		component(readerShape, func(ctx plugin.CompileContext, _ inspectConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[inspectPlan, stream.Descriptor], error) {
 			compiled.Add(1)
+			if resolver, ok := metadata.ResolverOf(ctx); !ok || !resolver.Valid() {
+				return plugin.Compiled[inspectPlan, stream.Descriptor]{}, errors.New("Compile did not receive the prepared metadata resolver")
+			}
 			prepared, ok := format.InspectionOf[int](ctx, value)
 			if !ok || prepared != 44 || inspected.Load() != 1 {
 				return plugin.Compiled[inspectPlan, stream.Descriptor]{}, errors.New("Compile did not receive the one prepared inspection")
@@ -90,6 +98,13 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		format.ReadWithInspect(value, func(ctx format.InspectContext) (format.Inspection, error) {
 			if _, ok := access.RandomOf(ctx.Opening()); !ok {
 				return format.Inspection{}, errors.New("Inspect did not receive the selected Random view")
+			}
+			resolver, ok := metadata.ResolverOf(ctx.Prepared())
+			if !ok {
+				return format.Inspection{}, errors.New("Inspect did not receive the prepared metadata resolver")
+			}
+			if _, err := resolver.Parse(ctx.Context(), slot, "inspect", metadata.StreamScope, metadata.NewBlob("", nil)); err != nil {
+				return format.Inspection{}, err
 			}
 			inspected.Add(1)
 			return format.NewInspection(value, 44), nil
@@ -117,7 +132,18 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		}),
 		plugin.WithWriter("in", inspectSchemaB),
 	)
-	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink))
+	encoding := plugin.NewComponent[inspectEncodingID](plugin.Descriptor{DisplayName: "inspection metadata encoding"}, configuration,
+		metadata.WithEncoding(
+			func(ctx metadata.ParseContext) (metadata.Document, error) {
+				if ctx.Carrier() != slot || ctx.Encoding() != plugin.IdentityOf[inspectEncodingID]() {
+					return metadata.Document{}, errors.New("metadata resolver selected the wrong encoding")
+				}
+				return metadata.NewBuilder(ctx.Scope()).Build()
+			},
+			func(metadata.MarshalContext) (metadata.Blob, error) { return metadata.NewBlob("", nil), nil },
+		),
+	)
+	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink, encoding)).AddDeclaration(metadata.Bind(slot, encoding.Identity()))
 	instance, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)

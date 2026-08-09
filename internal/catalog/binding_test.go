@@ -55,13 +55,18 @@ func TestMetadataBindingTargetRequiresEncodingTrait(t *testing.T) {
 	slot := carrier.Define[metadataBindingCarrierID]()
 	valid := metadataBindingComponent()
 	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, valid)
-	if _, err := Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, valid.Identity()))); err != nil {
+	index, err := Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, valid.Identity())))
+	if err != nil {
 		t.Fatalf("valid metadata encoding rejected: %v", err)
+	}
+	declaration, ok := index.LookupDeclaration(metadata.BindingKey(slot))
+	if !ok || !declaration.SameTargets(metadata.Bind(slot, valid.Identity())) {
+		t.Fatalf("metadata binding lookup = %#v/%v", declaration, ok)
 	}
 
 	invalid := catalogComponent[bindingComponentID]("not an encoding")
 	definition = plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, invalid)
-	_, err := Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, invalid.Identity())))
+	_, err = Build(plugin.NewSet(definition).AddDeclaration(metadata.Bind(slot, invalid.Identity())))
 	if err == nil || !hasCatalogDiagnostic(err, "catalog.metadata-encoding") {
 		t.Fatalf("metadata trait diagnostic = %v", err)
 	}
