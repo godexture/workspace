@@ -173,6 +173,18 @@ M6 が新設する write 側 capability（sink の逐次書きと位置指定書
 
 M6-1 は data unit schema の所有者も是正する。Access boundary の byte stream は `access`、container framing（`packet.Chunk`）は `media/format`、codec packet（`packet.Packet`）は `media/codec` が所有し、`plugin/pcm/linear` の固有宣言を削除する。schema identity が plugin 固有だと、WAVE demux と PCM parser のように別 plugin の component 同士が接続できず、codec Binding が format tag から parser を選ぶ設計も成立しない。これは新しい contract の宣言ではなく、既に consumer を持つ宣言の移設である。
 
+M6-2 は sink 側に位置を表現できる canonical schema を足す。読み側の item は順序どおりの byte 列でよいが、書き側は末尾追加と絶対 offset patch を区別する必要があり、WAVE の `RIFF`/`data` size 後追い patch がその最初の実 consumer になる。boundary の narrow view は Provider node にだけ渡る設計を維持し、mux は自分で I/O せず位置付き item を下流へ渡す。読み側 schema に意味のない append 印を持たせない。
+
+M6-2 は Inspect も担当する。「既知 format の header を読む」ことと「どの format か決める」ことは別操作であり、前者の実 consumer は明示指定された WAVE である。後者（共有 bounded probe、自動判別、非 seekable 入力の prefix replay）は M6-3 に残す。Inspect を後段に残すと M6-2 が header 情報を fixture か config から捏造することになり、M6-1 が carrier descriptor 規則で除去した形を再導入する。
+
+M6-2 は `metadata.Encoding` を component trait として追加する。M5 の `metadata.Binding` は宣言だけで、Parse/Marshal の契約は foundation test の private interface にしかない。M3 の skeleton は encoding を `flow.Operator` として模していたが、Parse は Inspect の最中すなわち Compile より前に必要で、`Open` は Program 確定後なので循環する。trait なら composition 時に解決でき、trait 判定規則にも合致する。Parse/Marshal は payload grant を取らない control-plane 操作とする。ただし embedded artwork は MB 級になり得るため、**外部入力の大きさで決まる control-plane allocation に上限を設けるかは M8 が決める**。RIFF INFO だけを扱う M6-2c では blocker にならない。
+
+M6-2 の Inspect transport は、M6-0 が作った marker key + 型消去値 + 型付き accessor の機構を再利用する。prepared value 専用の単一 slot を作らない。2 種類目の prepared value が現れた時点で map へ作り替えられるためで、機構を二つ持たない。型付きの出入口は `media/format` に閉じる。
+
+**format の選択は Prepare の段階であり、solver の gap-fill ではない。** Inspect transport は「node の Compile より前に Inspection が解決済み」を前提にする。M6-2a は明示指定なので成立するが、M6-3 の自動判別を solver が demux 候補を挿す形で実装すると前提が壊れる。documented pipeline どおり `Probe → 選択 → Inspect → Shape → Compile → Solve` の順を守る。Inspect は node ごとに 1 回、Compile は budget の範囲で複数回呼ばれるので、Compile が Inspection に対して pure であることを test で固定する。
+
+M6-2 は codec Binding を実際の選択へ接続する。M5 の solver は入力 schema だけで候補を索引しており、codec tag と無関係に同じ schema を受ける Parser/Decoder がすべて候補になる。PCM だけの間は不可視だが MP3/FLAC が入る M8 で誤選択になる。ただし tag が絞るのは codec/parser の選択だけとし、codec Binding を持たない component（converter、resampler、bitstream filter 等）は候補に残す。tag を全候補の filter にすると solver の一般性が失われる。
+
 M6-1 は carrier descriptor の意味も確定する。byte schema の descriptor は stream id と metadata までを運び、sample properties と media の time base を持たない。filesystem provider は media format を知らず、planner にも下流から source へ descriptor を逆伝播する仕組みが無いため、byte を消費する component が自分の config または container header から出力の意味を確定する。M5 の PCM 経路は fixture source が byte descriptor に PCM properties を捏造していたので成立していたが、実 Provider では不可能である。
 
 `stream.NewDescriptor` が有効な time base を必須とするため、carrier descriptor は canonical な placeholder を使い、`access` が名前付きで公開する。`access.Bytes()` は `Time` trait を持たず byte edge の time base を消費する経路が存在しないので、値は実行に影響しない。**timeline を持たない stream を型で表す正直な形は M7 が担当する。** time base 必須を「schema が `Time` trait を宣言する場合だけ」に条件化する変更で、`stream.NewDescriptor` の validity、`validateCompiledOutputs`、descriptor fingerprint、erased な `schema.Descriptor` への timeline 有無の露出を伴う。M7 は seek と timeline を扱うため、そこで初めて実 consumer が現れる。placeholder のまま恒久化させない。
@@ -187,7 +199,7 @@ M6-0 で削除する合成 API は `access.ProviderRole`、`access.Provider` の
 
 **trait 種は foundation が定義する閉じた集合である。** 判定規則は「host が Open より前に参照しなければ binding を決められないか」とする。Access trait は「その component が byte boundary であること」、Format trait は「boundary へ何を要求し、後に何で判別するか」を表し、どちらも bind 時に host が読む。Open 以降にしか要る場面がない情報は trait にせず、`Compile`/`Open` の contract に置く。第三者が拡張できるのは trait の**種類**ではなく**実装**であり、host が解釈しない独自 trait 種を付けても無視される。
 
-M6 時点で foundation が定義する trait 種は Access（source/sink）と Format（read/write）である。Format 側の詳細は下の M6-1 の項を参照する。
+M6 時点で foundation が定義する trait 種は Access（source/sink）、Format（read/write）、Metadata Encoding である。Format 側の詳細は下の M6-1 の項、Metadata Encoding は下の M6-2 の項を参照する。
 
 ## 文書全体の完了条件
 

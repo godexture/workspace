@@ -440,12 +440,18 @@ M6 は 5 文書に跨る最大の milestone であり、単位を分けずに着
 |---|---|---|
 | M6-0 | Access/Endpoint を component の trait にする合成 contract の是正。`ProviderRole`、Provider manifest、`Requirements`、`endpoint.Component`、`host.Providers`/`Endpoints` の削除と acquire 契約の追加 | `plugin.Set` 一つで両方向 Provider を含む合成が表現できる。data path は M5 のまま変わらない |
 | M6-1 | write 側 capability と narrow view、`plugin/file` Provider、prepared session の acquire と実 capability 再検証、transactional file output と temporary file の cleanup | M5 の PCM 経路が direct resource ではなく file Reference で通り、出力が temporary file と replace で commit される |
-| M6-2 | WAVE Format の demux/mux、RIFF chunk、codec Binding、未知 chunk の raw preservation、`RIFF`/`data` size patch の capability alternative、spool decorator と spool quota | WAVE の読み書きが通り、逐次書きのみの sink でも spool 経由で正しい header を書ける |
-| M6-3 | 候補間で共有する bounded probe と Format inspect | 入力 format を明示せずに WAVE と raw PCM を判別して変換できる |
+| M6-2a | Prepare の順序是正（Acquire → Inspect → Compile）、Inspect contract、WAVE demux と RIFF chunk 解析 | 明示指定した WAVE file を読んで raw PCM を書き出せる |
+| M6-2b | sink 側の positioned write schema、file sink の適用、spool adapter と spool quota、WAVE mux | WAVE file を書ける。逐次書きのみの sink でも spool 経由で正しい header を書ける |
+| M6-2c | RIFF INFO、未知 chunk の raw preservation、codec Binding による parser/decoder 選択 | metadata roundtrip と tag 駆動の codec 選択が通る |
+| M6-3 | 候補間で共有する bounded probe、自動 format 判別、非 seekable 入力の prefix replay | 入力 format を明示せずに WAVE と raw PCM を判別して変換できる |
 | M6-4 | `standard` composition、public `testkit` の最小形、`integration` module、out-of-tree 相当 plugin の拡張性 gate | 公式 composition から Host を作れ、第三者 plugin が core 無変更で同じ経路に載る |
 | M6-5 | `standard.Convert` と `cli`/`cmd/godec` の最短経路、体験の実測 | 一行の library 呼び出しと公式 binary で file から file への変換ができる |
 
-順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2 は M6-1 の実 byte session を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5 は composition をそれぞれ必要とする。
+順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2a は M6-1 の実 byte session を、M6-2b は M6-2a の WAVE header 知識を、M6-2c は両方向の経路を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5 は composition をそれぞれ必要とする。
+
+M6-2 を 3 つに割ったのは、読み経路と書き経路で必要な機構が違うためである。読みは Inspect と Prepare の順序是正を要し、書きは positioned write schema と spool adapter を要する。一つの単位にまとめると「WAVE が両方向とも動くまで何も green にならない」区間が生まれ、上の判定規則を満たせない。
+
+**Inspect は M6-2a が担当し、Probe は M6-3 に残す。** 「既知 format の header を読む」ことと「どの format か決める」ことは別の操作であり、前者は明示指定された WAVE が実 consumer になる。Inspect を後段に残すと、M6-2 は WAVE の sample properties、time base、codec tag、metadata、未知 chunk を fixture か config から捏造するしかなく、M6-1 が [access](access.md#m6-完了条件) の carrier descriptor 規則で除去した形を再導入することになる。
 
 M6-0 は M6 着手時の contract 監査で見つかった不整合の是正であり、新機能を作らない。実装を始めてから合成 API を変えると差分の由来が追えなくなるため、file I/O を含む M6-1 と混ぜず独立させる。詳細は [access](access.md#m6-完了条件) の Provider trait 条項と [plugins](plugins.md#m6-完了条件) の合成条項を正本とする。
 
@@ -454,6 +460,12 @@ M6-0 は M6 着手時の contract 監査で見つかった不整合の是正で�
 - WAVE が `media/format` の Format として宣言され、RIFF chunk 境界、`fmt `/`data` chunk、padding、size 上限を実規格として扱う。移植参照は `_legacy/plugin/wave/internal` にある。
 - **`RIFF`/`data` size の後追い patch で header 長が決して変わらない。** mux は先頭に `ds64` と同サイズの `JUNK` chunk を予約し、payload が 4 GiB を超えた場合だけ `JUNK` を `ds64` へ書き換えて RF64 にする。旧実装が持つ「header 長が変わったため patch できない」失敗（`_legacy/plugin/wave/internal/muxer.go`）が新経路に存在しない。sink capability による経路選択は [access](access.md#m6-完了条件) を正本とする。
 - **container framing と codec packet の schema を共有 vocabulary が所有する。** `packet.Chunk` の schema は `media/format`、`packet.Packet` の schema は `media/codec` が持ち、`plugin/pcm/linear` 固有の宣言を削除する。WAVE demux が出した chunk を PCM parser が受け取れること、codec Binding が format tag から任意の parser を選べることは、どちらも schema identity が plugin 横断で一致していることを前提にしている。plugin 固有 identity のままでは接続が `graph.schema-mismatch` になり、埋める bridge も存在しない。Access boundary の byte schema は [access](access.md#m6-完了条件) のとおり `access` が所有する。所有先の分割はこの文書の Format/Codec/Carrier の責務分割にそのまま従う。
+- **metadata Encoding が component trait として振る舞いを持つ。** M5 時点の `metadata.Binding` は `plugin.Declaration` の alias で宣言しかなく、Parse/Marshal の契約は foundation test の private interface にしかない。したがって catalog は Binding の衝突と target 実在しか検査できず、encoding の振る舞いを取得できない。このままでは WAVE が RIFF INFO を自分で parse することになり、Format と Metadata Encoding を Binding で分離するこの文書の設計に反する。context-aware で純粋な `Parse`/`Marshal` を trait に持たせ、Binding target が trait を持たない場合は Host 構築時の composition diagnostic にする。
+- **Format は carrier ID と raw payload だけを知る。** Host が carrier ID から Binding target を解決し、Format には catalog 全体ではなく narrow な metadata resolver を渡す。WAVE が具体 encoding component を import しない。[runtime](runtime.md#host-service) の「全 service や catalog を自由に取得できる Host/service locator は渡さない」に従う。
+- **Parse/Marshal は Open を要求しない。** Parse は Inspect の最中、つまり Compile より前に必要であり、`Open` は Program 確定後なので、operator として取得する形では循環する。trait であれば composition 時に解決でき、[scope](scope.md#m6-の-contract-分類) の trait 判定規則にも合致する。payload grant も要求しない control-plane 操作とする。
+- **Inspect が compile より前に走り、header から得た事実だけで descriptor が確定する。** WAVE の sample properties、time base、codec tag、metadata、未知 chunk は header にしかない。`stream.Descriptor` は compile 時に確定する immutable 値なので、runtime の demux が後から更新することはできない。したがって Prepare は Acquire → Inspect → Shape/Compile の順で進み、[runtime](runtime.md#planner-pipeline) の planner pipeline と一致する。M5/M6-1 の実装は acquire を Compile より後に置いており、この順序に反している。
+- **codec Binding が実際に parser/decoder の選択を絞る。** Inspect が確定した descriptor に codec tag を載せ、catalog が Binding を tag で引けるようにし、solver が tag に対応する Parser/Decoder を選ぶ。M5 時点の solver は入力 schema だけで候補を索引するため、tag と無関係に同じ schema を受ける Parser/Decoder がすべて候補になる。PCM だけの間は不可視だが、MP3/FLAC が入る M8 で誤選択になる。
+- **tag による絞り込みは codec/parser の選択にだけ効かせる。** 入力 descriptor が codec tag を持つとき除外するのは「別 tag の codec/parser として宣言された候補」に限り、codec Binding を持たない component（converter、resampler、bitstream filter 等）は従来どおり候補に残す。tag を全候補の filter にすると solver の一般性が失われる。
 - codec Binding が WAVE の format tag と `plugin/pcm/linear` の Parser/Decoder を結び、PCM component 側を container 向けに書き換えない。container が codec の packetization を直接知る経路（[F20](findings.md)）が新経路に現れない。
 - 未知 chunk が `metadata.RawBlock` として解釈されずに保持され、WAVE → WAVE の roundtrip で byte 列と順序が復元される。
 - RIFF INFO の metadata encoding が `media/metadata` の Document/Origin/RawBlock と `media/carrier` の carrier identity を使い、重複 key と順序を保存する。共通 key への写像は `media/tag` の vocabulary を使う。
