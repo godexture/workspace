@@ -135,9 +135,9 @@ func (c Component) Diagnostics() []diagnostic.Item {
 	if !c.schema.Valid() {
 		items = append(items, c.schema.Diagnostics()...)
 	}
-	if c.implementation == nil {
+	if c.implementation == nil && len(c.traits) == 0 {
 		items = append(items, diagnostic.NewItem("plugin.spec", diagnostic.ErrorSeverity, componentPath, "component requires a typed Spec", nil))
-	} else {
+	} else if c.implementation != nil {
 		items = append(items, c.implementation.problems...)
 	}
 	for index, item := range items {

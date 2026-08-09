@@ -33,6 +33,8 @@ type solveSchemaBID struct{}
 type solveSchemaCID struct{}
 type solveSchemaDID struct{}
 type solveUnit struct{}
+type solveControlID struct{}
+type solveControlTraitID struct{}
 
 var (
 	solveSchemaA = schema.Define[solveSchemaAID, solveUnit](schema.Traits[solveUnit]{})
@@ -140,6 +142,14 @@ func solveIndex(t testing.TB, components ...plugin.Component) catalog.Index {
 		t.Fatal(err)
 	}
 	return index
+}
+
+func solveControlComponent() plugin.Component {
+	return plugin.NewComponent[solveControlID](
+		plugin.Descriptor{DisplayName: "control"},
+		solveConfigSchema(),
+		plugin.WithTrait(plugin.TraitKeyOf[solveControlTraitID](), "fixture=control", plugin.PortShapeOptional, true),
+	)
 }
 
 func solveRequest(t testing.TB, source, sink plugin.Component, budget job.Budget) job.Job {

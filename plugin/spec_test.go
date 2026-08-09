@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync/atomic"
@@ -196,10 +197,10 @@ func TestComponentTraitSlotIsTypedAndRejectsDuplicateKeys(t *testing.T) {
 		Descriptor{DisplayName: "trait"},
 		pluginSchema(1),
 		WithSpec(testSpec(nil, nil)),
-		WithTrait(key, "fixture=one", 1),
+		WithTrait(key, "fixture=one", PortShapeRequired, 1),
 	)
 	value, ok := TraitValueOf[int](component, key)
-	if !ok || value != 1 || len(component.Traits()) != 1 || component.Traits()[0].Manifest != "fixture=one" {
+	if !ok || value != 1 || len(component.Traits()) != 1 || component.Traits()[0].Manifest != "fixture=one" || component.Traits()[0].ShapeRequirement != PortShapeRequired {
 		t.Fatalf("trait = %d/%v %#v", value, ok, component.Traits())
 	}
 	descriptors := component.Traits()
@@ -212,11 +213,42 @@ func TestComponentTraitSlotIsTypedAndRejectsDuplicateKeys(t *testing.T) {
 		Descriptor{DisplayName: "duplicate trait"},
 		pluginSchema(1),
 		WithSpec(testSpec(nil, nil)),
-		WithTrait(key, "fixture=one", 1),
-		WithTrait(key, "fixture=two", 2),
+		WithTrait(key, "fixture=one", PortShapeRequired, 1),
+		WithTrait(key, "fixture=two", PortShapeRequired, 2),
 	)
 	if !hasItem(duplicate.Diagnostics(), "plugin.trait-duplicate") {
 		t.Fatalf("duplicate trait diagnostics = %v", duplicate.Diagnostics())
+	}
+}
+
+func TestTraitOnlyComponentIsVisibleButNotExecutable(t *testing.T) {
+	key := TraitKeyOf[specTraitID]()
+	component := NewComponent[specUnitID](
+		Descriptor{DisplayName: "control plane"},
+		pluginSchema(1),
+		WithTrait(key, "fixture=control", PortShapeOptional, 1),
+	)
+	if items := component.Diagnostics(); len(items) != 0 {
+		t.Fatalf("trait-only diagnostics = %v", items)
+	}
+	view := component.View()
+	if view.HasSpec || view.Executable || !view.Ports.Empty() || len(view.Traits) != 1 || view.Traits[0].ShapeRequirement != PortShapeOptional {
+		t.Fatalf("trait-only view = %#v", view)
+	}
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors[int]()); !errors.Is(err, ErrComponentSpec) {
+		t.Fatalf("trait-only Compile error = %v", err)
+	}
+	if _, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), Compilation{}); !errors.Is(err, ErrComponentSpec) {
+		t.Fatalf("trait-only Open error = %v", err)
+	}
+
+	empty := NewComponent[specOtherID](Descriptor{DisplayName: "empty"}, pluginSchema(1))
+	if !hasItem(empty.Diagnostics(), "plugin.spec") {
+		t.Fatalf("empty component diagnostics = %v", empty.Diagnostics())
 	}
 }
 

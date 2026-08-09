@@ -27,14 +27,14 @@ type InspectFunc func(InspectContext) (Inspection, error)
 // Read attaches input byte requirements for one Format component.
 func Read(value Format, alternatives ...access.Alternative) plugin.ComponentOption {
 	trait := ReadTrait{format: value, requirements: access.NewRequirements(alternatives...)}
-	return plugin.WithTrait(readKey, trait.manifest("read"), trait)
+	return plugin.WithTrait(readKey, trait.manifest("read"), plugin.PortShapeRequired, trait)
 }
 
 // ReadWithInspect attaches input byte requirements and the one pre-Compile
 // inspection operation for a Format component.
 func ReadWithInspect(value Format, inspect InspectFunc, alternatives ...access.Alternative) plugin.ComponentOption {
 	trait := ReadTrait{format: value, requirements: access.NewRequirements(alternatives...), inspect: inspect}
-	return plugin.WithTrait(readKey, trait.manifest("read"), trait)
+	return plugin.WithTrait(readKey, trait.manifest("read"), plugin.PortShapeRequired, trait)
 }
 
 func ReadOf(component plugin.Component) (ReadTrait, bool) {
@@ -79,7 +79,7 @@ type WriteTrait struct {
 // Write attaches output byte requirements for one Format component.
 func Write(value Format, alternatives ...access.Alternative) plugin.ComponentOption {
 	trait := WriteTrait{format: value, requirements: access.NewRequirements(alternatives...)}
-	return plugin.WithTrait(writeKey, trait.manifest("write"), trait)
+	return plugin.WithTrait(writeKey, trait.manifest("write"), plugin.PortShapeRequired, trait)
 }
 
 func WriteOf(component plugin.Component) (WriteTrait, bool) {

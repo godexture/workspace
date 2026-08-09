@@ -83,7 +83,7 @@ func (t Trait) Mode() Mode         { return t.mode }
 // component's directional shape determines whether it is a source or sink.
 func WithTrait(trait Trait) plugin.ComponentOption {
 	manifest := "topology=" + trait.topology.String() + "|mode=" + trait.mode.String()
-	return plugin.WithTrait(traitKey, manifest, trait)
+	return plugin.WithTrait(traitKey, manifest, plugin.PortShapeRequired, trait)
 }
 
 // TraitOf returns the typed endpoint trait attached to component.

@@ -32,6 +32,8 @@ type graphSchemaBID struct{}
 type graphUnit struct{}
 type graphOtherUnit struct{}
 type graphConfig struct{}
+type graphControlID struct{}
+type graphControlTraitID struct{}
 
 var (
 	graphSchemaA = schema.Define[graphSchemaAID, graphUnit](schema.Traits[graphUnit]{})
@@ -121,6 +123,15 @@ func fixtureNode[Marker any](id job.NodeID) job.Node {
 	return job.NewNode(id, plugin.IdentityOf[Marker](), config.NewPatch())
 }
 
+func graphControlComponent() plugin.Component {
+	schemaValue := config.Struct[graphConfigID](func() graphConfig { return graphConfig{} }).Version("1").Build()
+	return plugin.NewComponent[graphControlID](
+		plugin.Descriptor{DisplayName: "control"},
+		schemaValue,
+		plugin.WithTrait(plugin.TraitKeyOf[graphControlTraitID](), "fixture=control", plugin.PortShapeOptional, true),
+	)
+}
+
 func TestCompileBuildsTopologicalGraphWithoutOpeningOperators(t *testing.T) {
 	var opened atomic.Int32
 	index := fixtureCatalog(t,
@@ -159,6 +170,20 @@ func TestCompileBuildsTopologicalGraphWithoutOpeningOperators(t *testing.T) {
 	if opened.Load() != 1 {
 		t.Fatalf("Open count = %d", opened.Load())
 	}
+}
+
+func TestCompileRejectsControlPlaneComponentAsGraphNode(t *testing.T) {
+	index := fixtureCatalog(t,
+		fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), nil, false),
+		fixtureComponent[graphSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
+		graphControlComponent(),
+	)
+	request := fixtureRequest(t,
+		[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("sink"), fixtureNode[graphControlID]("control")},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+	)
+	_, err := Compile(index, request)
+	assertCodes(t, err, "graph.control-plane-component")
 }
 
 func TestEvaluateReturnsTypedSchemaGapWithoutOpeningOperators(t *testing.T) {

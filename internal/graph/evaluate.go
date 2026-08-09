@@ -39,6 +39,10 @@ func evaluate(index catalog.Index, requested job.Graph, contexts CompileContexts
 			items = append(items, diagnostic.NewItem("graph.component", diagnostic.ErrorSeverity, diagnostic.Path{Component: request.ID().String()}, "requested component is not in the Host catalog", map[string]string{"identity": request.Component().String()}))
 			continue
 		}
+		if !component.View().HasSpec {
+			items = append(items, diagnostic.NewItem("graph.control-plane-component", diagnostic.ErrorSeverity, diagnostic.Path{Component: request.ID().String()}, "control-plane component cannot be used as a graph node", map[string]string{"identity": component.Identity().String()}))
+			continue
+		}
 		resolved, err := component.Resolve(request.Config())
 		if err != nil {
 			items = append(items, prefixNode(errorItems(err), request.ID())...)

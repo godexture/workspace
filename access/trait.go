@@ -45,7 +45,7 @@ func Source(scheme string, capabilities Capabilities, acquire AcquireFunc) plugi
 		capabilities: cloneCapabilities(capabilities),
 		acquire:      acquire,
 	}
-	return plugin.WithTrait(sourceKey, trait.manifest(), trait)
+	return plugin.WithTrait(sourceKey, trait.manifest(), plugin.PortShapeRequired, trait)
 }
 
 // SourceOf returns the typed source trait attached to component.
@@ -88,7 +88,7 @@ func Sink(scheme string, capabilities Capabilities, transaction TransactionClass
 		transaction:  transaction,
 		acquire:      acquire,
 	}
-	return plugin.WithTrait(sinkKey, trait.manifest(), trait)
+	return plugin.WithTrait(sinkKey, trait.manifest(), plugin.PortShapeRequired, trait)
 }
 
 // SinkOf returns the typed sink trait attached to component.

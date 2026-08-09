@@ -21,6 +21,11 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 	var items []diagnostic.Item
 	for _, component := range components {
 		shape := component.Ports()
+		for _, descriptor := range component.Traits() {
+			if descriptor.ShapeRequirement == plugin.PortShapeRequired && shape.Empty() {
+				items = append(items, traitItem("catalog.trait-shape", component.Identity(), "component trait requires a non-empty port shape", map[string]string{"trait": descriptor.Key}))
+			}
+		}
 		if trait, ok := access.SourceOf(component); ok {
 			items = append(items, validateSourceTrait(component, shape, trait, seen)...)
 		}

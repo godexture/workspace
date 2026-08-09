@@ -301,6 +301,28 @@ func TestResolveIsIndependentOfCatalogAndSuggestionOrder(t *testing.T) {
 	}
 }
 
+func TestControlPlaneComponentIsNotASolverCandidate(t *testing.T) {
+	bridge := solveBridge[solveBridgeABID](solveSchemaA, solveSchemaB, structural("ab"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, nil)
+	index := solveIndex(t, bridge, solveControlComponent())
+	policy, ok := job.PolicyFor(job.Fast)
+	if !ok {
+		t.Fatal("Fast policy is unavailable")
+	}
+	candidates := buildCandidateIndex(index, policy, solvePlatform())
+	foundBridge := false
+	for _, values := range candidates {
+		for _, candidate := range values {
+			if candidate.component.Identity() == plugin.IdentityOf[solveControlID]() {
+				t.Fatal("control-plane component entered solver candidate index")
+			}
+			foundBridge = foundBridge || candidate.component.Identity() == bridge.Identity()
+		}
+	}
+	if !foundBridge {
+		t.Fatal("executable bridge is absent from solver candidate index")
+	}
+}
+
 func assertSolveCode(t *testing.T, err error, code string) {
 	t.Helper()
 	items := diagnostic.ItemsOf(err)

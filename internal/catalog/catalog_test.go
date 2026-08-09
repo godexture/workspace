@@ -19,6 +19,10 @@ type catalogFirstID struct{}
 type catalogSecondID struct{}
 type catalogUnitID struct{}
 type catalogFormatID struct{}
+type catalogControlTraitID struct{}
+type catalogControlComponentID struct{}
+type catalogRequiredControlComponentID struct{}
+type catalogEmptyComponentID struct{}
 
 type catalogConfig struct{ Value int }
 type catalogUnit int
@@ -108,6 +112,40 @@ func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
 	views[0].Aliases = append(views[0].Aliases, "mutated")
 	if len(index.Views()[0].Aliases) != 0 {
 		t.Fatalf("catalog view aliases are mutable")
+	}
+}
+
+func TestBuildAcceptsPortlessTraitAndRejectsMissingComponentContract(t *testing.T) {
+	key := plugin.TraitKeyOf[catalogControlTraitID]()
+	control := plugin.NewComponent[catalogControlComponentID](
+		plugin.Descriptor{DisplayName: "control", Version: "1"},
+		catalogSchema(),
+		plugin.WithTrait(key, "fixture=control", plugin.PortShapeOptional, true),
+	)
+	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, control)
+	index, err := Build(plugin.NewSet(definition))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := index.Views()[0]
+	if view.HasSpec || view.Executable || !view.Ports.Empty() || len(view.Traits) != 1 {
+		t.Fatalf("control-plane catalog view = %#v", view)
+	}
+
+	required := plugin.NewComponent[catalogRequiredControlComponentID](
+		plugin.Descriptor{DisplayName: "missing ports", Version: "1"},
+		catalogSchema(),
+		plugin.WithTrait(key, "fixture=required", plugin.PortShapeRequired, true),
+	)
+	definition = plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, required)
+	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "catalog.trait-shape") {
+		t.Fatalf("required trait shape diagnostic = %v", err)
+	}
+
+	empty := plugin.NewComponent[catalogEmptyComponentID](plugin.Descriptor{DisplayName: "empty", Version: "1"}, catalogSchema())
+	definition = plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, empty)
+	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "plugin.spec") {
+		t.Fatalf("empty component diagnostic = %v", err)
 	}
 }
 

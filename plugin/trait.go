@@ -24,18 +24,34 @@ func TraitKeyOf[Marker any]() TraitKey {
 func (k TraitKey) Valid() bool    { return !k.identity.IsZero() }
 func (k TraitKey) String() string { return k.identity.String() }
 
+// TraitShapeRequirement states whether a component trait needs data-plane
+// ports. Semantic trait packages choose the requirement when attaching their
+// typed value.
+type TraitShapeRequirement uint8
+
+const (
+	PortShapeOptional TraitShapeRequirement = iota + 1
+	PortShapeRequired
+)
+
+func (r TraitShapeRequirement) Valid() bool {
+	return r == PortShapeOptional || r == PortShapeRequired
+}
+
 // TraitDescriptor is the inert catalog projection of a component trait.
 // Manifest is supplied by the trait-owning package and must not contain live
 // values, functions, references, or credentials.
 type TraitDescriptor struct {
-	Key      string
-	Manifest string
+	Key              string
+	Manifest         string
+	ShapeRequirement TraitShapeRequirement
 }
 
 type componentTrait struct {
-	key      TraitKey
-	manifest string
-	value    any
+	key              TraitKey
+	manifest         string
+	shapeRequirement TraitShapeRequirement
+	value            any
 }
 
 type traitStore map[TraitKey]componentTrait
@@ -47,13 +63,13 @@ type traitSource interface {
 // WithTrait attaches one opaque value to a marker-keyed component slot.
 // Packages such as access and endpoint wrap this low-level function with
 // typed constructors and accessors.
-func WithTrait(key TraitKey, manifest string, value any) ComponentOption {
+func WithTrait(key TraitKey, manifest string, shapeRequirement TraitShapeRequirement, value any) ComponentOption {
 	return func(options *componentOptions) {
-		if manifest == "" {
+		if manifest == "" || !shapeRequirement.Valid() {
 			options.problems = append(options.problems, specItem("plugin.trait", "component trait is invalid"))
 			return
 		}
-		traits, err := options.traits.with(key, manifest, value)
+		traits, err := options.traits.with(key, manifest, shapeRequirement, value)
 		switch {
 		case errors.Is(err, ErrInvalidTrait):
 			options.problems = append(options.problems, specItem("plugin.trait", "component trait is invalid"))
@@ -87,7 +103,7 @@ func TraitValueOf[T any](source traitSource, key TraitKey) (T, bool) {
 // marker-keyed prepared value attached. Semantic packages wrap this bridge
 // with typed constructors and accessors.
 func CompileContextWithTrait(ctx CompileContext, key TraitKey, value any) (CompileContext, error) {
-	traits, err := ctx.traits.with(key, "", value)
+	traits, err := ctx.traits.with(key, "", 0, value)
 	if err != nil {
 		return ctx, err
 	}
@@ -95,7 +111,7 @@ func CompileContextWithTrait(ctx CompileContext, key TraitKey, value any) (Compi
 	return ctx, nil
 }
 
-func (s traitStore) with(key TraitKey, manifest string, value any) (traitStore, error) {
+func (s traitStore) with(key TraitKey, manifest string, shapeRequirement TraitShapeRequirement, value any) (traitStore, error) {
 	if !key.Valid() || value == nil {
 		return nil, ErrInvalidTrait
 	}
@@ -106,7 +122,7 @@ func (s traitStore) with(key TraitKey, manifest string, value any) (traitStore, 
 	if result == nil {
 		result = make(traitStore)
 	}
-	result[key] = componentTrait{key: key, manifest: manifest, value: value}
+	result[key] = componentTrait{key: key, manifest: manifest, shapeRequirement: shapeRequirement, value: value}
 	return result, nil
 }
 
@@ -124,7 +140,7 @@ func cloneTraits(values traitStore) traitStore {
 func traitDescriptors(values traitStore) []TraitDescriptor {
 	result := make([]TraitDescriptor, 0, len(values))
 	for _, value := range values {
-		result = append(result, TraitDescriptor{Key: value.key.String(), Manifest: value.manifest})
+		result = append(result, TraitDescriptor{Key: value.key.String(), Manifest: value.manifest, ShapeRequirement: value.shapeRequirement})
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].Key < result[right].Key })
 	return result
