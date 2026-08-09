@@ -114,3 +114,51 @@ func TestDuplicateRawBlockIdentityIsRejected(t *testing.T) {
 		t.Fatal("repeated raw block identity accepted")
 	}
 }
+
+func TestBuilderAppendPreservesDocumentAndRawBlockOrder(t *testing.T) {
+	firstBuilder := NewBuilder(StreamScope)
+	firstBuilder.AddBlock(NewRawBlock("first", testCarrier, encodingIdentity(), NewBlob("", []byte{1})))
+	Add(firstBuilder, title, "Primary", Origin{Block: "first"})
+	first, err := firstBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBuilder := NewBuilder(StreamScope)
+	secondBuilder.AddBlock(NewRawBlock("second", testCarrier, encodingIdentity(), NewBlob("", []byte{2})))
+	Add(secondBuilder, title, "Alternate", Origin{Block: "second"})
+	second, err := secondBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := NewBuilder(StreamScope).Append(Document{}).Append(first).Append(second).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values := Values(merged, title); len(values) != 2 || values[0] != "Primary" || values[1] != "Alternate" {
+		t.Fatalf("merged entry order = %v", values)
+	}
+	blocks := merged.Blocks()
+	if len(blocks) != 2 || blocks[0].ID() != "first" || blocks[1].ID() != "second" {
+		t.Fatalf("merged block order = %#v", blocks)
+	}
+}
+
+func TestBuilderAppendRejectsScopeAndBlockConflicts(t *testing.T) {
+	asset, err := NewBuilder(AssetScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewBuilder(StreamScope).Append(asset).Build(); err == nil {
+		t.Fatal("Builder.Append accepted a different document scope")
+	}
+
+	block := NewRawBlock("same", testCarrier, encodingIdentity(), NewBlob("", nil))
+	first, err := NewBuilder(StreamScope).AddBlock(block).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewBuilder(StreamScope).Append(first).Append(first).Build(); err == nil {
+		t.Fatal("Builder.Append accepted a duplicate raw block identity")
+	}
+}

@@ -181,6 +181,26 @@ func (b *Builder) AddBlock(block RawBlock) *Builder {
 	return b
 }
 
+// Append merges one immutable document without changing entry or block order.
+// The zero document represents an absent descriptor attachment and is ignored.
+func (b *Builder) Append(document Document) *Builder {
+	if b == nil {
+		return b
+	}
+	if document.scope == 0 && len(document.entries) == 0 && len(document.blocks) == 0 {
+		return b
+	}
+	if !document.scope.Valid() || document.scope != b.scope {
+		b.problems = append(b.problems, fmt.Errorf("metadata document scope %s cannot be appended to %s", document.scope, b.scope))
+		return b
+	}
+	for _, block := range document.blocks {
+		b.AddBlock(block)
+	}
+	b.entries = append(b.entries, document.entries...)
+	return b
+}
+
 func (b *Builder) add(declaration key.Erased, value any, origin Origin) *Builder {
 	if problem := declaration.Problem(); problem != nil {
 		b.problems = append(b.problems, problem)
