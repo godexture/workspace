@@ -17,12 +17,16 @@ import (
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type (
@@ -71,25 +75,30 @@ func (s *fixtureState) snapshot() ([]byte, [][]int16, []timing.PTS, []string) {
 
 type fixtureSource struct {
 	fixtureOperator
-	state *fixtureState
+	state   *fixtureState
+	buffers *buffer.Allocator
 }
 
-func (s *fixtureSource) Read(ctx context.Context) (flow.Input[[]byte], error) {
+func (s *fixtureSource) Read(ctx context.Context) (flow.Input[buffer.Handle], error) {
 	if s.state.block {
 		<-ctx.Done()
-		return flow.Input[[]byte]{}, context.Cause(ctx)
+		return flow.Input[buffer.Handle]{}, context.Cause(ctx)
 	}
 	s.state.mu.Lock()
 	if s.state.read {
 		s.state.events = append(s.state.events, "eof")
 		s.state.mu.Unlock()
-		return flow.Input[[]byte]{}, io.EOF
+		return flow.Input[buffer.Handle]{}, io.EOF
 	}
 	s.state.read = true
 	value := append([]byte(nil), s.state.input...)
 	s.state.events = append(s.state.events, "read")
 	s.state.mu.Unlock()
-	return flow.NewInput(value, Bytes()), nil
+	handle, err := s.buffers.FromBytes(value, 1)
+	if err != nil {
+		return flow.Input[buffer.Handle]{}, err
+	}
+	return flow.NewInput(handle, access.Bytes()), nil
 }
 
 type fixtureObserver struct {
@@ -140,9 +149,9 @@ type fixtureSink struct {
 	state *fixtureState
 }
 
-func (s *fixtureSink) Write(_ context.Context, input flow.Input[[]byte]) error {
+func (s *fixtureSink) Write(_ context.Context, input flow.Input[buffer.Handle]) error {
 	s.state.mu.Lock()
-	s.state.output = append(s.state.output, input.Value()...)
+	s.state.output = append(s.state.output, input.Value().Bytes()...)
 	s.state.events = append(s.state.events, "write")
 	s.state.mu.Unlock()
 	input.Drop()
@@ -172,6 +181,17 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 	selection, ok := access.Select(capabilities, access.NewRequirements(Raw().Alternatives()...))
 	if !ok || len(selection.Capabilities()) != 1 || selection.Capabilities()[0] != access.SequentialRead {
 		t.Fatalf("raw Format narrow selection = %v, %v", selection.Capabilities(), ok)
+	}
+	readerShape := componentByIdentity(t, ReaderIdentity()).Ports()
+	parserShape := componentByIdentity(t, ParserIdentity()).Ports()
+	writerShape := componentByIdentity(t, WriterIdentity()).Ports()
+	if readerShape.Inputs[0].Schema().Identity() != access.Bytes().Identity() ||
+		readerShape.Outputs[0].Schema().Identity() != format.Chunks().Identity() ||
+		parserShape.Inputs[0].Schema().Identity() != format.Chunks().Identity() ||
+		parserShape.Outputs[0].Schema().Identity() != codec.Packets().Identity() ||
+		writerShape.Inputs[0].Schema().Identity() != codec.Packets().Identity() ||
+		writerShape.Outputs[0].Schema().Identity() != access.Bytes().Identity() {
+		t.Fatal("linear PCM components do not use canonical media schemas")
 	}
 	targets := Binding().Targets()
 	decoder, decoderOK := targets[0].Component()
@@ -293,7 +313,7 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("pcm", Packets().Identity(), timing.MustBase(1, 32_000), properties)
+	input := stream.MustDescriptor("pcm", codec.Packets().Identity(), timing.MustBase(1, 32_000), properties)
 	component := componentByIdentity(t, DecoderIdentity())
 	resolved, err := component.Resolve(config.NewPatch().SetText("rate", "32000").SetText("validBits", "12"))
 	if err != nil {
@@ -332,7 +352,7 @@ func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture 
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor := stream.MustDescriptor("pcm", Bytes().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
+	descriptor := stream.MustDescriptor("pcm", access.Bytes().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
 	state := &fixtureState{}
 	definition := fixtureDefinition(descriptor, state)
 	set := Set().Add(definition)
@@ -424,17 +444,21 @@ func runPCMProgram(t *testing.T, fixture pcmFixture, input []byte) ([]byte, [][]
 
 func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin.Definition {
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
-	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", Bytes())})
-	sinkShape := flow.NewShape([]flow.Port{flow.In("bytes", Bytes())}, nil)
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, nil)
 	source := plugin.NewComponent[fixtureSourceID](plugin.Descriptor{DisplayName: "PCM fixture source"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[fixtureConfig](sourceShape),
 		Compile: func(plugin.CompileContext, fixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
-			return plugin.Compiled[fixturePlan, stream.Descriptor]{Plan: fixturePlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("bytes", descriptor))}, nil
+			return plugin.Compiled[fixturePlan, stream.Descriptor]{
+				Plan:      fixturePlan{shape: sourceShape},
+				Outputs:   flow.NewDescriptors(flow.Describe("bytes", descriptor)),
+				Resources: resource.Request{Memory: 64 * 1024},
+			}, nil
 		},
-		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
-			return &fixtureSource{fixtureOperator: fixtureOperator{shape: sourceShape}, state: state}, nil
+		Open: func(ctx plugin.OpenContext, _ fixturePlan) (flow.Operator, error) {
+			return &fixtureSource{fixtureOperator: fixtureOperator{shape: sourceShape}, state: state, buffers: ctx.Buffers()}, nil
 		},
-	}), plugin.WithReader("bytes", Bytes()))
+	}), plugin.WithReader("bytes", access.Bytes()))
 	observeShape := flow.NewShape([]flow.Port{flow.In("in", sample.S16())}, []flow.Port{flow.Out("out", sample.S16())})
 	observer := plugin.NewComponent[fixtureObserveID](plugin.Descriptor{DisplayName: "PCM fixture observer"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[fixtureConfig](observeShape),
@@ -465,7 +489,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
 			return &fixtureSink{fixtureOperator: fixtureOperator{shape: sinkShape}, state: state}, nil
 		},
-	}), plugin.WithWriter("bytes", Bytes()))
+	}), plugin.WithWriter("bytes", access.Bytes()))
 	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "PCM fixture", Version: "1"}, source, observer, sink)
 }
 

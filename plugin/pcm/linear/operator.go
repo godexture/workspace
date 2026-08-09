@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/timing"
@@ -55,16 +58,27 @@ type readerOperator struct {
 	sampleOffset  int64
 }
 
-func (o *readerOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
+func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[packet.Chunk]) error {
 	if !input.Valid() {
 		return errors.New("raw PCM reader received unowned bytes")
 	}
-	data := input.Value()
+	data := input.Value().Bytes()
 	frameBytes := o.configuration.Layout.Channels() * 2
 	if frameBytes == 0 || len(data)%frameBytes != 0 {
 		return ErrPartialSample
 	}
 	chunkBytes := o.configuration.ChunkSamples * frameBytes
+	if len(data) > 0 && len(data) <= chunkBytes {
+		payload := input.Take().Value()
+		chunk := packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload)
+		item := flow.NewInput(chunk, format.Chunks())
+		if err := output.Emit(ctx, item); err != nil {
+			return err
+		}
+		o.sequence++
+		o.sampleOffset += int64(len(data) / frameBytes)
+		return nil
+	}
 	for offset := 0; offset < len(data); offset += chunkBytes {
 		end := offset + chunkBytes
 		if end > len(data) {
@@ -76,7 +90,7 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[[]byte], 
 		}
 		samples := int64((end - offset) / frameBytes)
 		chunk := packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload)
-		item := flow.NewInput(chunk, Chunks())
+		item := flow.NewInput(chunk, format.Chunks())
 		if err := output.Emit(ctx, item); err != nil {
 			item.Drop()
 			return err
@@ -107,7 +121,7 @@ func (o *parserOperator) Process(ctx context.Context, input flow.Input[packet.Ch
 	payload := chunk.Payload().Share()
 	duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), duration, payload).WithSideData(chunk.SideData())
-	item := flow.NewInput(value, Packets())
+	item := flow.NewInput(value, codec.Packets())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -231,7 +245,7 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 		timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))),
 		payload,
 	).WithSideData(frame.SideData())
-	item := flow.NewInput(packetValue, Packets())
+	item := flow.NewInput(packetValue, codec.Packets())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -245,12 +259,15 @@ func (*encoderOperator) Flush(context.Context, flow.Emitter[packet.Packet]) erro
 
 type writerOperator struct{ operatorBase }
 
-func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[[]byte]) error {
+func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[buffer.Handle]) error {
 	if !input.Valid() {
 		return errors.New("raw PCM writer received an unowned packet")
 	}
-	value := append([]byte(nil), input.Value().Bytes()...)
-	item := flow.NewInput(value, Bytes())
+	value := input.Value().Payload().Share()
+	if !value.Valid() {
+		return errors.New("raw PCM writer received an invalid packet payload")
+	}
+	item := flow.NewInput(value, access.Bytes())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -259,7 +276,7 @@ func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Pa
 	return nil
 }
 
-func (*writerOperator) Flush(context.Context, flow.Emitter[[]byte]) error { return nil }
+func (*writerOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
 
 func byteOrder(value sample.Endian) binary.ByteOrder {
 	switch value {

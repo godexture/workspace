@@ -1,7 +1,10 @@
 package linear
 
 import (
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -62,15 +65,15 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 func operationExecution(kind operation) plugin.ComponentOption {
 	switch kind {
 	case readerOperation:
-		return plugin.WithProcessor("bytes", Bytes(), "chunks", Chunks())
+		return plugin.WithProcessor("bytes", access.Bytes(), "chunks", format.Chunks())
 	case parserOperation:
-		return plugin.WithProcessor("chunks", Chunks(), "packets", Packets())
+		return plugin.WithProcessor("chunks", format.Chunks(), "packets", codec.Packets())
 	case decoderOperation:
-		return plugin.WithProcessor("packets", Packets(), "frames", sample.S16())
+		return plugin.WithProcessor("packets", codec.Packets(), "frames", sample.S16())
 	case encoderOperation:
-		return plugin.WithProcessor("frames", sample.S16(), "packets", Packets())
+		return plugin.WithProcessor("frames", sample.S16(), "packets", codec.Packets())
 	case writerOperation:
-		return plugin.WithProcessor("packets", Packets(), "bytes", Bytes())
+		return plugin.WithProcessor("packets", codec.Packets(), "bytes", access.Bytes())
 	default:
 		return nil
 	}
@@ -79,15 +82,15 @@ func operationExecution(kind operation) plugin.ComponentOption {
 func operationShape(kind operation) flow.Shape {
 	switch kind {
 	case readerOperation:
-		return flow.NewShape([]flow.Port{flow.In("bytes", Bytes())}, []flow.Port{flow.Out("chunks", Chunks())})
+		return flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("chunks", format.Chunks())})
 	case parserOperation:
-		return flow.NewShape([]flow.Port{flow.In("chunks", Chunks())}, []flow.Port{flow.Out("packets", Packets())})
+		return flow.NewShape([]flow.Port{flow.In("chunks", format.Chunks())}, []flow.Port{flow.Out("packets", codec.Packets())})
 	case decoderOperation:
-		return flow.NewShape([]flow.Port{flow.In("packets", Packets())}, []flow.Port{flow.Out("frames", sample.S16())})
+		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("frames", sample.S16())})
 	case encoderOperation:
-		return flow.NewShape([]flow.Port{flow.In("frames", sample.S16())}, []flow.Port{flow.Out("packets", Packets())})
+		return flow.NewShape([]flow.Port{flow.In("frames", sample.S16())}, []flow.Port{flow.Out("packets", codec.Packets())})
 	case writerOperation:
-		return flow.NewShape([]flow.Port{flow.In("packets", Packets())}, []flow.Port{flow.Out("bytes", Bytes())})
+		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("bytes", access.Bytes())})
 	default:
 		return flow.Shape{}
 	}
