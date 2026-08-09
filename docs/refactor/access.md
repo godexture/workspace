@@ -37,7 +37,7 @@ foundation は contract、capability negotiation、lifecycle、policy hook を�
 | 概念 | 入出力 | 責務 | 扱わないもの |
 |---|---|---|---|
 | `access.Reference` | locator | scheme/provider 選択に必要な canonical reference | media format |
-| `access.Provider` | reference → source/sink plan/session | credential、network、range、retry、transaction | container/codec semantics |
+| Access Provider trait | reference → source/sink plan/session | credential、network、range、retry、transaction | container/codec semantics |
 | `access.Source` | byte read capability | read、random access、size、snapshot、cancel | stream topology |
 | `access.Sink` | byte write transaction | write、patch、flush、commit/abort | mux header/index |
 | Format | byte capability → carrier/stream | probe、inspect、demux/mux、format seek | URL、credential、retry |
@@ -107,12 +107,12 @@ library が既に reader/writer を所有している場合、Provider lookup �
 
 ## Access Provider
 
-Provider は plugin marker、descriptor、config schema、provenance を他の component と共有するが、media transform node ではない。reference を job session resource へ解決する control-plane extension である。
+Provider は独立した manifest/interface ではなく、byte source または sink component に付く trait である。component として marker、descriptor、config schema、provenance、`plugin.Set` の composition/override 規則を共有し、trait の acquire 操作が reference を job session resource へ解決する。
 
 Provider は概念上、次を宣言する。
 
 - 対応する reference kind/scheme
-- source、sink、または両方
+- 付き先 component の方向（source は 0-in/1-out、sink は 1-in/0-out）
 - config schema と secret field
 - 静的に分かる capability alternatives
 - read-only inspection の effect
@@ -120,9 +120,9 @@ Provider は概念上、次を宣言する。
 - retry と snapshot consistency
 - sink transaction class
 
-scheme の重複は host 構築時に error とする。利用者が意図して置き換える場合だけ、対象 provider identity を指定する `Set.Override` を使う。暗黙の last-wins や registration order は使わない。
+同じ scheme の source trait と sink trait は共存できる。同じ方向での scheme 重複は host 構築時に error とする。利用者が意図して置き換える場合だけ、対象 component identity を指定する `Set.Override` を使う。暗黙の last-wins や registration order は使わない。
 
-「Protocol」は catalog 上の capability/説明名として使えるが、public Go interface は `access.Provider` の方が適切である。local file、memory、object store は必ずしも通信 protocol ではないためである。
+「Provider」は local file、memory、object store を含む product 上の概念名である。public Go contract は `access.Source`/`access.Sink` の component option と型付き `SourceTrait`/`SinkTrait` accessor に分け、すべてを一つの汎用 protocol interface にしない。
 
 ## lifecycle と Prepared Job
 

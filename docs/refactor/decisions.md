@@ -83,7 +83,7 @@ foundationへ具体的なprotocol/device実装を入れず、第三者が実装�
 
 ただし一つの汎用 protocol interface にはしない。
 
-- file、HTTP object、S3 object 等は Reference を byte Source/Sink session に解決する `access.Provider`
+- file、HTTP object、S3 object 等は Reference を byte Source/Sink session に解決する Access component trait
 - RTSP、RTP、HLS、DASH 等は clock/dynamic topology を持つ typed Endpoint component
 - camera、microphone、speaker 等は Device trait を持つ typed Endpoint component
 - direct reader/writer は owned/borrowed Access adaptor

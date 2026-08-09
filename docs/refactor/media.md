@@ -447,7 +447,7 @@ M6 は 5 文書に跨る最大の milestone であり、単位を分けずに着
 
 順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2 は M6-1 の実 byte session を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5 は composition をそれぞれ必要とする。
 
-M6-0 は M6 着手時の contract 監査で見つかった不整合の是正であり、新機能を作らない。実装を始めてから合成 API を変えると差分の由来が追えなくなるため、file I/O を含む M6-1 と混ぜず独立させる。詳細は [access](access.md#m6-完了条件) の Provider 分離条項と [plugins](plugins.md#m6-完了条件) の合成条項を正本とする。
+M6-0 は M6 着手時の contract 監査で見つかった不整合の是正であり、新機能を作らない。実装を始めてから合成 API を変えると差分の由来が追えなくなるため、file I/O を含む M6-1 と混ぜず独立させる。詳細は [access](access.md#m6-完了条件) の Provider trait 条項と [plugins](plugins.md#m6-完了条件) の合成条項を正本とする。
 
 ### media 側の条件
 

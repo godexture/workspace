@@ -99,7 +99,7 @@ Go の in-process plugin を後から導入する方法には platform 制約、
 
 ## Access Provider と Endpoint
 
-`plugin.Set` は media component に加え、byte object を解決する `access.Provider` definition を保持できる。Provider は identity/config/descriptor/provenance/override 規則を共有するが、typed data-plane node ではない。
+Access Provider と Endpoint は通常 component に marker-keyed trait として付く。component が definition に、definition が `plugin.Set` に載るため、利用者は拡張の分類ごとに別の合成 option を使わない。trait の型消去 slot は `plugin` が持つが、意味と型付き accessor は `access`/`endpoint` が所有する。
 
 RTSP/HLS/device 等は seekable byte Provider に偽装せず、通常の typed Endpoint component とする。capability、probe、transaction、clock、application-owned authority の詳細は [access](access.md) を正本とする。
 
