@@ -171,7 +171,13 @@ M6 でも宣言に留める contract と担当は次である。`metadata.Mappin
 
 M6 が新設する write 側 capability（sink の逐次書きと位置指定書き）と narrow view は、WAVE mux と local file Provider が同時に consumer になる。size 不明 header を書く streaming 出力は M6 では提供せず、需要が確認された milestone が opt-in と `Plan` warning を伴って追加する。
 
-M6-0 で削除する合成 API は `access.ProviderRole`、`access.Provider` の manifest 形とその declaration 生成、`endpoint.Component`、`host.Providers`/`host.Endpoints` である。Access と Endpoint は宣言する component の trait になり、`plugin.Set` が唯一の合成値になる。`plugin` に増えるのは marker key 付きの trait slot 一つで、取り出しは `access`/`endpoint` の型付き accessor に閉じる。host が解釈するのはこの二種の trait だけであり、第三者が独自の trait 種を付けても host は解釈しない。第三者が拡張できるのは trait の**種類**ではなく**実装**である。
+M6-1 は Format を方向別の component trait にする。boundary へ要求する capability alternative は方向で異なる（raw PCM の読みは逐次または位置指定+既知 size、書きは逐次で足りる）のに対し、M5 時点の `format.Format` は方向を持たない単一の `[]access.Alternative` を持ち、しかもどの component が消費するかを表せない。したがって alternative を `format.Format` から trait へ移し、`Format` 自体は identity、carrier、packetized だけを持つ方向中立な宣言に戻す。M5 時点の `format.Format` は production consumer を一つも持っていない（`linear.Raw()` は test と Example からしか参照されない）ため、この移動は既存 consumer を壊さない。Probe/Inspect の contract は同じ trait へ後から足すが、形を決めるのは実 consumer が現れる M6-3 とし、M6-1 では宣言しない。
+
+M6-0 で削除する合成 API は `access.ProviderRole`、`access.Provider` の manifest 形とその declaration 生成、`endpoint.Component`、`host.Providers`/`host.Endpoints` である。Access と Endpoint は宣言する component の trait になり、`plugin.Set` が唯一の合成値になる。`plugin` に増えるのは marker key 付きの trait slot 一つで、取り出しは各 package の型付き accessor に閉じる。
+
+**trait 種は foundation が定義する閉じた集合である。** 判定規則は「host が Open より前に参照しなければ binding を決められないか」とする。Access trait は「その component が byte boundary であること」、Format trait は「boundary へ何を要求し、後に何で判別するか」を表し、どちらも bind 時に host が読む。Open 以降にしか要る場面がない情報は trait にせず、`Compile`/`Open` の contract に置く。第三者が拡張できるのは trait の**種類**ではなく**実装**であり、host が解釈しない独自 trait 種を付けても無視される。
+
+M6 時点で foundation が定義する trait 種は Access（source/sink）と Format（read/write）である。Format 側の詳細は下の M6-1 の項を参照する。
 
 ## 文書全体の完了条件
 
