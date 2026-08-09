@@ -1,0 +1,262 @@
+package wave
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+
+	"github.com/godexture/godec/access"
+	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/sample"
+)
+
+func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
+	random, ok := access.RandomOf(ctx.Opening())
+	if !ok {
+		return mediaformat.Inspection{}, fmt.Errorf("%w: WAVE Inspect requires random read", ErrUnsupported)
+	}
+	value, err := inspectHeader(ctx.Context(), random)
+	if err != nil {
+		return mediaformat.Inspection{}, err
+	}
+	return mediaformat.NewInspection(WAVE(), value), nil
+}
+
+func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
+	if reader == nil {
+		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
+	}
+	var root [12]byte
+	if err := readFullAt(ctx, reader, root[:], 0); err != nil {
+		return header{}, fmt.Errorf("%w: RIFF header: %w", ErrMalformed, err)
+	}
+	rf64 := string(root[0:4]) == tagRF64
+	if string(root[0:4]) != tagRIFF && !rf64 || string(root[8:12]) != tagWAVE {
+		return header{}, fmt.Errorf("%w: RIFF/WAVE signature is absent", ErrMalformed)
+	}
+	rootSize := uint64(binary.LittleEndian.Uint32(root[4:8]))
+	if rootSize < 4 || rf64 && rootSize != math.MaxUint32 {
+		return header{}, fmt.Errorf("%w: invalid RIFF size", ErrMalformed)
+	}
+	rootEnd := uint64(8) + rootSize
+	if rf64 {
+		rootEnd = 0
+	}
+
+	var result header
+	result.rf64 = rf64
+	var formatFound, dataFound, ds64Found bool
+	var ds64DataSize uint64
+	offset := uint64(12)
+	for chunks := 0; chunks < 1<<20; chunks++ {
+		if rootEnd != 0 {
+			if offset == rootEnd {
+				break
+			}
+			if offset > rootEnd || rootEnd-offset < 8 {
+				return header{}, fmt.Errorf("%w: chunk header exceeds RIFF size", ErrMalformed)
+			}
+		}
+		if offset > math.MaxInt64 {
+			return header{}, fmt.Errorf("%w: chunk offset exceeds runtime range", ErrUnsupported)
+		}
+		var chunk [8]byte
+		if err := readFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
+			return header{}, fmt.Errorf("%w: chunk header at %d: %w", ErrMalformed, offset, err)
+		}
+		id := string(chunk[0:4])
+		declaredSize := uint64(binary.LittleEndian.Uint32(chunk[4:8]))
+		payloadOffset, ok := checkedAdd(offset, 8)
+		if !ok {
+			return header{}, fmt.Errorf("%w: chunk payload offset overflows", ErrMalformed)
+		}
+		if payloadOffset > math.MaxInt64 {
+			return header{}, fmt.Errorf("%w: chunk payload offset exceeds runtime range", ErrUnsupported)
+		}
+		actualSize := declaredSize
+
+		switch id {
+		case tagDS64:
+			if ds64Found || declaredSize < 28 {
+				return header{}, fmt.Errorf("%w: invalid ds64 chunk", ErrMalformed)
+			}
+			var payload [28]byte
+			if err := readFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
+				return header{}, fmt.Errorf("%w: ds64 chunk: %w", ErrMalformed, err)
+			}
+			riffSize := binary.LittleEndian.Uint64(payload[0:8])
+			ds64DataSize = binary.LittleEndian.Uint64(payload[8:16])
+			if riffSize < 4 || riffSize > math.MaxInt64-8 {
+				return header{}, fmt.Errorf("%w: ds64 RIFF size is invalid", ErrMalformed)
+			}
+			if rf64 {
+				rootEnd = 8 + riffSize
+			}
+			ds64Found = true
+		case tagFMT:
+			if formatFound {
+				return header{}, fmt.Errorf("%w: fmt chunk is repeated", ErrMalformed)
+			}
+			description, blockAlign, err := inspectFormat(ctx, reader, payloadOffset, declaredSize)
+			if err != nil {
+				return header{}, err
+			}
+			result.description = description
+			result.blockAlign = blockAlign
+			formatFound = true
+		case tagDATA:
+			if dataFound {
+				return header{}, fmt.Errorf("%w: data chunk is repeated", ErrMalformed)
+			}
+			if declaredSize == math.MaxUint32 {
+				if !rf64 || !ds64Found {
+					return header{}, fmt.Errorf("%w: extended data size has no ds64 chunk", ErrMalformed)
+				}
+				actualSize = ds64DataSize
+			}
+			if actualSize > uint64(math.MaxInt64)-payloadOffset {
+				return header{}, fmt.Errorf("%w: data range exceeds runtime offsets", ErrUnsupported)
+			}
+			result.dataOffset = int64(payloadOffset)
+			result.dataSize = actualSize
+			dataFound = true
+		}
+
+		next, ok := checkedAdd(payloadOffset, actualSize)
+		if !ok {
+			return header{}, fmt.Errorf("%w: chunk size overflows", ErrMalformed)
+		}
+		if actualSize&1 != 0 {
+			next, ok = checkedAdd(next, 1)
+			if !ok {
+				return header{}, fmt.Errorf("%w: chunk padding overflows", ErrMalformed)
+			}
+		}
+		if next <= offset || rootEnd != 0 && next > rootEnd {
+			return header{}, fmt.Errorf("%w: chunk exceeds RIFF bounds", ErrMalformed)
+		}
+		offset = next
+		if formatFound && dataFound {
+			break
+		}
+	}
+	if rf64 && !ds64Found {
+		return header{}, fmt.Errorf("%w: RF64 stream has no ds64 chunk", ErrMalformed)
+	}
+	if !formatFound || !dataFound {
+		return header{}, fmt.Errorf("%w: fmt or data chunk is absent", ErrMalformed)
+	}
+	if !result.valid() {
+		return header{}, fmt.Errorf("%w: PCM description and data block disagree", ErrMalformed)
+	}
+	return result, nil
+}
+
+func inspectFormat(ctx context.Context, reader access.Random, offset, size uint64) (sample.Description, int, error) {
+	if size < 16 {
+		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk is shorter than 16 bytes", ErrMalformed)
+	}
+	readSize := size
+	if readSize > 40 {
+		readSize = 40
+	}
+	buffer := make([]byte, int(readSize))
+	if err := readFullAt(ctx, reader, buffer, int64(offset)); err != nil {
+		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
+	}
+	audioFormat := binary.LittleEndian.Uint16(buffer[0:2])
+	channels := binary.LittleEndian.Uint16(buffer[2:4])
+	rate := binary.LittleEndian.Uint32(buffer[4:8])
+	byteRate := binary.LittleEndian.Uint32(buffer[8:12])
+	blockAlign := binary.LittleEndian.Uint16(buffer[12:14])
+	bits := binary.LittleEndian.Uint16(buffer[14:16])
+	validBits := bits
+	channelMask := uint32(0)
+	if audioFormat == formatExtensible {
+		if size < 40 || len(buffer) < 40 || binary.LittleEndian.Uint16(buffer[16:18]) < 22 {
+			return sample.Description{}, 0, fmt.Errorf("%w: extensible fmt chunk is incomplete", ErrMalformed)
+		}
+		validBits = binary.LittleEndian.Uint16(buffer[18:20])
+		channelMask = binary.LittleEndian.Uint32(buffer[20:24])
+		subFormat := buffer[24:40]
+		if binary.LittleEndian.Uint16(subFormat[0:2]) != formatPCM || subFormat[2] != 0 || subFormat[3] != 0 || !bytes.Equal(subFormat[4:], extensibleBase[:]) {
+			return sample.Description{}, 0, fmt.Errorf("%w: extensible subformat is not linear PCM", ErrUnsupported)
+		}
+		audioFormat = formatPCM
+	}
+	if audioFormat != formatPCM || bits != 16 || validBits == 0 || validBits > bits || rate == 0 {
+		return sample.Description{}, 0, fmt.Errorf("%w: only 16-bit integer PCM is supported", ErrUnsupported)
+	}
+	var layout sample.Layout
+	switch channels {
+	case 1:
+		layout = sample.Mono
+		if channelMask != 0 && channelMask != 0x4 {
+			return sample.Description{}, 0, fmt.Errorf("%w: mono channel mask is unsupported", ErrUnsupported)
+		}
+	case 2:
+		layout = sample.Stereo
+		if channelMask != 0 && channelMask != 0x3 {
+			return sample.Description{}, 0, fmt.Errorf("%w: stereo channel mask is unsupported", ErrUnsupported)
+		}
+	default:
+		return sample.Description{}, 0, fmt.Errorf("%w: channel count %d is unsupported", ErrUnsupported, channels)
+	}
+	expectedAlign := uint64(channels) * 2
+	expectedRate := uint64(rate) * expectedAlign
+	if uint64(blockAlign) != expectedAlign || expectedRate > math.MaxUint32 || uint64(byteRate) != expectedRate {
+		return sample.Description{}, 0, fmt.Errorf("%w: PCM byte rate or block alignment is inconsistent", ErrMalformed)
+	}
+	description := sample.Description{
+		Format:    sample.S16Interleaved,
+		ValidBits: int(validBits),
+		Rate:      int(rate),
+		Layout:    layout,
+		Endian:    sample.LittleEndian,
+	}
+	return description, int(blockAlign), nil
+}
+
+func readFullAt(ctx context.Context, reader access.Random, destination []byte, offset int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if offset < 0 {
+		return fmt.Errorf("%w: negative read offset", ErrMalformed)
+	}
+	read := 0
+	for read < len(destination) {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		count, err := reader.ReadAt(ctx, destination[read:], offset+int64(read))
+		if count < 0 || count > len(destination)-read {
+			return fmt.Errorf("%w: invalid random read count", ErrMalformed)
+		}
+		read += count
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if read == 0 {
+					return io.EOF
+				}
+				return io.ErrUnexpectedEOF
+			}
+			return err
+		}
+		if count == 0 {
+			return io.ErrNoProgress
+		}
+	}
+	return nil
+}
+
+func checkedAdd(left, right uint64) (uint64, bool) {
+	if left > math.MaxUint64-right {
+		return 0, false
+	}
+	return left + right, true
+}
