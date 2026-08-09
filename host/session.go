@@ -31,7 +31,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 		if projection.Kind != plan.ProviderBoundary || projection.Direction != direction {
 			continue
 		}
-		selection, selectionErr := boundarySelection(projection)
+		selection, selectionErr := providerSelection(projection)
 		if selectionErr != nil {
 			return sessions, selectionErr
 		}
@@ -89,6 +89,28 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 				"error":    openingErr.Error(),
 			})
 		}
+		if projection.Spool.Valid() {
+			spooled, spoolErr := newSpoolSession(projection.Spool, session, opening)
+			if spoolErr != nil {
+				return sessions, sessionDiagnostic("prepare.spool", projection, "Access output spool could not be created", map[string]string{"error": spoolErr.Error()})
+			}
+			sessions[len(sessions)-1].value = spooled
+			session = spooled
+			effective, effectiveErr := access.NewCapabilities(projection.Effective...)
+			if effectiveErr != nil || !capabilitySubset(effective, spooled.Capabilities()) {
+				return sessions, sessionDiagnostic("prepare.spool-capabilities", projection, "Access output spool does not provide every planned effective capability", nil)
+			}
+			selection, selectionErr = boundarySelection(projection)
+			if selectionErr != nil {
+				return sessions, selectionErr
+			}
+			opening, openingErr = access.NewOpening(direction, session, selection, class)
+			if openingErr != nil {
+				return sessions, sessionDiagnostic("prepare.spool-view", projection, "Access output spool cannot provide the selected effective view", map[string]string{"error": openingErr.Error()})
+			}
+			sessions[len(sessions)-1].actual = spooled.Capabilities()
+			sessions[len(sessions)-1].selected = selection
+		}
 		sessions[len(sessions)-1].opening = opening
 	}
 	return sessions, nil
@@ -130,11 +152,26 @@ func boundarySelection(projection plan.Boundary) (access.Selection, error) {
 	if len(projection.Selected) == 0 {
 		return access.Selection{}, nil
 	}
-	available, err := access.NewCapabilities(projection.Available...)
+	available, err := access.NewCapabilities(projection.Effective...)
 	if err != nil {
 		return access.Selection{}, err
 	}
 	selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(projection.Selected...)))
+	if !ok {
+		return access.Selection{}, access.ErrInvalidCapabilities
+	}
+	return selection, nil
+}
+
+func providerSelection(projection plan.Boundary) (access.Selection, error) {
+	if !projection.Spool.Valid() {
+		return boundarySelection(projection)
+	}
+	available, err := access.NewCapabilities(projection.Available...)
+	if err != nil {
+		return access.Selection{}, err
+	}
+	selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(access.SequentialWrite)))
 	if !ok {
 		return access.Selection{}, access.ErrInvalidCapabilities
 	}

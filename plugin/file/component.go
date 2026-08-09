@@ -64,6 +64,13 @@ func sourceComponent() plugin.Component {
 }
 
 func sinkComponent() plugin.Component {
+	return sinkComponentWith(
+		plugin.Descriptor{DisplayName: "File sink"},
+		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink),
+	)
+}
+
+func sinkComponentWith(descriptor plugin.Descriptor, traits ...plugin.ComponentOption) plugin.Component {
 	shape := sinkShape()
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
@@ -94,9 +101,10 @@ func sinkComponent() plugin.Component {
 			return openSink(plan.shape, opening)
 		},
 	}
-	return plugin.NewComponent[sinkID](plugin.Descriptor{DisplayName: "File sink"}, configurationSchema(),
+	options := []plugin.ComponentOption{
 		plugin.WithSpec(spec),
 		plugin.WithWriter("writes", access.Writes()),
-		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink),
-	)
+	}
+	options = append(options, traits...)
+	return plugin.NewComponent[sinkID](descriptor, configurationSchema(), options...)
 }
