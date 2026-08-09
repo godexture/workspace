@@ -18,6 +18,7 @@ var (
 	ErrPlaneIndex       = errors.New("buffer plane index is out of range")
 	ErrLeaseState       = errors.New("buffer overwrite lease is not writable")
 	ErrInvalidHandle    = errors.New("buffer handle is invalid")
+	ErrRange            = errors.New("buffer range is out of bounds")
 	ErrEditAllocator    = errors.New("copy-on-write requires a payload allocator")
 )
 
@@ -61,6 +62,8 @@ type storage struct {
 
 type lease struct {
 	storage  *storage
+	offset   int
+	layout   Layout
 	released atomic.Bool
 }
 
@@ -71,7 +74,7 @@ type Handle struct{ lease *lease }
 // View is a borrowed read-only view. It does not retain the backing storage;
 // the owner must outlive every use of the view. Call Share when a retained
 // Handle is needed.
-type View struct{ storage *storage }
+type View struct{ lease *lease }
 
 // Allocator owns one bounded payload grant. It is intended to be scoped to a
 // Job component or worker; allocation and release update only this local
@@ -114,7 +117,7 @@ func (a *Allocator) Allocate(spec Spec) (Handle, error) {
 	state := allocateStorage(layout, rawSize)
 	state.charge = charge
 	state.repay = a.release
-	return Handle{lease: &lease{storage: state}}, nil
+	return Handle{lease: newLease(state, 0, layout)}, nil
 }
 
 func (a *Allocator) FromBytes(value []byte, alignment int) (Handle, error) {
@@ -210,22 +213,56 @@ func align(value, alignment int) int {
 	return (value + mask) &^ mask
 }
 
+func newLease(state *storage, offset int, layout Layout) *lease {
+	return &lease{storage: state, offset: offset, layout: layout}
+}
+
+func (l *lease) bytes() []byte {
+	if l == nil || l.storage == nil {
+		return nil
+	}
+	return l.storage.data[l.offset : l.offset+l.layout.Size : l.offset+l.layout.Size]
+}
+
 func (h Handle) Valid() bool {
 	return h.lease != nil && h.lease.storage != nil && h.lease.storage.refs.Load() > 0 && !h.lease.released.Load()
 }
 
 func (h Handle) Borrow() View {
-	if h.lease == nil {
+	if !h.Valid() {
 		return View{}
 	}
-	return View{storage: h.lease.storage}
+	return View{lease: h.lease}
 }
 
 func (h Handle) Share() Handle {
-	if h.lease == nil || !h.lease.storage.retain() {
+	if !h.Valid() || !h.lease.storage.retain() {
 		return Handle{}
 	}
-	return Handle{lease: &lease{storage: h.lease.storage}}
+	return Handle{lease: newLease(h.lease.storage, h.lease.offset, h.lease.layout)}
+}
+
+// Range returns an owned zero-copy view over a byte range of h. The result is
+// read-only, has one plane, and retains the same backing storage independently
+// of the original Handle.
+func (h Handle) Range(offset, size int) (Handle, error) {
+	if !h.Valid() {
+		return Handle{}, ErrInvalidHandle
+	}
+	if offset < 0 || size < 0 || offset > h.lease.layout.Size || size > h.lease.layout.Size-offset {
+		return Handle{}, ErrRange
+	}
+	if !h.lease.storage.retain() {
+		return Handle{}, ErrInvalidHandle
+	}
+	layout := Layout{
+		Alignment: 1,
+		Size:      size,
+		Planes:    []Plane{{Size: size}},
+		ReadOnly:  true,
+		Shared:    true,
+	}
+	return Handle{lease: newLease(h.lease.storage, h.lease.offset+offset, layout)}, nil
 }
 
 func (h Handle) Layout() Layout { return h.Borrow().Layout() }
@@ -236,23 +273,23 @@ func (h Handle) MutableBytes() ([]byte, error) {
 	if !h.Valid() {
 		return nil, ErrInvalidHandle
 	}
-	if h.lease.storage.layout.ReadOnly {
+	if h.lease.layout.ReadOnly {
 		return nil, ErrReadOnly
 	}
-	if h.lease.storage.layout.Shared || h.lease.storage.refs.Load() != 1 {
+	if h.lease.layout.Shared || h.lease.storage.refs.Load() != 1 {
 		return nil, ErrShared
 	}
-	return h.lease.storage.data, nil
+	return h.lease.bytes(), nil
 }
 
 func (h Handle) Plane(index int) ([]byte, error) { return h.Borrow().Plane(index) }
 
 func (h Handle) ReadOnly() bool {
-	return h.lease != nil && h.lease.storage != nil && h.lease.storage.layout.ReadOnly
+	return h.Valid() && h.lease.layout.ReadOnly
 }
 
 func (h Handle) Shared() bool {
-	return h.lease != nil && h.lease.storage != nil && h.lease.storage.layout.Shared
+	return h.Valid() && h.lease.layout.Shared
 }
 
 // Edit is a transactional mutable view. An exclusive writable Handle reuses
@@ -270,17 +307,17 @@ func (h Handle) Edit(allocator *Allocator) (Edit, error) {
 		return Edit{}, ErrInvalidHandle
 	}
 	storage := h.lease.storage
-	if !storage.layout.ReadOnly && !storage.layout.Shared && storage.refs.Load() == 1 {
+	if !h.lease.layout.ReadOnly && !h.lease.layout.Shared && storage.refs.Load() == 1 {
 		return Edit{original: h, working: h, active: true}, nil
 	}
 	if allocator == nil {
 		return Edit{}, ErrEditAllocator
 	}
-	working, err := allocator.Allocate(editSpec(storage.layout))
+	working, err := allocator.Allocate(editSpec(h.lease.layout))
 	if err != nil {
 		return Edit{}, err
 	}
-	copy(working.lease.storage.data, storage.data)
+	copy(working.Bytes(), h.Bytes())
 	return Edit{original: h, working: working, copied: true, active: true}, nil
 }
 
@@ -305,19 +342,14 @@ func (e *Edit) MutableBytes() ([]byte, error) {
 	if e == nil || !e.active || !e.working.Valid() {
 		return nil, ErrLeaseState
 	}
-	return e.working.lease.storage.data, nil
+	return e.working.MutableBytes()
 }
 
 func (e *Edit) Plane(index int) ([]byte, error) {
 	if e == nil || !e.active || !e.working.Valid() {
 		return nil, ErrLeaseState
 	}
-	planes := e.working.lease.storage.layout.Planes
-	if index < 0 || index >= len(planes) {
-		return nil, ErrPlaneIndex
-	}
-	plane := planes[index]
-	return e.working.lease.storage.data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+	return e.working.Plane(index)
 }
 
 func (e *Edit) Copied() bool { return e != nil && e.active && e.copied }
@@ -367,48 +399,49 @@ func (h Handle) Release() {
 }
 
 func (v View) Valid() bool {
-	return v.storage != nil && v.storage.refs.Load() > 0
+	return v.lease != nil && v.lease.storage != nil && !v.lease.released.Load() && v.lease.storage.refs.Load() > 0
 }
 
 func (v View) Share() Handle {
-	if !v.Valid() || !v.storage.retain() {
+	if !v.Valid() || !v.lease.storage.retain() {
 		return Handle{}
 	}
-	return Handle{lease: &lease{storage: v.storage}}
+	return Handle{lease: newLease(v.lease.storage, v.lease.offset, v.lease.layout)}
 }
 
 func (v View) Layout() Layout {
 	if !v.Valid() {
 		return Layout{}
 	}
-	return v.storage.layout.Clone()
+	return v.lease.layout.Clone()
 }
 
 func (v View) Bytes() []byte {
 	if !v.Valid() {
 		return nil
 	}
-	return v.storage.data
+	return v.lease.bytes()
 }
 
 func (v View) Plane(index int) ([]byte, error) {
 	if !v.Valid() {
 		return nil, errors.New("invalid buffer view")
 	}
-	planes := v.storage.layout.Planes
+	planes := v.lease.layout.Planes
 	if index < 0 || index >= len(planes) {
 		return nil, ErrPlaneIndex
 	}
 	plane := planes[index]
-	return v.storage.data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+	bytes := v.lease.bytes()
+	return bytes[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
 }
 
 func (v View) ReadOnly() bool {
-	return v.Valid() && v.storage.layout.ReadOnly
+	return v.Valid() && v.lease.layout.ReadOnly
 }
 
 func (v View) Shared() bool {
-	return v.Valid() && v.storage.layout.Shared
+	return v.Valid() && v.lease.layout.Shared
 }
 
 func (state *storage) retain() bool {

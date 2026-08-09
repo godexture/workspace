@@ -134,7 +134,7 @@ func operationResources(kind operation, configuration configuration) resource.Re
 	planeBytes := configuration.ChunkSamples * 2
 	interleavedBytes := planeBytes * channels
 	switch kind {
-	case readerOperation, encoderOperation:
+	case encoderOperation:
 		return resource.Request{Memory: resource.Bytes(interleavedBytes)}
 	case decoderOperation:
 		bytes := planeBytes

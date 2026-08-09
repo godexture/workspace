@@ -1,6 +1,7 @@
 package buffer
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 )
@@ -75,6 +76,110 @@ func TestHandleSharingAndReadOnlyBoundary(t *testing.T) {
 	}
 	writable.Release()
 	retained.Release()
+}
+
+func TestRangeRetainsReadOnlySinglePlaneView(t *testing.T) {
+	allocator := testAllocator(t, 64)
+	original, err := allocator.FromBytes([]byte{0, 1, 2, 3, 4, 5, 6, 7}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranged, err := original.Range(2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !original.Valid() || !bytes.Equal(original.Bytes(), []byte{0, 1, 2, 3, 4, 5, 6, 7}) {
+		t.Fatal("Range consumed or changed the original Handle")
+	}
+	layout := ranged.Layout()
+	if layout.Size != 4 || len(layout.Planes) != 1 || layout.Planes[0] != (Plane{Size: 4}) || !layout.ReadOnly || !layout.Shared {
+		t.Fatalf("range layout = %#v", layout)
+	}
+	if !bytes.Equal(ranged.Bytes(), []byte{2, 3, 4, 5}) {
+		t.Fatalf("range bytes = %v", ranged.Bytes())
+	}
+	if &ranged.Bytes()[0] != &original.Bytes()[2] {
+		t.Fatal("Range copied instead of sharing the original storage")
+	}
+	plane, err := ranged.Plane(0)
+	if err != nil || !bytes.Equal(plane, ranged.Bytes()) {
+		t.Fatalf("range plane = %v, %v", plane, err)
+	}
+	if _, err := ranged.MutableBytes(); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("range mutable error = %v", err)
+	}
+	view := ranged.Borrow()
+	retained := view.Share()
+	ranged.Release()
+	if view.Valid() {
+		t.Fatal("borrowed range outlived its owner")
+	}
+	original.Release()
+	if !retained.Valid() || !bytes.Equal(retained.Bytes(), []byte{2, 3, 4, 5}) || allocator.Used() == 0 {
+		t.Fatal("retained range did not keep the original storage and overlay alive")
+	}
+	retained.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("released range retained %d bytes", allocator.Used())
+	}
+}
+
+func TestRangeRejectsInvalidBounds(t *testing.T) {
+	allocator := testAllocator(t, 16)
+	handle, err := allocator.FromBytes([]byte{1, 2, 3, 4}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Release()
+	for _, bounds := range [][2]int{{-1, 1}, {0, -1}, {5, 0}, {3, 2}} {
+		if _, err := handle.Range(bounds[0], bounds[1]); !errors.Is(err, ErrRange) {
+			t.Fatalf("Range(%d, %d) error = %v", bounds[0], bounds[1], err)
+		}
+	}
+	empty, err := handle.Range(4, 0)
+	if err != nil || !empty.Valid() || len(empty.Bytes()) != 0 {
+		t.Fatalf("empty tail range = valid %v, bytes %v, error %v", empty.Valid(), empty.Bytes(), err)
+	}
+	empty.Release()
+	if _, err := (Handle{}).Range(0, 0); !errors.Is(err, ErrInvalidHandle) {
+		t.Fatalf("invalid Handle range error = %v", err)
+	}
+}
+
+func TestRangeEditCopiesOnlyVisibleBytes(t *testing.T) {
+	allocator := testAllocator(t, 64)
+	original, err := allocator.FromBytes([]byte{0, 1, 2, 3, 4, 5}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranged, err := original.Range(2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit, err := ranged.Edit(allocator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !edit.Copied() || edit.Handle().Layout().Size != 3 {
+		t.Fatal("range edit did not copy only the visible layout")
+	}
+	mutable, err := edit.MutableBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutable[0] = 9
+	candidate := edit.Handle()
+	if err := edit.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if ranged.Valid() || !bytes.Equal(candidate.Bytes(), []byte{9, 3, 4}) || !bytes.Equal(original.Bytes(), []byte{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("range edit = ranged %v, candidate %v, original %v", ranged.Valid(), candidate.Bytes(), original.Bytes())
+	}
+	candidate.Release()
+	original.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("range edit retained %d bytes", allocator.Used())
+	}
 }
 
 func TestEditCopiesSharedStorageTransactionally(t *testing.T) {

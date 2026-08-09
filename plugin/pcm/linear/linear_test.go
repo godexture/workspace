@@ -454,8 +454,15 @@ func assertPCMPlan(t *testing.T, compiled plan.Plan) {
 				t.Fatalf("automatic node = %#v", node)
 			}
 		}
-		if (node.ID == "reader" || node.ID == "decoder" || node.ID == "encoder") && node.Resources.Memory == 0 {
-			t.Fatalf("allocating PCM node has no payload grant: %#v", node)
+		switch node.ID {
+		case "reader":
+			if node.Resources.Memory != 0 {
+				t.Fatalf("zero-copy reader reserves unused payload memory: %#v", node)
+			}
+		case "decoder", "encoder":
+			if node.Resources.Memory == 0 {
+				t.Fatalf("allocating PCM node has no payload grant: %#v", node)
+			}
 		}
 	}
 	if automatic != 1 {

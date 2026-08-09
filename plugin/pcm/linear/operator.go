@@ -84,7 +84,7 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Ha
 		if end > len(data) {
 			end = len(data)
 		}
-		payload, err := o.buffers.FromBytes(data[offset:end], 16)
+		payload, err := input.Value().Range(offset, end-offset)
 		if err != nil {
 			return err
 		}
