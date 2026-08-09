@@ -93,6 +93,7 @@ M5 cut 後はこの表の surface 実装を一時的に置かない。旧 CLI/WA
 | B2 | metadata の表現不能項目を黙って捨てず warning/loss report にする | [C10](decisions.md) | M7 |
 | B3 | 数値誤差を許容する variant を policy で選択可能にする | [C7](decisions.md)、[C15](decisions.md) | M5/M8 |
 | B4 | FLAC encoder の `Apodizations []Apodization`（関数値）を kind と parameter を持つ data 表現へ変える | 関数値は canonical 表現を持てず、`Tukey(0.5)` と `Tukey(0.9)` を区別できない。異なる bitstream を生むのに Plan と fingerprint に残らず、[performance.md](performance.md#artifactstable) の `ArtifactStable` を満たせない。現状 CLI/WASM からも設定できないため、data 化して初めて surface へ出せる | M8 |
+| B5 | file 出力の replace で、既存 target の ACL と file attribute を継承しない | commit は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため置換自体は成立し、root module に外部 dependency を持ち込まない。継承には `ReplaceFile` が必要で `golang.org/x/sys` に依存するため、実需要が出るまで採らない | M6 |
 
 ## 更新規則
 

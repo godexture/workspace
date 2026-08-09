@@ -183,6 +183,7 @@ M5 の切断により、M6 の開始時点で repository には利用 surface �
 
 - **利用者の最短経路が一行である。** [surfaces](surfaces.md#最短経路の-convenience) の `standard.Convert(ctx, "in.wav", "out.wav")` 相当が動く。path から Reference への解決は convenience が行い、URL 構文を要求しない。この convenience は `Job` を組み立てて同じ `Host` を呼ぶだけとし、別経路の planner や既定を持たない。
 - **`cmd/godec` が新 Host の上で動く。** WAVE/PCM の範囲に限り、入力と出力を指定した変換が公式 binary から実行できる。`cli.Run(ctx, h, args)` の形で `Host` を注入され、CLI layer に planner、registry、plugin factory を持たない。この時点の CLI が持つのは入出力指定、`Plan` preview、progress 表示、cancel、exit code の分類だけでよい。
+- **利用者が拡張の種類を知らなくてよい。** 第三者が Access Provider や Endpoint を含む plugin を配っても、利用者が書くのは `standard.Set().Add(acme.Plugin())` であり、合成 API を種類ごとに使い分けない。公式 composition は `standard.NewHost()` の一行で足りる。合成の入口が拡張の分類を利用者へ漏らしていないことを、第三者相当 plugin の受け入れ test で確認する。
 - **2 段目へ連続的に移行できる。** codec 指定、filter、mapping、policy、custom Set へ進む時に、1 段目で書いた code を捨てずに `Job` を露出させて拡張できる。[progressive disclosure](#progressive-disclosure) の段差が「作り直し」にならない。
 - **plugin 開発者の最小 component を実測し、目標との差を記録する。** M6 で実 WAVE/PCM component を書いた時点で、gain 相当の最小 processor に必要な概念数を数える。[最小 component](#最小-component) が目標とする水準に対して差が大きい場合、helper を追加するか、追加しない理由を記録する。放置しない。
 - **通常 Processor が実装しなくてよいものを実際に実装していない。** global registration、衝突しない文字列 ID、goroutine/channel、scheduler、手動 `Release`、CLI flag parser、wire DTO、metrics 集約、candidate routing のいずれも、公式 WAVE/PCM component の source に現れない。

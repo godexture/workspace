@@ -536,6 +536,32 @@ capability alternative は M6 の WAVE が最初の consumer になる（`data` 
 
 **consumer を持たない contract は M3 で凍結しない。** clock domain と timestamp origin、latency/buffer range、block/drop/duplicate/conceal policy、reconnect/discontinuity semantics、exclusive/shared resource、hotplug event、multi-output の `AllOrNothing` 共同 transaction は、この文書に設計として記述するが、実装する Endpoint も Provider も現時点の roadmap に存在しない。M3 では最小の型だけを置き、詳細は実際の Endpoint を作る milestone で決める。現行 `MediaAttributes` が「使われないまま形だけ先に決めて後で作り直す」失敗をした構造を繰り返さないためである。
 
+## M6 完了条件
+
+M6 は Access contract が最初の実 I/O consumer を得る milestone である。file Provider、prepared session、共有 probe、Inspect、spool、transactional file output を WAVE/PCM 経路と一体で実装する。media 側の条件と作業単位は [media](media.md#m6-完了条件) を正本とする。
+
+対象は local filesystem だけとする。remote Provider、device/session Endpoint、realtime clock は M6 の条件に含めない。
+
+- **Provider を component の trait として宣言する。** `access` が `plugin.ComponentOption` を提供し、source trait は 0-in/1-out の component、sink trait は 1-in/0-out の component に付く。scheme、capability、transaction class、acquire 操作は trait が持つ。M5 時点の `access.Provider` は component identity を一つしか持たず、[Access Provider](#access-provider) の binding が input boundary へ 0-in/1-out、output boundary へ 1-in/0-out を要求するため同じ scheme で両方向を提供できなかった。trait では方向が付き先の component で決まるので、この不整合が構造的に起きない。合成側の条件は [plugins](plugins.md#m6-完了条件) を正本とする。
+- **`ProviderRole`、Provider manifest、`endpoint.Component`、`host.Providers`/`host.Endpoints` を削除する。** 方向は trait の付き先から導出し、component と宣言の対応は trait であることから自明になる。M5 時点で必要だった「Provider component が catalog に無い」「Endpoint manifest が catalog component を記述していない」という検査は表現不能になるため消す。互換のための経路を残さない。
+- **acquire を trait の操作にする。** session を開くのは component の `Open` ではなく Prepare の段階なので、acquire は宣言ではなく trait が持つ操作にする。component は取得済みの narrow view を `plugin.OpenServices` の boundary として受け取るだけで、自分では開かない。
+- Provider 自身の `Requirements` を削除する。要求元は byte を消費する Format/component であり、Provider が自分の要求を自分の capability に対して解決する現在の形は意味を持たない。
+- scheme の衝突検出を `internal/catalog` が trait の走査で行う。Provider が自分で declaration を作る経路は不要になるので削除し、検出は codec/metadata Binding と同じ composition 診断の channel に残す。
+- `plugin/file` が source component と sink component を持ち、それぞれに trait を付ける。foundation package が filesystem 実装を import しない状態を維持する。
+- **write 側の capability 語彙と narrow view を新設する。** M5 時点の `access` は read 側 6 capability と `Sequential`/`Random` view しか持たない。sink の逐次書きと位置指定書きを別 capability として宣言でき、component は宣言した view だけを受け取る。あわせて `internal/bind` の出力 boundary が入力側と同じ経路で capability を選択する。M5 時点の `bindOutput` は選択を行わず空の `Selection` を渡している。
+- **Prepare が session を acquire し、宣言 capability ではなく実 session の capability を検証する。** manifest が宣言した capability を実際に開けなかった場合は、Open 後の type assertion ではなく Prepare の構造化 diagnostic になる。
+- **候補間で bounded probe を共有する。** 複数の Format 候補が同じ入力を判定しても byte source を読み直さず、候補ごとの `Seek(0)` を繰り返さない（[F7](findings.md)）。probe の上限 byte 数と cancel が policy から決まり、非 seekable 入力でも成立する。
+- 選択された Format の Inspect が stream、time base、metadata carrier を読み、その結果が `Compile` の入力 descriptor になる。probe/inspect と実行が同じ session と snapshot を使う。
+- **Prepare の段階順が [planner pipeline](runtime.md#planner-pipeline) と一致する。** Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、各 component の `Compile` は pure のままである。`Host.Plan` の dry-run が output を作成も truncate もしない。
+- **capability 不足を spool で埋める経路が動く。** WAVE mux は位置指定書きを第一 alternative、逐次書きのみを第二 alternative として宣言する。位置指定書きを持つ sink では header を直接 patch し、持たない sink では sink boundary を spool 付きへ差し替えて size 確定後に正しい header を書く。spool は graph node ではなく boundary の decorator とし、`plan.Boundary` に `SpoolSpec` として現れて選択理由を説明できる。runtime に第二の実行モードを持ち込まない。
+- **spool の storage は Host が所有し、上限を予約ではなく quota で表す。** `job.ResourcePolicy` に spool 専用の上限（最大 bytes と storage 種別）を持たせ、Host が Job 単位で spool を所有する。`resource.Request`/`Grant` の予約次元へは戻さない。spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。上限検査は spool-local counter で行い、中央 manager を item ごとに呼ばない。cancel、rollback、Job 終了で必ず削除する。
+- spool を Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。M6 の唯一の consumer が sink boundary の decorator であり、公開すると consumer を持たない plugin API を凍結することになる。第二の consumer が現れた milestone で共通 service へ昇格させるかを決める。
+- **transactional file output が実装される。** 同じ filesystem 上の temporary file へ書き、Finalize → Flush → Sync → PrepareCommit → Commit が成功した後に replace する。replace は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため既存 target を置換でき、外部 dependency を増やさない。`ReplaceFile` による ACL/attribute の継承は行わず、その差分を [capability](capability.md#挙動変更の記録) の B5 として記録する。失敗と cancel では元 target を残す。non-seekable/stdout sink で rollback できないことを `Plan` に示す。
+- 引き継いだ宣言が consumer を得る。`SpoolSpec`、`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、Source/Sink capability の `Own`/`Borrow`/`Factory`、`ProbeView`、`RangeRequest` のうち M6 が使うものを示し、使わないものは担当 milestone とともに [scope](scope.md#m6-の-contract-分類) へ残す。
+- 上記を unit/property test、`integration` の end-to-end test、[quality](quality.md#m6-完了条件) の Access Provider testkit で検査する。cancel、部分書き込み、commit 失敗、spool 中断で temporary file と spool storage が残らないことを含める。
+
+M6 では次を未完了事項として残す。HTTP/S3 等の remote Provider、device/session Endpoint、realtime clock、multi-output の `AllOrNothing` 共同 transaction、live topology event の既定 policy は、需要が現れた milestone と M9 で扱う。
+
 ## 文書全体の完了条件
 
 この節は Access/Endpoint contract の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。

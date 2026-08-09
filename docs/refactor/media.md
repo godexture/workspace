@@ -426,6 +426,47 @@ M3 では次を未完了事項として残す。descriptor から実際の Forma
 
 walking skeleton を要求する理由は、consumer のいない contract を M3〜M5 の 3 段積み上げないためである。M2 では `config.SchemaView` に resolver が必要だと判明したのが「M4 がどう使うか」を検討した時点であり、それまでの review では検出できなかった。M3 は package 数がさらに多く、同じ失敗の影響が大きい。
 
+## M6 完了条件
+
+M6 は最初の実 container 経路が動く milestone である。M4 の実 PCM へ WAVE を足し、demux → decode → encode → mux を新設計だけで通す。I/O 側の条件は [access](access.md#m6-完了条件)、composition と拡張性 gate は [plugins](plugins.md#m6-完了条件)、testkit と conformance は [quality](quality.md#m6-完了条件)、利用者と plugin 開発者の体験は [experience](experience.md#m6-完了条件) を正本とする。
+
+対象 family は WAVE と linear PCM だけとする。MP4 と multi-stream は M7、MP3/FLAC/audio filter は M8 が担当し、`media/video` と `media/subtitle` の frame 型は [scope](scope.md#初期実装と将来拡張) のとおり作らない。
+
+### 作業単位
+
+M6 は 5 文書に跨る最大の milestone であり、単位を分けずに着手すると「WAVE が動くまで何も動かない」区間が長くなる。分割の判定規則は M4 と同じく **各単位が端から端まで green の実行経路を残すこと** とする。
+
+| 単位 | 内容 | 単位終了時に動くもの |
+|---|---|---|
+| M6-0 | Access/Endpoint を component の trait にする合成 contract の是正。`ProviderRole`、Provider manifest、`Requirements`、`endpoint.Component`、`host.Providers`/`Endpoints` の削除と acquire 契約の追加 | `plugin.Set` 一つで両方向 Provider を含む合成が表現できる。data path は M5 のまま変わらない |
+| M6-1 | write 側 capability と narrow view、`plugin/file` Provider、prepared session の acquire と実 capability 再検証、transactional file output と temporary file の cleanup | M5 の PCM 経路が direct resource ではなく file Reference で通り、出力が temporary file と replace で commit される |
+| M6-2 | WAVE Format の demux/mux、RIFF chunk、codec Binding、未知 chunk の raw preservation、`RIFF`/`data` size patch の capability alternative、spool decorator と spool quota | WAVE の読み書きが通り、逐次書きのみの sink でも spool 経由で正しい header を書ける |
+| M6-3 | 候補間で共有する bounded probe と Format inspect | 入力 format を明示せずに WAVE と raw PCM を判別して変換できる |
+| M6-4 | `standard` composition、public `testkit` の最小形、`integration` module、out-of-tree 相当 plugin の拡張性 gate | 公式 composition から Host を作れ、第三者 plugin が core 無変更で同じ経路に載る |
+| M6-5 | `standard.Convert` と `cli`/`cmd/godec` の最短経路、体験の実測 | 一行の library 呼び出しと公式 binary で file から file への変換ができる |
+
+順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2 は M6-1 の実 byte session を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5 は composition をそれぞれ必要とする。
+
+M6-0 は M6 着手時の contract 監査で見つかった不整合の是正であり、新機能を作らない。実装を始めてから合成 API を変えると差分の由来が追えなくなるため、file I/O を含む M6-1 と混ぜず独立させる。詳細は [access](access.md#m6-完了条件) の Provider 分離条項と [plugins](plugins.md#m6-完了条件) の合成条項を正本とする。
+
+### media 側の条件
+
+- WAVE が `media/format` の Format として宣言され、RIFF chunk 境界、`fmt `/`data` chunk、padding、size 上限を実規格として扱う。移植参照は `_legacy/plugin/wave/internal` にある。
+- **`RIFF`/`data` size の後追い patch で header 長が決して変わらない。** mux は先頭に `ds64` と同サイズの `JUNK` chunk を予約し、payload が 4 GiB を超えた場合だけ `JUNK` を `ds64` へ書き換えて RF64 にする。旧実装が持つ「header 長が変わったため patch できない」失敗（`_legacy/plugin/wave/internal/muxer.go`）が新経路に存在しない。sink capability による経路選択は [access](access.md#m6-完了条件) を正本とする。
+- codec Binding が WAVE の format tag と `plugin/pcm/linear` の Parser/Decoder を結び、PCM component 側を container 向けに書き換えない。container が codec の packetization を直接知る経路（[F20](findings.md)）が新経路に現れない。
+- 未知 chunk が `metadata.RawBlock` として解釈されずに保持され、WAVE → WAVE の roundtrip で byte 列と順序が復元される。
+- RIFF INFO の metadata encoding が `media/metadata` の Document/Origin/RawBlock と `media/carrier` の carrier identity を使い、重複 key と順序を保存する。共通 key への写像は `media/tag` の vocabulary を使う。
+- `media/format` の Probe と Inspect が実 consumer を得る。Probe は bounded な先頭 range だけで判定し、Inspect が選択後に stream descriptor、time base、metadata carrier を読む。
+- M3 の trivial な schema/format/codec/metadata encoding が実 WAVE/PCM に置換され、`bytes → packet → frame → packet → bytes` の経路に test 専用 component が残らない。恒久 harness の役割は `integration` の end-to-end test が引き継ぐ。
+- WAVE/PCM の lossless roundtrip が exact で一致する。判定方法は [capability](capability.md) の該当行に従う。
+- **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md#m6-の-contract-分類) へ consumer を作る milestone とともに記載する。**
+- **先行 milestone から引き継いだ宣言を監査する。** [refactor.md](../refactor.md#実装ロードマップ) の「引き継いだ責務を完了条件へ再掲する」に従い、M3〜M5 が「宣言のみ」「M6 が担当」とした項目を検索し、実 consumer、完了条件、さらに先へ送る明示記録のいずれかへ一件ずつ対応付ける。
+- 上記を unit/property test と `integration` の end-to-end test で検査する。
+
+M6 では次を未完了事項として残す。無指定出力の copy/remux 既定（[capability](capability.md#挙動変更の記録) の B1）、metadata の loss report、`metadata.Mapping` の適用、multi-stream mapping、seek plan は M7。MP3/FLAC/audio filter と variant selection は M8。したがって M6 の WAVE → WAVE は decoder/encoder を開いてよく、stream copy を要求しない。
+
+size 不明 header を書く streaming 出力（旧実装が非 seekable sink へ書いていた `0xFFFFFFFF`）は M6 では提供しない。規格上不正な出力を既定にしないためであり、需要が確認された milestone が opt-in と `Plan` の warning を伴って追加する。M6 の非 seekable sink は spool 経路で正しい header を書く。
+
 ## 文書全体の完了条件
 
 この節は media/metadata contract の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。

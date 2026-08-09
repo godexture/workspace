@@ -288,3 +288,20 @@ M2 は identity、immutable `Set`/Catalog、構造化 diagnostic の contract �
 - 上記を marker identity、duplicate、explicit override、invalid definition、複数 Host isolation の unit/race test で検査する。公式 plugin を import しない。
 
 M2 では次を未完了事項として残す。`plugin/identity` の import path snapshot test は、公式 plugin へ marker identity を導入する M6/M8 の時点で marker ベースの test へ置き換える。各 plugin の `register.go`、旧 `core/registry`、`sdk/catalog` は M5 末尾の切断で一括削除する（[inventory](inventory.md#m5-の切断)）。
+
+## M6 完了条件
+
+M6 は公式 composition と第三者拡張が初めて実 plugin で成立する milestone である。component contract 自体は M2〜M5 で確定しているため、M6 が確認するのは「その contract の上で実 family と第三者 plugin が同じ経路に載るか」である。作業単位は [media](media.md#m6-完了条件) を正本とする。
+
+- **拡張は component に付き、`plugin.Set` が唯一の合成値である。** Access Provider と Endpoint を独立した合成入力にせず、宣言する対象の component へ `plugin.ComponentOption` として付ける。M5 の `plugin.WithReader`/`WithProcessor` が typed execution binding を component へ付けたのと同じ形であり、`plugin` に増えるのは marker key 付きの trait slot 一つだけである。`access` が `plugin` を import している以上 slot 自体は型消去になるが、取り出し口は `access`/`endpoint` が型付きで提供し、foundation に kind の switch を残さない。
+- **利用者が拡張の種類を知らなくてよい。** 第三者は Provider を含む plugin でも `acme.Plugin()` 一つを配り、利用者は `standard.Set().Add(acme.Plugin())` と書く。合成の入口を種類ごとに分けないため、`host.Providers`/`host.Endpoints` option と `endpoint.Component` を削除する。
+- `standard` package が `Set() plugin.Set` と `NewHost(extra ...plugin.Definition)` を提供し、WAVE、linear PCM、file Provider の definition と codec/metadata Binding をまとめて載せる。`host.New(host.Plugins(standard.Set()))` が公式 composition の完全な形になる。利用者が family ごとの import と Binding 登録を手で並べなくてよい。
+- **方向は trait の付き先が決める。** source trait は 0-in/1-out の component、sink trait は 1-in/0-out の component に付く。方向を手書き宣言する enum を持たない。M5 時点の `access.SourceSinkRole` は構築できるが決して bind されない dead value であり、宣言と実態が食い違いうることが実証されている。
+- 公式 plugin package が `wave.Plugin()` のように definition を関数で返す。`var Plugin = ...` の変数形を使わない。M2 で決めた形の最初の実適用である。
+- **out-of-tree 相当 plugin の拡張性 gate を通す。** `integration` から、core と surface の source を一切変更せずに新しい schema、Format、Codec、Metadata Encoding、Access Provider を追加し、標準 `Set` へ足した Host で実際の変換が通ることを test にする。第三者側が書くのは marker、config schema、`Compile`/`Open`、trait、Binding だけであり、利用者側は `Add` 一つで足りる。
+- 旧 `plugin/identity` の import path snapshot test を置き換える。実 declaration の marker identity と package path を `integration` 側から検査し、公式 family の identity が package 移動で黙って変わらないことを固定する。
+- 公式 plugin が別の公式 plugin を直接 import しない。WAVE は PCM の実装型ではなく codec Binding を通じて Parser/Decoder へ到達する。
+- 通常 component の source に global registration、衝突回避のための手書き文字列 ID、goroutine/channel、scheduler、手動 `Release`、surface DTO が現れない。概念数の実測は [experience](experience.md#m6-完了条件) が担当する。
+- 上記を `integration` の test で検査する。foundation package は公式 plugin を import しない。
+
+M6 では次を未完了事項として残す。MP3/FLAC/audio filter の family 移行と公式 plugin 間の直接依存の解消は M8、dynamic install と remote plugin protocol は [decisions](decisions.md#deferred-without-blocking-the-first-implementation) のとおり延期する。

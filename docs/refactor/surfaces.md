@@ -129,7 +129,7 @@ CLI layer に planner、registry、plugin factory を持たせない。
 file output は target と同じ filesystem 上の temporary file に書き、Finalize、flush、sync、close がすべて成功した後に rename/replace する。ただし temporary object、replace、commit/abort の実装は CLI ではなく file Access Provider が所有する。CLI は確認 UX と Job policy だけを担当する。
 
 - overwrite policy を事前に固定
-- Windows の replace semantics を専用実装で扱う
+- Windows の replace semantics を扱う（`os.Rename` が `MoveFileEx` の replace に写る。ACL/attribute は継承しない）
 - failure/cancel では元 target を残す
 - multi-output commit の部分成功を report する
 - stdout/non-seekable sink では rollback 不可能であることを Plan に示す

@@ -218,6 +218,20 @@ CI matrix は root の machine-readable manifest から生成し、日常の cha
 
 最低限、公式 optimized variant は reference/scalar との differential testを持ち、lossless codec は logical output exact、Stable は同じ signature の artifact exact、Portable は宣言 domain の cross-target artifact exact を検査する。`Fast` でも parser、CRC、timestamp、ordering、item count、bounds validation を緩めない。
 
+## M6 完了条件
+
+M6 は public testkit と `integration` module が最小形で成立する milestone である。CI matrix、corpus tier、hermetic build、release plan は M10 が担当し、M6 には要求しない。対象 family は WAVE と linear PCM、対象 Provider は local file だけとする。作業単位は [media](media.md#m6-完了条件) を正本とする。
+
+- **公式 plugin が第三者と同じ入口で検証される。** `testkit.Plugin(t, wave.Plugin())` の形で公式 WAVE/PCM/file plugin が public testkit を通る。公式 plugin だけが使う内部 test helper を別に持たない。
+- 共通 contract の最小形が実装される。identity/descriptor/config schema、`Compile` の purity と repeatability、bounded `Suggest`、selected component だけの `Open`、cancel/EOF/Flush/Finalize/Close、ownership leak と double drop、宣言 schema と実 item の一致、panic/error boundary、empty/truncated/oversized input を含む。
+- 専門 testkit のうち Format、Codec/Parser、Access Provider を M6 に含める。Metadata Encoding は RIFF INFO が扱う範囲（parse/marshal、重複と順序、未知 raw）に限り、Mapping と loss は M7、Endpoint は M9 に残す。
+- `integration` module が dependency graph の最上位にあり、foundation と公式 plugin が test のために互いを import しない。end-to-end 変換、拡張性 gate、identity 検査はここに置く。
+- **正しさを旧実装ではなく仕様で確認する。** [capability](capability.md) の WAVE、PCM、RIFF INFO の各行が指定する conformance 相当 vector と lossless roundtrip exact を実行し、確認済みであることを同表へ記録する。M0 baseline は差異の診断にだけ使う。
+- testkit の usability gate を満たす。plugin author が scheduler、queue、手動 `Release`、surface DTO を再実装せずに contract を検証できる。満たせない箇所は helper を追加するか、追加しない理由を記録する。
+- 上記の test が `go run ./tools/cmd/test-runner --simd` の対象に含まれ、milestone の完了確認で green になる。
+
+M6 では次を未完了事項として残す。root CI matrix、外部 corpus の取得 tier と provenance、hermetic build、SBOM/NOTICE、release plan は M10。browser lifecycle gate は M9 が surface を戻した時点で追加する。
+
 ## 文書全体の完了条件
 
 この節は品質・検証基盤の最終状態を示す。M0 単独の完了判定には、上記「M0 完了条件」だけを用いる。

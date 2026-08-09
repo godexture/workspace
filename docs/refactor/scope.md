@@ -161,6 +161,18 @@ M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prep
 
 先行 milestone から引き継いだ宣言は別に監査する。M3 の `access.SpoolSpec` と M4 の `job.ResourcePolicy.AllowSpool` は M5 の transaction coordinator の consumer ではなく、M6 の WAVE/file 経路が Plan node、temporary storage、cancel/rollback cleanup を初めて実装する。M5 の `resource.Request.Workers` は grant で制限された node-local `OpenContext.Tasks()` が実消費し、component が grant を超えて task を開始できない。consumer の無い `Temporary` resource dimension は M5 review で削除し、M6 が spool storage interface と課金単位を同時に決める。realtime `Clock` は M9 の Endpoint と同時に追加する。
 
+## M6 の contract 分類
+
+M6 で実 consumer を得る宣言は次である。`media/format` の Probe/Inspect と capability alternative、`media/carrier` の carrier identity、`metadata.RawBlock` の raw preservation、`media/codec` の codec Binding、`access` の Source/Sink capability と `Own`/`Borrow`/`Factory`、`ProbeView`/`RangeRequest`、`SpoolSpec`/`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、transaction class と `access.Transaction`/`Flusher`/`Syncer` の file 実装である。いずれも WAVE Format または local file Provider が実 consumer になる。
+
+M6 でも宣言に留める contract と担当は次である。`metadata.Mapping` と loss report は実 encoding 間変換が現れる M7、`stream.Event` の live topology 既定 policy と `flow.FanInPolicy` の zip 以外は実 component が現れる M7 以降、`endpoint` の Device/DeviceQuery と realtime clock は M9、`access.Snapshot` の再取得と retry は remote Provider を作る milestone が担当する。M6 で使わないと判断したものは、この節へ担当を書いてから残す。
+
+`resource` の temporary 次元は M5 review で削除し、**戻さないと決めた**。spool の上限は `job.ResourcePolicy` の spool 専用 quota として持ち、Host が Job 単位で storage を所有する。予約次元へ戻さないのは、spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。spool 自体は Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。MP4 fragmented 等の第二の consumer が現れた milestone で、共通 service へ昇格させるかを決める。
+
+M6 が新設する write 側 capability（sink の逐次書きと位置指定書き）と narrow view は、WAVE mux と local file Provider が同時に consumer になる。size 不明 header を書く streaming 出力は M6 では提供せず、需要が確認された milestone が opt-in と `Plan` warning を伴って追加する。
+
+M6-0 で削除する合成 API は `access.ProviderRole`、`access.Provider` の manifest 形とその declaration 生成、`endpoint.Component`、`host.Providers`/`host.Endpoints` である。Access と Endpoint は宣言する component の trait になり、`plugin.Set` が唯一の合成値になる。`plugin` に増えるのは marker key 付きの trait slot 一つで、取り出しは `access`/`endpoint` の型付き accessor に閉じる。host が解釈するのはこの二種の trait だけであり、第三者が独自の trait 種を付けても host は解釈しない。第三者が拡張できるのは trait の**種類**ではなく**実装**である。
+
 ## 文書全体の完了条件
 
 この節は拡張点全体の最終状態を示す gate であり、個別 milestone の完了判定には各 milestone 固有の条件を用いる。M3 の判定には上記「M3 完了条件」だけを使う。
