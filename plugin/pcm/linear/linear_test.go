@@ -248,6 +248,46 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}
 }
 
+func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
+	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	input := []byte{
+		0, 0, 1, 0, 2, 0, 3, 0, 4, 0,
+		5, 0, 6, 0, 7, 0, 8, 0,
+	}
+	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
+		t.Run(preset.String(), func(t *testing.T) {
+			fixture := compilePCMProgram(t, description)
+			graph, ok := fixture.request.Graph()
+			if !ok {
+				t.Fatal("PCM fixture has no graph")
+			}
+			policy, ok := job.PolicyFor(preset)
+			if !ok {
+				t.Fatalf("policy %s is unavailable", preset)
+			}
+			request, err := job.New(nil, nil, graph, job.WithPolicy(policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.request = request
+			output, _, _ := runPCMProgram(t, fixture, input)
+			if !bytes.Equal(output, input) {
+				t.Fatalf("round trip = %v, want %v", output, input)
+			}
+			prepared, err := fixture.host.Prepare(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Close()
+			for _, node := range prepared.Plan().Nodes() {
+				if node.ID == "encoder" && node.Resources.Memory != 4 {
+					t.Fatalf("encoder per-item memory = %d, want 4", node.Resources.Memory)
+				}
+			}
+		})
+	}
+}
+
 func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
 	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
 	fixture := compilePCMProgram(t, description)

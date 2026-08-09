@@ -22,7 +22,9 @@ const (
 
 func (c Confidence) Valid() bool { return c <= ExactConfidence }
 
-// Request is the minimum grant needed to open one compiled component.
+// Request is the minimum grant needed to open one compiled component. Memory
+// is the payload capacity for one in-flight item; Host expands it for the
+// bounded downstream queue slots retained by the executable Plan.
 type Request struct {
 	Memory  Bytes
 	Workers uint32

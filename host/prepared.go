@@ -107,7 +107,11 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		prepared.reservations = append(prepared.reservations, reservation{name: "runtime", lease: lease})
 	}
 	for _, node := range selected.Nodes() {
-		lease, err := manager.Reserve(node.ID().String(), node.Compilation().Resources())
+		request, err := selected.NodeResources(node.ID())
+		if err != nil {
+			return fail(err)
+		}
+		lease, err := manager.Reserve(node.ID().String(), request)
 		if err != nil {
 			return fail(err)
 		}

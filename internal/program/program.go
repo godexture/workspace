@@ -3,7 +3,6 @@ package program
 
 import (
 	"errors"
-	"math"
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/bound"
@@ -13,7 +12,6 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
-	"github.com/godexture/godec/resource"
 )
 
 type Program struct {
@@ -94,54 +92,6 @@ func (p Program) BuildObserved(operators []flow.Operator, observer *observe.Coll
 		return nil, errors.New("program has no complete typed execution binding")
 	}
 	return p.runtime.BuildObserved(operators, observer)
-}
-
-// Resources returns the exact coarse reservation required by compiled nodes
-// and runtime queue slots. Payloads remain charged to node-local allocators.
-func (p Program) Resources() (resource.Request, error) {
-	if !p.Valid() {
-		return resource.Request{}, errors.New("program is invalid")
-	}
-	var result resource.Request
-	for _, node := range p.nodes {
-		if err := addRequest(&result, node.Compilation().Resources()); err != nil {
-			return resource.Request{}, err
-		}
-	}
-	runtime, err := p.RuntimeResources()
-	if err != nil {
-		return resource.Request{}, err
-	}
-	if err := addRequest(&result, runtime); err != nil {
-		return resource.Request{}, err
-	}
-	return result, nil
-}
-
-func (p Program) RuntimeResources() (resource.Request, error) {
-	if !p.Valid() {
-		return resource.Request{}, errors.New("program is invalid")
-	}
-	var result resource.Request
-	for _, buffer := range p.plan.Runtime().Buffers {
-		if buffer.Limit.Items < 0 || uint64(buffer.Limit.Items) > math.MaxUint32 || uint64(result.Queue)+uint64(buffer.Limit.Items) > math.MaxUint32 {
-			return resource.Request{}, errors.New("program resource request overflows")
-		}
-		result.Queue += uint32(buffer.Limit.Items)
-	}
-	return result, nil
-}
-
-func addRequest(total *resource.Request, value resource.Request) error {
-	if uint64(total.Memory) > math.MaxUint64-uint64(value.Memory) ||
-		uint64(total.Workers)+uint64(value.Workers) > math.MaxUint32 ||
-		uint64(total.Queue)+uint64(value.Queue) > math.MaxUint32 {
-		return errors.New("program resource request overflows")
-	}
-	total.Memory += value.Memory
-	total.Workers += value.Workers
-	total.Queue += value.Queue
-	return nil
 }
 
 func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, error) {
