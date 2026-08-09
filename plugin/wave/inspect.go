@@ -11,7 +11,9 @@ import (
 
 	"github.com/godexture/godec/access"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/plugin"
 )
 
 func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
@@ -19,7 +21,8 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 	if !ok {
 		return mediaformat.Inspection{}, fmt.Errorf("%w: WAVE Inspect requires random read", ErrUnsupported)
 	}
-	value, err := inspectHeader(ctx.Context(), random)
+	resolver, _ := metadata.ResolverOf(ctx.Prepared())
+	value, err := inspectHeaderWithMetadata(ctx.Context(), random, resolver)
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -27,8 +30,15 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 }
 
 func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
+	return inspectHeaderWithMetadata(ctx, reader, metadata.Resolver{})
+}
+
+func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolver metadata.Resolver) (header, error) {
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
+	}
+	if !resolver.Valid() {
+		resolver, _ = metadata.NewResolver(nil)
 	}
 	var root [12]byte
 	if err := readFullAt(ctx, reader, root[:], 0); err != nil {
@@ -49,6 +59,7 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 
 	var result header
 	result.rf64 = rf64
+	document := metadata.NewBuilder(metadata.StreamScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
 	offset := uint64(12)
@@ -78,9 +89,12 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 			return header{}, fmt.Errorf("%w: chunk payload offset exceeds runtime range", ErrUnsupported)
 		}
 		actualSize := declaredSize
+		anchor := chunkAnchorAt(formatFound, dataFound)
+		preserve := true
 
 		switch id {
 		case tagDS64:
+			preserve = false
 			if ds64Found || declaredSize < 28 {
 				return header{}, fmt.Errorf("%w: invalid ds64 chunk", ErrMalformed)
 			}
@@ -98,6 +112,7 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 			}
 			ds64Found = true
 		case tagFMT:
+			preserve = false
 			if formatFound {
 				return header{}, fmt.Errorf("%w: fmt chunk is repeated", ErrMalformed)
 			}
@@ -109,6 +124,7 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 			result.blockAlign = blockAlign
 			formatFound = true
 		case tagDATA:
+			preserve = false
 			if dataFound {
 				return header{}, fmt.Errorf("%w: data chunk is repeated", ErrMalformed)
 			}
@@ -139,10 +155,12 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 		if next <= offset || rootEnd != 0 && next > rootEnd {
 			return header{}, fmt.Errorf("%w: chunk exceeds RIFF bounds", ErrMalformed)
 		}
-		offset = next
-		if formatFound && dataFound {
-			break
+		if preserve {
+			if err := inspectPreservedChunk(ctx, reader, resolver, document, offset, next, declaredSize, id, anchor); err != nil {
+				return header{}, err
+			}
 		}
+		offset = next
 	}
 	if rf64 && !ds64Found {
 		return header{}, fmt.Errorf("%w: RF64 stream has no ds64 chunk", ErrMalformed)
@@ -150,10 +168,46 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 	if !formatFound || !dataFound {
 		return header{}, fmt.Errorf("%w: fmt or data chunk is absent", ErrMalformed)
 	}
+	if rootEnd == 0 || offset != rootEnd {
+		return header{}, fmt.Errorf("%w: RIFF chunk scan did not reach the declared end", ErrMalformed)
+	}
+	parsed, err := document.Build()
+	if err != nil {
+		return header{}, fmt.Errorf("%w: WAVE metadata document: %w", ErrMalformed, err)
+	}
+	result.metadata = parsed
 	if !result.valid() {
 		return header{}, fmt.Errorf("%w: PCM description and data block disagree", ErrMalformed)
 	}
 	return result, nil
+}
+
+func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {
+	length := next - offset
+	if length > uint64(^uint(0)>>1) {
+		return fmt.Errorf("%w: chunk %q exceeds control-plane address space", ErrUnsupported, id)
+	}
+	raw := make([]byte, int(length))
+	if err := readFullAt(ctx, reader, raw, int64(offset)); err != nil {
+		return fmt.Errorf("%w: preserved chunk %q at %d: %w", ErrMalformed, id, offset, err)
+	}
+	if id == tagLIST && declaredSize >= 4 && len(raw) >= 12 && string(raw[8:12]) == tagINFO {
+		block := newChunkBlockID(offset, anchor, chunkInfo)
+		document, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw))
+		if err != nil {
+			return err
+		}
+		builder.Append(document)
+		return nil
+	}
+	block := metadata.NewRawBlock(
+		newChunkBlockID(offset, anchor, chunkRaw),
+		rawChunkCarrier(),
+		plugin.Identity{},
+		metadata.NewBlob("application/x-riff-chunk", raw),
+	)
+	builder.AddBlock(block)
+	return nil
 }
 
 func inspectFormat(ctx context.Context, reader access.Random, offset, size uint64) (sample.Description, int, error) {

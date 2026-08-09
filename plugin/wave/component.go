@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
@@ -50,7 +51,14 @@ func demuxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			output = output.WithMetadata(input.Metadata())
+			document, err := metadata.NewBuilder(metadata.StreamScope).
+				Append(input.Metadata()).
+				Append(inspected.metadata).
+				Build()
+			if err != nil {
+				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+			}
+			output = output.WithMetadata(document)
 			return plugin.Compiled[demuxPlan, stream.Descriptor]{
 				Plan:      demuxPlan{shape: shape.Clone(), header: inspected},
 				Outputs:   flow.NewDescriptors(flow.Describe("chunks", output)),

@@ -3,6 +3,7 @@ package wave
 import (
 	"errors"
 
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
 )
 
@@ -33,6 +34,7 @@ type header struct {
 	dataSize    uint64
 	blockAlign  int
 	rf64        bool
+	metadata    metadata.Document
 }
 
 func (h header) valid() bool {
