@@ -67,8 +67,8 @@ func validateSinkTrait(component plugin.Component, shape flow.Shape, trait acces
 	}
 	if port, ok := bound.Port(shape, plan.OutputBoundary); !ok {
 		items = append(items, traitItem("catalog.access-shape", component.Identity(), "Access sink trait requires a 1-input/0-output component", map[string]string{"direction": "sink", "scheme": trait.Scheme()}))
-	} else if !canonicalBytes(port) {
-		items = append(items, traitItem("catalog.access-schema", component.Identity(), "Access sink trait input must use access.Bytes", map[string]string{"direction": "sink", "port": port.ID(), "scheme": trait.Scheme()}))
+	} else if !canonicalWrites(port) {
+		items = append(items, traitItem("catalog.access-schema", component.Identity(), "Access sink trait input must use access.Writes", map[string]string{"direction": "sink", "port": port.ID(), "scheme": trait.Scheme()}))
 	}
 	return append(items, validateScheme(component.Identity(), "sink", trait.Scheme(), trait.Valid(), seen)...)
 }
@@ -93,14 +93,20 @@ func validateFormatWriteTrait(component plugin.Component, shape flow.Shape, trai
 	}
 	if len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.One {
 		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format write trait requires exactly one output port", map[string]string{"direction": "write"}))
-	} else if !canonicalBytes(shape.Outputs[0]) {
-		items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format write trait output must use access.Bytes", map[string]string{"direction": "write", "port": shape.Outputs[0].ID()}))
+	} else if !canonicalWrites(shape.Outputs[0]) {
+		items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format write trait output must use access.Writes", map[string]string{"direction": "write", "port": shape.Outputs[0].ID()}))
 	}
 	return items
 }
 
 func canonicalBytes(port flow.Port) bool {
 	want := access.Bytes().Descriptor()
+	got := port.Schema()
+	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
+}
+
+func canonicalWrites(port flow.Port) bool {
+	want := access.Writes().Descriptor()
 	got := port.Schema()
 	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
 }

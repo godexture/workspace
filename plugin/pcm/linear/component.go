@@ -78,7 +78,7 @@ func operationExecution(kind operation) plugin.ComponentOption {
 	case encoderOperation:
 		return plugin.WithProcessor("frames", sample.S16(), "packets", codec.Packets())
 	case writerOperation:
-		return plugin.WithProcessor("packets", codec.Packets(), "bytes", access.Bytes())
+		return plugin.WithProcessor("packets", codec.Packets(), "writes", access.Writes())
 	default:
 		return nil
 	}
@@ -95,7 +95,7 @@ func operationShape(kind operation) flow.Shape {
 	case encoderOperation:
 		return flow.NewShape([]flow.Port{flow.In("frames", sample.S16())}, []flow.Port{flow.Out("packets", codec.Packets())})
 	case writerOperation:
-		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("bytes", access.Bytes())})
+		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("writes", access.Writes())})
 	default:
 		return flow.Shape{}
 	}

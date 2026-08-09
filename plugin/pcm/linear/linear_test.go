@@ -156,7 +156,7 @@ type fixtureSink struct {
 	state *fixtureState
 }
 
-func (s *fixtureSink) Write(_ context.Context, input flow.Input[buffer.Handle]) error {
+func (s *fixtureSink) Write(_ context.Context, input flow.Input[access.Write]) error {
 	s.state.mu.Lock()
 	s.state.output = append(s.state.output, input.Value().Bytes()...)
 	s.state.events = append(s.state.events, "write")
@@ -210,7 +210,7 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 		parserShape.Inputs[0].Schema().Identity() != format.Chunks().Identity() ||
 		parserShape.Outputs[0].Schema().Identity() != codec.Packets().Identity() ||
 		writerShape.Inputs[0].Schema().Identity() != codec.Packets().Identity() ||
-		writerShape.Outputs[0].Schema().Identity() != access.Bytes().Identity() {
+		writerShape.Outputs[0].Schema().Identity() != access.Writes().Identity() {
 		t.Fatal("linear PCM components do not use canonical media schemas")
 	}
 	targets := Binding().Targets()
@@ -487,9 +487,9 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 	if !ok {
 		t.Fatal("writer output descriptor type was erased incorrectly")
 	}
-	bytesDescriptor, ok := writerOutputs.One("bytes")
-	if !ok || bytesDescriptor.ID() != carrier.ID() || bytesDescriptor.Metadata().Scope() != metadata.StreamScope || bytesDescriptor.TimeBase() != access.CarrierTimeBase() || bytesDescriptor.Properties().Len() != 0 {
-		t.Fatalf("writer carrier descriptor = %#v", bytesDescriptor)
+	writesDescriptor, ok := writerOutputs.One("writes")
+	if !ok || writesDescriptor.ID() != carrier.ID() || writesDescriptor.Metadata().Scope() != metadata.StreamScope || writesDescriptor.TimeBase() != access.CarrierTimeBase() || writesDescriptor.Properties().Len() != 0 {
+		t.Fatalf("writer carrier descriptor = %#v", writesDescriptor)
 	}
 }
 
@@ -530,7 +530,7 @@ func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture 
 			job.Connect(job.At("decoder", "frames"), job.At("observer", "in")),
 			job.Connect(job.At("observer", "out"), job.At("encoder", "frames")),
 			job.Connect(job.At("encoder", "packets"), job.At("writer", "packets")),
-			job.Connect(job.At("writer", "bytes"), job.At("sink", "bytes")),
+			job.Connect(job.At("writer", "writes"), job.At("sink", "writes")),
 		},
 	)
 	if err != nil {
@@ -728,7 +728,7 @@ func pcmTemporaryFiles(t *testing.T, target string) []string {
 func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin.Definition {
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
-	sinkShape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, nil)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("writes", access.Writes())}, nil)
 	source := plugin.NewComponent[fixtureSourceID](plugin.Descriptor{DisplayName: "PCM fixture source"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[fixtureConfig](sourceShape),
 		Compile: func(plugin.CompileContext, fixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
@@ -764,15 +764,15 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "PCM fixture sink"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[fixtureConfig](sinkShape),
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
-			if _, ok := inputs.One("bytes"); !ok {
-				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("pcm.fixture-input"))}}, nil
+			if _, ok := inputs.One("writes"); !ok {
+				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("pcm.fixture-input"))}}, nil
 			}
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{Plan: fixturePlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 		},
 		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
 			return &fixtureSink{fixtureOperator: fixtureOperator{shape: sinkShape}, state: state}, nil
 		},
-	}), plugin.WithWriter("bytes", access.Bytes()))
+	}), plugin.WithWriter("writes", access.Writes()))
 	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "PCM fixture", Version: "1"}, source, observer, sink)
 }
 

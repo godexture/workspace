@@ -30,7 +30,7 @@ func sourceShape() flow.Shape {
 }
 
 func sinkShape() flow.Shape {
-	return flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, nil)
+	return flow.NewShape([]flow.Port{flow.In("writes", access.Writes())}, nil)
 }
 
 func sourceComponent() plugin.Component {
@@ -68,14 +68,14 @@ func sinkComponent() plugin.Component {
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sinkPlan, stream.Descriptor], error) {
-			input, ok := inputs.One("bytes")
+			input, ok := inputs.One("writes")
 			if !ok {
 				return plugin.Compiled[sinkPlan, stream.Descriptor]{
-					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("file.input"))},
+					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("file.input"))},
 				}, nil
 			}
 			if input.TimeBase() != access.CarrierTimeBase() || input.Properties().Len() != 0 {
-				desired, err := stream.NewDescriptor(input.ID(), access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+				desired, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
 				if err != nil {
 					return plugin.Compiled[sinkPlan, stream.Descriptor]{}, err
 				}
@@ -96,7 +96,7 @@ func sinkComponent() plugin.Component {
 	}
 	return plugin.NewComponent[sinkID](plugin.Descriptor{DisplayName: "File sink"}, configurationSchema(),
 		plugin.WithSpec(spec),
-		plugin.WithWriter("bytes", access.Bytes()),
+		plugin.WithWriter("writes", access.Writes()),
 		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink),
 	)
 }

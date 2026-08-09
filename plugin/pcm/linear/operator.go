@@ -259,7 +259,7 @@ func (*encoderOperator) Flush(context.Context, flow.Emitter[packet.Packet]) erro
 
 type writerOperator struct{ operatorBase }
 
-func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[buffer.Handle]) error {
+func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[access.Write]) error {
 	if !input.Valid() {
 		return errors.New("raw PCM writer received an unowned packet")
 	}
@@ -267,7 +267,12 @@ func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Pa
 	if !value.Valid() {
 		return errors.New("raw PCM writer received an invalid packet payload")
 	}
-	item := flow.NewInput(value, access.Bytes())
+	write, err := access.Append(value)
+	if err != nil {
+		value.Release()
+		return err
+	}
+	item := flow.NewInput(write, access.Writes())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -276,7 +281,7 @@ func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Pa
 	return nil
 }
 
-func (*writerOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
+func (*writerOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }
 
 func byteOrder(value sample.Endian) binary.ByteOrder {
 	switch value {

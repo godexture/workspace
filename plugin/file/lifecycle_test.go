@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/buffer"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
@@ -34,11 +35,17 @@ type lifecycleOperator struct{ shape flow.Shape }
 func (o lifecycleOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (lifecycleOperator) Close() error        { return nil }
 
-func (o lifecycleOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
+func (o lifecycleOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
 	if !input.Valid() {
 		return errors.New("lifecycle pass received invalid bytes")
 	}
-	item := flow.NewInput(input.Take().Value(), access.Bytes())
+	payload := input.Take().Value()
+	write, err := access.Append(payload)
+	if err != nil {
+		payload.Release()
+		return err
+	}
+	item := flow.NewInput(write, access.Writes())
 	if err := output.Emit(ctx, item); err != nil {
 		item.Drop()
 		return err
@@ -46,7 +53,7 @@ func (o lifecycleOperator) Process(ctx context.Context, input flow.Input[buffer.
 	return nil
 }
 
-func (lifecycleOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
+func (lifecycleOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }
 
 type failingSinkOperator struct {
 	*sinkOperator
@@ -169,7 +176,7 @@ func lifecycleFixture(t *testing.T, inputPath, outputPath string, openFails bool
 func lifecycleComponent(openFails bool) plugin.Component {
 	shape := flow.NewShape(
 		[]flow.Port{flow.In("in", access.Bytes())},
-		[]flow.Port{flow.Out("out", access.Bytes())},
+		[]flow.Port{flow.Out("out", access.Writes())},
 	)
 	schema := lifecycleSchema()
 	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
@@ -179,9 +186,13 @@ func lifecycleComponent(openFails bool) plugin.Component {
 			if !ok {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("lifecycle.input"))}}, nil
 			}
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			if err != nil {
+				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
+			}
 			return plugin.Compiled[lifecyclePlan, stream.Descriptor]{
 				Plan:    lifecyclePlan{shape: shape.Clone()},
-				Outputs: flow.NewDescriptors(flow.Describe("out", input)),
+				Outputs: flow.NewDescriptors(flow.Describe("out", output.WithMetadata(input.Metadata()))),
 			}, nil
 		},
 		Open: func(plugin.OpenContext, lifecyclePlan) (flow.Operator, error) {
@@ -197,7 +208,7 @@ func lifecycleComponent(openFails bool) plugin.Component {
 	}
 	return plugin.NewComponent[lifecyclePassID](plugin.Descriptor{DisplayName: "Carrier pass"}, schema,
 		plugin.WithSpec(spec),
-		plugin.WithProcessor("in", access.Bytes(), "out", access.Bytes()),
+		plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
 		mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)),
 		mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)),
 	)
@@ -208,8 +219,8 @@ func lifecycleSinkComponent(phase host.Phase) plugin.Component {
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sinkPlan, stream.Descriptor], error) {
-			if _, ok := inputs.One("bytes"); !ok {
-				return plugin.Compiled[sinkPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("file.input"))}}, nil
+			if _, ok := inputs.One("writes"); !ok {
+				return plugin.Compiled[sinkPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("file.input"))}}, nil
 			}
 			return plugin.Compiled[sinkPlan, stream.Descriptor]{Plan: sinkPlan{shape: shape.Clone()}}, nil
 		},
@@ -227,7 +238,7 @@ func lifecycleSinkComponent(phase host.Phase) plugin.Component {
 	}
 	return plugin.NewComponent[sinkID](plugin.Descriptor{DisplayName: "Failing file sink"}, configurationSchema(),
 		plugin.WithSpec(spec),
-		plugin.WithWriter("bytes", access.Bytes()),
+		plugin.WithWriter("writes", access.Writes()),
 		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink),
 	)
 }

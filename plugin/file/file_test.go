@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,6 +22,35 @@ import (
 type shortSession struct {
 	data  []byte
 	limit int
+}
+
+type recordingSinkSession struct {
+	data  []byte
+	limit int
+	calls int
+}
+
+func (*recordingSinkSession) Capabilities() access.Capabilities {
+	capabilities, _ := access.NewCapabilities(access.RandomWrite)
+	return capabilities
+}
+
+func (*recordingSinkSession) Close() error                        { return nil }
+func (*recordingSinkSession) Flush(context.Context) error         { return nil }
+func (*recordingSinkSession) Sync(context.Context) error          { return nil }
+func (*recordingSinkSession) PrepareCommit(context.Context) error { return nil }
+func (*recordingSinkSession) Commit(context.Context) error        { return nil }
+func (*recordingSinkSession) Abort(context.Context) error         { return nil }
+
+func (s *recordingSinkSession) WriteAt(_ context.Context, source []byte, offset int64) (int, error) {
+	s.calls++
+	size := min(len(source), s.limit)
+	end := int(offset) + size
+	if end > len(s.data) {
+		s.data = append(s.data, make([]byte, end-len(s.data))...)
+	}
+	copy(s.data[int(offset):end], source[:size])
+	return size, nil
 }
 
 func (*shortSession) Capabilities() access.Capabilities {
@@ -140,7 +170,12 @@ func TestSinkReplacesOnlyAtCommitAndReturnsPayloadGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(handle, access.Bytes())); err != nil {
+	write, err := access.Append(handle)
+	if err != nil {
+		handle.Release()
+		t.Fatal(err)
+	}
+	if err := operator.Write(context.Background(), flow.NewInput(write, access.Writes())); err != nil {
 		t.Fatal(err)
 	}
 	if allocator.Used() != 0 {
@@ -166,6 +201,98 @@ func TestSinkReplacesOnlyAtCommitAndReturnsPayloadGrant(t *testing.T) {
 	assertFile(t, target, []byte("replacement"))
 	if matches := temporaryFiles(t, target); len(matches) != 0 {
 		t.Fatalf("temporary files after commit = %v", matches)
+	}
+}
+
+func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing.T) {
+	session := &recordingSinkSession{limit: 2}
+	selection := selection(t, session.Capabilities(), access.RandomWrite)
+	opening, err := access.NewOpening(access.SinkDirection, session, selection, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := openSink(sinkShape(), opening)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := opened.(*sinkOperator)
+	allocator, err := buffer.NewAllocator(16)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	appendPayload, err := allocator.FromBytes([]byte("abcdef"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendWrite, err := access.Append(appendPayload)
+	if err != nil {
+		appendPayload.Release()
+		t.Fatal(err)
+	}
+	if err := operator.Write(context.Background(), flow.NewInput(appendWrite, access.Writes())); err != nil {
+		t.Fatal(err)
+	}
+
+	patchPayload, err := allocator.FromBytes([]byte("XY"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patchWrite, err := access.Patch(2, patchPayload)
+	if err != nil {
+		patchPayload.Release()
+		t.Fatal(err)
+	}
+	if err := operator.Write(context.Background(), flow.NewInput(patchWrite, access.Writes())); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(session.data); got != "abXYef" {
+		t.Fatalf("positioned sink bytes = %q", got)
+	}
+	if session.calls != 4 {
+		t.Fatalf("partial write calls = %d, want 4", session.calls)
+	}
+	if allocator.Used() != 0 {
+		t.Fatalf("positioned sink retained %d payload bytes", allocator.Used())
+	}
+}
+
+func TestSinkRejectsOverflowWithoutConsumingPayload(t *testing.T) {
+	session := &recordingSinkSession{limit: 1}
+	selection := selection(t, session.Capabilities(), access.RandomWrite)
+	opening, err := access.NewOpening(access.SinkDirection, session, selection, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := openSink(sinkShape(), opening)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocator, err := buffer.NewAllocator(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := allocator.FromBytes([]byte{1}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write, err := access.Patch(math.MaxInt64, payload)
+	if err != nil {
+		payload.Release()
+		t.Fatal(err)
+	}
+	input := flow.NewInput(write, access.Writes())
+	if err := opened.(*sinkOperator).Write(context.Background(), input); err == nil {
+		input.Drop()
+		t.Fatal("overflowing patch was accepted")
+	}
+	if allocator.Used() == 0 || session.calls != 0 {
+		input.Drop()
+		t.Fatalf("failed write ownership/calls = %d/%d", allocator.Used(), session.calls)
+	}
+	input.Drop()
+	if allocator.Used() != 0 {
+		t.Fatalf("caller release retained %d payload bytes", allocator.Used())
 	}
 }
 
@@ -265,7 +392,12 @@ func writeBytes(t *testing.T, operator *sinkOperator, value []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(handle, access.Bytes())); err != nil {
+	write, err := access.Append(handle)
+	if err != nil {
+		handle.Release()
+		t.Fatal(err)
+	}
+	if err := operator.Write(context.Background(), flow.NewInput(write, access.Writes())); err != nil {
 		handle.Release()
 		t.Fatal(err)
 	}

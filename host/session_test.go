@@ -228,12 +228,12 @@ func providerSessionFixture(t *testing.T) (*sessionCounters, *sessionCounters, *
 	}
 	sourceState := &sessionCounters{}
 	sinkState := &sessionCounters{}
-	source, _, sink, _ := boundaryComponentsWith(
+	source, transform, sink, _ := boundaryComponentsWith(
 		nil,
 		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, sourceState.acquire(sourceCapabilities))},
 		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, sinkState.acquire(sinkCapabilities))},
 	)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "session fixture", Version: "1"}, source, sink))
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "session fixture", Version: "1"}, source, transform, sink))
 	instance, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,11 @@ func providerSessionFixture(t *testing.T) (*sessionCounters, *sessionCounters, *
 	outputReference, _ := access.Parse("memory:output")
 	input, _ := job.InputFromReference(inputReference)
 	output, _ := job.OutputToReference(outputReference)
-	request, err := job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
+	graph, err := boundaryGraph(transform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New([]job.Input{input}, []job.Output{output}, graph)
 	if err != nil {
 		t.Fatal(err)
 	}

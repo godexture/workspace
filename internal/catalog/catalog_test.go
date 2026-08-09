@@ -161,7 +161,7 @@ func TestBuildAcceptsSourceAndSinkTraitsForTheSameScheme(t *testing.T) {
 	)
 	sink := catalogTraitComponent[catalogSecondID](
 		"sink",
-		flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil),
+		flow.NewShape([]flow.Port{flow.In("in", access.Writes())}, nil),
 		access.Sink("memory", sinkCapabilities, access.AtomicReplace, catalogAcquire(sinkCapabilities)),
 	)
 	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, source, sink)
@@ -203,8 +203,12 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			code:       "catalog.format-schema",
 		},
 		"format write shape": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
 			code:       "catalog.format-shape",
+		},
+		"format write schema": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
+			code:       "catalog.format-schema",
 		},
 		"format duplicate": {
 			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", typ)}),
