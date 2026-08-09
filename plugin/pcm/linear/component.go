@@ -59,7 +59,11 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 			return openOperation(plan, ctx.Buffers())
 		},
 	}
-	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(), plugin.WithSpec(spec), operationExecution(kind))
+	options := []plugin.ComponentOption{plugin.WithSpec(spec), operationExecution(kind)}
+	if trait := operationFormat(kind); trait != nil {
+		options = append(options, trait)
+	}
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(), options...)
 }
 
 func operationExecution(kind operation) plugin.ComponentOption {

@@ -26,16 +26,27 @@ func DecoderIdentity() plugin.Identity { return plugin.IdentityOf[decoderID]() }
 func EncoderIdentity() plugin.Identity { return plugin.IdentityOf[encoderID]() }
 func WriterIdentity() plugin.Identity  { return plugin.IdentityOf[writerID]() }
 
-// Raw describes the containerless format's acceptable source capabilities.
+// Raw is the direction-neutral identity of containerless signed PCM.
 func Raw() format.Format {
-	value, err := format.Define[rawID]([]access.Alternative{
-		access.AnyOf(access.SequentialRead),
-		access.AnyOf(access.RandomRead, access.StableSize),
-	}, nil)
+	value, err := format.Define[rawID](nil)
 	if err != nil {
 		panic(err)
 	}
 	return value
+}
+
+func operationFormat(kind operation) plugin.ComponentOption {
+	switch kind {
+	case readerOperation:
+		return format.Read(Raw(),
+			access.AnyOf(access.SequentialRead),
+			access.AnyOf(access.RandomRead, access.StableSize),
+		)
+	case writerOperation:
+		return format.Write(Raw(), access.AnyOf(access.SequentialWrite))
+	default:
+		return nil
+	}
 }
 
 // Binding associates the raw PCM format tag with the first-class Parser and

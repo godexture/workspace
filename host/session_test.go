@@ -72,6 +72,17 @@ func TestPreparedOwnsProviderSessionsUntilClose(t *testing.T) {
 	}
 }
 
+func TestPreparedRunClosesProviderSessions(t *testing.T) {
+	source, sink, instance, request := providerSessionFixture(t)
+	result, err := instance.Run(context.Background(), request)
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("Run result = %#v, error %v", result, err)
+	}
+	if source.closed.Load() != 1 || sink.closed.Load() != 1 {
+		t.Fatalf("Run session close counts = source %d, sink %d", source.closed.Load(), sink.closed.Load())
+	}
+}
+
 func TestPrepareClosesAcquiredSessionsAfterLaterAcquireFailure(t *testing.T) {
 	want := errors.New("sink acquire failed")
 	source, sink, instance, request := providerSessionFixture(t)

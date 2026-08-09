@@ -12,7 +12,6 @@ import (
 	"io"
 	"testing"
 
-	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
@@ -861,7 +860,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	inputBytes := []byte{1, 0, 2, 0, 3, 0, 4, 0}
 	trace := &skeletonTrace{}
 	definition := skeletonComponents(inputBytes, trace)
-	trivialFormat, err := format.Define[skeletonFormatID]([]access.Alternative{access.AnyOf(access.SequentialRead)}, []carrier.ID{carrier.Define[skeletonPayloadCarrierID]()})
+	trivialFormat, err := format.Define[skeletonFormatID]([]carrier.ID{carrier.Define[skeletonPayloadCarrierID]()})
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}

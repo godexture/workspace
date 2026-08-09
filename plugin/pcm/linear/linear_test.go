@@ -171,16 +171,29 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 	if index.Len() != 5 {
 		t.Fatalf("component count = %d", index.Len())
 	}
-	if !Binding().Valid() || !Raw().Valid() || len(Raw().Alternatives()) != 2 {
+	if !Binding().Valid() || !Raw().Valid() {
 		t.Fatal("linear PCM declarations are incomplete")
+	}
+	read, readOK := format.ReadOf(componentByIdentity(t, ReaderIdentity()))
+	write, writeOK := format.WriteOf(componentByIdentity(t, WriterIdentity()))
+	if !readOK || !writeOK || read.Format().Identity() != Raw().Identity() || write.Format().Identity() != Raw().Identity() {
+		t.Fatalf("linear PCM Format traits = read %#v/%v, write %#v/%v", read, readOK, write, writeOK)
 	}
 	capabilities, err := access.NewCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selection, ok := access.Select(capabilities, access.NewRequirements(Raw().Alternatives()...))
+	selection, ok := access.Select(capabilities, read.Requirements())
 	if !ok || len(selection.Capabilities()) != 1 || selection.Capabilities()[0] != access.SequentialRead {
 		t.Fatalf("raw Format narrow selection = %v, %v", selection.Capabilities(), ok)
+	}
+	writeCapabilities, err := access.NewCapabilities(access.SequentialWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelection, ok := access.Select(writeCapabilities, write.Requirements())
+	if !ok || len(writeSelection.Capabilities()) != 1 || writeSelection.Capabilities()[0] != access.SequentialWrite {
+		t.Fatalf("raw Format write selection = %v, %v", writeSelection.Capabilities(), ok)
 	}
 	readerShape := componentByIdentity(t, ReaderIdentity()).Ports()
 	parserShape := componentByIdentity(t, ParserIdentity()).Ports()

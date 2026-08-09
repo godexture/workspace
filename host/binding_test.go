@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,8 +13,9 @@ import (
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/buffer"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
-	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
@@ -23,23 +25,42 @@ import (
 type (
 	boundaryPluginID    struct{}
 	boundaryConfigID    struct{}
-	boundarySchemaID    struct{}
+	boundaryFormatID    struct{}
 	boundarySourceID    struct{}
 	boundaryTransformID struct{}
 	boundarySinkID      struct{}
 )
 
 type boundaryConfig struct{}
-type boundaryUnit struct{}
 type boundaryPlan struct{ shape flow.Shape }
 
-var boundarySchema = schema.Define[boundarySchemaID](schema.Traits[boundaryUnit]{})
+var boundarySchema = access.Bytes()
+
+func boundaryFormat() mediaformat.Format {
+	value, err := mediaformat.Define[boundaryFormatID](nil)
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
 
 type boundaryOperator struct{ shape flow.Shape }
 type boundarySession struct{ capabilities access.Capabilities }
 
 func (o boundaryOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (boundaryOperator) Close() error        { return nil }
+func (boundaryOperator) Read(context.Context) (flow.Input[buffer.Handle], error) {
+	return flow.Input[buffer.Handle]{}, io.EOF
+}
+func (boundaryOperator) Write(_ context.Context, input flow.Input[buffer.Handle]) error {
+	input.Drop()
+	return nil
+}
+func (boundaryOperator) Flush(context.Context) error         { return nil }
+func (boundaryOperator) Sync(context.Context) error          { return nil }
+func (boundaryOperator) PrepareCommit(context.Context) error { return nil }
+func (boundaryOperator) Commit(context.Context) error        { return nil }
+func (boundaryOperator) Abort(context.Context) error         { return nil }
 func (s boundarySession) Capabilities() access.Capabilities {
 	result, _ := access.NewCapabilities(s.capabilities.Values()...)
 	return result
@@ -245,11 +266,12 @@ func TestHostBindsEndpointInBothDirections(t *testing.T) {
 }
 
 func TestHostBindsSourceAndSinkTraitsForSameSchemeFromPluginSet(t *testing.T) {
-	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	sourceCapabilities, _ := access.NewCapabilities(access.SequentialRead)
+	sinkCapabilities, _ := access.NewCapabilities(access.SequentialWrite)
 	source, _, sink, _ := boundaryComponentsWith(
 		nil,
-		[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
-		[]plugin.ComponentOption{access.Sink("memory", capabilities, access.AtomicReplace, boundaryAcquire(capabilities))},
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, boundaryAcquire(sourceCapabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, boundaryAcquire(sinkCapabilities))},
 	)
 	leftSet := plugin.NewSet().Add(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
 	rightSet := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, sink, source))
@@ -308,7 +330,7 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 	}
 	sourceOptions := append([]plugin.ComponentOption{component(sourceShape, func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
-	}), plugin.WithReader("out", boundarySchema)}, sourceTraits...)
+	}), plugin.WithReader("out", boundarySchema), mediaformat.Write(boundaryFormat(), access.AnyOf(access.SequentialWrite))}, sourceTraits...)
 	source := plugin.NewComponent[boundarySourceID](plugin.Descriptor{DisplayName: "source"}, configuration, sourceOptions...)
 	transform := plugin.NewComponent[boundaryTransformID](plugin.Descriptor{DisplayName: "transform"}, configuration, component(transformShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		input, ok := inputs.One("in")
@@ -316,13 +338,16 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: transformShape}, Outputs: flow.NewDescriptors(flow.Describe("out", input))}, nil
-	}), plugin.WithProcessor("in", boundarySchema, "out", boundarySchema))
+	}), plugin.WithProcessor("in", boundarySchema, "out", boundarySchema),
+		mediaformat.Read(boundaryFormat(), access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead)),
+		mediaformat.Write(boundaryFormat(), access.AnyOf(access.SequentialWrite)),
+	)
 	sinkOptions := append([]plugin.ComponentOption{component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		if _, ok := inputs.One("in"); !ok {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
-	}), plugin.WithWriter("in", boundarySchema)}, sinkTraits...)
+	}), plugin.WithWriter("in", boundarySchema), mediaformat.Read(boundaryFormat(), access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead))}, sinkTraits...)
 	sink := plugin.NewComponent[boundarySinkID](plugin.Descriptor{DisplayName: "sink"}, configuration, sinkOptions...)
 	return source, transform, sink, descriptor
 }

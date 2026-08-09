@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,39 +37,26 @@ type (
 var lifecycleType = schema.Define[lifecycleSchemaID](schema.Traits[int]{})
 
 type lifecycleState struct {
-	mu            sync.Mutex
-	entries       []string
-	values        []int
-	fail          map[string]error
-	task          func(context.Context) error
-	block         bool
-	bound         bool
-	multi         bool
-	access        access.Opening
-	endpoint      endpoint.Opening
-	panicAt       string
-	direct        bool
-	sourceHandle  *lifecycleHandle
-	sinkHandle    *lifecycleHandle
-	sessionClosed atomic.Int32
+	mu             sync.Mutex
+	entries        []string
+	values         []int
+	fail           map[string]error
+	task           func(context.Context) error
+	block          bool
+	bound          bool
+	multi          bool
+	inputEndpoint  endpoint.Opening
+	outputEndpoint endpoint.Opening
+	panicAt        string
+	direct         bool
+	sourceHandle   *lifecycleHandle
+	sinkHandle     *lifecycleHandle
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
-type lifecycleAccessSession struct {
-	capabilities access.Capabilities
-	closed       *atomic.Int32
-}
 
 func (h *lifecycleHandle) Close() error {
 	h.closed.Add(1)
-	return nil
-}
-func (s lifecycleAccessSession) Capabilities() access.Capabilities {
-	result, _ := access.NewCapabilities(s.capabilities.Values()...)
-	return result
-}
-func (s lifecycleAccessSession) Close() error {
-	s.closed.Add(1)
 	return nil
 }
 
@@ -218,19 +204,12 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, nil)
 	var sourceTraits, sinkTraits []plugin.ComponentOption
 	if state.bound {
-		capabilities, err := access.NewCapabilities(access.SequentialRead)
-		if err != nil {
-			t.Fatal(err)
-		}
 		trait, err := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
 		if err != nil {
 			t.Fatal(err)
 		}
-		acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
-			return lifecycleAccessSession{capabilities: capabilities, closed: &state.sessionClosed}, nil
-		}
 		sourceTraits = append(sourceTraits, endpoint.WithTrait(trait))
-		sinkTraits = append(sinkTraits, access.Sink("memory", capabilities, access.StagedCommit, acquire))
+		sinkTraits = append(sinkTraits, endpoint.WithTrait(trait))
 	}
 
 	source := plugin.NewComponent[lifecycleSourceID](
@@ -256,7 +235,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 					if !ok || !opening.Valid() {
 						return nil, errors.New("source endpoint opening is missing")
 					}
-					state.endpoint = opening
+					state.inputEndpoint = opening
 				}
 				if state.direct {
 					opening, ok := plugin.Boundary[access.Direct[*lifecycleHandle]](ctx)
@@ -313,11 +292,11 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 					return nil, err
 				}
 				if state.bound {
-					opening, ok := plugin.Boundary[access.Opening](ctx)
+					opening, ok := plugin.Boundary[endpoint.Opening](ctx)
 					if !ok || !opening.Valid() {
-						return nil, errors.New("sink access opening is missing")
+						return nil, errors.New("sink endpoint opening is missing")
 					}
-					state.access = opening
+					state.outputEndpoint = opening
 				}
 				if state.direct {
 					opening, ok := plugin.Boundary[access.Direct[*lifecycleHandle]](ctx)
@@ -390,11 +369,11 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		if inputErr != nil {
 			t.Fatal(inputErr)
 		}
-		reference, referenceErr := access.Parse("memory://user:secret@example/output?token=secret")
-		if referenceErr != nil {
-			t.Fatal(referenceErr)
+		outputRequest, outputErr := job.NewEndpoint(sink.Identity(), config.NewPatch())
+		if outputErr != nil {
+			t.Fatal(outputErr)
 		}
-		output, outputErr := job.OutputToReference(reference)
+		output, outputErr := job.OutputToEndpoint(outputRequest)
 		if outputErr != nil {
 			t.Fatal(outputErr)
 		}
@@ -428,29 +407,21 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	return instance, request
 }
 
-func TestPreparedRunHandsOnlySelectedBoundaryViewsToComponents(t *testing.T) {
+func TestPreparedRunHandsNodeLocalEndpointOpeningsToComponents(t *testing.T) {
 	state := &lifecycleState{bound: true}
 	instance, request := lifecycleFixture(t, state)
 	result, err := instance.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.endpoint.Direction() != endpoint.SourceDirection || state.endpoint.Trait().Topology() != endpoint.FiniteStatic {
-		t.Fatalf("endpoint opening = %#v", state.endpoint)
+	if state.inputEndpoint.Direction() != endpoint.SourceDirection || state.inputEndpoint.Trait().Topology() != endpoint.FiniteStatic {
+		t.Fatalf("input endpoint opening = %#v", state.inputEndpoint)
 	}
-	if state.access.Direction() != access.SinkDirection || state.access.Reference().Scheme() != "memory" || state.access.TransactionClass() != access.StagedCommit {
-		t.Fatalf("access opening = %#v", state.access)
+	if state.outputEndpoint.Direction() != endpoint.SinkDirection || state.outputEndpoint.Trait().Topology() != endpoint.FiniteStatic {
+		t.Fatalf("output endpoint opening = %#v", state.outputEndpoint)
 	}
-	if len(result.Outputs) != 1 || result.Outputs[0].Class != access.StagedCommit || result.Outputs[0].State != OutputCommitted {
+	if len(result.Outputs) != 1 || result.Outputs[0].Class != 0 || result.Outputs[0].State != OutputCommitted {
 		t.Fatalf("output = %#v", result.Outputs)
-	}
-	if state.sessionClosed.Load() != 1 {
-		t.Fatalf("Run closed Access session %d times", state.sessionClosed.Load())
-	}
-	for _, boundary := range resultPlan(t, instance, request).Boundaries() {
-		if strings.Contains(boundary.Reference, "secret") {
-			t.Fatalf("public Plan exposed a private reference: %#v", boundary)
-		}
 	}
 }
 

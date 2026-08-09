@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
@@ -17,6 +18,7 @@ type catalogPluginID struct{}
 type catalogFirstID struct{}
 type catalogSecondID struct{}
 type catalogUnitID struct{}
+type catalogFormatID struct{}
 
 type catalogConfig struct{ Value int }
 type catalogUnit int
@@ -133,8 +135,7 @@ func TestImplementationContractChangesCatalogFingerprint(t *testing.T) {
 }
 
 func TestTraitManifestChangesCatalogFingerprint(t *testing.T) {
-	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
-	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())})
 	build := func(capability access.Capability) Index {
 		capabilities, _ := access.NewCapabilities(capability)
 		component := catalogTraitComponent[catalogFirstID]("source", shape, access.Source("memory", capabilities, catalogAcquire(capabilities)))
@@ -151,17 +152,17 @@ func TestTraitManifestChangesCatalogFingerprint(t *testing.T) {
 }
 
 func TestBuildAcceptsSourceAndSinkTraitsForTheSameScheme(t *testing.T) {
-	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
-	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	sourceCapabilities, _ := access.NewCapabilities(access.SequentialRead)
+	sinkCapabilities, _ := access.NewCapabilities(access.SequentialWrite)
 	source := catalogTraitComponent[catalogFirstID](
 		"source",
-		flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}),
-		access.Source("memory", capabilities, catalogAcquire(capabilities)),
+		flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}),
+		access.Source("memory", sourceCapabilities, catalogAcquire(sourceCapabilities)),
 	)
 	sink := catalogTraitComponent[catalogSecondID](
 		"sink",
-		flow.NewShape([]flow.Port{flow.In("in", typ)}, nil),
-		access.Sink("memory", capabilities, access.AtomicReplace, catalogAcquire(capabilities)),
+		flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil),
+		access.Sink("memory", sinkCapabilities, access.AtomicReplace, catalogAcquire(sinkCapabilities)),
 	)
 	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, source, sink)
 	if _, err := Build(plugin.NewSet(definition)); err != nil {
@@ -173,6 +174,7 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
 	capabilities, _ := access.NewCapabilities(access.SequentialRead)
 	acquire := catalogAcquire(capabilities)
+	formatValue, _ := mediaformat.Define[catalogFormatID](nil)
 	tests := map[string]struct {
 		components []plugin.Component
 		code       string
@@ -181,12 +183,34 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("source", flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), access.Source("memory", capabilities, acquire))},
 			code:       "catalog.access-shape",
 		},
+		"source schema": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("source", flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), access.Source("memory", capabilities, acquire))},
+			code:       "catalog.access-schema",
+		},
 		"source scheme": {
 			components: []plugin.Component{
-				catalogTraitComponent[catalogFirstID]("first", flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), access.Source("memory", capabilities, acquire)),
-				catalogTraitComponent[catalogSecondID]("second", flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), access.Source("MEMORY", capabilities, acquire)),
+				catalogTraitComponent[catalogFirstID]("first", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), access.Source("memory", capabilities, acquire)),
+				catalogTraitComponent[catalogSecondID]("second", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), access.Source("MEMORY", capabilities, acquire)),
 			},
 			code: "catalog.access-scheme",
+		},
+		"format read shape": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)))},
+			code:       "catalog.format-shape",
+		},
+		"format read schema": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)))},
+			code:       "catalog.format-schema",
+		},
+		"format write shape": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
+			code:       "catalog.format-shape",
+		},
+		"format duplicate": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", typ)}),
+				mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)),
+				mediaformat.Read(formatValue, access.AnyOf(access.RandomRead)))},
+			code: "plugin.trait-duplicate",
 		},
 	}
 	for name, test := range tests {
