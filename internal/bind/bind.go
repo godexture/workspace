@@ -104,6 +104,11 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 			edges = append(edges, job.Connect(openOutputs[index], job.At(selection.node.ID(), selection.port)))
 		}
 	}
+	selectedEntries, err := registry.selectCapabilities(nodes, edges, entries)
+	if err != nil {
+		return Result{}, err
+	}
+	entries = selectedEntries
 
 	normalizedGraph, err := job.NewGraph(nodes, edges, mappings...)
 	if err != nil {

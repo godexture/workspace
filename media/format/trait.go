@@ -30,7 +30,9 @@ func ReadOf(component plugin.Component) (ReadTrait, bool) {
 	return plugin.TraitValueOf[ReadTrait](component, readKey)
 }
 
-func (t ReadTrait) Valid() bool { return t.format.Valid() && t.requirements.Valid() }
+func (t ReadTrait) Valid() bool {
+	return t.format.Valid() && t.requirements.ValidFor(access.SourceDirection)
+}
 func (t ReadTrait) Format() Format {
 	return t.format
 }
@@ -55,7 +57,9 @@ func WriteOf(component plugin.Component) (WriteTrait, bool) {
 	return plugin.TraitValueOf[WriteTrait](component, writeKey)
 }
 
-func (t WriteTrait) Valid() bool { return t.format.Valid() && t.requirements.Valid() }
+func (t WriteTrait) Valid() bool {
+	return t.format.Valid() && t.requirements.ValidFor(access.SinkDirection)
+}
 func (t WriteTrait) Format() Format {
 	return t.format
 }

@@ -2,7 +2,10 @@ package access
 
 import "errors"
 
-var errInvalidOpening = errors.New("access opening is invalid")
+var (
+	ErrInvalidOpening  = errors.New("access opening is invalid")
+	ErrTransactionView = errors.New("access sink session does not provide its transaction contract")
+)
 
 // Direction is the direction of one node-local Access binding.
 type Direction uint8
@@ -14,51 +17,100 @@ const (
 
 func (d Direction) Valid() bool { return d == SourceDirection || d == SinkDirection }
 
-// Opening is the selected, private reference and capability view handed only
-// to the component bound to that reference. It is not included in Plan.
+// Opening contains only the operation views selected for one acquired Access
+// session. The underlying session and reference are never exposed to the
+// component.
 type Opening struct {
-	direction Direction
-	reference Reference
-	available Capabilities
-	selected  []Capability
-	class     TransactionClass
+	direction   Direction
+	selected    []Capability
+	class       TransactionClass
+	views       viewSet
+	transaction Transaction
+	flusher     Flusher
+	syncer      Syncer
 }
 
-func NewOpening(direction Direction, reference Reference, available Capabilities, selected []Capability, class TransactionClass) (Opening, error) {
-	if !direction.Valid() || !reference.Valid() || !available.Valid() || class != 0 && !class.Valid() {
-		return Opening{}, errInvalidOpening
+func NewOpening(direction Direction, session Session, selection Selection, class TransactionClass) (Opening, error) {
+	if !direction.Valid() || session == nil || !selection.ValidFor(direction) || direction == SourceDirection && class != 0 || direction == SinkDirection && !class.Valid() {
+		return Opening{}, ErrInvalidOpening
 	}
-	previous := Capability("")
-	for index, capability := range selected {
-		if !capability.Valid() || index != 0 && capability <= previous || !available.Contains(capability) {
-			return Opening{}, ErrInvalidCapabilities
-		}
-		previous = capability
+	views, err := viewsFor(session, selection)
+	if err != nil {
+		return Opening{}, err
 	}
-	return Opening{
+	result := Opening{
 		direction: direction,
-		reference: reference,
-		available: Capabilities{values: available.Values()},
-		selected:  append([]Capability(nil), selected...),
+		selected:  selection.Capabilities(),
 		class:     class,
-	}, nil
+		views:     views,
+	}
+	if direction == SinkDirection {
+		result.transaction, _ = session.(Transaction)
+		result.flusher, _ = session.(Flusher)
+		result.syncer, _ = session.(Syncer)
+		if class != LiveNoCommit && result.transaction == nil {
+			return Opening{}, ErrTransactionView
+		}
+	}
+	return result, nil
 }
 
 func (o Opening) Valid() bool {
-	if !o.direction.Valid() || !o.reference.Valid() || !o.available.Valid() || o.class != 0 && !o.class.Valid() {
+	selection := Selection{capabilities: append([]Capability(nil), o.selected...)}
+	if !o.direction.Valid() || !selection.ValidFor(o.direction) || o.direction == SourceDirection && o.class != 0 || o.direction == SinkDirection && !o.class.Valid() {
 		return false
 	}
-	previous := Capability("")
-	for index, capability := range o.selected {
-		if !capability.Valid() || index != 0 && capability <= previous || !o.available.Contains(capability) {
-			return false
+	for _, capability := range o.selected {
+		switch capability {
+		case SequentialRead:
+			if o.views.sequential == nil {
+				return false
+			}
+		case RandomRead:
+			if o.views.random == nil {
+				return false
+			}
+		case SequentialWrite:
+			if o.views.appender == nil {
+				return false
+			}
+		case RandomWrite:
+			if o.views.patcher == nil {
+				return false
+			}
 		}
-		previous = capability
 	}
-	return true
+	return o.direction != SinkDirection || o.class == LiveNoCommit || o.transaction != nil
 }
+
 func (o Opening) Direction() Direction               { return o.direction }
-func (o Opening) Reference() Reference               { return o.reference }
-func (o Opening) Available() Capabilities            { return Capabilities{values: o.available.Values()} }
 func (o Opening) Selected() []Capability             { return append([]Capability(nil), o.selected...) }
 func (o Opening) TransactionClass() TransactionClass { return o.class }
+
+func SequentialOf(opening Opening) (Sequential, bool) {
+	return opening.views.sequential, opening.Valid() && opening.views.sequential != nil
+}
+
+func RandomOf(opening Opening) (Random, bool) {
+	return opening.views.random, opening.Valid() && opening.views.random != nil
+}
+
+func AppenderOf(opening Opening) (Appender, bool) {
+	return opening.views.appender, opening.Valid() && opening.views.appender != nil
+}
+
+func PatcherOf(opening Opening) (Patcher, bool) {
+	return opening.views.patcher, opening.Valid() && opening.views.patcher != nil
+}
+
+func TransactionOf(opening Opening) (Transaction, bool) {
+	return opening.transaction, opening.Valid() && opening.transaction != nil
+}
+
+func FlusherOf(opening Opening) (Flusher, bool) {
+	return opening.flusher, opening.Valid() && opening.flusher != nil
+}
+
+func SyncerOf(opening Opening) (Syncer, bool) {
+	return opening.syncer, opening.Valid() && opening.syncer != nil
+}

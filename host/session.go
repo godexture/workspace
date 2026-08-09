@@ -3,8 +3,10 @@ package host
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/plan"
 )
@@ -14,6 +16,7 @@ type acquiredSession struct {
 	value    access.Session
 	actual   access.Capabilities
 	selected access.Selection
+	opening  access.Opening
 }
 
 func acquireSessions(ctx context.Context, entries []bound.Entry, includeOutputs bool) (sessions []acquiredSession, err error) {
@@ -60,8 +63,64 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, includeOutputs 
 			return sessions, *failure
 		}
 		sessions[len(sessions)-1].actual = actual
+		declared := entry.SourceTrait().Capabilities()
+		direction := access.SourceDirection
+		class := access.TransactionClass(0)
+		if projection.Direction == plan.OutputBoundary {
+			declared = entry.SinkTrait().Capabilities()
+			direction = access.SinkDirection
+			class = entry.SinkTrait().TransactionClass()
+		}
+		if !capabilitySubset(declared, actual) {
+			return sessions, sessionDiagnostic("prepare.access-capabilities", projection, "Access session does not provide every capability guaranteed by its component trait", map[string]string{
+				"declared": capabilityNames(declared.Values()),
+				"actual":   capabilityNames(actual.Values()),
+				"selected": capabilityNames(selection.Capabilities()),
+			})
+		}
+		opening, openingErr := access.NewOpening(direction, session, selection, class)
+		if openingErr != nil {
+			return sessions, sessionDiagnostic("prepare.access-view", projection, "Access session cannot provide the selected narrow operation view", map[string]string{
+				"actual":   capabilityNames(actual.Values()),
+				"selected": capabilityNames(selection.Capabilities()),
+				"error":    openingErr.Error(),
+			})
+		}
+		sessions[len(sessions)-1].opening = opening
 	}
 	return sessions, nil
+}
+
+func capabilitySubset(required, actual access.Capabilities) bool {
+	for _, capability := range required.Values() {
+		if !actual.Contains(capability) {
+			return false
+		}
+	}
+	return true
+}
+
+func capabilityNames(values []access.Capability) string {
+	names := make([]string, len(values))
+	for index, value := range values {
+		names[index] = string(value)
+	}
+	return strings.Join(names, ",")
+}
+
+func sessionDiagnostic(code string, projection plan.Boundary, message string, extra map[string]string) error {
+	detail := map[string]string{
+		"node":      projection.Node,
+		"scheme":    projection.Scheme,
+		"direction": "read",
+	}
+	if projection.Direction == plan.OutputBoundary {
+		detail["direction"] = "write"
+	}
+	for key, value := range extra {
+		detail[key] = value
+	}
+	return diagnostic.NewError(diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{Component: projection.Component}, message, detail))
 }
 
 func boundarySelection(projection plan.Boundary) (access.Selection, error) {

@@ -3,10 +3,12 @@ package host
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plugin"
 )
@@ -16,6 +18,8 @@ type sessionCounters struct {
 	closed   atomic.Int32
 	fail     error
 	closeErr error
+	actual   access.Capabilities
+	noViews  bool
 }
 
 type trackedAccessSession struct {
@@ -23,11 +27,31 @@ type trackedAccessSession struct {
 	counters     *sessionCounters
 }
 
+type capabilityOnlyAccessSession struct {
+	capabilities access.Capabilities
+	counters     *sessionCounters
+}
+
+func (s capabilityOnlyAccessSession) Capabilities() access.Capabilities { return s.capabilities }
+func (s capabilityOnlyAccessSession) Close() error {
+	s.counters.closed.Add(1)
+	return s.counters.closeErr
+}
+
 func (s trackedAccessSession) Capabilities() access.Capabilities { return s.capabilities }
 func (s trackedAccessSession) Close() error {
 	s.counters.closed.Add(1)
 	return s.counters.closeErr
 }
+func (trackedAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
+func (trackedAccessSession) Write(_ context.Context, value []byte) (int, error) {
+	return len(value), nil
+}
+func (trackedAccessSession) Flush(context.Context) error         { return nil }
+func (trackedAccessSession) Sync(context.Context) error          { return nil }
+func (trackedAccessSession) PrepareCommit(context.Context) error { return nil }
+func (trackedAccessSession) Commit(context.Context) error        { return nil }
+func (trackedAccessSession) Abort(context.Context) error         { return nil }
 
 func (c *sessionCounters) acquire(capabilities access.Capabilities) access.AcquireFunc {
 	return func(context.Context, access.Reference, access.Selection) (access.Session, error) {
@@ -35,7 +59,14 @@ func (c *sessionCounters) acquire(capabilities access.Capabilities) access.Acqui
 		if c.fail != nil {
 			return nil, c.fail
 		}
-		return trackedAccessSession{capabilities: capabilities, counters: c}, nil
+		actual := capabilities
+		if len(c.actual.Values()) != 0 {
+			actual = c.actual
+		}
+		if c.noViews {
+			return capabilityOnlyAccessSession{capabilities: actual, counters: c}, nil
+		}
+		return trackedAccessSession{capabilities: actual, counters: c}, nil
 	}
 }
 
@@ -60,6 +91,27 @@ func TestPreparedOwnsProviderSessionsUntilClose(t *testing.T) {
 	}
 	if source.acquired.Load() != 1 || sink.acquired.Load() != 1 || source.closed.Load() != 0 || sink.closed.Load() != 0 {
 		t.Fatalf("prepared sessions = source %d/%d, sink %d/%d", source.acquired.Load(), source.closed.Load(), sink.acquired.Load(), sink.closed.Load())
+	}
+	boundaries := prepared.Plan().Boundaries()
+	if len(boundaries) != 2 {
+		t.Fatalf("boundaries = %#v", boundaries)
+	}
+	inputOpening := prepared.bySession[boundaries[0].Node].opening
+	outputOpening := prepared.bySession[boundaries[1].Node].opening
+	if _, ok := access.SequentialOf(inputOpening); !ok {
+		t.Fatal("Prepared input has no selected Sequential view")
+	}
+	if _, ok := access.RandomOf(inputOpening); ok {
+		t.Fatal("Prepared input exposes unselected Random view")
+	}
+	if _, ok := access.AppenderOf(outputOpening); !ok {
+		t.Fatal("Prepared output has no selected Appender view")
+	}
+	if _, ok := access.PatcherOf(outputOpening); ok {
+		t.Fatal("Prepared output exposes unselected Patcher view")
+	}
+	if _, ok := access.TransactionOf(outputOpening); !ok {
+		t.Fatal("Prepared output has no transaction view")
 	}
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
@@ -105,6 +157,36 @@ func TestPreparedCloseReportsSessionFailure(t *testing.T) {
 	}
 	if err := prepared.Close(); !errors.Is(err, want) {
 		t.Fatalf("Close error = %v", err)
+	}
+}
+
+func TestPrepareDiagnosesActualCapabilityAndViewMismatch(t *testing.T) {
+	tests := map[string]struct {
+		configure func(*sessionCounters)
+		code      string
+	}{
+		"capability": {
+			configure: func(state *sessionCounters) { state.actual = mustCapabilities(t, access.RandomRead) },
+			code:      "prepare.access-capabilities",
+		},
+		"view": {
+			configure: func(state *sessionCounters) { state.noViews = true },
+			code:      "prepare.access-view",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			source, _, instance, request := providerSessionFixture(t)
+			test.configure(source)
+			_, err := instance.Prepare(context.Background(), request)
+			items := diagnostic.ItemsOf(err)
+			if len(items) != 1 || items[0].Code != test.code || items[0].Detail["scheme"] != "memory" || items[0].Detail["selected"] != "sequential-read" {
+				t.Fatalf("diagnostic %s = %#v, error %v", test.code, items, err)
+			}
+			if source.closed.Load() != 1 {
+				t.Fatalf("failed session closed %d times", source.closed.Load())
+			}
+		})
 	}
 }
 

@@ -119,11 +119,11 @@ func (r *runner) opening(node string) (any, error) {
 	projection := entry.Projection()
 	switch projection.Kind {
 	case plan.ProviderBoundary:
-		if projection.Direction == plan.InputBoundary {
-			return access.NewOpening(access.SourceDirection, entry.Reference(), entry.SourceTrait().Capabilities(), projection.Selected, 0)
+		session, ok := r.prepared.bySession[node]
+		if !ok || !session.opening.Valid() {
+			return nil, errors.New("prepared Access session opening is missing")
 		}
-		trait := entry.SinkTrait()
-		return access.NewOpening(access.SinkDirection, entry.Reference(), trait.Capabilities(), projection.Selected, trait.TransactionClass())
+		return session.opening, nil
 	case plan.EndpointBoundary:
 		direction := endpoint.SourceDirection
 		if projection.Direction == plan.OutputBoundary {

@@ -78,8 +78,15 @@ func TestFactoryCreatesOwnedSessionEachTime(t *testing.T) {
 
 func TestRequirementsAreCombinationsOfSmallCapabilities(t *testing.T) {
 	requirements := NewRequirements(AnyOf(SequentialRead), AnyOf(RandomRead, StableSize))
-	if !requirements.Valid() || len(requirements.Alternatives) != 2 || len(requirements.Alternatives[1].Capabilities) != 2 {
+	if !requirements.Valid() || !requirements.ValidFor(SourceDirection) || requirements.ValidFor(SinkDirection) || len(requirements.Alternatives) != 2 || len(requirements.Alternatives[1].Capabilities) != 2 {
 		t.Fatalf("requirements = %#v", requirements)
+	}
+	write := NewRequirements(AnyOf(SequentialWrite), AnyOf(RandomWrite))
+	if !write.ValidFor(SinkDirection) || write.ValidFor(SourceDirection) {
+		t.Fatalf("write requirements = %#v", write)
+	}
+	if NewRequirements(AnyOf(SequentialRead, SequentialWrite)).ValidFor(SourceDirection) {
+		t.Fatal("mixed-direction capability alternative was accepted")
 	}
 }
 

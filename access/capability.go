@@ -74,6 +74,20 @@ func (r Requirements) Valid() bool {
 	return true
 }
 
+// ValidFor reports whether every alternative contains an operation for the
+// requested boundary direction and no operation from the opposite direction.
+func (r Requirements) ValidFor(direction Direction) bool {
+	if !direction.Valid() || !r.Valid() {
+		return false
+	}
+	for _, alternative := range r.Alternatives {
+		if !capabilitiesValidFor(alternative.Capabilities, direction) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r Requirements) Clone() Requirements { return NewRequirements(r.Alternatives...) }
 
 // Capabilities is a canonical set guaranteed by one bound source.
@@ -115,6 +129,9 @@ func (c Capabilities) Contains(value Capability) bool {
 type Selection struct{ capabilities []Capability }
 
 func (s Selection) Valid() bool { return len(s.capabilities) != 0 }
+func (s Selection) ValidFor(direction Direction) bool {
+	return s.Valid() && capabilitiesValidFor(s.capabilities, direction)
+}
 func (s Selection) Capabilities() []Capability {
 	return append([]Capability(nil), s.capabilities...)
 }
@@ -142,4 +159,29 @@ func Select(available Capabilities, requirements Requirements) (Selection, bool)
 		return Selection{capabilities: selected}, true
 	}
 	return Selection{}, false
+}
+
+func capabilitiesValidFor(values []Capability, direction Direction) bool {
+	hasOperation := false
+	for _, capability := range values {
+		switch direction {
+		case SourceDirection:
+			switch capability {
+			case SequentialRead, RandomRead:
+				hasOperation = true
+			case SequentialWrite, RandomWrite:
+				return false
+			}
+		case SinkDirection:
+			switch capability {
+			case SequentialWrite, RandomWrite:
+				hasOperation = true
+			case SequentialRead, RandomRead, StableSize, Reopen, ConcurrentRead, CancelableRead:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return hasOperation
 }
