@@ -20,6 +20,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -393,6 +394,56 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 	}
 }
 
+func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
+	document, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	carrier := stream.MustDescriptor("pcm", access.Bytes().Identity(), access.CarrierTimeBase(), property.New()).WithMetadata(document)
+	patch := config.NewPatch().SetText("rate", "32000").SetText("validBits", "12")
+
+	reader := componentByIdentity(t, ReaderIdentity())
+	resolvedReader, err := reader.Resolve(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiledReader, err := plugin.Compile(reader, plugin.CompileContext{}, resolvedReader, flow.NewDescriptors(flow.Describe("bytes", carrier)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readerOutputs, ok := plugin.OutputsOf[stream.Descriptor](compiledReader)
+	if !ok {
+		t.Fatal("reader output descriptor type was erased incorrectly")
+	}
+	chunks, ok := readerOutputs.One("chunks")
+	if !ok || chunks.ID() != carrier.ID() || chunks.Metadata().Scope() != metadata.StreamScope || chunks.TimeBase() != timing.MustBase(1, 32_000) {
+		t.Fatalf("reader output descriptor = %#v", chunks)
+	}
+	description, err := sample.FromProperties(chunks.Properties())
+	if err != nil || description != (sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian}) {
+		t.Fatalf("reader output properties = %#v, %v", description, err)
+	}
+
+	writer := componentByIdentity(t, WriterIdentity())
+	resolvedWriter, err := writer.Resolve(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packets := stream.MustDescriptor(carrier.ID(), codec.Packets().Identity(), timing.MustBase(1, 32_000), chunks.Properties()).WithMetadata(document)
+	compiledWriter, err := plugin.Compile(writer, plugin.CompileContext{}, resolvedWriter, flow.NewDescriptors(flow.Describe("packets", packets)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writerOutputs, ok := plugin.OutputsOf[stream.Descriptor](compiledWriter)
+	if !ok {
+		t.Fatal("writer output descriptor type was erased incorrectly")
+	}
+	bytesDescriptor, ok := writerOutputs.One("bytes")
+	if !ok || bytesDescriptor.ID() != carrier.ID() || bytesDescriptor.Metadata().Scope() != metadata.StreamScope || bytesDescriptor.TimeBase() != access.CarrierTimeBase() || bytesDescriptor.Properties().Len() != 0 {
+		t.Fatalf("writer carrier descriptor = %#v", bytesDescriptor)
+	}
+}
+
 type pcmFixture struct {
 	host    *host.Host
 	request job.Job
@@ -401,11 +452,7 @@ type pcmFixture struct {
 
 func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture {
 	t.Helper()
-	properties, err := description.Properties()
-	if err != nil {
-		t.Fatal(err)
-	}
-	descriptor := stream.MustDescriptor("pcm", access.Bytes().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
+	descriptor := stream.MustDescriptor("pcm", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
 	state := &fixtureState{}
 	definition := fixtureDefinition(descriptor, state)
 	set := Set().Add(definition)

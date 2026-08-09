@@ -29,3 +29,13 @@ func TestBytesSchemaRetainsAndReleasesGrantBackedPayload(t *testing.T) {
 		t.Fatalf("byte schema retained %d bytes", allocator.Used())
 	}
 }
+
+func TestCarrierTimeBaseIsAValidCanonicalPlaceholder(t *testing.T) {
+	base := CarrierTimeBase()
+	if !base.Valid() || base.Numerator != 1 || base.Denominator != 1 {
+		t.Fatalf("carrier time base = %#v", base)
+	}
+	if Bytes().Traits().Time != nil {
+		t.Fatal("byte carriers must not expose a media timeline")
+	}
+}

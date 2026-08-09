@@ -5,6 +5,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -110,18 +111,29 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 	}
 
 	expected, output := operationDescriptions(kind, configuration)
-	actual, err := sample.FromProperties(input.Properties())
-	if err != nil || actual != expected || input.TimeBase() != timing.MustBase(1, int64(expected.Rate)) {
-		desired, desiredErr := descriptorWith(input, inputPort.Schema().Identity(), expected)
-		if desiredErr != nil {
-			return plugin.Compiled[componentPlan, stream.Descriptor]{}, desiredErr
+	if kind != readerOperation {
+		actual, err := sample.FromProperties(input.Properties())
+		if err != nil || actual != expected || input.TimeBase() != timing.MustBase(1, int64(expected.Rate)) {
+			desired, desiredErr := descriptorWith(input, inputPort.Schema().Identity(), expected)
+			if desiredErr != nil {
+				return plugin.Compiled[componentPlan, stream.Descriptor]{}, desiredErr
+			}
+			return plugin.Compiled[componentPlan, stream.Descriptor]{
+				Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require(inputPort.ID(), plugin.DescriptorNeed("pcm.sample-description", desired))},
+			}, nil
 		}
-		return plugin.Compiled[componentPlan, stream.Descriptor]{
-			Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require(inputPort.ID(), plugin.DescriptorNeed("pcm.sample-description", desired))},
-		}, nil
 	}
 
-	outputDescriptor, err := descriptorWith(input, outputPort.Schema().Identity(), output)
+	var outputDescriptor stream.Descriptor
+	var err error
+	switch kind {
+	case readerOperation:
+		outputDescriptor, err = describedCarrier(input, outputPort.Schema().Identity(), output)
+	case writerOperation:
+		outputDescriptor, err = carrierDescriptor(input, outputPort.Schema().Identity())
+	default:
+		outputDescriptor, err = descriptorWith(input, outputPort.Schema().Identity(), output)
+	}
 	if err != nil {
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
 	}
@@ -176,6 +188,26 @@ func descriptorWith(input stream.Descriptor, schemaID schema.ID, description sam
 		return stream.Descriptor{}, err
 	}
 	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
+}
+
+func describedCarrier(input stream.Descriptor, schemaID schema.ID, description sample.Description) (stream.Descriptor, error) {
+	properties, err := description.Properties()
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
+}
+
+func carrierDescriptor(input stream.Descriptor, schemaID schema.ID) (stream.Descriptor, error) {
+	result, err := stream.NewDescriptor(input.ID(), schemaID, access.CarrierTimeBase(), property.New())
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
