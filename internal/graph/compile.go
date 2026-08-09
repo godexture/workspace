@@ -8,7 +8,7 @@ import (
 
 // Compile resolves and validates a graph that must already be complete.
 func Compile(index catalog.Index, requested job.Graph) (Graph, error) {
-	evaluation, err := evaluate(index, requested, false, nil)
+	evaluation, err := evaluate(index, requested, CompileContexts{}, false, nil)
 	if err != nil {
 		return Graph{}, err
 	}
@@ -22,11 +22,11 @@ func Compile(index catalog.Index, requested job.Graph) (Graph, error) {
 // Evaluate compiles every currently satisfiable node and returns typed gaps
 // for the solver. It never opens component implementations.
 func Evaluate(index catalog.Index, requested job.Graph) (Evaluation, error) {
-	return evaluate(index, requested, true, nil)
+	return evaluate(index, requested, CompileContexts{}, true, nil)
 }
 
 // EvaluateBounded invokes beforeCompile immediately before every component
 // Compile. It is the solver's strict compile-budget boundary.
-func EvaluateBounded(index catalog.Index, requested job.Graph, beforeCompile func() error) (Evaluation, error) {
-	return evaluate(index, requested, true, beforeCompile)
+func EvaluateBounded(index catalog.Index, requested job.Graph, contexts CompileContexts, beforeCompile func() error) (Evaluation, error) {
+	return evaluate(index, requested, contexts, true, beforeCompile)
 }

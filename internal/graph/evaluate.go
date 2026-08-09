@@ -22,7 +22,7 @@ type Evaluation struct {
 func (e Evaluation) Graph() (Graph, bool) { return e.graph, e.graph.Valid() }
 func (e Evaluation) Gaps() []Gap          { return append([]Gap(nil), e.gaps...) }
 
-func evaluate(index catalog.Index, requested job.Graph, allowGaps bool, beforeCompile func() error) (Evaluation, error) {
+func evaluate(index catalog.Index, requested job.Graph, contexts CompileContexts, allowGaps bool, beforeCompile func() error) (Evaluation, error) {
 	if !requested.Valid() {
 		return Evaluation{}, diagnostic.NewError(diagnostic.NewItem("graph.invalid-request", diagnostic.ErrorSeverity, diagnostic.Path{}, "requested graph is invalid", nil))
 	}
@@ -73,8 +73,9 @@ func evaluate(index catalog.Index, requested job.Graph, allowGaps bool, beforeCo
 		}
 		component := components[node.componentIndex]
 		configValue := configs[node.componentIndex]
+		compileContext := contexts.For(node.request.ID())
 		if allowGaps {
-			schemaGaps := descriptorSchemaGaps(node, edges, compiledByID, component, configValue, inputs)
+			schemaGaps := descriptorSchemaGaps(node, edges, compiledByID, component, configValue, compileContext, inputs)
 			if len(schemaGaps) != 0 {
 				gaps = append(gaps, schemaGaps...)
 				continue
@@ -85,7 +86,7 @@ func evaluate(index catalog.Index, requested job.Graph, allowGaps bool, beforeCo
 				return Evaluation{}, err
 			}
 		}
-		compilation, err := plugin.Compile(component, plugin.CompileContext{}, configValue, inputs)
+		compilation, err := plugin.Compile(component, compileContext, configValue, inputs)
 		if err != nil {
 			items = append(items, prefixNode(errorItems(err), node.request.ID())...)
 			continue
@@ -97,7 +98,7 @@ func evaluate(index catalog.Index, requested job.Graph, allowGaps bool, beforeCo
 		}
 		if allowGaps {
 			for _, requirement := range requirements {
-				gaps = append(gaps, gapFor(node, edges, compiledByID, component, configValue, inputs, requirement.Need(), requirement.Port()))
+				gaps = append(gaps, gapFor(node, edges, compiledByID, component, configValue, compileContext, inputs, requirement.Need(), requirement.Port()))
 			}
 		} else {
 			for _, requirement := range requirements {
@@ -184,7 +185,7 @@ func incomingEdges(edges []job.Edge, node job.NodeID, port string) []job.Edge {
 	return result
 }
 
-func descriptorSchemaGaps(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, component plugin.Component, configValue config.ResolvedView, inputs flow.Descriptors[stream.Descriptor]) []Gap {
+func descriptorSchemaGaps(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, component plugin.Component, configValue config.ResolvedView, compileContext plugin.CompileContext, inputs flow.Descriptors[stream.Descriptor]) []Gap {
 	var gaps []Gap
 	for _, port := range node.shape.Inputs {
 		values := inputs.At(port.ID())
@@ -201,7 +202,7 @@ func descriptorSchemaGaps(node shapedNode, edges []job.Edge, compiled map[job.No
 			desired = desired.WithMetadata(values[0].Metadata())
 		}
 		need := plugin.DescriptorNeed("graph.schema-mismatch", desired)
-		gaps = append(gaps, gapFor(node, edges, compiled, component, configValue, inputs, need, port.ID()))
+		gaps = append(gaps, gapFor(node, edges, compiled, component, configValue, compileContext, inputs, need, port.ID()))
 	}
 	return gaps
 }

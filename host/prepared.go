@@ -51,17 +51,19 @@ type Prepared struct {
 	released sync.Once
 }
 
-// Prepare resolves the immutable Program, reserves every compiled node and
-// runtime queue, and acquires its Access sessions before any operator opens.
+// Prepare acquires and inspects inputs, resolves the immutable Program,
+// reserves every compiled node and runtime queue, and only then acquires
+// output sessions before any operator opens.
 func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) {
-	selected, err := h.resolve(ctx, request)
+	planning, err := h.resolveInputs(ctx, request)
 	if err != nil {
-		failure := Failure{Phase: PreparePhase, Err: errors.Join(err, closeRequestDirects(request))}
+		failure := Failure{Phase: PreparePhase, Err: err}
 		return nil, &failure
 	}
-	entries := selected.Boundaries().Entries()
+	selected := planning.program
+	entries := planning.entries
 	failSelection := func(phase Phase, err error) (*Prepared, error) {
-		failure := Failure{Phase: phase, Err: errors.Join(err, closeBoundDirects(entries))}
+		failure := Failure{Phase: phase, Err: errors.Join(err, h.closeInputPlan(planning))}
 		return nil, &failure
 	}
 	if !selected.Executable() {
@@ -85,6 +87,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		manager:        manager,
 		byNode:         make(map[job.NodeID]*memory.Lease),
 		bySession:      make(map[string]acquiredSession),
+		sessions:       append([]acquiredSession(nil), planning.sessions...),
 		observation:    h.observation,
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
@@ -94,6 +97,9 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		if entry.Projection().Kind == plan.DirectBoundary {
 			prepared.direct = append(prepared.direct, entry)
 		}
+	}
+	for _, session := range prepared.sessions {
+		prepared.bySession[session.node] = session
 	}
 	fail := func(phase Phase, err error) (*Prepared, error) {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
@@ -125,12 +131,13 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		prepared.reservations = append(prepared.reservations, reservation{name: node.ID().String(), lease: lease})
 		prepared.byNode[node.ID()] = lease
 	}
-	prepared.sessions, err = acquireSessions(ctx, entries, true)
-	for _, session := range prepared.sessions {
+	outputSessions, acquireErr := acquireSessions(ctx, entries, plan.OutputBoundary)
+	prepared.sessions = append(prepared.sessions, outputSessions...)
+	for _, session := range outputSessions {
 		prepared.bySession[session.node] = session
 	}
-	if err != nil {
-		return fail(PreparePhase, err)
+	if acquireErr != nil {
+		return fail(PreparePhase, acquireErr)
 	}
 	return prepared, nil
 }

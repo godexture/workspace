@@ -27,6 +27,7 @@ type Gap struct {
 	need      plugin.Need[stream.Descriptor]
 	component plugin.Component
 	config    config.ResolvedView
+	context   plugin.CompileContext
 	inputs    flow.Descriptors[stream.Descriptor]
 }
 
@@ -60,7 +61,7 @@ func (g Gap) Accepts(candidate stream.Descriptor) (bool, error) {
 	if replaced != 1 {
 		return false, ErrGapCardinality
 	}
-	compilation, err := plugin.Compile(g.component, plugin.CompileContext{}, g.config, flow.NewDescriptors(bindings...))
+	compilation, err := plugin.Compile(g.component, g.context, g.config, flow.NewDescriptors(bindings...))
 	if err != nil {
 		return false, err
 	}
@@ -76,7 +77,7 @@ func (g Gap) Accepts(candidate stream.Descriptor) (bool, error) {
 	return true, nil
 }
 
-func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, component plugin.Component, configValue config.ResolvedView, inputs flow.Descriptors[stream.Descriptor], need plugin.Need[stream.Descriptor], port string) Gap {
+func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, component plugin.Component, configValue config.ResolvedView, compileContext plugin.CompileContext, inputs flow.Descriptors[stream.Descriptor], need plugin.Need[stream.Descriptor], port string) Gap {
 	gap := Gap{
 		node:      node.request.ID(),
 		port:      port,
@@ -84,6 +85,7 @@ func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, com
 		need:      need,
 		component: component,
 		config:    configValue,
+		context:   compileContext,
 		inputs:    copyDescriptors(inputs),
 	}
 	incoming := incomingEdges(edges, node.request.ID(), port)

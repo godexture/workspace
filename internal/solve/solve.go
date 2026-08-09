@@ -39,17 +39,18 @@ type planner struct {
 	nodes       map[job.NodeID]annotation
 	edges       map[string]annotation
 	bound       bound.State
+	contexts    graph.CompileContexts
 }
 
 // Resolve returns a private Program whose public Plan contains every selected
 // requested and automatic node.
 func Resolve(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform) (program.Program, error) {
-	return ResolveBound(ctx, index, request, platform, bound.State{})
+	return ResolveBound(ctx, index, request, platform, bound.State{}, graph.CompileContexts{})
 }
 
 // ResolveBound plans a Job whose Access/Endpoint choices have already been
 // normalized into graph nodes by internal/bind.
-func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State) (program.Program, error) {
+func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State, contexts graph.CompileContexts) (program.Program, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -83,6 +84,7 @@ func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 		nodes:    make(map[job.NodeID]annotation),
 		edges:    make(map[string]annotation),
 		bound:    boundaries,
+		contexts: contexts,
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)
@@ -103,7 +105,7 @@ func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 			return program.Program{}, p.planningError(limitError{dimension: "fixpoints"}, lastGap, nil)
 		}
 		p.usage.FixpointIterations++
-		evaluation, err := graph.EvaluateBounded(p.index, current, p.beforeCompile)
+		evaluation, err := graph.EvaluateBounded(p.index, current, p.contexts, p.beforeCompile)
 		if err != nil {
 			return program.Program{}, p.planningError(err, lastGap, nil)
 		}

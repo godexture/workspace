@@ -3,9 +3,7 @@
 package host
 
 import (
-	"context"
 	"encoding/hex"
-	"errors"
 	"runtime"
 	"sort"
 	"time"
@@ -13,9 +11,6 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/catalog"
-	"github.com/godexture/godec/internal/program"
-	"github.com/godexture/godec/internal/solve"
-	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -91,37 +86,6 @@ func New(options ...Option) (*Host, error) {
 		observation:    configuration.observation,
 		cleanupTimeout: configuration.cleanupTimeout,
 	}, nil
-}
-
-// Plan binds declarative Access/Endpoint choices, resolves the graph, and
-// closes any input session acquired for planning before it returns. It never
-// opens operators or output sessions.
-func (h *Host) Plan(ctx context.Context, request job.Job) (plan.Plan, error) {
-	program, err := h.resolve(ctx, request)
-	if err != nil {
-		return plan.Plan{}, errors.Join(err, closeRequestDirects(request))
-	}
-	entries := program.Boundaries().Entries()
-	sessions, acquireErr := acquireSessions(ctx, entries, false)
-	cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
-	defer cancel()
-	closeErr := joinFailures(closeSessions(cleanupContext, sessions))
-	return program.Plan(), errors.Join(acquireErr, closeErr, closeBoundDirects(entries))
-}
-
-func (h *Host) resolve(ctx context.Context, request job.Job) (program.Program, error) {
-	if h == nil {
-		return program.Program{}, diagnostic.NewError(diagnostic.NewItem("host.nil", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host is nil", nil))
-	}
-	bound, err := bind.Normalize(h.bindings, request)
-	if err != nil {
-		return program.Program{}, err
-	}
-	result, err := solve.ResolveBound(ctx, h.index, bound.Request(), h.platform, bound.Boundaries())
-	if err != nil {
-		return program.Program{}, err
-	}
-	return result, nil
 }
 
 // Catalog is an immutable public view of the host's component descriptions.

@@ -25,7 +25,7 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 			result[index] = entry
 			continue
 		}
-		adjacent, err := adjacentBoundaryNode(projection, edges)
+		adjacent, err := AdjacentBoundaryNode(projection, edges)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +72,10 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 	return result, nil
 }
 
-func adjacentBoundaryNode(boundary plan.Boundary, edges []job.Edge) (job.NodeID, error) {
+// AdjacentBoundaryNode returns the one explicit component connected directly
+// to an Access boundary. Prepare uses the same relation selected during Bind
+// when it attaches node-local inspection state.
+func AdjacentBoundaryNode(boundary plan.Boundary, edges []job.Edge) (job.NodeID, error) {
 	var adjacent []job.NodeID
 	for _, edge := range edges {
 		if boundary.Direction == plan.InputBoundary && edge.From().Node().String() == boundary.Node && edge.From().ID() == boundary.Port {

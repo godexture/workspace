@@ -19,13 +19,16 @@ type acquiredSession struct {
 	opening  access.Opening
 }
 
-func acquireSessions(ctx context.Context, entries []bound.Entry, includeOutputs bool) (sessions []acquiredSession, err error) {
+func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.BoundaryDirection) (sessions []acquiredSession, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !direction.Valid() {
+		return nil, errors.New("Access session direction is invalid")
+	}
 	for _, entry := range entries {
 		projection := entry.Projection()
-		if projection.Kind != plan.ProviderBoundary || projection.Direction == plan.OutputBoundary && !includeOutputs {
+		if projection.Kind != plan.ProviderBoundary || projection.Direction != direction {
 			continue
 		}
 		selection, selectionErr := boundarySelection(projection)

@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type sessionCounters struct {
@@ -44,6 +45,9 @@ func (s trackedAccessSession) Close() error {
 	return s.counters.closeErr
 }
 func (trackedAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
+func (trackedAccessSession) ReadAt(context.Context, []byte, int64) (int, error) {
+	return 0, io.EOF
+}
 func (trackedAccessSession) Write(_ context.Context, value []byte) (int, error) {
 	return len(value), nil
 }
@@ -144,6 +148,28 @@ func TestPrepareClosesAcquiredSessionsAfterLaterAcquireFailure(t *testing.T) {
 	}
 	if source.closed.Load() != 1 || sink.closed.Load() != 0 {
 		t.Fatalf("partial acquire cleanup = source %d, sink %d", source.closed.Load(), sink.closed.Load())
+	}
+}
+
+func TestPrepareAcquiresOutputOnlyAfterResourceReservation(t *testing.T) {
+	source, sink, instance, request := providerSessionFixture(t)
+	policy := request.Policy()
+	policy.Resources = job.ResourcePolicy{Limited: true, Limit: resource.Grant{}, Queue: policy.Resources.Queue}
+	graph, _ := request.Graph()
+	limited, err := job.New(request.Inputs(), request.Outputs(), graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = instance.Prepare(context.Background(), limited)
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Phase != ResourcePhase {
+		t.Fatalf("resource error = %v", err)
+	}
+	if source.acquired.Load() != 1 || source.closed.Load() != 1 {
+		t.Fatalf("input sessions = %d/%d", source.acquired.Load(), source.closed.Load())
+	}
+	if sink.acquired.Load() != 0 || sink.closed.Load() != 0 {
+		t.Fatalf("output acquired before reservation = %d/%d", sink.acquired.Load(), sink.closed.Load())
 	}
 }
 
