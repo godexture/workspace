@@ -17,6 +17,11 @@ type accessTraitConfig struct{}
 type accessTraitSchemaID struct{}
 type accessTraitUnit int
 
+type accessExampleIO struct {
+	read    []byte
+	written []byte
+}
+
 type accessTraitOperator struct{ shape flow.Shape }
 
 func (o accessTraitOperator) Ports() flow.Shape { return o.shape.Clone() }
@@ -30,6 +35,19 @@ func (accessTraitSession) Close() error                        { return nil }
 func (c *accessExampleCloser) Close() error {
 	c.closed = true
 	return nil
+}
+
+func (s *accessExampleIO) Read(context.Context, []byte) (int, error) { return 0, nil }
+func (s *accessExampleIO) ReadAt(_ context.Context, destination []byte, offset int64) (int, error) {
+	return copy(destination, s.read[offset:]), nil
+}
+func (s *accessExampleIO) Write(_ context.Context, source []byte) (int, error) {
+	s.written = append(s.written, source...)
+	return len(source), nil
+}
+func (s *accessExampleIO) WriteAt(_ context.Context, source []byte, offset int64) (int, error) {
+	copy(s.written[offset:], source)
+	return len(source), nil
 }
 
 // Requirements express alternatives as comparable capability data that can
@@ -68,6 +86,23 @@ func ExampleSelect() {
 
 	fmt.Println(ok, selection.Capabilities())
 	// Output: true [sequential-read]
+}
+
+// Read and write views are context-aware and keep cursor-based operations
+// separate from position-independent operations.
+func ExampleAppender() {
+	stream := &accessExampleIO{read: []byte("read")}
+	var random access.Random = stream
+	var appender access.Appender = stream
+	var patcher access.Patcher = stream
+
+	read := make([]byte, 4)
+	_, _ = random.ReadAt(context.Background(), read, 0)
+	_, _ = appender.Write(context.Background(), []byte("write"))
+	_, _ = patcher.WriteAt(context.Background(), []byte("W"), 0)
+
+	fmt.Println(string(read), string(stream.written))
+	// Output: read Write
 }
 
 // Access behavior and typed execution are traits of the same component, so a

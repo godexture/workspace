@@ -7,19 +7,25 @@ import (
 	"sync"
 )
 
-// Sequential and Random are the narrow views a component receives instead of a
-// struct whose unavailable operations are nil. A component declares what it
-// needs through Requirements and is handed only that.
-//
-// Only these two exist today. The views for stable size, reopen, cancel, and
-// the write side are added by the milestone that first hands one out, so their
-// shape is decided against a real caller rather than guessed here.
+// Sequential and Random are the narrow read views a component receives
+// instead of a struct whose unavailable operations are nil. A component
+// declares what it needs through Requirements and is handed only that.
 type Sequential interface {
 	Read(context.Context, []byte) (int, error)
 }
 
 type Random interface {
 	ReadAt(context.Context, []byte, int64) (int, error)
+}
+
+// Appender and Patcher are the narrow write views corresponding to
+// SequentialWrite and RandomWrite.
+type Appender interface {
+	Write(context.Context, []byte) (int, error)
+}
+
+type Patcher interface {
+	WriteAt(context.Context, []byte, int64) (int, error)
 }
 
 type Ownership uint8

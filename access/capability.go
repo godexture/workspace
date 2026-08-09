@@ -11,12 +11,14 @@ import (
 type Capability string
 
 const (
-	SequentialRead Capability = "sequential-read"
-	RandomRead     Capability = "random-read"
-	StableSize     Capability = "stable-size"
-	Reopen         Capability = "reopen"
-	ConcurrentRead Capability = "concurrent-read"
-	CancelableRead Capability = "cancelable-read"
+	SequentialRead  Capability = "sequential-read"
+	RandomRead      Capability = "random-read"
+	StableSize      Capability = "stable-size"
+	Reopen          Capability = "reopen"
+	ConcurrentRead  Capability = "concurrent-read"
+	CancelableRead  Capability = "cancelable-read"
+	SequentialWrite Capability = "sequential-write"
+	RandomWrite     Capability = "random-write"
 )
 
 func (c Capability) Valid() bool { return c != "" && strings.TrimSpace(string(c)) == string(c) }
