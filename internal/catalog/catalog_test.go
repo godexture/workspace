@@ -1,10 +1,13 @@
 package catalog
 
 import (
+	"context"
 	"testing"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
@@ -20,9 +23,15 @@ type catalogUnit int
 type catalogOtherUnit int
 
 type catalogOperator struct{ shape flow.Shape }
+type catalogSession struct{ capabilities access.Capabilities }
 
 func (o catalogOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (catalogOperator) Close() error        { return nil }
+func (s catalogSession) Capabilities() access.Capabilities {
+	result, _ := access.NewCapabilities(s.capabilities.Values()...)
+	return result
+}
+func (catalogSession) Close() error { return nil }
 
 func catalogSchema() config.Schema[catalogConfig] {
 	return config.Struct[catalogConfig](func() catalogConfig { return catalogConfig{Value: 1} }).
@@ -51,6 +60,30 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 		spec.Contract = contracts[0]
 	}
 	return plugin.NewComponent[Marker](descriptor, schemaValue, plugin.WithSpec(spec))
+}
+
+func catalogTraitComponent[Marker any](name string, shape flow.Shape, options ...plugin.ComponentOption) plugin.Component {
+	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
+		Shape: plugin.StaticShape[catalogConfig](shape),
+		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+			outputs := flow.NewDescriptors[int]()
+			if len(shape.Outputs) == 1 {
+				outputs = flow.NewDescriptors(flow.Describe(shape.Outputs[0].ID(), 1))
+			}
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: outputs}, nil
+		},
+		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
+			return catalogOperator{shape: plan}, nil
+		},
+	}
+	options = append([]plugin.ComponentOption{plugin.WithSpec(spec)}, options...)
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name, Version: "1"}, catalogSchema(), options...)
+}
+
+func catalogAcquire(capabilities access.Capabilities) access.AcquireFunc {
+	return func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+		return catalogSession{capabilities: capabilities}, nil
+	}
 }
 
 func TestBuildValidatesAndSortsImmutableIndex(t *testing.T) {
@@ -97,6 +130,98 @@ func TestImplementationContractChangesCatalogFingerprint(t *testing.T) {
 	if base.Fingerprint() == stable.Fingerprint() {
 		t.Fatal("implementation contract did not affect catalog fingerprint")
 	}
+}
+
+func TestTraitManifestChangesCatalogFingerprint(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	build := func(capability access.Capability) Index {
+		capabilities, _ := access.NewCapabilities(capability)
+		component := catalogTraitComponent[catalogFirstID]("source", shape, access.Source("memory", capabilities, catalogAcquire(capabilities)))
+		definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, component)
+		index, err := Build(plugin.NewSet(definition))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return index
+	}
+	if build(access.SequentialRead).Fingerprint() == build(access.RandomRead).Fingerprint() {
+		t.Fatal("Access trait change did not affect catalog fingerprint")
+	}
+}
+
+func TestBuildAcceptsSourceAndSinkTraitsForTheSameScheme(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	source := catalogTraitComponent[catalogFirstID](
+		"source",
+		flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}),
+		access.Source("memory", capabilities, catalogAcquire(capabilities)),
+	)
+	sink := catalogTraitComponent[catalogSecondID](
+		"sink",
+		flow.NewShape([]flow.Port{flow.In("in", typ)}, nil),
+		access.Sink("memory", capabilities, access.AtomicReplace, catalogAcquire(capabilities)),
+	)
+	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, source, sink)
+	if _, err := Build(plugin.NewSet(definition)); err != nil {
+		t.Fatalf("source/sink composition = %v", err)
+	}
+}
+
+func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	acquire := catalogAcquire(capabilities)
+	tests := map[string]struct {
+		components []plugin.Component
+		code       string
+	}{
+		"source shape": {
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("source", flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), access.Source("memory", capabilities, acquire))},
+			code:       "catalog.access-shape",
+		},
+		"source scheme": {
+			components: []plugin.Component{
+				catalogTraitComponent[catalogFirstID]("first", flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), access.Source("memory", capabilities, acquire)),
+				catalogTraitComponent[catalogSecondID]("second", flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), access.Source("MEMORY", capabilities, acquire)),
+			},
+			code: "catalog.access-scheme",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, test.components...)
+			_, err := Build(plugin.NewSet(definition))
+			if err == nil || !hasCatalogDiagnostic(err, test.code) {
+				t.Fatalf("diagnostic %s = %v", test.code, err)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsEndpointTraitOnNondirectionalComponent(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	trait, _ := endpoint.NewTrait(endpoint.LiveStatic, endpoint.Realtime)
+	component := catalogTraitComponent[catalogFirstID](
+		"endpoint",
+		flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}),
+		endpoint.WithTrait(trait),
+	)
+	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, component)
+	_, err := Build(plugin.NewSet(definition))
+	if err == nil || !hasCatalogDiagnostic(err, "catalog.endpoint-shape") {
+		t.Fatalf("endpoint shape diagnostic = %v", err)
+	}
+}
+
+func hasCatalogDiagnostic(err error, code string) bool {
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildRejectsBrokenDefinitionWithoutDroppingErrors(t *testing.T) {

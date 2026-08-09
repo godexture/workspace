@@ -36,26 +36,25 @@ type boundaryPlan struct{ shape flow.Shape }
 var boundarySchema = schema.Define[boundarySchemaID](schema.Traits[boundaryUnit]{})
 
 type boundaryOperator struct{ shape flow.Shape }
+type boundarySession struct{ capabilities access.Capabilities }
 
 func (o boundaryOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (boundaryOperator) Close() error        { return nil }
+func (s boundarySession) Capabilities() access.Capabilities {
+	result, _ := access.NewCapabilities(s.capabilities.Values()...)
+	return result
+}
+func (boundarySession) Close() error { return nil }
+
+func boundaryAcquire(capabilities access.Capabilities) access.AcquireFunc {
+	return func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+		return boundarySession{capabilities: capabilities}, nil
+	}
+}
 
 func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 	var opens atomic.Int32
-	source, transform, sink, descriptor := boundaryComponents(&opens)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))
 	capabilities, err := access.NewCapabilities(access.RandomRead, access.SequentialRead, access.StableSize)
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider, err := access.DefineProvider[boundarySourceID](
-		[]string{"memory"},
-		access.WithProviderCapabilities(capabilities),
-		access.WithProviderRequirements(access.NewRequirements(
-			access.AnyOf(access.SequentialRead),
-			access.AnyOf(access.RandomRead, access.StableSize),
-		)),
-	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +62,14 @@ func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sinkEndpoint, err := endpoint.New(sink, trait)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source, transform, sink, descriptor := boundaryComponentsWith(
+		&opens,
+		[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
+		[]plugin.ComponentOption{endpoint.WithTrait(trait)},
+	)
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))
 	host, err := New(
 		Plugins(set),
-		Providers(provider),
-		Endpoints(sinkEndpoint),
 		PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 	)
 	if err != nil {
@@ -106,7 +105,7 @@ func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 	if strings.Contains(inputBinding.Reference, "secret") || inputBinding.ReferenceFingerprint != reference.Fingerprint().String() {
 		t.Fatalf("reference projection = %#v", inputBinding)
 	}
-	if len(inputBinding.Available) != 3 || len(inputBinding.Selected) != 1 || inputBinding.Selected[0] != access.SequentialRead {
+	if len(inputBinding.Available) != 3 || len(inputBinding.Selected) != 0 {
 		t.Fatalf("capability projection = available %v, selected %v", inputBinding.Available, inputBinding.Selected)
 	}
 	if outputBinding.Direction != plan.OutputBoundary || outputBinding.Kind != plan.EndpointBoundary || outputBinding.Topology != endpoint.FiniteStatic || outputBinding.Mode != endpoint.Offline {
@@ -122,13 +121,15 @@ func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 }
 
 func TestHostBindsChoicesToExplicitGraphOpenPorts(t *testing.T) {
-	source, transform, sink, _ := boundaryComponents(nil)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))
 	capabilities, _ := access.NewCapabilities(access.SequentialRead)
-	provider, _ := access.DefineProvider[boundarySourceID]([]string{"memory"}, access.WithProviderCapabilities(capabilities))
 	trait, _ := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
-	sinkEndpoint, _ := endpoint.New(sink, trait)
-	host, err := New(Plugins(set), Providers(provider), Endpoints(sinkEndpoint), PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}))
+	source, transform, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
+		[]plugin.ComponentOption{endpoint.WithTrait(trait)},
+	)
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))
+	host, err := New(Plugins(set), PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,41 +154,77 @@ func TestHostBindsChoicesToExplicitGraphOpenPorts(t *testing.T) {
 	}
 }
 
-func TestHostRejectsProviderCapabilityBeforeOpen(t *testing.T) {
+func TestHostRejectsReferenceWithoutTraitForRequestedDirection(t *testing.T) {
 	var opens atomic.Int32
-	source, _, sink, _ := boundaryComponents(&opens)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
 	capabilities, _ := access.NewCapabilities(access.RandomRead)
-	provider, _ := access.DefineProvider[boundarySourceID](
-		[]string{"memory"},
-		access.WithProviderCapabilities(capabilities),
-		access.WithProviderRequirements(access.NewRequirements(access.AnyOf(access.SequentialRead))),
+	source, _, sink, _ := boundaryComponentsWith(
+		&opens,
+		[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
+		nil,
 	)
-	trait, _ := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
-	sinkEndpoint, _ := endpoint.New(sink, trait)
-	host, err := New(Plugins(set), Providers(provider), Endpoints(sinkEndpoint))
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+	host, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)
 	}
 	reference, _ := access.Parse("memory:data")
 	input, _ := job.InputFromReference(reference)
-	endpointRequest, _ := job.NewEndpoint(sink.Identity(), config.NewPatch())
-	output, _ := job.OutputToEndpoint(endpointRequest)
+	output, _ := job.OutputToReference(reference)
 	request, _ := job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
 	_, err = host.Plan(context.Background(), request)
 	items := diagnostic.ItemsOf(err)
-	if len(items) != 1 || items[0].Code != "bind.capability" || opens.Load() != 0 {
-		t.Fatalf("capability diagnostic = %#v, opens=%d", items, opens.Load())
+	if len(items) != 1 || items[0].Code != "bind.provider-not-found" || items[0].Detail["direction"] != "2" || opens.Load() != 0 {
+		t.Fatalf("directional provider diagnostic = %#v, opens=%d", items, opens.Load())
+	}
+}
+
+func TestHostRejectsInvalidTraitComposition(t *testing.T) {
+	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	acquire := boundaryAcquire(capabilities)
+	tests := map[string]struct {
+		sourceTraits []plugin.ComponentOption
+		sinkTraits   []plugin.ComponentOption
+		code         string
+	}{
+		"duplicate key": {
+			sourceTraits: []plugin.ComponentOption{
+				access.Source("memory", capabilities, acquire),
+				access.Source("other", capabilities, acquire),
+			},
+			code: "plugin.trait-duplicate",
+		},
+		"directional shape": {
+			sinkTraits: []plugin.ComponentOption{access.Source("memory", capabilities, acquire)},
+			code:       "catalog.access-shape",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			source, _, sink, _ := boundaryComponentsWith(nil, test.sourceTraits, test.sinkTraits)
+			set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+			_, err := New(Plugins(set))
+			if err == nil {
+				t.Fatalf("Host accepted invalid trait composition")
+			}
+			for _, item := range diagnostic.ItemsOf(err) {
+				if item.Code == test.code {
+					return
+				}
+			}
+			t.Fatalf("diagnostic %s = %v", test.code, err)
+		})
 	}
 }
 
 func TestHostBindsEndpointInBothDirections(t *testing.T) {
-	source, _, sink, _ := boundaryComponents(nil)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
 	trait, _ := endpoint.NewTrait(endpoint.LiveStatic, endpoint.Realtime)
-	sourceEndpoint, _ := endpoint.New(source, trait)
-	sinkEndpoint, _ := endpoint.New(sink, trait)
-	host, err := New(Plugins(set), Endpoints(sourceEndpoint, sinkEndpoint))
+	source, _, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{endpoint.WithTrait(trait)},
+		[]plugin.ComponentOption{endpoint.WithTrait(trait)},
+	)
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+	host, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,27 +244,28 @@ func TestHostBindsEndpointInBothDirections(t *testing.T) {
 	}
 }
 
-func TestBoundaryPlanIsIndependentOfManifestOrder(t *testing.T) {
-	source, _, sink, _ := boundaryComponents(nil)
-	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+func TestHostBindsSourceAndSinkTraitsForSameSchemeFromPluginSet(t *testing.T) {
 	capabilities, _ := access.NewCapabilities(access.SequentialRead)
-	memory, _ := access.DefineProvider[boundarySourceID]([]string{"memory"}, access.WithProviderCapabilities(capabilities))
-	unused, _ := access.DefineProvider[boundarySourceID]([]string{"unused"}, access.WithProviderCapabilities(capabilities))
-	trait, _ := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
-	sinkEndpoint, _ := endpoint.New(sink, trait)
+	source, _, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", capabilities, access.AtomicReplace, boundaryAcquire(capabilities))},
+	)
+	leftSet := plugin.NewSet().Add(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+	rightSet := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, sink, source))
 	platform := PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"})
-	left, err := New(Plugins(set), Providers(memory, unused), Endpoints(sinkEndpoint), platform)
+	left, err := New(Plugins(leftSet), platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	right, err := New(Plugins(set), Providers(unused, memory), Endpoints(sinkEndpoint), platform)
+	right, err := New(Plugins(rightSet), platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reference, _ := access.Parse("memory:data")
-	input, _ := job.InputFromReference(reference)
-	endpointRequest, _ := job.NewEndpoint(sink.Identity(), config.NewPatch())
-	output, _ := job.OutputToEndpoint(endpointRequest)
+	inputReference, _ := access.Parse("memory:input")
+	outputReference, _ := access.Parse("memory:output")
+	input, _ := job.InputFromReference(inputReference)
+	output, _ := job.OutputToReference(outputReference)
 	request, _ := job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
 	leftPlan, err := left.Plan(context.Background(), request)
 	if err != nil {
@@ -238,11 +276,19 @@ func TestBoundaryPlanIsIndependentOfManifestOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if left.Catalog().Fingerprint() != right.Catalog().Fingerprint() || leftPlan.Fingerprint() != rightPlan.Fingerprint() {
-		t.Fatal("Provider manifest order changed catalog or Plan identity")
+		t.Fatal("trait component order changed catalog or Plan identity")
+	}
+	boundaries := leftPlan.Boundaries()
+	if len(boundaries) != 2 || boundaries[0].Component != source.Identity().String() || boundaries[1].Component != sink.Identity().String() {
+		t.Fatalf("directional traits = %#v", boundaries)
 	}
 }
 
 func boundaryComponents(opens *atomic.Int32) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
+	return boundaryComponentsWith(opens, nil, nil)
+}
+
+func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plugin.ComponentOption) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
 	descriptor := stream.MustDescriptor("boundary", boundarySchema.Identity(), timing.MustBase(1, 48_000), property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", boundarySchema)})
@@ -260,9 +306,10 @@ func boundaryComponents(opens *atomic.Int32) (plugin.Component, plugin.Component
 			},
 		})
 	}
-	source := plugin.NewComponent[boundarySourceID](plugin.Descriptor{DisplayName: "source"}, configuration, component(sourceShape, func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
+	sourceOptions := append([]plugin.ComponentOption{component(sourceShape, func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
-	}))
+	})}, sourceTraits...)
+	source := plugin.NewComponent[boundarySourceID](plugin.Descriptor{DisplayName: "source"}, configuration, sourceOptions...)
 	transform := plugin.NewComponent[boundaryTransformID](plugin.Descriptor{DisplayName: "transform"}, configuration, component(transformShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		input, ok := inputs.One("in")
 		if !ok {
@@ -270,11 +317,12 @@ func boundaryComponents(opens *atomic.Int32) (plugin.Component, plugin.Component
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: transformShape}, Outputs: flow.NewDescriptors(flow.Describe("out", input))}, nil
 	}))
-	sink := plugin.NewComponent[boundarySinkID](plugin.Descriptor{DisplayName: "sink"}, configuration, component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
+	sinkOptions := append([]plugin.ComponentOption{component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 		if _, ok := inputs.One("in"); !ok {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
 		return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
-	}))
+	})}, sinkTraits...)
+	sink := plugin.NewComponent[boundarySinkID](plugin.Descriptor{DisplayName: "sink"}, configuration, sinkOptions...)
 	return source, transform, sink, descriptor
 }

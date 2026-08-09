@@ -8,7 +8,9 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
-type declarationNamespace struct{}
+type componentTraitKey struct{}
+
+var traitKey = plugin.TraitKeyOf[componentTraitKey]()
 
 // Topology describes whether an endpoint has a finite or live stream shape.
 type Topology uint8
@@ -56,8 +58,7 @@ func (m Mode) String() string {
 }
 
 var (
-	ErrInvalidTrait     = errors.New("endpoint trait is invalid")
-	ErrInvalidComponent = errors.New("endpoint component is invalid")
+	ErrInvalidTrait = errors.New("endpoint trait is invalid")
 )
 
 // Trait is the M3 endpoint contract. Clock, latency, reconnect, hotplug, and
@@ -78,40 +79,15 @@ func (t Trait) Valid() bool        { return t.topology.Valid() && t.mode.Valid()
 func (t Trait) Topology() Topology { return t.topology }
 func (t Trait) Mode() Mode         { return t.mode }
 
-// Component layers an endpoint trait over an ordinary plugin.Component. The
-// plugin component retains port shape and Open; this type adds no registry or
-// lifecycle side effects.
-type Component struct {
-	component plugin.Component
-	trait     Trait
+// WithTrait attaches endpoint behavior to a normal typed component. The
+// component's directional shape determines whether it is a source or sink.
+func WithTrait(trait Trait) plugin.ComponentOption {
+	manifest := "topology=" + trait.topology.String() + "|mode=" + trait.mode.String()
+	return plugin.WithTrait(traitKey, manifest, trait)
 }
 
-func New(component plugin.Component, trait Trait) (Component, error) {
-	if component.Identity().IsZero() || len(component.Diagnostics()) != 0 {
-		return Component{}, ErrInvalidComponent
-	}
-	if !trait.Valid() {
-		return Component{}, ErrInvalidTrait
-	}
-	return Component{component: component, trait: trait}, nil
-}
-
-func (c Component) Valid() bool                       { return !c.component.Identity().IsZero() && c.trait.Valid() }
-func (c Component) Identity() plugin.Identity         { return c.component.Identity() }
-func (c Component) PluginComponent() plugin.Component { return c.component }
-func (c Component) Trait() Trait                      { return c.trait }
-
-// Declaration projects the endpoint trait into Host catalog identity. The
-// typed manifest remains on Host; this inert declaration makes composition
-// and catalog fingerprints account for it without a second registry.
-func (c Component) Declaration() plugin.Declaration {
-	name := c.identityName() + "|topology=" + c.trait.topology.String() + "|mode=" + c.trait.mode.String()
-	return plugin.Declare[declarationNamespace](name, c.Identity())
-}
-
-func (c Component) identityName() string {
-	if c.Identity().IsZero() {
-		return "invalid"
-	}
-	return c.Identity().String()
+// TraitOf returns the typed endpoint trait attached to component.
+func TraitOf(component plugin.Component) (Trait, bool) {
+	trait, ok := plugin.TraitValueOf[Trait](component, traitKey)
+	return trait, ok
 }

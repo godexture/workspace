@@ -10,68 +10,46 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
+type sourceBinding struct {
+	component plugin.Identity
+	trait     access.SourceTrait
+}
+
+type sinkBinding struct {
+	component plugin.Identity
+	trait     access.SinkTrait
+}
+
 type Registry struct {
 	index     catalog.Index
-	providers map[string]access.Provider
+	sources   map[string]sourceBinding
+	sinks     map[string]sinkBinding
 	endpoints map[plugin.Identity]endpoint.Trait
 }
 
-func NewRegistry(index catalog.Index, providers []access.Provider, endpoints []endpoint.Component) (Registry, error) {
+func NewRegistry(index catalog.Index) Registry {
 	result := Registry{
 		index:     index,
-		providers: make(map[string]access.Provider, len(providers)),
-		endpoints: make(map[plugin.Identity]endpoint.Trait, len(endpoints)),
+		sources:   make(map[string]sourceBinding),
+		sinks:     make(map[string]sinkBinding),
+		endpoints: make(map[plugin.Identity]endpoint.Trait),
 	}
-	var items []diagnostic.Item
-	for _, provider := range providers {
-		if !provider.Valid() {
-			items = append(items, bindItem("bind.invalid-provider", plugin.Identity{}, "Access Provider manifest is invalid", nil))
-			continue
+	for _, component := range index.Components() {
+		if trait, ok := access.SourceOf(component); ok && trait.Valid() {
+			result.sources[trait.Scheme()] = sourceBinding{component: component.Identity(), trait: trait}
 		}
-		if _, ok := index.Lookup(provider.Identity()); !ok {
-			items = append(items, bindItem("bind.provider-target", provider.Identity(), "Access Provider component is not in the catalog", nil))
-			continue
+		if trait, ok := access.SinkOf(component); ok && trait.Valid() {
+			result.sinks[trait.Scheme()] = sinkBinding{component: component.Identity(), trait: trait}
 		}
-		for _, scheme := range provider.Schemes() {
-			if previous, exists := result.providers[scheme]; exists {
-				items = append(items, bindItem("bind.duplicate-provider", provider.Identity(), "Access Provider scheme is repeated", map[string]string{
-					"scheme":   scheme,
-					"previous": previous.Identity().String(),
-				}))
-				continue
-			}
-			result.providers[scheme] = provider
+		if trait, ok := endpoint.TraitOf(component); ok && trait.Valid() {
+			result.endpoints[component.Identity()] = trait
 		}
 	}
-	for _, declared := range endpoints {
-		if !declared.Valid() {
-			items = append(items, bindItem("bind.invalid-endpoint", plugin.Identity{}, "Endpoint manifest is invalid", nil))
-			continue
-		}
-		identity := declared.Identity()
-		component, ok := index.Lookup(identity)
-		if !ok {
-			items = append(items, bindItem("bind.endpoint-target", identity, "Endpoint component is not in the catalog", nil))
-			continue
-		}
-		if !component.Ports().Equal(declared.PluginComponent().Ports()) || component.Schema().Description().Identity != declared.PluginComponent().Schema().Description().Identity {
-			items = append(items, bindItem("bind.endpoint-definition", identity, "Endpoint manifest does not describe the catalog component", nil))
-			continue
-		}
-		if _, exists := result.endpoints[identity]; exists {
-			items = append(items, bindItem("bind.duplicate-endpoint", identity, "Endpoint component is repeated", nil))
-			continue
-		}
-		result.endpoints[identity] = declared.Trait()
-	}
-	if hasErrors(items) {
-		return Registry{}, diagnostic.NewError(items...)
-	}
-	return result, nil
+	return result
 }
 
 func (r Registry) Valid() bool {
-	return r.index.Len() != 0 || len(r.providers) == 0 && len(r.endpoints) == 0
+	return r.index.Len() != 0 || len(r.sources) == 0 && len(r.sinks) == 0 && len(r.endpoints) == 0
 }
 
 func bindItem(code string, component plugin.Identity, message string, detail map[string]string) diagnostic.Item {
@@ -80,13 +58,4 @@ func bindItem(code string, component plugin.Identity, message string, detail map
 		path.Component = component.String()
 	}
 	return diagnostic.NewItem(code, diagnostic.ErrorSeverity, path, message, detail)
-}
-
-func hasErrors(items []diagnostic.Item) bool {
-	for _, item := range items {
-		if item.Severity == diagnostic.ErrorSeverity {
-			return true
-		}
-	}
-	return false
 }

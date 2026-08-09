@@ -19,7 +19,7 @@ func (r *runner) initializeOutputs() {
 		}
 		class := access.TransactionClass(0)
 		if entry, ok := r.boundary[node.ID().String()]; ok && entry.Projection().Kind == plan.ProviderBoundary {
-			class = entry.Provider().TransactionClass()
+			class = entry.SinkTrait().TransactionClass()
 		}
 		outcome := len(r.result.Outputs)
 		r.result.Outputs = append(r.result.Outputs, OutputOutcome{
@@ -119,11 +119,11 @@ func (r *runner) opening(node string) (any, error) {
 	projection := entry.Projection()
 	switch projection.Kind {
 	case plan.ProviderBoundary:
-		direction := access.SourceDirection
-		if projection.Direction == plan.OutputBoundary {
-			direction = access.SinkDirection
+		if projection.Direction == plan.InputBoundary {
+			return access.NewOpening(access.SourceDirection, entry.Reference(), entry.SourceTrait().Capabilities(), projection.Selected, 0)
 		}
-		return access.NewOpening(direction, entry.Reference(), entry.Provider().Capabilities(), projection.Selected, entry.Provider().TransactionClass())
+		trait := entry.SinkTrait()
+		return access.NewOpening(access.SinkDirection, entry.Reference(), trait.Capabilities(), projection.Selected, trait.TransactionClass())
 	case plan.EndpointBoundary:
 		direction := endpoint.SourceDirection
 		if projection.Direction == plan.OutputBoundary {

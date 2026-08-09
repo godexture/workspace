@@ -36,38 +36,38 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 			return endpointOperator{shape: shape}, nil
 		},
 	}
-	component := plugin.NewComponent[endpointComponentID](plugin.Descriptor{DisplayName: "capture"}, config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Version("1").Build(), plugin.WithSpec(spec))
 	trait, err := NewTrait(LiveDynamic, Realtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint, err := New(component, trait)
-	if err != nil {
-		t.Fatal(err)
+	component := plugin.NewComponent[endpointComponentID](
+		plugin.Descriptor{DisplayName: "capture"},
+		config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Version("1").Build(),
+		plugin.WithSpec(spec),
+		WithTrait(trait),
+	)
+	attached, ok := TraitOf(component)
+	if !ok || attached.Topology() != LiveDynamic || attached.Mode() != Realtime {
+		t.Fatalf("endpoint trait = %#v, %v", attached, ok)
 	}
-	if !endpoint.Valid() || endpoint.Identity() != component.Identity() || endpoint.Trait().Topology() != LiveDynamic {
-		t.Fatalf("endpoint = %#v", endpoint)
-	}
-	declaration := endpoint.Declaration()
-	if !declaration.Valid() || len(declaration.Targets()) != 1 {
-		t.Fatalf("endpoint declaration = %#v", declaration)
+	if len(component.Traits()) != 1 {
+		t.Fatalf("component traits = %#v", component.Traits())
 	}
 	if opens.Load() != 0 {
 		t.Fatal("endpoint construction opened component")
 	}
 }
 
-func TestEndpointRejectsComponentWithoutSpec(t *testing.T) {
+func TestEndpointTraitRetainsInvalidValueForCompositionDiagnostics(t *testing.T) {
 	component := plugin.NewComponent[endpointComponentID](
 		plugin.Descriptor{DisplayName: "capture"},
 		config.Struct[endpointConfig](func() endpointConfig { return endpointConfig{} }).Version("1").Build(),
+		plugin.WithSpec(plugin.Spec[endpointConfig, struct{}, int]{}),
+		WithTrait(Trait{}),
 	)
-	trait, err := NewTrait(LiveStatic, Realtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New(component, trait); err != ErrInvalidComponent {
-		t.Fatalf("invalid component error = %v", err)
+	trait, ok := TraitOf(component)
+	if !ok || trait.Valid() {
+		t.Fatalf("invalid endpoint trait = %#v, %v", trait, ok)
 	}
 }
 

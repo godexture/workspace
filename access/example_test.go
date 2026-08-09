@@ -5,9 +5,27 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/plugin"
 )
 
 type accessExampleCloser struct{ closed bool }
+type accessTraitComponentID struct{}
+type accessTraitConfig struct{}
+type accessTraitSchemaID struct{}
+type accessTraitUnit int
+
+type accessTraitOperator struct{ shape flow.Shape }
+
+func (o accessTraitOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (accessTraitOperator) Close() error        { return nil }
+
+type accessTraitSession struct{ capabilities access.Capabilities }
+
+func (s accessTraitSession) Capabilities() access.Capabilities { return s.capabilities }
+func (accessTraitSession) Close() error                        { return nil }
 
 func (c *accessExampleCloser) Close() error {
 	c.closed = true
@@ -50,6 +68,39 @@ func ExampleSelect() {
 
 	fmt.Println(ok, selection.Capabilities())
 	// Output: true [sequential-read]
+}
+
+// Access behavior and typed execution are traits of the same component, so a
+// plugin definition is the only value an application needs to compose.
+func ExampleSource() {
+	typ := schema.Define[accessTraitSchemaID, accessTraitUnit](schema.Traits[accessTraitUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", typ)})
+	capabilities, _ := access.NewCapabilities(access.SequentialRead)
+	acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+		return accessTraitSession{capabilities: capabilities}, nil
+	}
+	component := plugin.NewComponent[accessTraitComponentID](
+		plugin.Descriptor{DisplayName: "memory source", Version: "1"},
+		config.Struct[accessTraitConfig](func() accessTraitConfig { return accessTraitConfig{} }).Version("1").Build(),
+		plugin.WithSpec(plugin.Spec[accessTraitConfig, flow.Shape, int]{
+			Shape: plugin.StaticShape[accessTraitConfig](shape),
+			Compile: func(plugin.CompileContext, accessTraitConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
+				return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("bytes", 1))}, nil
+			},
+			Open: func(plugin.OpenContext, flow.Shape) (flow.Operator, error) {
+				return accessTraitOperator{shape: shape}, nil
+			},
+		}),
+		plugin.WithReader("bytes", typ),
+		access.Source("memory", capabilities, acquire),
+	)
+	trait, ok := access.SourceOf(component)
+
+	fmt.Println(ok, trait.Scheme())
+	fmt.Println(component.View().Executable, len(component.Traits()))
+	// Output:
+	// true memory
+	// true 1
 }
 
 // A strong snapshot gives repeated planning and execution a stable source

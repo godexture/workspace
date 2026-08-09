@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
-	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
@@ -141,92 +139,73 @@ func TestReferenceSeparatesCanonicalAndRedactedDisplay(t *testing.T) {
 
 type providerComponentA struct{}
 type providerComponentB struct{}
-type providerPluginA struct{}
-type providerPluginB struct{}
 type providerConfig struct{}
 type providerUnitID struct{}
 type providerUnit int
 
 type providerOperator struct{ shape flow.Shape }
+type providerSession struct{ capabilities Capabilities }
 
 func (o providerOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (providerOperator) Close() error        { return nil }
+func (s providerSession) Capabilities() Capabilities {
+	result, _ := NewCapabilities(s.capabilities.Values()...)
+	return result
+}
+func (providerSession) Close() error { return nil }
 
 func providerSchema() config.Schema[providerConfig] {
 	return config.Struct[providerConfig](func() providerConfig { return providerConfig{} }).Version("1").Build()
 }
 
-func providerFixtureComponent[Marker any](name string) plugin.Component {
-	typ := schema.Define[providerUnitID, providerUnit](schema.Traits[providerUnit]{})
-	shape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", typ)})
+func providerFixtureComponent[Marker any](name string, shape flow.Shape, options ...plugin.ComponentOption) plugin.Component {
 	spec := plugin.Spec[providerConfig, flow.Shape, int]{
 		Shape: plugin.StaticShape[providerConfig](shape),
 		Compile: func(plugin.CompileContext, providerConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
-			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("bytes", 1))}, nil
+			outputs := flow.NewDescriptors[int]()
+			for _, port := range shape.Outputs {
+				outputs = flow.NewDescriptors(flow.Describe(port.ID(), 1))
+			}
+			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: outputs}, nil
 		},
 		Open: func(_ plugin.OpenContext, plan flow.Shape) (flow.Operator, error) {
 			return providerOperator{shape: plan}, nil
 		},
 	}
-	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, providerSchema(), plugin.WithSpec(spec))
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, providerSchema(), append([]plugin.ComponentOption{plugin.WithSpec(spec)}, options...)...)
 }
 
-func TestProviderSchemeConflictUsesHostDeclarationValidation(t *testing.T) {
-	first := providerFixtureComponent[providerComponentA]("first")
-	second := providerFixtureComponent[providerComponentB]("second")
-	firstProvider, err := DefineProvider[providerComponentA]([]string{"HTTP"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondProvider, err := DefineProvider[providerComponentB]([]string{"http"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstDeclaration, err := firstProvider.Declaration("http")
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondDeclaration, err := secondProvider.Declaration("http")
-	if err != nil {
-		t.Fatal(err)
-	}
-	set := plugin.NewSet(
-		plugin.Define[providerPluginA](plugin.Descriptor{DisplayName: "plugin-a"}, first),
-		plugin.Define[providerPluginB](plugin.Descriptor{DisplayName: "plugin-b"}, second),
-	).AddDeclaration(firstDeclaration).AddDeclaration(secondDeclaration)
-	_, err = catalog.Build(set)
-	if err == nil {
-		t.Fatal("host accepted duplicate provider scheme")
-	}
-	for _, item := range diagnostic.ItemsOf(err) {
-		if item.Code == "catalog.declaration-conflict" {
-			return
-		}
-	}
-	t.Fatalf("provider conflict diagnostic missing: %v", err)
-}
-
-func TestProviderManifestCarriesCapabilitiesRequirementsAndRole(t *testing.T) {
+func TestAccessTraitsCarryCapabilitiesAcquireAndTransaction(t *testing.T) {
 	capabilities, err := NewCapabilities(StableSize, RandomRead)
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider, err := DefineProvider[providerComponentA](
-		[]string{"memory"},
-		WithProviderRole(SourceSinkRole),
-		WithProviderCapabilities(capabilities),
-		WithProviderRequirements(NewRequirements(AnyOf(RandomRead, StableSize))),
-		WithTransactionClass(AtomicReplace),
+	acquire := func(context.Context, Reference, Selection) (Session, error) {
+		return providerSession{capabilities: capabilities}, nil
+	}
+	typ := schema.Define[providerUnitID, providerUnit](schema.Traits[providerUnit]{})
+	sourceComponent := providerFixtureComponent[providerComponentA](
+		"source",
+		flow.NewShape(nil, []flow.Port{flow.Out("bytes", typ)}),
+		Source("MEMORY", capabilities, acquire),
 	)
-	if err != nil {
-		t.Fatal(err)
+	sinkComponent := providerFixtureComponent[providerComponentB](
+		"sink",
+		flow.NewShape([]flow.Port{flow.In("bytes", typ)}, nil),
+		Sink("memory", capabilities, AtomicReplace, acquire),
+	)
+	source, sourceOK := SourceOf(sourceComponent)
+	sink, sinkOK := SinkOf(sinkComponent)
+	if !sourceOK || !sinkOK || source.Scheme() != "memory" || sink.Scheme() != "memory" {
+		t.Fatalf("traits = %#v/%v %#v/%v", source, sourceOK, sink, sinkOK)
 	}
-	if !provider.Role().AllowsSource() || !provider.Role().AllowsSink() || len(provider.Declarations()) != 2 {
-		t.Fatalf("provider manifest = %#v", provider)
+	if !source.Capabilities().Contains(RandomRead) || sink.TransactionClass() != AtomicReplace {
+		t.Fatalf("trait capabilities = %#v %#v", source, sink)
 	}
-	selection, ok := Select(provider.Capabilities(), provider.Requirements())
-	if !ok || len(selection.Capabilities()) != 2 {
-		t.Fatalf("provider selection = %v, %v", selection.Capabilities(), ok)
+	reference, _ := Parse("memory:data")
+	session, err := source.Acquire(context.Background(), reference, Selection{})
+	if err != nil || !session.Capabilities().Contains(StableSize) {
+		t.Fatalf("acquired session = %#v, %v", session, err)
 	}
 }
 

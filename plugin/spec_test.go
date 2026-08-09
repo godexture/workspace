@@ -15,6 +15,7 @@ import (
 
 type specUnitID struct{}
 type specOtherID struct{}
+type specTraitID struct{}
 type specUnit struct{ Value int }
 type specPlan struct {
 	shape flow.Shape
@@ -186,6 +187,36 @@ func TestExecutionBindingRejectsDuplicateAndShapeMismatch(t *testing.T) {
 	)
 	if !hasItem(mismatch.Diagnostics(), "plugin.execution-shape") {
 		t.Fatalf("execution shape diagnostics = %v", mismatch.Diagnostics())
+	}
+}
+
+func TestComponentTraitSlotIsTypedAndRejectsDuplicateKeys(t *testing.T) {
+	key := TraitKeyOf[specTraitID]()
+	component := NewComponent[specUnitID](
+		Descriptor{DisplayName: "trait"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithTrait(key, "fixture=one", 1),
+	)
+	value, ok := TraitValueOf[int](component, key)
+	if !ok || value != 1 || len(component.Traits()) != 1 || component.Traits()[0].Manifest != "fixture=one" {
+		t.Fatalf("trait = %d/%v %#v", value, ok, component.Traits())
+	}
+	descriptors := component.Traits()
+	descriptors[0].Manifest = "mutated"
+	if component.Traits()[0].Manifest != "fixture=one" {
+		t.Fatal("component trait descriptors retained caller mutation")
+	}
+
+	duplicate := NewComponent[specOtherID](
+		Descriptor{DisplayName: "duplicate trait"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithTrait(key, "fixture=one", 1),
+		WithTrait(key, "fixture=two", 2),
+	)
+	if !hasItem(duplicate.Diagnostics(), "plugin.trait-duplicate") {
+		t.Fatalf("duplicate trait diagnostics = %v", duplicate.Diagnostics())
 	}
 }
 

@@ -55,11 +55,17 @@ type lifecycleState struct {
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
+type lifecycleAccessSession struct{ capabilities access.Capabilities }
 
 func (h *lifecycleHandle) Close() error {
 	h.closed.Add(1)
 	return nil
 }
+func (s lifecycleAccessSession) Capabilities() access.Capabilities {
+	result, _ := access.NewCapabilities(s.capabilities.Values()...)
+	return result
+}
+func (lifecycleAccessSession) Close() error { return nil }
 
 func (s *lifecycleState) add(value string) {
 	s.mu.Lock()
@@ -203,11 +209,27 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	sourceShape := flow.NewShape(nil, []flow.Port{sourcePort})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, []flow.Port{flow.Out("out", lifecycleType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, nil)
+	var sourceTraits, sinkTraits []plugin.ComponentOption
+	if state.bound {
+		capabilities, err := access.NewCapabilities(access.SequentialRead)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trait, err := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+			return lifecycleAccessSession{capabilities: capabilities}, nil
+		}
+		sourceTraits = append(sourceTraits, endpoint.WithTrait(trait))
+		sinkTraits = append(sinkTraits, access.Sink("memory", capabilities, access.StagedCommit, acquire))
+	}
 
 	source := plugin.NewComponent[lifecycleSourceID](
 		plugin.Descriptor{DisplayName: "source", Version: "1"},
 		configuration,
-		plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
+		append([]plugin.ComponentOption{plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
 			Shape: plugin.StaticShape[lifecycleConfig](sourceShape),
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				resources := resource.Request{}
@@ -243,7 +265,8 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 				return &lifecycleSource{lifecycleBase: &lifecycleBase{shape: shape, name: "source", state: state}}, nil
 			},
 		}),
-		plugin.WithReader("out", lifecycleType),
+			plugin.WithReader("out", lifecycleType),
+		}, sourceTraits...)...,
 	)
 	processor := plugin.NewComponent[lifecycleProcessorID](
 		plugin.Descriptor{DisplayName: "processor", Version: "1"},
@@ -302,8 +325,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	sink := plugin.NewComponent[lifecycleSinkID](
 		plugin.Descriptor{DisplayName: "sink", Version: "1"},
 		configuration,
-		sinkOption("sink"),
-		plugin.WithWriter("in", lifecycleType),
+		append([]plugin.ComponentOption{sinkOption("sink"), plugin.WithWriter("in", lifecycleType)}, sinkTraits...)...,
 	)
 	components := []plugin.Component{source, processor, sink}
 	var sinkB plugin.Component
@@ -321,30 +343,6 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		Plugins(plugin.NewSet(definition)),
 		PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 		Observe(ObservationBasic),
-	}
-	if state.bound {
-		capabilities, capabilityErr := access.NewCapabilities(access.SequentialRead)
-		if capabilityErr != nil {
-			t.Fatal(capabilityErr)
-		}
-		provider, providerErr := access.DefineProvider[lifecycleSinkID](
-			[]string{"memory"},
-			access.WithProviderRole(access.SinkRole),
-			access.WithProviderCapabilities(capabilities),
-			access.WithTransactionClass(access.StagedCommit),
-		)
-		if providerErr != nil {
-			t.Fatal(providerErr)
-		}
-		trait, traitErr := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
-		if traitErr != nil {
-			t.Fatal(traitErr)
-		}
-		sourceEndpoint, endpointErr := endpoint.New(source, trait)
-		if endpointErr != nil {
-			t.Fatal(endpointErr)
-		}
-		hostOptions = append(hostOptions, Providers(provider), Endpoints(sourceEndpoint))
 	}
 	hostOptions = append(hostOptions, options...)
 	instance, err := New(hostOptions...)

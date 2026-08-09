@@ -21,6 +21,7 @@ type Component struct {
 	defaultShape   flow.Shape
 	execution      drive.Binding
 	executionSet   bool
+	traits         map[TraitKey]componentTrait
 }
 
 type componentOptions struct {
@@ -30,6 +31,7 @@ type componentOptions struct {
 	problems       []diagnostic.Item
 	execution      drive.Binding
 	executionSet   bool
+	traits         map[TraitKey]componentTrait
 }
 
 // ComponentOption changes non-identity component metadata.
@@ -67,6 +69,7 @@ func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema
 		problems:       cloneItems(componentOptionsValue.problems),
 		execution:      componentOptionsValue.execution,
 		executionSet:   componentOptionsValue.executionSet,
+		traits:         cloneTraits(componentOptionsValue.traits),
 	}
 	if identityErr != nil {
 		result.problems = append(result.problems, diagnostic.NewItem("plugin.marker", diagnostic.ErrorSeverity, diagnostic.Path{}, identityErr.Error(), nil))
@@ -108,6 +111,10 @@ func (c Component) Aliases() []string { return append([]string(nil), c.aliases..
 
 // Provenance returns build provenance.
 func (c Component) Provenance() Provenance { return c.provenance }
+
+// Traits returns inert, sorted trait descriptions. Live values remain
+// accessible only through the trait-owning package's typed accessor.
+func (c Component) Traits() []TraitDescriptor { return traitDescriptors(c.traits) }
 
 // Ports returns the shape resolved from the default config. Planning always
 // calls Shape again with the selected config.
@@ -162,6 +169,7 @@ func (c Component) View() ComponentView {
 		Finalizes:       c.implementation != nil && c.implementation.finalizes,
 		Executable:      c.executionSet && c.execution.Valid(),
 		Contract:        c.Contract(),
+		Traits:          c.Traits(),
 	}
 }
 
@@ -178,6 +186,7 @@ func (c Component) withPlugin(identity Identity) Component {
 	c.aliases = append([]string(nil), c.aliases...)
 	c.problems = cloneItems(c.problems)
 	c.defaultShape = c.defaultShape.Clone()
+	c.traits = cloneTraits(c.traits)
 	return c
 }
 
@@ -199,6 +208,7 @@ type ComponentView struct {
 	Finalizes       bool
 	Executable      bool
 	Contract        Contract
+	Traits          []TraitDescriptor
 }
 
 func (c *Component) initializeDefaultShape() {

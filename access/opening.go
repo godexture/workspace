@@ -1,5 +1,9 @@
 package access
 
+import "errors"
+
+var errInvalidOpening = errors.New("access opening is invalid")
+
 // Direction is the direction of one node-local Access binding.
 type Direction uint8
 
@@ -22,7 +26,7 @@ type Opening struct {
 
 func NewOpening(direction Direction, reference Reference, available Capabilities, selected []Capability, class TransactionClass) (Opening, error) {
 	if !direction.Valid() || !reference.Valid() || !available.Valid() || class != 0 && !class.Valid() {
-		return Opening{}, ErrInvalidProvider
+		return Opening{}, errInvalidOpening
 	}
 	previous := Capability("")
 	for index, capability := range selected {

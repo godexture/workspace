@@ -5,12 +5,10 @@ import (
 	"encoding/hex"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -126,18 +124,11 @@ func (r Registry) bindInput(input job.Input, index int, used map[job.NodeID]stru
 	switch input.Kind() {
 	case job.ReferenceInput:
 		reference, _ := input.Reference()
-		provider, ok := r.providers[reference.Scheme()]
+		provider, ok := r.sources[reference.Scheme()]
 		if !ok {
-			return selected{}, missingProvider(reference.Scheme())
+			return selected{}, missingProvider(reference.Scheme(), plan.InputBoundary)
 		}
-		if !provider.Role().AllowsSource() {
-			return selected{}, directionError(provider.Identity(), plan.InputBoundary)
-		}
-		selection, err := selectCapabilities(provider)
-		if err != nil {
-			return selected{}, err
-		}
-		return r.providerSelection(provider, reference, selection, index, plan.InputBoundary, used)
+		return r.sourceSelection(provider, reference, index, used)
 	case job.EndpointInput:
 		request, _ := input.Endpoint()
 		return r.endpointSelection(request, index, plan.InputBoundary, used)
@@ -153,14 +144,11 @@ func (r Registry) bindOutput(output job.Output, index int, used map[job.NodeID]s
 	switch output.Kind() {
 	case job.ReferenceOutput:
 		reference, _ := output.Reference()
-		provider, ok := r.providers[reference.Scheme()]
+		provider, ok := r.sinks[reference.Scheme()]
 		if !ok {
-			return selected{}, missingProvider(reference.Scheme())
+			return selected{}, missingProvider(reference.Scheme(), plan.OutputBoundary)
 		}
-		if !provider.Role().AllowsSink() {
-			return selected{}, directionError(provider.Identity(), plan.OutputBoundary)
-		}
-		return r.providerSelection(provider, reference, access.Selection{}, index, plan.OutputBoundary, used)
+		return r.sinkSelection(provider, reference, index, used)
 	case job.EndpointOutput:
 		request, _ := output.Endpoint()
 		return r.endpointSelection(request, index, plan.OutputBoundary, used)
@@ -202,28 +190,50 @@ func (r Registry) directSelection(direct job.Direct, index int, direction plan.B
 	}, nil
 }
 
-func (r Registry) providerSelection(provider access.Provider, reference access.Reference, capability access.Selection, index int, direction plan.BoundaryDirection, used map[job.NodeID]struct{}) (selected, error) {
-	component, _ := r.index.Lookup(provider.Identity())
+func (r Registry) sourceSelection(provider sourceBinding, reference access.Reference, index int, used map[job.NodeID]struct{}) (selected, error) {
+	component, _ := r.index.Lookup(provider.component)
 	patch := config.NewPatch()
-	port, err := boundaryPort(component, patch, direction)
+	port, err := boundaryPort(component, patch, plan.InputBoundary)
 	if err != nil {
 		return selected{}, err
 	}
-	id := boundaryNodeID(direction, index, provider.Identity(), used)
+	id := boundaryNodeID(plan.InputBoundary, index, provider.component, used)
 	projection := plan.Boundary{
-		Direction:            direction,
+		Direction:            plan.InputBoundary,
 		Kind:                 plan.ProviderBoundary,
 		Choice:               index,
 		Node:                 id.String(),
 		Port:                 port,
-		Component:            provider.Identity().String(),
+		Component:            provider.component.String(),
 		Scheme:               reference.Scheme(),
 		Reference:            reference.Display(),
 		ReferenceFingerprint: reference.Fingerprint().String(),
-		Available:            provider.Capabilities().Values(),
-		Selected:             capability.Capabilities(),
+		Available:            provider.trait.Capabilities().Values(),
 	}
-	return selected{node: job.NewNode(id, provider.Identity(), patch), port: port, entry: bound.Provider(projection, reference, provider)}, nil
+	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Source(projection, reference, provider.trait)}, nil
+}
+
+func (r Registry) sinkSelection(provider sinkBinding, reference access.Reference, index int, used map[job.NodeID]struct{}) (selected, error) {
+	component, _ := r.index.Lookup(provider.component)
+	patch := config.NewPatch()
+	port, err := boundaryPort(component, patch, plan.OutputBoundary)
+	if err != nil {
+		return selected{}, err
+	}
+	id := boundaryNodeID(plan.OutputBoundary, index, provider.component, used)
+	projection := plan.Boundary{
+		Direction:            plan.OutputBoundary,
+		Kind:                 plan.ProviderBoundary,
+		Choice:               index,
+		Node:                 id.String(),
+		Port:                 port,
+		Component:            provider.component.String(),
+		Scheme:               reference.Scheme(),
+		Reference:            reference.Display(),
+		ReferenceFingerprint: reference.Fingerprint().String(),
+		Available:            provider.trait.Capabilities().Values(),
+	}
+	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Sink(projection, reference, provider.trait)}, nil
 }
 
 func (r Registry) endpointSelection(request job.EndpointRequest, index int, direction plan.BoundaryDirection, used map[job.NodeID]struct{}) (selected, error) {
@@ -250,25 +260,6 @@ func (r Registry) endpointSelection(request job.EndpointRequest, index int, dire
 	return selected{node: job.NewNode(id, request.Component(), request.Config()), port: port, entry: bound.Endpoint(projection, trait)}, nil
 }
 
-func selectCapabilities(provider access.Provider) (access.Selection, error) {
-	requirements := provider.Requirements()
-	if requirements.Empty() {
-		return access.Selection{}, nil
-	}
-	selection, ok := access.Select(provider.Capabilities(), requirements)
-	if ok {
-		return selection, nil
-	}
-	available := provider.Capabilities().Values()
-	values := make([]string, len(available))
-	for index, capability := range available {
-		values[index] = string(capability)
-	}
-	return access.Selection{}, diagnostic.NewError(bindItem("bind.capability", provider.Identity(), "Access Provider cannot satisfy the declared source capability alternatives", map[string]string{
-		"available": strings.Join(values, ","),
-	}))
-}
-
 func boundaryPort(component plugin.Component, patch config.Patch, direction plan.BoundaryDirection) (string, error) {
 	resolved, err := component.Resolve(patch)
 	if err != nil {
@@ -278,20 +269,11 @@ func boundaryPort(component plugin.Component, patch config.Patch, direction plan
 	if err != nil {
 		return "", err
 	}
-	var ports []flow.Port
-	valid := false
-	switch direction {
-	case plan.InputBoundary:
-		ports = shape.Outputs
-		valid = len(shape.Inputs) == 0 && len(shape.Outputs) == 1
-	case plan.OutputBoundary:
-		ports = shape.Inputs
-		valid = len(shape.Inputs) == 1 && len(shape.Outputs) == 0
-	}
-	if !valid || ports[0].Multiplicity() != flow.One {
+	port, valid := bound.Port(shape, direction)
+	if !valid {
 		return "", diagnostic.NewError(bindItem("bind.endpoint-shape", component.Identity(), "boundary component must have exactly one directional port", map[string]string{"direction": strconv.Itoa(int(direction))}))
 	}
-	return ports[0].ID(), nil
+	return port.ID(), nil
 }
 
 func (r Registry) openPorts(nodes []job.Node, edges []job.Edge) ([]job.Port, []job.Port, error) {
@@ -355,12 +337,10 @@ func boundaryNodeID(direction plan.BoundaryDirection, index int, identity plugin
 	}
 }
 
-func missingProvider(scheme string) error {
-	return diagnostic.NewError(bindItem("bind.provider-not-found", plugin.Identity{}, "no Access Provider is registered for the reference scheme", map[string]string{"scheme": scheme}))
-}
-
-func directionError(identity plugin.Identity, direction plan.BoundaryDirection) error {
-	return diagnostic.NewError(bindItem("bind.provider-role", identity, "Access Provider does not support the requested direction", map[string]string{"direction": strconv.Itoa(int(direction))}))
+func missingProvider(scheme string, direction plan.BoundaryDirection) error {
+	return diagnostic.NewError(bindItem("bind.provider-not-found", plugin.Identity{}, "no Access Provider trait matches the reference scheme and direction", map[string]string{
+		"scheme": scheme, "direction": strconv.Itoa(int(direction)),
+	}))
 }
 
 func boundaryCountError(direction plan.BoundaryDirection, choices, ports int) error {

@@ -90,6 +90,7 @@ func Build(set plugin.Set) (Index, error) {
 			}
 		}
 	}
+	items = append(items, validateTraits(components)...)
 
 	declarations := set.Declarations()
 	seenDeclarations := make(map[plugin.DeclarationKey]plugin.Declaration, len(declarations))

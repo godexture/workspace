@@ -10,9 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/internal/program"
@@ -25,8 +23,6 @@ import (
 type options struct {
 	plugins        plugin.Set
 	platform       plan.Platform
-	providers      []access.Provider
-	endpoints      []endpoint.Component
 	observation    Observation
 	cleanupTimeout time.Duration
 }
@@ -37,17 +33,6 @@ type Option func(*options)
 // Plugins supplies the explicit immutable plugin set for this Host.
 func Plugins(set plugin.Set) Option {
 	return func(options *options) { options.plugins = set }
-}
-
-// Providers supplies immutable Access Provider manifests. Their declarations
-// are validated through the plugin catalog during Host construction.
-func Providers(values ...access.Provider) Option {
-	return func(options *options) { options.providers = append(options.providers, values...) }
-}
-
-// Endpoints supplies typed Endpoint traits layered on catalog components.
-func Endpoints(values ...endpoint.Component) Option {
-	return func(options *options) { options.endpoints = append(options.endpoints, values...) }
 }
 
 // PlatformSnapshot overrides the immutable platform capability snapshot.
@@ -94,25 +79,11 @@ func New(options ...Option) (*Host, error) {
 			return nil, diagnostic.NewError(diagnostic.NewItem("host.platform", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host platform features are invalid", nil))
 		}
 	}
-	set := configuration.plugins
-	for _, provider := range configuration.providers {
-		for _, declaration := range provider.Declarations() {
-			set = set.AddDeclaration(declaration)
-		}
-	}
-	for _, endpoint := range configuration.endpoints {
-		if endpoint.Valid() {
-			set = set.AddDeclaration(endpoint.Declaration())
-		}
-	}
-	index, err := catalog.Build(set)
+	index, err := catalog.Build(configuration.plugins)
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := bind.NewRegistry(index, configuration.providers, configuration.endpoints)
-	if err != nil {
-		return nil, err
-	}
+	bindings := bind.NewRegistry(index)
 	return &Host{
 		index:          index,
 		platform:       configuration.platform,

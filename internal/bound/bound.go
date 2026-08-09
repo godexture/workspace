@@ -10,14 +10,19 @@ import (
 type Entry struct {
 	projection plan.Boundary
 	reference  access.Reference
-	provider   access.Provider
+	source     access.SourceTrait
+	sink       access.SinkTrait
 	trait      endpoint.Trait
 	direct     any
 	close      func() error
 }
 
-func Provider(projection plan.Boundary, reference access.Reference, provider access.Provider) Entry {
-	return Entry{projection: cloneProjection(projection), reference: reference, provider: provider}
+func Source(projection plan.Boundary, reference access.Reference, trait access.SourceTrait) Entry {
+	return Entry{projection: cloneProjection(projection), reference: reference, source: trait}
+}
+
+func Sink(projection plan.Boundary, reference access.Reference, trait access.SinkTrait) Entry {
+	return Entry{projection: cloneProjection(projection), reference: reference, sink: trait}
 }
 
 func Endpoint(projection plan.Boundary, trait endpoint.Trait) Entry {
@@ -34,21 +39,28 @@ func (e Entry) Valid() bool {
 	}
 	switch e.projection.Kind {
 	case plan.ProviderBoundary:
-		return e.reference.Valid() && e.provider.Valid() && !e.trait.Valid() && e.direct == nil && e.close == nil
+		if !e.reference.Valid() || e.trait.Valid() || e.direct != nil || e.close != nil {
+			return false
+		}
+		if e.projection.Direction == plan.InputBoundary {
+			return e.source.Valid() && !e.sink.Valid()
+		}
+		return e.sink.Valid() && !e.source.Valid()
 	case plan.EndpointBoundary:
-		return !e.reference.Valid() && !e.provider.Valid() && e.trait.Valid() && e.direct == nil && e.close == nil
+		return !e.reference.Valid() && !e.source.Valid() && !e.sink.Valid() && e.trait.Valid() && e.direct == nil && e.close == nil
 	case plan.DirectBoundary:
-		return !e.reference.Valid() && !e.provider.Valid() && !e.trait.Valid() && e.direct != nil && e.close != nil
+		return !e.reference.Valid() && !e.source.Valid() && !e.sink.Valid() && !e.trait.Valid() && e.direct != nil && e.close != nil
 	default:
 		return false
 	}
 }
 
-func (e Entry) Projection() plan.Boundary     { return cloneProjection(e.projection) }
-func (e Entry) Reference() access.Reference   { return e.reference }
-func (e Entry) Provider() access.Provider     { return e.provider }
-func (e Entry) EndpointTrait() endpoint.Trait { return e.trait }
-func (e Entry) DirectOpening() any            { return e.direct }
+func (e Entry) Projection() plan.Boundary       { return cloneProjection(e.projection) }
+func (e Entry) Reference() access.Reference     { return e.reference }
+func (e Entry) SourceTrait() access.SourceTrait { return e.source }
+func (e Entry) SinkTrait() access.SinkTrait     { return e.sink }
+func (e Entry) EndpointTrait() endpoint.Trait   { return e.trait }
+func (e Entry) DirectOpening() any              { return e.direct }
 func (e Entry) Close() error {
 	if e.close == nil {
 		return nil
