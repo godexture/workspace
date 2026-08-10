@@ -177,6 +177,8 @@ M6-2 は sink 側に位置を表現できる canonical schema を足す。読み
 
 M6-2 は Inspect も担当する。「既知 format の header を読む」ことと「どの format か決める」ことは別操作であり、前者の実 consumer は明示指定された WAVE である。後者（共有 bounded probe、自動判別、非 seekable 入力の prefix replay）は M6-3 に残す。Inspect を後段に残すと M6-2 が header 情報を fixture か config から捏造することになり、M6-1 が carrier descriptor 規則で除去した形を再導入する。
 
+M6-2c は `plugin.CompileContext` へ cancellation を通す。marshalled metadata は sink へ渡す payload であり、payload の grant は `Compile` で宣言するため、size を知るには `Compile` から `Marshal` を呼ぶしかない。`context.Background()` では planning の cancellation と budget を無視する。渡すのは `Value` が常に nil の context に限り、`Compile` の決定性を honor system にしない。この結合は、外部入力の大きさで決まる metadata payload に上限を設けるかという M8 の判断とも接する。
+
 M6-2c は `plugin.Component` を control-plane 拡張へ広げる。M5 時点の component は typed `Spec` を必須とするため、`Open` も port も持たない metadata Encoding を宣言できない。合成時の拡張がすべて component に乗るという M6-0 の決定の帰結として、Spec を optional にする。有効性は「Spec と port を持つ」または「trait を一つ以上持つ」で判定し、どちらも持たない component は従来どおり拒否する。trait は port shape を要求するかどうかを自分で表明し、control-plane component は solver 候補にならず、Job node に指定された場合は専用の diagnostic で拒否する。詳細は [plugins](plugins.md#m6-完了条件) を正本とする。
 
 M6-2 は `metadata.Encoding` を component trait として追加する。M5 の `metadata.Binding` は宣言だけで、Parse/Marshal の契約は foundation test の private interface にしかない。M3 の skeleton は encoding を `flow.Operator` として模していたが、Parse は Inspect の最中すなわち Compile より前に必要で、`Open` は Program 確定後なので循環する。trait なら composition 時に解決でき、trait 判定規則にも合致する。Parse/Marshal は payload grant を取らない control-plane 操作とする。ただし embedded artwork は MB 級になり得るため、**外部入力の大きさで決まる control-plane allocation に上限を設けるかは M8 が決める**。RIFF INFO だけを扱う M6-2c では blocker にならない。
