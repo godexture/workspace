@@ -177,6 +177,10 @@ M6-2 は sink 側に位置を表現できる canonical schema を足す。読み
 
 M6-2 は Inspect も担当する。「既知 format の header を読む」ことと「どの format か決める」ことは別操作であり、前者の実 consumer は明示指定された WAVE である。後者（共有 bounded probe、自動判別、非 seekable 入力の prefix replay）は M6-3 に残す。Inspect を後段に残すと M6-2 が header 情報を fixture か config から捏造することになり、M6-1 が carrier descriptor 規則で除去した形を再導入する。
 
+M6-3 の自動判別は content evidence を持つ format にだけ成立する。WAVE は RIFF/WAVE signature で判別できるが、raw PCM は任意の byte 列と区別できない。したがって raw PCM は判別結果ではなく**低順位の明示的 fallback** とし、Plan に `Automatic` と専用 reason で現れ、content evidence が無い旨の warning を伴う。signature が一致した後の malformed 入力は raw へ降格せず失敗する。同順位の fallback が複数あれば identity 順で黙って選ばず ambiguity diagnostic にする。**evidence 無しの fallback を既定で許すか hint の opt-in にするかは M6-5 が決める。** 既定 config での fallback は rate/layout/endian を捏造して成功を返すことを意味するため、入力ごとの hint/config surface を作る M6-5 の最短 UX と同じ場所で判断する。M6-3 完了条件の「入力 format を明示せずに判別」は content evidence を持つ format についての条件と読む。
+
+非 seekable な WAVE 入力は M6 では扱わない。signature 検出後に capability diagnostic とする。WAVE Inspect を逐次化すると、data の後方にある metadata を保存するために Inspect 時点で入力全体を読む必要が生じ、bounded prefix の契約を破るためである。旧実装の demuxer も `io.ReadSeeker` を要求しており、capability の変更ではない。M6-3 の逐次入力 gate は「共有 Probe と raw fallback が prefix replay で動く」までとする。
+
 M6-2c は `plugin.CompileContext` へ cancellation を通す。marshalled metadata は sink へ渡す payload であり、payload の grant は `Compile` で宣言するため、size を知るには `Compile` から `Marshal` を呼ぶしかない。`context.Background()` では planning の cancellation と budget を無視する。渡すのは `Value` が常に nil の context に限り、`Compile` の決定性を honor system にしない。この結合は、外部入力の大きさで決まる metadata payload に上限を設けるかという M8 の判断とも接する。
 
 M6-2c は `plugin.Component` を control-plane 拡張へ広げる。M5 時点の component は typed `Spec` を必須とするため、`Open` も port も持たない metadata Encoding を宣言できない。合成時の拡張がすべて component に乗るという M6-0 の決定の帰結として、Spec を optional にする。有効性は「Spec と port を持つ」または「trait を一つ以上持つ」で判定し、どちらも持たない component は従来どおり拒否する。trait は port shape を要求するかどうかを自分で表明し、control-plane component は solver 候補にならず、Job node に指定された場合は専用の diagnostic で拒否する。詳細は [plugins](plugins.md#m6-完了条件) を正本とする。
