@@ -12,10 +12,36 @@ import (
 )
 
 type ShapeContext struct{}
-type CompileContext struct{ traits traitStore }
+type CompileContext struct {
+	context context.Context
+	traits  traitStore
+}
 type SuggestContext struct{}
 
 func (c CompileContext) traitSlots() traitStore { return c.traits }
+
+// Context returns planning cancellation and deadline without context values.
+// Compile remains a pure function of its explicit inputs and prepared traits.
+func (c CompileContext) Context() context.Context {
+	if c.context == nil {
+		return context.Background()
+	}
+	return c.context
+}
+
+// CompileContextWithContext returns an immutable CompileContext carrying only
+// Done, Err, and Deadline from parent. Value always returns nil.
+func CompileContextWithContext(value CompileContext, parent context.Context) CompileContext {
+	if parent == nil {
+		parent = context.Background()
+	}
+	value.context = compileCancellationContext{Context: parent}
+	return value
+}
+
+type compileCancellationContext struct{ context.Context }
+
+func (compileCancellationContext) Value(any) any { return nil }
 
 // ErrWorkerLimit is returned by TaskStarter.Start when a component has no
 // unused worker capacity in the resource.Request declared by Compile.

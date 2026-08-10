@@ -59,15 +59,25 @@ func (o solveOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (solveOperator) Close() error        { return nil }
 
 type solveCompile func(solveConfig, flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor]
+type solveContextCompile func(plugin.CompileContext, solveConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error)
 
 func solveComponent[Marker any](shape flow.Shape, compile solveCompile, suggest plugin.SuggestFunc[solveConfig, stream.Descriptor], suggestionLimit int, contract plugin.Contract, opened, compiles *atomic.Int32) plugin.Component {
+	return solveContextComponent[Marker](shape, func(_ plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
+		return compile(value, inputs), nil
+	}, suggest, suggestionLimit, contract, opened, compiles)
+}
+
+func solveContextComponent[Marker any](shape flow.Shape, compile solveContextCompile, suggest plugin.SuggestFunc[solveConfig, stream.Descriptor], suggestionLimit int, contract plugin.Contract, opened, compiles *atomic.Int32) plugin.Component {
 	spec := plugin.Spec[solveConfig, solvePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[solveConfig](shape),
-		Compile: func(_ plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
+		Compile: func(ctx plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
 			if compiles != nil {
 				compiles.Add(1)
 			}
-			result := compile(value, inputs)
+			result, err := compile(ctx, value, inputs)
+			if err != nil {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{}, err
+			}
 			result.Plan = solvePlan{shape: shape.Clone()}
 			return result, nil
 		},

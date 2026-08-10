@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
@@ -276,6 +277,44 @@ func TestCompileContextSharesMarkerTraitStore(t *testing.T) {
 	value, ok = TraitValueOf[int](duplicate, key)
 	if !ok || value != 7 {
 		t.Fatalf("duplicate changed context = %d/%v", value, ok)
+	}
+}
+
+func TestCompileContextExposesCancellationWithoutValues(t *testing.T) {
+	type contextKey struct{}
+
+	key := TraitKeyOf[specTraitID]()
+	prepared, err := CompileContextWithTrait(CompileContext{}, key, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Hour)
+	parent, cancel := context.WithDeadline(context.WithValue(context.Background(), contextKey{}, "hidden"), deadline)
+	contextual := CompileContextWithContext(prepared, parent)
+
+	gotDeadline, ok := contextual.Context().Deadline()
+	if !ok || !gotDeadline.Equal(deadline) {
+		t.Fatalf("deadline = %v/%v, want %v", gotDeadline, ok, deadline)
+	}
+	if value := contextual.Context().Value(contextKey{}); value != nil {
+		t.Fatalf("context value = %v, want nil", value)
+	}
+	value, ok := TraitValueOf[int](contextual, key)
+	if !ok || value != 7 {
+		t.Fatalf("prepared trait = %d/%v", value, ok)
+	}
+
+	cancel()
+	select {
+	case <-contextual.Context().Done():
+	case <-time.After(time.Second):
+		t.Fatal("cancellation was not propagated")
+	}
+	if !errors.Is(contextual.Context().Err(), context.Canceled) {
+		t.Fatalf("context error = %v", contextual.Context().Err())
+	}
+	if (CompileContext{}).Context().Value(contextKey{}) != nil {
+		t.Fatal("zero CompileContext exposed a value")
 	}
 }
 

@@ -105,7 +105,7 @@ func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 			return program.Program{}, p.planningError(limitError{dimension: "fixpoints"}, lastGap, nil)
 		}
 		p.usage.FixpointIterations++
-		evaluation, err := graph.EvaluateBounded(p.index, current, p.contexts, p.beforeCompile)
+		evaluation, err := graph.EvaluateBounded(p.index, current, p.contexts.WithContext(p.context), p.beforeCompile)
 		if err != nil {
 			return program.Program{}, p.planningError(err, lastGap, nil)
 		}
