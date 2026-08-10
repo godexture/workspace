@@ -89,13 +89,20 @@ map iteration、catalog insertion、goroutine timing、candidate evaluation comp
 
 ## public plugin testkit
 
-第三者と公式 plugin が同じ public testkit を使う。
+第三者と公式 plugin が同じ public testkit を使う。testkit は**構造層と typed case 層の二層**とする。
 
 ```go
 func TestPlugin(t *testing.T) {
-    testkit.Plugin(t, acme.Plugin())
+    testkit.Plugin(t, acme.Plugin())          // 構造層: definition だけで判定できる範囲
+    testkit.Format(t, acme.Reader(), cases)   // typed case 層: fixture と config を伴う
 }
 ```
+
+一引数で意味的 conformance を判定することはできない。`Spec` の descriptor 型は composition 時に型消去され、有効な入力 descriptor、config、実 byte、Access Reference を definition から復元する手段が無い。dummy 入力で実行すれば正しい plugin を誤って失敗させる。したがって層を分け、**fixture を production の `plugin.Definition` に持たせず、型消去された test hook も公開しない**。
+
+構造層が判定するのは、definition だけで決まる整合性である。identity と descriptor、config schema、trait と port shape の整合、execution binding と shape の一致、control-plane component が port を持たないこと。**構造層の通過は conformance ではない**ため、その旨を godoc と失敗 message に明示する。
+
+typed case 層は `Component`、`Format`、`Codec`、`Metadata Encoding`、`Access Provider` の別に、呼び出し側が fixture、config、reference を渡して意味を検証する。共通 contract の実装は一つの runner に置き、種別ごとに複製しない。
 
 共通 contract:
 
@@ -118,7 +125,7 @@ func TestPlugin(t *testing.T) {
 | Access Provider | capability、snapshot/retry、Own/Borrow、commit/abort |
 | Endpoint | clock、overflow/underrun、cancel/join、reconnect/topology event |
 
-plugin author が scheduler、queue、manual `Release`、surface DTO を再実装しなくても contract を検証できることを testkit の usability gate にする。
+plugin author が scheduler、queue、manual `Release`、surface DTO を再実装しなくても contract を検証できることを testkit の usability gate にする。二層にした以上、この gate は typed case 層で測る。**author が供給してよいのは config、入力 fixture、期待値だけ**とし、Host 構築、Job 組み立て、queue、ownership harness、Plan の検査は testkit が持つ。author 側の記述量が fixture と期待値を超える場合は helper を足すか、足さない理由を記録する。
 
 ## integration
 
@@ -222,7 +229,8 @@ CI matrix は root の machine-readable manifest から生成し、日常の cha
 
 M6 は public testkit と `integration` module が最小形で成立する milestone である。CI matrix、corpus tier、hermetic build、release plan は M10 が担当し、M6 には要求しない。対象 family は WAVE と linear PCM、対象 Provider は local file だけとする。作業単位は [media](media.md#m6-完了条件) を正本とする。
 
-- **公式 plugin が第三者と同じ入口で検証される。** `testkit.Plugin(t, wave.Plugin())` の形で公式 WAVE/PCM/file plugin が public testkit を通る。公式 plugin だけが使う内部 test helper を別に持たない。
+- **公式 plugin が第三者と同じ入口で検証される。** 公式 WAVE/PCM/file plugin が構造層と typed case 層の両方を通る。公式 plugin だけが使う内部 test helper を別に持たない。fixture を production の `plugin.Definition` に持たせず、型消去された test hook も公開しない。
+- **構造層だけの通過を conformance と誤認させない。** 構造層は definition から決まる整合性しか見ないため、その範囲を godoc と失敗 message に明示する。あわせて `integration` が、**実行可能な公式 component すべてに typed case が存在すること**を検査する。公式 family に対しては覆い漏れを機械的に検出できるようにし、構造層の通過が「一応 test した」で止まらないようにする。
 - 共通 contract の最小形が実装される。identity/descriptor/config schema、`Compile` の purity と repeatability、bounded `Suggest`、selected component だけの `Open`、cancel/EOF/Flush/Finalize/Close、ownership leak と double drop、宣言 schema と実 item の一致、panic/error boundary、empty/truncated/oversized input を含む。
 - 専門 testkit のうち Format、Codec/Parser、Access Provider を M6 に含める。Metadata Encoding は RIFF INFO が扱う範囲（parse/marshal、重複と順序、未知 raw）に限り、Mapping と loss は M7、Endpoint は M9 に残す。
 - `integration` module が dependency graph の最上位にあり、foundation と公式 plugin が test のために互いを import しない。end-to-end 変換、拡張性 gate、identity 検査はここに置く。
