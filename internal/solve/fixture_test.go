@@ -146,8 +146,16 @@ func solveDescriptor(typ schema.Type[solveUnit], denominator int64) stream.Descr
 }
 
 func solveIndex(t testing.TB, components ...plugin.Component) catalog.Index {
+	return solveIndexWithDeclarations(t, nil, components...)
+}
+
+func solveIndexWithDeclarations(t testing.TB, declarations []plugin.Declaration, components ...plugin.Component) catalog.Index {
 	t.Helper()
-	index, err := catalog.Build(plugin.NewSet(plugin.Define[solvePluginID](plugin.Descriptor{DisplayName: "solver", Version: "1"}, components...)))
+	set := plugin.NewSet(plugin.Define[solvePluginID](plugin.Descriptor{DisplayName: "solver", Version: "1"}, components...))
+	for _, declaration := range declarations {
+		set = set.AddDeclaration(declaration)
+	}
+	index, err := catalog.Build(set)
 	if err != nil {
 		t.Fatal(err)
 	}

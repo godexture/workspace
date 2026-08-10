@@ -121,6 +121,10 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 		}
 
 		for _, candidate := range p.candidates[current.descriptor.Schema().String()] {
+			if !codecCandidateMatches(p.index, candidate.component.Identity(), current.descriptor) {
+				rejected.add("codec-tag")
+				continue
+			}
 			remaining := p.budget.SuggestionsPerNeed - suggestions
 			if remaining < 0 {
 				remaining = 0

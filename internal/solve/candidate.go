@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
@@ -89,6 +90,23 @@ func compatibleContract(contract plugin.Contract, policy job.Policy, platform pl
 		}
 	}
 	return true
+}
+
+func codecCandidateMatches(index catalog.Index, candidate plugin.Identity, input stream.Descriptor) bool {
+	tag, tagged := codec.TagOf(input.Properties())
+	if !tagged {
+		return true
+	}
+	bindings := index.CodecBindings(candidate)
+	if len(bindings) == 0 {
+		return true
+	}
+	for _, binding := range bindings {
+		if binding.Tag() == tag {
+			return true
+		}
+	}
+	return false
 }
 
 type candidateResult struct {

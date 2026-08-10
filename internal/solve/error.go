@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plan"
 )
 
@@ -80,6 +81,11 @@ func solveDiagnostic(code string, gap *graph.Gap, usage plan.Usage, budget job.B
 		detail["need"] = gap.Need().Code()
 		if edge, ok := gap.Edge(); ok {
 			detail["edge"] = edge.From().String() + "->" + edge.To().String()
+		}
+		if input, ok := gap.Input(); ok {
+			if tag, tagged := codec.TagOf(input.Properties()); tagged {
+				detail["codecTag"] = tag.String()
+			}
 		}
 	}
 	if summary := rejected.summary(); summary != "" {
