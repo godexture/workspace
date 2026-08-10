@@ -155,6 +155,9 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	}
 	compileContext := plugin.CompileContextWithContext(plugin.CompileContext{}, p.context)
 	compilation, compileErr := plugin.Compile(candidate.component, compileContext, resolved, flow.NewDescriptors(flow.Describe(shape.Inputs[0].ID(), input)))
+	if contextErr := p.checkContext(); contextErr != nil {
+		return candidateResult{}, contextErr
+	}
 	result := candidateResult{bridge: bridge{component: candidate.component, input: shape.Inputs[0], output: shape.Outputs[0]}, config: resolved, compilation: compilation}
 	if compileErr == nil {
 		result.output, compileErr = validateBridgeResult(compilation, shape.Outputs[0], input, p.policy)

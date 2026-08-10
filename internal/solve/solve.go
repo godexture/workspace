@@ -122,6 +122,9 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 		p.usage.FixpointIterations++
 		evaluation, err := graph.EvaluateBounded(p.index, current, p.contexts.WithContext(p.context), p.beforeCompile)
 		if err != nil {
+			if contextErr := p.checkContext(); contextErr != nil {
+				err = contextErr
+			}
 			return program.Program{}, p.planningError(err, lastGap, nil)
 		}
 		if compiled, complete := evaluation.Graph(); complete {

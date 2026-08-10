@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
@@ -21,6 +22,7 @@ type sessionCounters struct {
 	closeErr error
 	actual   access.Capabilities
 	noViews  bool
+	wait     bool
 }
 
 type trackedAccessSession struct {
@@ -58,8 +60,12 @@ func (trackedAccessSession) Commit(context.Context) error        { return nil }
 func (trackedAccessSession) Abort(context.Context) error         { return nil }
 
 func (c *sessionCounters) acquire(capabilities access.Capabilities) access.AcquireFunc {
-	return func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+	return func(ctx context.Context, _ access.Reference, _ access.Selection) (access.Session, error) {
 		c.acquired.Add(1)
+		if c.wait {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
 		if c.fail != nil {
 			return nil, c.fail
 		}
@@ -71,6 +77,26 @@ func (c *sessionCounters) acquire(capabilities access.Capabilities) access.Acqui
 			return capabilityOnlyAccessSession{capabilities: actual, counters: c}, nil
 		}
 		return trackedAccessSession{capabilities: actual, counters: c}, nil
+	}
+}
+
+func TestPlanningDurationStartsBeforeInputAcquire(t *testing.T) {
+	source, sink, instance, request := providerSessionFixture(t)
+	source.wait = true
+	graph, _ := request.Graph()
+	budget := request.Budget()
+	budget.Duration = time.Millisecond
+	timed, err := job.New(request.Inputs(), request.Outputs(), graph, job.WithPolicy(request.Policy()), job.WithBudget(budget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = instance.Plan(t.Context(), timed)
+	items := diagnostic.ItemsOf(err)
+	if len(items) != 1 || items[0].Code != "prepare.budget-exhausted" || items[0].Detail["dimension"] != "duration" || items[0].Detail["phase"] != "acquire" || items[0].Detail["limit"] != budget.Duration.String() {
+		t.Fatalf("duration diagnostic = %#v, error=%v", items, err)
+	}
+	if source.acquired.Load() != 1 || source.closed.Load() != 0 || sink.acquired.Load() != 0 {
+		t.Fatalf("duration cleanup = source %d/%d, sink %d", source.acquired.Load(), source.closed.Load(), sink.acquired.Load())
 	}
 }
 

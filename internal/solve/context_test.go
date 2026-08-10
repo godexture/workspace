@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/stream"
@@ -186,5 +187,20 @@ func TestResolvePropagatesCancellationToAutomaticCompile(t *testing.T) {
 	}
 	if !hidden.Load() || !canceled.Load() {
 		t.Fatalf("automatic Compile observed hidden=%v canceled=%v", hidden.Load(), canceled.Load())
+	}
+}
+
+func TestResolveClassifiesDirectDurationExhaustion(t *testing.T) {
+	source := solveContextSource(func(ctx plugin.CompileContext) error {
+		<-ctx.Context().Done()
+		return ctx.Context().Err()
+	})
+	sink := solveSink(solveSchemaA, false, nil)
+	budget := job.DefaultBudget()
+	budget.Duration = time.Millisecond
+	_, err := Resolve(t.Context(), solveIndex(t, source, sink), solveRequest(t, source, sink, budget), solvePlatform())
+	items := diagnostic.ItemsOf(err)
+	if len(items) != 1 || items[0].Code != "solve.budget-exhausted" || items[0].Detail["dimension"] != "duration" {
+		t.Fatalf("duration diagnostic = %#v, error=%v", items, err)
 	}
 }

@@ -47,6 +47,7 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	selected := inputPlan{entries: normalized.Boundaries().Entries()}
 	selected.sessions, err = acquireSessions(planningContext, selected.entries, plan.InputBoundary)
 	if err != nil {
+		err = planningDurationError(planningContext, normalized.Request().Budget(), "acquire", err)
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
 	selection, err := h.selectInputFormats(planningContext, normalized.Request(), selected.entries, selected.sessions)
@@ -58,6 +59,7 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	selected.stores = selection.stores
 	contexts, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
 	if err != nil {
+		err = planningDurationError(planningContext, selection.request.Budget(), "inspect", err)
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
 	selected.stores, err = finishProbeStores(selected.stores)
@@ -69,6 +71,23 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
 	return selected, nil
+}
+
+func planningDurationError(ctx context.Context, budget job.Budget, phase string, err error) error {
+	if !internalplanning.DurationExhausted(ctx) {
+		return err
+	}
+	for _, item := range diagnostic.ItemsOf(err) {
+		if item.Code == "prepare.probe-budget" || item.Code == "solve.budget-exhausted" {
+			return err
+		}
+	}
+	return diagnostic.NewError(diagnostic.NewItem("prepare.budget-exhausted", diagnostic.ErrorSeverity, diagnostic.Path{}, "planning duration budget was exhausted", map[string]string{
+		"dimension": "duration",
+		"phase":     phase,
+		"limit":     budget.Duration.String(),
+		"cause":     err.Error(),
+	}))
 }
 
 func (h *Host) closeInputPlan(selected inputPlan) error {
