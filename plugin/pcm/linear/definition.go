@@ -41,7 +41,7 @@ func operationFormat(kind operation) plugin.ComponentOption {
 		return format.Read(Raw(), access.NewRequirements(
 			access.AnyOf(access.SequentialRead),
 			access.AnyOf(access.RandomRead, access.StableSize),
-		))
+		), format.WithProbe(probeRaw))
 	case writerOperation:
 		return format.Write(Raw(), access.AnyOf(access.SequentialWrite))
 	default:

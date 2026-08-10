@@ -41,7 +41,20 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 		var formatIdentity plugin.Identity
 		if projection.Direction == plan.InputBoundary {
 			trait, present := mediaformat.ReadOf(component)
-			if !present || !trait.Valid() {
+			if !present {
+				available, availableErr := access.NewCapabilities(projection.Available...)
+				if availableErr != nil {
+					return nil, availableErr
+				}
+				selection, selected := probeSelection(available)
+				if !selected {
+					return nil, probeCapabilityUnavailable(projection)
+				}
+				projection.Selected = selection.Capabilities()
+				result[index] = bound.AutomaticSource(projection, entry.Reference(), entry.SourceTrait())
+				continue
+			}
+			if !trait.Valid() {
 				return nil, missingFormatRequirements(projection, node)
 			}
 			requirements = trait.Requirements()
@@ -87,6 +100,43 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 	return result, nil
 }
 
+func probeSelection(available access.Capabilities) (access.Selection, bool) {
+	for _, capability := range []access.Capability{access.RandomRead, access.SequentialRead} {
+		selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(capability)))
+		if ok {
+			return selection, true
+		}
+	}
+	return access.Selection{}, false
+}
+
+// FinalizeInput replaces an automatic boundary's Probe acquisition selection
+// with the requirements of the Format selected during Prepare.
+func FinalizeInput(entry bound.Entry, node job.Node, component plugin.Component, actual access.Capabilities) (bound.Entry, access.Selection, error) {
+	projection := entry.Projection()
+	trait, ok := mediaformat.ReadOf(component)
+	if !entry.Pending() || projection.Direction != plan.InputBoundary || projection.Kind != plan.ProviderBoundary || !ok || !trait.Valid() || !actual.Valid() {
+		return bound.Entry{}, access.Selection{}, diagnostic.NewError(bindItem("bind.format-selection", component.Identity(), "automatic Format selection cannot finalize the Access input", map[string]string{"node": node.ID().String()}))
+	}
+	available, err := access.NewCapabilities(projection.Effective...)
+	if err != nil {
+		return bound.Entry{}, access.Selection{}, err
+	}
+	for _, capability := range available.Values() {
+		if !actual.Contains(capability) {
+			return bound.Entry{}, access.Selection{}, diagnostic.NewError(bindItem("bind.session-capability", component.Identity(), "acquired Access session no longer provides a declared capability", map[string]string{
+				"node": node.ID().String(), "capability": string(capability),
+			}))
+		}
+	}
+	selection, selected := access.Select(available, trait.Requirements())
+	if !selected {
+		return bound.Entry{}, access.Selection{}, unsatisfiedCapabilities(projection, node, trait.Format().Identity(), trait.Requirements())
+	}
+	projection.Selected = selection.Capabilities()
+	return bound.ResolveSource(entry, projection), selection, nil
+}
+
 func spoolCapabilities(available access.Capabilities, requirements access.Requirements) (access.Capabilities, access.Selection, bool) {
 	if _, ok := access.Select(available, requirements); ok {
 		return access.Capabilities{}, access.Selection{}, false
@@ -127,6 +177,12 @@ func AdjacentBoundaryNode(boundary plan.Boundary, edges []job.Edge) (job.NodeID,
 func missingFormatRequirements(boundary plan.Boundary, adjacent job.Node) error {
 	return diagnostic.NewError(bindItem("bind.format-requirement", adjacent.Component(), "Access boundary adjacent component has no capability requirements for its direction", map[string]string{
 		"node": adjacent.ID().String(), "scheme": boundary.Scheme, "direction": boundaryDirection(boundary.Direction),
+	}))
+}
+
+func probeCapabilityUnavailable(boundary plan.Boundary) error {
+	return diagnostic.NewError(bindItem("bind.probe-capability", plugin.Identity{}, "Access source provides neither position-independent nor sequential reading for Format Probe", map[string]string{
+		"node": boundary.Node, "scheme": boundary.Scheme, "direction": "read", "available": capabilityList(boundary.Available),
 	}))
 }
 

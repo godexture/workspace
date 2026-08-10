@@ -37,6 +37,7 @@ type Prepared struct {
 	reservations   []reservation
 	byNode         map[job.NodeID]*memory.Lease
 	sessions       []acquiredSession
+	probeStores    []*probeStore
 	bySession      map[string]acquiredSession
 	direct         []bound.Entry
 	observation    Observation
@@ -88,6 +89,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		byNode:         make(map[job.NodeID]*memory.Lease),
 		bySession:      make(map[string]acquiredSession),
 		sessions:       append([]acquiredSession(nil), planning.sessions...),
+		probeStores:    append([]*probeStore(nil), planning.stores...),
 		observation:    h.observation,
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
@@ -210,6 +212,9 @@ func (p *Prepared) Close() error {
 func (p *Prepared) releaseResources(ctx context.Context) (failures []Failure) {
 	p.released.Do(func() {
 		failures = append(failures, closeSessions(ctx, p.sessions)...)
+		if err := closeProbeStores(p.probeStores); err != nil {
+			failures = append(failures, Failure{Phase: ResourcePhase, Err: err})
+		}
 		for index := len(p.reservations) - 1; index >= 0; index-- {
 			value := p.reservations[index]
 			if allocator := value.lease.Buffers(); allocator != nil && allocator.Used() != 0 {

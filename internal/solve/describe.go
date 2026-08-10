@@ -19,6 +19,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		CatalogFingerprint: catalogFingerprint(p.index),
 		Platform:           p.platform,
 		Boundaries:         p.bound.Projections(),
+		Warnings:           append([]string(nil), p.warnings...),
 	}
 	for _, node := range compiled.Nodes() {
 		component, ok := p.index.Lookup(node.Component())

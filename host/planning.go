@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/bound"
+	internalplanning "github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
@@ -17,6 +18,7 @@ type inputPlan struct {
 	program  program.Program
 	entries  []bound.Entry
 	sessions []acquiredSession
+	stores   []*probeStore
 }
 
 // Plan acquires and inspects input sessions before compilation, then closes
@@ -40,16 +42,29 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	if err != nil {
 		return inputPlan{}, errors.Join(err, closeRequestDirects(request))
 	}
+	planningContext, cancel := internalplanning.Start(ctx, normalized.Request().Budget().Duration)
+	defer cancel()
 	selected := inputPlan{entries: normalized.Boundaries().Entries()}
-	selected.sessions, err = acquireSessions(ctx, selected.entries, plan.InputBoundary)
+	selected.sessions, err = acquireSessions(planningContext, selected.entries, plan.InputBoundary)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	contexts, err := h.inspectInputs(ctx, normalized.Request(), selected.entries, selected.sessions)
+	selection, err := h.selectInputFormats(planningContext, normalized.Request(), selected.entries, selected.sessions)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	selected.program, err = solve.ResolveBound(ctx, h.index, normalized.Request(), h.platform, normalized.Boundaries(), contexts)
+	selected.entries = selection.entries
+	selected.sessions = selection.sessions
+	selected.stores = selection.stores
+	contexts, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	selected.stores, err = finishProbeStores(selected.stores)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	selected.program, err = solve.ResolvePrepared(planningContext, h.index, selection.request, h.platform, bound.New(selected.entries...), contexts, selection.preselection)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
@@ -59,5 +74,5 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 func (h *Host) closeInputPlan(selected inputPlan) error {
 	cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
 	defer cancel()
-	return errors.Join(joinFailures(closeSessions(cleanupContext, selected.sessions)), closeBoundDirects(selected.entries))
+	return errors.Join(joinFailures(closeSessions(cleanupContext, selected.sessions)), closeProbeStores(selected.stores), closeBoundDirects(selected.entries))
 }

@@ -75,6 +75,10 @@ func solveDiagnostic(code string, gap *graph.Gap, usage plan.Usage, budget job.B
 		"suggestionLimit": strconv.Itoa(budget.SuggestionsPerNeed),
 		"fixpoints":       strconv.Itoa(usage.FixpointIterations),
 		"fixpointLimit":   strconv.Itoa(budget.FixpointIterations),
+		"probeBytes":      strconv.FormatUint(uint64(usage.ProbeBytes), 10),
+		"probeByteLimit":  strconv.FormatUint(uint64(budget.ProbeBytes), 10),
+		"probeRounds":     strconv.Itoa(usage.ProbeRounds),
+		"probeRoundLimit": strconv.Itoa(budget.ProbeRounds),
 	}
 	if gap != nil {
 		path = diagnostic.Path{Component: gap.Node().String(), Descriptor: gap.Port()}

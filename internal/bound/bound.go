@@ -15,22 +15,36 @@ type Entry struct {
 	trait      endpoint.Trait
 	direct     any
 	close      func() error
+	automatic  bool
+	resolved   bool
 }
 
 func Source(projection plan.Boundary, reference access.Reference, trait access.SourceTrait) Entry {
-	return Entry{projection: cloneProjection(projection), reference: reference, source: trait}
+	return Entry{projection: cloneProjection(projection), reference: reference, source: trait, resolved: true}
+}
+
+// AutomaticSource is an input boundary narrowed only for Probe acquisition.
+// It must be resolved with the selected Format before entering the solver.
+func AutomaticSource(projection plan.Boundary, reference access.Reference, trait access.SourceTrait) Entry {
+	return Entry{projection: cloneProjection(projection), reference: reference, source: trait, automatic: true}
 }
 
 func Sink(projection plan.Boundary, reference access.Reference, trait access.SinkTrait) Entry {
-	return Entry{projection: cloneProjection(projection), reference: reference, sink: trait}
+	return Entry{projection: cloneProjection(projection), reference: reference, sink: trait, resolved: true}
 }
 
 func Endpoint(projection plan.Boundary, trait endpoint.Trait) Entry {
-	return Entry{projection: cloneProjection(projection), trait: trait}
+	return Entry{projection: cloneProjection(projection), trait: trait, resolved: true}
 }
 
 func Direct(projection plan.Boundary, opening any, close func() error) Entry {
-	return Entry{projection: cloneProjection(projection), direct: opening, close: close}
+	return Entry{projection: cloneProjection(projection), direct: opening, close: close, resolved: true}
+}
+
+func ResolveSource(entry Entry, projection plan.Boundary) Entry {
+	entry.projection = cloneProjection(projection)
+	entry.resolved = true
+	return entry
 }
 
 func (e Entry) Valid() bool {
@@ -43,7 +57,7 @@ func (e Entry) Valid() bool {
 			return false
 		}
 		if e.projection.Direction == plan.InputBoundary {
-			return e.source.Valid() && !e.sink.Valid()
+			return e.source.Valid() && !e.sink.Valid() && (!e.automatic || e.projection.Direction == plan.InputBoundary)
 		}
 		return e.sink.Valid() && !e.source.Valid()
 	case plan.EndpointBoundary:
@@ -61,6 +75,8 @@ func (e Entry) SourceTrait() access.SourceTrait { return e.source }
 func (e Entry) SinkTrait() access.SinkTrait     { return e.sink }
 func (e Entry) EndpointTrait() endpoint.Trait   { return e.trait }
 func (e Entry) DirectOpening() any              { return e.direct }
+func (e Entry) Automatic() bool                 { return e.automatic }
+func (e Entry) Pending() bool                   { return e.automatic && !e.resolved }
 func (e Entry) Close() error {
 	if e.close == nil {
 		return nil
@@ -86,6 +102,18 @@ func (s State) Valid() bool {
 			return false
 		}
 		seen[key] = struct{}{}
+	}
+	return true
+}
+
+func (s State) Ready() bool {
+	if !s.Valid() {
+		return false
+	}
+	for _, entry := range s.entries {
+		if entry.Pending() {
+			return false
+		}
 	}
 	return true
 }

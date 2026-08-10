@@ -45,90 +45,111 @@ func (waveDecoyOperator) Process(context.Context, flow.Input[packet.Chunk], flow
 func (waveDecoyOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error { return nil }
 
 func TestWAVEFileToRawPCMEndToEnd(t *testing.T) {
+	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
+		t.Run(preset.String(), func(t *testing.T) {
+			runWAVEFileToRawPCM(t, preset, false)
+		})
+	}
+}
+
+func TestAutomaticWAVEFileToRawPCMEndToEnd(t *testing.T) {
+	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
+		t.Run(preset.String(), func(t *testing.T) {
+			runWAVEFileToRawPCM(t, preset, true)
+		})
+	}
+}
+
+func runWAVEFileToRawPCM(t *testing.T, preset job.Preset, automatic bool) {
+	t.Helper()
 	payload := []byte{
 		0x01, 0x00, 0xff, 0x7f,
 		0xff, 0xff, 0x00, 0x80,
 		0x34, 0x12, 0xcc, 0xed,
 		0x00, 0x00, 0x01, 0x00,
 	}
-	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
-		t.Run(preset.String(), func(t *testing.T) {
-			directory := t.TempDir()
-			inputPath := filepath.Join(directory, "input.wav")
-			outputPath := filepath.Join(directory, "output.pcm")
-			if err := os.WriteFile(inputPath, testWAVE(payload, 2, 48_000, testChunk{id: "JUNK", payload: []byte{0xff}}), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			set := waveTestSet()
-			instance, err := host.New(
-				host.Plugins(set),
-				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			patch := config.NewPatch().
-				SetText("rate", strconv.Itoa(48_000)).
-				SetText("validBits", "16").
-				SetText("layout", "stereo").
-				SetText("endian", "little").
-				SetText("chunkSamples", "2")
-			requested, err := job.NewGraph(
-				[]job.Node{
-					job.NewNode("demux", DemuxerIdentity(), config.NewPatch()),
-					job.NewNode("parser", linear.ParserIdentity(), patch),
-					job.NewNode("decoder", linear.DecoderIdentity(), patch),
-					job.NewNode("encoder", linear.EncoderIdentity(), patch),
-					job.NewNode("writer", linear.WriterIdentity(), patch),
-				},
-				[]job.Edge{
-					job.Connect(job.At("demux", "chunks"), job.At("parser", "chunks")),
-					job.Connect(job.At("parser", "packets"), job.At("decoder", "packets")),
-					job.Connect(job.At("decoder", "frames"), job.At("encoder", "frames")),
-					job.Connect(job.At("encoder", "packets"), job.At("writer", "packets")),
-				},
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			input, err := job.InputFromReference(fileReference(t, inputPath))
-			if err != nil {
-				t.Fatal(err)
-			}
-			output, err := job.OutputToReference(fileReference(t, outputPath))
-			if err != nil {
-				t.Fatal(err)
-			}
-			policy, ok := job.PolicyFor(preset)
-			if !ok {
-				t.Fatalf("policy %s is unavailable", preset)
-			}
-			request, err := job.New([]job.Input{input}, []job.Output{output}, requested, job.WithPolicy(policy))
-			if err != nil {
-				t.Fatal(err)
-			}
-			prepared, err := instance.Prepare(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := prepared.Close(); err != nil {
-					t.Error(err)
-				}
-			}()
-			assertWAVEReadPlan(t, prepared.Plan())
-			result, err := prepared.Run(context.Background())
-			if err != nil || !result.Succeeded() {
-				t.Fatalf("Run result = %#v, error %v", result, err)
-			}
-			decoded, err := os.ReadFile(outputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(decoded, payload) {
-				t.Fatalf("raw PCM = %v, want %v", decoded, payload)
-			}
-		})
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	outputPath := filepath.Join(directory, "output.pcm")
+	if err := os.WriteFile(inputPath, testWAVE(payload, 2, 48_000, testChunk{id: "JUNK", payload: []byte{0xff}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := host.New(
+		host.Plugins(waveTestSet()),
+		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := config.NewPatch().
+		SetText("rate", strconv.Itoa(48_000)).
+		SetText("validBits", "16").
+		SetText("layout", "stereo").
+		SetText("endian", "little").
+		SetText("chunkSamples", "2")
+	nodes := []job.Node{
+		job.NewNode("decoder", linear.DecoderIdentity(), patch),
+		job.NewNode("encoder", linear.EncoderIdentity(), patch),
+		job.NewNode("writer", linear.WriterIdentity(), patch),
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("decoder", "frames"), job.At("encoder", "frames")),
+		job.Connect(job.At("encoder", "packets"), job.At("writer", "packets")),
+	}
+	if !automatic {
+		nodes = append([]job.Node{
+			job.NewNode("demux", DemuxerIdentity(), config.NewPatch()),
+			job.NewNode("parser", linear.ParserIdentity(), patch),
+		}, nodes...)
+		edges = append([]job.Edge{
+			job.Connect(job.At("demux", "chunks"), job.At("parser", "chunks")),
+			job.Connect(job.At("parser", "packets"), job.At("decoder", "packets")),
+		}, edges...)
+	}
+	requested, err := job.NewGraph(nodes, edges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := job.InputFromReference(fileReference(t, inputPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := job.OutputToReference(fileReference(t, outputPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, ok := job.PolicyFor(preset)
+	if !ok {
+		t.Fatalf("policy %s is unavailable", preset)
+	}
+	request, err := job.New([]job.Input{input}, []job.Output{output}, requested, job.WithPolicy(policy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if automatic {
+		assertAutomaticWAVEReadPlan(t, prepared.Plan())
+	} else {
+		assertWAVEReadPlan(t, prepared.Plan())
+	}
+	result, err := prepared.Run(context.Background())
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("Run result = %#v, error %v", result, err)
+	}
+	decoded, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded, payload) {
+		t.Fatalf("raw PCM = %v, want %v", decoded, payload)
 	}
 }
 
@@ -354,6 +375,35 @@ func assertWAVEReadPlan(t *testing.T, value plan.Plan) {
 		return
 	}
 	t.Fatal("WAVE demux node is absent from Plan")
+}
+
+func assertAutomaticWAVEReadPlan(t *testing.T, value plan.Plan) {
+	t.Helper()
+	if len(value.Warnings()) != 0 {
+		t.Fatalf("content-selected WAVE warnings = %v", value.Warnings())
+	}
+	usage := value.Usage()
+	if usage.ProbeBytes != 12 || usage.ProbeRounds != 2 {
+		t.Fatalf("WAVE probe usage = %#v", usage)
+	}
+	foundDemux := false
+	for _, node := range value.Nodes() {
+		if node.Component != DemuxerIdentity().String() {
+			continue
+		}
+		foundDemux = true
+		if node.Origin != plan.Automatic || node.Reason != "format.probe" || len(node.Outputs) != 1 || node.Outputs[0].Descriptor.Schema != mediaformat.Chunks().Identity().String() {
+			t.Fatalf("automatic WAVE demux = %#v", node)
+		}
+	}
+	if !foundDemux {
+		t.Fatal("automatic WAVE demux is absent from Plan")
+	}
+	for _, boundary := range value.Boundaries() {
+		if boundary.Direction == plan.InputBoundary && (len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomRead) {
+			t.Fatalf("automatic WAVE input selection = %#v", boundary)
+		}
+	}
 }
 
 func assertWAVEWritePlan(t *testing.T, value plan.Plan) {

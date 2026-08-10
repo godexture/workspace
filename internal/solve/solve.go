@@ -5,13 +5,13 @@ package solve
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/internal/graph"
+	"github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -25,8 +25,6 @@ type annotation struct {
 
 type planner struct {
 	context     context.Context
-	parent      context.Context
-	timed       bool
 	index       catalog.Index
 	request     job.Job
 	policy      job.Policy
@@ -40,6 +38,7 @@ type planner struct {
 	edges       map[string]annotation
 	bound       bound.State
 	contexts    graph.CompileContexts
+	warnings    []string
 }
 
 // Resolve returns a private Program whose public Plan contains every selected
@@ -51,30 +50,36 @@ func Resolve(ctx context.Context, index catalog.Index, request job.Job, platform
 // ResolveBound plans a Job whose Access/Endpoint choices have already been
 // normalized into graph nodes by internal/bind.
 func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State, contexts graph.CompileContexts) (program.Program, error) {
+	return resolveBound(ctx, index, request, platform, boundaries, contexts, Preselection{})
+}
+
+// ResolvePrepared plans a graph containing Format nodes selected by Prepare
+// before ordinary solver gap filling.
+func ResolvePrepared(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State, contexts graph.CompileContexts, selected Preselection) (program.Program, error) {
+	return resolveBound(ctx, index, request, platform, boundaries, contexts, selected)
+}
+
+func resolveBound(ctx context.Context, index catalog.Index, request job.Job, platform plan.Platform, boundaries bound.State, contexts graph.CompileContexts, selected Preselection) (program.Program, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !request.Valid() || !platform.Valid() || !boundaries.Valid() {
+	if !request.Valid() || !platform.Valid() || !boundaries.Ready() {
 		return program.Program{}, solveDiagnostic("solve.invalid-request", nil, plan.Usage{}, request.Budget(), "invalid", nil)
 	}
 	requested, ok := request.Graph()
 	if !ok {
 		return program.Program{}, solveDiagnostic("solve.binding-unavailable", nil, plan.Usage{}, request.Budget(), "binding", nil)
 	}
+	if !selected.validFor(requested) {
+		return program.Program{}, solveDiagnostic("solve.invalid-request", nil, selected.usage, request.Budget(), "preselection", nil)
+	}
 	if err := validateRequestedContracts(index, requested, request.Policy(), platform); err != nil {
 		return program.Program{}, err
 	}
-	planningContext := ctx
-	cancel := func() {}
-	timed := request.Budget().Duration > 0
-	if timed {
-		planningContext, cancel = context.WithTimeout(ctx, request.Budget().Duration)
-	}
+	planningContext, cancel := planning.Start(ctx, request.Budget().Duration)
 	defer cancel()
 	p := &planner{
 		context:  planningContext,
-		parent:   ctx,
-		timed:    timed,
 		index:    index,
 		request:  request,
 		policy:   request.Policy(),
@@ -85,14 +90,24 @@ func ResolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 		edges:    make(map[string]annotation),
 		bound:    boundaries,
 		contexts: contexts,
+		usage:    selected.usage,
+		warnings: append([]string(nil), selected.warnings...),
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)
 	for _, node := range requested.Nodes() {
-		p.nodes[node.ID()] = annotation{origin: plan.Requested}
+		if reason, automatic := selected.nodes[node.ID()]; automatic {
+			p.nodes[node.ID()] = annotation{origin: plan.Automatic, reason: reason}
+		} else {
+			p.nodes[node.ID()] = annotation{origin: plan.Requested}
+		}
 	}
 	for _, edge := range requested.Edges() {
-		p.edges[edgeKey(edge)] = annotation{origin: plan.Requested}
+		if reason, automatic := selected.edges[edgeKey(edge)]; automatic {
+			p.edges[edgeKey(edge)] = annotation{origin: plan.Automatic, reason: reason}
+		} else {
+			p.edges[edgeKey(edge)] = annotation{origin: plan.Requested}
+		}
 	}
 
 	current := requested
@@ -158,10 +173,10 @@ func (p *planner) beforeCompile() error {
 
 func (p *planner) checkContext() error {
 	if err := p.context.Err(); err != nil {
-		if p.timed && p.parent.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		if planning.DurationExhausted(p.context) {
 			return limitError{dimension: "duration"}
 		}
-		return canceledError{cause: err}
+		return canceledError{cause: context.Cause(p.context)}
 	}
 	return nil
 }

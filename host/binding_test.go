@@ -357,7 +357,7 @@ func TestHostBindsSourceAndSinkTraitsForSameSchemeFromPluginSet(t *testing.T) {
 	}
 }
 
-func TestHostReportsMissingAndUnsatisfiedFormatRequirements(t *testing.T) {
+func TestHostReportsMissingProbeCandidatesAndUnsatisfiedFormatRequirements(t *testing.T) {
 	trait, _ := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
 	tests := map[string]struct {
 		capabilities access.Capabilities
@@ -367,7 +367,7 @@ func TestHostReportsMissingAndUnsatisfiedFormatRequirements(t *testing.T) {
 		"missing": {
 			capabilities: mustCapabilities(t, access.SequentialRead),
 			sink:         func() plugin.Component { return boundarySinkWithoutFormat(trait) },
-			code:         "bind.format-requirement",
+			code:         "prepare.probe-candidate",
 		},
 		"unsatisfied": {
 			capabilities: mustCapabilities(t, access.StableSize),
