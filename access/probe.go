@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
+
+	"github.com/godexture/godec/media/buffer"
 )
 
 var ErrInvalidProbeRange = errors.New("access probe range is invalid")
@@ -15,15 +18,23 @@ type RangeRequest struct {
 }
 
 func NewRangeRequest(offset, length int64) (RangeRequest, error) {
-	if offset < 0 || length < 0 {
+	if offset < 0 || length <= 0 || offset > math.MaxInt64-length {
 		return RangeRequest{}, ErrInvalidProbeRange
 	}
 	return RangeRequest{offset: offset, length: length}, nil
 }
 
-func (r RangeRequest) Valid() bool   { return r.offset >= 0 && r.length >= 0 }
+func (r RangeRequest) Valid() bool {
+	return r.offset >= 0 && r.length > 0 && r.offset <= math.MaxInt64-r.length
+}
 func (r RangeRequest) Offset() int64 { return r.offset }
 func (r RangeRequest) Length() int64 { return r.length }
+func (r RangeRequest) End() int64 {
+	if !r.Valid() {
+		return 0
+	}
+	return r.offset + r.length
+}
 
 // A probe receives the Random view and nothing else, which is what keeps it
 // from moving a shared cursor.
@@ -33,9 +44,11 @@ var _ Random = ProbeView{}
 // range. New views copy the supplied bytes so a probe cannot observe producer
 // mutation.
 type ProbeView struct {
-	valid bool
-	base  int64
-	data  []byte
+	valid    bool
+	buffered bool
+	base     int64
+	data     []byte
+	view     buffer.View
 }
 
 func NewProbeView(data []byte) ProbeView {
@@ -44,22 +57,34 @@ func NewProbeView(data []byte) ProbeView {
 }
 
 func NewProbeViewAt(base int64, data []byte) (ProbeView, error) {
-	if base < 0 {
+	if base < 0 || uint64(len(data)) > math.MaxInt64 || base > math.MaxInt64-int64(len(data)) {
 		return ProbeView{}, ErrInvalidProbeRange
 	}
 	return ProbeView{valid: true, base: base, data: append([]byte(nil), data...)}, nil
 }
 
-func (v ProbeView) Valid() bool { return v.valid }
+// NewProbeViewFromBuffer borrows one grant-backed read-only buffer. The
+// buffer owner must retain it for every Probe call that receives the view.
+func NewProbeViewFromBuffer(base int64, value buffer.View) (ProbeView, error) {
+	layout := value.Layout()
+	if base < 0 || !value.Valid() || !value.ReadOnly() || len(layout.Planes) != 1 || layout.Planes[0].Size != layout.Size || base > math.MaxInt64-int64(layout.Size) {
+		return ProbeView{}, ErrInvalidProbeRange
+	}
+	return ProbeView{valid: true, buffered: true, base: base, view: value}, nil
+}
+
+func (v ProbeView) Valid() bool {
+	return v.valid && (!v.buffered || v.view.Valid())
+}
 func (v ProbeView) Base() int64 { return v.base }
-func (v ProbeView) Size() int64 { return int64(len(v.data)) }
+func (v ProbeView) Size() int64 { return int64(len(v.bytes())) }
 
 // Bytes returns a copy of the bounded bytes.
-func (v ProbeView) Bytes() []byte { return append([]byte(nil), v.data...) }
+func (v ProbeView) Bytes() []byte { return append([]byte(nil), v.bytes()...) }
 
 // Range returns the source range represented by this view.
 func (v ProbeView) Range() RangeRequest {
-	return RangeRequest{offset: v.base, length: int64(len(v.data))}
+	return RangeRequest{offset: v.base, length: v.Size()}
 }
 
 // ReadAt implements the position-independent access contract. Offset is an
@@ -73,18 +98,29 @@ func (v ProbeView) ReadAt(ctx context.Context, destination []byte, offset int64)
 		default:
 		}
 	}
-	if offset < v.base || offset > v.base+int64(len(v.data)) {
+	if !v.Valid() {
+		return 0, ErrInvalidProbeRange
+	}
+	data := v.bytes()
+	if offset < v.base || offset > v.base+int64(len(data)) {
 		return 0, ErrInvalidProbeRange
 	}
 	if len(destination) == 0 {
 		return 0, nil
 	}
-	if offset == v.base+int64(len(v.data)) {
+	if offset == v.base+int64(len(data)) {
 		return 0, io.EOF
 	}
-	n := copy(destination, v.data[offset-v.base:])
+	n := copy(destination, data[offset-v.base:])
 	if n != len(destination) {
 		return n, io.EOF
 	}
 	return n, nil
+}
+
+func (v ProbeView) bytes() []byte {
+	if v.buffered {
+		return v.view.Bytes()
+	}
+	return v.data
 }

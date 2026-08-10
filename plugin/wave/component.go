@@ -84,6 +84,6 @@ func demuxerComponent() plugin.Component {
 	return plugin.NewComponent[demuxerID](plugin.Descriptor{DisplayName: "WAVE demuxer"}, configurationSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("bytes", access.Bytes(), "chunks", mediaformat.Chunks()),
-		mediaformat.ReadWithInspect(WAVE(), inspectWAVE, access.AnyOf(access.RandomRead)),
+		mediaformat.Read(WAVE(), access.NewRequirements(access.AnyOf(access.RandomRead)), mediaformat.WithInspect(inspectWAVE)),
 	)
 }

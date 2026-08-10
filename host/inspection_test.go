@@ -95,7 +95,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: readerShape}, Outputs: flow.NewDescriptors(flow.Describe("out", output)), Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "inspect"}}}, nil
 		}),
 		plugin.WithProcessor("bytes", access.Bytes(), "out", inspectSchemaA),
-		format.ReadWithInspect(value, func(ctx format.InspectContext) (format.Inspection, error) {
+		format.Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), format.WithInspect(func(ctx format.InspectContext) (format.Inspection, error) {
 			if _, ok := access.RandomOf(ctx.Opening()); !ok {
 				return format.Inspection{}, errors.New("Inspect did not receive the selected Random view")
 			}
@@ -108,7 +108,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			}
 			inspected.Add(1)
 			return format.NewInspection(value, 44), nil
-		}, access.AnyOf(access.RandomRead)),
+		})),
 	)
 	bridgeShape := flow.NewShape([]flow.Port{flow.In("in", inspectSchemaA)}, []flow.Port{flow.Out("out", inspectSchemaB)})
 	bridge := plugin.NewComponent[inspectBridgeID](plugin.Descriptor{DisplayName: "inspection bridge"}, configuration,

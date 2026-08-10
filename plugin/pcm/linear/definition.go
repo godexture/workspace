@@ -38,10 +38,10 @@ func Raw() format.Format {
 func operationFormat(kind operation) plugin.ComponentOption {
 	switch kind {
 	case readerOperation:
-		return format.Read(Raw(),
+		return format.Read(Raw(), access.NewRequirements(
 			access.AnyOf(access.SequentialRead),
 			access.AnyOf(access.RandomRead, access.StableSize),
-		)
+		))
 	case writerOperation:
 		return format.Write(Raw(), access.AnyOf(access.SequentialWrite))
 	default:

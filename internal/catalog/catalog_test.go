@@ -233,11 +233,11 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			code: "catalog.access-scheme",
 		},
 		"format read shape": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))))},
 			code:       "catalog.format-shape",
 		},
 		"format read schema": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))))},
 			code:       "catalog.format-schema",
 		},
 		"format write shape": {
@@ -250,8 +250,8 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 		},
 		"format duplicate": {
 			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", typ)}),
-				mediaformat.Read(formatValue, access.AnyOf(access.SequentialRead)),
-				mediaformat.Read(formatValue, access.AnyOf(access.RandomRead)))},
+				mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))),
+				mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.RandomRead))))},
 			code: "plugin.trait-duplicate",
 		},
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
@@ -228,12 +230,47 @@ func TestSpoolProbeAndSnapshotAreDeclarations(t *testing.T) {
 		t.Fatalf("probe read = %d, %q, %v", n, buffer, err)
 	}
 	request, err := NewRangeRequest(10, 4)
-	if err != nil || request.Offset() != 10 || request.Length() != 4 {
+	if err != nil || request.Offset() != 10 || request.Length() != 4 || request.End() != 14 {
 		t.Fatalf("probe range request = %#v, %v", request, err)
+	}
+	if _, err := NewRangeRequest(0, 0); !errors.Is(err, ErrInvalidProbeRange) {
+		t.Fatalf("empty probe range error = %v", err)
+	}
+	if _, err := NewRangeRequest(math.MaxInt64, 1); !errors.Is(err, ErrInvalidProbeRange) {
+		t.Fatalf("overflowing probe range error = %v", err)
 	}
 	snapshot, err := NewSnapshot("", NoSnapshot)
 	if err != nil || !snapshot.Valid() || snapshot.Strong() {
 		t.Fatalf("snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestProbeViewBorrowsGrantBackedReadOnlyBuffer(t *testing.T) {
+	allocator, err := buffer.NewAllocator(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := allocator.Overwrite(buffer.Spec{Alignment: 1, ReadOnly: true, Planes: []buffer.PlaneSpec{{Size: 4}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Fill(func(value buffer.Mutable) error {
+		copy(value.Bytes(), "RIFF")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := lease.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := NewProbeViewFromBuffer(8, handle.Borrow())
+	if err != nil || !view.Valid() || string(view.Bytes()) != "RIFF" {
+		t.Fatalf("grant-backed probe view = %#v, %v", view, err)
+	}
+	handle.Release()
+	if view.Valid() || allocator.Used() != 0 {
+		t.Fatalf("released probe view remains valid, used = %d", allocator.Used())
 	}
 }
 

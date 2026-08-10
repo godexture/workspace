@@ -55,7 +55,7 @@ func TestDirectionTraitsOwnIndependentCapabilityAlternatives(t *testing.T) {
 	}
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	readComponent := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "read"}, schema,
-		Read(value, access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead, access.StableSize)))
+		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead, access.StableSize))))
 	writeComponent := plugin.NewComponent[fixtureWriteComponentID](plugin.Descriptor{DisplayName: "write"}, schema,
 		Write(value, access.AnyOf(access.SequentialWrite)))
 	read, readOK := ReadOf(readComponent)
@@ -95,13 +95,13 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	called := 0
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "inspected read"}, schema,
-		ReadWithInspect(value, func(ctx InspectContext) (Inspection, error) {
+		Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), WithInspect(func(ctx InspectContext) (Inspection, error) {
 			called++
 			if !ctx.Valid() || ctx.Context() == nil || !ctx.Opening().Valid() {
 				t.Fatal("InspectContext is invalid")
 			}
 			return NewInspection(value, prepared{Size: 44}), nil
-		}, access.AnyOf(access.RandomRead)))
+		})))
 	trait, ok := ReadOf(component)
 	if !ok || !trait.HasInspect() {
 		t.Fatalf("read trait = %#v/%v", trait, ok)
@@ -124,5 +124,55 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	}
 	if _, ok := InspectionOf[prepared](compileContext, other); ok {
 		t.Fatal("inspection accepted a different Format")
+	}
+}
+
+func TestReadTraitRunsPureBoundedProbe(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rangeRequest, err := access.NewRangeRequest(0, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := NewEvidence("RIFF/WAVE signature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type contextKey struct{}
+	parent := context.WithValue(context.Background(), contextKey{}, "hidden")
+	calls := 0
+	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
+	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "probed read"}, schema,
+		Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), WithProbe(func(ctx ProbeContext) (ProbeResult, error) {
+			calls++
+			if !ctx.Valid() || ctx.Context().Value(contextKey{}) != nil {
+				t.Fatal("ProbeContext exposed an invalid context or value")
+			}
+			views := ctx.Views()
+			if len(views) == 0 {
+				return Need(rangeRequest), nil
+			}
+			if end, known := ctx.End(); !known || end != 12 {
+				t.Fatalf("source end = %d/%v", end, known)
+			}
+			return Match(evidence), nil
+		})))
+	trait, ok := ReadOf(component)
+	if !ok || !trait.Valid() || !trait.HasProbe() {
+		t.Fatalf("probe trait = %#v/%v", trait, ok)
+	}
+	requested, err := trait.Probe(NewProbeContext(parent, nil))
+	if err != nil || requested.Status() != ProbeNeedsData || len(requested.Needs()) != 1 {
+		t.Fatalf("initial Probe = %#v, %v", requested, err)
+	}
+	view := access.NewProbeView([]byte("RIFF\x00\x00\x00\x00WAVE"))
+	matched, err := trait.Probe(NewProbeContextAtEnd(parent, []access.ProbeView{view}, 12))
+	if err != nil || matched.Status() != ProbeMatch || len(matched.Evidence()) != 1 || calls != 2 {
+		t.Fatalf("terminal Probe = %#v, %v; calls = %d", matched, err, calls)
+	}
+	if !Fallback().Valid() || !Mismatch().Valid() || !Malformed("truncated header", evidence).Valid() {
+		t.Fatal("terminal Probe result constructors are invalid")
 	}
 }

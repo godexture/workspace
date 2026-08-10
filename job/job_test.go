@@ -161,7 +161,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}) {
 		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
 	}
-	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3}
+	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5}
 	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
 	if err != nil {
 		t.Fatal(err)

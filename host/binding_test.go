@@ -451,7 +451,7 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 	}, func(shape flow.Shape) flow.Operator {
 		return boundaryTransformOperator{boundaryOperator{shape: shape}}
 	}), plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
-		mediaformat.Read(boundaryFormat(), access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead)),
+		mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead))),
 		mediaformat.Write(boundaryFormat(), access.AnyOf(access.SequentialWrite)),
 	)
 	sinkOptions := append([]plugin.ComponentOption{component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
@@ -487,7 +487,7 @@ func boundaryReadSink(trait endpoint.Trait, withFormat bool) plugin.Component {
 		endpoint.WithTrait(trait),
 	}
 	if withFormat {
-		options = append(options, mediaformat.Read(boundaryFormat(), access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead)))
+		options = append(options, mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead))))
 	}
 	return plugin.NewComponent[boundarySinkID](
 		plugin.Descriptor{DisplayName: "sink"},

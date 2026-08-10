@@ -57,11 +57,14 @@ type Usage struct {
 	Suggestions        int
 	FixpointIterations int
 	CacheHits          int
+	ProbeBytes         resource.Bytes
+	ProbeRounds        int
 }
 
 func (u Usage) valid(budget job.Budget) bool {
-	return u.States >= 0 && u.Compiles >= 0 && u.Suggestions >= 0 && u.FixpointIterations >= 0 && u.CacheHits >= 0 &&
-		u.States <= budget.States && u.Compiles <= budget.Compiles && u.FixpointIterations <= budget.FixpointIterations
+	return u.States >= 0 && u.Compiles >= 0 && u.Suggestions >= 0 && u.FixpointIterations >= 0 && u.CacheHits >= 0 && u.ProbeRounds >= 0 &&
+		u.States <= budget.States && u.Compiles <= budget.Compiles && u.FixpointIterations <= budget.FixpointIterations &&
+		u.ProbeBytes <= budget.ProbeBytes && u.ProbeRounds <= budget.ProbeRounds
 }
 
 type Platform struct {

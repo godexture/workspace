@@ -1,6 +1,11 @@
 package job
 
-import "time"
+import (
+	"math"
+	"time"
+
+	"github.com/godexture/godec/resource"
+)
 
 // Budget bounds planner work independently of context cancellation. Duration
 // is a defensive wall-clock limit; deterministic state limits remain the
@@ -10,11 +15,14 @@ type Budget struct {
 	Compiles           int
 	SuggestionsPerNeed int
 	FixpointIterations int
+	ProbeBytes         resource.Bytes
+	ProbeRounds        int
 	Duration           time.Duration
 }
 
 func (b Budget) Valid() bool {
-	return b.States > 0 && b.Compiles > 0 && b.SuggestionsPerNeed > 0 && b.FixpointIterations > 0 && b.Duration >= 0
+	return b.States > 0 && b.Compiles > 0 && b.SuggestionsPerNeed > 0 && b.FixpointIterations > 0 &&
+		b.ProbeBytes > 0 && uint64(b.ProbeBytes) <= math.MaxInt64 && b.ProbeRounds > 0 && b.Duration >= 0
 }
 
 func DefaultBudget() Budget {
@@ -23,5 +31,7 @@ func DefaultBudget() Budget {
 		Compiles:           16384,
 		SuggestionsPerNeed: 64,
 		FixpointIterations: 64,
+		ProbeBytes:         64 << 10,
+		ProbeRounds:        16,
 	}
 }
