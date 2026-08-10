@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/gotype"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/plugin"
 )
@@ -20,6 +21,7 @@ type Index struct {
 	declarations  []plugin.Declaration
 	byID          map[plugin.Identity]int
 	byDeclaration map[plugin.DeclarationKey]int
+	codecBindings map[plugin.Identity][]CodecBinding
 	fingerprint   [32]byte
 }
 
@@ -134,6 +136,9 @@ func Build(set plugin.Set) (Index, error) {
 				}
 			}
 		}
+		if codec.IsBindingKey(key) && len(declaration.Targets()) > 2 {
+			items = append(items, diagnostic.NewItem("catalog.codec-binding", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "codec binding must name a codec and at most one parser", nil))
+		}
 		if exists {
 			continue
 		}
@@ -175,6 +180,7 @@ func Build(set plugin.Set) (Index, error) {
 		declarations:  append([]plugin.Declaration(nil), declarations...),
 		byID:          byID,
 		byDeclaration: byDeclaration,
+		codecBindings: indexCodecBindings(declarations),
 		fingerprint:   catalogFingerprint(definitions, components, declarations),
 	}, nil
 }

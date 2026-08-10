@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
@@ -119,6 +120,9 @@ func TestDemuxCompileUsesInspectionInsteadOfCarrierProperties(t *testing.T) {
 	description, err := sample.FromProperties(output.Properties())
 	if err != nil || description != inspected.description {
 		t.Fatalf("WAVE properties = %#v, %v", description, err)
+	}
+	if tag, ok := codec.TagOf(output.Properties()); !ok || tag != PCMTag() {
+		t.Fatalf("WAVE codec tag = %q/%v", tag, ok)
 	}
 	if compiled.Resources().Memory != 2 {
 		t.Fatalf("WAVE reframe memory = %d", compiled.Resources().Memory)

@@ -112,4 +112,31 @@ func TestBindingRegistrationOrderDoesNotChangeFingerprint(t *testing.T) {
 	}
 }
 
+func TestCodecBindingsAreIndexedByTargetTagAndRole(t *testing.T) {
+	codecComponent := catalogComponent[bindingComponentID]("codec")
+	parserComponent := catalogComponent[secondBindingComponentID]("parser")
+	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, codecComponent, parserComponent)
+	firstTag := format.NewTag("fixture", "a")
+	secondTag := format.NewTag("fixture", "b")
+	set := plugin.NewSet(definition).
+		AddDeclaration(codec.Bind(firstTag, codec.New(codecComponent.Identity()), codec.NewParser(parserComponent.Identity()))).
+		AddDeclaration(codec.BindWithoutParser(secondTag, codec.New(codecComponent.Identity())))
+	index, err := Build(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codecValues := index.CodecBindings(codecComponent.Identity())
+	if len(codecValues) != 2 || codecValues[0].Tag() != firstTag || codecValues[0].Role() != CodecRole || codecValues[1].Tag() != secondTag || codecValues[1].Role() != CodecRole {
+		t.Fatalf("codec reverse bindings = %#v", codecValues)
+	}
+	parserValues := index.CodecBindings(parserComponent.Identity())
+	if len(parserValues) != 1 || parserValues[0].Tag() != firstTag || parserValues[0].Role() != ParserRole {
+		t.Fatalf("parser reverse bindings = %#v", parserValues)
+	}
+	parserValues[0] = CodecBinding{}
+	if got := index.CodecBindings(parserComponent.Identity()); len(got) != 1 || got[0].Tag() != firstTag {
+		t.Fatal("codec reverse binding lookup exposed index storage")
+	}
+}
+
 func diagnosticItems(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }

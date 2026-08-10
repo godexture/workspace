@@ -3,6 +3,7 @@ package wave
 
 import (
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
@@ -25,6 +26,9 @@ func InfoEncodingIdentity() plugin.Identity { return plugin.IdentityOf[infoID]()
 
 // RIFFInfo identifies a LIST/INFO metadata carrier inside WAVE.
 func RIFFInfo() carrier.ID { return carrier.Define[infoSlot]() }
+
+// PCMTag identifies the PCM codec tag carried by WAVE format headers.
+func PCMTag() format.Tag { return format.NewTag("wave", "0001") }
 
 func WAVE() format.Format {
 	value, err := format.Define[waveID]([]carrier.ID{RIFFInfo()})
@@ -54,6 +58,9 @@ func Set() plugin.Set {
 		result = result.AddDeclaration(declaration)
 	}
 	for _, declaration := range sample.Declarations() {
+		result = result.AddDeclaration(declaration)
+	}
+	for _, declaration := range codec.Declarations() {
 		result = result.AddDeclaration(declaration)
 	}
 	return result

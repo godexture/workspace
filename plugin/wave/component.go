@@ -6,6 +6,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/stream"
@@ -44,6 +45,10 @@ func demuxerComponent() plugin.Component {
 				))
 			}
 			properties, err := inspected.description.Properties()
+			if err != nil {
+				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+			}
+			properties, err = codec.WithTag(properties, inspected.codecTag)
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}

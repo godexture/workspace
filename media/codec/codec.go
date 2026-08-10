@@ -2,9 +2,38 @@
 package codec
 
 import (
+	"fmt"
+
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/plugin"
 )
+
+type tagPropertyID struct{}
+
+var tagProperty = property.Define[tagPropertyID](func(value format.Tag) ([]byte, error) {
+	if !value.Valid() {
+		return nil, fmt.Errorf("codec tag is empty")
+	}
+	return property.Scalar[format.Tag]()(value)
+})
+
+// Tag is the canonical descriptor property used to constrain codec/parser
+// candidates selected for a container stream.
+func Tag() property.Key[format.Tag] { return tagProperty }
+
+func WithTag(properties property.Set, value format.Tag) (property.Set, error) {
+	return tagProperty.Set(properties, value)
+}
+
+func TagOf(properties property.Set) (format.Tag, bool) {
+	value, ok := tagProperty.Get(properties)
+	return value, ok && value.Valid()
+}
+
+func Declarations() []plugin.Declaration {
+	return []plugin.Declaration{plugin.DeclareKey(tagProperty)}
+}
 
 // Codec is a component identity for a media codec. The implementation is
 // opened through plugin.Component; this type only participates in
@@ -48,4 +77,20 @@ func Bind(key format.Tag, value Codec, parser Parser) Binding {
 
 func BindWithoutParser(key format.Tag, value Codec) Binding {
 	return Bind(key, value, Parser{})
+}
+
+func BindingKey(key format.Tag) plugin.DeclarationKey {
+	return BindWithoutParser(key, Codec{}).Key()
+}
+
+func IsBindingKey(key plugin.DeclarationKey) bool {
+	return key.Namespace() == plugin.IdentityOf[bindingNamespace]()
+}
+
+func BindingTag(key plugin.DeclarationKey) (format.Tag, bool) {
+	if !IsBindingKey(key) {
+		return "", false
+	}
+	value := format.Tag(key.Name())
+	return value, value.Valid()
 }

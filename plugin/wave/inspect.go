@@ -59,6 +59,7 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 
 	var result header
 	result.rf64 = rf64
+	result.codecTag = PCMTag()
 	document := metadata.NewBuilder(metadata.StreamScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64

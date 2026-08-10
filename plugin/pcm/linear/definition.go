@@ -83,5 +83,8 @@ func Set() plugin.Set {
 	for _, declaration := range sample.Declarations() {
 		result = result.AddDeclaration(declaration)
 	}
+	for _, declaration := range codec.Declarations() {
+		result = result.AddDeclaration(declaration)
+	}
 	return result
 }
