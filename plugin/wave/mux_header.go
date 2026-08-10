@@ -12,6 +12,7 @@ const ds64PayloadSize = 28
 
 type muxHeader struct {
 	initial        []byte
+	afterData      []byte
 	reserveOffset  int64
 	dataSizeOffset int64
 	dataOffset     int64
@@ -31,30 +32,48 @@ type finalizedHeader struct {
 }
 
 func newMuxHeader(description sample.Description) (muxHeader, error) {
+	return newMuxHeaderWithChunks(description, muxChunks{})
+}
+
+func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (muxHeader, error) {
 	formatPayload, blockAlign, err := marshalFormat(description)
 	if err != nil {
 		return muxHeader{}, err
 	}
-	headerSize := 12 + 8 + ds64PayloadSize + 8 + len(formatPayload) + 8
+	if len(chunks.beforeFormat) > math.MaxInt-80-len(formatPayload) || len(chunks.beforeData) > math.MaxInt-80-len(formatPayload)-len(chunks.beforeFormat) {
+		return muxHeader{}, fmt.Errorf("%w: WAVE metadata header exceeds runtime address space", ErrUnsupported)
+	}
+	headerSize := 12 + 8 + ds64PayloadSize + len(chunks.beforeFormat) + 8 + len(formatPayload) + len(chunks.beforeData) + 8
 	value := make([]byte, headerSize)
 	copy(value[0:4], tagRIFF)
 	copy(value[8:12], tagWAVE)
 	reserveOffset := 12
-	copy(value[reserveOffset:reserveOffset+4], "JUNK")
-	binary.LittleEndian.PutUint32(value[reserveOffset+4:reserveOffset+8], ds64PayloadSize)
+	copy(value[reserveOffset:], muxReserveChunk())
 	formatOffset := reserveOffset + 8 + ds64PayloadSize
+	copy(value[formatOffset:], chunks.beforeFormat)
+	formatOffset += len(chunks.beforeFormat)
 	copy(value[formatOffset:formatOffset+4], tagFMT)
 	binary.LittleEndian.PutUint32(value[formatOffset+4:formatOffset+8], uint32(len(formatPayload)))
 	copy(value[formatOffset+8:], formatPayload)
 	dataOffset := formatOffset + 8 + len(formatPayload)
+	copy(value[dataOffset:], chunks.beforeData)
+	dataOffset += len(chunks.beforeData)
 	copy(value[dataOffset:dataOffset+4], tagDATA)
 	return muxHeader{
 		initial:        value,
+		afterData:      append([]byte(nil), chunks.afterData...),
 		reserveOffset:  int64(reserveOffset),
 		dataSizeOffset: int64(dataOffset + 4),
 		dataOffset:     int64(headerSize),
 		blockAlign:     uint64(blockAlign),
 	}, nil
+}
+
+func muxReserveChunk() []byte {
+	value := make([]byte, 8+ds64PayloadSize)
+	copy(value[0:4], "JUNK")
+	binary.LittleEndian.PutUint32(value[4:8], ds64PayloadSize)
+	return value
 }
 
 func marshalFormat(description sample.Description) ([]byte, int, error) {
@@ -139,12 +158,20 @@ func (h muxHeader) outputSize(dataSize uint64) (int, uint64, error) {
 		return 0, 0, fmt.Errorf("%w: WAVE mux header layout is invalid", ErrMalformed)
 	}
 	padding := dataSize & 1
-	if dataSize > math.MaxUint64-padding || uint64(h.dataOffset) > math.MaxUint64-dataSize-padding {
+	suffix := uint64(len(h.afterData))
+	if dataSize > math.MaxUint64-padding || dataSize+padding > math.MaxUint64-suffix || uint64(h.dataOffset) > math.MaxUint64-dataSize-padding-suffix {
 		return 0, 0, fmt.Errorf("%w: WAVE output size overflows", ErrUnsupported)
 	}
-	fileSize := uint64(h.dataOffset) + dataSize + padding
+	fileSize := uint64(h.dataOffset) + dataSize + padding + suffix
 	if fileSize > math.MaxInt64 {
 		return 0, 0, fmt.Errorf("%w: WAVE output exceeds runtime offsets", ErrUnsupported)
 	}
 	return int(padding), fileSize, nil
+}
+
+func (h muxHeader) payloadBytes() int {
+	if len(h.afterData) > len(h.initial) {
+		return len(h.afterData)
+	}
+	return len(h.initial)
 }

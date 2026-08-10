@@ -100,6 +100,7 @@ func materializeMuxHeader(t *testing.T, header muxHeader, data []byte) []byte {
 	value := make([]byte, int(finalized.fileSize))
 	copy(value, header.initial)
 	copy(value[int(header.dataOffset):], data)
+	copy(value[int(header.dataOffset)+len(data)+finalized.padding:], header.afterData)
 	for _, patch := range finalized.patches {
 		copy(value[int(patch.offset):], patch.payload)
 	}

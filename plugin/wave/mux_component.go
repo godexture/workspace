@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -31,7 +32,7 @@ func muxerComponent() plugin.Component {
 	shape := muxerShape()
 	spec := plugin.Spec[configuration, muxPlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
-		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[muxPlan, stream.Descriptor], error) {
+		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[muxPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("packets")
 			if !ok {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{
@@ -44,7 +45,12 @@ func muxerComponent() plugin.Component {
 					"wave.sample-description", diagnostic.ErrorSeverity, diagnostic.Path{}, "WAVE muxer requires a complete PCM sample description", nil,
 				))
 			}
-			header, err := newMuxHeader(description)
+			resolver, _ := metadata.ResolverOf(ctx)
+			chunks, err := marshalMuxChunks(ctx.Context(), resolver, input.Metadata())
+			if err != nil {
+				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+			}
+			header, err := newMuxHeaderWithChunks(description, chunks)
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
@@ -56,7 +62,7 @@ func muxerComponent() plugin.Component {
 				Plan:         muxPlan{shape: shape.Clone(), header: header},
 				Outputs:      flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
 				Effects:      []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
-				Resources:    resource.Request{Memory: resource.Bytes(len(header.initial))},
+				Resources:    resource.Request{Memory: resource.Bytes(header.payloadBytes())},
 				Finalization: plugin.RequiresFinalization,
 			}, nil
 		},
