@@ -21,7 +21,7 @@
 | M3 | 完了 | M3-1 の walking skeleton、M3-2 の metadata model/Binding と raw preservation、M3-3 の `media/side`、`stream.Event`、access の Reference/Provider/transaction/spool/probe/snapshot、typed endpoint trait/device/query を実装した。scheme conflict は既存 `plugin.Declaration`/catalog で検証し、device scan・permission・network side effect は追加していない。固有の完了条件は [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) を参照する。 |
 | M4 | 完了 | M4-1〜M4-4 で typed Compile/Suggest、graph validation、bounded solver、public `Plan`/private `Program`、Provider/Endpoint binding、実 linear PCM、N=1/4/16 filter region の二 converter gate を完了した。対象 race/vet、全 package build、docs check、全 module scalar/SIMD gate を通過した。 |
 | M5 | 完了 | typed execution island、ownership/COW、policy-driven bounded queue、cancel/task、Finalize、transactional Host lifecycle、structured Result、PCM walking skeleton、cut 前 paired measurement と production Host performance gate を完成し、旧 contract を削除して未移植 algorithm を `_legacy/` へ隔離した。証拠は [runtime.md](runtime.md#m5-完了条件) と [performance.md](performance.md#m5-runtime-performance-gate) を参照する。 |
-| M6 | 進行中 | M6-0〜M6-3 を完了し、file/WAVE の自動 Format 判別と sequential prefix replay を含む Fast/Realtime の実経路が通る。次は M6-4 の標準 composition・integration・testkit を実装する。 |
+| M6 | 進行中 | M6-0〜M6-4 を完了した。公式 composition、public testkit、独立 integration module、全公式 component の typed coverage、第三者 Provider/Format/Codec/Metadata の `Set.Add` 拡張が成立した。次は M6-5 の最短 library/CLI surface を実装する。 |
 | M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含め、`QueuePolicy.Window` が兼ねる queue bound と fan-in alignment tolerance を分離して late-input policy を明示する。 |
 | M8 | 未着手 | 完了時に `_legacy/` を削除する。 |
 | M9 | 未着手 | — |
@@ -38,6 +38,13 @@
 - M6-2 の着手前監査で、現行契約のまま完了条件を満たせない断絶を 3 件確認し、単位の割り方と Inspect の担当を是正した。(1) **mux が header を patch する経路が無い。** boundary の narrow view は Provider node にだけ渡り、file sink は全 handle を自前追跡 offset へ順次書き、`Finalize` に emitter が無く、読み側 item は位置を持たない。sink 側に位置を表現できる canonical schema を足し、mux は自分で I/O せず位置付き item を `Flush` から渡す。(2) **Inspect を M6-3 に残すと WAVE 経路が compile できない。** `resolve` が Shape/Compile/Solve を終えた後に session を acquire しており、[runtime](runtime.md#planner-pipeline) の pipeline 順に反している。header からしか得られない事実で descriptor を確定するため Inspect を M6-2a へ移し、M6-3 は probe と自動判別に絞る。(3) **codec Binding が selection に使われていない。** solver は入力 schema だけで候補を索引しており、tag と無関係に同 schema の Parser/Decoder がすべて候補になる。tag による絞り込みを足すが、Binding を持たない bridge は候補に残す。あわせて M6-2 を読み経路・書き経路・metadata/Binding の 3 単位へ割った。正本は [media](media.md#作業単位)、[access](access.md#m6-完了条件)、[scope](scope.md#m6-の-contract-分類)。
 - M6-2a〜M6-2c は完了した。Prepare は Acquire → Inspect → Compile/Solve の順になり、WAVE の read/write、direct/spooled output、RIFF INFO と未知 chunk の lossless roundtrip、codec tag による parser 選択を実 file の Fast/Realtime 経路で検証した。詳細は [task/m6-2a.md](task/m6-2a.md)、[task/m6-2b.md](task/m6-2b.md)、[task/m6-2c.md](task/m6-2c.md)。
 - M6-3 は [task/m6-3.md](task/m6-3.md) の実装結果と検証を完了した。Host は random-first の共有 Probe cache と byte/round/duration budget で WAVE を content evidence から選び、sequential-only input の raw fallback では同じ session の prefix を zero-copy replay する。自動 node/reason/warning/usage は Plan に固定され、Fast/Realtime、failure matrix、対象 race/vet/build/docs gate を通過した。
+- M6-4 は [task/m6-4.md](task/m6-4.md) の実装結果と検証を完了した。definition-owned declaration と
+  `standard.Set` を唯一の公式 composition にし、構造層と typed case 層に分けた public `testkit` を追加した。
+  integration は公式 executable 9 件と trait-only RIFF INFO の coverage、仕様 vector、Fast/Realtime の実 file
+  経路、marker identity、import direction を検査する。第三者相当 ACME plugin は foundation の public API
+  だけで Provider/Format/Codec/Metadata を宣言し、`standard.Set().Add(acme.Plugin())` 一つで自動 bind/solve/run
+  される。Snapshot/retry は remote Provider、Mapping/loss は M7、direct＋Inspect と Endpoint は M9 の担当として
+  coverage registry に残した。
 - M4-2 の skeleton は descriptor 変換を各 component の pure `Compile` に移し、`internal/graph.Compile` が作った compilation だけを `Open` へ渡す。test driver は compiled graph の input/output descriptor を読むだけで変換規則を持たない。外部 byte writer と metadata encoding の両経路には source/sink node を明示した。
 - M4-3 は explicit graph evaluator を唯一の compile authority のまま gap を型付きで返せるようにし、schema/property condition を bounded Dijkstra 探索で補う。candidate lookup は input schema 索引、visited state は canonical fingerprint と完全比較、候補 compile は memo 化し、policy/effect/resource と全 budget を Open 前に検査する。`Plan` は secret を redacted summary に落とした inert value、`Program` は resolved config と compilation を持つ private value として分離した。
 - M0/M1 を再度開く blocker はない。M0 で把握した後続課題は [baseline.md](baseline.md#既知のギャップm0-完了時点で未解消後続-milestone-へ) に記録している。

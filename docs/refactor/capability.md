@@ -17,8 +17,8 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| WAVE (RIFF) format | demux/mux、chunk 解析、raw chunk 保持 | 維持 | M6 | conformance 相当の小型 vector + roundtrip |
-| PCM codec | 複数 bit depth、left-justify | 維持 | M6 | lossless roundtrip exact |
+| WAVE (RIFF) format | demux/mux、chunk 解析、raw chunk 保持 | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の RIFF/Extensible、malformed/truncated vector と `TestWAVEMetadataRoundTripUsesTagBoundParser` の未知 chunk/INFO exact roundtrip |
+| PCM codec | 複数 bit depth、left-justify | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の 12/16 valid bits、little/big endian、mono/stereo decode/encode exact と Fast/Realtime file roundtrip |
 | ADPCM (IMA, MS) | encode/decode | 維持 | M8 | 仕様 vector + roundtrip |
 | G.711 (A-law, μ-law) | encode/decode | 維持 | M8 | 仕様 table 照合 |
 | MP3 format | elementary stream、Xing/VBRI header、scan | 維持 | M8 | 仕様 vector |
@@ -32,7 +32,7 @@
 |---|---|---|---|---|
 | ID3v1 / ID3v2 | parse/marshal | 維持 | M8 | 仕様 vector |
 | Vorbis Comment | parse/marshal | 維持 | M8 | 仕様 vector |
-| RIFF INFO | parse/marshal | 維持 | M6 | 仕様 vector |
+| RIFF INFO | parse/marshal | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の parse/marshal、duplicate/order、未知 raw と `TestWAVEMetadataRoundTripUsesTagBoundParser` の container roundtrip |
 | multi-value の順序保持 | WAVE で固定済み | 維持 | M3/M7 | Document の順序 test。M3 分は `media/metadata` の `TestDocumentKeepsOrderDuplicateKeysAndOrigin` で確認済み |
 | 重複 key の保持 | WAVE で固定済み | 維持 | M3/M7 | Document の重複 test。M3 分は同上の test で確認済み |
 | 未知 payload の raw 保持 | WAVE で固定済み | 維持 | M3/M7 | RawBlock の roundtrip。M3 分は `TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite` で確認済み |
@@ -60,7 +60,7 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| local file 入出力 | CLI が `os.Open` と temporary file を直接扱う | 変更 | M6/M9 | file Provider の transaction test |
+| local file 入出力 | CLI が `os.Open` と temporary file を直接扱う | 変更 | M6/M9 | M6 確認済み: `integration.TestOfficialPluginConformance` の capability 選択、`plugin/file` の commit/abort/cancel/temporary cleanup、positioned write の memory/disk spool。CLI 接続は M9 |
 | stdin/stdout | CLI | 維持 | M9 | CLI test |
 | Go library API | `sdk/conversion` | 変更 | M6/M9 | `standard.NewHost()` の example |
 | CLI | `godec` と 14 flag | 変更 | M9 | Job 正規化後の CLI test |

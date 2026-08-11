@@ -190,6 +190,33 @@ M5 の切断により、M6 の開始時点で repository には利用 surface �
 - **識別子を手で考えさせない。** 公式 plugin を書く過程で、第三者が一意性を保証しなければならない文字列が新たに必要にならなかったことを確認する。必要になった箇所は marker 由来へ移すか、一意性が不要である理由を記録する。
 - **error が最初の利用者を助ける。** 存在しない component selector、範囲外の config 値、満たせない mapping に対し、最も近い候補または有効な範囲が示される。[config](config.md#validation-と-diagnostic) の構造化 diagnostic が実 plugin でも成立する。
 
+### M6-4 の実測
+
+- 公式 composition は `standard.NewHost()`、第三者拡張は
+  `host.New(host.Plugins(standard.Set().Add(acme.Plugin())))` で完結した。第三者 fixture は Access、Format、
+  Codec、Metadata Encoding と owned declaration を一つの definition で運び、利用者側に拡張種別ごとの
+  option や Binding 追加を要求しない。
+- 公式の実行可能 component 9 件と trait-only RIFF INFO、第三者の実行可能 component 4 件と trait-only
+  Metadata Encoding を同じ public testkit へ通した。typed case の呼び出し側が指定するのは subject と、
+  optional な `Name`、`Config`、`Input`、`Want` だけである。公式 case と第三者 conformance case には
+  `Host`、`Job`、`Plan`、queue、allocator、手動 `Release`/`Drop`、surface DTO の参照が 0 件で、これらは
+  testkit の共通 runner が所有する。
+- local file は `testkit.LocalFile(payload)`、reference 自体が immutable payload を表す Provider は
+  `testkit.ReadOnlyReference(reference, payload)` の一行を入力 fixture とする。後者は第三者 ACME case の
+  seed/read/residue/close callback 19 行が実測で見つかったため追加し、Provider author の case を
+  subject/input/want へ戻した。外部 storage 固有の staging を持つ Provider だけが
+  `AccessFixtureOf`/`AccessTarget` で typed fixture を実装する。
+- M6 の WAVE/PCM component は Format inspection、descriptor 変換、resource 宣言を持つ高度な component
+  であり、gain 相当の通常 Processor ではない。実装上の概念は marker、config schema、Shape、Compile、
+  Open/Operator、typed execution binding の 6 件を共通に持ち、Format trait と Resource Request を必要な
+  component だけが足す。linear family ではこの共通部分を `newComponent` 一箇所に集約し、各 component
+  宣言は marker、operation、display name だけである。通常 Processor 用 `plugin.Processor` convenience は
+  M6 内に実 consumer がないため先取りせず、実 filter family が戻る M8 でこの節の目標形と再実測する。
+- 公式 component source は global registration、衝突回避用の文字列 identity、goroutine/channel、
+  scheduler、manual `Release`、surface parser/DTO、metrics 集約、candidate routing を実装していない。
+  identity、schema、Format、carrier、key は marker 由来であり、plugin author が一意な文字列を割り当てる
+  箇所は増えなかった。
+
 ## M9 完了条件
 
 M9 は M6 で書いた最短経路を全 surface へ広げる milestone であり、三者の体験が揃う時点である。移行ではなく完成であり、library、CLI、WASM、demo が同じ Host/Job/Plan/Result を使う状態にする。
