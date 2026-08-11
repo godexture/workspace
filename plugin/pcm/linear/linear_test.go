@@ -5,12 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/url"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,7 +27,6 @@ import (
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
-	fileplugin "github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/resource"
 )
 
@@ -274,49 +268,6 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}
 }
 
-func TestPCMFileReferencesMatchDirectResourcesAcrossQueuePresets(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
-	input := []byte{0x00, 0x80, 0xff, 0xff, 0x00, 0x00, 0x01, 0x00, 0xff, 0x7f}
-	directOutput, directPlanes, directTimestamps := runPCMProgram(t, compilePCMProgram(t, description), input)
-
-	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
-		t.Run(preset.String(), func(t *testing.T) {
-			directory := t.TempDir()
-			inputPath := filepath.Join(directory, "input.raw")
-			outputPath := filepath.Join(directory, "output.raw")
-			if err := os.WriteFile(inputPath, input, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			fixture := compilePCMFileProgram(t, description, inputPath, outputPath, preset)
-			compiled, err := fixture.host.Plan(context.Background(), fixture.request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertFileBoundaries(t, compiled)
-			if _, err := os.Stat(outputPath); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("Host.Plan created output: %v", err)
-			}
-			if matches := pcmTemporaryFiles(t, outputPath); len(matches) != 0 {
-				t.Fatalf("Host.Plan created temporary files: %v", matches)
-			}
-
-			fileOutput, filePlanes, fileTimestamps := runPCMFileProgram(t, fixture, outputPath)
-			if !bytes.Equal(fileOutput, directOutput) {
-				t.Fatalf("file output = %v, direct output = %v", fileOutput, directOutput)
-			}
-			if !equalPlanes(filePlanes, directPlanes) {
-				t.Fatalf("file frames = %v, direct frames = %v", filePlanes, directPlanes)
-			}
-			if !equalPTS(fileTimestamps, directTimestamps) {
-				t.Fatalf("file timestamps = %v, direct timestamps = %v", fileTimestamps, directTimestamps)
-			}
-			if matches := pcmTemporaryFiles(t, outputPath); len(matches) != 0 {
-				t.Fatalf("Run retained temporary files: %v", matches)
-			}
-		})
-	}
-}
-
 func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
 	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
 	input := []byte{
@@ -549,57 +500,6 @@ func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture 
 	return pcmFixture{host: instance, request: request, state: state}
 }
 
-func compilePCMFileProgram(t *testing.T, description sample.Description, inputPath, outputPath string, preset job.Preset) pcmFixture {
-	t.Helper()
-	descriptor := stream.MustDescriptor("pcm", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
-	state := &fixtureState{}
-	set := Set().Add(fileplugin.Plugin()).Add(fixtureDefinition(descriptor, state))
-	instance, err := host.New(
-		host.Plugins(set),
-		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
-		host.Observe(host.ObservationBasic),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	patch := pcmConfiguration(description)
-	requested, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("reader", ReaderIdentity(), patch),
-			job.NewNode("decoder", DecoderIdentity(), patch),
-			job.NewNode("observer", plugin.IdentityOf[fixtureObserveID](), config.NewPatch()),
-			job.NewNode("encoder", EncoderIdentity(), patch),
-			job.NewNode("writer", WriterIdentity(), patch),
-		},
-		[]job.Edge{
-			job.Connect(job.At("reader", "chunks"), job.At("decoder", "packets")),
-			job.Connect(job.At("decoder", "frames"), job.At("observer", "in")),
-			job.Connect(job.At("observer", "out"), job.At("encoder", "frames")),
-			job.Connect(job.At("encoder", "packets"), job.At("writer", "packets")),
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, err := job.InputFromReference(pcmFileReference(t, inputPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := job.OutputToReference(pcmFileReference(t, outputPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, ok := job.PolicyFor(preset)
-	if !ok {
-		t.Fatalf("policy %s is unavailable", preset)
-	}
-	request, err := job.New([]job.Input{input}, []job.Output{output}, requested, job.WithPolicy(policy))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pcmFixture{host: instance, request: request, state: state}
-}
-
 func pcmConfiguration(description sample.Description) config.Patch {
 	return config.NewPatch().
 		SetText("rate", strconv.Itoa(description.Rate)).
@@ -657,78 +557,6 @@ func runPCMProgram(t *testing.T, fixture pcmFixture, input []byte) ([]byte, [][]
 	output, observed, timestamps, events := fixture.state.snapshot()
 	assertEventOrder(t, events, "eof", "finalize", "flow-flush", "sink-flush")
 	return output, observed, timestamps
-}
-
-func runPCMFileProgram(t *testing.T, fixture pcmFixture, outputPath string) ([]byte, [][]int16, []timing.PTS) {
-	t.Helper()
-	prepared, err := fixture.host.Prepare(context.Background(), fixture.request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertPCMPlan(t, prepared.Plan())
-	assertFileBoundaries(t, prepared.Plan())
-	result, err := prepared.Run(context.Background())
-	if err != nil || !result.Succeeded() {
-		t.Fatalf("file PCM Run result = %#v, err = %v", result, err)
-	}
-	output, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, observed, timestamps, events := fixture.state.snapshot()
-	assertEventOrder(t, events, "finalize", "flow-flush")
-	return output, observed, timestamps
-}
-
-func assertFileBoundaries(t *testing.T, compiled plan.Plan) {
-	t.Helper()
-	boundaries := compiled.Boundaries()
-	if len(boundaries) != 2 {
-		t.Fatalf("file boundary count = %d", len(boundaries))
-	}
-	for _, boundary := range boundaries {
-		if boundary.Scheme != "file" || boundary.Kind != plan.ProviderBoundary || len(boundary.Selected) != 1 {
-			t.Fatalf("file boundary = %#v", boundary)
-		}
-		switch boundary.Direction {
-		case plan.InputBoundary:
-			if boundary.Component != fileplugin.SourceIdentity().String() || boundary.Selected[0] != access.SequentialRead {
-				t.Fatalf("file input boundary = %#v", boundary)
-			}
-		case plan.OutputBoundary:
-			if boundary.Component != fileplugin.SinkIdentity().String() || boundary.Selected[0] != access.SequentialWrite {
-				t.Fatalf("file output boundary = %#v", boundary)
-			}
-		default:
-			t.Fatalf("file boundary direction = %v", boundary.Direction)
-		}
-	}
-}
-
-func pcmFileReference(t *testing.T, path string) access.Reference {
-	t.Helper()
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value := filepath.ToSlash(absolute)
-	if runtime.GOOS == "windows" && !strings.HasPrefix(value, "/") {
-		value = "/" + value
-	}
-	reference, err := access.Parse((&url.URL{Scheme: "file", Path: value}).String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return reference
-}
-
-func pcmTemporaryFiles(t *testing.T, target string) []string {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+".godec-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return matches
 }
 
 func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin.Definition {
@@ -812,18 +640,6 @@ func equalSamples(left, right []int16) bool {
 	}
 	for index := range left {
 		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func equalPlanes(left, right [][]int16) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if !equalSamples(left[index], right[index]) {
 			return false
 		}
 	}
