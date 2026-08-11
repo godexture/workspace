@@ -10,16 +10,32 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	internalplanning "github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/job"
-	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
-	"github.com/godexture/godec/plugin/pcm/linear"
-	"github.com/godexture/godec/plugin/wave"
+	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
+
+type (
+	probeFixturePluginID  struct{}
+	probeFixtureConfigID  struct{}
+	probeContentID        struct{}
+	probeFallbackID       struct{}
+	probeContentFormatID  struct{}
+	probeFallbackFormatID struct{}
+	probeFixtureConfig    struct{}
+	probeFixturePlan      struct{ shape flow.Shape }
+	probeFixtureOperator  struct{ shape flow.Shape }
+)
+
+func (o probeFixtureOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (probeFixtureOperator) Close() error        { return nil }
 
 type probeTestSession struct {
 	data            []byte
@@ -195,7 +211,7 @@ func TestProbeSchedulerSelectsContentBeforeFallbackWithinBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if choice.component.Identity() != wave.DemuxerIdentity() || choice.fallback || len(choice.evidence) != 1 {
+	if choice.component.Identity() != plugin.IdentityOf[probeContentID]() || choice.fallback || len(choice.evidence) != 1 {
 		t.Fatalf("choice = %s, fallback=%v, evidence=%v", choice.component.Identity(), choice.fallback, choice.evidence)
 	}
 	if usage.ProbeBytes != 12 || usage.ProbeRounds != 2 || session.randomReads.Load() != 1 || session.sequentialReads.Load() != 0 {
@@ -218,7 +234,7 @@ func TestProbeSchedulerReportsByteAndRoundExhaustion(t *testing.T) {
 			session, opening := probeOpening(t, data, access.RandomRead, access.StableSize)
 			_, _, _, err := instance.probeInput(t.Context(), probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, test.budget)
 			items := diagnostic.ItemsOf(err)
-			if len(items) != 1 || items[0].Code != "prepare.probe-budget" || items[0].Detail["dimension"] != test.dimension || !strings.Contains(items[0].Detail["candidate"], wave.DemuxerIdentity().String()) {
+			if len(items) != 1 || items[0].Code != "prepare.probe-budget" || items[0].Detail["dimension"] != test.dimension || !strings.Contains(items[0].Detail["candidate"], plugin.IdentityOf[probeContentID]().String()) {
 				t.Fatalf("diagnostic = %#v, error=%v", items, err)
 			}
 			if test.dimension == "bytes" && items[0].Detail["range"] != "0:12" {
@@ -245,12 +261,12 @@ func TestProbeSchedulerReportsSharedPlanningDurationExhaustion(t *testing.T) {
 
 func TestChooseFormatReportsCanonicalEqualRankAmbiguity(t *testing.T) {
 	instance := probeHost(t)
-	waveComponent, _ := instance.index.Lookup(wave.DemuxerIdentity())
-	rawComponent, _ := instance.index.Lookup(linear.ReaderIdentity())
+	contentComponent, _ := instance.index.Lookup(plugin.IdentityOf[probeContentID]())
+	fallbackComponent, _ := instance.index.Lookup(plugin.IdentityOf[probeFallbackID]())
 	evidence, _ := mediaformat.NewEvidence("content")
 	first := []probeCandidate{
-		{component: waveComponent, result: mediaformat.Match(evidence), terminal: true},
-		{component: rawComponent, result: mediaformat.Match(evidence), terminal: true},
+		{component: contentComponent, result: mediaformat.Match(evidence), terminal: true},
+		{component: fallbackComponent, result: mediaformat.Match(evidence), terminal: true},
 	}
 	_, firstErr := chooseFormat(probeBoundary(), first)
 	_, secondErr := chooseFormat(probeBoundary(), []probeCandidate{first[1], first[0]})
@@ -290,13 +306,59 @@ func probeSelectionForTest(capabilities access.Capabilities) (access.Selection, 
 
 func probeHost(t *testing.T) *Host {
 	t.Helper()
-	set := wave.Set().Add(linear.Plugin()).AddDeclaration(linear.Binding()).
-		AddDeclaration(codec.Bind(wave.PCMTag(), codec.New(linear.DecoderIdentity()), codec.NewParser(linear.ParserIdentity())))
+	content := probeFormatComponent[probeContentID, probeContentFormatID](probeContent)
+	fallback := probeFormatComponent[probeFallbackID, probeFallbackFormatID](func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+		return mediaformat.Fallback(), nil
+	})
+	set := plugin.NewSet(plugin.Define[probeFixturePluginID](plugin.Descriptor{DisplayName: "probe fixture", Version: "1"}, content, fallback))
 	instance, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return instance
+}
+
+func probeFormatComponent[ComponentMarker, FormatMarker any](probe mediaformat.ProbeFunc) plugin.Component {
+	configuration := config.Struct[probeFixtureConfigID](func() probeFixtureConfig { return probeFixtureConfig{} }).Version("1").Build()
+	shape := flow.NewShape(
+		[]flow.Port{flow.In("bytes", access.Bytes())},
+		[]flow.Port{flow.Out("chunks", mediaformat.Chunks())},
+	)
+	spec := plugin.Spec[probeFixtureConfig, probeFixturePlan, stream.Descriptor]{
+		Shape: plugin.StaticShape[probeFixtureConfig](shape),
+		Compile: func(plugin.CompileContext, probeFixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[probeFixturePlan, stream.Descriptor], error) {
+			return plugin.Compiled[probeFixturePlan, stream.Descriptor]{Plan: probeFixturePlan{shape: shape.Clone()}}, nil
+		},
+		Open: func(plugin.OpenContext, probeFixturePlan) (flow.Operator, error) {
+			return probeFixtureOperator{shape: shape.Clone()}, nil
+		},
+	}
+	format, err := mediaformat.Define[FormatMarker](nil)
+	if err != nil {
+		panic(err)
+	}
+	return plugin.NewComponent[ComponentMarker](
+		plugin.Descriptor{DisplayName: "probe Format fixture"},
+		configuration,
+		plugin.WithSpec(spec),
+		mediaformat.Read(format, access.NewRequirements(access.AnyOf(access.RandomRead)), mediaformat.WithProbe(probe)),
+	)
+}
+
+func probeContent(ctx mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+	request, _ := access.NewRangeRequest(0, 12)
+	for _, view := range ctx.Views() {
+		if view.Base() != 0 || view.Size() < 12 {
+			continue
+		}
+		value := view.Bytes()
+		if string(value[:4]) != "RIFF" || string(value[8:12]) != "WAVE" {
+			return mediaformat.Mismatch(), nil
+		}
+		evidence, _ := mediaformat.NewEvidence("RIFF/WAVE signature")
+		return mediaformat.Match(evidence), nil
+	}
+	return mediaformat.Need(request), nil
 }
 
 func probeBoundary() plan.Boundary {
