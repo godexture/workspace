@@ -1,9 +1,6 @@
 package integration_test
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/godexture/godec/access"
@@ -36,7 +33,7 @@ func TestThirdPartyPluginConformance(t *testing.T) {
 		testkit.TrackAccess(testkit.AccessIn(set, acme.SourceIdentity()), coverage),
 		testkit.AccessCase{
 			Name:  "reference-backed-random-read",
-			Input: acmeAccessFixture(t, encoded),
+			Input: testkit.ReadOnlyReference(mustACMEReference(t, encoded), encoded),
 			Want: testkit.WantAccess(encoded,
 				access.AnyOf(access.RandomRead, access.StableSize),
 				access.AnyOf(access.SequentialRead),
@@ -95,26 +92,13 @@ func TestThirdPartyPluginConformance(t *testing.T) {
 	coverage.VerifyIdentities(t, plugin.NewSet(definition), acme.EncodingIdentity())
 }
 
-func acmeAccessFixture(t testing.TB, encoded []byte) testkit.AccessFixture {
+func mustACMEReference(t testing.TB, encoded []byte) access.Reference {
 	t.Helper()
 	reference, err := acme.Reference(encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testkit.AccessFixtureOf(encoded, func(context.Context) (testkit.AccessTarget, error) {
-		return testkit.NewAccessTarget(
-			reference,
-			func(_ context.Context, value []byte) error {
-				if !bytes.Equal(value, encoded) {
-					return errors.New("ACME fixture seed changed")
-				}
-				return nil
-			},
-			func(context.Context) ([]byte, error) { return append([]byte(nil), encoded...), nil },
-			func(context.Context) ([]string, error) { return nil, nil },
-			func() error { return nil },
-		), nil
-	})
+	return reference
 }
 
 func acmeDocument(t testing.TB, label string, raw bool) metadata.Document {

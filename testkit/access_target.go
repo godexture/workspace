@@ -1,8 +1,10 @@
 package testkit
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,6 +57,27 @@ type accessFixtureState struct {
 // describe the same logical Reference so Plan purity compares identical input.
 func AccessFixtureOf(bytes []byte, open func(context.Context) (AccessTarget, error)) AccessFixture {
 	return AccessFixture{bytes: append([]byte(nil), bytes...), open: open}
+}
+
+// ReadOnlyReference constructs a source fixture whose immutable byte image is
+// already identified by reference. It is useful for content-addressed and
+// value-encoded Provider references that have no external staging residue.
+func ReadOnlyReference(reference access.Reference, value []byte) AccessFixture {
+	expected := append([]byte(nil), value...)
+	return AccessFixtureOf(expected, func(context.Context) (AccessTarget, error) {
+		return NewAccessTarget(
+			reference,
+			func(_ context.Context, seeded []byte) error {
+				if !bytes.Equal(seeded, expected) {
+					return fmt.Errorf("read-only Reference seed = %x, want %x", seeded, expected)
+				}
+				return nil
+			},
+			func(context.Context) ([]byte, error) { return append([]byte(nil), expected...), nil },
+			func(context.Context) ([]string, error) { return nil, nil },
+			func() error { return nil },
+		), nil
+	})
 }
 
 // LocalFile constructs a hermetic local-file Provider fixture. Each scenario
