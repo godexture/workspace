@@ -159,3 +159,44 @@ func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 		}
 	}
 }
+
+// VerifyIdentities fails unless every listed control-plane or executable
+// component belongs to set and completed at least one typed case. It is the
+// explicit coverage gate for trait-only components excluded from the
+// executable population.
+func (c *Coverage) VerifyIdentities(t testing.TB, set plugin.Set, identities ...plugin.Identity) {
+	t.Helper()
+	if c == nil {
+		t.Error("testkit typed coverage: registry is nil")
+		return
+	}
+	c.mu.Lock()
+	executed := make(map[plugin.Identity]int, len(c.executed))
+	for identity, count := range c.executed {
+		executed[identity] = count
+	}
+	c.mu.Unlock()
+	known := make(map[plugin.Identity]struct{})
+	for _, component := range set.Components() {
+		known[component.Identity()] = struct{}{}
+	}
+	seen := make(map[plugin.Identity]struct{}, len(identities))
+	for _, identity := range identities {
+		if identity.IsZero() {
+			t.Error("testkit typed coverage: required identity is empty")
+			continue
+		}
+		if _, duplicate := seen[identity]; duplicate {
+			t.Errorf("testkit typed coverage: required identity %s is repeated", identity)
+			continue
+		}
+		seen[identity] = struct{}{}
+		if _, ok := known[identity]; !ok {
+			t.Errorf("testkit typed coverage: required identity %s is absent from the covered Set", identity)
+			continue
+		}
+		if executed[identity] == 0 {
+			t.Errorf("testkit typed coverage: component %s has no executed typed case", identity)
+		}
+	}
+}

@@ -49,11 +49,15 @@ type lifecycleState struct {
 }
 
 type scenarioCore struct {
-	host    *host.Host
-	job     job.Job
-	state   *lifecycleState
-	finish  func() error
-	cleanup func() error
+	host        *host.Host
+	job         job.Job
+	state       *lifecycleState
+	selected    plugin.Identity
+	purity      func(context.Context) (string, error)
+	inspectPlan func(plan.Plan) error
+	cancelCheck func() error
+	finish      func() error
+	cleanup     func() error
 }
 
 func (s *scenarioCore) close() error {
@@ -189,14 +193,19 @@ func executeCase(t testing.TB, identity plugin.Identity, failureCode string, fac
 	t.Helper()
 	first := planScenario(t, identity, factory, time.Hour)
 	second := planScenario(t, identity, factory, 2*time.Hour)
-	if first.Fingerprint() != second.Fingerprint() {
-		t.Fatalf("Compile purity: Plan fingerprint changed with deadline: %s != %s", first.Fingerprint(), second.Fingerprint())
+	if first.fingerprint != second.fingerprint {
+		t.Fatalf("Compile purity: planning result changed with deadline: %s != %s", first.fingerprint, second.fingerprint)
 	}
 	runCancelled(t, factory)
-	runSuccessful(t, failureCode, factory, first)
+	runSuccessful(t, failureCode, factory, first.plan)
 }
 
-func planScenario(t testing.TB, identity plugin.Identity, factory func() (*scenarioCore, error), timeout time.Duration) plan.Plan {
+type scenarioPlan struct {
+	plan        plan.Plan
+	fingerprint string
+}
+
+func planScenario(t testing.TB, identity plugin.Identity, factory func() (*scenarioCore, error), timeout time.Duration) scenarioPlan {
 	t.Helper()
 	scenario, err := factory()
 	if err != nil {
@@ -213,8 +222,25 @@ func planScenario(t testing.TB, identity plugin.Identity, factory func() (*scena
 	if err != nil {
 		t.Fatalf("testkit Host.Plan: %v", err)
 	}
-	assertSelectedSubject(t, selected, identity)
-	return selected
+	selectedIdentity := identity
+	if !scenario.selected.IsZero() {
+		selectedIdentity = scenario.selected
+	}
+	assertSelectedSubject(t, selected, selectedIdentity)
+	if scenario.inspectPlan != nil {
+		if err := scenario.inspectPlan(selected); err != nil {
+			t.Errorf("testkit Plan inspection: %v", err)
+		}
+	}
+	fingerprint := selected.Fingerprint().String()
+	if scenario.purity != nil {
+		value, purityErr := scenario.purity(ctx)
+		if purityErr != nil {
+			t.Fatalf("testkit planning purity: %v", purityErr)
+		}
+		fingerprint += ":" + value
+	}
+	return scenarioPlan{plan: selected, fingerprint: fingerprint}
 }
 
 func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
@@ -241,7 +267,14 @@ func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
 	if len(result.Cleanup) != 0 {
 		t.Errorf("testkit cancellation cleanup failures = %v", result.Cleanup)
 	}
-	_ = prepared.Close()
+	if err := prepared.Close(); err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("testkit cancellation Prepared.Close: %v", err)
+	}
+	if scenario.cancelCheck != nil {
+		if err := scenario.cancelCheck(); err != nil {
+			t.Errorf("testkit cancellation contract: %v", err)
+		}
+	}
 }
 
 func runSuccessful(t testing.TB, failureCode string, factory func() (*scenarioCore, error), planned plan.Plan) {
@@ -261,6 +294,11 @@ func runSuccessful(t testing.TB, failureCode string, factory func() (*scenarioCo
 	}
 	if prepared.Plan().Fingerprint() != planned.Fingerprint() {
 		t.Fatalf("Prepare selected %s, Plan selected %s", prepared.Plan().Fingerprint(), planned.Fingerprint())
+	}
+	if scenario.inspectPlan != nil {
+		if err := scenario.inspectPlan(prepared.Plan()); err != nil {
+			t.Errorf("testkit prepared Plan inspection: %v", err)
+		}
 	}
 	result, runErr := prepared.Run(context.Background())
 	closeErr := prepared.Close()
