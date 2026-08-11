@@ -3,6 +3,7 @@ package testkit
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,13 +13,93 @@ import (
 // Coverage records identities actually passed through the common typed-case
 // runner. It is explicit test state, not a process-global registration hook.
 type Coverage struct {
-	mu       sync.Mutex
-	executed map[plugin.Identity]int
+	mu        sync.Mutex
+	executed  map[plugin.Identity]int
+	uncovered map[string]string
 }
 
 // NewCoverage creates an empty typed-case execution registry.
 func NewCoverage() *Coverage {
-	return &Coverage{executed: make(map[plugin.Identity]int)}
+	return &Coverage{
+		executed:  make(map[plugin.Identity]int),
+		uncovered: make(map[string]string),
+	}
+}
+
+// UncoveredContract identifies one conformance contract that has an explicit
+// future owner instead of a helper or executed case in the current milestone.
+type UncoveredContract struct {
+	Identity  string
+	Milestone string
+}
+
+// AssignUncovered records one intentionally uncovered contract and the
+// milestone responsible for closing it. Empty and repeated identities are
+// rejected so absence cannot silently masquerade as an assignment.
+func (c *Coverage) AssignUncovered(identity, milestone string) error {
+	identity = strings.TrimSpace(identity)
+	milestone = strings.TrimSpace(milestone)
+	if c == nil {
+		return fmt.Errorf("testkit typed coverage: nil registry cannot assign uncovered contract %q", identity)
+	}
+	if identity == "" {
+		return fmt.Errorf("testkit typed coverage: uncovered contract identity is required")
+	}
+	if milestone == "" {
+		return fmt.Errorf("testkit typed coverage: uncovered contract %s has no responsible milestone", identity)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uncovered == nil {
+		c.uncovered = make(map[string]string)
+	}
+	if assigned, exists := c.uncovered[identity]; exists {
+		return fmt.Errorf("testkit typed coverage: uncovered contract %s is already assigned to %s", identity, assigned)
+	}
+	c.uncovered[identity] = milestone
+	return nil
+}
+
+// Uncovered returns assigned gaps in stable contract-identity order.
+func (c *Coverage) Uncovered() []UncoveredContract {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	result := make([]UncoveredContract, 0, len(c.uncovered))
+	for identity, milestone := range c.uncovered {
+		result = append(result, UncoveredContract{Identity: identity, Milestone: milestone})
+	}
+	c.mu.Unlock()
+	sort.Slice(result, func(left, right int) bool {
+		return result[left].Identity < result[right].Identity
+	})
+	return result
+}
+
+// VerifyComplete is the final-state gate used when every public conformance
+// contract must have a helper and an executed case. Milestone-local tests may
+// inspect Uncovered instead while their assigned gaps intentionally remain.
+func (c *Coverage) VerifyComplete(t testing.TB) {
+	t.Helper()
+	if err := c.completionError(); err != nil {
+		t.Error(err)
+	}
+}
+
+func (c *Coverage) completionError() error {
+	if c == nil {
+		return fmt.Errorf("testkit typed coverage: registry is nil")
+	}
+	gaps := c.Uncovered()
+	if len(gaps) == 0 {
+		return nil
+	}
+	values := make([]string, len(gaps))
+	for index, gap := range gaps {
+		values[index] = gap.Identity + " (" + gap.Milestone + ")"
+	}
+	return fmt.Errorf("testkit typed coverage: uncovered contracts remain: %s", strings.Join(values, ", "))
 }
 
 // Track returns an otherwise identical Subject whose completed cases are
@@ -44,6 +125,10 @@ func (c *Coverage) record(identity plugin.Identity) {
 // least one typed case, and every recorded identity belongs to set.
 func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	t.Helper()
+	if c == nil {
+		t.Error("testkit typed coverage: registry is nil")
+		return
+	}
 	c.mu.Lock()
 	executed := make(map[plugin.Identity]int, len(c.executed))
 	for identity, count := range c.executed {
