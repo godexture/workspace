@@ -6,20 +6,85 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/buffer"
+	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
-	"github.com/godexture/godec/plugin/pcm/linear"
-	waveplugin "github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/resource"
 )
+
+type (
+	spoolPluginID struct{}
+	spoolPassID   struct{}
+	spoolFormatID struct{}
+	spoolOperator struct {
+		shape     flow.Shape
+		buffers   *buffer.Allocator
+		finalized bool
+		flushed   bool
+	}
+)
+
+var spoolInput = []byte("0000payload")
+var spoolPatch = []byte("SIZE")
+
+func (o *spoolOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (*spoolOperator) Close() error        { return nil }
+
+func (o *spoolOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
+	payload := input.Take().Value()
+	write, err := access.Append(payload)
+	if err != nil {
+		payload.Release()
+		return err
+	}
+	item := flow.NewInput(write, access.Writes())
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (o *spoolOperator) Finalize(context.Context) error {
+	o.finalized = true
+	return nil
+}
+
+func (o *spoolOperator) Flush(ctx context.Context, output flow.Emitter[access.Write]) error {
+	if !o.finalized {
+		return errors.New("positioned fixture must be finalized before flush")
+	}
+	if o.flushed {
+		return nil
+	}
+	payload, err := o.buffers.FromBytes(spoolPatch, 1)
+	if err != nil {
+		return err
+	}
+	write, err := access.Patch(0, payload)
+	if err != nil {
+		payload.Release()
+		return err
+	}
+	item := flow.NewInput(write, access.Writes())
+	if err := output.Emit(ctx, item); err != nil {
+		item.Drop()
+		return err
+	}
+	o.flushed = true
+	return nil
+}
 
 type sequentialOutputState struct {
 	mu          sync.Mutex
@@ -90,25 +155,19 @@ func (s *sequentialOutputSession) Close() error {
 	return nil
 }
 
-func TestWAVEOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T) {
+func TestPositionedOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T) {
 	directory := t.TempDir()
-	inputPath := filepath.Join(directory, "input.pcm")
-	directPath := filepath.Join(directory, "direct.wav")
-	payload := []byte{
-		0x01, 0x00, 0xff, 0x7f,
-		0xff, 0xff, 0x00, 0x80,
-		0x34, 0x12, 0xcc, 0xed,
-		0x00, 0x00, 0x01, 0x00,
-	}
-	if err := os.WriteFile(inputPath, payload, 0o600); err != nil {
+	inputPath := filepath.Join(directory, "input.bin")
+	directPath := filepath.Join(directory, "direct.bin")
+	if err := os.WriteFile(inputPath, spoolInput, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	policy := spoolPolicy(t, access.MemorySpool, 1<<20)
-	directHost, err := host.New(host.Plugins(linear.Set().Add(Plugin()).Add(waveplugin.Plugin())))
+	directHost, err := host.New(host.Plugins(plugin.NewSet(Plugin(), spoolFixture())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	directRequest := waveOutputJob(t, inputPath, fileReference(t, directPath), policy)
+	directRequest := spoolOutputJob(t, inputPath, fileReference(t, directPath), policy)
 	directPlan, err := directHost.Plan(t.Context(), directRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -118,18 +177,22 @@ func TestWAVEOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T
 	}
 	result, err := directHost.Run(t.Context(), directRequest)
 	if err != nil || !result.Succeeded() {
-		t.Fatalf("direct WAVE result = %#v, %v", result, err)
+		t.Fatalf("direct positioned result = %#v, %v", result, err)
 	}
 	direct, err := os.ReadFile(directPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	want := append(append([]byte(nil), spoolPatch...), spoolInput[len(spoolPatch):]...)
+	if !bytes.Equal(direct, want) {
+		t.Fatalf("direct positioned output = %q, want %q", direct, want)
 	}
 
 	for _, storage := range []access.SpoolStorage{access.MemorySpool, access.DiskSpool} {
 		t.Run(spoolStorageLabel(storage), func(t *testing.T) {
 			state := &sequentialOutputState{output: []byte("old"), partialSize: 7}
 			instance := sequentialOutputHost(t, state)
-			request := waveOutputJob(t, inputPath, sequenceReference(t), spoolPolicy(t, storage, 1<<20))
+			request := spoolOutputJob(t, inputPath, sequenceReference(t), spoolPolicy(t, storage, 1<<20))
 			prepared, err := instance.Prepare(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
@@ -142,7 +205,7 @@ func TestWAVEOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T
 			}
 			result, err := prepared.Run(t.Context())
 			if err != nil || !result.Succeeded() {
-				t.Fatalf("spooled WAVE result = %#v, %v", result, err)
+				t.Fatalf("spooled positioned result = %#v, %v", result, err)
 			}
 			state.mu.Lock()
 			output := append([]byte(nil), state.output...)
@@ -150,7 +213,7 @@ func TestWAVEOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T
 			closed := state.closed
 			state.mu.Unlock()
 			if !bytes.Equal(output, direct) {
-				t.Fatal("spooled WAVE differs from direct random-write output")
+				t.Fatal("spooled positioned output differs from direct random-write output")
 			}
 			if len(selected) != 1 || selected[0] != access.SequentialWrite || closed != 1 {
 				t.Fatalf("underlying selection/close = %v/%d", selected, closed)
@@ -159,10 +222,10 @@ func TestWAVEOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *testing.T
 	}
 }
 
-func TestWAVESpoolFailuresDoNotPublishSequentialTarget(t *testing.T) {
+func TestPositionedSpoolFailuresDoNotPublishSequentialTarget(t *testing.T) {
 	directory := t.TempDir()
-	inputPath := filepath.Join(directory, "input.pcm")
-	if err := os.WriteFile(inputPath, []byte{1, 0, 2, 0, 3, 0, 4, 0}, 0o600); err != nil {
+	inputPath := filepath.Join(directory, "input.bin")
+	if err := os.WriteFile(inputPath, spoolInput, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
@@ -171,7 +234,7 @@ func TestWAVESpoolFailuresDoNotPublishSequentialTarget(t *testing.T) {
 		configure func(*sequentialOutputState)
 		cancel    bool
 	}{
-		{name: "quota", maximum: 64},
+		{name: "quota", maximum: 8},
 		{name: "final copy", maximum: 1 << 20, configure: func(state *sequentialOutputState) { state.writeErr = errors.New("copy failed") }},
 		{name: "commit", maximum: 1 << 20, configure: func(state *sequentialOutputState) { state.commitErr = errors.New("commit failed") }},
 		{name: "cancel", maximum: 1 << 20, cancel: true},
@@ -183,7 +246,7 @@ func TestWAVESpoolFailuresDoNotPublishSequentialTarget(t *testing.T) {
 				test.configure(state)
 			}
 			instance := sequentialOutputHost(t, state)
-			request := waveOutputJob(t, inputPath, sequenceReference(t), spoolPolicy(t, access.MemorySpool, test.maximum))
+			request := spoolOutputJob(t, inputPath, sequenceReference(t), spoolPolicy(t, access.MemorySpool, test.maximum))
 			prepared, err := instance.Prepare(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
@@ -225,7 +288,7 @@ func sequentialOutputHost(t *testing.T, state *sequentialOutputState) *host.Host
 		plugin.Descriptor{DisplayName: "Sequential fixture sink"},
 		access.Sink("sequence", capabilities, access.AtomicReplace, acquire),
 	)
-	set := linear.Set().Add(Plugin()).Add(waveplugin.Plugin()).Override(SinkIdentity(), sink)
+	set := plugin.NewSet(Plugin(), spoolFixture()).Override(SinkIdentity(), sink)
 	instance, err := host.New(host.Plugins(set))
 	if err != nil {
 		t.Fatal(err)
@@ -233,24 +296,11 @@ func sequentialOutputHost(t *testing.T, state *sequentialOutputState) *host.Host
 	return instance
 }
 
-func waveOutputJob(t *testing.T, inputPath string, outputReference access.Reference, policy job.Policy) job.Job {
+func spoolOutputJob(t *testing.T, inputPath string, outputReference access.Reference, policy job.Policy) job.Job {
 	t.Helper()
-	patch := config.NewPatch().
-		SetText("rate", strconv.Itoa(48_000)).
-		SetText("validBits", "16").
-		SetText("layout", "stereo").
-		SetText("endian", "little").
-		SetText("chunkSamples", "2")
 	graph, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("reader", linear.ReaderIdentity(), patch),
-			job.NewNode("parser", linear.ParserIdentity(), patch),
-			job.NewNode("mux", waveplugin.MuxerIdentity(), config.NewPatch()),
-		},
-		[]job.Edge{
-			job.Connect(job.At("reader", "chunks"), job.At("parser", "chunks")),
-			job.Connect(job.At("parser", "packets"), job.At("mux", "packets")),
-		},
+		[]job.Node{job.NewNode("positioned", plugin.IdentityOf[spoolPassID](), config.NewPatch())},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +318,54 @@ func waveOutputJob(t *testing.T, inputPath string, outputReference access.Refere
 		t.Fatal(err)
 	}
 	return request
+}
+
+func spoolFixture() plugin.Definition {
+	shape := flow.NewShape(
+		[]flow.Port{flow.In("bytes", access.Bytes())},
+		[]flow.Port{flow.Out("writes", access.Writes())},
+	)
+	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
+		Shape: plugin.StaticShape[lifecycleConfig](shape),
+		Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[lifecyclePlan, stream.Descriptor], error) {
+			input, ok := inputs.One("bytes")
+			if !ok {
+				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{
+					plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("spool.input")),
+				}}, nil
+			}
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			if err != nil {
+				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
+			}
+			return plugin.Compiled[lifecyclePlan, stream.Descriptor]{
+				Plan:         lifecyclePlan{shape: shape.Clone()},
+				Outputs:      flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
+				Resources:    resource.Request{Memory: resource.Bytes(len(spoolPatch))},
+				Finalization: plugin.RequiresFinalization,
+			}, nil
+		},
+		Open: func(ctx plugin.OpenContext, _ lifecyclePlan) (flow.Operator, error) {
+			if ctx.Buffers() == nil {
+				return nil, errors.New("positioned fixture requires a payload allocator")
+			}
+			return &spoolOperator{shape: shape.Clone(), buffers: ctx.Buffers()}, nil
+		},
+		Finalizes: true,
+	}
+	formatValue, err := mediaformat.Define[spoolFormatID](nil)
+	if err != nil {
+		panic(err)
+	}
+	component := plugin.NewComponent[spoolPassID](
+		plugin.Descriptor{DisplayName: "Positioned write fixture"},
+		lifecycleSchema(),
+		plugin.WithSpec(spec),
+		plugin.WithProcessor("bytes", access.Bytes(), "writes", access.Writes()),
+		mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))),
+		mediaformat.Write(formatValue, access.AnyOf(access.RandomWrite)),
+	)
+	return plugin.Define[spoolPluginID](plugin.Descriptor{DisplayName: "Positioned write fixture", Version: "1"}, component)
 }
 
 func spoolPolicy(t *testing.T, storage access.SpoolStorage, maximum resource.Bytes) job.Policy {
