@@ -86,6 +86,16 @@ func ChunkInput(description sample.Description, values []Chunk, options ...Strea
 	if err != nil {
 		return Fixture[packet.Chunk]{}
 	}
+	return ChunkInputFor(descriptor, values)
+}
+
+// ChunkInputFor builds container chunks for an explicitly supplied
+// descriptor. It supports non-audio third-party Formats without inventing PCM
+// properties while retaining the same ownership accounting as ChunkInput.
+func ChunkInputFor(descriptor stream.Descriptor, values []Chunk) Fixture[packet.Chunk] {
+	if !descriptor.Valid() || descriptor.Schema() != mediaformat.Chunks().Identity() {
+		return Fixture[packet.Chunk]{}
+	}
 	allocator, err := buffer.NewAllocator(payloadLimit(chunkPayloads(values)))
 	if err != nil {
 		return Fixture[packet.Chunk]{}
@@ -109,6 +119,15 @@ func ChunkInput(description sample.Description, values []Chunk, options ...Strea
 func PacketInput(description sample.Description, values []Packet, options ...StreamOption) Fixture[packet.Packet] {
 	descriptor, err := mediaDescriptor(codec.Packets().Identity(), description, options...)
 	if err != nil {
+		return Fixture[packet.Packet]{}
+	}
+	return PacketInputFor(descriptor, values)
+}
+
+// PacketInputFor builds codec packets for an explicitly supplied descriptor.
+// It keeps packet ownership in testkit without assuming PCM properties.
+func PacketInputFor(descriptor stream.Descriptor, values []Packet) Fixture[packet.Packet] {
+	if !descriptor.Valid() || descriptor.Schema() != codec.Packets().Identity() {
 		return Fixture[packet.Packet]{}
 	}
 	allocator, err := buffer.NewAllocator(payloadLimit(packetPayloads(values)))
