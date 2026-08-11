@@ -1,15 +1,13 @@
-package wave
+package integration_test
 
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
-	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -21,13 +19,12 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
-	mediatag "github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
-	fileplugin "github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/pcm/linear"
+	"github.com/godexture/godec/plugin/wave"
+	"github.com/godexture/godec/standard"
 )
 
 type waveDecoyPluginID struct{}
@@ -71,11 +68,16 @@ func runWAVEFileToRawPCM(t *testing.T, preset job.Preset, automatic bool) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.wav")
 	outputPath := filepath.Join(directory, "output.pcm")
-	if err := os.WriteFile(inputPath, testWAVE(payload, 2, 48_000, testChunk{id: "JUNK", payload: []byte{0xff}}), 0o600); err != nil {
+	inputBytes := riffFile(
+		riffChunk("fmt ", pcmFormat(2, 48_000, 16), 0),
+		riffChunk("JUNK", []byte{0xff}, 0),
+		riffChunk("data", payload, 0),
+	)
+	if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	instance, err := host.New(
-		host.Plugins(waveTestSet()),
+		host.Plugins(standard.Set()),
 		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 	)
 	if err != nil {
@@ -98,7 +100,7 @@ func runWAVEFileToRawPCM(t *testing.T, preset job.Preset, automatic bool) {
 	}
 	if !automatic {
 		nodes = append([]job.Node{
-			job.NewNode("demux", DemuxerIdentity(), config.NewPatch()),
+			job.NewNode("demux", wave.DemuxerIdentity(), config.NewPatch()),
 			job.NewNode("parser", linear.ParserIdentity(), patch),
 		}, nodes...)
 		edges = append([]job.Edge{
@@ -110,11 +112,11 @@ func runWAVEFileToRawPCM(t *testing.T, preset job.Preset, automatic bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := job.InputFromReference(fileReference(t, inputPath))
+	input, err := job.InputFromReference(localFileReference(t, inputPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := job.OutputToReference(fileReference(t, outputPath))
+	output, err := job.OutputToReference(localFileReference(t, outputPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +170,7 @@ func TestRawPCMToWAVEFileEndToEnd(t *testing.T) {
 			if err := os.WriteFile(inputPath, payload, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			set := waveTestSet()
+			set := standard.Set()
 			instance, err := host.New(
 				host.Plugins(set),
 				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
@@ -186,7 +188,7 @@ func TestRawPCMToWAVEFileEndToEnd(t *testing.T) {
 				[]job.Node{
 					job.NewNode("reader", linear.ReaderIdentity(), patch),
 					job.NewNode("parser", linear.ParserIdentity(), patch),
-					job.NewNode("mux", MuxerIdentity(), config.NewPatch()),
+					job.NewNode("mux", wave.MuxerIdentity(), config.NewPatch()),
 				},
 				[]job.Edge{
 					job.Connect(job.At("reader", "chunks"), job.At("parser", "chunks")),
@@ -196,11 +198,11 @@ func TestRawPCMToWAVEFileEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			input, err := job.InputFromReference(fileReference(t, inputPath))
+			input, err := job.InputFromReference(localFileReference(t, inputPath))
 			if err != nil {
 				t.Fatal(err)
 			}
-			output, err := job.OutputToReference(fileReference(t, outputPath))
+			output, err := job.OutputToReference(localFileReference(t, outputPath))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,16 +227,7 @@ func TestRawPCMToWAVEFileEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			inspected, err := inspectHeader(context.Background(), memoryRandom(encoded))
-			if err != nil {
-				t.Fatal(err)
-			}
-			start := int(inspected.dataOffset)
-			end := start + int(inspected.dataSize)
-			want := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian}
-			if inspected.rf64 || inspected.description != want || !bytes.Equal(encoded[start:end], payload) {
-				t.Fatalf("WAVE output = header %#v, payload %v", inspected, encoded[start:end])
-			}
+			assertPCMRIFF(t, encoded, pcmFormat(2, 48_000, 16), payload)
 		})
 	}
 }
@@ -246,16 +239,16 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 		0x34, 0x12, 0xcc, 0xed,
 		0x00, 0x00, 0x01, 0x00,
 	}
-	beforeFormat := waveTestChunk(t, "PRE!", []byte{1, 2, 3}, 0x91)
-	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(2, 48_000, 16), 0)
-	infoChunk := infoTestList(t,
-		infoTestChunk(t, "IART", []byte("First\x00"), 0),
-		infoTestChunk(t, "IART", []byte("Second\x00"), 0xa5),
-		infoTestChunk(t, "XTRA", []byte{4, 5, 6}, 0xcc),
+	beforeFormat := riffChunk("PRE!", []byte{1, 2, 3}, 0x91)
+	formatChunk := riffChunk("fmt ", pcmFormat(2, 48_000, 16), 0)
+	infoChunk := riffInfo(
+		riffChunk("IART", []byte("First\x00"), 0),
+		riffChunk("IART", []byte("Second\x00"), 0xa5),
+		riffChunk("XTRA", []byte{4, 5, 6}, 0xcc),
 	)
-	dataChunk := waveTestChunk(t, tagDATA, payload, 0)
-	afterData := waveTestChunk(t, "POST", []byte{7, 8, 9}, 0xb3)
-	inputBytes := waveTestRIFF(t, beforeFormat, formatChunk, infoChunk, dataChunk, afterData)
+	dataChunk := riffChunk("data", payload, 0)
+	afterData := riffChunk("POST", []byte{7, 8, 9}, 0xb3)
+	inputBytes := riffFile(beforeFormat, formatChunk, infoChunk, dataChunk, afterData)
 
 	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
 		t.Run(preset.String(), func(t *testing.T) {
@@ -267,7 +260,7 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			}
 			var decoyCompiles atomic.Int32
 			decoy := waveDecoyParser(&decoyCompiles)
-			set := waveTestSet(plugin.Define[waveDecoyPluginID](plugin.Descriptor{DisplayName: "other codec", Version: "1"}, decoy)).
+			set := standard.Set().Add(plugin.Define[waveDecoyPluginID](plugin.Descriptor{DisplayName: "other codec", Version: "1"}, decoy)).
 				AddDeclaration(codec.Bind(mediaformat.NewTag("fixture", "other"), codec.New(linear.DecoderIdentity()), codec.NewParser(decoy.Identity())))
 			instance, err := host.New(
 				host.Plugins(set),
@@ -284,10 +277,10 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 				SetText("chunkSamples", "2")
 			requested, err := job.NewGraph(
 				[]job.Node{
-					job.NewNode("demux", DemuxerIdentity(), config.NewPatch()),
+					job.NewNode("demux", wave.DemuxerIdentity(), config.NewPatch()),
 					job.NewNode("decoder", linear.DecoderIdentity(), patch),
 					job.NewNode("encoder", linear.EncoderIdentity(), patch),
-					job.NewNode("mux", MuxerIdentity(), config.NewPatch()),
+					job.NewNode("mux", wave.MuxerIdentity(), config.NewPatch()),
 				},
 				[]job.Edge{
 					job.Connect(job.At("demux", "chunks"), job.At("decoder", "packets")),
@@ -298,11 +291,11 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			input, err := job.InputFromReference(fileReference(t, inputPath))
+			input, err := job.InputFromReference(localFileReference(t, inputPath))
 			if err != nil {
 				t.Fatal(err)
 			}
-			output, err := job.OutputToReference(fileReference(t, outputPath))
+			output, err := job.OutputToReference(localFileReference(t, outputPath))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -333,16 +326,11 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(encoded), infoTestResolver(t))
-			if err != nil {
-				t.Fatal(err)
+			chunks := parseRIFF(t, encoded)
+			if !bytes.Equal(chunkPayload(t, chunks, "data"), payload) {
+				t.Fatalf("round-trip PCM = %x, want %x", chunkPayload(t, chunks, "data"), payload)
 			}
-			start := int(inspected.dataOffset)
-			end := start + int(inspected.dataSize)
-			if !bytes.Equal(encoded[start:end], payload) {
-				t.Fatalf("round-trip PCM = %x, want %x", encoded[start:end], payload)
-			}
-			got := restoredWaveChunks(inspected.metadata)
+			got := preservedChunks(chunks)
 			want := [][]byte{beforeFormat, infoChunk, afterData}
 			if len(got) != len(want) {
 				t.Fatalf("round-trip metadata chunks = %x", got)
@@ -388,7 +376,7 @@ func assertAutomaticWAVEReadPlan(t *testing.T, value plan.Plan) {
 	}
 	foundDemux := false
 	for _, node := range value.Nodes() {
-		if node.Component != DemuxerIdentity().String() {
+		if node.Component != wave.DemuxerIdentity().String() {
 			continue
 		}
 		foundDemux = true
@@ -435,20 +423,6 @@ func assertTagBoundParser(t testing.TB, value plan.Plan, decoy plugin.Identity) 
 	}
 }
 
-func waveTestSet(extras ...plugin.Definition) plugin.Set {
-	result := linear.Set().Add(fileplugin.Plugin()).Add(Plugin())
-	for _, extra := range extras {
-		result = result.Add(extra)
-	}
-	result = result.
-		AddDeclaration(InfoBinding()).
-		AddDeclaration(codec.Bind(PCMTag(), codec.New(linear.DecoderIdentity()), codec.NewParser(linear.ParserIdentity())))
-	for _, declaration := range mediatag.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	return result
-}
-
 func waveDecoyParser(compiles *atomic.Int32) plugin.Component {
 	shape := flow.NewShape(
 		[]flow.Port{flow.In("chunks", mediaformat.Chunks())},
@@ -489,19 +463,103 @@ func waveDecoyParser(compiles *atomic.Int32) plugin.Component {
 	)
 }
 
-func fileReference(t *testing.T, path string) access.Reference {
+type riffTestChunk struct {
+	id      string
+	payload []byte
+	raw     []byte
+}
+
+func riffChunk(identity string, payload []byte, padding byte) []byte {
+	if len(identity) != 4 {
+		panic("RIFF chunk identity must contain four bytes")
+	}
+	result := make([]byte, 8+len(payload)+len(payload)&1)
+	copy(result[:4], identity)
+	binary.LittleEndian.PutUint32(result[4:8], uint32(len(payload)))
+	copy(result[8:], payload)
+	if len(payload)&1 != 0 {
+		result[len(result)-1] = padding
+	}
+	return result
+}
+
+func riffInfo(fields ...[]byte) []byte {
+	payload := []byte("INFO")
+	for _, field := range fields {
+		payload = append(payload, field...)
+	}
+	return riffChunk("LIST", payload, 0)
+}
+
+func riffFile(chunks ...[]byte) []byte {
+	body := []byte("WAVE")
+	for _, chunk := range chunks {
+		body = append(body, chunk...)
+	}
+	result := make([]byte, 8+len(body))
+	copy(result[:4], "RIFF")
+	binary.LittleEndian.PutUint32(result[4:8], uint32(len(body)))
+	copy(result[8:], body)
+	return result
+}
+
+func parseRIFF(t testing.TB, value []byte) []riffTestChunk {
 	t.Helper()
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		t.Fatal(err)
+	if len(value) < 12 || string(value[:4]) != "RIFF" || string(value[8:12]) != "WAVE" || int(binary.LittleEndian.Uint32(value[4:8])) != len(value)-8 {
+		t.Fatalf("invalid RIFF image: size=%d", len(value))
 	}
-	value := filepath.ToSlash(absolute)
-	if runtime.GOOS == "windows" && !strings.HasPrefix(value, "/") {
-		value = "/" + value
+	var result []riffTestChunk
+	for offset := 12; offset < len(value); {
+		if len(value)-offset < 8 {
+			t.Fatalf("truncated RIFF chunk header at %d", offset)
+		}
+		size := int(binary.LittleEndian.Uint32(value[offset+4 : offset+8]))
+		end := offset + 8 + size
+		padded := end + size&1
+		if end < offset || padded > len(value) {
+			t.Fatalf("invalid RIFF chunk %q size %d at %d", value[offset:offset+4], size, offset)
+		}
+		result = append(result, riffTestChunk{
+			id:      string(value[offset : offset+4]),
+			payload: append([]byte(nil), value[offset+8:end]...),
+			raw:     append([]byte(nil), value[offset:padded]...),
+		})
+		offset = padded
 	}
-	reference, err := access.Parse((&url.URL{Scheme: "file", Path: value}).String())
-	if err != nil {
-		t.Fatal(err)
+	return result
+}
+
+func chunkPayload(t testing.TB, chunks []riffTestChunk, identity string) []byte {
+	t.Helper()
+	for _, chunk := range chunks {
+		if chunk.id == identity {
+			return chunk.payload
+		}
 	}
-	return reference
+	t.Fatalf("RIFF chunk %q is absent", identity)
+	return nil
+}
+
+func preservedChunks(chunks []riffTestChunk) [][]byte {
+	result := make([][]byte, 0, len(chunks))
+	for _, chunk := range chunks {
+		switch chunk.id {
+		case "JUNK", "fmt ", "data":
+			continue
+		default:
+			result = append(result, chunk.raw)
+		}
+	}
+	return result
+}
+
+func assertPCMRIFF(t testing.TB, encoded, format, payload []byte) {
+	t.Helper()
+	chunks := parseRIFF(t, encoded)
+	if got := chunkPayload(t, chunks, "fmt "); !bytes.Equal(got, format) {
+		t.Fatalf("WAVE format = %x, want %x", got, format)
+	}
+	if got := chunkPayload(t, chunks, "data"); !bytes.Equal(got, payload) {
+		t.Fatalf("WAVE payload = %x, want %x", got, payload)
+	}
 }
