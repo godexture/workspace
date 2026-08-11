@@ -1,4 +1,4 @@
-package wave
+package integration_test
 
 import (
 	"bytes"
@@ -23,7 +23,9 @@ import (
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/linear"
+	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/resource"
+	"github.com/godexture/godec/standard"
 )
 
 const replayBlockSize = 8
@@ -146,7 +148,7 @@ func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) 
 	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
 		t.Run(preset.String(), func(t *testing.T) {
 			state := &replaySourceState{payload: append([]byte(nil), payload...)}
-			set := waveTestSet(replaySourcePlugin(state))
+			set := standard.Set().Add(replaySourcePlugin(state))
 			instance, err := host.New(
 				host.Plugins(set),
 				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
@@ -158,7 +160,7 @@ func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) 
 			outputPath := filepath.Join(directory, "output.pcm")
 			inputReference, _ := access.Parse("sequence:input")
 			input, _ := job.InputFromReference(inputReference)
-			output, _ := job.OutputToReference(fileReference(t, outputPath))
+			output, _ := job.OutputToReference(localFileReference(t, outputPath))
 			request := automaticPCMRequest(t, preset, input, output)
 			prepared, err := instance.Prepare(t.Context(), request)
 			if err != nil {
@@ -190,10 +192,10 @@ func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) 
 }
 
 func TestSequentialWAVEMatchDoesNotFallBackToRaw(t *testing.T) {
-	payload := testWAVE([]byte{1, 0, 2, 0}, 1, 48_000)
+	payload := riffWAVE([]byte{1, 0, 2, 0}, 1, 48_000, 16)
 	state := &replaySourceState{payload: payload}
 	instance, err := host.New(
-		host.Plugins(waveTestSet(replaySourcePlugin(state))),
+		host.Plugins(standard.Set().Add(replaySourcePlugin(state))),
 		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 	)
 	if err != nil {
@@ -202,11 +204,11 @@ func TestSequentialWAVEMatchDoesNotFallBackToRaw(t *testing.T) {
 	inputReference, _ := access.Parse("sequence:input")
 	input, _ := job.InputFromReference(inputReference)
 	outputPath := filepath.Join(t.TempDir(), "output.pcm")
-	output, _ := job.OutputToReference(fileReference(t, outputPath))
+	output, _ := job.OutputToReference(localFileReference(t, outputPath))
 	request := automaticPCMRequest(t, job.Fast, input, output)
 	_, err = instance.Prepare(t.Context(), request)
 	items := host.Diagnostics(err)
-	if len(items) != 1 || items[0].Code != "bind.capability-unsatisfied" || items[0].Detail["format"] != WAVE().Identity().String() {
+	if len(items) != 1 || items[0].Code != "bind.capability-unsatisfied" || items[0].Detail["format"] != wave.WAVE().Identity().String() {
 		t.Fatalf("diagnostic = %#v, error=%v", items, err)
 	}
 	if state.acquired.Load() != 1 || state.read.Load() != 12 || state.closed.Load() != 1 {
@@ -220,7 +222,7 @@ func TestSequentialWAVEMatchDoesNotFallBackToRaw(t *testing.T) {
 func TestSequentialRawFallbackPlanClosesProbeSession(t *testing.T) {
 	state := &replaySourceState{payload: []byte("0123456789abcdef")}
 	instance, err := host.New(
-		host.Plugins(waveTestSet(replaySourcePlugin(state))),
+		host.Plugins(standard.Set().Add(replaySourcePlugin(state))),
 		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 	)
 	if err != nil {
@@ -229,7 +231,7 @@ func TestSequentialRawFallbackPlanClosesProbeSession(t *testing.T) {
 	inputReference, _ := access.Parse("sequence:input")
 	input, _ := job.InputFromReference(inputReference)
 	outputPath := filepath.Join(t.TempDir(), "output.pcm")
-	output, _ := job.OutputToReference(fileReference(t, outputPath))
+	output, _ := job.OutputToReference(localFileReference(t, outputPath))
 	planned, err := instance.Plan(t.Context(), automaticPCMRequest(t, job.Fast, input, output))
 	if err != nil {
 		t.Fatal(err)
@@ -251,16 +253,16 @@ func TestMalformedWAVEMatchDoesNotFallBackToRaw(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance, err := host.New(
-		host.Plugins(waveTestSet()),
+		host.Plugins(standard.Set()),
 		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, _ := job.InputFromReference(fileReference(t, inputPath))
-	output, _ := job.OutputToReference(fileReference(t, outputPath))
+	input, _ := job.InputFromReference(localFileReference(t, inputPath))
+	output, _ := job.OutputToReference(localFileReference(t, outputPath))
 	_, err = instance.Prepare(t.Context(), automaticPCMRequest(t, job.Fast, input, output))
-	if !errors.Is(err, ErrMalformed) {
+	if !errors.Is(err, wave.ErrMalformed) {
 		t.Fatalf("malformed WAVE error = %v", err)
 	}
 	if strings.Contains(err.Error(), "format.fallback") {
