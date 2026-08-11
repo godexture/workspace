@@ -78,7 +78,20 @@ type recorder[T any] interface {
 // the sink can release every payload before Host verifies its grants.
 type Expectation[T any] struct {
 	newRecorder func() recorder[T]
-	failureCode string
+	failure     failureExpectation
+}
+
+type failureStage uint8
+
+const (
+	planFailure failureStage = iota + 1
+	runFailure
+)
+
+type failureExpectation struct {
+	stage  failureStage
+	code   string
+	target error
 }
 
 // WantValues compares projected logical values in order. snapshot must copy
@@ -98,11 +111,45 @@ func EqualValues[T comparable](want ...T) Expectation[T] {
 // Fails expects execution to report diagnostic code. Cleanup and ownership
 // accounting must still succeed.
 func Fails[T any](code string) Expectation[T] {
-	return Expectation[T]{failureCode: code, newRecorder: func() recorder[T] { return &discardRecorder[T]{} }}
+	return Expectation[T]{
+		failure:     failureExpectation{stage: runFailure, code: code},
+		newRecorder: func() recorder[T] { return &discardRecorder[T]{} },
+	}
+}
+
+// WantPlanError expects Host.Plan to reject the fixture with target. It is
+// intended for control-plane validation such as malformed Format headers.
+func WantPlanError[T any](target error) Expectation[T] {
+	return Expectation[T]{
+		failure:     failureExpectation{stage: planFailure, target: target},
+		newRecorder: func() recorder[T] { return &discardRecorder[T]{} },
+	}
+}
+
+// WantRunError expects execution to fail with target after planning and
+// preparation succeeded.
+func WantRunError[T any](target error) Expectation[T] {
+	return Expectation[T]{
+		failure:     failureExpectation{stage: runFailure, target: target},
+		newRecorder: func() recorder[T] { return &discardRecorder[T]{} },
+	}
 }
 
 func (e Expectation[T]) valid() bool {
-	return e.newRecorder != nil && (e.failureCode == "" || e.failureCode == strings.TrimSpace(e.failureCode))
+	if e.newRecorder == nil {
+		return false
+	}
+	failure := e.failure
+	if failure.stage == 0 {
+		return failure.code == "" && failure.target == nil
+	}
+	if failure.stage != planFailure && failure.stage != runFailure {
+		return false
+	}
+	if failure.code != "" {
+		return failure.target == nil && failure.code == strings.TrimSpace(failure.code)
+	}
+	return failure.target != nil
 }
 
 type valueRecorder[T, V any] struct {

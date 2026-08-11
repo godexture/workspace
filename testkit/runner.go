@@ -114,7 +114,7 @@ func runOne[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O], test
 		}
 	}()
 	if kind == formatRunner {
-		if err := verifyFormatProbe(subject, master, test.Want.failureCode != ""); err != nil {
+		if err := verifyFormatProbe(subject, master, test.Want.failure.stage != 0); err != nil {
 			t.Fatalf("testkit Format probe: %v", err)
 		}
 	}
@@ -122,7 +122,7 @@ func runOne[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O], test
 	factory := func() (*scenarioCore, error) {
 		return newScenario(kind, subject, test.Config, master.clone(), test.Want.newRecorder())
 	}
-	executeCase(t, subject.identity, test.Want.failureCode, factory)
+	executeCase(t, subject.identity, test.Want.failure, factory)
 	subject.coverage.record(subject.identity)
 }
 
@@ -189,15 +189,46 @@ func verifyFormatProbe[I, O any](subject Subject[I, O], input Fixture[I], expect
 	return fmt.Errorf("probe exceeded %d rounds", budget.ProbeRounds)
 }
 
-func executeCase(t testing.TB, identity plugin.Identity, failureCode string, factory func() (*scenarioCore, error)) {
+func executeCase(t testing.TB, identity plugin.Identity, failure failureExpectation, factory func() (*scenarioCore, error)) {
 	t.Helper()
+	if failure.stage == planFailure {
+		first := planFailureScenario(t, factory, time.Hour, failure)
+		second := planFailureScenario(t, factory, 2*time.Hour, failure)
+		if first != second {
+			t.Fatalf("planning failure purity: result changed with deadline: %q != %q", first, second)
+		}
+		return
+	}
 	first := planScenario(t, identity, factory, time.Hour)
 	second := planScenario(t, identity, factory, 2*time.Hour)
 	if first.fingerprint != second.fingerprint {
 		t.Fatalf("Compile purity: planning result changed with deadline: %s != %s", first.fingerprint, second.fingerprint)
 	}
 	runCancelled(t, factory)
-	runSuccessful(t, failureCode, factory, first.plan)
+	runSuccessful(t, failure, factory, first.plan)
+}
+
+func planFailureScenario(t testing.TB, factory func() (*scenarioCore, error), timeout time.Duration, want failureExpectation) string {
+	t.Helper()
+	scenario, err := factory()
+	if err != nil {
+		t.Fatalf("testkit Plan failure scenario: %v", err)
+	}
+	defer func() {
+		if err := scenario.close(); err != nil {
+			t.Errorf("testkit Plan failure scenario cleanup: %v", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_, planErr := scenario.host.Plan(ctx, scenario.job)
+	if planErr == nil {
+		t.Fatalf("testkit Host.Plan succeeded, want %s", want.describe())
+	}
+	if !want.matches(planErr) {
+		t.Fatalf("testkit Host.Plan error = %v, want %s", planErr, want.describe())
+	}
+	return planErr.Error()
 }
 
 type scenarioPlan struct {
@@ -277,7 +308,7 @@ func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
 	}
 }
 
-func runSuccessful(t testing.TB, failureCode string, factory func() (*scenarioCore, error), planned plan.Plan) {
+func runSuccessful(t testing.TB, failure failureExpectation, factory func() (*scenarioCore, error), planned plan.Plan) {
 	t.Helper()
 	scenario, err := factory()
 	if err != nil {
@@ -302,7 +333,7 @@ func runSuccessful(t testing.TB, failureCode string, factory func() (*scenarioCo
 	}
 	result, runErr := prepared.Run(context.Background())
 	closeErr := prepared.Close()
-	if failureCode == "" {
+	if failure.stage == 0 {
 		if runErr != nil || closeErr != nil || !result.Succeeded() {
 			t.Fatalf("testkit Host.Run failed: run=%v close=%v result=%#v", runErr, closeErr, result)
 		}
@@ -313,15 +344,29 @@ func runSuccessful(t testing.TB, failureCode string, factory func() (*scenarioCo
 		}
 	} else {
 		if runErr == nil {
-			t.Errorf("testkit Host.Run succeeded, want diagnostic %q", failureCode)
-		} else if !hasDiagnostic(runErr, failureCode) {
-			t.Errorf("testkit Host.Run diagnostics = %v, want %q", host.Diagnostics(runErr), failureCode)
+			t.Errorf("testkit Host.Run succeeded, want %s", failure.describe())
+		} else if !failure.matches(runErr) {
+			t.Errorf("testkit Host.Run error = %v, diagnostics = %v, want %s", runErr, host.Diagnostics(runErr), failure.describe())
 		}
 		if len(result.Cleanup) != 0 {
 			t.Errorf("testkit expected-failure cleanup = %v", result.Cleanup)
 		}
 	}
-	assertLifecycle(t, scenario.state, failureCode == "")
+	assertLifecycle(t, scenario.state, failure.stage == 0)
+}
+
+func (f failureExpectation) matches(err error) bool {
+	if f.target != nil {
+		return errors.Is(err, f.target)
+	}
+	return f.code != "" && hasDiagnostic(err, f.code)
+}
+
+func (f failureExpectation) describe() string {
+	if f.target != nil {
+		return fmt.Sprintf("error matching %v", f.target)
+	}
+	return fmt.Sprintf("diagnostic %q", f.code)
 }
 
 func hasDiagnostic(err error, code string) bool {

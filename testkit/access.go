@@ -97,7 +97,7 @@ func Access(t testing.TB, subject AccessSubject, cases ...AccessCase) {
 			factory := func() (*scenarioCore, error) {
 				return newAccessScenario(subject, direction, current.Input, current.Want)
 			}
-			executeCase(child, subject.identity, "", factory)
+			executeCase(child, subject.identity, failureExpectation{}, factory)
 			subject.coverage.record(subject.identity)
 		})
 	}

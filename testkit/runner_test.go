@@ -38,6 +38,11 @@ type runnerPlan struct {
 
 var runnerType = schema.Define[runnerSchemaID](schema.Traits[int]{})
 
+var (
+	errRunnerPlan = errors.New("runner planning failure")
+	errRunnerRun  = errors.New("runner execution failure")
+)
+
 func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 	definition := runnerDefinition()
 	descriptor := stream.MustDescriptor("fixture", runnerType.Identity(), timing.MustBase(1, 1), property.New())
@@ -57,6 +62,12 @@ func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 			Input:  Values(descriptor, runnerType, -1),
 			Want:   Fails[int]("runner.negative"),
 		},
+		Case[int, int]{
+			Name:   "execution-error",
+			Config: config.NewPatch().Set("factor", 2),
+			Input:  Values(descriptor, runnerType, -2),
+			Want:   WantRunError[int](errRunnerRun),
+		},
 	)
 	coverage.VerifyExecutable(t, plugin.NewSet(definition))
 }
@@ -66,16 +77,23 @@ func TestFormatUsesAccessBoundaryInspection(t *testing.T) {
 	var probes atomic.Int32
 	definition := runnerFormatDefinition(&inspections, &probes)
 	subject := SubjectOf(definition, plugin.IdentityOf[runnerFormatComponentID](), "bytes", access.Bytes(), "out", access.Bytes())
-	Format(t, subject, Case[buffer.Handle, buffer.Handle]{
-		Name:  "inspected",
-		Input: ByteInput([]byte{0x42}),
-		Want:  WantBytes([]byte{0x42}),
-	})
-	if got := inspections.Load(); got != 4 {
-		t.Fatalf("Inspect calls = %d, want one for each of two Plans, cancellation Prepare, and execution Prepare", got)
+	Format(t, subject,
+		Case[buffer.Handle, buffer.Handle]{
+			Name:  "inspected",
+			Input: ByteInput([]byte{0x42}),
+			Want:  WantBytes([]byte{0x42}),
+		},
+		Case[buffer.Handle, buffer.Handle]{
+			Name:  "inspection-error",
+			Input: ByteInput([]byte{0x43}),
+			Want:  WantPlanError[buffer.Handle](errRunnerPlan),
+		},
+	)
+	if got := inspections.Load(); got != 6 {
+		t.Fatalf("Inspect calls = %d, want four successful and two rejected planning scenarios", got)
 	}
-	if got := probes.Load(); got != 2 {
-		t.Fatalf("Probe calls = %d, want one request and one terminal result", got)
+	if got := probes.Load(); got != 4 {
+		t.Fatalf("Probe calls = %d, want one request and one terminal result per case", got)
 	}
 }
 
@@ -131,6 +149,9 @@ func runnerFormatDefinition(inspections, probes *atomic.Int32) plugin.Definition
 		if _, err := reader.ReadAt(ctx.Context(), value, 0); err != nil && !errors.Is(err, io.EOF) {
 			return mediaformat.Inspection{}, err
 		}
+		if value[0] == 0x43 {
+			return mediaformat.Inspection{}, errRunnerPlan
+		}
 		return mediaformat.NewInspection(formatValue, value[0]), nil
 	}
 	spec := plugin.Spec[runnerFormatConfig, runnerPlan, stream.Descriptor]{
@@ -168,6 +189,9 @@ type runnerOperator runnerPlan
 func (o runnerOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (runnerOperator) Close() error        { return nil }
 func (o runnerOperator) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
+	if input.Value() == -2 {
+		return errRunnerRun
+	}
 	if input.Value() < 0 {
 		return diagnostic.NewError(diagnostic.NewItem("runner.negative", diagnostic.ErrorSeverity, diagnostic.Path{}, "negative fixture", nil))
 	}

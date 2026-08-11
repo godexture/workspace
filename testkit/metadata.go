@@ -105,7 +105,7 @@ func Metadata(t testing.TB, subject MetadataSubject, cases ...MetadataCase) {
 			if !current.Want.valid() {
 				child.Fatalf("testkit Metadata expectation is invalid")
 			}
-			executeCase(child, subject.identity, "", func() (*scenarioCore, error) {
+			executeCase(child, subject.identity, failureExpectation{}, func() (*scenarioCore, error) {
 				return newMetadataScenario(subject, current)
 			})
 			subject.coverage.record(subject.identity)

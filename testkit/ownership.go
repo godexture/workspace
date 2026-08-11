@@ -42,7 +42,7 @@ func verifyAccessOwnership(t testing.TB) {
 	for _, ownership := range []access.Ownership{access.Owned, access.Borrowed} {
 		ownership := ownership
 		runNamed(t, directionNameForOwnership(ownership), func(child testing.TB) {
-			executeCase(child, plugin.IdentityOf[ownershipSourceID](), "", func() (*scenarioCore, error) {
+			executeCase(child, plugin.IdentityOf[ownershipSourceID](), failureExpectation{}, func() (*scenarioCore, error) {
 				return newOwnershipScenario(ownership)
 			})
 		})
