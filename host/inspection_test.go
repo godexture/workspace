@@ -175,3 +175,50 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		t.Fatalf("input sessions = %d/%d", sessions.acquired.Load(), sessions.closed.Load())
 	}
 }
+
+func TestPlanDiagnosesDirectSourceRequiringFormatInspection(t *testing.T) {
+	source, reader, sink, _ := boundaryComponentsWith(nil, nil, nil, format.WithInspect(func(format.InspectContext) (format.Inspection, error) {
+		return format.NewInspection(boundaryFormat(), struct{}{}), nil
+	}))
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](
+		plugin.Descriptor{DisplayName: "direct inspection fixture", Version: "1"},
+		source,
+		reader,
+		sink,
+	))
+	instance, err := New(Plugins(set))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptor, err := job.NewAdaptor(source.Identity(), config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := job.InputFromSource(access.Borrow(&lifecycleHandle{}), adaptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := job.NewGraph(
+		[]job.Node{
+			job.NewNode("reader", reader.Identity(), config.NewPatch()),
+			job.NewNode("sink", sink.Identity(), config.NewPatch()),
+		},
+		[]job.Edge{job.Connect(job.At("reader", "out"), job.At("sink", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New([]job.Input{input}, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = instance.Plan(context.Background(), request)
+	if err == nil {
+		t.Fatal("Plan accepted a direct source requiring Format Inspect")
+	}
+	items := Diagnostics(err)
+	if len(items) != 1 || items[0].Code != "prepare.inspect-direct" || items[0].Detail["milestone"] != "M9" || items[0].Detail["boundary"] == "" || items[0].Detail["formatNode"] != reader.Identity().String() {
+		t.Fatalf("diagnostics = %#v", items)
+	}
+}

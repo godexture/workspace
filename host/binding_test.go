@@ -414,7 +414,7 @@ func boundaryComponents(opens *atomic.Int32) (plugin.Component, plugin.Component
 	return boundaryComponentsWith(opens, nil, nil)
 }
 
-func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plugin.ComponentOption) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
+func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plugin.ComponentOption, readOptions ...mediaformat.ReadOption) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
 	descriptor := stream.MustDescriptor("boundary", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())})
@@ -451,7 +451,7 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 	}, func(shape flow.Shape) flow.Operator {
 		return boundaryTransformOperator{boundaryOperator{shape: shape}}
 	}), plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
-		mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead))),
+		mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead)), readOptions...),
 		mediaformat.Write(boundaryFormat(), access.AnyOf(access.SequentialWrite)),
 	)
 	sinkOptions := append([]plugin.ComponentOption{component(sinkShape, func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {

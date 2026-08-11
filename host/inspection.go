@@ -59,10 +59,16 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 		if !trait.HasInspect() {
 			continue
 		}
-		opening, openingOK := openings[projection.Node]
 		if projection.Kind == plan.DirectBoundary {
-			opening, openingOK = entry.DirectOpening().(access.Opening)
+			return graph.CompileContexts{}, inspectDiagnostic(
+				"prepare.inspect-direct",
+				projection,
+				component.Identity(),
+				"direct Access sources cannot satisfy Format Inspect before joining the session/capability model",
+				map[string]string{"milestone": "M9"},
+			)
 		}
+		opening, openingOK := openings[projection.Node]
 		if !openingOK || !opening.Valid() || opening.Direction() != access.SourceDirection {
 			return graph.CompileContexts{}, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires a selected Access source opening", nil)
 		}
