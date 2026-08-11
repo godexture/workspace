@@ -119,7 +119,13 @@ func Build(set plugin.Set) (Index, error) {
 			component, componentTarget := target.Component()
 			if componentTarget {
 				if _, present := seenComponents[component]; !present {
-					items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.String(), Descriptor: key.String()}, "composition declaration target is not in the catalog", map[string]string{"target": component.String()}))
+					detail := map[string]string{"target": component.String()}
+					message := "composition declaration target is not in the catalog"
+					if owner := declaration.Owner(); !owner.IsZero() {
+						detail["ownerDefinition"] = owner.String()
+						message = "owned composition declaration target is not in the catalog"
+					}
+					items = append(items, diagnostic.NewItem("catalog.declaration-target", diagnostic.ErrorSeverity, diagnostic.Path{Component: component.String(), Descriptor: key.String()}, message, detail))
 				}
 			}
 		}

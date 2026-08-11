@@ -13,6 +13,7 @@ import (
 )
 
 type bindingPluginID struct{}
+type secondBindingPluginID struct{}
 type bindingComponentID struct{}
 type secondBindingComponentID struct{}
 type metadataBindingComponentID struct{}
@@ -49,6 +50,40 @@ func TestBuildRejectsDeclarationWithMissingTarget(t *testing.T) {
 		}
 	}
 	t.Fatalf("missing declaration target diagnostic absent: %v", err)
+}
+
+func TestOwnedDeclarationMayTargetAnotherDefinition(t *testing.T) {
+	ownerComponent := catalogComponent[bindingComponentID]("owner")
+	targetComponent := catalogComponent[secondBindingComponentID]("target")
+	binding := codec.BindWithoutParser(format.NewTag("fixture", "external"), codec.New(targetComponent.Identity()))
+	owner := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "owner plugin", Version: "1"}, ownerComponent).
+		WithDeclarations(binding)
+	target := plugin.Define[secondBindingPluginID](plugin.Descriptor{DisplayName: "target plugin", Version: "1"}, targetComponent)
+
+	if _, err := Build(plugin.NewSet(owner, target)); err != nil {
+		t.Fatalf("external owned declaration target rejected: %v", err)
+	}
+}
+
+func TestRemovingOwnedDeclarationTargetReportsTargetAndOwner(t *testing.T) {
+	target := catalogComponent[bindingComponentID]("target")
+	keeper := catalogComponent[secondBindingComponentID]("keeper")
+	binding := codec.BindWithoutParser(format.NewTag("fixture", "removed"), codec.New(target.Identity()))
+	definition := plugin.Define[bindingPluginID](plugin.Descriptor{DisplayName: "binding plugin", Version: "1"}, target, keeper).
+		WithDeclarations(binding)
+
+	_, err := Build(plugin.NewSet(definition).Remove(target.Identity()))
+	if err == nil {
+		t.Fatal("removed owned declaration target unexpectedly accepted")
+	}
+	for _, item := range diagnosticItems(err) {
+		if item.Code == "catalog.declaration-target" &&
+			item.Path.Component == target.Identity().String() &&
+			item.Detail["ownerDefinition"] == definition.Identity().String() {
+			return
+		}
+	}
+	t.Fatalf("target/owner diagnostic missing: %v", err)
 }
 
 func TestMetadataBindingTargetRequiresEncodingTrait(t *testing.T) {

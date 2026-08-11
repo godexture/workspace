@@ -67,24 +67,21 @@ func Plugin() plugin.Definition {
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
 	}
-	return plugin.Define[pluginID](descriptor,
+	definition := plugin.Define[pluginID](descriptor,
 		newComponent[readerID](readerOperation, "Raw PCM reader"),
 		newComponent[parserID](parserOperation, "Linear PCM parser"),
 		newComponent[decoderID](decoderOperation, "Linear PCM decoder"),
 		newComponent[encoderID](encoderOperation, "Linear PCM encoder"),
 		newComponent[writerID](writerOperation, "Raw PCM writer"),
 	)
+	declarations := []plugin.Declaration{Binding()}
+	declarations = append(declarations, sample.Declarations()...)
+	declarations = append(declarations, codec.Declarations()...)
+	return definition.WithDeclarations(declarations...)
 }
 
 // Set returns the self-contained composition, including sample property and
 // codec/parser declarations.
 func Set() plugin.Set {
-	result := plugin.NewSet(Plugin()).AddDeclaration(Binding())
-	for _, declaration := range sample.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	for _, declaration := range codec.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	return result
+	return plugin.NewSet(Plugin())
 }

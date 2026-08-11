@@ -15,6 +15,7 @@ type secondPluginID struct{}
 type testComponentID struct{}
 type secondComponentID struct{}
 type foundationUnitID struct{}
+type foundationDeclarationID struct{}
 
 type pluginConfig struct {
 	Level int
@@ -221,8 +222,15 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 		t.Fatalf("OverridePlugin diagnostic returned the wrong receiver: result=%d source=%d diagnostics=%v", len(missing.Components()), len(set.Components()), missing.Diagnostics())
 	}
 	removed := overridden.Remove(component.Identity())
-	if !removed.Empty() {
-		t.Fatalf("Remove = %#v; want empty set", removed)
+	if removed.Empty() || len(removed.Components()) != 0 {
+		t.Fatalf("component Remove did not retain its owner definition: %#v", removed)
+	}
+	if items := removed.Definitions()[0].Diagnostics(); !hasDiagnosticItem(items, "plugin.empty-definition") {
+		t.Fatalf("empty owner definition diagnostic = %v", items)
+	}
+	removedPlugin := overridden.Remove(definition.Identity())
+	if !removedPlugin.Empty() {
+		t.Fatalf("plugin Remove = %#v; want empty set", removedPlugin)
 	}
 	if overridden.Empty() {
 		t.Fatal("Remove mutated source set")
@@ -231,6 +239,82 @@ func TestOverrideAndRemoveDoNotMutateOriginal(t *testing.T) {
 	if len(missingRemoval.Diagnostics()) == 0 {
 		t.Fatal("missing Remove target was not retained as a diagnostic")
 	}
+}
+
+func TestDefinitionOwnsDeclarationsImmutably(t *testing.T) {
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	base := Define[testPluginID](pluginDescriptor("plugin"), component)
+	declaration := Declare[foundationDeclarationID]("owned", component.Identity())
+	owned := base.WithDeclarations(declaration)
+
+	if len(base.Declarations()) != 0 {
+		t.Fatal("WithDeclarations mutated the source definition")
+	}
+	values := owned.Declarations()
+	if len(values) != 1 || values[0].Owner() != owned.Identity() || !values[0].SameTargets(declaration) {
+		t.Fatalf("owned declarations = %#v", values)
+	}
+	values[0] = Declaration{}
+	if got := owned.Declarations(); len(got) != 1 || !got[0].Valid() {
+		t.Fatal("Definitions exposed mutable declaration storage")
+	}
+
+	set := NewSet(owned)
+	if got := set.Declarations(); len(got) != 1 || got[0].Owner() != owned.Identity() {
+		t.Fatalf("Set.Add did not carry owned declarations: %#v", got)
+	}
+	root := set.AddDeclaration(Declare[foundationDeclarationID]("root", component.Identity()))
+	if got := root.Declarations(); len(got) != 2 || !got[1].Owner().IsZero() {
+		t.Fatalf("composition-root declaration has an owner: %#v", got)
+	}
+	overridden := set.OverrideDeclaration(declaration.Key(), declaration)
+	if got := overridden.Declarations(); len(got) != 1 || !got[0].Owner().IsZero() {
+		t.Fatalf("composition override did not replace owned declaration: %#v", got)
+	}
+	removed := set.Remove(owned.Identity())
+	if !removed.Empty() || len(removed.Declarations()) != 0 {
+		t.Fatalf("removing definition retained its declarations: %#v", removed.Declarations())
+	}
+}
+
+func TestDefinitionRetainsInvalidAndDuplicateDeclarations(t *testing.T) {
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	valid := Declare[foundationDeclarationID]("owned", component.Identity())
+	invalid := Declare[foundationDeclarationID]("", component.Identity())
+	definition := Define[testPluginID](pluginDescriptor("plugin"), component).
+		WithDeclarations(valid).
+		WithDeclarations(valid, invalid)
+
+	if len(definition.Declarations()) != 3 {
+		t.Fatalf("definition discarded a declaration: %#v", definition.Declarations())
+	}
+	items := definition.Diagnostics()
+	if !hasDiagnosticItem(items, "plugin.declaration-duplicate") || !hasDiagnosticItem(items, "plugin.declaration") {
+		t.Fatalf("declaration diagnostics = %v", items)
+	}
+}
+
+func TestOverridePluginReplacesOwnedDeclarations(t *testing.T) {
+	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	first := Define[testPluginID](pluginDescriptor("plugin"), component).
+		WithDeclarations(Declare[foundationDeclarationID]("first", component.Identity()))
+	replacement := Define[testPluginID](pluginDescriptor("replacement"), component).
+		WithDeclarations(Declare[foundationDeclarationID]("second", component.Identity()))
+
+	overridden := NewSet(first).OverridePlugin(first.Identity(), replacement)
+	values := overridden.Declarations()
+	if len(values) != 1 || values[0].Key().Name() != "second" || values[0].Owner() != first.Identity() {
+		t.Fatalf("OverridePlugin declarations = %#v", values)
+	}
+}
+
+func hasDiagnosticItem(items []diagnostic.Item, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInvalidComponentKeepsAggregateDiagnostics(t *testing.T) {

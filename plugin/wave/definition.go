@@ -40,12 +40,17 @@ func WAVE() format.Format {
 
 // Plugin returns the pure-Go WAVE component family.
 func Plugin() plugin.Definition {
-	return plugin.Define[pluginID](plugin.Descriptor{
+	definition := plugin.Define[pluginID](plugin.Descriptor{
 		DisplayName: "WAVE",
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
 	}, demuxerComponent(), muxerComponent(), infoComponent())
+	declarations := []plugin.Declaration{InfoBinding()}
+	declarations = append(declarations, tag.Declarations()...)
+	declarations = append(declarations, sample.Declarations()...)
+	declarations = append(declarations, codec.Declarations()...)
+	return definition.WithDeclarations(declarations...)
 }
 
 // InfoBinding connects WAVE's LIST/INFO carrier to its standalone Encoding.
@@ -53,15 +58,5 @@ func InfoBinding() metadata.Binding { return metadata.Bind(RIFFInfo(), InfoEncod
 
 // Set returns the self-contained WAVE composition and shared metadata keys.
 func Set() plugin.Set {
-	result := plugin.NewSet(Plugin()).AddDeclaration(InfoBinding())
-	for _, declaration := range tag.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	for _, declaration := range sample.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	for _, declaration := range codec.Declarations() {
-		result = result.AddDeclaration(declaration)
-	}
-	return result
+	return plugin.NewSet(Plugin())
 }

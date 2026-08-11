@@ -28,11 +28,14 @@ func (k DeclarationKey) String() string {
 	return k.namespace.String() + ":" + k.name
 }
 
-// Declaration is a composition-time declaration owned by plugin.Set.
+// Declaration is composition metadata. A declaration attached through
+// Definition.WithDeclarations carries its owning definition identity; a
+// declaration added directly to Set is owned by the composition root.
 type Declaration struct {
 	key      DeclarationKey
 	targets  []DeclarationTarget
 	problems []string
+	owner    Identity
 }
 
 // Declare constructs a component declaration in the namespace of Namespace.
@@ -95,6 +98,10 @@ func (d Declaration) Valid() bool {
 
 func (d Declaration) Key() DeclarationKey { return d.key }
 
+// Owner returns the definition that contributes this declaration. The zero
+// identity means the declaration belongs directly to the composition root.
+func (d Declaration) Owner() Identity { return d.owner }
+
 // Targets returns declaration targets in their semantic role order.
 func (d Declaration) Targets() []DeclarationTarget {
 	return append([]DeclarationTarget(nil), d.targets...)
@@ -145,4 +152,24 @@ func (d Declaration) String() string {
 		targets[index] = target.String()
 	}
 	return d.key.String() + " -> " + strings.Join(targets, ",")
+}
+
+func (d Declaration) withOwner(owner Identity) Declaration {
+	d = d.clone()
+	d.owner = owner
+	return d
+}
+
+func (d Declaration) clone() Declaration {
+	d.targets = append([]DeclarationTarget(nil), d.targets...)
+	d.problems = append([]string(nil), d.problems...)
+	return d
+}
+
+func cloneDeclarations(values []Declaration) []Declaration {
+	result := make([]Declaration, len(values))
+	for index, value := range values {
+		result[index] = value.clone()
+	}
+	return result
 }

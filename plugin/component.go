@@ -248,10 +248,11 @@ func (c Component) suggestionLimit() int {
 // Definition is a plugin composition returned by a plugin function such as
 // Plugin() or Codec().
 type Definition struct {
-	identity   Identity
-	descriptor Descriptor
-	components []Component
-	problems   []diagnostic.Item
+	identity     Identity
+	descriptor   Descriptor
+	components   []Component
+	declarations []Declaration
+	problems     []diagnostic.Item
 }
 
 // Define constructs a plugin definition from a marker identity and opaque
@@ -275,8 +276,45 @@ func Define[Marker any](descriptor Descriptor, components ...Component) Definiti
 		}
 		seen[component.identity] = struct{}{}
 	}
-	if len(components) == 0 {
-		result.problems = append(result.problems, diagnostic.NewItem("plugin.empty-definition", diagnostic.ErrorSeverity, diagnostic.Path{}, "plugin definition must contain at least one component", nil))
+	return result
+}
+
+// WithDeclarations returns a definition that owns values. Invalid and
+// duplicate declarations remain attached so Host construction can report the
+// complete composition error instead of silently dropping them.
+func (d Definition) WithDeclarations(values ...Declaration) Definition {
+	result := d.clone()
+	seen := make(map[DeclarationKey]struct{}, len(result.declarations)+len(values))
+	for _, declaration := range result.declarations {
+		if declaration.Key().Valid() {
+			seen[declaration.Key()] = struct{}{}
+		}
+	}
+	for _, value := range values {
+		declaration := value.withOwner(result.identity)
+		result.declarations = append(result.declarations, declaration)
+		if problem := declaration.Problem(); problem != nil {
+			result.problems = append(result.problems, diagnostic.NewItem(
+				"plugin.declaration",
+				diagnostic.ErrorSeverity,
+				diagnostic.Path{Descriptor: declaration.Key().String()},
+				"owned composition declaration is invalid",
+				map[string]string{"cause": problem.Error()},
+			))
+		}
+		if !declaration.Key().Valid() {
+			continue
+		}
+		if _, exists := seen[declaration.Key()]; exists {
+			result.problems = append(result.problems, diagnostic.NewItem(
+				"plugin.declaration-duplicate",
+				diagnostic.ErrorSeverity,
+				diagnostic.Path{Descriptor: declaration.Key().String()},
+				"definition owns the same declaration key more than once",
+				nil,
+			))
+		}
+		seen[declaration.Key()] = struct{}{}
 	}
 	return result
 }
@@ -296,12 +334,21 @@ func (d Definition) Components() []Component {
 	return result
 }
 
+// Declarations returns copied composition declarations owned by this
+// definition.
+func (d Definition) Declarations() []Declaration {
+	return cloneDeclarations(d.declarations)
+}
+
 // Diagnostics returns definition-time and current component diagnostics.
 func (d Definition) Diagnostics() []diagnostic.Item {
 	items := cloneItems(d.problems)
 	pluginPath := diagnostic.Path{}
 	if !d.identity.IsZero() {
 		pluginPath.Component = d.identity.String()
+	}
+	if len(d.components) == 0 {
+		items = append(items, diagnostic.NewItem("plugin.empty-definition", diagnostic.ErrorSeverity, pluginPath, "plugin definition must contain at least one component", nil))
 	}
 	items = append(items, d.descriptor.diagnostics(pluginPath)...)
 	for _, component := range d.components {
@@ -317,6 +364,7 @@ func (d Definition) Diagnostics() []diagnostic.Item {
 
 func (d Definition) clone() Definition {
 	d.components = d.Components()
+	d.declarations = d.Declarations()
 	d.problems = cloneItems(d.problems)
 	return d
 }
@@ -347,9 +395,10 @@ func bindComponent(component Component, pluginIdentity Identity, descriptor Desc
 
 // DefinitionView is a read-only plugin description.
 type DefinitionView struct {
-	Identity   Identity
-	Descriptor Descriptor
-	Components []ComponentView
+	Identity     Identity
+	Descriptor   Descriptor
+	Components   []ComponentView
+	Declarations []Declaration
 }
 
 // View returns a read-only plugin description.
@@ -359,7 +408,7 @@ func (d Definition) View() DefinitionView {
 	for index, component := range components {
 		views[index] = component.View()
 	}
-	return DefinitionView{Identity: d.identity, Descriptor: d.descriptor, Components: views}
+	return DefinitionView{Identity: d.identity, Descriptor: d.descriptor, Components: views, Declarations: d.Declarations()}
 }
 
 func cloneItems(items []diagnostic.Item) []diagnostic.Item {

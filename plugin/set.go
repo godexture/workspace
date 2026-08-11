@@ -44,7 +44,7 @@ func (s Set) Add(definition Definition) Set {
 	result := Set{
 		definitions:  make([]Definition, len(s.definitions)+1),
 		problems:     cloneItems(s.problems),
-		declarations: append([]Declaration(nil), s.declarations...),
+		declarations: append(cloneDeclarations(s.declarations), definition.Declarations()...),
 	}
 	for index, existing := range s.definitions {
 		result.definitions[index] = existing.clone()
@@ -60,7 +60,7 @@ func (s Set) AddDeclaration(declaration Declaration) Set {
 	result := Set{
 		definitions:  make([]Definition, len(s.definitions)),
 		problems:     cloneItems(s.problems),
-		declarations: append(append([]Declaration(nil), s.declarations...), declaration),
+		declarations: append(cloneDeclarations(s.declarations), declaration.withOwner(Identity{})),
 	}
 	for index, definition := range s.definitions {
 		result.definitions[index] = definition.clone()
@@ -71,7 +71,7 @@ func (s Set) AddDeclaration(declaration Declaration) Set {
 // Declarations returns immutable composition declarations in registration
 // order.
 func (s Set) Declarations() []Declaration {
-	return append([]Declaration(nil), s.declarations...)
+	return cloneDeclarations(s.declarations)
 }
 
 // OverrideDeclaration explicitly replaces all declarations for one key.
@@ -94,18 +94,19 @@ func (s Set) OverrideDeclaration(target DeclarationKey, replacement Declaration)
 	if !replaced {
 		return s.withProblem(diagnostic.NewItem("plugin.declaration-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "declaration override target is not present", nil))
 	}
-	result.declarations = append(result.declarations, replacement)
+	result.declarations = append(result.declarations, replacement.withOwner(Identity{}))
 	return result
 }
 
 // Remove returns a new set with identity removed. A plugin identity removes
 // the whole definition; a component identity removes only that component.
 func (s Set) Remove(identity Identity) Set {
-	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
+	result := Set{problems: cloneItems(s.problems), declarations: cloneDeclarations(s.declarations)}
 	removed := false
 	for _, definition := range s.definitions {
 		if definition.identity == identity {
 			removed = true
+			result.declarations = declarationsWithoutOwner(result.declarations, definition.identity)
 			continue
 		}
 		components := definition.Components()
@@ -116,12 +117,6 @@ func (s Set) Remove(identity Identity) Set {
 				continue
 			}
 			filtered = append(filtered, component)
-		}
-		if len(filtered) == 0 {
-			if len(components) != 0 {
-				removed = true
-			}
-			continue
 		}
 		definition.components = append([]Component(nil), filtered...)
 		result.definitions = append(result.definitions, definition.clone())
@@ -140,7 +135,7 @@ func (s Set) Override(target Identity, replacement Component) Set {
 	if target.IsZero() || replacement.identity != target {
 		return s.withProblem(invalidOverrideItem("override target and replacement component identities must match"))
 	}
-	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
+	result := Set{problems: cloneItems(s.problems), declarations: cloneDeclarations(s.declarations)}
 	replaced := false
 	for _, definition := range s.definitions {
 		updated, ok := definition.replaceComponent(target, replacement)
@@ -161,11 +156,13 @@ func (s Set) OverridePlugin(target Identity, replacement Definition) Set {
 	if target.IsZero() || replacement.identity != target {
 		return s.withProblem(invalidOverrideItem("override target and replacement plugin identities must match"))
 	}
-	result := Set{problems: cloneItems(s.problems), declarations: append([]Declaration(nil), s.declarations...)}
+	result := Set{problems: cloneItems(s.problems), declarations: cloneDeclarations(s.declarations)}
 	replaced := false
 	for _, definition := range s.definitions {
 		if definition.identity == target {
 			result.definitions = append(result.definitions, replacement.clone())
+			result.declarations = declarationsWithoutOwner(result.declarations, target)
+			result.declarations = append(result.declarations, replacement.Declarations()...)
 			replaced = true
 			continue
 		}
@@ -239,12 +236,23 @@ func (s Set) withProblem(item diagnostic.Item) Set {
 	result := Set{
 		definitions:  make([]Definition, len(s.definitions)),
 		problems:     cloneItems(s.problems),
-		declarations: append([]Declaration(nil), s.declarations...),
+		declarations: cloneDeclarations(s.declarations),
 	}
 	for index, definition := range s.definitions {
 		result.definitions[index] = definition.clone()
 	}
 	result.problems = append(result.problems, item)
+	return result
+}
+
+func declarationsWithoutOwner(values []Declaration, owner Identity) []Declaration {
+	result := make([]Declaration, 0, len(values))
+	for _, declaration := range values {
+		if declaration.Owner() == owner {
+			continue
+		}
+		result = append(result, declaration.clone())
+	}
 	return result
 }
 
