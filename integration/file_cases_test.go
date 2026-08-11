@@ -1,4 +1,4 @@
-package file_test
+package integration_test
 
 import (
 	"testing"
@@ -9,16 +9,14 @@ import (
 	"github.com/godexture/godec/testkit"
 )
 
-func TestPublicAccessConformance(t *testing.T) {
-	definition := file.Plugin()
-	coverage := testkit.NewCoverage()
+func runFileCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
+	t.Helper()
 	payload := make([]byte, 70*1024+37)
 	for index := range payload {
 		payload[index] = byte(index * 31)
 	}
-
 	testkit.Access(t,
-		testkit.TrackAccess(testkit.AccessOf(definition, file.SourceIdentity()), coverage),
+		testkit.TrackAccess(testkit.AccessIn(set, file.SourceIdentity()), coverage),
 		testkit.AccessCase{
 			Name:  "random-read-with-stable-size",
 			Input: testkit.LocalFile(payload),
@@ -29,7 +27,7 @@ func TestPublicAccessConformance(t *testing.T) {
 		},
 	)
 	testkit.Access(t,
-		testkit.TrackAccess(testkit.AccessOf(definition, file.SinkIdentity()), coverage),
+		testkit.TrackAccess(testkit.AccessIn(set, file.SinkIdentity()), coverage),
 		testkit.AccessCase{
 			Name:  "sequential-atomic-replace",
 			Input: testkit.LocalFile(payload),
@@ -41,5 +39,4 @@ func TestPublicAccessConformance(t *testing.T) {
 			Want:  testkit.WantAccess(payload[:257], access.AnyOf(access.RandomWrite)),
 		},
 	)
-	coverage.VerifyExecutable(t, plugin.NewSet(definition))
 }

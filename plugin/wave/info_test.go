@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/godexture/godec/host"
@@ -12,54 +11,7 @@ import (
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
-	"github.com/godexture/godec/testkit"
 )
-
-func TestPublicRIFFInfoConformance(t *testing.T) {
-	title := infoTestChunk(t, "INAM", []byte("Song\x00"), 0x7f)
-	artistFirst := infoTestChunk(t, "IART", []byte("First\x00"), 0)
-	artistSecond := infoTestChunk(t, "IART", []byte("Second\x00"), 0xa5)
-	unknown := infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xcc)
-	value := infoTestList(t, title, artistFirst, artistSecond, unknown)
-	payload := metadata.NewBlob("application/x-riff-info", value)
-	block := metadata.BlockID("list-0")
-	origin := func(native string) metadata.Origin {
-		return metadata.Origin{Encoding: InfoEncodingIdentity(), Carrier: RIFFInfo(), Block: block, Native: native}
-	}
-	builder := metadata.NewBuilder(metadata.StreamScope)
-	builder.AddBlock(metadata.NewRawBlock(block, RIFFInfo(), InfoEncodingIdentity(), payload))
-	unknownOffset := 4 + len(title) + len(artistFirst) + len(artistSecond)
-	builder.AddBlock(metadata.NewRawBlock(
-		metadata.BlockID(fmt.Sprintf("%s/field/%08d", block, unknownOffset)),
-		RIFFInfo(),
-		InfoEncodingIdentity(),
-		metadata.NewBlob("application/octet-stream", unknown),
-	))
-	metadata.Add(builder, tag.Title(), "Song", origin("INAM"))
-	metadata.Add(builder, tag.Artist(), "First", origin("IART"))
-	metadata.Add(builder, tag.Artist(), "Second", origin("IART"))
-	want, err := builder.Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	definition := Plugin()
-	coverage := testkit.NewCoverage()
-	testkit.Plugin(t, definition)
-	testkit.Metadata(t,
-		testkit.TrackMetadata(testkit.MetadataOf(definition, InfoEncodingIdentity()), coverage),
-		testkit.MetadataCase{
-			Name:  "duplicates-order-and-unknown-raw",
-			Input: testkit.MetadataInput(RIFFInfo(), block, metadata.StreamScope, payload),
-			Want:  testkit.WantMetadata(want, payload),
-		},
-		testkit.MetadataCase{
-			Name:  "malformed",
-			Input: testkit.MetadataInput(RIFFInfo(), "broken", metadata.StreamScope, metadata.NewBlob("", nil)),
-			Want:  testkit.MetadataFails("metadata.parse"),
-		},
-	)
-	coverage.VerifyIdentities(t, plugin.NewSet(definition), InfoEncodingIdentity())
-}
 
 func TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding(t *testing.T) {
 	title := infoTestChunk(t, "INAM", []byte("Song\x00"), 0x7f)
