@@ -125,9 +125,14 @@ func (c *Coverage) record(identity plugin.Identity) {
 // least one typed case, and every recorded identity belongs to set.
 func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	t.Helper()
+	for _, problem := range c.executableProblems(set) {
+		t.Error(problem)
+	}
+}
+
+func (c *Coverage) executableProblems(set plugin.Set) []error {
 	if c == nil {
-		t.Error("testkit typed coverage: registry is nil")
-		return
+		return []error{fmt.Errorf("testkit typed coverage: registry is nil")}
 	}
 	c.mu.Lock()
 	executed := make(map[plugin.Identity]int, len(c.executed))
@@ -137,10 +142,11 @@ func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	c.mu.Unlock()
 
 	known := make(map[plugin.Identity]bool)
+	var problems []error
 	for _, component := range set.Components() {
 		known[component.Identity()] = component.View().Executable
 		if component.View().Executable && executed[component.Identity()] == 0 {
-			t.Errorf("testkit typed coverage: executable component %s has no executed typed case", component.Identity())
+			problems = append(problems, fmt.Errorf("testkit typed coverage: executable component %s has no executed typed case", component.Identity()))
 		}
 	}
 	var unknown []string
@@ -151,13 +157,14 @@ func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	}
 	sort.Strings(unknown)
 	for _, identity := range unknown {
-		t.Errorf("testkit typed coverage: executed identity %s is absent from the covered Set", identity)
+		problems = append(problems, fmt.Errorf("testkit typed coverage: executed identity %s is absent from the covered Set", identity))
 	}
 	for identity, count := range executed {
 		if count < 1 {
-			t.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count))
+			problems = append(problems, fmt.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count)))
 		}
 	}
+	return problems
 }
 
 // VerifyIdentities fails unless every listed control-plane or executable

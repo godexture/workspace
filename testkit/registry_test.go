@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/godexture/godec/plugin"
 )
 
 func TestCoverageRecordsAssignedUncoveredContracts(t *testing.T) {
@@ -63,5 +65,12 @@ func TestEmptyCoverageIsComplete(t *testing.T) {
 	var coverage *Coverage
 	if err := coverage.completionError(); err == nil || !strings.Contains(err.Error(), "registry is nil") {
 		t.Fatalf("nil completion error = %v", err)
+	}
+}
+
+func TestCoverageRejectsExecutableWithoutExecutedTypedCase(t *testing.T) {
+	problems := NewCoverage().executableProblems(plugin.NewSet(runnerDefinition()))
+	if len(problems) != 1 || !strings.Contains(problems[0].Error(), plugin.IdentityOf[runnerComponentID]().String()) || !strings.Contains(problems[0].Error(), "no executed typed case") {
+		t.Fatalf("missing executable coverage problems = %v", problems)
 	}
 }
