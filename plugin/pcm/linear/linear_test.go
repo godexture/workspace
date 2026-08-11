@@ -240,6 +240,12 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 			input:       []byte{0x80, 0x00, 0x7f, 0xff, 0x00, 0x00, 0xff, 0xff, 0x7f, 0xff, 0x00, 0x01},
 			planes:      [][]int16{{-32768, 0, 32767}, {32767, -1, 1}},
 		},
+		{
+			name:        "twelve bit left justified",
+			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian},
+			input:       []byte{0xf0, 0xff, 0x10, 0x00, 0x00, 0x80, 0xf0, 0x7f},
+			planes:      [][]int16{{-1, 1, -2048, 2047}},
+		},
 	}
 
 	for _, test := range tests {

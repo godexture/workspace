@@ -158,6 +158,7 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 	}
 	defer lease.Discard()
 	order := byteOrder(o.configuration.Endian)
+	shift := uint(16 - o.configuration.ValidBits)
 	encoded := value.Bytes()
 	err = lease.Fill(func(storage buffer.Mutable) error {
 		for channel := 0; channel < channels; channel++ {
@@ -167,7 +168,8 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 			}
 			for index := 0; index < samples; index++ {
 				offset := (index*channels + channel) * 2
-				binary.NativeEndian.PutUint16(plane[index*2:index*2+2], order.Uint16(encoded[offset:offset+2]))
+				value := int16(order.Uint16(encoded[offset : offset+2]))
+				binary.NativeEndian.PutUint16(plane[index*2:index*2+2], uint16(value>>shift))
 			}
 		}
 		return nil
@@ -217,6 +219,7 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 	}
 	defer lease.Discard()
 	order := byteOrder(o.configuration.Endian)
+	shift := uint(16 - o.configuration.ValidBits)
 	err = lease.Fill(func(storage buffer.Mutable) error {
 		encoded := storage.Bytes()
 		for channel := 0; channel < channels; channel++ {
@@ -226,7 +229,7 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 			}
 			for index, value := range plane {
 				offset := (index*channels + channel) * 2
-				order.PutUint16(encoded[offset:offset+2], uint16(value))
+				order.PutUint16(encoded[offset:offset+2], uint16(value)<<shift)
 			}
 		}
 		return nil
