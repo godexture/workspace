@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **6 / 12 マイルストーン完了（M0〜M5）**
+> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -21,7 +21,7 @@
 | M3 | 完了 | M3-1 の walking skeleton、M3-2 の metadata model/Binding と raw preservation、M3-3 の `media/side`、`stream.Event`、access の Reference/Provider/transaction/spool/probe/snapshot、typed endpoint trait/device/query を実装した。scheme conflict は既存 `plugin.Declaration`/catalog で検証し、device scan・permission・network side effect は追加していない。固有の完了条件は [media.md](media.md#m3-完了条件)、[access.md](access.md#m3-完了条件)、[scope.md](scope.md#m3-完了条件) を参照する。 |
 | M4 | 完了 | M4-1〜M4-4 で typed Compile/Suggest、graph validation、bounded solver、public `Plan`/private `Program`、Provider/Endpoint binding、実 linear PCM、N=1/4/16 filter region の二 converter gate を完了した。対象 race/vet、全 package build、docs check、全 module scalar/SIMD gate を通過した。 |
 | M5 | 完了 | typed execution island、ownership/COW、policy-driven bounded queue、cancel/task、Finalize、transactional Host lifecycle、structured Result、PCM walking skeleton、cut 前 paired measurement と production Host performance gate を完成し、旧 contract を削除して未移植 algorithm を `_legacy/` へ隔離した。証拠は [runtime.md](runtime.md#m5-完了条件) と [performance.md](performance.md#m5-runtime-performance-gate) を参照する。 |
-| M6 | 進行中 | M6-0〜M6-4 を完了した。公式 composition、public testkit、独立 integration module、全公式 component の typed coverage、第三者 Provider/Format/Codec/Metadata の `Set.Add` 拡張が成立した。次は M6-5a（Format hint/request と `standard.Convert`）、M6-5b（Run 単位の event delivery と CLI）を実装する。 |
+| M6 | 完了 | file/WAVE/PCM の自動判別・変換、transaction/spool、公式 composition、public testkit、第三者拡張、`standard.Convert`、Run 単位 event delivery、最小 `godec` CLI を同じ Host 経路で完成し、全 module の race/vet/build/generate/docs/scalar・SIMD gate を通過した。 |
 | M7 | 未着手 | MP4 を multi-stream/mapping/seek の実 consumer として含め、`QueuePolicy.Window` が兼ねる queue bound と fan-in alignment tolerance を分離して late-input policy を明示する。 |
 | M8 | 未着手 | 完了時に `_legacy/` を削除する。 |
 | M9 | 未着手 | — |
@@ -46,6 +46,11 @@
   だけで Provider/Format/Codec/Metadata を宣言し、`standard.Set().Add(acme.Plugin())` 一つで自動 bind/solve/run
   される。Snapshot/retry は remote Provider、Mapping/loss は M7、direct＋Inspect と Endpoint は M9 の担当として
   coverage registry に残した。
+- M6-5 は [task/m6-5.md](task/m6-5.md) の実装結果と検証を完了した。Format trait の extension 宣言から
+  input hint/output request を解決し、raw fallback は media 意味を明示した場合だけ許す。file convenience は
+  same-file identity を拒否し、`standard.Convert` と injected-Host CLI が WAVE→WAVE/raw を同じ Plan/Prepare/Run
+  で実行する。per-Run event delivery は bounded/non-blocking で、drop、renderer failure、cancel、output outcome を
+  Result と CLI に投影する。第三者 Format は extension trait と `Set.Add` だけで同じ path surface へ参加する。
 - M4-2 の skeleton は descriptor 変換を各 component の pure `Compile` に移し、`internal/graph.Compile` が作った compilation だけを `Open` へ渡す。test driver は compiled graph の input/output descriptor を読むだけで変換規則を持たない。外部 byte writer と metadata encoding の両経路には source/sink node を明示した。
 - M4-3 は explicit graph evaluator を唯一の compile authority のまま gap を型付きで返せるようにし、schema/property condition を bounded Dijkstra 探索で補う。candidate lookup は input schema 索引、visited state は canonical fingerprint と完全比較、候補 compile は memo 化し、policy/effect/resource と全 budget を Open 前に検査する。`Plan` は secret を redacted summary に落とした inert value、`Program` は resolved config と compilation を持つ private value として分離した。
 - M0/M1 を再度開く blocker はない。M0 で把握した後続課題は [baseline.md](baseline.md#既知のギャップm0-完了時点で未解消後続-milestone-へ) に記録している。
@@ -53,7 +58,7 @@
 - repository 全体の scalar/SIMD/forced-scalar differential は必須 gate にしない。`tools/cmd/differential` は任意の診断 tool とし、semantic 差は対象 package の test で検証する。
 - 日常開発と milestone/release の検証範囲は [quality.md](quality.md#開発時の検証-tier)、性能回帰の判定は [performance.md](performance.md#開発時の性能回帰方針) に従う。
 - `config.SchemaView` は型消去 resolver を持ち、catalog 経由で `Patch` を resolve できる。M9 で再導入する CLI/WASM の投影もこの経路へ接続する。
-- M5 の切断後、current tree に WAVE/MP3/FLAC/audio filter/CLI/WASM/demo web は存在しない。これは未 release 製品の意図した capability hiatus であり、M6〜M9 が新 contract へ順に再接続する。root module は標準 library だけに依存し、`go list ./...` は新 stack、独立 PCM algorithm、維持 utility だけを列挙する。
+- M5 の切断後に一度外した WAVE、file、Go convenience、最小 CLI は M6 で新 contract へ再接続した。MP3/FLAC/audio filter は M8、stdin/stdout・WASM・demo web と完全な surface は M9 まで意図した capability hiatus を続ける。root module は標準 library だけに依存する。
 - M5 cut の直前に旧/new runtime の AB/BA paired benchmark を同一 process で取得し、明白な 2 倍回帰と item/hop 比例 allocation がないことを確認した。これは cut 時点の一回限りの比較記録で、source は Git commit `f11fc1a` に固定する。build 不能な harness を `_legacy/` に残さず、current tree の継続 gate は production façade を通る `host.BenchmarkPreparedRunLinear` とする。
 - inventory は `plugin/pcm/internal/{adpcm,g711}` を独立 utility と判定していたが、ADPCM が `core/domain/media` と `plugin/wave/params` に依存していた。切断前監査で codec-local `adpcm/param` へ分離し、scalar/SIMD の単独 build/test を通してから WAVE carrier contract を削除した。計画の判定を実装より優先しない。
 - erased descriptor から typed 実装を組み立てる機構は M3 で実証し、M5 で実 queue の owner を確定した。M3 の `schema.Queue`/`Fanout` と descriptor factory は成立性確認用の仮 product で、bounded limit、cancel、close、drain を加えると schema package が scheduler を所有するため削除した。現在は `schema.Descriptor` が marker identity と payload Go 型だけを運び、`plugin.WithReader` / `WithProcessor` / `WithWriter` が `schema.Type[T]` と traits を registration 時に捕捉する。`internal/run/drive` は Open 時に operator/link を一度だけ assert し、delivery、bounded queue、fan-out を typed のまま作る。`Descriptor` は非比較を保ち、schema の論理一致には `Identity()`、同一 process 内の wiring 互換性には identity と payload Go 型の組を使う。
