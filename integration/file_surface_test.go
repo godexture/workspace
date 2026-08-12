@@ -75,6 +75,36 @@ func TestFileJobSelectsRequestedOutputFormatEndToEnd(t *testing.T) {
 	}
 }
 
+// TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip pins M6 stream copy until M7 owns it as policy.
+func TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	outputPath := filepath.Join(directory, "output.wav")
+	if err := os.WriteFile(inputPath, riffFile(
+		riffChunk("fmt ", pcmFormat(2, 44_100, 16), 0),
+		riffChunk("data", []byte{1, 0, 2, 0}, 0),
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(inputPath, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := instance.Plan(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range selected.Nodes() {
+		if node.Component == linear.DecoderIdentity().String() || node.Component == linear.EncoderIdentity().String() {
+			t.Fatalf("default WAVE remux selected codec round-trip node %#v", node)
+		}
+	}
+}
+
 func TestFileJobRequiresRawMediaConfigBeyondPathExtension(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.raw")
