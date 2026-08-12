@@ -443,11 +443,12 @@ M6 は 5 文書に跨る最大の milestone であり、単位を分けずに着
 | M6-2a | Prepare の順序是正（Acquire → Inspect → Compile）、Inspect contract、WAVE demux と RIFF chunk 解析 | 明示指定した WAVE file を読んで raw PCM を書き出せる |
 | M6-2b | sink 側の positioned write schema、file sink の適用、spool adapter と spool quota、WAVE mux | WAVE file を書ける。逐次書きのみの sink でも spool 経由で正しい header を書ける |
 | M6-2c | RIFF INFO、未知 chunk の raw preservation、codec Binding による parser/decoder 選択 | metadata roundtrip と tag 駆動の codec 選択が通る |
-| M6-3 | 二段階 binding、候補間で共有する bounded probe、自動 format 選択、逐次入力の prefix replay | 入力 format を明示せずに WAVE を content evidence で判別し、evidence が無い入力は記録付き fallback として raw PCM を選ぶ |
+| M6-3 | 二段階 binding、候補間で共有する bounded probe、自動 format 選択、逐次入力の prefix replay | 入力 format を明示せずに WAVE を content evidence で判別し、evidence が無い入力は明示 hint がある場合だけ raw PCM を選ぶ |
 | M6-4 | `standard` composition、public `testkit` の最小形、`integration` module、out-of-tree 相当 plugin の拡張性 gate | 公式 composition から Host を作れ、第三者 plugin が core 無変更で同じ経路に載る |
-| M6-5 | `standard.Convert` と `cli`/`cmd/godec` の最短経路、体験の実測 | 一行の library 呼び出しと公式 binary で file から file への変換ができる |
+| M6-5a | `job` の Format hint/request、Format trait の拡張子宣言、`standard.Convert` | 一行の library 呼び出しで file から file への変換ができ、出力 format が指定どおりに選ばれる |
+| M6-5b | Run 単位の bounded event delivery、`cli`/`cmd/godec`、体験の実測 | 公式 binary で変換でき、実行中の progress と cancel が働く |
 
-順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2a は M6-1 の実 byte session を、M6-2b は M6-2a の WAVE header 知識を、M6-2c は両方向の経路を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5 は composition をそれぞれ必要とする。
+順序は依存で決まる。M6-1 は M6-0 が作る trait 契約を、M6-2a は M6-1 の実 byte session を、M6-2b は M6-2a の WAVE header 知識を、M6-2c は両方向の経路を、M6-3 は判別対象となる 2 つの実 Format を、M6-4 は検証対象の実 plugin を、M6-5a は composition、M6-5b は file convenience と実行 event consumer をそれぞれ必要とする。
 
 M6-2 を 3 つに割ったのは、読み経路と書き経路で必要な機構が違うためである。読みは Inspect と Prepare の順序是正を要し、書きは positioned write schema と spool adapter を要する。一つの単位にまとめると「WAVE が両方向とも動くまで何も green にならない」区間が生まれ、上の判定規則を満たせない。
 
