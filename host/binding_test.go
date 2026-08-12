@@ -22,12 +22,13 @@ import (
 )
 
 type (
-	boundaryPluginID    struct{}
-	boundaryConfigID    struct{}
-	boundaryFormatID    struct{}
-	boundarySourceID    struct{}
-	boundaryTransformID struct{}
-	boundarySinkID      struct{}
+	boundaryPluginID      struct{}
+	boundaryConfigID      struct{}
+	boundaryFormatID      struct{}
+	boundaryOtherFormatID struct{}
+	boundarySourceID      struct{}
+	boundaryTransformID   struct{}
+	boundarySinkID        struct{}
 )
 
 type boundaryConfig struct{}
@@ -355,6 +356,69 @@ func TestHostBindsSourceAndSinkTraitsForSameSchemeFromPluginSet(t *testing.T) {
 	if len(boundaries[0].Selected) != 1 || boundaries[0].Selected[0] != access.SequentialRead || len(boundaries[1].Selected) != 1 || boundaries[1].Selected[0] != access.SequentialWrite {
 		t.Fatalf("directional capability selection = %#v", boundaries)
 	}
+}
+
+func TestPinnedBoundaryFormatMustAgreeWithJobSelector(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.SequentialRead)
+	sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+	source, transform, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, boundaryAcquire(sourceCapabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, boundaryAcquire(sinkCapabilities))},
+	)
+	instance, err := New(Plugins(plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputReference, _ := access.Parse("memory:input")
+	outputReference, _ := access.Parse("memory:output")
+	baseInput, _ := job.InputFromReference(inputReference)
+	baseOutput, _ := job.OutputToReference(outputReference)
+	graph, _ := boundaryGraph(transform)
+	matching, _ := job.SelectFormat(boundaryFormat())
+	otherFormat, _ := mediaformat.Define[boundaryOtherFormatID](nil)
+	conflicting, _ := job.SelectFormat(otherFormat)
+
+	matchingInput, _ := baseInput.WithFormatHint(matching)
+	matchingOutput, _ := baseOutput.WithFormatRequest(matching)
+	request, _ := job.New([]job.Input{matchingInput}, []job.Output{matchingOutput}, graph)
+	if _, err := instance.Plan(t.Context(), request); err != nil {
+		t.Fatalf("matching pinned selectors failed: %v", err)
+	}
+	for name, choices := range map[string]struct {
+		input  job.Input
+		output job.Output
+	}{
+		"input":  {input: mustInputHint(t, baseInput, conflicting), output: baseOutput},
+		"output": {input: baseInput, output: mustOutputRequest(t, baseOutput, conflicting)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, _ := job.New([]job.Input{choices.input}, []job.Output{choices.output}, graph)
+			_, err := instance.Plan(t.Context(), request)
+			items := diagnostic.ItemsOf(err)
+			if len(items) != 1 || items[0].Code != "bind.format-conflict" || items[0].Detail["pinnedFormat"] != boundaryFormat().Identity().String() {
+				t.Fatalf("pinned conflict = %#v, %v", items, err)
+			}
+		})
+	}
+}
+
+func mustInputHint(t testing.TB, input job.Input, selector job.FormatSelector) job.Input {
+	t.Helper()
+	result, err := input.WithFormatHint(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func mustOutputRequest(t testing.TB, output job.Output, selector job.FormatSelector) job.Output {
+	t.Helper()
+	result, err := output.WithFormatRequest(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestHostReportsMissingProbeCandidatesAndUnsatisfiedFormatRequirements(t *testing.T) {

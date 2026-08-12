@@ -2,6 +2,8 @@
 package bound
 
 import (
+	"slices"
+
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/plan"
@@ -54,7 +56,11 @@ func ResolveSource(entry Entry, projection plan.Boundary) Entry {
 }
 
 func (e Entry) Valid() bool {
-	if !e.projection.Valid() {
+	if e.automatic && !e.resolved && e.projection.Direction == plan.OutputBoundary {
+		if !validPendingOutput(e.projection) {
+			return false
+		}
+	} else if !e.projection.Valid() {
 		return false
 	}
 	switch e.projection.Kind {
@@ -73,6 +79,15 @@ func (e Entry) Valid() bool {
 	default:
 		return false
 	}
+}
+
+func validPendingOutput(value plan.Boundary) bool {
+	if value.Direction != plan.OutputBoundary || value.Kind != plan.ProviderBoundary || value.Choice < 0 || value.Node == "" || value.Port == "" || value.Component == "" || value.Scheme == "" || value.Reference == "" || value.ReferenceFingerprint == "" || len(value.Selected) != 0 || !value.Spool.IsZero() || value.Topology != 0 || value.Mode != 0 || value.Ownership != 0 {
+		return false
+	}
+	available, availableErr := access.NewCapabilities(value.Available...)
+	effective, effectiveErr := access.NewCapabilities(value.Effective...)
+	return availableErr == nil && effectiveErr == nil && slices.Equal(available.Values(), value.Available) && slices.Equal(effective.Values(), value.Effective) && slices.Equal(value.Available, value.Effective)
 }
 
 func (e Entry) Projection() plan.Boundary       { return cloneProjection(e.projection) }

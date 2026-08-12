@@ -18,11 +18,7 @@ func (h *Host) formatCompileContexts(requested job.Graph) (map[job.NodeID]plugin
 		if !ok {
 			continue
 		}
-		carriers := formatCarriers(component)
-		if len(carriers) == 0 {
-			continue
-		}
-		resolver, err := h.metadataResolver(carriers)
+		prepared, present, err := h.formatCompileContext(component)
 		if err != nil {
 			return nil, diagnostic.NewError(diagnostic.NewItem(
 				"prepare.metadata-resolver",
@@ -32,13 +28,27 @@ func (h *Host) formatCompileContexts(requested job.Graph) (map[job.NodeID]plugin
 				map[string]string{"node": node.ID().String(), "cause": err.Error()},
 			))
 		}
-		prepared, err := metadata.WithResolver(plugin.CompileContext{}, resolver)
-		if err != nil {
-			return nil, err
+		if present {
+			contexts[node.ID()] = prepared
 		}
-		contexts[node.ID()] = prepared
 	}
 	return contexts, nil
+}
+
+func (h *Host) formatCompileContext(component plugin.Component) (plugin.CompileContext, bool, error) {
+	carriers := formatCarriers(component)
+	if len(carriers) == 0 {
+		return plugin.CompileContext{}, false, nil
+	}
+	resolver, err := h.metadataResolver(carriers)
+	if err != nil {
+		return plugin.CompileContext{}, false, err
+	}
+	prepared, err := metadata.WithResolver(plugin.CompileContext{}, resolver)
+	if err != nil {
+		return plugin.CompileContext{}, false, err
+	}
+	return prepared, true, nil
 }
 
 func (h *Host) metadataResolver(carriers []carrier.ID) (metadata.Resolver, error) {

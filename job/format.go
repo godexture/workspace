@@ -77,6 +77,34 @@ func (s FormatSelector) Config() (config.Patch, bool) {
 	return s.config.Clone(), s.configSet
 }
 
+// Matches reports whether this selector names the supplied Format
+// declaration. It does not resolve component implementation ambiguity.
+func (s FormatSelector) Matches(value mediaformat.Format) bool {
+	if identity, ok := s.Identity(); ok {
+		return identity == value.Identity()
+	}
+	extension, ok := s.Extension()
+	if !ok {
+		return false
+	}
+	for _, declared := range value.Extensions() {
+		if declared == extension {
+			return true
+		}
+	}
+	return false
+}
+
+func (s FormatSelector) String() string {
+	if identity, ok := s.Identity(); ok {
+		return "identity:" + identity.String()
+	}
+	if extension, ok := s.Extension(); ok {
+		return "extension:." + extension.String()
+	}
+	return ""
+}
+
 func (s FormatSelector) clone() FormatSelector {
 	result := s
 	result.config = s.config.Clone()

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -18,11 +19,26 @@ func (h *Host) resolveReadFormat(boundary plan.Boundary, selector job.FormatSele
 	}
 	if len(matches) == 0 {
 		return catalog.FormatMatch{}, probeDiagnostic("prepare.format-not-found", boundary, plugin.Identity{}, "input Format hint does not match a readable Format in the Host catalog", map[string]string{
-			"selector": formatSelectorLabel(selector), "available": availableReadFormats(h.index),
+			"selector": selector.String(), "available": availableReadFormats(h.index),
 		})
 	}
 	return catalog.FormatMatch{}, probeDiagnostic("prepare.format-ambiguous", boundary, plugin.Identity{}, "input Format hint matches multiple readable Format components", map[string]string{
-		"selector": formatSelectorLabel(selector), "candidates": formatMatchList(matches),
+		"selector": selector.String(), "candidates": formatMatchList(matches),
+	})
+}
+
+func (h *Host) resolveWriteFormat(boundary plan.Boundary, selector job.FormatSelector) (catalog.FormatMatch, error) {
+	matches := writeFormatMatches(h.index, selector)
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) == 0 {
+		return catalog.FormatMatch{}, formatSelectionDiagnostic("prepare.format-not-found", boundary, plugin.Identity{}, "output Format request does not match a writable Format in the Host catalog", map[string]string{
+			"selector": selector.String(), "available": availableWriteFormats(h.index),
+		})
+	}
+	return catalog.FormatMatch{}, formatSelectionDiagnostic("prepare.format-ambiguous", boundary, plugin.Identity{}, "output Format request matches multiple writable Format components", map[string]string{
+		"selector": selector.String(), "candidates": formatMatchList(matches),
 	})
 }
 
@@ -36,30 +52,14 @@ func readFormatMatches(index catalog.Index, selector job.FormatSelector) []catal
 	return nil
 }
 
-func selectorMatchesFormat(selector job.FormatSelector, value mediaformat.Format) bool {
+func writeFormatMatches(index catalog.Index, selector job.FormatSelector) []catalog.FormatMatch {
 	if identity, ok := selector.Identity(); ok {
-		return identity == value.Identity()
-	}
-	extension, ok := selector.Extension()
-	if !ok {
-		return false
-	}
-	for _, declared := range value.Extensions() {
-		if declared == extension {
-			return true
-		}
-	}
-	return false
-}
-
-func formatSelectorLabel(selector job.FormatSelector) string {
-	if identity, ok := selector.Identity(); ok {
-		return "identity:" + identity.String()
+		return index.WriteFormats(identity)
 	}
 	if extension, ok := selector.Extension(); ok {
-		return "extension:." + extension.String()
+		return index.WriteExtension(extension)
 	}
-	return ""
+	return nil
 }
 
 func formatMatchList(matches []catalog.FormatMatch) string {
@@ -72,11 +72,25 @@ func formatMatchList(matches []catalog.FormatMatch) string {
 }
 
 func availableReadFormats(index catalog.Index) string {
+	return availableFormats(index, func(component plugin.Component) (mediaformat.Format, bool) {
+		trait, ok := mediaformat.ReadOf(component)
+		return trait.Format(), ok && trait.Valid()
+	})
+}
+
+func availableWriteFormats(index catalog.Index) string {
+	return availableFormats(index, func(component plugin.Component) (mediaformat.Format, bool) {
+		trait, ok := mediaformat.WriteOf(component)
+		return trait.Format(), ok && trait.Valid()
+	})
+}
+
+func availableFormats(index catalog.Index, declared func(plugin.Component) (mediaformat.Format, bool)) string {
 	seen := make(map[string]struct{})
 	for _, component := range index.Components() {
-		trait, ok := mediaformat.ReadOf(component)
-		if ok && trait.Valid() {
-			seen[trait.Format().Identity().String()] = struct{}{}
+		value, ok := declared(component)
+		if ok {
+			seen[value.Identity().String()] = struct{}{}
 		}
 	}
 	values := make([]string, 0, len(seen))
@@ -85,4 +99,20 @@ func availableReadFormats(index catalog.Index) string {
 	}
 	sort.Strings(values)
 	return strings.Join(values, ",")
+}
+
+func formatSelectionDiagnostic(code string, boundary plan.Boundary, component plugin.Identity, message string, extra map[string]string) error {
+	detail := map[string]string{
+		"boundary":  boundary.Node,
+		"scheme":    boundary.Scheme,
+		"direction": "write",
+	}
+	for key, value := range extra {
+		detail[key] = value
+	}
+	path := diagnostic.Path{}
+	if !component.IsZero() {
+		path.Component = component.String()
+	}
+	return diagnostic.NewError(diagnostic.NewItem(code, diagnostic.ErrorSeverity, path, message, detail))
 }

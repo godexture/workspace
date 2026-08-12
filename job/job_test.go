@@ -62,6 +62,9 @@ func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
 	if _, ok := byIdentity.Extension(); ok {
 		t.Fatal("identity selector also exposed an extension")
 	}
+	if !byIdentity.Matches(value) || byIdentity.String() != "identity:"+value.Identity().String() {
+		t.Fatalf("identity selector rendering/match = %q/%v", byIdentity.String(), byIdentity.Matches(value))
+	}
 
 	extension, _ := mediaformat.ParseExtension(".WAV")
 	byExtension, err := SelectFormatExtension(extension)
@@ -73,6 +76,10 @@ func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
 	}
 	if _, ok := byExtension.Identity(); ok {
 		t.Fatal("extension selector also exposed an identity")
+	}
+	withExtension, _ := mediaformat.Define[jobFormatID](nil, mediaformat.WithExtensions("wav"))
+	if !byExtension.Matches(withExtension) || byExtension.String() != "extension:.wav" {
+		t.Fatalf("extension selector rendering/match = %q/%v", byExtension.String(), byExtension.Matches(withExtension))
 	}
 	if _, ok := byExtension.Config(); ok {
 		t.Fatal("selector unexpectedly has explicit config")

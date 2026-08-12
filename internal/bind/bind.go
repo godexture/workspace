@@ -104,6 +104,9 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 			edges = append(edges, job.Connect(openOutputs[index], job.At(selection.node.ID(), selection.port)))
 		}
 	}
+	if err := registry.validatePinnedFormats(inputs, outputs, nodes, edges, entries); err != nil {
+		return Result{}, err
+	}
 	selectedEntries, err := registry.selectCapabilities(nodes, edges, entries, request.Policy().Resources)
 	if err != nil {
 		return Result{}, err

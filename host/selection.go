@@ -40,7 +40,7 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 	}
 
 	for entryIndex, entry := range result.entries {
-		if !entry.Pending() {
+		if !entry.Pending() || entry.Projection().Direction != plan.InputBoundary {
 			continue
 		}
 		projection := entry.Projection()
@@ -92,7 +92,7 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 		reason := "format.probe"
 		if choice.fallback {
 			reason = "format.fallback"
-			basis := "explicit " + formatSelectorLabel(hint)
+			basis := "explicit " + hint.String()
 			if choice.configured {
 				basis += " and media configuration"
 			}

@@ -195,7 +195,7 @@ func (h *Host) chooseFormat(boundary plan.Boundary, candidates []probeCandidate,
 	}
 	if len(selected) == 0 {
 		return formatChoice{}, probeDiagnostic("prepare.probe-mismatch", boundary, target.Component().Identity(), "the hinted Format did not recognize the input and does not provide an evidence-free fallback", map[string]string{
-			"format": target.Format().Identity().String(), "selector": formatSelectorLabel(hint),
+			"format": target.Format().Identity().String(), "selector": hint.String(),
 		})
 	}
 	if err := validateFallbackConfig(boundary, selected[0], hint); err != nil {
@@ -232,7 +232,7 @@ func chooseProbeCandidate(boundary plan.Boundary, selected []probeCandidate, fal
 		fallback:  fallback,
 		evidence:  candidate.result.Evidence(),
 	}
-	if hint.Valid() && selectorMatchesFormat(hint, candidate.trait.Format()) {
+	if hint.Valid() && hint.Matches(candidate.trait.Format()) {
 		choice.config, choice.configured = hint.Config()
 	}
 	return choice, nil
@@ -259,7 +259,7 @@ func validateFallbackConfig(boundary plan.Boundary, candidate probeCandidate, hi
 		return nil
 	}
 	return probeDiagnostic("prepare.format-config-required", boundary, candidate.component.Identity(), "evidence-free Format fallback requires explicit media configuration", map[string]string{
-		"format": candidate.trait.Format().Identity().String(), "selector": formatSelectorLabel(hint), "required": strings.Join(required, ","), "provided": strings.Join(provided, ","),
+		"format": candidate.trait.Format().Identity().String(), "selector": hint.String(), "required": strings.Join(required, ","), "provided": strings.Join(provided, ","),
 	})
 }
 
