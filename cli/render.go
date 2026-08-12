@@ -7,6 +7,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
@@ -16,6 +18,8 @@ import (
 
 type eventRenderer struct {
 	destination io.Writer
+	mu          sync.Mutex
+	stopped     atomic.Bool
 	seen        map[uint64]struct{}
 	printed     map[uint64]struct{}
 	deferred    map[uint64]host.Event
@@ -24,6 +28,11 @@ type eventRenderer struct {
 }
 
 func (r *eventRenderer) Emit(_ context.Context, event host.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped.Load() {
+		return nil
+	}
 	if r.seen == nil {
 		r.seen = make(map[uint64]struct{})
 		r.printed = make(map[uint64]struct{})
@@ -44,6 +53,11 @@ func (r *eventRenderer) Emit(_ context.Context, event host.Event) error {
 }
 
 func (r *eventRenderer) finish(events []host.Event, summary host.ObservationSummary) (bool, error) {
+	r.stopped.Store(true)
+	if !r.mu.TryLock() {
+		return false, errEventRendererActive
+	}
+	defer r.mu.Unlock()
 	if r.seen == nil {
 		r.seen = make(map[uint64]struct{})
 		r.printed = make(map[uint64]struct{})
@@ -72,6 +86,8 @@ func (r *eventRenderer) finish(events []host.Event, summary host.ObservationSumm
 	}
 	return observationLost(r.seen, events, summary), nil
 }
+
+var errEventRendererActive = errors.New("event renderer delivery exceeded cleanup timeout")
 
 func observationLost(seen map[uint64]struct{}, events []host.Event, summary host.ObservationSummary) bool {
 	total := summary.HistoryDropped + uint64(len(events))

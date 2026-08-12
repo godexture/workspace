@@ -206,6 +206,40 @@ func TestRunDoesNotBackpressureConversionOnBlockedRenderer(t *testing.T) {
 	}
 }
 
+func TestRunStopsRenderingAfterObservationCleanupTimeout(t *testing.T) {
+	instance, err := host.New(host.Plugins(standard.Set()), host.CleanupTimeout(20*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	outputPath := filepath.Join(directory, "output.wav")
+	payload := bytes.Repeat([]byte{1, 0, 2, 0}, 4_096)
+	if err := os.WriteFile(inputPath, pcmWave(2, 44_100, 16, payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocked := newBlockingWriter()
+	var stdout bytes.Buffer
+	finished := make(chan ExitCode, 1)
+	go func() {
+		finished <- Run(t.Context(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, blocked))
+	}()
+	<-blocked.started
+	waitForFile(t, outputPath)
+	select {
+	case code := <-finished:
+		if code != ExitCanceled {
+			close(blocked.release)
+			t.Fatalf("cleanup timeout exit = %d, want %d", code, ExitCanceled)
+		}
+	case <-time.After(time.Second):
+		close(blocked.release)
+		t.Fatal("CLI waited for a renderer past the observation cleanup timeout")
+	}
+	close(blocked.release)
+	<-blocked.finished
+}
+
 func TestEventRendererRecoversDeliveryGapFromHistory(t *testing.T) {
 	var stderr bytes.Buffer
 	renderer := &eventRenderer{destination: &stderr}
@@ -280,25 +314,32 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("renderer failed") }
 
 type blockingWriter struct {
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	buffer  bytes.Buffer
+	started  chan struct{}
+	release  chan struct{}
+	finished chan struct{}
+	once     sync.Once
+	mu       sync.Mutex
+	buffer   bytes.Buffer
 }
 
 func newBlockingWriter() *blockingWriter {
-	return &blockingWriter{started: make(chan struct{}), release: make(chan struct{})}
+	return &blockingWriter{started: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
 }
 
 func (w *blockingWriter) Write(value []byte) (int, error) {
+	first := false
 	w.once.Do(func() {
+		first = true
 		close(w.started)
 		<-w.release
 	})
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buffer.Write(value)
+	written, err := w.buffer.Write(value)
+	w.mu.Unlock()
+	if first {
+		close(w.finished)
+	}
+	return written, err
 }
 
 func (w *blockingWriter) String() string {

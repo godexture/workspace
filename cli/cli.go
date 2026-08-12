@@ -103,6 +103,10 @@ func Run(ctx context.Context, instance *host.Host, args []string, values ...Opti
 		host.DeliverEvents(cliEventLimit, renderer),
 	))
 	observationLost, renderErr := renderer.finish(result.Events, result.Observation)
+	if errors.Is(renderErr, errEventRendererActive) {
+		closeErr := prepared.Close()
+		return runtimeExit(ctx, errors.Join(runErr, renderErr, closeErr))
+	}
 	if runErr == nil {
 		runErr = renderErr
 	}
