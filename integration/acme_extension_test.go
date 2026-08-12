@@ -81,6 +81,58 @@ func TestStandardSetAddRunsThirdPartyProviderFormatCodecAndMetadata(t *testing.T
 	}
 }
 
+func TestThirdPartyFormatExtensionJoinsFileConvenienceThroughSetAdd(t *testing.T) {
+	label := "file-extension"
+	payload := []byte{0, 4, 41, 254}
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.acme")
+	outputPath := filepath.Join(directory, "output.acme")
+	if err := os.WriteFile(inputPath, mustACME(t, label, payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(inputPath, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := host.New(host.Plugins(standard.Set().Add(acme.Plugin())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	selectedReader, selectedWriter := false, false
+	for _, node := range prepared.Plan().Nodes() {
+		switch node.Component {
+		case acme.ReaderIdentity().String():
+			selectedReader = node.Origin == plan.Automatic && node.Reason == "format.probe"
+		case acme.WriterIdentity().String():
+			selectedWriter = node.Origin == plan.Automatic && node.Reason == "format.output"
+		}
+	}
+	if !selectedReader || !selectedWriter {
+		t.Fatalf("third-party Format selection = reader %v, writer %v", selectedReader, selectedWriter)
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("third-party file Run = %#v, %v", result, runErr)
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := mustACME(t, label, []byte{1, 5, 42, 255})
+	if !bytes.Equal(got, want) {
+		t.Fatalf("third-party file output = %x, want %x", got, want)
+	}
+}
+
 func assertACMEDeclarations(t testing.TB, declarations []plugin.Declaration, owner plugin.Identity) {
 	t.Helper()
 	want := map[plugin.DeclarationKey]plugin.Identity{

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/buffer"
@@ -390,6 +391,50 @@ func TestReferenceCanonicalizesPlatformPathsWithoutIO(t *testing.T) {
 	}
 	if _, err := Reference("bad\x00path"); err == nil {
 		t.Fatal("NUL path accepted")
+	}
+}
+
+func TestValidateDistinctRejectsEquivalentFileIdentities(t *testing.T) {
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input.wav")
+	if err := os.WriteFile(input, []byte("input"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]string{
+		"same path":              input,
+		"relative normalization": filepath.Join(directory, "child", "..", "input.wav"),
+	}
+	link := filepath.Join(directory, "hardlink.wav")
+	if err := os.Link(input, link); err != nil {
+		t.Fatal(err)
+	}
+	tests["hard link"] = link
+	symlink := filepath.Join(directory, "symlink.wav")
+	if err := os.Symlink(input, symlink); err == nil {
+		tests["symbolic link"] = symlink
+	}
+	if runtime.GOOS == "windows" {
+		tests["path case"] = strings.ToUpper(input)
+	}
+
+	for name, output := range tests {
+		t.Run(name, func(t *testing.T) {
+			items := diagnostic.ItemsOf(ValidateDistinct(input, output))
+			if len(items) != 1 || items[0].Code != "file.same-path" {
+				t.Fatalf("same-file diagnostic = %#v", items)
+			}
+		})
+	}
+	if err := ValidateDistinct(input, filepath.Join(directory, "missing.wav")); err != nil {
+		t.Fatalf("distinct missing output rejected: %v", err)
+	}
+	distinct := filepath.Join(directory, "existing.wav")
+	if err := os.WriteFile(distinct, []byte("output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDistinct(input, distinct); err != nil {
+		t.Fatalf("distinct existing output rejected: %v", err)
 	}
 }
 

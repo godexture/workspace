@@ -177,6 +177,121 @@ func TestFileJobRejectsUnknownOutputExtensionBeforeOutputAcquire(t *testing.T) {
 	}
 }
 
+func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T) {
+	payload := []byte{1, 0, 2, 0, 3, 0, 4, 0}
+	inputBytes := riffFile(
+		riffChunk("fmt ", pcmFormat(2, 44_100, 16), 0),
+		riffChunk("data", payload, 0),
+	)
+	for _, extension := range []string{"wav", "raw"} {
+		t.Run(extension, func(t *testing.T) {
+			directory := t.TempDir()
+			inputPath := filepath.Join(directory, "input.wav")
+			outputPath := filepath.Join(directory, "output."+extension)
+			if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if extension == "raw" {
+				if !bytes.Equal(encoded, payload) {
+					t.Fatalf("raw output = %x, want %x", encoded, payload)
+				}
+				return
+			}
+			assertPCMRIFF(t, encoded, pcmFormat(2, 44_100, 16), payload)
+		})
+	}
+
+	t.Run("same path rejected", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "audio.wav")
+		if err := os.WriteFile(path, inputBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := standard.Convert(t.Context(), path, path)
+		items := host.Diagnostics(err)
+		if len(items) != 1 || items[0].Code != "file.same-path" {
+			t.Fatalf("same-path diagnostic = %#v, %v", items, err)
+		}
+		encoded, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(encoded, inputBytes) {
+			t.Fatal("same-path rejection changed the original input")
+		}
+	})
+
+	t.Run("existing distinct target replaced", func(t *testing.T) {
+		directory := t.TempDir()
+		inputPath := filepath.Join(directory, "input.wav")
+		outputPath := filepath.Join(directory, "output.wav")
+		if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(outputPath, []byte("existing target"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPCMRIFF(t, encoded, pcmFormat(2, 44_100, 16), payload)
+	})
+
+	t.Run("runtime rollback", func(t *testing.T) {
+		directory := t.TempDir()
+		inputPath := filepath.Join(directory, "partial.wav")
+		outputPath := filepath.Join(directory, "existing.wav")
+		partial := riffFile(
+			riffChunk("fmt ", pcmFormat(1, 48_000, 16), 0),
+			riffChunk("data", []byte{1}, 0),
+		)
+		original := []byte("existing output remains")
+		if err := os.WriteFile(inputPath, partial, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(outputPath, original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := standard.Convert(t.Context(), inputPath, outputPath); err == nil {
+			t.Fatal("partial PCM conversion unexpectedly succeeded")
+		}
+		got, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, original) {
+			t.Fatalf("failed conversion changed output = %q", got)
+		}
+	})
+
+	t.Run("raw input requires explicit media config", func(t *testing.T) {
+		directory := t.TempDir()
+		inputPath := filepath.Join(directory, "input.raw")
+		outputPath := filepath.Join(directory, "output.wav")
+		if err := os.WriteFile(inputPath, []byte("0123456789abcdef"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := standard.Convert(t.Context(), inputPath, outputPath)
+		items := host.Diagnostics(err)
+		if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "endian,layout,rate,validBits" {
+			t.Fatalf("raw one-line diagnostic = %#v, %v", items, err)
+		}
+		if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed raw convenience touched output: %v", statErr)
+		}
+	})
+}
+
 func assertOutputFormatNode(t testing.TB, value plan.Plan, extension string) {
 	t.Helper()
 	want := linear.WriterIdentity()

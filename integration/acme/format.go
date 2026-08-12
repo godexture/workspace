@@ -33,7 +33,7 @@ type (
 )
 
 func Container() mediaformat.Format {
-	value, err := mediaformat.Define[formatID]([]carrier.ID{LabelCarrier()})
+	value, err := mediaformat.Define[formatID]([]carrier.ID{LabelCarrier()}, mediaformat.WithExtensions("acme"))
 	if err != nil {
 		panic(err)
 	}
