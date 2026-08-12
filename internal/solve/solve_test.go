@@ -2,6 +2,7 @@ package solve
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
@@ -105,6 +108,109 @@ func TestResolveFindsLongPathAndIgnoresUnrelatedCandidates(t *testing.T) {
 	if unrelatedCompiles.Load() != 0 {
 		t.Fatalf("unrelated candidate compiled %d times", unrelatedCompiles.Load())
 	}
+}
+
+func TestTerminalConstraintKeepsIntermediateBridgesAndExplainsSelectedFormat(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	sink := solveSink(solveSchemaD, false, nil)
+	ab := solveBridge[solveBridgeABID](solveSchemaA, solveSchemaB, structural("ab"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, nil)
+	bc := solveBridge[solveBridgeBCID](solveSchemaB, solveSchemaC, structural("bc"), schemaTransform(solveSchemaC), nil, 0, plugin.Contract{}, nil, nil)
+	selectedFormat := solveBridge[solveBridgeCDID](solveSchemaC, solveSchemaD, structural("selected"), schemaTransform(solveSchemaD), nil, 0, plugin.Contract{}, nil, nil)
+	competingFormat := solveBridge[solveBridgeADID](solveSchemaA, solveSchemaD, structural("competing"), schemaTransform(solveSchemaD), nil, 0, plugin.Contract{}, nil, nil)
+	preselection, err := NewPreselection(nil, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preselection, err = preselection.WithTerminals(TerminalSelection{
+		Boundary: job.At("sink", "in"), Component: selectedFormat.Identity(), Reason: "format.output",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, sink, competingFormat, selectedFormat, bc, ab), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform(), bound.State{}, graph.CompileContexts{}, preselection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make(map[string]plan.Node)
+	for _, node := range program.Plan().Nodes() {
+		if node.Origin == plan.Automatic {
+			found[node.Component] = node
+		}
+	}
+	for _, component := range []plugin.Component{ab, bc, selectedFormat} {
+		if _, ok := found[component.Identity().String()]; !ok {
+			t.Fatalf("terminal path omitted %s: %#v", component.Identity(), found)
+		}
+	}
+	if _, ok := found[competingFormat.Identity().String()]; ok {
+		t.Fatalf("competing terminal Format was selected: %#v", found)
+	}
+	if found[selectedFormat.Identity().String()].Reason != "format.output" || found[ab.Identity().String()].Reason == "format.output" || found[bc.Identity().String()].Reason == "format.output" {
+		t.Fatalf("terminal reasons = %#v", found)
+	}
+	selectedID := found[selectedFormat.Identity().String()].ID
+	adjacent := 0
+	for _, edge := range program.Plan().Edges() {
+		if edge.FromNode == selectedID || edge.ToNode == selectedID {
+			adjacent++
+			if edge.Reason != "format.output" {
+				t.Fatalf("terminal edge reason = %#v", edge)
+			}
+		}
+	}
+	if adjacent != 2 {
+		t.Fatalf("terminal adjacent edges = %d", adjacent)
+	}
+}
+
+func TestTerminalConstraintCarriesPreparedContextAndFixedConfig(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	sink := solveSink(solveSchemaB, false, nil)
+	key := plugin.TraitKeyOf[solveTerminalContextID]()
+	var suggestions atomic.Int32
+	shape := flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, []flow.Port{flow.Out("out", solveSchemaB)})
+	terminal := solveContextComponent[solveBridgeABID](shape, func(ctx plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
+		prepared, ok := plugin.TraitValueOf[string](ctx, key)
+		input, inputOK := inputs.One("in")
+		if !ok || prepared != "prepared" || !inputOK || value.Mode != 3 {
+			return plugin.Compiled[solvePlan, stream.Descriptor]{}, errors.New("terminal Compile did not receive fixed prepared inputs")
+		}
+		return plugin.Compiled[solvePlan, stream.Descriptor]{
+			Outputs: flow.NewDescriptors(flow.Describe("out", schemaTransform(solveSchemaB)(input, value))), Effects: []plugin.Effect{structural("terminal")},
+		}, nil
+	}, func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
+		suggestions.Add(1)
+		return []solveConfig{{Mode: 4}}
+	}, 1, plugin.Contract{}, nil, nil)
+	prepared, err := plugin.CompileContextWithTrait(plugin.CompileContext{}, key, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preselection, _ := NewPreselection(nil, nil, nil, plan.Usage{})
+	preselection, err = preselection.WithTerminals(TerminalSelection{
+		Boundary: job.At("sink", "in"), Component: terminal.Identity(), Config: config.NewPatch().Set("mode", 3), Configured: true, Context: prepared, Reason: "format.output",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, sink, terminal), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform(), bound.State{}, graph.CompileContexts{}, preselection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suggestions.Load() != 0 {
+		t.Fatalf("fixed terminal config invoked Suggest %d times", suggestions.Load())
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.Component != terminal.Identity().String() {
+			continue
+		}
+		fields := node.Config.Fields()
+		if len(fields) != 1 || fields[0].ID != "mode" || fields[0].Value != "3" || fields[0].Source != config.SourceExplicit || node.Reason != "format.output" {
+			t.Fatalf("fixed terminal node = %#v", node)
+		}
+		return
+	}
+	t.Fatal("fixed terminal node is absent")
 }
 
 func TestResolveConditionGapSkipsNonProgressCandidate(t *testing.T) {

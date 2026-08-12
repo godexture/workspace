@@ -121,6 +121,7 @@ type compileKey struct {
 	config      config.Fingerprint
 	input       stream.Fingerprint
 	environment string
+	prepared    string
 }
 
 type compileEntry struct {
@@ -131,7 +132,7 @@ type compileEntry struct {
 
 type compileCache map[compileKey][]compileEntry
 
-func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, input stream.Descriptor) (candidateResult, error) {
+func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, input stream.Descriptor, prepared plugin.CompileContext, preparedKey string) (candidateResult, error) {
 	shape, err := candidate.component.Shape(plugin.ShapeContext{}, resolved)
 	if err != nil {
 		return candidateResult{}, rejectError{code: "shape"}
@@ -143,7 +144,7 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	if err != nil {
 		return candidateResult{}, rejectError{code: "descriptor"}
 	}
-	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint, input: fingerprint, environment: p.environment}
+	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint, input: fingerprint, environment: p.environment, prepared: preparedKey}
 	for _, entry := range p.cache[key] {
 		if entry.input.SameState(input) {
 			p.usage.CacheHits++
@@ -153,7 +154,7 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	if err := p.beforeCompile(); err != nil {
 		return candidateResult{}, err
 	}
-	compileContext := plugin.CompileContextWithContext(plugin.CompileContext{}, p.context)
+	compileContext := plugin.CompileContextWithContext(prepared, p.context)
 	compilation, compileErr := plugin.Compile(candidate.component, compileContext, resolved, flow.NewDescriptors(flow.Describe(shape.Inputs[0].ID(), input)))
 	if contextErr := p.checkContext(); contextErr != nil {
 		return candidateResult{}, contextErr
@@ -205,13 +206,23 @@ func validateBridgeResult(compilation plugin.Compilation, outputPort flow.Port, 
 	return output, nil
 }
 
-func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin.Need[stream.Descriptor], remaining int) ([]config.ResolvedView, int, bool, error) {
+func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin.Need[stream.Descriptor], remaining int, fixed *config.Patch) ([]config.ResolvedView, int, bool, error) {
 	values := make([]config.ResolvedView, 0, 1)
 	seen := make(map[config.Fingerprint]struct{})
-	resolved, err := candidate.component.Resolve(config.NewPatch())
+	patch := config.NewPatch()
+	if fixed != nil {
+		patch = fixed.Clone()
+	}
+	resolved, err := candidate.component.Resolve(patch)
 	if err == nil {
 		values = append(values, resolved)
 		seen[resolved.Fingerprint] = struct{}{}
+	}
+	if fixed != nil {
+		if err != nil {
+			return nil, 0, false, rejectError{code: rejectionCode(err)}
+		}
+		return values, 0, false, nil
 	}
 	if err := p.checkContext(); err != nil {
 		return nil, 0, false, err

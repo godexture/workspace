@@ -8,8 +8,8 @@ import (
 )
 
 // CompileContexts is the immutable node-local prepared input to component
-// compilation. Inserted nodes receive planning cancellation without prepared
-// values because they did not pass through Prepare inspection.
+// compilation. Solver-inserted nodes receive values only when Host selected
+// them before solving, such as an output Format terminal.
 type CompileContexts struct {
 	byNode   map[job.NodeID]plugin.CompileContext
 	planning context.Context
@@ -41,4 +41,17 @@ func (c CompileContexts) For(id job.NodeID) plugin.CompileContext {
 func (c CompileContexts) WithContext(ctx context.Context) CompileContexts {
 	c.planning = ctx
 	return c
+}
+
+// WithPrepared returns a copy carrying node-local values for a component
+// selected before solver insertion.
+func (c CompileContexts) WithPrepared(id job.NodeID, value plugin.CompileContext) CompileContexts {
+	result := make(map[job.NodeID]plugin.CompileContext, len(c.byNode)+1)
+	for key, prepared := range c.byNode {
+		result[key] = prepared
+	}
+	if id.Valid() {
+		result[id] = value
+	}
+	return CompileContexts{byNode: result, planning: c.planning}
 }

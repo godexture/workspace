@@ -36,6 +36,7 @@ type planner struct {
 	environment string
 	nodes       map[job.NodeID]annotation
 	edges       map[string]annotation
+	terminals   map[string]terminalSelection
 	bound       bound.State
 	contexts    graph.CompileContexts
 	warnings    []string
@@ -79,19 +80,20 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 	planningContext, cancel := planning.Start(ctx, request.Budget().Duration)
 	defer cancel()
 	p := &planner{
-		context:  planningContext,
-		index:    index,
-		request:  request,
-		policy:   request.Policy(),
-		budget:   request.Budget(),
-		platform: platform,
-		cache:    make(compileCache),
-		nodes:    make(map[job.NodeID]annotation),
-		edges:    make(map[string]annotation),
-		bound:    boundaries,
-		contexts: contexts,
-		usage:    selected.usage,
-		warnings: append([]string(nil), selected.warnings...),
+		context:   planningContext,
+		index:     index,
+		request:   request,
+		policy:    request.Policy(),
+		budget:    request.Budget(),
+		platform:  platform,
+		cache:     make(compileCache),
+		nodes:     make(map[job.NodeID]annotation),
+		edges:     make(map[string]annotation),
+		terminals: selected.clone().terminals,
+		bound:     boundaries,
+		contexts:  contexts,
+		usage:     selected.usage,
+		warnings:  append([]string(nil), selected.warnings...),
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)

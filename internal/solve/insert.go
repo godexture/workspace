@@ -39,6 +39,8 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 	newNodes := make([]job.Node, 0, len(path))
 	newEdges := make([]job.Edge, 0, len(path)+1)
 	newAnnotations := make(map[job.NodeID]annotation, len(path))
+	newEdgeAnnotations := make(map[string]annotation, len(path)+1)
+	terminal, constrained := p.terminals[jobPortKey(gap.Node(), gap.Port())]
 	for index, selected := range path {
 		patch, err := selected.result.bridge.component.Schema().Patch(selected.result.config)
 		if err != nil {
@@ -51,9 +53,23 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 		edge := job.Connect(previous, job.At(id, selected.result.bridge.input.ID()))
 		newEdges = append(newEdges, edge)
 		previous = job.At(id, selected.result.bridge.output.ID())
-		newAnnotations[id] = annotation{origin: plan.Automatic, reason: gap.Need().Code(), summary: selected.result.config.Summary()}
+		reason := gap.Need().Code()
+		if constrained && selected.result.bridge.component.Identity() == terminal.component && index == len(path)-1 {
+			reason = terminal.reason
+		}
+		newAnnotations[id] = annotation{origin: plan.Automatic, reason: reason, summary: selected.result.config.Summary()}
+		newEdgeAnnotations[edgeKey(edge)] = annotation{origin: plan.Automatic, reason: reason}
+		if constrained && selected.result.bridge.component.Identity() == terminal.component && index == len(path)-1 {
+			p.contexts = p.contexts.WithPrepared(id, terminal.context)
+		}
 	}
-	newEdges = append(newEdges, job.Connect(previous, replaced.To()))
+	last := job.Connect(previous, replaced.To())
+	newEdges = append(newEdges, last)
+	lastReason := gap.Need().Code()
+	if constrained && len(path) != 0 && path[len(path)-1].result.bridge.component.Identity() == terminal.component {
+		lastReason = terminal.reason
+	}
+	newEdgeAnnotations[edgeKey(last)] = annotation{origin: plan.Automatic, reason: lastReason}
 	nodes = append(nodes, newNodes...)
 	kept = append(kept, newEdges...)
 	updated, err := job.NewGraph(nodes, kept, current.Mappings()...)
@@ -64,8 +80,8 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 	for id, value := range newAnnotations {
 		p.nodes[id] = value
 	}
-	for _, edge := range newEdges {
-		p.edges[edgeKey(edge)] = annotation{origin: plan.Automatic, reason: gap.Need().Code()}
+	for key, value := range newEdgeAnnotations {
+		p.edges[key] = value
 	}
 	return updated, nil
 }

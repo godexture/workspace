@@ -3,8 +3,12 @@ package solve
 import (
 	"container/heap"
 
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/internal/graph"
+	"github.com/godexture/godec/job"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/plugin"
 )
 
 type step struct {
@@ -90,6 +94,7 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 	stateLimit := false
 	suggestionLimit := false
 	suggestions := 0
+	terminal, constrained := p.terminals[jobPortKey(gap.Node(), gap.Port())]
 
 	for queue.Len() != 0 {
 		if err := p.checkContext(); err != nil {
@@ -99,7 +104,8 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 		if !visited.current(current) {
 			continue
 		}
-		if current.descriptor.Schema() == gap.ExpectedSchema() {
+		terminalSatisfied := !constrained || len(current.path) != 0 && current.path[len(current.path)-1].result.bridge.component.Identity() == terminal.component
+		if current.descriptor.Schema() == gap.ExpectedSchema() && terminalSatisfied {
 			if err := p.beforeCompile(); err != nil {
 				return nil, rejected, err
 			}
@@ -121,6 +127,12 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 		}
 
 		for _, candidate := range p.candidates[current.descriptor.Schema().String()] {
+			if constrained {
+				if _, isFormat := mediaformat.WriteOf(candidate.component); isFormat && candidate.component.Identity() != terminal.component {
+					rejected.add("terminal-format")
+					continue
+				}
+			}
 			if !codecCandidateMatches(p.index, candidate.component.Identity(), current.descriptor) {
 				rejected.add("codec-tag")
 				continue
@@ -129,7 +141,18 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 			if remaining < 0 {
 				remaining = 0
 			}
-			configs, suggested, limited, err := p.configs(candidate, current.descriptor, gap.Need(), remaining)
+			var fixed *config.Patch
+			prepared := plugin.CompileContext{}
+			preparedKey := ""
+			if constrained && candidate.component.Identity() == terminal.component {
+				prepared = terminal.context
+				preparedKey = jobPortKey(terminal.boundary.Node(), terminal.boundary.ID())
+				if terminal.configured {
+					patch := terminal.config.Clone()
+					fixed = &patch
+				}
+			}
+			configs, suggested, limited, err := p.configs(candidate, current.descriptor, gap.Need(), remaining, fixed)
 			suggestions += suggested
 			if limited {
 				suggestionLimit = true
@@ -145,7 +168,7 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 				continue
 			}
 			for _, resolved := range configs {
-				result, err := p.compileBridge(candidate, resolved, current.descriptor)
+				result, err := p.compileBridge(candidate, resolved, current.descriptor, prepared, preparedKey)
 				if err != nil {
 					if _, limited := err.(limitError); limited {
 						return nil, rejected, err
@@ -158,6 +181,10 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 				}
 				if result.output.SameState(current.descriptor) {
 					rejected.add("non-progress")
+					continue
+				}
+				if constrained && result.output.Schema() == gap.ExpectedSchema() && candidate.component.Identity() != terminal.component {
+					rejected.add("terminal-format")
 					continue
 				}
 				outputFingerprint, err := result.output.Fingerprint()
@@ -190,4 +217,8 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 		return nil, rejected, limitError{dimension: "suggestions"}
 	}
 	return nil, rejected, rejectError{code: "no-path"}
+}
+
+func jobPortKey(node job.NodeID, port string) string {
+	return job.At(node, port).String()
 }

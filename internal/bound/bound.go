@@ -33,6 +33,12 @@ func Sink(projection plan.Boundary, reference access.Reference, trait access.Sin
 	return Entry{projection: cloneProjection(projection), reference: reference, sink: trait, resolved: true}
 }
 
+// AutomaticSink is an output boundary whose Format requirements will be
+// selected by Host before the solver runs.
+func AutomaticSink(projection plan.Boundary, reference access.Reference, trait access.SinkTrait) Entry {
+	return Entry{projection: cloneProjection(projection), reference: reference, sink: trait, automatic: true}
+}
+
 func Endpoint(projection plan.Boundary, trait endpoint.Trait) Entry {
 	return Entry{projection: cloneProjection(projection), trait: trait, resolved: true}
 }
@@ -57,7 +63,7 @@ func (e Entry) Valid() bool {
 			return false
 		}
 		if e.projection.Direction == plan.InputBoundary {
-			return e.source.Valid() && !e.sink.Valid() && (!e.automatic || e.projection.Direction == plan.InputBoundary)
+			return e.source.Valid() && !e.sink.Valid()
 		}
 		return e.sink.Valid() && !e.source.Valid()
 	case plan.EndpointBoundary:

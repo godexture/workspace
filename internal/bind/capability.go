@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/job"
@@ -61,11 +62,19 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 			formatIdentity = trait.Format().Identity()
 		} else {
 			trait, present := mediaformat.WriteOf(component)
-			if !present || !trait.Valid() {
+			if !present {
+				result[index] = bound.AutomaticSink(projection, entry.Reference(), entry.SinkTrait())
+				continue
+			}
+			if !trait.Valid() {
 				return nil, missingFormatRequirements(projection, node)
 			}
-			requirements = trait.Requirements()
-			formatIdentity = trait.Format().Identity()
+			selected, err := selectSinkCapabilities(entry, projection, node, trait, policy)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = selected
+			continue
 		}
 		available, err := access.NewCapabilities(projection.Available...)
 		if err != nil {
@@ -73,31 +82,52 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 		}
 		selection, ok := access.Select(available, requirements)
 		if !ok {
-			adapted, adaptedSelection, possible := spoolCapabilities(available, requirements)
-			if projection.Direction != plan.OutputBoundary || !possible {
-				return nil, unsatisfiedCapabilities(projection, node, formatIdentity, requirements)
-			}
-			if !policy.AllowSpool {
-				return nil, spoolDisabled(projection, node, formatIdentity, requirements)
-			}
-			spec, err := access.NewSpoolSpec(int64(policy.SpoolMaxBytes), 0, policy.SpoolStorage, 0, true, entry.SinkTrait().TransactionClass())
-			if err != nil {
-				return nil, err
-			}
-			projection.Effective = adapted.Values()
-			projection.Selected = adaptedSelection.Capabilities()
-			projection.Spool = spec
-			result[index] = bound.Sink(projection, entry.Reference(), entry.SinkTrait())
-			continue
+			return nil, unsatisfiedCapabilities(projection, node, formatIdentity, requirements)
 		}
 		projection.Selected = selection.Capabilities()
-		if projection.Direction == plan.InputBoundary {
-			result[index] = bound.Source(projection, entry.Reference(), entry.SourceTrait())
-		} else {
-			result[index] = bound.Sink(projection, entry.Reference(), entry.SinkTrait())
-		}
+		result[index] = bound.Source(projection, entry.Reference(), entry.SourceTrait())
 	}
 	return result, nil
+}
+
+// FinalizeOutput selects the sink capabilities required by the Format chosen
+// before solving. Output acquisition still occurs after solving and resource
+// reservation.
+func FinalizeOutput(entry bound.Entry, component plugin.Component, policy job.ResourcePolicy) (bound.Entry, error) {
+	projection := entry.Projection()
+	trait, ok := mediaformat.WriteOf(component)
+	if !entry.Pending() || projection.Direction != plan.OutputBoundary || projection.Kind != plan.ProviderBoundary || !ok || !trait.Valid() {
+		return bound.Entry{}, diagnostic.NewError(bindItem("bind.format-selection", component.Identity(), "automatic Format selection cannot finalize the Access output", map[string]string{"node": projection.Node}))
+	}
+	node := job.NewNode(job.NodeID("format@"+projection.Node), component.Identity(), config.NewPatch())
+	return selectSinkCapabilities(entry, projection, node, trait, policy)
+}
+
+func selectSinkCapabilities(entry bound.Entry, projection plan.Boundary, node job.Node, trait mediaformat.WriteTrait, policy job.ResourcePolicy) (bound.Entry, error) {
+	available, err := access.NewCapabilities(projection.Available...)
+	if err != nil {
+		return bound.Entry{}, err
+	}
+	selection, selected := access.Select(available, trait.Requirements())
+	if !selected {
+		adapted, adaptedSelection, possible := spoolCapabilities(available, trait.Requirements())
+		if !possible {
+			return bound.Entry{}, unsatisfiedCapabilities(projection, node, trait.Format().Identity(), trait.Requirements())
+		}
+		if !policy.AllowSpool {
+			return bound.Entry{}, spoolDisabled(projection, node, trait.Format().Identity(), trait.Requirements())
+		}
+		spec, err := access.NewSpoolSpec(int64(policy.SpoolMaxBytes), 0, policy.SpoolStorage, 0, true, entry.SinkTrait().TransactionClass())
+		if err != nil {
+			return bound.Entry{}, err
+		}
+		projection.Effective = adapted.Values()
+		projection.Selected = adaptedSelection.Capabilities()
+		projection.Spool = spec
+		return bound.Sink(projection, entry.Reference(), entry.SinkTrait()), nil
+	}
+	projection.Selected = selection.Capabilities()
+	return bound.Sink(projection, entry.Reference(), entry.SinkTrait()), nil
 }
 
 func probeSelection(available access.Capabilities) (access.Selection, bool) {

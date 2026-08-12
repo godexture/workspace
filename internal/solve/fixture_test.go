@@ -25,6 +25,7 @@ type solveBridgeABID struct{}
 type solveBridgeABSecondID struct{}
 type solveBridgeBCID struct{}
 type solveBridgeCDID struct{}
+type solveBridgeADID struct{}
 type solveBridgeAAID struct{}
 type solveUnrelatedID struct{}
 type solveMixerID struct{}
@@ -35,6 +36,7 @@ type solveSchemaDID struct{}
 type solveUnit struct{}
 type solveControlID struct{}
 type solveControlTraitID struct{}
+type solveTerminalContextID struct{}
 
 var (
 	solveSchemaA = schema.Define[solveSchemaAID, solveUnit](schema.Traits[solveUnit]{})
