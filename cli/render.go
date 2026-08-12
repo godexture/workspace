@@ -118,7 +118,7 @@ func renderPlan(destination io.Writer, selected plan.Plan) error {
 			if field.Redacted {
 				value = "<redacted>"
 			}
-			if _, err := fmt.Fprintf(destination, "  config %s=%s source=%s\n", field.ID, value, field.Source); err != nil {
+			if _, err := fmt.Fprintf(destination, "  config %s=%s source=%s\n", field.ID, value, field.Source.String()); err != nil {
 				return err
 			}
 		}

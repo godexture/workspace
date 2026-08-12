@@ -15,6 +15,7 @@ const (
 	SourceDefault Source = iota
 	SourcePreset
 	SourceExplicit
+	SourcePlanner
 	SourceNormalized
 )
 
@@ -26,6 +27,8 @@ func (s Source) String() string {
 		return "preset"
 	case SourceExplicit:
 		return "explicit"
+	case SourcePlanner:
+		return "planner"
 	case SourceNormalized:
 		return "normalized"
 	default:

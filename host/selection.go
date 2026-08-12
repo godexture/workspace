@@ -64,7 +64,7 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 			return fail(probeBudgetDiagnostic(projection, "job", usage, request.Budget(), nil))
 		}
 
-		updated, node, insertedEdges, err := insertFormatNode(result.request, projection, choice.component, choice.config)
+		updated, node, insertedEdges, err := insertFormatNode(result.request, projection, choice.component, choice.config.Planned())
 		if err != nil {
 			return fail(err)
 		}

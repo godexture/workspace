@@ -115,7 +115,7 @@ func TestRunAcceptsExplicitRawPropertiesWithoutCLIDefaults(t *testing.T) {
 	if err != nil || !bytes.HasPrefix(encoded, []byte("RIFF")) || !bytes.Contains(encoded, payload) {
 		t.Fatalf("raw WAVE output = %x, %v", encoded, err)
 	}
-	if !strings.Contains(stdout.String(), "without content evidence") || !strings.Contains(stdout.String(), "config rate=48000 source=explicit") {
+	if !strings.Contains(stdout.String(), "without content evidence") || !strings.Contains(stdout.String(), "config rate=48000 source=planner") {
 		t.Fatalf("raw Plan omitted provenance/warning: %s", stdout.String())
 	}
 }

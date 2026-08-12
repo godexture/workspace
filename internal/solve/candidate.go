@@ -241,11 +241,19 @@ func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin
 	suggestionCount := len(suggested)
 	p.usage.Suggestions += suggestionCount
 	for _, value := range suggested {
-		if _, exists := seen[value.Fingerprint]; exists {
+		patch, patchErr := candidate.component.Schema().Patch(value)
+		if patchErr != nil {
+			return nil, 0, false, rejectError{code: rejectionCode(patchErr)}
+		}
+		planned, resolveErr := candidate.component.Resolve(patch.Planned())
+		if resolveErr != nil {
+			return nil, 0, false, rejectError{code: rejectionCode(resolveErr)}
+		}
+		if _, exists := seen[planned.Fingerprint]; exists {
 			continue
 		}
-		seen[value.Fingerprint] = struct{}{}
-		values = append(values, value)
+		seen[planned.Fingerprint] = struct{}{}
+		values = append(values, planned)
 	}
 	sort.Slice(values, func(left, right int) bool {
 		return values[left].Fingerprint.String() < values[right].Fingerprint.String()

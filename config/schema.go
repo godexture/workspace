@@ -242,7 +242,11 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			items = append(items, diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input has the wrong type", inputDetail(field)))
 			continue
 		}
-		provenance.sources[fieldID] = SourceExplicit
+		source := entry.source
+		if source != SourcePlanner {
+			source = SourceExplicit
+		}
+		provenance.sources[fieldID] = source
 	}
 
 	return s.finish(value, provenance, items)

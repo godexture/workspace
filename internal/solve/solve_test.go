@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -43,6 +44,78 @@ func TestResolveDirectGraphProducesRequestedProgramWithoutOpening(t *testing.T) 
 	if opened.Load() != 1 {
 		t.Fatalf("Program.Open count = %d", opened.Load())
 	}
+}
+
+func TestRequestedNodeConfigRemainsExplicit(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	sink := solveSink(solveSchemaA, false, nil)
+	requested, err := job.NewGraph(
+		[]job.Node{
+			job.NewNode("source", source.Identity(), config.NewPatch().Set("mode", 3)),
+			job.NewNode("sink", sink.Identity(), config.NewPatch()),
+		},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := Resolve(context.Background(), solveIndex(t, source, sink), request, solvePlatform())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.ID != "source" {
+			continue
+		}
+		fields := node.Config.Fields()
+		if len(fields) != 1 || fields[0].Source != config.SourceExplicit {
+			t.Fatalf("requested config provenance = %#v", fields)
+		}
+		return
+	}
+	t.Fatal("requested source node is absent")
+}
+
+func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	sink := solveSink(solveSchemaA, true, nil)
+	bridge := solveBridge[solveBridgeAAID](
+		solveSchemaA,
+		solveSchemaA,
+		plugin.Effect{Kind: plugin.RepresentationEffect, Loss: plugin.NoLoss, Detail: "rate"},
+		func(input stream.Descriptor, value solveConfig) stream.Descriptor {
+			if value.Mode != 3 {
+				return input
+			}
+			return stream.MustDescriptor(input.ID(), input.Schema(), timing.MustBase(1, 48_000), input.Properties()).WithMetadata(input.Metadata())
+		},
+		func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
+			return []solveConfig{{Mode: 3}}
+		},
+		1,
+		plugin.Contract{},
+		nil,
+		nil,
+	)
+	program, err := Resolve(context.Background(), solveIndex(t, source, sink, bridge), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.Component != bridge.Identity().String() {
+			continue
+		}
+		fields := node.Config.Fields()
+		if len(fields) != 1 || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner {
+			t.Fatalf("suggested config provenance = %#v", fields)
+		}
+		return
+	}
+	t.Fatal("suggested bridge node is absent")
 }
 
 func TestResolveInsertsOneBridgeAndExplainsIt(t *testing.T) {
@@ -205,7 +278,7 @@ func TestTerminalConstraintCarriesPreparedContextAndFixedConfig(t *testing.T) {
 			continue
 		}
 		fields := node.Config.Fields()
-		if len(fields) != 1 || fields[0].ID != "mode" || fields[0].Value != "3" || fields[0].Source != config.SourceExplicit || node.Reason != "format.output" {
+		if len(fields) != 1 || fields[0].ID != "mode" || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner || node.Reason != "format.output" {
 			t.Fatalf("fixed terminal node = %#v", node)
 		}
 		return

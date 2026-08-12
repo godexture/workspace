@@ -46,6 +46,7 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 		if err != nil {
 			return job.Graph{}, err
 		}
+		patch = patch.Planned()
 		id := automaticNodeID(replaced, index, selected.result, used)
 		used[id] = struct{}{}
 		node := job.NewNode(id, selected.result.bridge.component.Identity(), patch)

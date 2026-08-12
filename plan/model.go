@@ -19,12 +19,14 @@ func (o Origin) Valid() bool { return o == Requested || o == Automatic }
 // Node describes one selected component implementation without retaining its
 // compiled plan or resolved typed config.
 type Node struct {
-	ID           string
-	Origin       Origin
-	Component    string
-	DisplayName  string
-	Variant      string
-	Version      string
+	ID          string
+	Origin      Origin
+	Component   string
+	DisplayName string
+	Variant     string
+	Version     string
+	// Config includes display provenance; canonical Plan identity uses only its
+	// schema, version, and value fingerprint.
 	Config       config.Summary
 	Inputs       []PortDescriptor
 	Outputs      []PortDescriptor

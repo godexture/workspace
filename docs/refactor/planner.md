@@ -294,6 +294,10 @@ Compile を並行評価する場合も結果を canonical order で merge し、
 
 Plan は selected path だけでなく、少なくとも次を持つ。
 
+config field の provenance は default、preset、explicit、planner、normalized を区別する。
+planner が Suggest または自動 Format 選択から与えた値を explicit と表示しない。この provenance は
+表示 metadata であり、同じ resolved value の config fingerprint と Plan fingerprint には影響させない。
+
 - requested node/edge と auto-insert node/edge の区別
 - component canonical identity、alias、implementation version
 - canonical config

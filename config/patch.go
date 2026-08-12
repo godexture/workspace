@@ -13,6 +13,7 @@ type patchValue struct {
 	text   string
 	isText bool
 	value  any
+	source Source
 }
 
 // NewPatch returns an empty sparse patch.
@@ -29,7 +30,7 @@ func (p Patch) Preset(name string) Patch {
 // performed by the target schema so unknown fields can be reported together.
 func (p Patch) Set(field string, value any) Patch {
 	result := p.clone()
-	result.fields[field] = patchValue{value: value}
+	result.fields[field] = patchValue{value: value, source: SourceExplicit}
 	return result
 }
 
@@ -37,7 +38,17 @@ func (p Patch) Set(field string, value any) Patch {
 // field codec performs decoding and validation.
 func (p Patch) SetText(field, value string) Patch {
 	result := p.clone()
-	result.fields[field] = patchValue{text: value, isText: true}
+	result.fields[field] = patchValue{text: value, isText: true, source: SourceExplicit}
+	return result
+}
+
+// Planned returns a copy whose supplied fields are attributed to the planner.
+func (p Patch) Planned() Patch {
+	result := p.clone()
+	for field, value := range result.fields {
+		value.source = SourcePlanner
+		result.fields[field] = value
+	}
 	return result
 }
 

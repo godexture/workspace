@@ -71,6 +71,27 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if source, _ := resolved.Provenance.Source("number"); source != SourceExplicit {
 		t.Fatalf("explicit provenance = %s, want explicit", source)
 	}
+
+	planned, err := schema.Resolve(NewPatch().SetText("number", "0").Planned())
+	if err != nil {
+		t.Fatalf("planner resolve failed: %v", err)
+	}
+	if source, _ := planned.Provenance.Source("number"); source != SourcePlanner {
+		t.Fatalf("planner provenance = %s, want planner", source)
+	}
+	if planned.Fingerprint != resolved.Fingerprint {
+		t.Fatal("provenance changed the config fingerprint")
+	}
+	fields := schema.summary(planned.Value, planned.Provenance, planned.Fingerprint).Fields()
+	foundPlanner := false
+	for _, field := range fields {
+		if field.ID == "number" && field.Source == SourcePlanner {
+			foundPlanner = true
+		}
+	}
+	if !foundPlanner {
+		t.Fatalf("planner summary = %#v", fields)
+	}
 }
 
 func TestSchemaAggregatesUnknownAndInvalidInput(t *testing.T) {

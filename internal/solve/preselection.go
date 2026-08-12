@@ -107,7 +107,7 @@ func (s Preselection) WithTerminals(values ...TerminalSelection) (Preselection, 
 			return Preselection{}, errors.New("terminal selection is repeated")
 		}
 		result.terminals[key] = terminalSelection{
-			boundary: value.Boundary, component: value.Component, config: value.Config.Clone(), configured: value.Configured, context: value.Context, reason: value.Reason,
+			boundary: value.Boundary, component: value.Component, config: value.Config.Planned(), configured: value.Configured, context: value.Context, reason: value.Reason,
 		}
 	}
 	return result, nil

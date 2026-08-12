@@ -24,6 +24,16 @@ type planConfig struct {
 	Token config.SecretValue[string]
 }
 
+func planConfiguration() config.Schema[planConfig] {
+	return config.Struct[planConfigID](func() planConfig {
+		return planConfig{Mode: "copy", Token: config.NewSecret("default-secret")}
+	}).
+		Version("1").
+		AddField(config.Field("mode", func(value *planConfig) *string { return &value.Mode }, config.String())).
+		AddField(config.Field("token", func(value *planConfig) *config.SecretValue[string] { return &value.Token }, config.SecretCodec(config.String()))).
+		Build()
+}
+
 func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T) {
 	description := testDescription(t)
 	description.Boundaries = []Boundary{{
@@ -117,13 +127,7 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 
 func testDescription(t *testing.T) Description {
 	t.Helper()
-	configuration := config.Struct[planConfigID](func() planConfig {
-		return planConfig{Mode: "copy", Token: config.NewSecret("default-secret")}
-	}).
-		Version("1").
-		AddField(config.Field("mode", func(value *planConfig) *string { return &value.Mode }, config.String())).
-		AddField(config.Field("token", func(value *planConfig) *config.SecretValue[string] { return &value.Token }, config.SecretCodec(config.String()))).
-		Build()
+	configuration := planConfiguration()
 	resolved, err := configuration.View().Resolve(config.NewPatch().SetText("token", "live-secret"))
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +207,36 @@ func TestPlanFingerprintExcludesDisplayAndIncludesExecutionState(t *testing.T) {
 	}
 	if first.Fingerprint() == third.Fingerprint() || first.ExecutionSignature() == third.ExecutionSignature() {
 		t.Fatal("execution descriptor did not change canonical identity")
+	}
+}
+
+func TestPlanFingerprintExcludesConfigProvenance(t *testing.T) {
+	configuration := planConfiguration()
+	explicit, err := configuration.View().Resolve(config.NewPatch().Set("mode", "copy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := configuration.View().Resolve(config.NewPatch().Set("mode", "copy").Planned())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.Fingerprint != planned.Fingerprint || explicit.Summary().Fields()[0].Source == planned.Summary().Fields()[0].Source {
+		t.Fatalf("config provenance fixture = explicit %#v, planned %#v", explicit.Summary().Fields(), planned.Summary().Fields())
+	}
+	firstDescription := testDescription(t)
+	firstDescription.Nodes[0].Config = explicit.Summary()
+	first, err := New(firstDescription)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDescription := testDescription(t)
+	secondDescription.Nodes[0].Config = planned.Summary()
+	second, err := New(secondDescription)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint() != second.Fingerprint() || first.ExecutionSignature() != second.ExecutionSignature() {
+		t.Fatal("config provenance changed Plan identity")
 	}
 }
 
