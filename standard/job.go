@@ -3,6 +3,7 @@ package standard
 import (
 	"github.com/godexture/godec/internal/surface"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/plugin/file"
 )
 
 // FileJobOption configures one catalog-independent file request.
@@ -47,5 +48,13 @@ func NewFileJob(inputPath, outputPath string, values ...FileJobOption) (job.Job,
 	if options.outputSet {
 		output = &options.output
 	}
-	return surface.FileJob(inputPath, outputPath, input, output)
+	inputReference, err := file.Reference(inputPath)
+	if err != nil {
+		return job.Job{}, err
+	}
+	outputReference, err := file.Reference(outputPath)
+	if err != nil {
+		return job.Job{}, err
+	}
+	return surface.FileJob(inputPath, inputReference, outputPath, outputReference, input, output)
 }

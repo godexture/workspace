@@ -77,11 +77,19 @@ func (i invocation) request() (job.Job, error) {
 	if err != nil {
 		return job.Job{}, err
 	}
+	inputReference, err := file.Reference(i.input)
+	if err != nil {
+		return job.Job{}, err
+	}
+	outputReference, err := file.Reference(i.output)
+	if err != nil {
+		return job.Job{}, err
+	}
 	var request job.Job
 	if selected {
-		request, err = surface.FileJob(i.input, i.output, &selector, nil)
+		request, err = surface.FileJob(i.input, inputReference, i.output, outputReference, &selector, nil)
 	} else {
-		request, err = surface.FileJob(i.input, i.output, nil, nil)
+		request, err = surface.FileJob(i.input, inputReference, i.output, outputReference, nil, nil)
 	}
 	if err != nil {
 		return job.Job{}, err

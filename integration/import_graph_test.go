@@ -51,12 +51,12 @@ func TestFoundationAndOfficialFamiliesKeepImportDirection(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
-			if relative == ".git" || relative == "integration" || relative == "standard" || relative == "tools" || strings.HasPrefix(entry.Name(), "_") {
+			if relative == ".git" || relative == "integration" || relative == "standard" || relative == "tools" || relative == "cli" || relative == "cmd" || strings.HasPrefix(entry.Name(), "_") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".go" {
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)

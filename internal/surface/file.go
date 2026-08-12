@@ -6,22 +6,14 @@ import (
 	"errors"
 	"path/filepath"
 
+	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
-	"github.com/godexture/godec/plugin/file"
 )
 
 // FileJob builds a catalog-independent file-to-file request. Nil selectors
 // derive extension hints from each path without filesystem I/O.
-func FileJob(inputPath, outputPath string, inputSelector, outputSelector *job.FormatSelector) (job.Job, error) {
-	inputReference, err := file.Reference(inputPath)
-	if err != nil {
-		return job.Job{}, err
-	}
-	outputReference, err := file.Reference(outputPath)
-	if err != nil {
-		return job.Job{}, err
-	}
+func FileJob(inputPath string, inputReference access.Reference, outputPath string, outputReference access.Reference, inputSelector, outputSelector *job.FormatSelector) (job.Job, error) {
 	input, err := job.InputFromReference(inputReference)
 	if err != nil {
 		return job.Job{}, err
