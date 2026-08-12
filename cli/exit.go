@@ -7,6 +7,22 @@ import (
 	"github.com/godexture/godec/host"
 )
 
+type planningRequestError struct {
+	cause error
+}
+
+func (e planningRequestError) Error() string { return e.cause.Error() }
+
+func (e planningRequestError) Unwrap() error { return e.cause }
+
+func requestExit(err error) ExitCode {
+	var planning planningRequestError
+	if errors.As(err, &planning) {
+		return ExitPlanning
+	}
+	return ExitUsage
+}
+
 func planningExit(ctx context.Context, err error) ExitCode {
 	if canceled(ctx, err) {
 		return ExitCanceled

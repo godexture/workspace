@@ -64,7 +64,7 @@ func Run(ctx context.Context, instance *host.Host, args []string, values ...Opti
 	request, err := invocation.request()
 	if err != nil {
 		renderError(configuration.stderr, err)
-		return ExitUsage
+		return requestExit(err)
 	}
 	if invocation.planOnly {
 		selected, planErr := instance.Plan(ctx, request)

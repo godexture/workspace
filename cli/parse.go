@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/surface"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -72,17 +73,28 @@ func parse(args []string) (invocation, error) {
 }
 
 func (i invocation) request() (job.Job, error) {
-	if err := file.ValidateDistinct(i.input, i.output); err != nil {
-		return job.Job{}, err
-	}
 	selector, selected, err := i.inputSelector()
 	if err != nil {
 		return job.Job{}, err
 	}
+	var request job.Job
 	if selected {
-		return surface.FileJob(i.input, i.output, &selector, nil)
+		request, err = surface.FileJob(i.input, i.output, &selector, nil)
+	} else {
+		request, err = surface.FileJob(i.input, i.output, nil, nil)
 	}
-	return surface.FileJob(i.input, i.output, nil, nil)
+	if err != nil {
+		return job.Job{}, err
+	}
+	if err := file.ValidateDistinct(i.input, i.output); err != nil {
+		for _, item := range diagnostic.ItemsOf(err) {
+			if item.Code == "file.same-path" {
+				return job.Job{}, err
+			}
+		}
+		return job.Job{}, planningRequestError{cause: err}
+	}
+	return request, nil
 }
 
 func (i invocation) inputSelector() (job.FormatSelector, bool, error) {
