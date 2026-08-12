@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
@@ -15,6 +16,7 @@ import (
 
 type jobSourceID struct{}
 type jobSinkID struct{}
+type jobFormatID struct{}
 
 type jobDirectHandle struct{ closed atomic.Int32 }
 
@@ -41,6 +43,84 @@ func TestChoicesAreExclusiveAndReferencesStayRedacted(t *testing.T) {
 	}
 	if got.String() == reference.Canonical() {
 		t.Fatal("ordinary reference rendering exposed canonical secret")
+	}
+}
+
+func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
+	value, err := mediaformat.Define[jobFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byIdentity, err := SelectFormat(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, ok := byIdentity.Identity()
+	if !ok || identity != value.Identity() {
+		t.Fatalf("identity selector = %v/%v", identity, ok)
+	}
+	if _, ok := byIdentity.Extension(); ok {
+		t.Fatal("identity selector also exposed an extension")
+	}
+
+	extension, _ := mediaformat.ParseExtension(".WAV")
+	byExtension, err := SelectFormatExtension(extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := byExtension.Extension(); !ok || got.String() != "wav" {
+		t.Fatalf("extension selector = %q/%v", got, ok)
+	}
+	if _, ok := byExtension.Identity(); ok {
+		t.Fatal("extension selector also exposed an identity")
+	}
+	if _, ok := byExtension.Config(); ok {
+		t.Fatal("selector unexpectedly has explicit config")
+	}
+	configured := byExtension.WithConfig(config.NewPatch().Set("rate", 48_000))
+	patch, ok := configured.Config()
+	if !ok || len(patch.FieldIDs()) != 1 || patch.FieldIDs()[0] != "rate" {
+		t.Fatalf("selector config = %v/%v", patch.FieldIDs(), ok)
+	}
+
+	reference, _ := access.Parse("file:///input.wav")
+	input, _ := InputFromReference(reference)
+	input, err = input.WithFormatHint(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, _ := OutputToReference(reference)
+	output, err = output.WithFormatRequest(byIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := New([]Input{input}, []Output{output}, Graph{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hint, ok := request.Inputs()[0].FormatHint()
+	if !ok {
+		t.Fatal("Job lost input Format hint")
+	}
+	returned, _ := hint.Config()
+	returned = returned.Set("layout", "stereo")
+	preserved, _ := request.Inputs()[0].FormatHint()
+	preservedPatch, _ := preserved.Config()
+	if fields := preservedPatch.FieldIDs(); len(fields) != 1 || fields[0] != "rate" {
+		t.Fatalf("Job exposed selector config storage: %v", fields)
+	}
+	if selected, ok := request.Outputs()[0].FormatRequest(); !ok || selected.Kind() != FormatIdentitySelector {
+		t.Fatalf("Job output selector = %#v/%v", selected, ok)
+	}
+
+	if _, err := SelectFormat(mediaformat.Format{}); err == nil {
+		t.Fatal("invalid Format identity selector accepted")
+	}
+	if _, err := SelectFormatExtension(""); err == nil {
+		t.Fatal("invalid Format extension selector accepted")
+	}
+	if _, err := input.WithFormatHint(FormatSelector{}); err == nil {
+		t.Fatal("invalid input Format hint accepted")
 	}
 }
 

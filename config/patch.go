@@ -54,6 +54,9 @@ func (p Patch) FieldIDs() []string {
 	return ids
 }
 
+// Clone returns an independent sparse patch with the same entries.
+func (p Patch) Clone() Patch { return p.clone() }
+
 func (p Patch) clone() Patch {
 	result := Patch{preset: p.preset, fields: make(map[string]patchValue, len(p.fields))}
 	for field, value := range p.fields {

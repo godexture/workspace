@@ -363,6 +363,57 @@ func TestFileReferenceResolvesEscapedAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestReferenceCanonicalizesPlatformPathsWithoutIO(t *testing.T) {
+	paths := []string{
+		filepath.Join(t.TempDir(), "space % 日本語.wav"),
+		filepath.Join("relative", "nested", "input.raw"),
+	}
+	for _, path := range paths {
+		reference, err := Reference(path)
+		if err != nil {
+			t.Fatalf("Reference(%q): %v", path, err)
+		}
+		got, err := pathOf(reference)
+		if err != nil {
+			t.Fatalf("pathOf(%q): %v", path, err)
+		}
+		want, err := filepath.Abs(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != filepath.Clean(want) {
+			t.Fatalf("Reference roundtrip = %q, want %q", got, filepath.Clean(want))
+		}
+	}
+	if _, err := Reference(""); err == nil {
+		t.Fatal("empty path accepted")
+	}
+	if _, err := Reference("bad\x00path"); err == nil {
+		t.Fatal("NUL path accepted")
+	}
+}
+
+func TestReferenceCanonicalizesWindowsUNC(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows UNC syntax")
+	}
+	path := `\\server\share\space % 日本語.wav`
+	reference, err := Reference(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.Canonical() != "file://server/share/space%20%25%20%E6%97%A5%E6%9C%AC%E8%AA%9E.wav" {
+		t.Fatalf("UNC canonical reference = %q", reference.Canonical())
+	}
+	got, err := pathOf(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != path {
+		t.Fatalf("UNC roundtrip = %q, want %q", got, path)
+	}
+}
+
 func openedSink(t *testing.T, target string) (access.Session, *sinkOperator) {
 	t.Helper()
 	session, err := acquireSink(context.Background(), fileReference(t, target), selection(t, sinkCapabilities(), access.SequentialWrite))

@@ -55,16 +55,32 @@ func New(inputs []Input, outputs []Output, graph Graph, values ...Option) (Job, 
 	if !configuration.budget.Valid() {
 		return Job{}, errors.New("job planning budget is invalid")
 	}
-	return Job{inputs: append([]Input(nil), inputs...), outputs: append([]Output(nil), outputs...), graph: graph, policy: configuration.policy, budget: configuration.budget}, nil
+	return Job{inputs: cloneInputs(inputs), outputs: cloneOutputs(outputs), graph: graph, policy: configuration.policy, budget: configuration.budget}, nil
 }
 
 func (j Job) Valid() bool {
 	return (j.graph.Valid() || len(j.inputs) != 0 && len(j.outputs) != 0) && j.policy.Valid() && j.budget.Valid()
 }
-func (j Job) Inputs() []Input   { return append([]Input(nil), j.inputs...) }
-func (j Job) Outputs() []Output { return append([]Output(nil), j.outputs...) }
+func (j Job) Inputs() []Input   { return cloneInputs(j.inputs) }
+func (j Job) Outputs() []Output { return cloneOutputs(j.outputs) }
 func (j Job) Policy() Policy    { return j.policy }
 func (j Job) Budget() Budget    { return j.budget }
 func (j Job) Graph() (Graph, bool) {
 	return j.graph, j.graph.Valid()
+}
+
+func cloneInputs(values []Input) []Input {
+	result := append([]Input(nil), values...)
+	for index := range result {
+		result[index].format = result[index].format.clone()
+	}
+	return result
+}
+
+func cloneOutputs(values []Output) []Output {
+	result := append([]Output(nil), values...)
+	for index := range result {
+		result[index].format = result[index].format.clone()
+	}
+	return result
 }

@@ -1,10 +1,13 @@
 package standard_test
 
 import (
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/plugin"
@@ -85,6 +88,62 @@ func TestNewHostAddsDefinitionThroughTheSameComposition(t *testing.T) {
 	}
 	if !foundBinding {
 		t.Fatal("extra definition did not carry its owned binding")
+	}
+}
+
+func TestNewFileJobCarriesCanonicalExtensionSelectorsWithoutIO(t *testing.T) {
+	request, err := standard.NewFileJob(filepath.Join("missing", "Input.WAV"), filepath.Join("missing", "Output.RAW"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hint, ok := request.Inputs()[0].FormatHint()
+	if !ok {
+		t.Fatal("input extension hint is absent")
+	}
+	inputExtension, ok := hint.Extension()
+	if !ok || inputExtension.String() != "wav" {
+		t.Fatalf("input extension = %q/%v", inputExtension, ok)
+	}
+	selection, ok := request.Outputs()[0].FormatRequest()
+	if !ok {
+		t.Fatal("output extension request is absent")
+	}
+	outputExtension, ok := selection.Extension()
+	if !ok || outputExtension.String() != "raw" {
+		t.Fatalf("output extension = %q/%v", outputExtension, ok)
+	}
+	if _, err := standard.NewFileJob("", "output.wav"); err == nil {
+		t.Fatal("empty input path accepted")
+	}
+}
+
+func TestNewFileJobAllowsExplicitFormatAndExtensionlessOutput(t *testing.T) {
+	selector, err := job.SelectFormat(linear.Raw())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector = selector.WithConfig(config.NewPatch().Set("rate", 48_000))
+	request, err := standard.NewFileJob("input.wav", "output", standard.WithInputFormat(selector))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hint, ok := request.Inputs()[0].FormatHint()
+	if !ok {
+		t.Fatal("explicit input selector is absent")
+	}
+	identity, ok := hint.Identity()
+	if !ok || identity != linear.Raw().Identity() {
+		t.Fatalf("explicit Format = %v/%v", identity, ok)
+	}
+	patch, ok := hint.Config()
+	if !ok || !slices.Equal(patch.FieldIDs(), []string{"rate"}) {
+		t.Fatalf("explicit config = %v/%v", patch.FieldIDs(), ok)
+	}
+	if _, ok := request.Outputs()[0].FormatRequest(); ok {
+		t.Fatal("extensionless output unexpectedly has a Format request")
+	}
+	if _, err := standard.NewFileJob("input.wav", "output.wav", standard.WithOutputFormat(job.FormatSelector{})); err == nil {
+		t.Fatal("invalid explicit output selector accepted")
 	}
 }
 

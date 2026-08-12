@@ -93,6 +93,7 @@ type Input struct {
 	reference access.Reference
 	direct    any
 	endpoint  EndpointRequest
+	format    FormatSelector
 }
 
 func InputFromReference(reference access.Reference) (Input, error) {
@@ -116,7 +117,7 @@ func InputFromEndpoint(request EndpointRequest) (Input, error) {
 	return Input{kind: EndpointInput, endpoint: request}, nil
 }
 
-func (i Input) Valid() bool { return i.kind.Valid() }
+func (i Input) Valid() bool { return i.kind.Valid() && (!i.format.Kind().Valid() || i.format.Valid()) }
 func (i Input) Kind() InputKind {
 	return i.kind
 }
@@ -129,6 +130,21 @@ func (i Input) Direct() (Direct, bool) {
 }
 func (i Input) Endpoint() (EndpointRequest, bool) {
 	return i.endpoint, i.kind == EndpointInput && i.endpoint.Valid()
+}
+
+// WithFormatHint returns an input carrying an explicit Format hint. Content
+// evidence remains authoritative when the Host resolves the hint.
+func (i Input) WithFormatHint(selector FormatSelector) (Input, error) {
+	if !i.Valid() || !selector.Valid() {
+		return Input{}, errors.New("job input Format hint is invalid")
+	}
+	result := i
+	result.format = selector.clone()
+	return result, nil
+}
+
+func (i Input) FormatHint() (FormatSelector, bool) {
+	return i.format.clone(), i.format.Valid()
 }
 
 type OutputKind uint8
@@ -148,6 +164,7 @@ type Output struct {
 	reference access.Reference
 	direct    any
 	endpoint  EndpointRequest
+	format    FormatSelector
 }
 
 func OutputToReference(reference access.Reference) (Output, error) {
@@ -171,7 +188,7 @@ func OutputToEndpoint(request EndpointRequest) (Output, error) {
 	return Output{kind: EndpointOutput, endpoint: request}, nil
 }
 
-func (o Output) Valid() bool { return o.kind.Valid() }
+func (o Output) Valid() bool { return o.kind.Valid() && (!o.format.Kind().Valid() || o.format.Valid()) }
 func (o Output) Kind() OutputKind {
 	return o.kind
 }
@@ -184,4 +201,18 @@ func (o Output) Direct() (Direct, bool) {
 }
 func (o Output) Endpoint() (EndpointRequest, bool) {
 	return o.endpoint, o.kind == EndpointOutput && o.endpoint.Valid()
+}
+
+// WithFormatRequest returns an output constrained to one requested Format.
+func (o Output) WithFormatRequest(selector FormatSelector) (Output, error) {
+	if !o.Valid() || !selector.Valid() {
+		return Output{}, errors.New("job output Format request is invalid")
+	}
+	result := o
+	result.format = selector.clone()
+	return result, nil
+}
+
+func (o Output) FormatRequest() (FormatSelector, bool) {
+	return o.format.clone(), o.format.Valid()
 }
