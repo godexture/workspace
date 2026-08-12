@@ -11,16 +11,23 @@ import (
 	"github.com/godexture/godec/host"
 )
 
+// ExitCode classifies command completion without inspecting error text.
 type ExitCode int
 
 const (
-	ExitSuccess  ExitCode = 0
-	ExitUsage    ExitCode = 2
+	// ExitSuccess reports a completed conversion or preview.
+	ExitSuccess ExitCode = 0
+	// ExitUsage reports invalid command arguments or an unsafe same-file request.
+	ExitUsage ExitCode = 2
+	// ExitPlanning reports a request that could not be prepared.
 	ExitPlanning ExitCode = 3
-	ExitRuntime  ExitCode = 4
+	// ExitRuntime reports execution or rendering failure.
+	ExitRuntime ExitCode = 4
+	// ExitCanceled reports context cancellation or deadline expiry.
 	ExitCanceled ExitCode = 130
 )
 
+// Option configures an embedded CLI invocation.
 type Option func(*options)
 
 type options struct {

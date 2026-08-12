@@ -60,15 +60,15 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| local file 入出力 | CLI が `os.Open` と temporary file を直接扱う | 変更 | M6/M9 | M6 確認済み: `integration.TestOfficialPluginConformance` の capability 選択、`plugin/file` の commit/abort/cancel/temporary cleanup、positioned write の memory/disk spool。CLI 接続は M9 |
+| local file 入出力 | CLI が `os.Open` と temporary file を直接扱う | 変更 | M6/M9 | M6 確認済み: `integration.TestOfficialPluginConformance` の capability 選択、`plugin/file` の commit/abort/cancel/temporary cleanup、positioned write の memory/disk spool、および `cli.TestRunConvertsWaveToRequestedFileFormat` の公式 CLI 接続。M9 は stdin/stdout と全 surface を追加 |
 | stdin/stdout | CLI | 維持 | M9 | CLI test |
-| Go library API | `sdk/conversion` | 変更 | M6/M9 | `standard.NewHost()` の example |
-| CLI | `godec` と 14 flag | 変更 | M9 | Job 正規化後の CLI test |
+| Go library API | `sdk/conversion` | 変更 | M6/M9 | M6 確認済み: `standard.Convert`、`standard.NewFileJob`、`standard.NewHost` の example/E2E。M9 は multi-stream と全 surface の policy を追加 |
+| CLI | `godec` と 14 flag | 変更 | M6/M9 | M6 確認済み: injected Host 上の file input/output、Plan preview、raw 明示 config、progress、cancel、安定 exit code。M9 は stdin/stdout と残りの flag を追加 |
 | playback | Oto 直結の `PlaybackSink` | 変更 | M9 | typed Endpoint + 専用 command |
 | WASM binding | 8 関数、全量 `[]byte` | 変更 | M9 | versioned DTO と handle 状態機械の test |
 | example web | server + client | 変更 | M9 | catalog 駆動 editor の test |
 
-M5 cut 後はこの表の surface 実装を一時的に置かない。旧 CLI/WASM/demo source を互換層として残さず、M6 の Go 最短経路と M9 の各 surface を同じ Host façade から新設する意図的な capability hiatus である。判断と後続の確認義務は削除せず、この表で維持する。
+M5 cut 後はいったん surface 実装を置かず、旧 CLI/WASM/demo source を互換層として残さなかった。M6 で Go と CLI の最短経路を同じ Host façade から新設し、M9 は stdin/stdout、WASM、demo を含む全 surface をその経路へ広げる。判断と後続の確認義務は削除せず、この表で維持する。
 
 ## 未定
 

@@ -2,7 +2,7 @@
 
 Godec is a pre-v1, pure-Go foundation for building extensible media processing and transcoding applications. Applications compose an explicit immutable plugin set; Godec then plans a typed graph and runs it with bounded resources, explicit ownership, cancellation, and transactional output handling.
 
-> Project status: the M0–M5 foundation refactor is complete. The current tree provides the catalog, planner, runtime, and a raw PCM vertical path. WAVE/file conversion, the convenience `standard` package, CLI, MP3/FLAC, WASM, and the demo application return in M6–M9. Do not treat the current API as stable before v1.
+> Project status: milestones M0–M6 of the foundation refactor are complete. The current tree provides local file conversion for WAVE and linear PCM through the same catalog, planner, runtime, library, and CLI path. MP4, MP3/FLAC, the complete CLI, WASM, and the demo application follow in M7–M9. Do not treat the current API as stable before v1.
 
 ## What is here now
 
@@ -10,10 +10,12 @@ Godec is a pre-v1, pure-Go foundation for building extensible media processing a
 - Typed configuration, media schemas, ports, metadata, timing, and buffer ownership
 - Deterministic graph validation and bounded bridge solving with a public, inert [`plan.Plan`](plan/)
 - A failure-safe [`host.Host`](host/) lifecycle with bounded queues, worker grants, cancellation, finalization, output transactions, and structured results
-- A real raw PCM implementation in [`plugin/pcm/linear`](plugin/pcm/linear/)
+- Transactional local-file access, content-based WAVE detection, RIFF metadata preservation, and real WAVE/linear PCM implementations
+- The [`standard`](standard/) composition, one-call file conversion, and an injected-Host [`cli`](cli/) used by [`cmd/godec`](cmd/godec/)
+- A public [`testkit`](testkit/) and an independent [`integration`](integration/) module that exercise official and third-party-style plugins through the same contracts
 - Focused examples in package tests, available through `go doc` and pkg.go.dev-compatible tooling
 
-The supported-capability roadmap and intentional post-M5 hiatus are tracked in [the refactor plan](docs/refactor.md) and [the current checkpoint](docs/refactor/checkpoint.md).
+The supported-capability roadmap and remaining work are tracked in [the refactor plan](docs/refactor.md) and [the current checkpoint](docs/refactor/checkpoint.md).
 
 ## Requirements
 
@@ -26,30 +28,34 @@ The supported-capability roadmap and intentional post-M5 hiatus are tracked in [
 package main
 
 import (
-    "fmt"
+    "context"
+    "log"
 
-    "github.com/godexture/godec/host"
-    "github.com/godexture/godec/plugin/pcm/linear"
+    "github.com/godexture/godec/standard"
 )
 
 func main() {
-    h, err := host.New(host.Plugins(linear.Set()))
-    if err != nil {
-        panic(err)
+    if err := standard.Convert(context.Background(), "input.wav", "output.wav"); err != nil {
+        log.Fatal(err)
     }
-
-    fmt.Println(h.Catalog().Len())
 }
 ```
 
-This composes the raw PCM components without package initialization or a process-global registry. See the executable examples in [`host`](host/example_test.go), [`job`](job/example_test.go), and [`plugin/pcm/linear`](plugin/pcm/linear/example_test.go) for the current API. A short file-to-file conversion example will become the primary quick start when M6 adds the WAVE/file path.
+The same path is available from the official command:
+
+```sh
+go run ./cmd/godec input.wav output.wav
+go run ./cmd/godec --plan input.wav output.raw
+```
+
+Input and output must identify different files. Raw PCM input is accepted only with an explicit format and all media-defining properties; run `go run ./cmd/godec --help` for the M6 flags. See the executable examples in [`standard`](standard/example_test.go), [`host`](host/example_test.go), and [`job`](job/example_test.go) for the layered API.
 
 ## Develop and verify
 
 Run focused tests while changing a package:
 
 ```sh
-go test ./host ./plugin/pcm/linear
+go test ./host ./plugin/file ./plugin/wave ./plugin/pcm/linear ./standard ./cli
 ```
 
 Run the repository-wide milestone/release gates from the repository root:

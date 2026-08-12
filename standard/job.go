@@ -5,6 +5,7 @@ import (
 	"github.com/godexture/godec/job"
 )
 
+// FileJobOption configures one catalog-independent file request.
 type FileJobOption func(*fileJobOptions)
 
 type fileJobOptions struct {
@@ -14,6 +15,7 @@ type fileJobOptions struct {
 	outputSet bool
 }
 
+// WithInputFormat supplies an explicit input Format hint and optional config.
 func WithInputFormat(selector job.FormatSelector) FileJobOption {
 	return func(options *fileJobOptions) {
 		options.input = selector
@@ -21,6 +23,7 @@ func WithInputFormat(selector job.FormatSelector) FileJobOption {
 	}
 }
 
+// WithOutputFormat supplies an explicit output Format request and optional config.
 func WithOutputFormat(selector job.FormatSelector) FileJobOption {
 	return func(options *fileJobOptions) {
 		options.output = selector

@@ -217,6 +217,35 @@ M5 の切断により、M6 の開始時点で repository には利用 surface �
   identity、schema、Format、carrier、key は marker 由来であり、plugin author が一意な文字列を割り当てる
   箇所は増えなかった。
 
+### M6-5 の実測
+
+- 通常利用者の最短経路は `standard.Convert(ctx, "input.wav", "output.wav")` の一行になった。
+  利用者が扱う概念は context と二つの path だけで、Host、Job、Format、Provider、transaction は見えない。
+  実行可能な正本は `standard.ExampleConvert`、WAVE/raw と既存 target 置換・rollback・same-file 拒否は
+  `integration/file_surface_test.go` が検査する。
+- CLI の content-detectable 入力は `godec input.wav output.wav`、read-only preview は
+  `godec --plan input.wav output.raw` である。入力 path、出力 path、任意の preview という 2〜3 概念だけで、
+  同じ Host の Plan/Prepare/Run を使う。Plan は自動選択した入出力 Format、理由、config provenance、
+  capability/spool、warning を表示し、実行中は Host event から progress を表示する。OS signal は command が
+  context cancellation へ変換し、temporary output の rollback は Host が担う。
+- raw 入力は推測しない。CLI では `--input-format raw --raw-rate 48000 --raw-valid-bits 16
+  --raw-layout stereo --raw-endian little input.raw output.wav` のように Format と 4 件の media 意味を明示する。
+  これらは CLI 固有 default ではなく typed Job と同じ sparse `config.Patch` へ正規化される。不足時は
+  `prepare.format-config-required` となり、雑音を正常出力しない。
+- 2 段目では、最短経路の file normalization を捨てずに `standard.NewFileJob` で Job を得て、
+  `standard.NewHost()` または `host.New(host.Plugins(standard.Set().Add(acme.Plugin())))` へ渡す。増える概念は
+  Job と Host、必要な場合だけ selector/config と Run observation である。第三者 `.acme` Format は extension
+  trait と `Set.Add` だけで同じ constructor に参加し、standard/CLI の固定表や種類別 registration は無い。
+- library の live observation は `host.Observe(mode, host.RetainEvents(n), host.DeliverEvents(n, sink))` を
+  Run ごとに渡す。利用者が指定するのは mode、二つの上限、typed sink だけで、queue、dispatcher、drop 集計、
+  renderer failure の cancellation は Host が所有する。遅い sink は media path を止めず、欠落は
+  `Result.Observation` と sequence gap に残る。CLI renderer もこの公開経路だけを使い、polling や byte 由来の
+  独自 progress 計算を持たない。
+- CLI author 側の責務は argument parser、共有 FileJob normalization の呼び出し、Plan/event/result renderer、
+  exit code projection に限られた。plugin factory は `cmd/godec` の `standard.NewHost()` 一箇所だけにあり、CLI
+  package の import graphに standard、solver、runtime queue は無い。`cli.Run` は injected Host と streams を
+  受けるため、E2E は process/global state を使わず hermetic に検査できる。
+
 ## M9 完了条件
 
 M9 は M6 で書いた最短経路を全 surface へ広げる milestone であり、三者の体験が揃う時点である。移行ではなく完成であり、library、CLI、WASM、demo が同じ Host/Job/Plan/Result を使う状態にする。
