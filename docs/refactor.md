@@ -120,6 +120,8 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 
 **設計文書**（目標設計を記述する。M11 で `docs/design/` へ移し恒久化する）: [decisions](refactor/decisions.md)、[architecture](refactor/architecture.md)、[media](refactor/media.md)、[audio](refactor/audio.md)、[access](refactor/access.md)、[config](refactor/config.md)、[plugins](refactor/plugins.md)、[planner](refactor/planner.md)、[runtime](refactor/runtime.md)、[performance](refactor/performance.md)、[quality](refactor/quality.md)、[fixtures](refactor/fixtures.md)、[supply](refactor/supply.md)、[surfaces](refactor/surfaces.md)、[web](refactor/web.md)、[experience](refactor/experience.md)、[scope](refactor/scope.md)。移す際に「現行実装の監査結果」節と milestone 完了条件節を落とし、目標設計だけを残す。
 
+この二分類に属さず削除済み contract を説明していた `docs/legacy/` は M6 review で削除した。規格 algorithm の移植参照である repository root の `_legacy/` とは別物であり、後者は M8 まで維持する。
+
 設計文書に残すのは、godoc では表現できない横断的な判断（policy vector、planner の探索規則、reproducibility contract、依存方向の原則）に限る。個々の API の形は [experience](refactor/experience.md) の規則どおり各 package の `Example` 関数を正本とし、文書からは参照する。実装済み package を説明する Go code block を文書に残さない。
 
 ## 確定済みの境界
