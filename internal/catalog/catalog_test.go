@@ -19,6 +19,7 @@ type catalogFirstID struct{}
 type catalogSecondID struct{}
 type catalogUnitID struct{}
 type catalogFormatID struct{}
+type catalogOtherFormatID struct{}
 type catalogControlTraitID struct{}
 type catalogControlComponentID struct{}
 type catalogRequiredControlComponentID struct{}
@@ -186,6 +187,82 @@ func TestTraitManifestChangesCatalogFingerprint(t *testing.T) {
 	}
 	if build(access.SequentialRead).Fingerprint() == build(access.RandomRead).Fingerprint() {
 		t.Fatal("Access trait change did not affect catalog fingerprint")
+	}
+}
+
+func TestFormatExtensionsAreIndexedByDirectionAndAffectFingerprint(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	build := func(extension string) Index {
+		value, err := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions(extension))
+		if err != nil {
+			t.Fatal(err)
+		}
+		read := catalogTraitComponent[catalogFirstID]("read", flow.NewShape(
+			[]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)},
+		), mediaformat.Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+		write := catalogTraitComponent[catalogSecondID]("write", flow.NewShape(
+			[]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("writes", access.Writes())},
+		), mediaformat.Write(value, access.AnyOf(access.SequentialWrite)))
+		index, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, read, write)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return index
+	}
+	wav := build(".WAV")
+	extension, _ := mediaformat.ParseExtension("wav")
+	reads := wav.ReadExtension(extension)
+	writes := wav.WriteExtension(extension)
+	if len(reads) != 1 || reads[0].Component().Identity() != plugin.IdentityOf[catalogFirstID]() || len(writes) != 1 || writes[0].Component().Identity() != plugin.IdentityOf[catalogSecondID]() {
+		t.Fatalf("directional extension index = read %#v, write %#v", reads, writes)
+	}
+	reads[0] = FormatMatch{}
+	if got := wav.ReadExtension(extension); len(got) != 1 || !got[0].Valid() {
+		t.Fatal("Format extension lookup exposed index storage")
+	}
+	if wav.Fingerprint() == build("wave").Fingerprint() {
+		t.Fatal("Format extension did not affect catalog fingerprint")
+	}
+}
+
+func TestBuildRejectsConflictingFormatDeclarationAndFallbackField(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	firstFormat, _ := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions("one"))
+	secondFormat, _ := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions("two"))
+	readShape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)})
+	first := catalogTraitComponent[catalogFirstID]("first", readShape,
+		mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+	second := catalogTraitComponent[catalogSecondID]("second", readShape,
+		mediaformat.Read(secondFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, first, second)
+	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "catalog.format-declaration") {
+		t.Fatalf("conflicting Format declaration diagnostic = %v", err)
+	}
+
+	fallback := catalogTraitComponent[catalogFirstID]("fallback", readShape,
+		mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead)),
+			mediaformat.WithProbe(func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) { return mediaformat.Fallback(), nil }),
+			mediaformat.RequireFallbackConfig("absent")))
+	definition = plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, fallback)
+	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "catalog.format-config") {
+		t.Fatalf("fallback config field diagnostic = %v", err)
+	}
+}
+
+func TestCatalogAllowsSharedExtensionUntilSelection(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	firstFormat, _ := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions("shared"))
+	secondFormat, _ := mediaformat.Define[catalogOtherFormatID](nil, mediaformat.WithExtensions("shared"))
+	shape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)})
+	first := catalogTraitComponent[catalogFirstID]("first", shape, mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+	second := catalogTraitComponent[catalogSecondID]("second", shape, mediaformat.Read(secondFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+	index, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, first, second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extension, _ := mediaformat.ParseExtension("shared")
+	if got := index.ReadExtension(extension); len(got) != 2 {
+		t.Fatalf("shared extension matches = %d, want 2", len(got))
 	}
 }
 

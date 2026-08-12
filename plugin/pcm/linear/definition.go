@@ -28,7 +28,7 @@ func WriterIdentity() plugin.Identity  { return plugin.IdentityOf[writerID]() }
 
 // Raw is the direction-neutral identity of containerless signed PCM.
 func Raw() format.Format {
-	value, err := format.Define[rawID](nil)
+	value, err := format.Define[rawID](nil, format.WithExtensions("raw", "pcm"))
 	if err != nil {
 		panic(err)
 	}
@@ -41,7 +41,7 @@ func operationFormat(kind operation) plugin.ComponentOption {
 		return format.Read(Raw(), access.NewRequirements(
 			access.AnyOf(access.SequentialRead),
 			access.AnyOf(access.RandomRead, access.StableSize),
-		), format.WithProbe(probeRaw))
+		), format.WithProbe(probeRaw), format.RequireFallbackConfig("rate", "validBits", "layout", "endian"))
 	case writerOperation:
 		return format.Write(Raw(), access.AnyOf(access.SequentialWrite))
 	default:

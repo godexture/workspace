@@ -17,8 +17,14 @@ type accessScheme struct {
 	scheme    string
 }
 
+type formatUse struct {
+	value     mediaformat.Format
+	component plugin.Identity
+}
+
 func validateTraits(components []plugin.Component) []diagnostic.Item {
 	seen := make(map[accessScheme]plugin.Identity)
+	formats := make(map[plugin.Identity]formatUse)
 	var items []diagnostic.Item
 	for _, component := range components {
 		shape := component.Ports()
@@ -35,9 +41,12 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 		}
 		if trait, ok := mediaformat.ReadOf(component); ok {
 			items = append(items, validateFormatReadTrait(component, shape, trait)...)
+			items = append(items, validateFormatDeclaration(component.Identity(), trait.Format(), formats)...)
+			items = append(items, validateFallbackFields(component, trait)...)
 		}
 		if trait, ok := mediaformat.WriteOf(component); ok {
 			items = append(items, validateFormatWriteTrait(component, shape, trait)...)
+			items = append(items, validateFormatDeclaration(component.Identity(), trait.Format(), formats)...)
 		}
 		if trait, ok := metadata.EncodingOf(component); ok && !trait.Valid() {
 			items = append(items, traitItem("catalog.metadata-trait", component.Identity(), "Metadata Encoding trait is invalid", nil))
@@ -52,6 +61,46 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 				items = append(items, traitItem("catalog.endpoint-shape", component.Identity(), "Endpoint trait requires one directional port", nil))
 			}
 		}
+	}
+	return items
+}
+
+func validateFormatDeclaration(identity plugin.Identity, value mediaformat.Format, seen map[plugin.Identity]formatUse) []diagnostic.Item {
+	if !value.Valid() {
+		return nil
+	}
+	previous, exists := seen[value.Identity()]
+	if !exists {
+		seen[value.Identity()] = formatUse{value: value, component: identity}
+		return nil
+	}
+	if previous.value.Same(value) {
+		return nil
+	}
+	return []diagnostic.Item{traitItem("catalog.format-declaration", identity, "Format identity has conflicting declarations", map[string]string{
+		"format":   value.Identity().String(),
+		"previous": previous.component.String(),
+	})}
+}
+
+func validateFallbackFields(component plugin.Component, trait mediaformat.ReadTrait) []diagnostic.Item {
+	fields := trait.FallbackConfigFields()
+	if len(fields) == 0 {
+		return nil
+	}
+	available := make(map[string]struct{})
+	for _, field := range component.Schema().Description().Fields {
+		available[field.ID] = struct{}{}
+	}
+	var items []diagnostic.Item
+	for _, field := range fields {
+		if _, exists := available[field]; exists {
+			continue
+		}
+		items = append(items, traitItem("catalog.format-config", component.Identity(), "Format fallback requires an unknown config field", map[string]string{
+			"field":  field,
+			"format": trait.Format().Identity().String(),
+		}))
 	}
 	return items
 }

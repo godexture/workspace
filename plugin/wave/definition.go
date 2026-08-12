@@ -31,7 +31,7 @@ func RIFFInfo() carrier.ID { return carrier.Define[infoSlot]() }
 func PCMTag() format.Tag { return format.NewTag("wave", "0001") }
 
 func WAVE() format.Format {
-	value, err := format.Define[waveID]([]carrier.ID{RIFFInfo()})
+	value, err := format.Define[waveID]([]carrier.ID{RIFFInfo()}, format.WithExtensions("wav", "wave"))
 	if err != nil {
 		panic(err)
 	}

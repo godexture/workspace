@@ -22,6 +22,7 @@ type Index struct {
 	byID          map[plugin.Identity]int
 	byDeclaration map[plugin.DeclarationKey]int
 	codecBindings map[plugin.Identity][]CodecBinding
+	formats       formatIndex
 	fingerprint   [32]byte
 }
 
@@ -187,6 +188,7 @@ func Build(set plugin.Set) (Index, error) {
 		byID:          byID,
 		byDeclaration: byDeclaration,
 		codecBindings: indexCodecBindings(declarations),
+		formats:       indexFormats(components),
 		fingerprint:   catalogFingerprint(definitions, components, declarations),
 	}, nil
 }

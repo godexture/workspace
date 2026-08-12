@@ -2,6 +2,7 @@ package format
 
 import (
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/godexture/godec/access"
@@ -21,6 +22,7 @@ type ReadTrait struct {
 	requirements access.Requirements
 	probe        ProbeFunc
 	inspect      InspectFunc
+	fallback     []string
 	invalid      bool
 }
 
@@ -34,6 +36,8 @@ type readOptions struct {
 	probeSet   bool
 	inspect    InspectFunc
 	inspectSet bool
+	fallback   []string
+	invalid    bool
 }
 
 // WithProbe adds the bounded operation used before automatic Format
@@ -62,6 +66,32 @@ func WithInspect(inspect InspectFunc) ReadOption {
 	}
 }
 
+// RequireFallbackConfig declares component config fields that must be present
+// in an explicit input hint before an evidence-free Probe fallback may select
+// this Format.
+func RequireFallbackConfig(fields ...string) ReadOption {
+	return func(options *readOptions) {
+		seen := make(map[string]struct{}, len(options.fallback)+len(fields))
+		for _, field := range options.fallback {
+			seen[field] = struct{}{}
+		}
+		for _, field := range fields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				options.invalid = true
+				continue
+			}
+			if _, exists := seen[field]; exists {
+				options.invalid = true
+				continue
+			}
+			seen[field] = struct{}{}
+			options.fallback = append(options.fallback, field)
+		}
+		sort.Strings(options.fallback)
+	}
+}
+
 // Read attaches input byte requirements and optional pre-Compile operations
 // for one Format component.
 func Read(value Format, requirements access.Requirements, values ...ReadOption) plugin.ComponentOption {
@@ -76,7 +106,8 @@ func Read(value Format, requirements access.Requirements, values ...ReadOption) 
 		requirements: requirements.Clone(),
 		probe:        options.probe,
 		inspect:      options.inspect,
-		invalid:      options.probeSet && options.probe == nil || options.inspectSet && options.inspect == nil,
+		fallback:     append([]string(nil), options.fallback...),
+		invalid:      options.invalid || options.probeSet && options.probe == nil || options.inspectSet && options.inspect == nil || len(options.fallback) != 0 && options.probe == nil,
 	}
 	return plugin.WithTrait(readKey, trait.manifest("read"), plugin.PortShapeRequired, trait)
 }
@@ -94,6 +125,7 @@ func (t ReadTrait) Format() Format {
 func (t ReadTrait) Requirements() access.Requirements { return t.requirements.Clone() }
 func (t ReadTrait) HasProbe() bool                    { return t.probe != nil }
 func (t ReadTrait) HasInspect() bool                  { return t.inspect != nil }
+func (t ReadTrait) FallbackConfigFields() []string    { return append([]string(nil), t.fallback...) }
 
 func (t ReadTrait) Probe(ctx ProbeContext) (ProbeResult, error) {
 	if !t.Valid() || t.probe == nil {
@@ -130,7 +162,7 @@ func (t ReadTrait) Inspect(ctx InspectContext) (Inspection, error) {
 }
 
 func (t ReadTrait) manifest(direction string) string {
-	return traitManifest(direction, t.format, t.requirements) + "|probe=" + boolManifest(t.probe != nil) + "|inspect=" + boolManifest(t.inspect != nil)
+	return traitManifest(direction, t.format, t.requirements) + "|probe=" + boolManifest(t.probe != nil) + "|inspect=" + boolManifest(t.inspect != nil) + "|fallbackConfig=" + strings.Join(t.fallback, ",")
 }
 
 type WriteTrait struct {
@@ -169,7 +201,7 @@ func traitManifest(direction string, value Format, requirements access.Requireme
 		}
 		alternatives[index] = strings.Join(capabilities, "+")
 	}
-	return direction + "|format=" + value.Identity().String() + "|alternatives=" + strings.Join(alternatives, ",")
+	return direction + "|" + value.manifest() + "|alternatives=" + strings.Join(alternatives, ",")
 }
 
 func boolManifest(value bool) string {

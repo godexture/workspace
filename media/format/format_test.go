@@ -2,6 +2,7 @@ package format
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/godexture/godec/access"
@@ -29,15 +30,34 @@ func (fixtureInspectSession) ReadAt(context.Context, []byte, int64) (int, error)
 
 func TestFormatDeclaresIdentityAndOpenCarriers(t *testing.T) {
 	declared := carrier.Define[fixtureCarrierID]()
-	value, err := Define[fixtureFormatID]([]carrier.ID{declared})
+	value, err := Define[fixtureFormatID]([]carrier.ID{declared}, WithExtensions(".WAVE", "wav"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !value.Valid() || value.Carriers()[0] != declared || value.Packetized() {
+	if !value.Valid() || value.Carriers()[0] != declared || value.Packetized() || !slices.Equal(value.Extensions(), []Extension{"wav", "wave"}) {
 		t.Fatalf("format = %#v", value)
+	}
+	exts := value.Extensions()
+	exts[0] = "changed"
+	if value.Extensions()[0] != "wav" {
+		t.Fatal("Format exposed mutable extensions")
 	}
 	if _, err := Define[struct{}](nil); err == nil {
 		t.Fatal("empty format identity accepted")
+	}
+	for _, values := range [][]string{{"wav", ".WAV"}, {""}, {"a/b"}, {"two.parts"}} {
+		if _, err := Define[fixtureOtherFormatID](nil, WithExtensions(values...)); err == nil {
+			t.Fatalf("invalid extensions accepted: %v", values)
+		}
+	}
+}
+
+func TestFormatDeclarationEqualityIncludesExtensions(t *testing.T) {
+	left, _ := Define[fixtureFormatID](nil, WithExtensions("wave", "wav"))
+	right, _ := Define[fixtureFormatID](nil, WithExtensions(".WAV", ".WAVE"))
+	other, _ := Define[fixtureFormatID](nil, WithExtensions("wave"))
+	if !left.Same(right) || left.Same(other) {
+		t.Fatalf("Format Same = %v/%v", left.Same(right), left.Same(other))
 	}
 }
 
@@ -174,5 +194,29 @@ func TestReadTraitRunsPureBoundedProbe(t *testing.T) {
 	}
 	if !Fallback().Valid() || !Mismatch().Valid() || !Malformed("truncated header", evidence).Valid() {
 		t.Fatal("terminal Probe result constructors are invalid")
+	}
+}
+
+func TestReadTraitDeclaresImmutableFallbackConfig(t *testing.T) {
+	value, _ := Define[fixtureFormatID](nil)
+	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
+	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "fallback"}, schema,
+		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead)), WithProbe(func(ProbeContext) (ProbeResult, error) {
+			return Fallback(), nil
+		}), RequireFallbackConfig("rate", "layout")))
+	trait, ok := ReadOf(component)
+	if !ok || !trait.Valid() || !slices.Equal(trait.FallbackConfigFields(), []string{"layout", "rate"}) {
+		t.Fatalf("fallback trait = %#v/%v", trait, ok)
+	}
+	fields := trait.FallbackConfigFields()
+	fields[0] = "changed"
+	if trait.FallbackConfigFields()[0] != "layout" {
+		t.Fatal("ReadTrait exposed mutable fallback config")
+	}
+	invalid := plugin.NewComponent[fixtureWriteComponentID](plugin.Descriptor{DisplayName: "invalid fallback"}, schema,
+		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead)), RequireFallbackConfig("rate")))
+	invalidTrait, _ := ReadOf(invalid)
+	if invalidTrait.Valid() {
+		t.Fatal("fallback config without Probe is valid")
 	}
 }
