@@ -48,7 +48,12 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 		if sessionIndex < 0 {
 			return fail(probeDiagnostic("prepare.probe-session", projection, plugin.Identity{}, "automatic Format selection has no acquired input session", nil))
 		}
-		choice, store, probeUsage, err := h.probeInput(ctx, projection, result.sessions[sessionIndex], request.Budget())
+		var hint job.FormatSelector
+		inputs := result.request.Inputs()
+		if projection.Choice >= 0 && projection.Choice < len(inputs) {
+			hint, _ = inputs[projection.Choice].FormatHint()
+		}
+		choice, store, probeUsage, err := h.probeInput(ctx, projection, result.sessions[sessionIndex], hint, request.Budget())
 		if err != nil {
 			return fail(err)
 		}
@@ -59,7 +64,7 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 			return fail(probeBudgetDiagnostic(projection, "job", usage, request.Budget(), nil))
 		}
 
-		updated, node, insertedEdges, err := insertFormatNode(result.request, projection, choice.component)
+		updated, node, insertedEdges, err := insertFormatNode(result.request, projection, choice.component, choice.config)
 		if err != nil {
 			return fail(err)
 		}
@@ -87,7 +92,11 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 		reason := "format.probe"
 		if choice.fallback {
 			reason = "format.fallback"
-			warnings = append(warnings, "input "+strconv.Itoa(projection.Choice)+" selected "+choice.trait.Format().Identity().String()+" without content evidence; default Format configuration determines interpretation")
+			basis := "explicit " + formatSelectorLabel(hint)
+			if choice.configured {
+				basis += " and media configuration"
+			}
+			warnings = append(warnings, "input "+strconv.Itoa(projection.Choice)+" selected "+choice.trait.Format().Identity().String()+" without content evidence through "+basis)
 		}
 		nodes = append(nodes, solve.SelectedNode{ID: node.ID(), Reason: reason})
 		for _, edge := range insertedEdges {
@@ -103,12 +112,12 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 	return result, nil
 }
 
-func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.Component) (job.Job, job.Node, []job.Edge, error) {
+func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.Component, patch config.Patch) (job.Job, job.Node, []job.Edge, error) {
 	graph, ok := request.Graph()
 	if !ok {
 		return job.Job{}, job.Node{}, nil, errors.New("automatic Format selection requires a normalized graph")
 	}
-	resolved, err := component.Resolve(config.NewPatch())
+	resolved, err := component.Resolve(patch)
 	if err != nil {
 		return job.Job{}, job.Node{}, nil, err
 	}
@@ -143,7 +152,7 @@ func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.
 		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-edge", boundary, component.Identity(), "automatic Format boundary edge is missing", nil)
 	}
 	id := selectedFormatNodeID(replaced, component.Identity(), used)
-	node := job.NewNode(id, component.Identity(), config.NewPatch())
+	node := job.NewNode(id, component.Identity(), patch)
 	first := job.Connect(replaced.From(), job.At(id, shape.Inputs[0].ID()))
 	second := job.Connect(job.At(id, shape.Outputs[0].ID()), replaced.To())
 	nodes = append(nodes, node)

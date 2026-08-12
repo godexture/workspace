@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	internalplanning "github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/job"
@@ -22,10 +23,12 @@ import (
 )
 
 type formatChoice struct {
-	component plugin.Component
-	trait     mediaformat.ReadTrait
-	fallback  bool
-	evidence  []mediaformat.Evidence
+	component  plugin.Component
+	trait      mediaformat.ReadTrait
+	config     config.Patch
+	configured bool
+	fallback   bool
+	evidence   []mediaformat.Evidence
 }
 
 type probeCandidate struct {
@@ -63,7 +66,7 @@ func newProbeStore(opening access.Opening, budget job.Budget) (*probeStore, erro
 	return &probeStore{allocator: allocator, random: random, sequential: sequential}, nil
 }
 
-func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session acquiredSession, budget job.Budget) (formatChoice, *probeStore, plan.Usage, error) {
+func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session acquiredSession, hint job.FormatSelector, budget job.Budget) (formatChoice, *probeStore, plan.Usage, error) {
 	candidates := make([]probeCandidate, 0)
 	for _, component := range h.index.Components() {
 		trait, ok := mediaformat.ReadOf(component)
@@ -157,14 +160,14 @@ func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session a
 		}
 	}
 	usage.ProbeBytes = store.read
-	choice, selectErr := chooseFormat(boundary, candidates)
+	choice, selectErr := h.chooseFormat(boundary, candidates, hint)
 	if selectErr != nil {
 		return fail(selectErr)
 	}
 	return choice, store, usage, nil
 }
 
-func chooseFormat(boundary plan.Boundary, candidates []probeCandidate) (formatChoice, error) {
+func (h *Host) chooseFormat(boundary plan.Boundary, candidates []probeCandidate, hint job.FormatSelector) (formatChoice, error) {
 	var matches, fallbacks []probeCandidate
 	for _, candidate := range candidates {
 		switch candidate.result.Status() {
@@ -174,15 +177,34 @@ func chooseFormat(boundary plan.Boundary, candidates []probeCandidate) (formatCh
 			fallbacks = append(fallbacks, candidate)
 		}
 	}
-	selected := matches
-	fallback := false
-	if len(selected) == 0 {
-		selected = fallbacks
-		fallback = true
+	if len(matches) != 0 {
+		return chooseProbeCandidate(boundary, matches, false, hint)
+	}
+	if !hint.Valid() {
+		return formatChoice{}, probeDiagnostic("prepare.probe-mismatch", boundary, plugin.Identity{}, "no Format Probe recognized the input; evidence-free fallback requires an explicit Format hint", map[string]string{"fallbacks": probeCandidateList(fallbacks)})
+	}
+	target, err := h.resolveReadFormat(boundary, hint)
+	if err != nil {
+		return formatChoice{}, err
+	}
+	selected := make([]probeCandidate, 0, 1)
+	for _, candidate := range fallbacks {
+		if candidate.component.Identity() == target.Component().Identity() {
+			selected = append(selected, candidate)
+		}
 	}
 	if len(selected) == 0 {
-		return formatChoice{}, probeDiagnostic("prepare.probe-mismatch", boundary, plugin.Identity{}, "no Format Probe recognized the input and no fallback is available", nil)
+		return formatChoice{}, probeDiagnostic("prepare.probe-mismatch", boundary, target.Component().Identity(), "the hinted Format did not recognize the input and does not provide an evidence-free fallback", map[string]string{
+			"format": target.Format().Identity().String(), "selector": formatSelectorLabel(hint),
+		})
 	}
+	if err := validateFallbackConfig(boundary, selected[0], hint); err != nil {
+		return formatChoice{}, err
+	}
+	return chooseProbeCandidate(boundary, selected, true, hint)
+}
+
+func chooseProbeCandidate(boundary plan.Boundary, selected []probeCandidate, fallback bool, hint job.FormatSelector) (formatChoice, error) {
 	if len(selected) != 1 {
 		type ambiguity struct {
 			identity string
@@ -204,12 +226,50 @@ func chooseFormat(boundary plan.Boundary, candidates []probeCandidate) (formatCh
 		})
 	}
 	candidate := selected[0]
-	return formatChoice{
+	choice := formatChoice{
 		component: candidate.component,
 		trait:     candidate.trait,
 		fallback:  fallback,
 		evidence:  candidate.result.Evidence(),
-	}, nil
+	}
+	if hint.Valid() && selectorMatchesFormat(hint, candidate.trait.Format()) {
+		choice.config, choice.configured = hint.Config()
+	}
+	return choice, nil
+}
+
+func validateFallbackConfig(boundary plan.Boundary, candidate probeCandidate, hint job.FormatSelector) error {
+	required := candidate.trait.FallbackConfigFields()
+	if len(required) == 0 {
+		return nil
+	}
+	patch, configured := hint.Config()
+	provided := patch.FieldIDs()
+	seen := make(map[string]struct{}, len(provided))
+	for _, field := range provided {
+		seen[field] = struct{}{}
+	}
+	missing := make([]string, 0, len(required))
+	for _, field := range required {
+		if _, exists := seen[field]; !exists {
+			missing = append(missing, field)
+		}
+	}
+	if configured && len(missing) == 0 {
+		return nil
+	}
+	return probeDiagnostic("prepare.format-config-required", boundary, candidate.component.Identity(), "evidence-free Format fallback requires explicit media configuration", map[string]string{
+		"format": candidate.trait.Format().Identity().String(), "selector": formatSelectorLabel(hint), "required": strings.Join(required, ","), "provided": strings.Join(provided, ","),
+	})
+}
+
+func probeCandidateList(values []probeCandidate) string {
+	result := make([]string, len(values))
+	for index, candidate := range values {
+		result[index] = candidate.component.Identity().String()
+	}
+	sort.Strings(result)
+	return strings.Join(result, ",")
 }
 
 func probeConfidence(fallback bool) string {

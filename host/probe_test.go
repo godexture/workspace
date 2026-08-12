@@ -27,9 +27,11 @@ type (
 	probeFixtureConfigID  struct{}
 	probeContentID        struct{}
 	probeFallbackID       struct{}
+	probeOtherFallbackID  struct{}
 	probeContentFormatID  struct{}
 	probeFallbackFormatID struct{}
-	probeFixtureConfig    struct{}
+	probeOtherFormatID    struct{}
+	probeFixtureConfig    struct{ Rate int }
 	probeFixturePlan      struct{ shape flow.Shape }
 	probeFixtureOperator  struct{ shape flow.Shape }
 )
@@ -206,7 +208,9 @@ func TestProbeSchedulerSelectsContentBeforeFallbackWithinBudget(t *testing.T) {
 	instance := probeHost(t)
 	data := []byte("RIFF\x10\x00\x00\x00WAVEpayload")
 	session, opening := probeOpening(t, data, access.RandomRead, access.SequentialRead, access.StableSize)
-	choice, store, usage, err := instance.probeInput(t.Context(), probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, job.DefaultBudget())
+	fallback, _ := mediaformat.Define[probeFallbackFormatID](nil)
+	hint, _ := job.SelectFormat(fallback)
+	choice, store, usage, err := instance.probeInput(t.Context(), probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, hint, job.DefaultBudget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +236,7 @@ func TestProbeSchedulerReportsByteAndRoundExhaustion(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			session, opening := probeOpening(t, data, access.RandomRead, access.StableSize)
-			_, _, _, err := instance.probeInput(t.Context(), probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, test.budget)
+			_, _, _, err := instance.probeInput(t.Context(), probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, job.FormatSelector{}, test.budget)
 			items := diagnostic.ItemsOf(err)
 			if len(items) != 1 || items[0].Code != "prepare.probe-budget" || items[0].Detail["dimension"] != test.dimension || !strings.Contains(items[0].Detail["candidate"], plugin.IdentityOf[probeContentID]().String()) {
 				t.Fatalf("diagnostic = %#v, error=%v", items, err)
@@ -252,7 +256,7 @@ func TestProbeSchedulerReportsSharedPlanningDurationExhaustion(t *testing.T) {
 	defer cancel()
 	<-ctx.Done()
 	session, opening := probeOpening(t, []byte("RIFF\x10\x00\x00\x00WAVE"), access.RandomRead, access.StableSize)
-	_, _, _, err := instance.probeInput(ctx, probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, budget)
+	_, _, _, err := instance.probeInput(ctx, probeBoundary(), acquiredSession{node: "source", value: session, actual: session.capabilities, opening: opening}, job.FormatSelector{}, budget)
 	items := diagnostic.ItemsOf(err)
 	if len(items) != 1 || items[0].Code != "prepare.probe-budget" || items[0].Detail["dimension"] != "duration" || items[0].Detail["durationLimit"] != budget.Duration.String() {
 		t.Fatalf("diagnostic = %#v, error=%v", items, err)
@@ -268,12 +272,61 @@ func TestChooseFormatReportsCanonicalEqualRankAmbiguity(t *testing.T) {
 		{component: contentComponent, result: mediaformat.Match(evidence), terminal: true},
 		{component: fallbackComponent, result: mediaformat.Match(evidence), terminal: true},
 	}
-	_, firstErr := chooseFormat(probeBoundary(), first)
-	_, secondErr := chooseFormat(probeBoundary(), []probeCandidate{first[1], first[0]})
+	_, firstErr := instance.chooseFormat(probeBoundary(), first, job.FormatSelector{})
+	_, secondErr := instance.chooseFormat(probeBoundary(), []probeCandidate{first[1], first[0]}, job.FormatSelector{})
 	firstItems := diagnostic.ItemsOf(firstErr)
 	secondItems := diagnostic.ItemsOf(secondErr)
 	if len(firstItems) != 1 || len(secondItems) != 1 || firstItems[0].Code != "prepare.probe-ambiguous" || firstItems[0].Detail["candidates"] != secondItems[0].Detail["candidates"] || firstItems[0].Detail["evidence"] != secondItems[0].Detail["evidence"] {
 		t.Fatalf("ambiguity diagnostics = %#v / %#v", firstItems, secondItems)
+	}
+}
+
+func TestFallbackRequiresExplicitHintAndRequiredConfig(t *testing.T) {
+	instance := probeHost(t)
+	component, _ := instance.index.Lookup(plugin.IdentityOf[probeFallbackID]())
+	trait, _ := mediaformat.ReadOf(component)
+	candidates := []probeCandidate{{component: component, trait: trait, result: mediaformat.Fallback(), terminal: true}}
+
+	if _, err := instance.chooseFormat(probeBoundary(), candidates, job.FormatSelector{}); diagnostic.ItemsOf(err)[0].Code != "prepare.probe-mismatch" {
+		t.Fatalf("fallback without hint = %v", err)
+	}
+	hint, _ := job.SelectFormat(trait.Format())
+	if _, err := instance.chooseFormat(probeBoundary(), candidates, hint); diagnostic.ItemsOf(err)[0].Code != "prepare.format-config-required" {
+		t.Fatalf("fallback without config = %v", err)
+	}
+	hint = hint.WithConfig(config.NewPatch().Set("rate", 1))
+	choice, err := instance.chooseFormat(probeBoundary(), candidates, hint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch, configured := choice.config, choice.configured
+	if !choice.fallback || !configured || len(patch.FieldIDs()) != 1 || patch.FieldIDs()[0] != "rate" {
+		t.Fatalf("configured fallback = %#v, fields %v", choice, patch.FieldIDs())
+	}
+}
+
+func TestFallbackExtensionAmbiguityIsResolvedThroughCatalog(t *testing.T) {
+	first := probeFormatComponentWithExtensions[probeFallbackID, probeFallbackFormatID](func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+		return mediaformat.Fallback(), nil
+	}, []string{"shared"})
+	second := probeFormatComponentWithExtensions[probeOtherFallbackID, probeOtherFormatID](func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+		return mediaformat.Fallback(), nil
+	}, []string{"shared"})
+	instance, err := New(Plugins(plugin.NewSet(plugin.Define[probeFixturePluginID](plugin.Descriptor{DisplayName: "ambiguous", Version: "1"}, first, second))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := make([]probeCandidate, 0, 2)
+	for _, component := range []plugin.Component{first, second} {
+		trait, _ := mediaformat.ReadOf(component)
+		candidates = append(candidates, probeCandidate{component: component, trait: trait, result: mediaformat.Fallback(), terminal: true})
+	}
+	extension, _ := mediaformat.ParseExtension("shared")
+	hint, _ := job.SelectFormatExtension(extension)
+	_, err = instance.chooseFormat(probeBoundary(), candidates, hint)
+	items := diagnostic.ItemsOf(err)
+	if len(items) != 1 || items[0].Code != "prepare.format-ambiguous" || !strings.Contains(items[0].Detail["candidates"], first.Identity().String()) || !strings.Contains(items[0].Detail["candidates"], second.Identity().String()) {
+		t.Fatalf("extension ambiguity = %#v", items)
 	}
 }
 
@@ -309,7 +362,7 @@ func probeHost(t *testing.T) *Host {
 	content := probeFormatComponent[probeContentID, probeContentFormatID](probeContent)
 	fallback := probeFormatComponent[probeFallbackID, probeFallbackFormatID](func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
 		return mediaformat.Fallback(), nil
-	})
+	}, mediaformat.RequireFallbackConfig("rate"))
 	set := plugin.NewSet(plugin.Define[probeFixturePluginID](plugin.Descriptor{DisplayName: "probe fixture", Version: "1"}, content, fallback))
 	instance, err := New(Plugins(set))
 	if err != nil {
@@ -318,8 +371,13 @@ func probeHost(t *testing.T) *Host {
 	return instance
 }
 
-func probeFormatComponent[ComponentMarker, FormatMarker any](probe mediaformat.ProbeFunc) plugin.Component {
-	configuration := config.Struct[probeFixtureConfigID](func() probeFixtureConfig { return probeFixtureConfig{} }).Version("1").Build()
+func probeFormatComponent[ComponentMarker, FormatMarker any](probe mediaformat.ProbeFunc, options ...mediaformat.ReadOption) plugin.Component {
+	return probeFormatComponentWithExtensions[ComponentMarker, FormatMarker](probe, nil, options...)
+}
+
+func probeFormatComponentWithExtensions[ComponentMarker, FormatMarker any](probe mediaformat.ProbeFunc, extensions []string, options ...mediaformat.ReadOption) plugin.Component {
+	configuration := config.Struct[probeFixtureConfigID](func() probeFixtureConfig { return probeFixtureConfig{Rate: 1} }).Version("1").
+		AddField(config.Field("rate", func(value *probeFixtureConfig) *int { return &value.Rate }, config.Int().Range(1, 768_000))).Build()
 	shape := flow.NewShape(
 		[]flow.Port{flow.In("bytes", access.Bytes())},
 		[]flow.Port{flow.Out("chunks", mediaformat.Chunks())},
@@ -333,7 +391,11 @@ func probeFormatComponent[ComponentMarker, FormatMarker any](probe mediaformat.P
 			return probeFixtureOperator{shape: shape.Clone()}, nil
 		},
 	}
-	format, err := mediaformat.Define[FormatMarker](nil)
+	var formatOptions []mediaformat.Option
+	if len(extensions) != 0 {
+		formatOptions = append(formatOptions, mediaformat.WithExtensions(extensions...))
+	}
+	format, err := mediaformat.Define[FormatMarker](nil, formatOptions...)
 	if err != nil {
 		panic(err)
 	}
@@ -341,7 +403,7 @@ func probeFormatComponent[ComponentMarker, FormatMarker any](probe mediaformat.P
 		plugin.Descriptor{DisplayName: "probe Format fixture"},
 		configuration,
 		plugin.WithSpec(spec),
-		mediaformat.Read(format, access.NewRequirements(access.AnyOf(access.RandomRead)), mediaformat.WithProbe(probe)),
+		mediaformat.Read(format, access.NewRequirements(access.AnyOf(access.RandomRead)), append([]mediaformat.ReadOption{mediaformat.WithProbe(probe)}, options...)...),
 	)
 }
 

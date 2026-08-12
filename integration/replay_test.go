@@ -281,6 +281,14 @@ func automaticPCMRequest(t *testing.T, preset job.Preset, input job.Input, outpu
 		SetText("layout", "mono").
 		SetText("endian", "little").
 		SetText("chunkSamples", "1024")
+	hint, err := job.SelectFormat(linear.Raw())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err = input.WithFormatHint(hint.WithConfig(patch))
+	if err != nil {
+		t.Fatal(err)
+	}
 	requested, err := job.NewGraph(
 		[]job.Node{
 			job.NewNode("parser", linear.ParserIdentity(), patch),
@@ -366,6 +374,15 @@ func assertRawFallbackPlan(t *testing.T, value plan.Plan) {
 		found = true
 		if node.Origin != plan.Automatic || node.Reason != "format.fallback" {
 			t.Fatalf("raw fallback node = %#v", node)
+		}
+		explicit := make(map[string]bool)
+		for _, field := range node.Config.Fields() {
+			explicit[field.ID] = field.Source == config.SourceExplicit
+		}
+		for _, field := range []string{"rate", "validBits", "layout", "endian"} {
+			if !explicit[field] {
+				t.Fatalf("raw fallback config %q is not explicit: %#v", field, node.Config.Fields())
+			}
 		}
 	}
 	if !found {
