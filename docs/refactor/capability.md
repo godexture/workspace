@@ -93,7 +93,7 @@ M5 cut 後はいったん surface 実装を置かず、旧 CLI/WASM/demo source 
 | B2 | metadata の表現不能項目を黙って捨てず warning/loss report にする | [C10](decisions.md) | M7 |
 | B3 | 数値誤差を許容する variant を policy で選択可能にする | [C7](decisions.md)、[C15](decisions.md) | M5/M8 |
 | B4 | FLAC encoder の `Apodizations []Apodization`（関数値）を kind と parameter を持つ data 表現へ変える | 関数値は canonical 表現を持てず、`Tukey(0.5)` と `Tukey(0.9)` を区別できない。異なる bitstream を生むのに Plan と fingerprint に残らず、[performance.md](performance.md#artifactstable) の `ArtifactStable` を満たせない。現状 CLI/WASM からも設定できないため、data 化して初めて surface へ出せる | M8 |
-| B5 | file 出力の replace で、既存 target の ACL と file attribute を継承しない | commit は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため置換自体は成立し、root module に外部 dependency を持ち込まない。継承には `ReplaceFile` が必要で `golang.org/x/sys` に依存するため、実需要が出るまで採らない | M6 |
+| B5 | file 出力は新規 target を `0666` と process umask で作り、既存 target の permission bit を維持する。一方、既存 target の ACL と file attribute は継承しない | temporary file は同一 directory に通常の file 作成と同じ permission で作り、既存 target があれば rename 前にその permission bit を適用する。rename 後は対応 OS で親 directory を sync する。commit は `os.Rename` とし、Windows でも置換自体は成立させるが、ACL/attribute の継承に必要な `ReplaceFile` と `golang.org/x/sys` は実需要が出るまで採らない | M6 |
 | B6 | 入力と出力が同じ file を指す変換を拒否する | 一行 convenience で成功 commit が原本を復元不能に破壊するため、既定にしない。同名の打ち間違いだけで起きる。検出は output が既存なら `os.SameFile`、非存在なら正規化 path 比較とし、stdlib だけで足りる。in-place 対応は需要が確認された milestone で扱い、その時は (1) Windows が `os.Open` に `FILE_SHARE_DELETE` を付けないため入力 handle が開いている間 `os.Rename` が失敗する問題への対応と、(2) 原本を破壊する以上の明示 opt-in の両方を前提とする。(1) は `syscall.CreateFile` を直接使う形になるが、`os.Open` が持つ長い path の `\\?\` 前置処理が抜けるため、`os.NewFile` で包む前にそこを合わせる必要がある | M6（拒否）／需要確認後（in-place） |
 
 ## 更新規則

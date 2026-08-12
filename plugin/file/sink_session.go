@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/godexture/godec/access"
@@ -46,9 +45,7 @@ func acquireSink(ctx context.Context, reference access.Reference, selected acces
 	if err != nil {
 		return nil, err
 	}
-	directory := filepath.Dir(target)
-	pattern := "." + filepath.Base(target) + ".godec-*"
-	handle, err := os.CreateTemp(directory, pattern)
+	handle, err := createTemporary(target)
 	if err != nil {
 		return nil, err
 	}
@@ -143,12 +140,15 @@ func (s *sinkSession) Commit(ctx context.Context) error {
 	if s.state != sinkPrepared || s.temp == "" {
 		return errSessionClosed
 	}
+	if err := preservePermissions(s.temp, s.target); err != nil {
+		return err
+	}
 	if err := os.Rename(s.temp, s.target); err != nil {
 		return err
 	}
 	s.temp = ""
 	s.state = sinkCommitted
-	return nil
+	return syncDirectory(s.target)
 }
 
 func (s *sinkSession) Abort(ctx context.Context) error {

@@ -205,6 +205,54 @@ func TestSinkReplacesOnlyAtCommitAndReturnsPayloadGrant(t *testing.T) {
 	}
 }
 
+func TestSinkPreservesExistingTargetPermissions(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "output.raw")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, target, []byte("replacement"))
+	got, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode().Perm() != want.Mode().Perm() {
+		t.Fatalf("replacement mode = %04o, want %04o", got.Mode().Perm(), want.Mode().Perm())
+	}
+}
+
+func TestNewSinkUsesOrdinaryFileCreationPermissions(t *testing.T) {
+	directory := t.TempDir()
+	reference := filepath.Join(directory, "reference")
+	handle, err := os.Create(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(directory, "output.raw")
+	commitFile(t, target, []byte("created"))
+	got, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode().Perm() != want.Mode().Perm() {
+		t.Fatalf("new output mode = %04o, os.Create mode %04o", got.Mode().Perm(), want.Mode().Perm())
+	}
+}
+
 func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing.T) {
 	session := &recordingSinkSession{limit: 2}
 	selection := selection(t, session.Capabilities(), access.RandomWrite)
@@ -497,6 +545,29 @@ func writeBytes(t *testing.T, operator *sinkOperator, value []byte) {
 		handle.Release()
 		t.Fatal(err)
 	}
+}
+
+func commitFile(t *testing.T, target string, value []byte) {
+	t.Helper()
+	acquired, err := acquireSink(context.Background(), fileReference(t, target), selection(t, sinkCapabilities(), access.SequentialWrite))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := acquired.(*sinkSession)
+	defer session.Close()
+	if _, err := session.Write(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.PrepareCommit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, target, value)
 }
 
 func selection(t *testing.T, available access.Capabilities, values ...access.Capability) access.Selection {
