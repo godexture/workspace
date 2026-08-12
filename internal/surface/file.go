@@ -13,7 +13,7 @@ import (
 
 // FileJob builds a catalog-independent file-to-file request. Nil selectors
 // derive extension hints from each path without filesystem I/O.
-func FileJob(inputPath string, inputReference access.Reference, outputPath string, outputReference access.Reference, inputSelector, outputSelector *job.FormatSelector) (job.Job, error) {
+func FileJob(inputPath string, inputReference access.Reference, outputPath string, outputReference access.Reference, inputSelector, outputSelector *job.FormatSelector, options ...job.Option) (job.Job, error) {
 	input, err := job.InputFromReference(inputReference)
 	if err != nil {
 		return job.Job{}, err
@@ -42,7 +42,7 @@ func FileJob(inputPath string, inputReference access.Reference, outputPath strin
 			return job.Job{}, err
 		}
 	}
-	return job.New([]job.Input{input}, []job.Output{output}, job.Graph{})
+	return job.New([]job.Input{input}, []job.Output{output}, job.Graph{}, options...)
 }
 
 func fileSelector(path string, explicit *job.FormatSelector) (job.FormatSelector, error) {

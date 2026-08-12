@@ -283,6 +283,22 @@ func TestAllocatorEnforcesLocalGrantAndReturnsItOnce(t *testing.T) {
 	second.Release()
 }
 
+func TestAllocatorGrantExcludesAlignmentBackingSlack(t *testing.T) {
+	spec := Spec{Alignment: 8, Planes: []PlaneSpec{{Size: 4}}}
+	allocator := testAllocator(t, 4)
+	handle, err := allocator.Allocate(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocator.Used() != 4 {
+		t.Fatalf("logical payload charge = %d", allocator.Used())
+	}
+	handle.Release()
+	if allocator.Used() != 0 {
+		t.Fatalf("logical payload repayment = %d", allocator.Used())
+	}
+}
+
 func TestOverwritePublishesOnlyAfterSuccessfulFill(t *testing.T) {
 	allocator := testAllocator(t, 16)
 	lease, err := allocator.Overwrite(Spec{Planes: []PlaneSpec{{Size: 4}}})

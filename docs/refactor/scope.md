@@ -171,6 +171,8 @@ M6 review では、操作 view と consumer を持たなかった `Reopen` と `
 
 `resource` の temporary 次元は M5 review で削除し、**戻さないと決めた**。spool の上限は `job.ResourcePolicy` の spool 専用 quota として持ち、Host が Job 単位で storage を所有する。予約次元へ戻さないのは、spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。spool 自体は Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。MP4 fragmented 等の第二の consumer が現れた milestone で、共通 service へ昇格させるかを決める。
 
+`PolicyFor` の preset は `AllowSpool` を有効にしない。spool は `standard.WithPolicy` 等から明示した `job.ResourcePolicy` に正の上限と storage を与えた場合だけ利用できる。M7 の MP4 fragmented/spool でも preset の暗黙 effect へ変えず、必要なら独立した user choice として設計する。
+
 M6 が新設する write 側 capability（sink の逐次書きと位置指定書き）と narrow view は、WAVE mux と local file Provider が同時に consumer になる。size 不明 header を書く streaming 出力は M6 では提供せず、需要が確認された milestone が opt-in と `Plan` warning を伴って追加する。
 
 M6-1 は data unit schema の所有者も是正する。Access boundary の byte stream は `access`、container framing（`packet.Chunk`）は `media/format`、codec packet（`packet.Packet`）は `media/codec` が所有し、`plugin/pcm/linear` の固有宣言を削除する。schema identity が plugin 固有だと、WAVE demux と PCM parser のように別 plugin の component 同士が接続できず、codec Binding が format tag から parser を選ぶ設計も成立しない。これは新しい contract の宣言ではなく、既に consumer を持つ宣言の移設である。

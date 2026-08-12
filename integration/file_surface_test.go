@@ -105,6 +105,44 @@ func TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFileJobPolicyAndBudgetReachEffectivePlan(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	outputPath := filepath.Join(directory, "output.raw")
+	if err := os.WriteFile(inputPath, riffFile(
+		riffChunk("fmt ", pcmFormat(1, 48_000, 16), 0),
+		riffChunk("data", []byte{1, 0}, 0),
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy, ok := job.PolicyFor(job.Realtime)
+	if !ok {
+		t.Fatal("realtime policy is unavailable")
+	}
+	budget := job.DefaultBudget()
+	budget.Compiles--
+	request, err := standard.NewFileJob(
+		inputPath,
+		outputPath,
+		standard.WithPolicy(policy),
+		standard.WithBudget(budget),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := instance.Plan(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.EffectivePolicy() != policy || selected.Budget() != budget {
+		t.Fatalf("effective policy/budget = %#v, %#v", selected.EffectivePolicy(), selected.Budget())
+	}
+}
+
 func TestFileJobRequiresRawMediaConfigBeyondPathExtension(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.raw")

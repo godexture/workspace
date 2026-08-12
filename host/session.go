@@ -66,12 +66,14 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return sessions, *failure
 		}
 		sessions[len(sessions)-1].actual = actual
-		declared := entry.SourceTrait().Capabilities()
-		direction := access.SourceDirection
+		var declared access.Capabilities
+		accessDirection := access.SourceDirection
 		class := access.TransactionClass(0)
-		if projection.Direction == plan.OutputBoundary {
+		if projection.Direction == plan.InputBoundary {
+			declared = entry.SourceTrait().Capabilities()
+		} else {
 			declared = entry.SinkTrait().Capabilities()
-			direction = access.SinkDirection
+			accessDirection = access.SinkDirection
 			class = entry.SinkTrait().TransactionClass()
 		}
 		if !capabilitySubset(declared, actual) {
@@ -81,7 +83,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 				"selected": capabilityNames(selection.Capabilities()),
 			})
 		}
-		opening, openingErr := access.NewOpening(direction, session, selection, class)
+		opening, openingErr := access.NewOpening(accessDirection, session, selection, class)
 		if openingErr != nil {
 			return sessions, sessionDiagnostic("prepare.access-view", projection, "Access session cannot provide the selected narrow operation view", map[string]string{
 				"actual":   capabilityNames(actual.Values()),
@@ -104,7 +106,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			if selectionErr != nil {
 				return sessions, selectionErr
 			}
-			opening, openingErr = access.NewOpening(direction, session, selection, class)
+			opening, openingErr = access.NewOpening(accessDirection, session, selection, class)
 			if openingErr != nil {
 				return sessions, sessionDiagnostic("prepare.spool-view", projection, "Access output spool cannot provide the selected effective view", map[string]string{"error": openingErr.Error()})
 			}

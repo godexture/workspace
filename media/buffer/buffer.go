@@ -105,6 +105,9 @@ func (a *Allocator) Used() int64 {
 	return a.used.Load()
 }
 
+// Allocate charges the logical layout size (at least one byte) to the grant.
+// The backing slice reserves up to Alignment-1 additional bytes solely to
+// align the exposed payload; that implementation slack is not grant capacity.
 func (a *Allocator) Allocate(spec Spec) (Handle, error) {
 	layout, rawSize, err := layoutOf(spec)
 	if err != nil {

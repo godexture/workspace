@@ -14,6 +14,10 @@ type fileJobOptions struct {
 	inputSet  bool
 	output    job.FormatSelector
 	outputSet bool
+	policy    job.Policy
+	policySet bool
+	budget    job.Budget
+	budgetSet bool
 }
 
 // WithInputFormat supplies an explicit input Format hint and optional config.
@@ -29,6 +33,22 @@ func WithOutputFormat(selector job.FormatSelector) FileJobOption {
 	return func(options *fileJobOptions) {
 		options.output = selector
 		options.outputSet = true
+	}
+}
+
+// WithPolicy supplies the policy used to plan the file request.
+func WithPolicy(policy job.Policy) FileJobOption {
+	return func(options *fileJobOptions) {
+		options.policy = policy
+		options.policySet = true
+	}
+}
+
+// WithBudget supplies the bounded planning budget for the file request.
+func WithBudget(budget job.Budget) FileJobOption {
+	return func(options *fileJobOptions) {
+		options.budget = budget
+		options.budgetSet = true
 	}
 }
 
@@ -56,5 +76,12 @@ func NewFileJob(inputPath, outputPath string, values ...FileJobOption) (job.Job,
 	if err != nil {
 		return job.Job{}, err
 	}
-	return surface.FileJob(inputPath, inputReference, outputPath, outputReference, input, output)
+	var jobOptions []job.Option
+	if options.policySet {
+		jobOptions = append(jobOptions, job.WithPolicy(options.policy))
+	}
+	if options.budgetSet {
+		jobOptions = append(jobOptions, job.WithBudget(options.budget))
+	}
+	return surface.FileJob(inputPath, inputReference, outputPath, outputReference, input, output, jobOptions...)
 }

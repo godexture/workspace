@@ -147,4 +147,25 @@ func TestNewFileJobAllowsExplicitFormatAndExtensionlessOutput(t *testing.T) {
 	}
 }
 
+func TestNewFileJobForwardsPolicyAndBudget(t *testing.T) {
+	policy, ok := job.PolicyFor(job.Realtime)
+	if !ok {
+		t.Fatal("realtime policy is unavailable")
+	}
+	budget := job.DefaultBudget()
+	budget.States--
+	request, err := standard.NewFileJob(
+		"input.wav",
+		"output.wav",
+		standard.WithPolicy(policy),
+		standard.WithBudget(budget),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Policy() != policy || request.Budget() != budget {
+		t.Fatalf("file job policy/budget = %#v, %#v", request.Policy(), request.Budget())
+	}
+}
+
 type extraTraitKey struct{}
