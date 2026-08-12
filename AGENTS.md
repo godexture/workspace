@@ -32,6 +32,9 @@
     - benchmark/profile は hot path、allocation、並行処理、runtime 構造に影響し得る変更、または性能回帰の調査時だけ実行する
     - 日常の性能確認は代表 case で、同一条件における処理時間または無視できない allocation が概ね 2 倍以上に悪化する明白な回帰の検出を目的とする。小さな差は gate にしない
     - 小さな性能差を採用判断に使う場合だけ、同一 process の paired benchmark や profile で追加確認する。異なる machine や電源状態の raw timing は比較しない
+- これはリリース前のプロジェクトである
+    - 既存のユーザーのためのマイグレーションや、後方互換のことは一切考えなくてよい
+    - 公開 API も自由に変更してよい
 
 ## Rules
 - package などの命名に複合語はなるべく用いない
