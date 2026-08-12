@@ -420,7 +420,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 		return time.Unix(1, 0)
 	}
 	for _, mode := range []observe.Mode{observe.Off, observe.Basic} {
-		collector := observe.New(mode, clock)
+		collector := observe.New(mode, observe.Config{HistoryLimit: 8}, clock)
 		execution, err := template.BuildObserved([]flow.Operator{
 			&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{2, 3}},
 			&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
@@ -443,7 +443,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 		t.Fatalf("Off/Basic detailed work = size %d time %d clock %d", sizeCalls.Load(), timeCalls.Load(), clockCalls.Load())
 	}
 
-	collector := observe.New(observe.Detailed, clock)
+	collector := observe.New(observe.Detailed, observe.Config{HistoryLimit: 8}, clock)
 	execution, err := template.BuildObserved([]flow.Operator{
 		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{2, 3}},
 		&templateWriter{templateOperator: templateOperator{shape: sinkShape}},

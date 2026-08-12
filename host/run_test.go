@@ -328,7 +328,6 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	hostOptions := []Option{
 		Plugins(plugin.NewSet(definition)),
 		PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
-		Observe(ObservationBasic),
 	}
 	hostOptions = append(hostOptions, options...)
 	instance, err := New(hostOptions...)
@@ -491,7 +490,7 @@ func TestPreparedRunOrdersFinalizeFlushAndCommit(t *testing.T) {
 	if entries, _ := state.snapshot(); len(entries) != 0 {
 		t.Fatalf("Prepare opened runtime state: %v", entries)
 	}
-	result, err := prepared.Run(context.Background())
+	result, err := prepared.Run(context.Background(), Observe(ObservationBasic, RetainEvents(64)))
 	if err != nil {
 		t.Fatal(err)
 	}

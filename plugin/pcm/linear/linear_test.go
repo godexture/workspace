@@ -465,7 +465,6 @@ func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture 
 	instance, err := host.New(
 		host.Plugins(set),
 		host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
-		host.Observe(host.ObservationBasic),
 	)
 	if err != nil {
 		t.Fatal(err)

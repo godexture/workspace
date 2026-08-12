@@ -90,6 +90,7 @@ func (r *runner) closeOperators(ctx context.Context) {
 }
 
 func (r *runner) setPrimary(failure Failure) {
+	failure = r.observationFailure(failure)
 	if r.result.Primary == nil {
 		value := failure
 		r.result.Primary = &value

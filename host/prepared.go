@@ -40,7 +40,6 @@ type Prepared struct {
 	probeStores    []*probeStore
 	bySession      map[string]acquiredSession
 	direct         []bound.Entry
-	observation    Observation
 	cleanupTimeout time.Duration
 
 	mu       sync.Mutex
@@ -90,7 +89,6 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		bySession:      make(map[string]acquiredSession),
 		sessions:       append([]acquiredSession(nil), planning.sessions...),
 		probeStores:    append([]*probeStore(nil), planning.stores...),
-		observation:    h.observation,
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
 		done:           make(chan struct{}),
@@ -283,13 +281,18 @@ func joinFailures(values []Failure) error {
 }
 
 // Run is the convenience form for Prepare followed by one execution.
-func (h *Host) Run(ctx context.Context, request job.Job) (Result, error) {
+func (h *Host) Run(ctx context.Context, request job.Job, options ...RunOption) (Result, error) {
+	configuration, err := resolveRunOptions(options)
+	if err != nil {
+		failure := failureOf(RunPhase, "", "", err)
+		return Result{Primary: &failure}, &failure
+	}
 	prepared, err := h.Prepare(ctx, request)
 	if err != nil {
 		failure := failureOf(PreparePhase, "", "", err)
 		return Result{Primary: &failure}, err
 	}
-	result, runErr := prepared.Run(ctx)
+	result, runErr := prepared.run(ctx, configuration)
 	if closeErr := prepared.Close(); runErr == nil && closeErr != nil {
 		runErr = closeErr
 	}

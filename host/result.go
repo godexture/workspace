@@ -1,6 +1,7 @@
 package host
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -27,6 +28,7 @@ const (
 	PreparePhase       Phase = "prepare"
 	OpenPhase          Phase = "open"
 	RunPhase           Phase = "run"
+	ObservationPhase   Phase = "observation"
 	FinalizePhase      Phase = "finalize"
 	FlushPhase         Phase = "flush"
 	SyncPhase          Phase = "sync"
@@ -120,6 +122,29 @@ type Event struct {
 	Detail   map[string]string
 }
 
+// EventSink receives immutable event snapshots from one Run. Calls are
+// serialized by Host and never execute on a media-path goroutine.
+type EventSink interface {
+	Emit(context.Context, Event) error
+}
+
+// EventSinkFunc adapts a function to EventSink.
+type EventSinkFunc func(context.Context, Event) error
+
+func (f EventSinkFunc) Emit(ctx context.Context, event Event) error {
+	if f == nil {
+		return nil
+	}
+	return f(ctx, event)
+}
+
+// ObservationSummary distinguishes bounded history loss from live delivery
+// overflow. Event sequence gaps identify where delivery was lost.
+type ObservationSummary struct {
+	HistoryDropped  uint64
+	DeliveryDropped uint64
+}
+
 // Result separates the failure that stopped useful work from failures found
 // while rolling back or releasing resources.
 type Result struct {
@@ -128,6 +153,7 @@ type Result struct {
 	Diagnostics []diagnostic.Item
 	Outputs     []OutputOutcome
 	Events      []Event
+	Observation ObservationSummary
 }
 
 func (r Result) Succeeded() bool {

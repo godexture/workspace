@@ -52,6 +52,10 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 		return Failure{Phase: phase, Node: node, Task: taskName, Err: err, Stack: append([]byte(nil), panicError.Stack...)}
 	}
 	failure := Failure{Phase: phase, Node: node, Task: taskName, Err: err}
+	var stacked interface{ StackTrace() []byte }
+	if errors.As(err, &stacked) {
+		failure.Stack = stacked.StackTrace()
+	}
 	for _, item := range diagnostic.ItemsOf(err) {
 		if stack := item.Detail["stack"]; stack != "" {
 			failure.Stack = []byte(stack)

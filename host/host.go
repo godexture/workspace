@@ -18,7 +18,6 @@ import (
 type options struct {
 	plugins        plugin.Set
 	platform       plan.Platform
-	observation    Observation
 	cleanupTimeout time.Duration
 }
 
@@ -37,11 +36,6 @@ func PlatformSnapshot(platform plan.Platform) Option {
 	return func(options *options) { options.platform = platform }
 }
 
-// Observe selects the runtime observation strategy when a prepared Job runs.
-func Observe(mode Observation) Option {
-	return func(options *options) { options.observation = mode }
-}
-
 // CleanupTimeout bounds cancellation joins and context-aware rollback work.
 func CleanupTimeout(timeout time.Duration) Option {
 	return func(options *options) { options.cleanupTimeout = timeout }
@@ -53,7 +47,6 @@ type Host struct {
 	index          catalog.Index
 	platform       plan.Platform
 	bindings       bind.Registry
-	observation    Observation
 	cleanupTimeout time.Duration
 }
 
@@ -61,7 +54,7 @@ type Host struct {
 // definition is valid. Errors retain all component/field diagnostics.
 func New(options ...Option) (*Host, error) {
 	configuration := optionsState(options)
-	if !configuration.observation.Valid() || configuration.cleanupTimeout <= 0 {
+	if configuration.cleanupTimeout <= 0 {
 		return nil, diagnostic.NewError(diagnostic.NewItem("host.runtime-policy", diagnostic.ErrorSeverity, diagnostic.Path{}, "Host runtime policy is invalid", nil))
 	}
 	configuration.platform.Features = append([]string(nil), configuration.platform.Features...)
@@ -83,7 +76,6 @@ func New(options ...Option) (*Host, error) {
 		index:          index,
 		platform:       configuration.platform,
 		bindings:       bindings,
-		observation:    configuration.observation,
 		cleanupTimeout: configuration.cleanupTimeout,
 	}, nil
 }
@@ -147,7 +139,6 @@ func Diagnostics(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }
 func optionsState(values []Option) options {
 	result := options{
 		platform:       plan.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH, Toolchain: runtime.Version()},
-		observation:    ObservationOff,
 		cleanupTimeout: 5 * time.Second,
 	}
 	for _, option := range values {

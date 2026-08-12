@@ -34,7 +34,16 @@ type runner struct {
 
 // Run opens and executes a Prepared job exactly once. All operators and
 // reservations are released before it returns, including on cancellation.
-func (p *Prepared) Run(ctx context.Context) (Result, error) {
+func (p *Prepared) Run(ctx context.Context, options ...RunOption) (Result, error) {
+	configuration, err := resolveRunOptions(options)
+	if err != nil {
+		failure := Failure{Phase: RunPhase, Err: err}
+		return Result{Primary: &failure}, &failure
+	}
+	return p.run(ctx, configuration)
+}
+
+func (p *Prepared) run(ctx context.Context, configuration runOptions) (Result, error) {
 	if p == nil {
 		failure := Failure{Phase: RunPhase, Err: errors.New("prepared job is nil")}
 		return Result{Primary: &failure}, &failure
@@ -54,16 +63,17 @@ func (p *Prepared) Run(ctx context.Context) (Result, error) {
 	p.cancel = cancel
 	p.mu.Unlock()
 
-	r := newRunner(p, jobContext, cancel)
+	r := newRunner(p, jobContext, cancel, configuration, ctx)
 	r.execute()
+	r.finishObservation()
 	r.finishSnapshots()
 	err := resultError(r.result)
 	p.complete(err)
 	return r.result, err
 }
 
-func newRunner(prepared *Prepared, ctx context.Context, cancel context.CancelCauseFunc) *runner {
-	collector := observe.New(observe.Mode(prepared.observation), nil)
+func newRunner(prepared *Prepared, ctx context.Context, cancel context.CancelCauseFunc, options runOptions, observationContext context.Context) *runner {
+	collector := newObservationCollector(options, observationContext, cancel)
 	nodes := prepared.program.Nodes()
 	r := &runner{
 		prepared:  prepared,
