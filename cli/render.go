@@ -14,9 +14,71 @@ import (
 	"github.com/godexture/godec/plan"
 )
 
-type eventRenderer struct{ destination io.Writer }
+type eventRenderer struct {
+	destination io.Writer
+	seen        map[uint64]struct{}
+	printed     map[uint64]struct{}
+	deferred    map[uint64]host.Event
+	next        uint64
+	waiting     bool
+}
 
 func (r *eventRenderer) Emit(_ context.Context, event host.Event) error {
+	if r.seen == nil {
+		r.seen = make(map[uint64]struct{})
+		r.printed = make(map[uint64]struct{})
+		r.deferred = make(map[uint64]host.Event)
+	}
+	r.seen[event.Sequence] = struct{}{}
+	if r.waiting || event.Sequence != r.next {
+		r.waiting = true
+		r.deferred[event.Sequence] = event
+		return nil
+	}
+	if err := r.render(event); err != nil {
+		return err
+	}
+	r.printed[event.Sequence] = struct{}{}
+	r.next++
+	return nil
+}
+
+func (r *eventRenderer) finish(events []host.Event, summary host.ObservationSummary) (bool, error) {
+	if r.seen == nil {
+		r.seen = make(map[uint64]struct{})
+		r.printed = make(map[uint64]struct{})
+		r.deferred = make(map[uint64]host.Event)
+	}
+	available := make(map[uint64]host.Event, len(r.deferred)+len(events))
+	for sequence, event := range r.deferred {
+		available[sequence] = event
+	}
+	for _, event := range events {
+		r.seen[event.Sequence] = struct{}{}
+		available[event.Sequence] = event
+	}
+	sequences := make([]uint64, 0, len(available))
+	for sequence := range available {
+		if _, ok := r.printed[sequence]; !ok {
+			sequences = append(sequences, sequence)
+		}
+	}
+	sort.Slice(sequences, func(left, right int) bool { return sequences[left] < sequences[right] })
+	for _, sequence := range sequences {
+		if err := r.render(available[sequence]); err != nil {
+			return observationLost(r.seen, events, summary), err
+		}
+		r.printed[sequence] = struct{}{}
+	}
+	return observationLost(r.seen, events, summary), nil
+}
+
+func observationLost(seen map[uint64]struct{}, events []host.Event, summary host.ObservationSummary) bool {
+	total := summary.HistoryDropped + uint64(len(events))
+	return uint64(len(seen)) < total
+}
+
+func (r *eventRenderer) render(event host.Event) error {
 	switch event.Kind {
 	case host.ProgressEvent:
 		_, err := fmt.Fprintf(r.destination, "progress sequence=%d edge=%s items=%d bytes=%d\n", event.Sequence, event.Edge, event.Items, event.Bytes)
@@ -99,9 +161,9 @@ func capabilities(values []access.Capability) string {
 	return strings.Join(result, ",")
 }
 
-func renderResult(stdout, stderr io.Writer, result host.Result, runErr error) error {
+func renderResult(stdout, stderr io.Writer, result host.Result, runErr error, observationLost bool) error {
 	var failures []error
-	if result.Observation.HistoryDropped != 0 || result.Observation.DeliveryDropped != 0 {
+	if observationLost {
 		_, err := fmt.Fprintf(stderr, "warning observation-loss history=%d delivery=%d\n", result.Observation.HistoryDropped, result.Observation.DeliveryDropped)
 		failures = append(failures, err)
 	}

@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/standard"
 )
 
@@ -51,6 +53,15 @@ func TestRunConvertsWaveToRequestedFileFormat(t *testing.T) {
 			}
 			if !strings.Contains(stderr.String(), "progress sequence=") {
 				t.Fatalf("progress output = %s", stderr.String())
+			}
+			if strings.Contains(stderr.String(), "observation-loss") {
+				t.Fatalf("ordinary conversion reported observation loss: %s", stderr.String())
+			}
+			sequences := renderedSequences(t, stderr.String())
+			for index, sequence := range sequences {
+				if sequence != uint64(index) {
+					t.Fatalf("event sequences = %v", sequences)
+				}
 			}
 		})
 	}
@@ -164,7 +175,7 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 	})
 }
 
-func TestRunReportsLiveDeliveryDropWithoutBlockingConversion(t *testing.T) {
+func TestRunDoesNotBackpressureConversionOnBlockedRenderer(t *testing.T) {
 	instance, _ := standard.NewHost()
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.wav")
@@ -190,8 +201,70 @@ func TestRunReportsLiveDeliveryDropWithoutBlockingConversion(t *testing.T) {
 	if code := <-finished; code != ExitSuccess {
 		t.Fatalf("drop exit = %d, stdout=%s stderr=%s", code, stdout.String(), blocked.String())
 	}
-	if !strings.Contains(blocked.String(), "warning observation-loss") || !strings.Contains(blocked.String(), "delivery=") {
-		t.Fatalf("drop report = %s", blocked.String())
+	if strings.Contains(blocked.String(), "warning observation-loss") {
+		t.Fatalf("bounded delivery reported information loss: %s", blocked.String())
+	}
+}
+
+func TestEventRendererRecoversDeliveryGapFromHistory(t *testing.T) {
+	var stderr bytes.Buffer
+	renderer := &eventRenderer{destination: &stderr}
+	if err := renderer.Emit(t.Context(), host.Event{Sequence: 0, Kind: host.LifecycleEvent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.Emit(t.Context(), host.Event{Sequence: 2, Kind: host.ProgressEvent}); err != nil {
+		t.Fatal(err)
+	}
+	result := host.Result{
+		Events: []host.Event{
+			{Sequence: 0, Kind: host.LifecycleEvent},
+			{Sequence: 1, Kind: host.LifecycleEvent},
+			{Sequence: 2, Kind: host.ProgressEvent},
+		},
+		Observation: host.ObservationSummary{DeliveryDropped: 1},
+	}
+	lost, err := renderer.finish(result.Events, result.Observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := renderResult(io.Discard, &stderr, result, nil, lost); err != nil {
+		t.Fatal(err)
+	}
+	if lost || strings.Contains(stderr.String(), "observation-loss") {
+		t.Fatalf("recoverable delivery gap reported loss: %s", stderr.String())
+	}
+	if sequences := renderedSequences(t, stderr.String()); len(sequences) != 3 || sequences[0] != 0 || sequences[1] != 1 || sequences[2] != 2 {
+		t.Fatalf("recovered sequences = %v", sequences)
+	}
+}
+
+func TestEventRendererWarnsWhenHistoryCannotRecoverDeliveryGap(t *testing.T) {
+	var stderr bytes.Buffer
+	renderer := &eventRenderer{destination: &stderr}
+	for _, event := range []host.Event{
+		{Sequence: 0, Kind: host.LifecycleEvent},
+		{Sequence: 2, Kind: host.ProgressEvent},
+	} {
+		if err := renderer.Emit(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := host.Result{
+		Events: []host.Event{
+			{Sequence: 2, Kind: host.ProgressEvent},
+			{Sequence: 3, Kind: host.LifecycleEvent},
+		},
+		Observation: host.ObservationSummary{HistoryDropped: 2, DeliveryDropped: 1},
+	}
+	lost, err := renderer.finish(result.Events, result.Observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := renderResult(io.Discard, &stderr, result, nil, lost); err != nil {
+		t.Fatal(err)
+	}
+	if !lost || !strings.Contains(stderr.String(), "warning observation-loss history=2 delivery=1") {
+		t.Fatalf("unrecoverable history overflow = %s", stderr.String())
 	}
 }
 
@@ -244,6 +317,25 @@ func waitForFile(t testing.TB, path string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("output was not committed while renderer was blocked")
+}
+
+func renderedSequences(t testing.TB, output string) []uint64 {
+	t.Helper()
+	var result []uint64
+	for _, line := range strings.Split(output, "\n") {
+		for _, field := range strings.Fields(line) {
+			if !strings.HasPrefix(field, "sequence=") {
+				continue
+			}
+			sequence, err := strconv.ParseUint(strings.TrimPrefix(field, "sequence="), 10, 64)
+			if err != nil {
+				t.Fatalf("parse sequence from %q: %v", line, err)
+			}
+			result = append(result, sequence)
+			break
+		}
+	}
+	return result
 }
 
 func pcmWave(channels uint16, rate uint32, bits uint16, payload []byte) []byte {

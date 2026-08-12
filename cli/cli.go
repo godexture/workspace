@@ -11,6 +11,8 @@ import (
 	"github.com/godexture/godec/host"
 )
 
+const cliEventLimit = 64
+
 // ExitCode classifies command completion without inspecting error text.
 type ExitCode int
 
@@ -97,13 +99,18 @@ func Run(ctx context.Context, instance *host.Host, args []string, values ...Opti
 	renderer := &eventRenderer{destination: configuration.stderr}
 	result, runErr := prepared.Run(ctx, host.Observe(
 		host.ObservationDetailed,
-		host.DeliverEvents(8, renderer),
+		host.RetainEvents(cliEventLimit),
+		host.DeliverEvents(cliEventLimit, renderer),
 	))
+	observationLost, renderErr := renderer.finish(result.Events, result.Observation)
+	if runErr == nil {
+		runErr = renderErr
+	}
 	closeErr := prepared.Close()
 	if runErr == nil {
 		runErr = closeErr
 	}
-	if err := renderResult(configuration.stdout, configuration.stderr, result, runErr); err != nil && runErr == nil {
+	if err := renderResult(configuration.stdout, configuration.stderr, result, runErr, observationLost); err != nil && runErr == nil {
 		runErr = err
 	}
 	if runErr != nil {
