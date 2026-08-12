@@ -199,10 +199,10 @@ func TestFormatExtensionsAreIndexedByDirectionAndAffectFingerprint(t *testing.T)
 		}
 		read := catalogTraitComponent[catalogFirstID]("read", flow.NewShape(
 			[]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)},
-		), mediaformat.Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+		), mediaformat.Read(value, access.NewRequirements(access.AllOf(access.SequentialRead))))
 		write := catalogTraitComponent[catalogSecondID]("write", flow.NewShape(
 			[]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("writes", access.Writes())},
-		), mediaformat.Write(value, access.AnyOf(access.SequentialWrite)))
+		), mediaformat.Write(value, access.NewRequirements(access.AllOf(access.SequentialWrite))))
 		index, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, read, write)))
 		if err != nil {
 			t.Fatal(err)
@@ -231,16 +231,16 @@ func TestBuildRejectsConflictingFormatDeclarationAndFallbackField(t *testing.T) 
 	secondFormat, _ := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions("two"))
 	readShape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)})
 	first := catalogTraitComponent[catalogFirstID]("first", readShape,
-		mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+		mediaformat.Read(firstFormat, access.NewRequirements(access.AllOf(access.SequentialRead))))
 	second := catalogTraitComponent[catalogSecondID]("second", readShape,
-		mediaformat.Read(secondFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+		mediaformat.Read(secondFormat, access.NewRequirements(access.AllOf(access.SequentialRead))))
 	definition := plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, first, second)
 	if _, err := Build(plugin.NewSet(definition)); err == nil || !hasCatalogDiagnostic(err, "catalog.format-declaration") {
 		t.Fatalf("conflicting Format declaration diagnostic = %v", err)
 	}
 
 	fallback := catalogTraitComponent[catalogFirstID]("fallback", readShape,
-		mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead)),
+		mediaformat.Read(firstFormat, access.NewRequirements(access.AllOf(access.SequentialRead)),
 			mediaformat.WithProbe(func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) { return mediaformat.Fallback(), nil }),
 			mediaformat.RequireFallbackConfig("absent")))
 	definition = plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, fallback)
@@ -254,8 +254,8 @@ func TestCatalogAllowsSharedExtensionUntilSelection(t *testing.T) {
 	firstFormat, _ := mediaformat.Define[catalogFormatID](nil, mediaformat.WithExtensions("shared"))
 	secondFormat, _ := mediaformat.Define[catalogOtherFormatID](nil, mediaformat.WithExtensions("shared"))
 	shape := flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("out", typ)})
-	first := catalogTraitComponent[catalogFirstID]("first", shape, mediaformat.Read(firstFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
-	second := catalogTraitComponent[catalogSecondID]("second", shape, mediaformat.Read(secondFormat, access.NewRequirements(access.AnyOf(access.SequentialRead))))
+	first := catalogTraitComponent[catalogFirstID]("first", shape, mediaformat.Read(firstFormat, access.NewRequirements(access.AllOf(access.SequentialRead))))
+	second := catalogTraitComponent[catalogSecondID]("second", shape, mediaformat.Read(secondFormat, access.NewRequirements(access.AllOf(access.SequentialRead))))
 	index, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "format", Version: "1"}, first, second)))
 	if err != nil {
 		t.Fatal(err)
@@ -310,25 +310,25 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			code: "catalog.access-scheme",
 		},
 		"format read shape": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))))},
 			code:       "catalog.format-shape",
 		},
 		"format read schema": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))))},
 			code:       "catalog.format-schema",
 		},
 		"format write shape": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), mediaformat.Write(formatValue, access.NewRequirements(access.AllOf(access.SequentialWrite))))},
 			code:       "catalog.format-shape",
 		},
 		"format write schema": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("write", flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)}), mediaformat.Write(formatValue, access.NewRequirements(access.AllOf(access.SequentialWrite))))},
 			code:       "catalog.format-schema",
 		},
 		"format duplicate": {
 			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", typ)}),
-				mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))),
-				mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.RandomRead))))},
+				mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))),
+				mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.RandomRead))))},
 			code: "plugin.trait-duplicate",
 		},
 	}

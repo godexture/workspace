@@ -14,22 +14,21 @@ const (
 	SequentialRead  Capability = "sequential-read"
 	RandomRead      Capability = "random-read"
 	StableSize      Capability = "stable-size"
-	Reopen          Capability = "reopen"
-	ConcurrentRead  Capability = "concurrent-read"
-	CancelableRead  Capability = "cancelable-read"
 	SequentialWrite Capability = "sequential-write"
 	RandomWrite     Capability = "random-write"
 )
 
 func (c Capability) Valid() bool { return c != "" && strings.TrimSpace(string(c)) == string(c) }
 
+// Alternative is an AND set: every capability must be available.
 type Alternative struct{ Capabilities []Capability }
 
-func AnyOf(capabilities ...Capability) Alternative {
+// AllOf constructs one capability conjunction.
+func AllOf(capabilities ...Capability) Alternative {
 	return Alternative{Capabilities: append([]Capability(nil), capabilities...)}
 }
 
-func (a Alternative) Clone() Alternative { return AnyOf(a.Capabilities...) }
+func (a Alternative) Clone() Alternative { return AllOf(a.Capabilities...) }
 
 func (a Alternative) Valid() bool {
 	if len(a.Capabilities) == 0 {
@@ -48,6 +47,7 @@ func (a Alternative) Valid() bool {
 	return true
 }
 
+// Requirements is an ordered OR list of capability alternatives.
 type Requirements struct{ Alternatives []Alternative }
 
 func NewRequirements(alternatives ...Alternative) Requirements {
@@ -55,7 +55,7 @@ func NewRequirements(alternatives ...Alternative) Requirements {
 	for index, alternative := range alternatives {
 		capabilities := append([]Capability(nil), alternative.Capabilities...)
 		sort.Slice(capabilities, func(left, right int) bool { return capabilities[left] < capabilities[right] })
-		result.Alternatives[index] = AnyOf(capabilities...)
+		result.Alternatives[index] = AllOf(capabilities...)
 	}
 	return result
 }
@@ -176,7 +176,7 @@ func capabilitiesValidFor(values []Capability, direction Direction) bool {
 			switch capability {
 			case SequentialWrite, RandomWrite:
 				hasOperation = true
-			case SequentialRead, RandomRead, StableSize, Reopen, ConcurrentRead, CancelableRead:
+			case SequentialRead, RandomRead, StableSize:
 				return false
 			}
 		default:

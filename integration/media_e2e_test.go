@@ -348,7 +348,7 @@ func assertWAVEReadPlan(t *testing.T, value plan.Plan) {
 	t.Helper()
 	for _, boundary := range value.Boundaries() {
 		if boundary.Direction == plan.InputBoundary {
-			if len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomRead {
+			if len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize {
 				t.Fatalf("WAVE input selection = %#v", boundary)
 			}
 		}
@@ -388,7 +388,7 @@ func assertAutomaticWAVEReadPlan(t *testing.T, value plan.Plan) {
 		t.Fatal("automatic WAVE demux is absent from Plan")
 	}
 	for _, boundary := range value.Boundaries() {
-		if boundary.Direction == plan.InputBoundary && (len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomRead) {
+		if boundary.Direction == plan.InputBoundary && (len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize) {
 			t.Fatalf("automatic WAVE input selection = %#v", boundary)
 		}
 	}

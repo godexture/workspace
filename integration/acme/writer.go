@@ -67,7 +67,7 @@ func writerComponent() plugin.Component {
 	return plugin.NewComponent[writerID](plugin.Descriptor{DisplayName: "ACME writer"}, configurationSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("values", Values(), "writes", access.Writes()),
-		mediaformat.Write(Container(), access.AnyOf(access.SequentialWrite)),
+		mediaformat.Write(Container(), access.NewRequirements(access.AllOf(access.SequentialWrite))),
 	)
 }
 

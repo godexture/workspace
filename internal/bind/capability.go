@@ -132,7 +132,7 @@ func selectSinkCapabilities(entry bound.Entry, projection plan.Boundary, node jo
 
 func probeSelection(available access.Capabilities) (access.Selection, bool) {
 	for _, capability := range []access.Capability{access.RandomRead, access.SequentialRead} {
-		selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(capability)))
+		selection, ok := access.Select(available, access.NewRequirements(access.AllOf(capability)))
 		if ok {
 			return selection, true
 		}

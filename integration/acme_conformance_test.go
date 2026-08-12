@@ -35,8 +35,8 @@ func TestThirdPartyPluginConformance(t *testing.T) {
 			Name:  "reference-backed-random-read",
 			Input: testkit.ReadOnlyReference(mustACMEReference(t, encoded), encoded),
 			Want: testkit.WantAccess(encoded,
-				access.AnyOf(access.RandomRead, access.StableSize),
-				access.AnyOf(access.SequentialRead),
+				access.AllOf(access.RandomRead, access.StableSize),
+				access.AllOf(access.SequentialRead),
 			),
 		},
 	)

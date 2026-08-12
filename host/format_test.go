@@ -80,6 +80,6 @@ func formatSelectionComponent[Marker any](value mediaformat.Format) plugin.Compo
 	configuration := config.Struct[formatSelectionConfigID](func() formatSelectionConfig { return formatSelectionConfig{} }).Version("1").Build()
 	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: "Format writer"}, configuration,
 		plugin.WithSpec(spec),
-		mediaformat.Write(value, access.AnyOf(access.SequentialWrite)),
+		mediaformat.Write(value, access.NewRequirements(access.AllOf(access.SequentialWrite))),
 	)
 }

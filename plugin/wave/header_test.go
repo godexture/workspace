@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -60,6 +61,24 @@ func TestInspectHeaderReadsRIFFAndRF64PCM(t *testing.T) {
 	}
 	if value.description != want || value.dataSize != uint64(len(data)) || !value.rf64 {
 		t.Fatalf("RF64 inspection = %#v", value)
+	}
+}
+
+func TestInspectHeaderUsesStableSizeForRIFFAndRF64(t *testing.T) {
+	for name, complete := range map[string][]byte{
+		"riff": testWAVE([]byte{1, 2, 3, 4}, 1, 48_000),
+		"rf64": testRF64([]byte{1, 2, 3, 4}, 1, 48_000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			truncated := complete[:len(complete)-2]
+			_, err := inspectHeaderWithStableSize(context.Background(), memoryRandom(truncated), uint64(len(truncated)), metadata.Resolver{})
+			if !errors.Is(err, ErrTruncatedData) {
+				t.Fatalf("stable-size inspection error = %v", err)
+			}
+			if _, err := inspectHeader(context.Background(), memoryRandom(truncated)); err != nil {
+				t.Fatalf("inspection without StableSize should defer payload truncation: %v", err)
+			}
+		})
 	}
 }
 

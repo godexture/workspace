@@ -177,6 +177,38 @@ func TestFileJobRejectsUnknownOutputExtensionBeforeOutputAcquire(t *testing.T) {
 	}
 }
 
+func TestFileJobRejectsTruncatedWAVEBeforeOutputAcquire(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	outputPath := filepath.Join(directory, "output.wav")
+	complete := riffFile(
+		riffChunk("fmt ", pcmFormat(1, 48_000, 16), 0),
+		riffChunk("data", []byte{1, 0, 2, 0}, 0),
+	)
+	if err := os.WriteFile(inputPath, complete[:len(complete)-2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(inputPath, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = instance.Prepare(t.Context(), request)
+	if !errors.Is(err, wave.ErrTruncatedData) {
+		t.Fatalf("Prepare error = %v", err)
+	}
+	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("truncated input touched output: %v", statErr)
+	}
+	temporaries, globErr := filepath.Glob(filepath.Join(directory, ".output.wav.godec-*"))
+	if globErr != nil || len(temporaries) != 0 {
+		t.Fatalf("truncated input temporary outputs = %v, %v", temporaries, globErr)
+	}
+}
+
 func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T) {
 	payload := []byte{1, 0, 2, 0, 3, 0, 4, 0}
 	inputBytes := riffFile(

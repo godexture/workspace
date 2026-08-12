@@ -701,6 +701,16 @@ func (s *readSession) ReadAt(ctx context.Context, destination []byte, offset int
 	return count, nil
 }
 
+func (s *readSession) Size(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if s.closed.Load() {
+		return 0, errors.New("testkit read session is closed")
+	}
+	return int64(len(s.data)), nil
+}
+
 type writeSession struct{ caps access.Capabilities }
 
 func (s *writeSession) Capabilities() access.Capabilities { return s.caps }

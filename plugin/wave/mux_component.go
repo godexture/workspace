@@ -80,6 +80,6 @@ func muxerComponent() plugin.Component {
 	return plugin.NewComponent[muxerID](plugin.Descriptor{DisplayName: "WAVE muxer"}, configurationSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("packets", codec.Packets(), "writes", access.Writes()),
-		mediaformat.Write(WAVE(), access.AnyOf(access.RandomWrite)),
+		mediaformat.Write(WAVE(), access.NewRequirements(access.AllOf(access.RandomWrite))),
 	)
 }

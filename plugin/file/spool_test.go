@@ -362,8 +362,8 @@ func spoolFixture() plugin.Definition {
 		lifecycleSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("bytes", access.Bytes(), "writes", access.Writes()),
-		mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))),
-		mediaformat.Write(formatValue, access.AnyOf(access.RandomWrite)),
+		mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))),
+		mediaformat.Write(formatValue, access.NewRequirements(access.AllOf(access.RandomWrite))),
 	)
 	return plugin.Define[spoolPluginID](plugin.Descriptor{DisplayName: "Positioned write fixture", Version: "1"}, component)
 }

@@ -209,8 +209,8 @@ func lifecycleComponent(openFails bool) plugin.Component {
 	return plugin.NewComponent[lifecyclePassID](plugin.Descriptor{DisplayName: "Carrier pass"}, schema,
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
-		mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.SequentialRead))),
-		mediaformat.Write(formatValue, access.AnyOf(access.SequentialWrite)),
+		mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))),
+		mediaformat.Write(formatValue, access.NewRequirements(access.AllOf(access.SequentialWrite))),
 	)
 }
 

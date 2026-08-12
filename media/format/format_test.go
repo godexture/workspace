@@ -75,9 +75,9 @@ func TestDirectionTraitsOwnIndependentCapabilityAlternatives(t *testing.T) {
 	}
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	readComponent := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "read"}, schema,
-		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead), access.AnyOf(access.RandomRead, access.StableSize))))
+		Read(value, access.NewRequirements(access.AllOf(access.SequentialRead), access.AllOf(access.RandomRead, access.StableSize))))
 	writeComponent := plugin.NewComponent[fixtureWriteComponentID](plugin.Descriptor{DisplayName: "write"}, schema,
-		Write(value, access.AnyOf(access.SequentialWrite)))
+		Write(value, access.NewRequirements(access.AllOf(access.SequentialWrite))))
 	read, readOK := ReadOf(readComponent)
 	write, writeOK := WriteOf(writeComponent)
 	if !readOK || !writeOK || !read.Valid() || !write.Valid() || read.Format().Identity() != value.Identity() || write.Format().Identity() != value.Identity() {
@@ -103,7 +103,7 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selection, ok := access.Select(capabilities, access.NewRequirements(access.AnyOf(access.RandomRead)))
+	selection, ok := access.Select(capabilities, access.NewRequirements(access.AllOf(access.RandomRead)))
 	if !ok {
 		t.Fatal("random read selection failed")
 	}
@@ -115,7 +115,7 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	called := 0
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "inspected read"}, schema,
-		Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), WithInspect(func(ctx InspectContext) (Inspection, error) {
+		Read(value, access.NewRequirements(access.AllOf(access.RandomRead)), WithInspect(func(ctx InspectContext) (Inspection, error) {
 			called++
 			if !ctx.Valid() || ctx.Context() == nil || !ctx.Opening().Valid() {
 				t.Fatal("InspectContext is invalid")
@@ -165,7 +165,7 @@ func TestReadTraitRunsPureBoundedProbe(t *testing.T) {
 	calls := 0
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "probed read"}, schema,
-		Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), WithProbe(func(ctx ProbeContext) (ProbeResult, error) {
+		Read(value, access.NewRequirements(access.AllOf(access.RandomRead)), WithProbe(func(ctx ProbeContext) (ProbeResult, error) {
 			calls++
 			if !ctx.Valid() || ctx.Context().Value(contextKey{}) != nil {
 				t.Fatal("ProbeContext exposed an invalid context or value")
@@ -201,7 +201,7 @@ func TestReadTraitDeclaresImmutableFallbackConfig(t *testing.T) {
 	value, _ := Define[fixtureFormatID](nil)
 	schema := config.Struct[fixtureConfigID](func() struct{} { return struct{}{} }).Version("1").Build()
 	component := plugin.NewComponent[fixtureReadComponentID](plugin.Descriptor{DisplayName: "fallback"}, schema,
-		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead)), WithProbe(func(ProbeContext) (ProbeResult, error) {
+		Read(value, access.NewRequirements(access.AllOf(access.SequentialRead)), WithProbe(func(ProbeContext) (ProbeResult, error) {
 			return Fallback(), nil
 		}), RequireFallbackConfig("rate", "layout")))
 	trait, ok := ReadOf(component)
@@ -214,7 +214,7 @@ func TestReadTraitDeclaresImmutableFallbackConfig(t *testing.T) {
 		t.Fatal("ReadTrait exposed mutable fallback config")
 	}
 	invalid := plugin.NewComponent[fixtureWriteComponentID](plugin.Descriptor{DisplayName: "invalid fallback"}, schema,
-		Read(value, access.NewRequirements(access.AnyOf(access.SequentialRead)), RequireFallbackConfig("rate")))
+		Read(value, access.NewRequirements(access.AllOf(access.SequentialRead)), RequireFallbackConfig("rate")))
 	invalidTrait, _ := ReadOf(invalid)
 	if invalidTrait.Valid() {
 		t.Fatal("fallback config without Probe is valid")

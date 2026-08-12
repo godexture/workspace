@@ -104,7 +104,7 @@ M3-1 の walking skeleton が data path の consumer として使う contract �
 
 同じ skeleton の host 構築では、`plugin.Set` の一般化された declaration、`media/codec` の codec/parser identity と Binding、`host.New` の declaration conflict/target 検証も consumer として使う。`media/format.Format` は marker 由来 identity を持つ宣言を作り `Valid()` を確認するだけで、tag は Binding key/data として使う。`media/codec.Codec`/`Parser` 自身は I/O や parse/decode を実行せず、data path の trivial parser/decoder/encoder は `plugin.Component` の `flow.Processor` fixture として実装する。第三者 schema の bounded queue/fan-out consumer は M5 の `internal/run/{queue,drive}` test が担当する。
 
-M3-1 で data-path consumer を持たず宣言・検証に留める contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow/Factory、Format の実 I/O、実 Format/Codec の decode/encode、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。
+M3-1 で data-path consumer を持たず宣言・検証に留めた contract は、`media/property` と `media/stream` の descriptor/property 経路、`access` の Source/Sink capability と Own/Borrow、Format の実 I/O、実 Format/Codec の decode/encode、endpoint、dynamic Shape、Compile/Suggest、planner/runtime の拡張である。これらは M3-3/M4/M6 以降へ残し、未使用の詳細を先に凍結しない。session factory は M6 review で consumer が無いことを確認して削除した。
 
 ### M3-2 の contract 分類
 
@@ -163,9 +163,11 @@ M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prep
 
 ## M6 の contract 分類
 
-M6 で実 consumer を得る宣言は次である。`media/format` の Probe/Inspect と capability alternative、`media/carrier` の carrier identity、`metadata.RawBlock` の raw preservation、`media/codec` の codec Binding、`access` の Source/Sink capability と `Own`/`Borrow`/`Factory`、`ProbeView`/`RangeRequest`、`SpoolSpec`/`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、transaction class と `access.Transaction`/`Flusher`/`Syncer` の file 実装である。いずれも WAVE Format または local file Provider が実 consumer になる。
+M6 で実 consumer を得る宣言は次である。`media/format` の Probe/Inspect と capability alternative、`media/carrier` の carrier identity、`metadata.RawBlock` の raw preservation、`media/codec` の codec Binding、`access` の Source/Sink capability と `Own`/`Borrow`、`ProbeView`/`RangeRequest`、`SpoolSpec`/`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、transaction class と `access.Transaction`/`Flusher`/`Syncer` の file 実装である。いずれも WAVE Format または local file Provider が実 consumer になる。
 
 M6 でも宣言に留める contract と担当は次である。`metadata.Mapping` と loss report は実 encoding 間変換が現れる M7、`stream.Event` の live topology 既定 policy と `flow.FanInPolicy` の zip 以外は実 component が現れる M7 以降、`endpoint` の Device/DeviceQuery と realtime clock は M9、`access.Snapshot` の再取得と retry は remote Provider を作る milestone が担当する。M6 で使わないと判断したものは、この節へ担当を書いてから残す。
+
+M6 review では、操作 view と consumer を持たなかった `Reopen` と `ConcurrentRead`、blocked syscall を解除できない file Provider が誤って宣言していた `CancelableRead` を削除した。`Reopen` と `ConcurrentRead` は HTTP/S3 等の remote Provider を実装する milestone で、再取得操作・snapshot semantics・並行 range consumer と同時にだけ再導入する。`CancelableRead` は blocked I/O を context cancel または Close で実際に解除できる Provider と、その保証を検査する test が同じ milestone にある場合だけ再導入する。session factory は stdin/stdout を扱う M9 で複数 session を生成する実 consumer が必要になった場合に限り再設計する。
 
 `resource` の temporary 次元は M5 review で削除し、**戻さないと決めた**。spool の上限は `job.ResourcePolicy` の spool 専用 quota として持ち、Host が Job 単位で storage を所有する。予約次元へ戻さないのは、spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。spool 自体は Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。MP4 fragmented 等の第二の consumer が現れた milestone で、共通 service へ昇格させるかを決める。
 

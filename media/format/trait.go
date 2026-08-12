@@ -171,8 +171,8 @@ type WriteTrait struct {
 }
 
 // Write attaches output byte requirements for one Format component.
-func Write(value Format, alternatives ...access.Alternative) plugin.ComponentOption {
-	trait := WriteTrait{format: value, requirements: access.NewRequirements(alternatives...)}
+func Write(value Format, requirements access.Requirements) plugin.ComponentOption {
+	trait := WriteTrait{format: value, requirements: requirements.Clone()}
 	return plugin.WithTrait(writeKey, trait.manifest("write"), plugin.PortShapeRequired, trait)
 }
 

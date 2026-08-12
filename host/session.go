@@ -156,7 +156,7 @@ func boundarySelection(projection plan.Boundary) (access.Selection, error) {
 	if err != nil {
 		return access.Selection{}, err
 	}
-	selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(projection.Selected...)))
+	selection, ok := access.Select(available, access.NewRequirements(access.AllOf(projection.Selected...)))
 	if !ok {
 		return access.Selection{}, access.ErrInvalidCapabilities
 	}
@@ -171,7 +171,7 @@ func providerSelection(projection plan.Boundary) (access.Selection, error) {
 	if err != nil {
 		return access.Selection{}, err
 	}
-	selection, ok := access.Select(available, access.NewRequirements(access.AnyOf(access.SequentialWrite)))
+	selection, ok := access.Select(available, access.NewRequirements(access.AllOf(access.SequentialWrite)))
 	if !ok {
 		return access.Selection{}, access.ErrInvalidCapabilities
 	}

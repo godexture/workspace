@@ -258,7 +258,7 @@ func sequentialOpening(t *testing.T, session access.Session) access.Opening {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, ok := access.Select(available, access.NewRequirements(access.AnyOf(access.SequentialWrite)))
+	selected, ok := access.Select(available, access.NewRequirements(access.AllOf(access.SequentialWrite)))
 	if !ok {
 		t.Fatal("sequential write selection failed")
 	}

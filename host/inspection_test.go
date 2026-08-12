@@ -95,7 +95,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: readerShape}, Outputs: flow.NewDescriptors(flow.Describe("out", output)), Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "inspect"}}}, nil
 		}),
 		plugin.WithProcessor("bytes", access.Bytes(), "out", inspectSchemaA),
-		format.Read(value, access.NewRequirements(access.AnyOf(access.RandomRead)), format.WithInspect(func(ctx format.InspectContext) (format.Inspection, error) {
+		format.Read(value, access.NewRequirements(access.AllOf(access.RandomRead)), format.WithInspect(func(ctx format.InspectContext) (format.Inspection, error) {
 			if _, ok := access.RandomOf(ctx.Opening()); !ok {
 				return format.Inspection{}, errors.New("Inspect did not receive the selected Random view")
 			}

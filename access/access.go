@@ -18,6 +18,11 @@ type Random interface {
 	ReadAt(context.Context, []byte, int64) (int, error)
 }
 
+// Sizer reports the immutable byte length promised by StableSize.
+type Sizer interface {
+	Size(context.Context) (int64, error)
+}
+
 // Appender and Patcher are the narrow write views corresponding to
 // SequentialWrite and RandomWrite.
 type Appender interface {
@@ -33,10 +38,9 @@ type Ownership uint8
 const (
 	Owned Ownership = iota + 1
 	Borrowed
-	FactoryOwned
 )
 
-func (o Ownership) Valid() bool { return o >= Owned && o <= FactoryOwned }
+func (o Ownership) Valid() bool { return o == Owned || o == Borrowed }
 
 // Resource describes a direct handle and whether Host closes it. No provider,
 // filesystem, network, or device implementation is part of this package.
@@ -87,24 +91,6 @@ func (r *Resource[T]) Close() error {
 		}
 	})
 	return r.state.closeErr
-}
-
-type SessionFactory[T any] struct {
-	open func(context.Context) (T, error)
-}
-
-func Factory[T any](open func(context.Context) (T, error)) SessionFactory[T] {
-	return SessionFactory[T]{open: open}
-}
-
-func (f SessionFactory[T]) Open(ctx context.Context) (Resource[T], error) {
-	value, err := f.open(ctx)
-	if err != nil {
-		return Resource[T]{}, err
-	}
-	resource := Own(value)
-	resource.ownership = FactoryOwned
-	return resource, nil
 }
 
 func closeFunc[T any](value T) func() error {

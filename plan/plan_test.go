@@ -57,8 +57,8 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 	}
 
 	boundaries := first.Boundaries()
-	boundaries[0].Available[0] = access.CancelableRead
-	boundaries[0].Effective[0] = access.CancelableRead
+	boundaries[0].Available[0] = access.StableSize
+	boundaries[0].Effective[0] = access.StableSize
 	if first.Boundaries()[0].Available[0] != access.RandomRead || first.Boundaries()[0].Effective[0] != access.RandomRead {
 		t.Fatal("Plan exposed mutable boundary capability storage")
 	}

@@ -54,8 +54,8 @@ func (s *accessExampleIO) WriteAt(_ context.Context, source []byte, offset int64
 // be recorded in a plan, while a probe receives only a bounded Random view.
 func ExampleNewRequirements() {
 	requirements := access.NewRequirements(
-		access.AnyOf(access.SequentialRead),
-		access.AnyOf(access.RandomRead, access.StableSize),
+		access.AllOf(access.SequentialRead),
+		access.AllOf(access.RandomRead, access.StableSize),
 	)
 	probe, err := access.NewProbeViewAt(128, []byte("fLaC"))
 	if err != nil {
@@ -67,25 +67,25 @@ func ExampleNewRequirements() {
 		panic(err)
 	}
 
-	fmt.Println(len(requirements.Alternatives), requirements.Alternatives[1].Capabilities)
+	fmt.Println(requirements.Alternatives[0].Capabilities, "OR", requirements.Alternatives[1].Capabilities)
 	fmt.Println(probe.Range().Offset(), string(buffer))
 	// Output:
-	// 2 [random-read stable-size]
+	// [sequential-read] OR [random-read stable-size]
 	// 128 fLaC
 }
 
 // Select fixes one declared alternative before Open, so a later Format sees
 // only the operations it requested even when the source supports more.
 func ExampleSelect() {
-	available, _ := access.NewCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
+	available, _ := access.NewCapabilities(access.RandomRead, access.StableSize)
 	requirements := access.NewRequirements(
-		access.AnyOf(access.SequentialRead),
-		access.AnyOf(access.RandomRead, access.StableSize),
+		access.AllOf(access.SequentialRead),
+		access.AllOf(access.RandomRead, access.StableSize),
 	)
 	selection, ok := access.Select(available, requirements)
 
 	fmt.Println(ok, selection.Capabilities())
-	// Output: true [sequential-read]
+	// Output: true [random-read stable-size]
 }
 
 // Read and write views are context-aware and keep cursor-based operations

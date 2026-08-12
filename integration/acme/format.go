@@ -88,7 +88,7 @@ func readerComponent() plugin.Component {
 	return plugin.NewComponent[readerID](plugin.Descriptor{DisplayName: "ACME reader"}, configurationSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("bytes", access.Bytes(), "packets", codec.Packets()),
-		mediaformat.Read(Container(), access.NewRequirements(access.AnyOf(access.RandomRead)), mediaformat.WithProbe(probe), mediaformat.WithInspect(inspect)),
+		mediaformat.Read(Container(), access.NewRequirements(access.AllOf(access.RandomRead)), mediaformat.WithProbe(probe), mediaformat.WithInspect(inspect)),
 	)
 }
 

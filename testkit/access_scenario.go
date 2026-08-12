@@ -303,7 +303,7 @@ func accessWriteFixture(requirements access.Requirements, input *Fixture[buffer.
 			},
 		}),
 		plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
-		mediaformat.Write(accessFixtureFormat(), requirements.Alternatives...),
+		mediaformat.Write(accessFixtureFormat(), requirements),
 	)
 	return plugin.Define[accessFixturePluginID](plugin.Descriptor{DisplayName: "testkit Access fixtures", Version: "1"}, source, pass)
 }

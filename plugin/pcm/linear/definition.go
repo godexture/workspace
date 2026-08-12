@@ -39,11 +39,11 @@ func operationFormat(kind operation) plugin.ComponentOption {
 	switch kind {
 	case readerOperation:
 		return format.Read(Raw(), access.NewRequirements(
-			access.AnyOf(access.SequentialRead),
-			access.AnyOf(access.RandomRead, access.StableSize),
+			access.AllOf(access.SequentialRead),
+			access.AllOf(access.RandomRead, access.StableSize),
 		), format.WithProbe(probeRaw), format.RequireFallbackConfig("rate", "validBits", "layout", "endian"))
 	case writerOperation:
-		return format.Write(Raw(), access.AnyOf(access.SequentialWrite))
+		return format.Write(Raw(), access.NewRequirements(access.AllOf(access.SequentialWrite)))
 	default:
 		return nil
 	}

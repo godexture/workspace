@@ -21,8 +21,19 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 	if !ok {
 		return mediaformat.Inspection{}, fmt.Errorf("%w: WAVE Inspect requires random read", ErrUnsupported)
 	}
+	sizer, ok := access.StableSizeOf(ctx.Opening())
+	if !ok {
+		return mediaformat.Inspection{}, fmt.Errorf("%w: WAVE Inspect requires stable size", ErrUnsupported)
+	}
+	size, err := sizer.Size(ctx.Context())
+	if err != nil {
+		return mediaformat.Inspection{}, err
+	}
+	if size < 0 {
+		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is negative", ErrMalformed)
+	}
 	resolver, _ := metadata.ResolverOf(ctx.Prepared())
-	value, err := inspectHeaderWithMetadata(ctx.Context(), random, resolver)
+	value, err := inspectHeaderWithStableSize(ctx.Context(), random, uint64(size), resolver)
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -34,6 +45,14 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 }
 
 func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolver metadata.Resolver) (header, error) {
+	return inspectHeaderWithSize(ctx, reader, 0, false, resolver)
+}
+
+func inspectHeaderWithStableSize(ctx context.Context, reader access.Random, size uint64, resolver metadata.Resolver) (header, error) {
+	return inspectHeaderWithSize(ctx, reader, size, true, resolver)
+}
+
+func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver) (header, error) {
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}
@@ -55,6 +74,8 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 	rootEnd := uint64(8) + rootSize
 	if rf64 {
 		rootEnd = 0
+	} else if err := validateSourceEnd(rootEnd, sourceSize, sizeKnown); err != nil {
+		return header{}, err
 	}
 
 	var result header
@@ -110,6 +131,9 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 			}
 			if rf64 {
 				rootEnd = 8 + riffSize
+				if err := validateSourceEnd(rootEnd, sourceSize, sizeKnown); err != nil {
+					return header{}, err
+				}
 			}
 			ds64Found = true
 		case tagFMT:
@@ -137,6 +161,10 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 			}
 			if actualSize > uint64(math.MaxInt64)-payloadOffset {
 				return header{}, fmt.Errorf("%w: data range exceeds runtime offsets", ErrUnsupported)
+			}
+			dataEnd := payloadOffset + actualSize
+			if sizeKnown && dataEnd > sourceSize {
+				return header{}, fmt.Errorf("%w: data ends at %d, source size is %d", ErrTruncatedData, dataEnd, sourceSize)
 			}
 			result.dataOffset = int64(payloadOffset)
 			result.dataSize = actualSize
@@ -181,6 +209,16 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 		return header{}, fmt.Errorf("%w: PCM description and data block disagree", ErrMalformed)
 	}
 	return result, nil
+}
+
+func validateSourceEnd(declared, actual uint64, known bool) error {
+	if !known || declared == actual {
+		return nil
+	}
+	if declared > actual {
+		return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrTruncatedData, declared, actual)
+	}
+	return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrMalformed, declared, actual)
 }
 
 func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {

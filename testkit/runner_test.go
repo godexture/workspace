@@ -179,7 +179,7 @@ func runnerFormatDefinition(inspections, probes *atomic.Int32) plugin.Definition
 	component := plugin.NewComponent[runnerFormatComponentID](plugin.Descriptor{DisplayName: "runner format"}, configuration,
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("bytes", access.Bytes(), "out", access.Bytes()),
-		mediaformat.Read(formatValue, access.NewRequirements(access.AnyOf(access.RandomRead)), mediaformat.WithProbe(probe), mediaformat.WithInspect(inspect)),
+		mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.RandomRead)), mediaformat.WithProbe(probe), mediaformat.WithInspect(inspect)),
 	)
 	return plugin.Define[runnerFormatPluginID](plugin.Descriptor{DisplayName: "runner format", Version: "1"}, component)
 }

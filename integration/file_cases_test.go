@@ -21,8 +21,8 @@ func runFileCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Name:  "random-read-with-stable-size",
 			Input: testkit.LocalFile(payload),
 			Want: testkit.WantAccess(payload,
-				access.AnyOf(access.RandomRead, access.StableSize),
-				access.AnyOf(access.SequentialRead),
+				access.AllOf(access.RandomRead, access.StableSize),
+				access.AllOf(access.SequentialRead),
 			),
 		},
 	)
@@ -31,12 +31,12 @@ func runFileCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		testkit.AccessCase{
 			Name:  "sequential-atomic-replace",
 			Input: testkit.LocalFile(payload),
-			Want:  testkit.WantAccess(payload, access.AnyOf(access.SequentialWrite)),
+			Want:  testkit.WantAccess(payload, access.AllOf(access.SequentialWrite)),
 		},
 		testkit.AccessCase{
 			Name:  "random-atomic-replace",
 			Input: testkit.LocalFile(payload[:257]),
-			Want:  testkit.WantAccess(payload[:257], access.AnyOf(access.RandomWrite)),
+			Want:  testkit.WantAccess(payload[:257], access.AllOf(access.RandomWrite)),
 		},
 	)
 }

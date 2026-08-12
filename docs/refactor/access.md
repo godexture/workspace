@@ -166,17 +166,11 @@ CLI の dry-run は input の bounded probe/inspect を行ってよいが、outp
 ## source capability
 
 capability は巨大な boolean struct にせず、operation と semantics を持つ小さな contract の組み合わせにする。
-
-代表的な capability:
-
-- sequential read
-- position-independent random read
-- stable known size
-- reopen/clone
-- finite、growing、live
-- stable snapshot identity
-- concurrent range read
-- cancellation/close-unblocks-read
+M6 の公開 capability は sequential read、position-independent random read、stable known size、
+sequential write、random write である。`AllOf` は一つの alternative 内の AND を作り、
+`Requirements.Alternatives` は優先順を持つ OR の列である。reopen、concurrent range read、
+cancellation/close-unblocks-read は実装できる Provider と操作 view が同時に現れるまで型を置かず、
+再導入条件を [scope](scope.md#m6-の-contract-分類) に記録する。
 
 random read は共有 cursor を持つ `Seek` より `ReadAt` 相当を優先する。Provider が seek しか提供できない場合、host adaptor が lock と cursor restore を伴う random view を作れるが、その serialization/cost を capability に反映する。
 
@@ -193,8 +187,7 @@ Format は capability alternative を宣言できる。
 
 ```text
 WAVE inspect:
-  sequential
-  OR random + stable size
+  random + stable size
 
 MP4 output:
   random-write
@@ -208,12 +201,11 @@ planner は format mode、source/sink capability、policy をまとめて選ぶ�
 `io.Reader`/`io.Writer` adaptor は ownership を曖昧にしない。
 
 - `access.Own(x)`: Host が session 終了時に閉じる。
-- `access.Borrow(x)`: Host は閉じない。blocked I/O を cancel で解除できない可能性を capability に出す。
-- `access.Factory(f)`: Prepare ごとに新しい owned session を作れる。
+- `access.Borrow(x)`: Host は閉じない。
 
-Close が blocked read/write を解除できる Provider はその保証を contract に含める。単なる `io.Reader` を context-aware と偽らない。non-cooperative borrowed handle は timeout 後も goroutine が残り得るため、Plan warning または policy rejection の対象にする。
+Close が blocked read/write を解除できる Provider が現れた時だけ、その操作と保証を contract に含める。単なる `io.Reader` を context-aware と偽らない。non-cooperative borrowed handle は timeout 後も goroutine が残り得るため、Plan warning または policy rejection の対象にする。
 
-input source の cursor を probe、inspect、run が暗黙共有しない。host が prefix replay、independent range view、reopen のいずれかを選び、chosen Format には定義済みの開始位置から渡す。
+input source の cursor を probe、inspect、run が暗黙共有しない。M6 の host は prefix replay または independent range view を選び、chosen Format には定義済みの開始位置から渡す。再取得は remote Provider の実操作と snapshot semantics が揃うまで行わない。
 
 ## bounded Probe
 
@@ -517,15 +509,15 @@ Host integration:
 M3 は Access と Endpoint の contract を foundation package として新設する milestone である。output transaction の実行は M5、file Provider/session の acquire、probe、inspect と spool の実挿入は M6、HTTP/S3 と device の実装は需要に応じた M6 以降/M9 の担当であり、M3 には要求しない。media 側の条件は [media](media.md#m3-完了条件) を参照する。
 
 - `access.Reference`、`access.Provider`、byte `Source`/`Sink` capability、transaction が別々の型として存在し、一つの汎用 protocol interface に潰れていない。
-- source capability が巨大な boolean struct ではなく、sequential read、position-independent random read、stable size、reopen、snapshot identity、concurrent range read、cancel 等の小さな contract の組み合わせで表現される。
+- source capability が巨大な boolean struct ではなく、sequential read、position-independent random read、stable size の小さな contract の組み合わせで表現される。remote Provider 固有の reopen、concurrent range read、blocked I/O cancellation は実 consumer と同じ milestone で追加する。
 - Format が capability alternative を宣言でき、宣言した requirement を満たす narrow view だけを受け取る形になっている。不可能な operation を nil field として渡し plugin 内で type assertion させる余地がない。
-- `Own`/`Borrow`/`Factory` で ownership が明示され、Host が閉じるかどうかと、blocked I/O を cancel で解除できるかが capability に現れる。
+- `Own`/`Borrow` で ownership が明示され、Host が閉じるかどうかが決まる。blocked I/O cancellation は保証できる Provider が現れるまで宣言しない。
 - Probe が immutable な bounded view を受け取り、source cursor を変更しない。候補ごとの独立 reader または immutable range を使い、byte budget と追加 range request を表現できる。
 - sink が `io.Writer` ではなく transaction として表現され、Provider が transaction class（atomic replace、staged commit、rollbackable、append-only、live/no-commit）を宣言できる。
 - spool が隠れた実装詳細ではなく、予測 bytes、memory/disk 使用、開始 latency、rollback class を伴う明示的な要素として表現できる。
 - Endpoint が閉じた `Device` role registry ではなく通常の typed component として表現され、`FiniteStatic`/`LiveStatic`/`LiveDynamic` と realtime/offline の区別を宣言できる。
 - Device が component identity、device reference、device descriptor を分けて表現でき、Host 構築や package import が device scan、permission prompt、network access を起こさない。
-- snapshot identity、retry、reopen が同じ content を指す保証を型で表現でき、strong snapshot を持たない source がその事実を descriptor に残せる。
+- snapshot identity が同じ content を指す保証を型で表現でき、strong snapshot を持たない source がその事実を descriptor に残せる。retry/reopen は remote Provider の実操作と同時に追加する。
 - credential が config schema の secret field または application 所有の handle として扱われ、[C16](decisions.md) のとおり path/scheme/CIDR 等の権限 DSL や Job ごとの authority engine を foundation に持たない。
 - foundation package が filesystem、network、device の具体実装を import しない。
 - 上記を unit/property test で検査する。第三者相当の Provider/Endpoint fixture を含め、公式 plugin と OS/network 依存を持ち込まない。
@@ -559,7 +551,7 @@ M6 は Access contract が最初の実 I/O consumer を得る milestone であ�
 - **write 側の capability 語彙と narrow view を新設する。** M5 時点の `access` は read 側 6 capability と `Sequential`/`Random` view しか持たない。sink の逐次書きと位置指定書きを別 capability として宣言でき、component は宣言した view だけを受け取る。あわせて `internal/bind` の出力 boundary が入力側と同じ経路で capability を選択する。M5 時点の `bindOutput` は選択を行わず空の `Selection` を渡している。
 - **Prepare が session を acquire し、宣言 capability ではなく実 session の capability を検証する。** manifest が宣言した capability を実際に開けなかった場合は、Open 後の type assertion ではなく Prepare の構造化 diagnostic になる。
 - **binding は二段階にする。** M6-2 までの capability 選択は Normalize の時点で隣接する明示済み Format trait の要求を読むが、自動判別では Format が Probe の後にしか決まらない。一方 acquire は選択済み capability を要求するため、そのままでは probe 用 session を取得できない。したがって Bind では Provider と boundary だけを確定し、probe 用 session を取得し、Probe の後に Format を選び、実 session の capability と選択 Format の要求から最終的な Opening を作る。capability 不足はこの時点で構造化 diagnostic にする。
-- **probe 用 session は位置指定読みを優先し、そのまま run session になる。** 位置指定読みがあれば cursor を進めずに読めるので replay が不要になる。逐次読みしか無い source でだけ prefix を消費し、消費分を replay する。probe session を捨てて取り直す形にしない。逐次 source は巻き戻せず、再取得は `Reopen` を要求するためである。
+- **probe 用 session は位置指定読みを優先し、そのまま run session になる。** 位置指定読みがあれば cursor を進めずに読めるので replay が不要になる。逐次読みしか無い source でだけ prefix を消費し、消費分を replay する。M6 は session を捨てて取り直す contract を持たず、再取得 semantics は remote Provider の実装時に決める。
 - **prefix replay buffer は owner と grant を持つ。** 上限は probe budget で決まるが、確保元を決めずに置かない。[M6-1](scope.md#m6-の-contract-分類) で「boundary の payload だけが Job grant の外」という穴を塞いだので、replay buffer で同じ穴を開けない。
 - **候補間で bounded probe を共有する。** 複数の Format 候補が同じ入力を判定しても byte source を読み直さず、候補ごとの `Seek(0)` を繰り返さない（[F7](findings.md)）。probe の上限 byte 数と cancel が policy から決まり、非 seekable 入力でも成立する。
 - **Probe の実行 contract を持つ。** Probe は複数の immutable な view を受け、terminal result か追加 range 要求を返す反復 protocol とする。Host が range cache と全候補共通の budget を所有し、同一要求を重複排除する。逐次 source への要求は単調な prefix 拡張に限り、実際に読み進めた全 byte を budget に算入する。重複要求、空要求、budget 超過、進捗しない反復は構造化 diagnostic にする。
@@ -570,7 +562,7 @@ M6 は Access contract が最初の実 I/O consumer を得る milestone であ�
 - **spool の storage は Host が所有し、上限を予約ではなく quota で表す。** `job.ResourcePolicy` に spool 専用の上限（最大 bytes と storage 種別）を持たせ、Host が Job 単位で spool を所有する。`resource.Request`/`Grant` の予約次元へは戻さない。spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。上限検査は spool-local counter で行い、中央 manager を item ごとに呼ばない。cancel、rollback、Job 終了で必ず削除する。
 - spool を Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。M6 の唯一の consumer が sink boundary の decorator であり、公開すると consumer を持たない plugin API を凍結することになる。第二の consumer が現れた milestone で共通 service へ昇格させるかを決める。
 - **transactional file output が実装される。** 同じ filesystem 上の temporary file へ書き、Finalize → Flush → Sync → PrepareCommit → Commit が成功した後に replace する。replace は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため既存 target を置換でき、外部 dependency を増やさない。`ReplaceFile` による ACL/attribute の継承は行わず、その差分を [capability](capability.md#挙動変更の記録) の B5 として記録する。失敗と cancel では元 target を残す。non-seekable/stdout sink で rollback できないことを `Plan` に示す。
-- 引き継いだ宣言が consumer を得る。`SpoolSpec`、`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、Source/Sink capability の `Own`/`Borrow`/`Factory`、`ProbeView`、`RangeRequest` のうち M6 が使うものを示し、使わないものは担当 milestone とともに [scope](scope.md#m6-の-contract-分類) へ残す。
+- 引き継いだ宣言が consumer を得る。`SpoolSpec`、`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、Source/Sink capability の `Own`/`Borrow`、`ProbeView`、`RangeRequest` のうち M6 が使うものを示し、使わないものは担当 milestone とともに [scope](scope.md#m6-の-contract-分類) へ残す。
 - 上記を unit/property test、`integration` の end-to-end test、[quality](quality.md#m6-完了条件) の Access Provider testkit で検査する。cancel、部分書き込み、commit 失敗、spool 中断で temporary file と spool storage が残らないことを含める。
 
 M6 では次を未完了事項として残す。HTTP/S3 等の remote Provider、device/session Endpoint、realtime clock、multi-output の `AllOrNothing` 共同 transaction、live topology event の既定 policy は、需要が現れた milestone と M9 で扱う。

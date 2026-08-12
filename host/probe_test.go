@@ -350,7 +350,7 @@ func probeOpening(t *testing.T, data []byte, capabilities ...access.Capability) 
 
 func probeSelectionForTest(capabilities access.Capabilities) (access.Selection, bool) {
 	for _, capability := range []access.Capability{access.RandomRead, access.SequentialRead} {
-		if selection, ok := access.Select(capabilities, access.NewRequirements(access.AnyOf(capability))); ok {
+		if selection, ok := access.Select(capabilities, access.NewRequirements(access.AllOf(capability))); ok {
 			return selection, true
 		}
 	}
@@ -403,7 +403,7 @@ func probeFormatComponentWithExtensions[ComponentMarker, FormatMarker any](probe
 		plugin.Descriptor{DisplayName: "probe Format fixture"},
 		configuration,
 		plugin.WithSpec(spec),
-		mediaformat.Read(format, access.NewRequirements(access.AnyOf(access.RandomRead)), append([]mediaformat.ReadOption{mediaformat.WithProbe(probe)}, options...)...),
+		mediaformat.Read(format, access.NewRequirements(access.AllOf(access.RandomRead)), append([]mediaformat.ReadOption{mediaformat.WithProbe(probe)}, options...)...),
 	)
 }
 

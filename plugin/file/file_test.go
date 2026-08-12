@@ -3,6 +3,7 @@ package file
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math"
 	"net/url"
@@ -82,7 +83,7 @@ func TestPluginComposesBothFileDirections(t *testing.T) {
 	var sourceFound, sinkFound bool
 	for _, component := range definition.Components() {
 		if trait, ok := access.SourceOf(component); ok {
-			sourceFound = component.Identity() == SourceIdentity() && trait.Scheme() == "file" && trait.Capabilities().Contains(access.CancelableRead)
+			sourceFound = component.Identity() == SourceIdentity() && trait.Scheme() == "file" && trait.Capabilities().Contains(access.StableSize)
 		}
 		if trait, ok := access.SinkOf(component); ok {
 			sinkFound = component.Identity() == SinkIdentity() && trait.Scheme() == "file" && trait.TransactionClass() == access.AtomicReplace
@@ -90,6 +91,31 @@ func TestPluginComposesBothFileDirections(t *testing.T) {
 	}
 	if !sourceFound || !sinkFound {
 		t.Fatalf("file traits = source %v, sink %v", sourceFound, sinkFound)
+	}
+}
+
+func TestSourceSessionReportsAcquiredStableSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.bin")
+	if err := os.WriteFile(path, []byte("stable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	acquired, err := acquireSource(
+		context.Background(),
+		fileReference(t, path),
+		selection(t, sourceCapabilities(), access.RandomRead, access.StableSize),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := acquired.(*sourceSession)
+	if size, err := session.Size(context.Background()); err != nil || size != 6 {
+		t.Fatalf("Size = %d, %v", size, err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Size(context.Background()); !errors.Is(err, errSessionClosed) {
+		t.Fatalf("Size after Close error = %v", err)
 	}
 }
 
@@ -572,7 +598,7 @@ func commitFile(t *testing.T, target string, value []byte) {
 
 func selection(t *testing.T, available access.Capabilities, values ...access.Capability) access.Selection {
 	t.Helper()
-	selected, ok := access.Select(available, access.NewRequirements(access.AnyOf(values...)))
+	selected, ok := access.Select(available, access.NewRequirements(access.AllOf(values...)))
 	if !ok {
 		t.Fatalf("capability selection failed: available %v, requested %v", available.Values(), values)
 	}

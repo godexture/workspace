@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -242,22 +243,45 @@ func TestPrepareDiagnosesActualCapabilityAndViewMismatch(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsMissingStableSizeViewBeforeSinkAcquire(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.RandomRead, access.StableSize)
+	sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+	sourceState, sinkState, instance, request := providerSessionFixtureWith(
+		t,
+		sourceCapabilities,
+		sinkCapabilities,
+		access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
+	)
+
+	_, err := instance.Prepare(context.Background(), request)
+	items := diagnostic.ItemsOf(err)
+	if len(items) != 1 || items[0].Code != "prepare.access-view" || items[0].Detail["selected"] != "random-read,stable-size" || !strings.Contains(items[0].Detail["error"], "stable-size") {
+		t.Fatalf("stable-size diagnostic = %#v, error %v", items, err)
+	}
+	if sourceState.closed.Load() != 1 || sinkState.acquired.Load() != 0 {
+		t.Fatalf("sessions = source closed %d, sink acquired %d", sourceState.closed.Load(), sinkState.acquired.Load())
+	}
+}
+
 func providerSessionFixture(t *testing.T) (*sessionCounters, *sessionCounters, *Host, job.Job) {
 	t.Helper()
-	sourceCapabilities, err := access.NewCapabilities(access.SequentialRead)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sinkCapabilities, err := access.NewCapabilities(access.SequentialWrite)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return providerSessionFixtureWith(
+		t,
+		mustCapabilities(t, access.SequentialRead),
+		mustCapabilities(t, access.SequentialWrite),
+		access.NewRequirements(access.AllOf(access.SequentialRead), access.AllOf(access.RandomRead)),
+	)
+}
+
+func providerSessionFixtureWith(t *testing.T, sourceCapabilities, sinkCapabilities access.Capabilities, requirements access.Requirements) (*sessionCounters, *sessionCounters, *Host, job.Job) {
+	t.Helper()
 	sourceState := &sessionCounters{}
 	sinkState := &sessionCounters{}
-	source, transform, sink, _ := boundaryComponentsWith(
+	source, transform, sink, _ := boundaryComponentsWithRequirements(
 		nil,
 		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, sourceState.acquire(sourceCapabilities))},
 		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, sinkState.acquire(sinkCapabilities))},
+		requirements,
 	)
 	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "session fixture", Version: "1"}, source, transform, sink))
 	instance, err := New(Plugins(set))

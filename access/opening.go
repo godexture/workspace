@@ -70,6 +70,10 @@ func (o Opening) Valid() bool {
 			if o.views.random == nil {
 				return false
 			}
+		case StableSize:
+			if o.views.sizer == nil {
+				return false
+			}
 		case SequentialWrite:
 			if o.views.appender == nil {
 				return false
@@ -93,6 +97,12 @@ func SequentialOf(opening Opening) (Sequential, bool) {
 
 func RandomOf(opening Opening) (Random, bool) {
 	return opening.views.random, opening.Valid() && opening.views.random != nil
+}
+
+// StableSizeOf returns the context-aware size view selected for a stable
+// finite source. Growing and live sources do not select this capability.
+func StableSizeOf(opening Opening) (Sizer, bool) {
+	return opening.views.sizer, opening.Valid() && opening.views.sizer != nil
 }
 
 func AppenderOf(opening Opening) (Appender, bool) {

@@ -25,7 +25,7 @@ const (
 
 var ErrMalformed = errors.New("malformed ACME stream")
 
-var sourceCaps = mustCapabilities(access.SequentialRead, access.RandomRead, access.StableSize, access.CancelableRead)
+var sourceCaps = mustCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
 
 type sourcePlan struct{ shape flow.Shape }
 
@@ -144,6 +144,18 @@ func (s *memorySession) ReadAt(ctx context.Context, destination []byte, offset i
 		return count, io.EOF
 	}
 	return count, nil
+}
+
+func (s *memorySession) Size(ctx context.Context) (int64, error) {
+	if err := context.Cause(ctx); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, errors.New("ACME session is closed")
+	}
+	return int64(len(s.data)), nil
 }
 
 func (s *memorySession) Close() error {

@@ -53,7 +53,7 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		testkit.Case[buffer.Handle, packet.Chunk]{
 			Name:  "truncated-data",
 			Input: testkit.ByteInput(truncated),
-			Want:  testkit.WantRunError[packet.Chunk](wave.ErrTruncatedData),
+			Want:  testkit.WantPlanError[packet.Chunk](wave.ErrTruncatedData),
 		},
 		testkit.Case[buffer.Handle, packet.Chunk]{
 			Name:  "partial-sample-block",

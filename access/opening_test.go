@@ -30,7 +30,7 @@ func TestOpeningExposesOnlySelectedNarrowViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := openingSession{capabilities: capabilities}
-	readSelection, ok := Select(capabilities, NewRequirements(AnyOf(SequentialRead)))
+	readSelection, ok := Select(capabilities, NewRequirements(AllOf(SequentialRead)))
 	if !ok {
 		t.Fatal("read selection failed")
 	}
@@ -45,7 +45,7 @@ func TestOpeningExposesOnlySelectedNarrowViews(t *testing.T) {
 		t.Fatal("unselected Appender view was exposed")
 	}
 
-	writeSelection, ok := Select(capabilities, NewRequirements(AnyOf(SequentialWrite)))
+	writeSelection, ok := Select(capabilities, NewRequirements(AllOf(SequentialWrite)))
 	if !ok {
 		t.Fatal("write selection failed")
 	}
@@ -69,15 +69,37 @@ func TestOpeningExposesOnlySelectedNarrowViews(t *testing.T) {
 
 func TestOpeningRejectsMissingOperationAndTransactionViews(t *testing.T) {
 	readCapabilities, _ := NewCapabilities(SequentialRead)
-	readSelection, _ := Select(readCapabilities, NewRequirements(AnyOf(SequentialRead)))
+	readSelection, _ := Select(readCapabilities, NewRequirements(AllOf(SequentialRead)))
 	if _, err := NewOpening(SourceDirection, capabilityOnlySession{capabilities: readCapabilities}, readSelection, 0); !errors.Is(err, ErrCapabilityView) {
 		t.Fatalf("missing read view error = %v", err)
 	}
 	writeCapabilities, _ := NewCapabilities(SequentialWrite)
-	writeSelection, _ := Select(writeCapabilities, NewRequirements(AnyOf(SequentialWrite)))
+	writeSelection, _ := Select(writeCapabilities, NewRequirements(AllOf(SequentialWrite)))
 	type appendSession struct{ capabilityViewSession }
 	session := appendSession{capabilityViewSession{capabilities: writeCapabilities}}
 	if _, err := NewOpening(SinkDirection, session, writeSelection, AtomicReplace); !errors.Is(err, ErrTransactionView) {
 		t.Fatalf("missing transaction error = %v", err)
+	}
+}
+
+func TestOpeningExposesSelectedStableSizeView(t *testing.T) {
+	capabilities, err := NewCapabilities(RandomRead, StableSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := Select(capabilities, NewRequirements(AllOf(RandomRead, StableSize)))
+	if !ok {
+		t.Fatal("stable size selection failed")
+	}
+	opening, err := NewOpening(SourceDirection, capabilityViewSession{capabilities: capabilities}, selection, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sizer, ok := StableSizeOf(opening)
+	if !ok {
+		t.Fatal("selected stable size view is missing")
+	}
+	if size, err := sizer.Size(t.Context()); err != nil || size != 42 {
+		t.Fatalf("stable size = %d, %v", size, err)
 	}
 }

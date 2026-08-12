@@ -14,6 +14,7 @@ var errSessionClosed = errors.New("file Access session is closed")
 type sourceSession struct {
 	mu     sync.Mutex
 	handle *os.File
+	size   int64
 	closed bool
 }
 
@@ -22,8 +23,6 @@ func sourceCapabilities() access.Capabilities {
 		access.SequentialRead,
 		access.RandomRead,
 		access.StableSize,
-		access.Reopen,
-		access.CancelableRead,
 	)
 	if err != nil {
 		panic(err)
@@ -46,7 +45,11 @@ func acquireSource(ctx context.Context, reference access.Reference, selected acc
 	if err != nil {
 		return nil, err
 	}
-	return &sourceSession{handle: handle}, nil
+	info, err := handle.Stat()
+	if err != nil {
+		return nil, errors.Join(err, handle.Close())
+	}
+	return &sourceSession{handle: handle, size: info.Size()}, nil
 }
 
 func (*sourceSession) Capabilities() access.Capabilities { return sourceCapabilities() }
@@ -81,6 +84,18 @@ func (s *sourceSession) ReadAt(ctx context.Context, destination []byte, offset i
 		return count, cause
 	}
 	return count, err
+}
+
+func (s *sourceSession) Size(ctx context.Context) (int64, error) {
+	if err := contextFailure(ctx); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.handle == nil {
+		return 0, errSessionClosed
+	}
+	return s.size, nil
 }
 
 func (s *sourceSession) Close() error {

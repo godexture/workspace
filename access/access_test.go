@@ -60,35 +60,16 @@ func TestCopiedOwnedResourceClosesOnce(t *testing.T) {
 	}
 }
 
-func TestFactoryCreatesOwnedSessionEachTime(t *testing.T) {
-	var opens atomic.Int32
-	factory := Factory(func(context.Context) (accessHandle, error) {
-		opens.Add(1)
-		return accessHandle{closed: &atomic.Int32{}}, nil
-	})
-	one, err := factory.Open(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	two, err := factory.Open(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if one.Ownership() != FactoryOwned || two.Ownership() != FactoryOwned || opens.Load() != 2 {
-		t.Fatalf("factory sessions = %v, %v, opens=%d", one.Ownership(), two.Ownership(), opens.Load())
-	}
-}
-
 func TestRequirementsAreCombinationsOfSmallCapabilities(t *testing.T) {
-	requirements := NewRequirements(AnyOf(SequentialRead), AnyOf(RandomRead, StableSize))
+	requirements := NewRequirements(AllOf(SequentialRead), AllOf(RandomRead, StableSize))
 	if !requirements.Valid() || !requirements.ValidFor(SourceDirection) || requirements.ValidFor(SinkDirection) || len(requirements.Alternatives) != 2 || len(requirements.Alternatives[1].Capabilities) != 2 {
 		t.Fatalf("requirements = %#v", requirements)
 	}
-	write := NewRequirements(AnyOf(SequentialWrite), AnyOf(RandomWrite))
+	write := NewRequirements(AllOf(SequentialWrite), AllOf(RandomWrite))
 	if !write.ValidFor(SinkDirection) || write.ValidFor(SourceDirection) {
 		t.Fatalf("write requirements = %#v", write)
 	}
-	if NewRequirements(AnyOf(SequentialRead, SequentialWrite)).ValidFor(SourceDirection) {
+	if NewRequirements(AllOf(SequentialRead, SequentialWrite)).ValidFor(SourceDirection) {
 		t.Fatal("mixed-direction capability alternative was accepted")
 	}
 }
@@ -99,8 +80,8 @@ func TestCapabilitySelectionUsesDeclaredAlternativeOrderAndNarrows(t *testing.T)
 		t.Fatal(err)
 	}
 	requirements := NewRequirements(
-		AnyOf(SequentialRead),
-		AnyOf(RandomRead, StableSize),
+		AllOf(SequentialRead),
+		AllOf(RandomRead, StableSize),
 	)
 	selection, ok := Select(available, requirements)
 	if !ok || !selection.Valid() {

@@ -10,12 +10,13 @@ var ErrCapabilityView = errors.New("access session does not provide its selected
 type viewSet struct {
 	sequential Sequential
 	random     Random
+	sizer      Sizer
 	appender   Appender
 	patcher    Patcher
 }
 
 // viewsFor is the single capability-to-view mapping used when Prepare narrows
-// an acquired session. Semantic capabilities have no operation view.
+// an acquired session.
 func viewsFor(session Session, selection Selection) (viewSet, error) {
 	if session == nil || !selection.Valid() {
 		return viewSet{}, ErrCapabilityView
@@ -31,6 +32,11 @@ func viewsFor(session Session, selection Selection) (viewSet, error) {
 		case RandomRead:
 			result.random, _ = session.(Random)
 			if result.random == nil {
+				return viewSet{}, missingCapabilityView(capability)
+			}
+		case StableSize:
+			result.sizer, _ = session.(Sizer)
+			if result.sizer == nil {
 				return viewSet{}, missingCapabilityView(capability)
 			}
 		case SequentialWrite:
