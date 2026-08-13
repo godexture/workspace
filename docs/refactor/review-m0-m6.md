@@ -13,14 +13,14 @@ M0〜M6 の実装は、module 境界、typed media path、planner/runtime、file
 
 監査結果は次のとおりである。
 
-| 優先度 | 件数 | 判定 |
-|---|---:|---|
-| P0 | 0 | 即時の repository-wide stop に相当する問題は確認しなかった |
-| P1 | 7 | M7 着手前に contract と回帰 test を直す |
-| P2 | 4 | M6 再完了または直後の hardening 単位で直す |
-| P3 | 1 | M7 で責務が増える前に分割する |
+| 優先度 | 件数 | 判定 | 現状 |
+|---|---:|---|---|
+| P0 | 0 | 即時の repository-wide stop に相当する問題は確認しなかった | — |
+| P1 | 7 | M7 着手前に contract と回帰 test を直す | 全件解決済み（2026-08-13） |
+| P2 | 4 | M6 再完了または直後の hardening 単位で直す | 全件解決済み（2026-08-13） |
+| P3 | 1 | M7 で責務が増える前に分割する | 解決済み（2026-08-13） |
 
-推奨する進捗上の扱いは、M0/M1 の完了を維持し、M2〜M6 の過去成果を消すのではなく、M6 を `進行中（M0〜M6 review remediation）` へ戻して本書の P1 を閉じることである。P2 も、明示した担当 milestone と実 consumer が無いものは M6 再完了までに閉じる。
+推奨する進捗上の扱いは、M0/M1 の完了を維持し、M2〜M6 の過去成果を消すのではなく、M6 を `進行中（M0〜M6 review remediation）` へ戻して本書の P1 を閉じることであった。R-01〜R-12 をすべて実装と negative regression test の両方で閉じたため、[M6 再完了条件](#m6-再完了条件) を満たしている。
 
 ## 監査範囲
 
@@ -58,15 +58,15 @@ coverage は合否条件にはしていないが、未検査 contract の探索�
 
 ## milestone 判定
 
-| Milestone | 判定 | 根拠 |
-|---|---|---|
-| M0 | 完了維持 | baseline commit、manifest、再現条件、意味上の比較軸が残っている。今回の現行実装の欠陥は baseline artifact を無効にしない |
-| M1 | 完了維持 | root/integration/tools の module DAG、tracked workspace、generator bootstrap、`GOWORK=off` の tools build が成立している |
-| M2 | 要是正 | R-01、R-05、R-06、R-07 により secret、normalization、immutable config、panic-free construction の contract が未成立 |
-| M3 | 要是正 | R-03、R-08、R-10 により borrowed media、allocator bounds、Access snapshot/StableSize の contract が未成立 |
-| M4 | 要是正 | R-06 と R-09 により pure Shape/Compile と bounded Suggest の検証が不十分 |
-| M5 | 要是正 | R-02、R-03 により exact-once ownership、panic cleanup、COW 強制が未成立 |
-| M6 | 要是正 | R-04、R-09、R-10、R-11 により WAVE preservation、public testkit、file snapshot、CLI failure UX の完了条件が未成立 |
+| Milestone | 監査時の判定 | 根拠 | 是正後 |
+|---|---|---|---|
+| M0 | 完了維持 | baseline commit、manifest、再現条件、意味上の比較軸が残っている。今回の現行実装の欠陥は baseline artifact を無効にしない | 完了維持 |
+| M1 | 完了維持 | root/integration/tools の module DAG、tracked workspace、generator bootstrap、`GOWORK=off` の tools build が成立している | 完了維持 |
+| M2 | 要是正 | R-01、R-05、R-06、R-07 により secret、normalization、immutable config、panic-free construction の contract が未成立 | 是正済み |
+| M3 | 要是正 | R-03、R-08、R-10 により borrowed media、allocator bounds、Access snapshot/StableSize の contract が未成立 | 是正済み |
+| M4 | 要是正 | R-06 と R-09 により pure Shape/Compile と bounded Suggest の検証が不十分 | 是正済み |
+| M5 | 要是正 | R-02、R-03 により exact-once ownership、panic cleanup、COW 強制が未成立 | 是正済み |
+| M6 | 要是正 | R-04、R-09、R-10、R-11 により WAVE preservation、public testkit、file snapshot、CLI failure UX の完了条件が未成立 | 是正済み |
 
 ## Findings
 
@@ -94,6 +94,10 @@ debug log、test failure、panic report、observability adapter が一般的な 
 - secret を含み得る diagnostic detail、panic recovery、test failure で raw `%v`/`%#v` を使わない。
 
 ### R-02 [P1] ownership token の複製と panic が exact-once release を破る
+
+**状態: 解決済み（2026-08-13）**
+
+複製して二重解放できる transport token を public surface から削除した。所有権を表す値は pointer で渡す `flow.Item` だけになり、`noCopy` により複製を `go vet` が検出する。`flow.Transfer` は source を空にした後 `defer` で unwind を検出し、error と panic の両方で元 payload を一度だけ drop する。詳細は [runtime](runtime.md#ownership) を正本とする。
 
 R-02 には独立した二つの failure mode がある。
 
@@ -155,6 +159,10 @@ Go の `[]byte`/`[]T` に read-only 型は無いため、これは method 名の
 
 ### R-04 [P1] 合法な WAVE `JUNK` payload を無条件に捨てる
 
+**状態: 解決済み（2026-08-13）**
+
+reservation slot の `JUNK` を専用 anchor (`chunkReservation`) の raw chunk として保持し、mux は自前の空 slot を作る代わりにその byte 列を同じ slot へ書き戻す。RIFF → RIFF の roundtrip は byte 一致し、繰り返しても chunk が増殖しない。RF64 昇格時は `ds64` がその slot を占めるため保持 byte が失われるが、header 長は data size 確定前に固定されるため他所へ移せない。この loss を [capability](capability.md) の B8 と [media](media.md#m6-完了条件) へ契約として明記し、M7 の loss report が実 consumer になった時点で report 対象にする。unit test は anchor 判定（reservation slot／同 size 別位置／別 size／odd padding）、non-zero payload の 2 回 roundtrip、RF64 昇格時の置換を固定した。integration の `preservedChunks` は `JUNK` 全体を除外せず、writer 自身が生成する空 reservation だけを除外し、non-zero reservation を持つ入力の end-to-end 変換で slot の byte 一致を検査する。
+
 **根拠**
 
 - [`inspect.go`](../../plugin/wave/inspect.go)（116〜121 行目）は RIFF 先頭の reservation offset にあり size が 28 byte の `JUNK` を、payload を見ずに structural と判定して preservation 対象から外す。
@@ -176,6 +184,10 @@ Go の `[]byte`/`[]T` に read-only 型は無いため、これは method 名の
 
 ### R-05 [P1] config codec の合成で normalization が消える
 
+**状態: 解決済み（2026-08-13）**
+
+`Schema.finish` から field-order normalization を `Schema.normalizeFields` へ切り出し、`Nested` がそれを再利用する。`UnionCodec` は選択 variant の Normalize を委譲し、diagnostic path を `value` 以下へ付ける。Union の Validate も同じ path 規則へ揃え、未登録 variant は `variant` を指す。`SecretCodec` は Normalize と Validate の inner diagnostic を捨てず、severity と code を保った redacted diagnostic へ写す。message、detail、値由来の path は落とす。Validate が inner の全 diagnostic を単一 error へ潰していた挙動もこれで直り、warning が error に格上げされなくなった。回帰 test は Slice/Optional、Map/Auto、Nested、Union、Secret を同時に含む schema で value、provenance、diagnostic path、fingerprint を検査し、secret 経路では raw 値の非漏洩も検査する。
+
 **根拠**
 
 - [`Nested`](../../config/collection.go)（208〜230 行目）は nested schema の Decode/Encode/Canonical/Clone/Validate を委譲するが Normalize を持たない。
@@ -195,6 +207,10 @@ Go の `[]byte`/`[]T` に read-only 型は無いため、これは method 名の
 - List/Map/Optional/Auto/Nested/Union/Secret を多段合成した table test で、value、provenance、diagnostic、fingerprint を検査する。
 
 ### R-06 [P1] immutable request/config が shallow copy で、fingerprint 後に意味が変わる
+
+**状態: 解決済み（2026-08-13）**
+
+`Patch` を schema-bound にした。typed entry は `Schema.Key`／`SchemaView.Key` が返す `config.Key` 経由でのみ入り、key が field の宣言 clone を運ぶので `Patch` は set 時と read 時の両方で snapshot を作る。schema を知らない `Set(string, any)` では [C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) に反せず deep clone できないため、この形にした。text entry は immutable なので schema を要さない。他 schema の key、型不一致、無効 key は `Patch` が diagnostic として保持し、解決時に集約する。`Resolved` と `ResolvedView` は exported field をやめ、`Value()` が呼び出しごとに fresh snapshot を返す accessor になった。これにより Shape が受け取った slice/map を書き換えても、同じ fingerprint の後続 Compile は元の値を見る。`Enum` は variadic の backing slice を複製し、`job.NewNode`／`NewAdaptor`／`NewEndpoint` は constructor と getter の両方で patch を clone する。回帰 test は constructor 入力の後書き換え、getter 戻り値の書き換え、Shape callback 内の書き換え、他 schema key、`Enum` の caller mutation を検査する。
 
 **根拠**
 
@@ -217,6 +233,10 @@ constructor 後の caller mutation で Job の意味が変わり、[M6-5](task/m
 
 ### R-07 [P1] config の第三者 callback panic が Host/process 境界を越える
 
+**状態: 解決済み（2026-08-13）**
+
+`config/callback.go` に共通 helper を置き、宣言された callback へ入る経路をすべてそこから呼ぶ。accessor と `Clone` は field boundary（read/write/decode/normalize）で、`Decode`/`Encode`/`Canonical`/`Normalize`/`Validate` は codec の入口で、schema validator・default factory・preset は schema の入口で捕捉する。失敗は phase と field/schema path を持つ `config.callback-panic` diagnostic か、その操作自身の error になる。recovered 値は secret を含み得るため、diagnostic にも error にも operation 名しか出さない。表示専用の `Encode` は失敗 channel を持たないので `<invalid>` へ縮退する。panic matrix test は accessor、clone、decode、encode、canonical、normalize、validate、schema validator、default factory、preset を網羅し、いずれの経路でも panic 値が漏れないことを検査する。
+
 **根拠**
 
 - [`Field`](../../config/field.go)（58〜60 行目）は invalid codec/accessor でも panic しないと説明され、[`Builder.Build`](../../config/schema.go)（110〜112 行目）も validation/canonicalization を panic 無しで行うと説明される。
@@ -234,6 +254,10 @@ constructor 後の caller mutation で Job の意味が変わり、[M6-5](task/m
 - default、preset、accessor、Clone、Normalize、Validate、Canonical、Decode、Encode、schema validator の panic matrix を test する。
 
 ### R-08 [P2] buffer layout の整数 overflow が小さな allocation として通る
+
+**状態: 解決済み（2026-08-13）**
+
+`layoutOf` の alignment 切り上げ、`Size + Padding`、累積 position をすべて事前 checked arithmetic にし、`ErrLayoutOverflow` で拒否する。allocation 前に `validateLayout` が「各 plane が padding 込みで layout size 内に収まる」invariant を検査し、backing を直接 slice する `Mutable.Plane`、`Edit.MutablePlane`、`View.PlaneAligned` は範囲外 plane を `ErrRange` にして slice-bounds panic を起こさない。table test は MaxInt 単独、size+padding overflow、二度の overflow で小さな正値へ戻る場合、累積 overflow、最大 alignment、negative、zero-size を固定し、property test は 500 通りの spec で「error または、allocate と全 plane 読み書きが通る valid layout」を検査する。
 
 **根拠**
 
@@ -262,6 +286,10 @@ buffer.Spec{Planes: []buffer.PlaneSpec{
 
 ### R-09 [P2] public testkit が M6 必須の bounded Suggest を検査しない
 
+**状態: 解決済み（2026-08-13）**
+
+`testkit.Suggests` を追加した。`Suggestion` は input descriptor、`plugin.Need`、期待 candidate を取り、candidate は redacted な config summary の field 値で表すので secret を test source へ書かずに済む。runner は declared limit、canonical 一意性、component 自身の schema への所属、error diagnostic の不在、繰り返しの一致を検査する。`plugin.Suggest` が panic と invalid config を error にするため、error なしの要求がその両方を覆う。`SuggestContext` は context を持たないので deadline/cancel に依存する余地が構造的に無く、その事実を comment に残した。規則は `verifySuggestions` に切り出し、testkit 自身の test が limit 超過、非再現、重複、未解決 candidate、件数不一致、値不一致、未知 field で実際に落ちることを固定する。coverage registry は `HasSuggest` を宣言した component に Suggest scenario が無ければ失敗する。公式 linear の 5 component すべてに、入力追従・要求 endian 採用・提示なしの 3 scenario を通した。
+
 **根拠**
 
 - [quality.md の M6 完了条件](quality.md#m6-完了条件) は common contract に `Compile` purity/repeatability と bounded `Suggest` の両方を含める。
@@ -282,6 +310,10 @@ buffer.Spec{Planes: []buffer.PlaneSpec{
 ### R-10 [P2] Snapshot に roadmap owner がなく、local file の StableSize も成立しない
 
 R-10 は export 管理と実 file semantics が結び付いた計画上の欠陥である。
+
+**状態: 解決済み（2026-08-13）**
+
+`access.Snapshot` を削除せず、local file Provider を実 consumer にした。`access.Snapshotter` を実装する session が現在の content identity を報告し、判断は Host が持つ。Host は acquire 時の identity を記録し、run 開始前と output commit 前に照合して、変化していれば `access/snapshot` failure にする。local file の identity は size と mtime で `WeakSnapshot` として報告する。truncate、grow、mtime が動く overwrite は検出でき、同一 timestamp tick 内の同 size 上書きは検出できない。強い identity は content の読み直しでしか作れないため、nature を偽らず weak と宣言し [capability](capability.md) の B9 に記録した。`StableSize` は渡す byte 列への約束でもあるので、read は acquire 時 size で clamp する。session は開いた path ではなく開いた file を提供するため、path 差し替えは content 変化ではない。coverage registry は `M0`〜`M11` の許可集合だけを受理し、`remote-provider` という擬似 milestone は使えなくなった。同 assignment は削除し、[scope](scope.md#m6-の-contract-分類) の記述も実在 milestone だけを指すよう直した。integration test は truncate、grow、同 size 上書き、path 差し替えを Prepare と Run の間に行う。
 
 **根拠**
 
@@ -306,6 +338,10 @@ M10 の final coverage と M11 の no-unused-export を閉じられない。さ�
 
 ### R-11 [P2] CLI が rendering/cleanup failure の原因を捨てる
 
+**状態: 解決済み（2026-08-13）**
+
+`cli.Run` は分類済み `ExitCode` と、その裏で起きた独立な failure をすべて `errors.Join` した error を持つ `cli.Result` を返す。parse、request、plan、prepare、run、render、close は一つの outcome へ結果を足すだけで、後段の failure が前段の failure を上書きしない。`cmd/godec` だけが code を `os.Exit` へ写す薄い wrapper である。failure matrix test は plan 描画中の stdout 失敗、result 描画時点の stdout 失敗、planning failure 報告中の stderr 失敗、usage error 報告中の stderr 失敗、cancel、plan 描画失敗と close の同時発生を検査し、成功時に error が nil であることも固定する。
+
 **根拠**
 
 - [`cli.Run`](../../cli/cli.go)（69〜97 行目）は usage/request/plan/prepare error の `render*` error を無視する。
@@ -324,6 +360,10 @@ CLI process は非 zero になっても、stderr/stdout failure、cleanup failur
 - failing stdout、failing stderr、plan render + close、run error + result render、cancel の matrix test を追加する。
 
 ### R-12 [P3] runtime と testkit の責務が単一 file に集まり過ぎている
+
+**状態: 解決済み（2026-08-13）**
+
+`internal/run/drive` を graph binding (`drive.go`)、link/scope (`link.go`)、task (`task.go`)、boundary sink と linear processor (`linear.go`)、fan-out (`fanout.go`)、bounded edge (`buffer.go`)、observation (`observe.go`)、fan-in (`zip.go`) へ分けた。`testkit` は public runner (`runner.go`)、Format probe (`probe.go`)、plan/lifecycle assertion (`assert.go`)、scenario factory (`scenario.go`)、fixture component と session (`fixture.go`) へ分け、`componentOf` は Subject と同じ file へ移した。package は増やさず、private type とその invariant の owner が一つの file に収まる位置で切った。
 
 [`internal/run/drive/drive.go`](../../internal/run/drive/drive.go) は 866 行で、binding/scope/link/task、source/writer/processor、fan-out、buffer、observe、zip を同居させる。[`testkit/runner.go`](../../testkit/runner.go) は 804 行で、case orchestration、scenario construction、fixture provider/session、operator、lifecycle assertion を同居させる。
 
@@ -377,7 +417,7 @@ R-03 と R-06 は公開 API の形を変える。後方互換性が不要な今�
 
 ## M6 再完了条件
 
-本監査に対する M6 再完了は、少なくとも次を満たした時とする。
+本監査に対する M6 再完了は、少なくとも次を満たした時とする。**2026-08-13 時点で全項目を満たした。**
 
 - R-01〜R-07 の P1 が実装と negative regression test の両方で閉じている。
 - R-08〜R-11 が閉じているか、実在する roadmap milestone、実 consumer、機械検査可能な完了条件へ割り当てられている。
@@ -386,3 +426,5 @@ R-03 と R-06 は公開 API の形を変える。後方互換性が不要な今�
 - WAVE の input-derived `JUNK` を含む unknown chunk/padding exact vector が integration で通る。
 - local file の mutation/snapshot semantics が文書と capability 宣言で一致する。
 - full verification が green で、review 用の temporary probe/source が tree に残っていない。
+
+是正で確定した product 判断は、それぞれの正本へ移した。schema-bound な typed patch entry と phase ごとの config snapshot は [config](config.md#完全値と疎な-patch)、reservation slot `JUNK` の再利用と RF64 昇格時の loss は [media](media.md#m6-完了条件) と [capability](capability.md) の B8、local file の weak snapshot と phase 間検証は [access](access.md#snapshotretry再現性) と B9、coverage owner を実在 milestone に限る規則は [scope](scope.md#m6-の-contract-分類)、`cli.Run` の structured result は [experience](experience.md) を正本とする。
