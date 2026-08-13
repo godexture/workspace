@@ -441,3 +441,72 @@ func probeBudget(byteLimit resource.Bytes, rounds int) job.Budget {
 var _ access.Session = (*probeTestSession)(nil)
 var _ access.Sequential = (*probeTestSession)(nil)
 var _ access.Random = (*probeTestSession)(nil)
+
+type snapshotProbeSession struct {
+	*probeTestSession
+	identity string
+}
+
+func (s *snapshotProbeSession) Snapshot(context.Context) (access.Snapshot, error) {
+	return access.NewSnapshot(s.identity, access.WeakSnapshot)
+}
+
+// Replacing a sequential-only session with its replay wrapper must not change
+// what the source says about its content. A wrapper that answered for itself
+// would report no identity, and the run-time check would read that as the
+// source having changed under a job that never touched it.
+func TestReplaySessionKeepsTheContentIdentityOfItsSource(t *testing.T) {
+	session, opening := probeOpening(t, []byte("0123456789abcdef"), access.SequentialRead)
+	snapshotting := &snapshotProbeSession{probeTestSession: session, identity: "fixture/size:16"}
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := access.NewRangeRequest(0, 4)
+	if _, _, extendErr := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes); extendErr != nil {
+		t.Fatal(extendErr)
+	}
+	replayed, err := store.ReplaySession(snapshotting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayed.Close()
+
+	before, err := readSnapshot(t.Context(), snapshotting)
+	if err != nil || !before.Valid() {
+		t.Fatalf("source snapshot = %#v, error %v", before, err)
+	}
+	after, err := readSnapshot(t.Context(), replayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("replayed snapshot = %#v, want the source snapshot %#v", after, before)
+	}
+	if failure := verifySnapshots(t.Context(), RunPhase, []acquiredSession{{node: "source", value: replayed, snapshot: before}}); failure != nil {
+		t.Fatalf("an unchanged source was reported as changed: %v", failure)
+	}
+}
+
+// A session with no content identity is not the same as one that changed, and
+// a wrapper over it must not invent one.
+func TestReplaySessionReportsNoIdentityWhenItsSourceHasNone(t *testing.T) {
+	session, opening := probeOpening(t, []byte("0123456789abcdef"), access.SequentialRead)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := access.NewRangeRequest(0, 4)
+	if _, _, extendErr := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes); extendErr != nil {
+		t.Fatal(extendErr)
+	}
+	replayed, err := store.ReplaySession(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayed.Close()
+	snapshot, err := readSnapshot(t.Context(), replayed)
+	if err != nil || snapshot.Valid() {
+		t.Fatalf("snapshot = %#v, error %v, want no identity and no error", snapshot, err)
+	}
+}

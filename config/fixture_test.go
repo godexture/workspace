@@ -1,6 +1,10 @@
 package config
 
-import "github.com/godexture/godec/diagnostic"
+import (
+	"testing"
+
+	"github.com/godexture/godec/diagnostic"
+)
 
 type nestedConfig struct {
 	Limit int
@@ -50,3 +54,21 @@ func defaultTestConfig() testConfig {
 }
 
 func diagnosticItems(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }
+
+func mustValue[C any](t *testing.T, resolved Resolved[C]) C {
+	t.Helper()
+	value, err := resolved.Value()
+	if err != nil {
+		t.Fatalf("resolved snapshot failed: %v", err)
+	}
+	return value
+}
+
+func mustViewValue(t *testing.T, view ResolvedView) any {
+	t.Helper()
+	value, err := view.Value()
+	if err != nil {
+		t.Fatalf("resolved view snapshot failed: %v", err)
+	}
+	return value
+}

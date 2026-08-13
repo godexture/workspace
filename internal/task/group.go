@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/godexture/godec/diagnostic"
 )
 
 var (
@@ -18,6 +20,9 @@ var (
 )
 
 // PanicError preserves the recovered value and stack from one task boundary.
+// Value stays available to a caller that decides it is safe to look at; the
+// error text never renders it, because a panic value can be the data the
+// panicking code was handling.
 type PanicError struct {
 	Name     string
 	Location string
@@ -26,7 +31,7 @@ type PanicError struct {
 }
 
 func (e *PanicError) Error() string {
-	return fmt.Sprintf("task %q panicked: %v", e.Name, e.Value)
+	return fmt.Sprintf("task %q panicked: %s", e.Name, diagnostic.Recovered(e.Value))
 }
 
 // Failure associates an error with the task that returned or panicked.

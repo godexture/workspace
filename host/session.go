@@ -133,6 +133,9 @@ func readSnapshot(ctx context.Context, session access.Session) (access.Snapshot,
 		return access.Snapshot{}, nil
 	}
 	snapshot, err := reporter.Snapshot(ctx)
+	if errors.Is(err, access.ErrNoSnapshot) {
+		return access.Snapshot{}, nil
+	}
 	if err != nil {
 		return access.Snapshot{}, err
 	}
@@ -159,8 +162,11 @@ func verifySnapshots(ctx context.Context, phase Phase, sessions []acquiredSessio
 			failure := failureOf(phase, session.node, "access/snapshot", err)
 			return &failure
 		}
-		if current.Identity() != session.snapshot.Identity() {
-			failure := failureOf(phase, session.node, "access/snapshot", fmt.Errorf("source content changed after planning: %s became %s", session.snapshot.Identity(), current.Identity()))
+		// A source that identified its content at acquire has to keep doing
+		// so. Losing the identity, or weakening it, leaves nothing to compare
+		// and must not read as agreement.
+		if current.Nature() != session.snapshot.Nature() || current.Identity() != session.snapshot.Identity() {
+			failure := failureOf(phase, session.node, "access/snapshot", fmt.Errorf("source content changed after planning: %s became %s", describeSnapshot(session.snapshot), describeSnapshot(current)))
 			return &failure
 		}
 	}
@@ -242,4 +248,11 @@ func closeSessions(ctx context.Context, sessions []acquiredSession) (failures []
 		}
 	}
 	return failures
+}
+
+func describeSnapshot(snapshot access.Snapshot) string {
+	if !snapshot.Valid() {
+		return "no content identity"
+	}
+	return snapshot.Identity()
 }

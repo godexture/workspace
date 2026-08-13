@@ -12,14 +12,14 @@ import (
 	"github.com/godexture/godec/media/packet"
 )
 
-type chunkCollector struct{ items []packet.Chunk }
+type chunkCollector struct{ items []flow.Parcel[packet.Chunk] }
 
 func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk]) error {
-	value, ok := input.Detach()
+	parcel, ok := input.Detach()
 	if !ok {
 		return errors.New("collector received an unowned chunk")
 	}
-	c.items = append(c.items, value)
+	c.items = append(c.items, parcel)
 	return nil
 }
 
@@ -64,13 +64,13 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if !item.Valid() {
 			t.Fatalf("invalid chunk item = %#v", item)
 		}
-		decoded = item.Bytes().AppendTo(decoded)
+		decoded = item.Value().Bytes().AppendTo(decoded)
 	}
 	if !bytes.Equal(decoded, payload) {
 		t.Fatalf("demux payload = %v", decoded)
 	}
-	if collector.items[0].Payload().Layout().ReadOnly || !collector.items[1].Payload().Layout().ReadOnly {
-		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Payload().Layout(), collector.items[1].Payload().Layout())
+	if collector.items[0].Value().Payload().Layout().ReadOnly || !collector.items[1].Value().Payload().Layout().ReadOnly {
+		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Value().Payload().Layout(), collector.items[1].Value().Payload().Layout())
 	}
 	for _, item := range collector.items {
 		item.Release()

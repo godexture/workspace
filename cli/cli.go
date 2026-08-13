@@ -162,6 +162,11 @@ func execute(ctx context.Context, instance *host.Host, args []string, configurat
 	if !errors.Is(renderErr, errEventRendererActive) {
 		result.add(renderResult(configuration.stdout, configuration.stderr, value, runErr, observationLost))
 	}
-	result.add(prepared.Close())
+	// Close reports the terminal state of the prepared job, which after a
+	// failed run is that same failure. Joining it again would report one
+	// failure as two independent ones.
+	if closeErr := prepared.Close(); !errors.Is(runErr, closeErr) {
+		result.add(closeErr)
+	}
 	return result.result()
 }

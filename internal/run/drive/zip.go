@@ -29,7 +29,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 			return nil, Task{}, err
 		}
 		edges[index] = edge
-		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, traits: traits})
+		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
 	}
 	state := &zipState[I, O]{joiner: joiner, edges: edges, traits: traits, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
 	for index := range state.items {
@@ -84,14 +84,13 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
-			value, err := edge.Pop(ctx)
+			err := edge.Pop(ctx, &s.items[index])
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			if err != nil {
 				return err
 			}
-			s.items[index].SetWithTraits(value, s.traits.Fork, s.traits.Drop)
 			s.read++
 		}
 		if !s.withinWatermark() {

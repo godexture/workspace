@@ -317,9 +317,13 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 func (s Schema[C]) resolved(value C, provenance Provenance, items []diagnostic.Item, fingerprint Fingerprint) Resolved[C] {
 	return Resolved[C]{
 		value: value,
-		clone: func(value C) C {
-			snapshot, _ := s.snapshot(value)
-			return snapshot
+		clone: func(value C) (C, error) {
+			snapshot, items := s.snapshot(value)
+			if err := diagnosticError(items); err != nil {
+				var zero C
+				return zero, err
+			}
+			return snapshot, nil
 		},
 		provenance:  cloneProvenance(provenance),
 		diagnostics: cloneItems(items),

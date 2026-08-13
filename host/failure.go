@@ -22,7 +22,7 @@ func (r *runner) invoke(phase Phase, node, taskName string, work func(context.Co
 func invoke(ctx context.Context, phase Phase, node, taskName string, work func(context.Context) error) (failure *Failure) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			value := failureOf(phase, node, taskName, fmt.Errorf("panic: %v", recovered))
+			value := failureOf(phase, node, taskName, fmt.Errorf("panic: %s", diagnostic.Recovered(recovered)))
 			value.Stack = append([]byte(nil), debug.Stack()...)
 			failure = &value
 		}

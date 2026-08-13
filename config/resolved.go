@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -96,16 +97,23 @@ func (f Fingerprint) Bytes() []byte {
 // later consumer sees behind an unchanged fingerprint.
 type Resolved[C any] struct {
 	value       C
-	clone       func(C) C
+	clone       func(C) (C, error)
 	provenance  Provenance
 	diagnostics []diagnostic.Item
 	fingerprint Fingerprint
 }
 
 // Value returns an independent snapshot of the resolved configuration.
-func (r Resolved[C]) Value() C {
+//
+// It returns an error when a declared clone fails, because the alternative is
+// worse than no value: a snapshot is built by copying the struct and replacing
+// every field with its clone, so a field whose clone failed still points at
+// the retained value. Handing that back would let the caller edit what the
+// next caller sees, which is the aliasing the snapshot exists to prevent.
+func (r Resolved[C]) Value() (C, error) {
 	if r.clone == nil {
-		return r.value
+		var zero C
+		return zero, errors.New("resolved config has no schema snapshot")
 	}
 	return r.clone(r.value)
 }

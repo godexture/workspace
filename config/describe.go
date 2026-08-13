@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -104,16 +105,13 @@ type ResolvedView struct {
 func (v ResolvedView) Schema() string { return v.schema }
 
 // Value returns an independent snapshot of the resolved configuration behind
-// an any boundary. It is nil when resolution produced no value.
-func (v ResolvedView) Value() any {
+// an any boundary. Like the typed form it reports a failed clone rather than
+// handing back a value that still aliases the retained one.
+func (v ResolvedView) Value() (any, error) {
 	if v.clone == nil {
-		return v.value
+		return nil, errors.New("resolved config view has no schema snapshot")
 	}
-	cloned, err := v.clone(v.value)
-	if err != nil {
-		return nil
-	}
-	return cloned
+	return v.clone(v.value)
 }
 
 // Provenance reports which stage supplied each registered field.
@@ -241,7 +239,11 @@ func (s Schema[C]) View() SchemaView {
 			return s.resolvedView(resolved), err
 		},
 		patch: func(resolved ResolvedView) (Patch, error) {
-			value, ok := resolved.Value().(C)
+			snapshot, err := resolved.Value()
+			if err != nil {
+				return Patch{}, err
+			}
+			value, ok := snapshot.(C)
 			if !ok {
 				item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config value has the wrong type", nil)
 				return Patch{}, diagnostic.NewError(item)
@@ -260,7 +262,10 @@ func (s Schema[C]) resolvedView(resolved Resolved[C]) ResolvedView {
 			if !ok {
 				return nil, diagnostic.NewError(diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config value has the wrong type", nil))
 			}
-			snapshot, _ := s.snapshot(typed)
+			snapshot, items := s.snapshot(typed)
+			if err := diagnosticError(items); err != nil {
+				return nil, err
+			}
 			return snapshot, nil
 		},
 		provenance:  cloneProvenance(resolved.provenance),

@@ -192,20 +192,30 @@ func (c *Coverage) executableProblems(set plugin.Set) []error {
 			problems = append(problems, fmt.Errorf("testkit typed coverage: component %s declares Suggest but has no Suggest scenario", component.Identity()))
 		}
 	}
+	// Coverage claims that every recorded identity belongs to the Set it is
+	// verified against. Recording a Suggest scenario for a component outside
+	// that Set would otherwise count toward a population it is not part of.
+	problems = append(problems, foreignIdentities(executed, known, "executed")...)
+	problems = append(problems, foreignIdentities(suggested, known, "suggested")...)
+	for identity, count := range executed {
+		if count < 1 {
+			problems = append(problems, fmt.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count)))
+		}
+	}
+	return problems
+}
+
+func foreignIdentities(recorded map[plugin.Identity]int, known map[plugin.Identity]bool, kind string) []error {
 	var unknown []string
-	for identity := range executed {
+	for identity := range recorded {
 		if _, ok := known[identity]; !ok {
 			unknown = append(unknown, identity.String())
 		}
 	}
 	sort.Strings(unknown)
+	problems := make([]error, 0, len(unknown))
 	for _, identity := range unknown {
-		problems = append(problems, fmt.Errorf("testkit typed coverage: executed identity %s is absent from the covered Set", identity))
-	}
-	for identity, count := range executed {
-		if count < 1 {
-			problems = append(problems, fmt.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count)))
-		}
+		problems = append(problems, fmt.Errorf("testkit typed coverage: %s identity %s is absent from the covered Set", kind, identity))
 	}
 	return problems
 }

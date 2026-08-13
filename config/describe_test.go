@@ -38,7 +38,7 @@ func TestSchemaViewResolvesCompleteTypedValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Schema() != schema.Description().Identity || resolved.Fingerprint().IsZero() || resolved.Value().(value).Mode != 3 {
+	if resolved.Schema() != schema.Description().Identity || resolved.Fingerprint().IsZero() || mustViewValue(t, resolved).(value).Mode != 3 {
 		t.Fatalf("resolved view = %#v", resolved)
 	}
 	if _, err := view.ResolveValue(struct{ Mode int }{Mode: 3}); err == nil {
@@ -88,7 +88,7 @@ func TestSchemaViewSummaryAndPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roundTrip.Fingerprint() != resolved.Fingerprint() || !reflect.DeepEqual(roundTrip.Value(), resolved.Value()) {
+	if roundTrip.Fingerprint() != resolved.Fingerprint() || !reflect.DeepEqual(mustViewValue(t, roundTrip), mustViewValue(t, resolved)) {
 		t.Fatalf("round trip = %#v, want %#v", roundTrip, resolved)
 	}
 }

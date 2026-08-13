@@ -84,6 +84,20 @@ func (s *replaySession) Read(ctx context.Context, destination []byte) (int, erro
 	return s.reader.Read(ctx, destination)
 }
 
+// Snapshot delegates to the session the prefix was read from. A wrapper that
+// answered for itself would report no content identity at all, and Host would
+// read that as the source having changed under a job that never touched it.
+func (s *replaySession) Snapshot(ctx context.Context) (access.Snapshot, error) {
+	if s == nil || s.underlying == nil {
+		return access.Snapshot{}, errors.New("prefix replay session is closed")
+	}
+	reporter, ok := access.SnapshotOf(s.underlying)
+	if !ok {
+		return access.Snapshot{}, access.ErrNoSnapshot
+	}
+	return reporter.Snapshot(ctx)
+}
+
 func (s *replaySession) Close() error {
 	if s == nil {
 		return nil

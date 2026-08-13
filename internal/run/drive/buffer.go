@@ -13,24 +13,17 @@ import (
 )
 
 type bufferDelivery[T any] struct {
-	queue  *queue.Queue[T]
-	traits schema.Traits[T]
+	queue *queue.Queue[T]
 }
 
-// Emit hands the value to the queue, which owns it until Pop succeeds. A
-// rejected push never stores it, so the cell takes it back and the producer
-// stays responsible. Traits belong to the edge, not to each value, so the
-// queue stores values alone and no copyable ownership token exists.
+// Emit moves the cell into the queue, which owns it until Pop succeeds. A
+// rejected push never empties the cell, so the producer stays responsible and
+// the payload is never in two places.
 func (b *bufferDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
-	value, ok := item.Detach()
-	if !ok {
+	if item == nil || !item.Valid() {
 		return ErrInvalidItem
 	}
-	if err := b.queue.Push(ctx, value); err != nil {
-		item.SetWithTraits(value, b.traits.Fork, b.traits.Drop)
-		return err
-	}
-	return nil
+	return b.queue.Push(ctx, item)
 }
 
 func (b *bufferDelivery[T]) close(context.Context) error {
@@ -57,14 +50,13 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 				var item flow.Item[T]
 				defer item.Drop()
 				for {
-					value, err := edge.Pop(ctx)
+					err := edge.Pop(ctx, &item)
 					if errors.Is(err, io.EOF) {
 						return target.close(ctx)
 					}
 					if err != nil {
 						return err
 					}
-					item.SetWithTraits(value, traits.Fork, traits.Drop)
 					emitErr := target.Emit(ctx, &item)
 					edge.Complete()
 					if emitErr != nil {
@@ -73,12 +65,12 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 				}
 			},
 		}
-		return linkOf[T](&bufferDelivery[T]{queue: edge, traits: traits}), task, nil
+		return linkOf[T](&bufferDelivery[T]{queue: edge}), task, nil
 	}
 }
 
-// queueTraits hands the schema traits straight to the queue, which owns every
-// value it holds and releases the remainder when drained.
+// queueTraits hands the edge-local measurements to the queue. Releasing stays
+// with the cells the queue stores.
 func queueTraits[T any](traits schema.Traits[T]) queue.Traits[T] {
-	return queue.Traits[T]{Drop: traits.Drop, Size: traits.Size, Time: traits.Time}
+	return queue.Traits[T]{Size: traits.Size, Time: traits.Time}
 }

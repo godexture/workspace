@@ -364,7 +364,11 @@ func TestNodeConfigIsSnapshottedOnBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resolved.Value(); got.Layout != "stereo" || got.Mode != "" {
+	got, err := resolved.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Layout != "stereo" || got.Mode != "" {
 		t.Fatalf("node config = %#v, want only the layout the constructor received", got)
 	}
 	if fields := node.Config().FieldIDs(); len(fields) != 1 || fields[0] != "layout" {

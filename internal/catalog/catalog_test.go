@@ -422,9 +422,13 @@ func TestCatalogComponentResolvesPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog component resolve failed: %v", err)
 	}
-	value, ok := resolved.Value().(catalogConfig)
+	snapshot, err := resolved.Value()
+	if err != nil {
+		t.Fatalf("resolved snapshot failed: %v", err)
+	}
+	value, ok := snapshot.(catalogConfig)
 	if !ok || value.Value != 7 {
-		t.Fatalf("resolved catalog value = %#v, want catalogConfig{Value: 7}", resolved.Value())
+		t.Fatalf("resolved catalog value = %#v, want catalogConfig{Value: 7}", snapshot)
 	}
 
 	_, err = fromCatalog.Resolve(config.NewPatch().SetText("value", "99").SetText("unknown", "1"))

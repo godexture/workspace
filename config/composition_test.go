@@ -84,19 +84,19 @@ func TestCompositionKeepsNormalization(t *testing.T) {
 		t.Fatalf("resolve failed: %v", err)
 	}
 
-	if got := resolved.Value().Items[0].Value; got != "item" {
+	if got := mustValue(t, resolved).Items[0].Value; got != "item" {
 		t.Errorf("slice element = %q, want %q", got, "item")
 	}
-	if got := resolved.Value().Labels["key"].Value; got != "label" {
+	if got := mustValue(t, resolved).Labels["key"].Value; got != "label" {
 		t.Errorf("map value = %q, want %q", got, "label")
 	}
-	if got := resolved.Value().Nested.Name; got != "nested" {
+	if got := mustValue(t, resolved).Nested.Name; got != "nested" {
 		t.Errorf("nested field = %q, want %q", got, "nested")
 	}
-	if got := resolved.Value().Choice.Value; got != "choice" {
+	if got := mustValue(t, resolved).Choice.Value; got != "choice" {
 		t.Errorf("union variant value = %q, want %q", got, "choice")
 	}
-	if got := resolved.Value().Token.Reveal(); got != compositionSecret {
+	if got := mustValue(t, resolved).Token.Reveal(); got != compositionSecret {
 		t.Errorf("secret value = %q, want %q", got, compositionSecret)
 	}
 

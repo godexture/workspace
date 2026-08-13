@@ -156,6 +156,45 @@ func TestRunJoinsPlanRenderingAndCleanupFailures(t *testing.T) {
 	}
 }
 
+// Close reports the terminal state of the prepared job, which after a failed
+// run is that same failure. Joining it again would tell an embedding
+// application that two independent things went wrong.
+func TestRunReportsOneRuntimeFailureOnce(t *testing.T) {
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.wav")
+	if err := os.WriteFile(inputPath, pcmWave(1, 48_000, 16, []byte{1, 0, 2, 0}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory cannot be replaced by a file, so committing the output fails
+	// after the conversion itself ran.
+	outputPath := filepath.Join(directory, "occupied")
+	if err := os.Mkdir(outputPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	result := Run(context.Background(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, &stderr))
+	if result.Err == nil {
+		t.Fatalf("writing over a directory succeeded: %#v", result)
+	}
+	var joined interface{ Unwrap() []error }
+	if !errors.As(result.Err, &joined) {
+		return
+	}
+	seen := make(map[string]int)
+	for _, failure := range joined.Unwrap() {
+		seen[failure.Error()]++
+	}
+	for text, count := range seen {
+		if count > 1 {
+			t.Errorf("failure %q was reported %d times", text, count)
+		}
+	}
+}
+
 // A successful command returns no error at all, so a caller can treat a
 // non-nil error as the only signal it needs.
 func TestRunReportsNoErrorOnSuccess(t *testing.T) {

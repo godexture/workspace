@@ -3,8 +3,9 @@ package observe
 import (
 	"context"
 	"errors"
-	"fmt"
 	"runtime/debug"
+
+	"github.com/godexture/godec/diagnostic"
 )
 
 type SinkPanicError struct {
@@ -12,7 +13,9 @@ type SinkPanicError struct {
 	Stack []byte
 }
 
-func (e *SinkPanicError) Error() string { return fmt.Sprintf("observation sink panicked: %v", e.Value) }
+func (e *SinkPanicError) Error() string {
+	return "observation sink panicked: " + diagnostic.Recovered(e.Value)
+}
 func (e *SinkPanicError) StackTrace() []byte {
 	return append([]byte(nil), e.Stack...)
 }

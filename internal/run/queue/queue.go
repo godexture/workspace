@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/godexture/godec/flow"
 )
 
 var (
@@ -16,6 +18,7 @@ var (
 	ErrInvalidSize  = errors.New("runtime queue size trait returned an invalid size")
 	ErrUnknownTime  = errors.New("runtime queue time trait returned an unknown timestamp")
 	ErrClosed       = errors.New("runtime queue is closed")
+	ErrInvalidItem  = errors.New("runtime queue requires an owned item cell")
 )
 
 // Limit is enforced locally by one edge. Time is expressed in the connected
@@ -29,21 +32,24 @@ type Limit struct {
 
 func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Time >= 0 }
 
+// Traits are the edge-local measurements a limit needs. Releasing is not one
+// of them: the ring stores cells, so every queued payload carries its own
+// release obligation and the queue never handles a bare value it could hand
+// out twice.
 type Traits[T any] struct {
-	Drop func(T)
 	Size func(T) int
 	Time func(T) (int64, bool)
 }
 
 type entry[T any] struct {
-	value T
-	size  int64
-	time  int64
+	cell flow.Item[T]
+	size int64
+	time int64
 }
 
 // Queue is a bounded ring with context-aware waits and idempotent close. It
-// owns every successfully pushed value until Pop succeeds. Drain releases all
-// remaining owners through the captured Drop trait.
+// owns every successfully pushed cell until Pop succeeds. Drain releases all
+// remaining owners through the cells themselves.
 type Queue[T any] struct {
 	mu       sync.Mutex
 	notEmpty chan struct{}
@@ -81,11 +87,17 @@ func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
 	}, nil
 }
 
-func (q *Queue[T]) Push(ctx context.Context, value T) error {
+// Push moves the cell's payload into the ring. The cell is emptied only when
+// the ring accepted it, so a rejected or cancelled push leaves the producer
+// still holding its item and no payload exists in two places.
+func (q *Queue[T]) Push(ctx context.Context, item *flow.Item[T]) error {
 	if q == nil {
 		return ErrClosed
 	}
-	item, err := q.describe(value)
+	if item == nil || !item.Valid() {
+		return ErrInvalidItem
+	}
+	size, itemTime, err := q.measure(item.Value())
 	if err != nil {
 		return err
 	}
@@ -101,8 +113,8 @@ func (q *Queue[T]) Push(ctx context.Context, value T) error {
 			}
 			return ErrClosed
 		}
-		if q.fits(item) {
-			q.push(item)
+		if q.fits(size, itemTime) {
+			q.push(item, size, itemTime)
 			q.notify(q.notEmpty)
 			q.mu.Unlock()
 			return nil
@@ -117,10 +129,13 @@ func (q *Queue[T]) Push(ctx context.Context, value T) error {
 	}
 }
 
-func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
-	var zero T
+// Pop moves the oldest queued payload into into, releasing anything it held.
+func (q *Queue[T]) Pop(ctx context.Context, into *flow.Item[T]) error {
 	if q == nil {
-		return zero, io.EOF
+		return io.EOF
+	}
+	if into == nil {
+		return ErrInvalidItem
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -128,23 +143,23 @@ func (q *Queue[T]) Pop(ctx context.Context) (T, error) {
 	for {
 		q.mu.Lock()
 		if q.count != 0 {
-			item := q.pop()
+			q.pop(into)
 			q.active++
 			if !q.closed {
 				q.notify(q.notFull)
 			}
 			q.mu.Unlock()
-			return item.value, nil
+			return nil
 		}
 		if q.closed {
 			q.mu.Unlock()
-			return zero, io.EOF
+			return io.EOF
 		}
 		notEmpty := q.notEmpty
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return zero, context.Cause(ctx)
+			return context.Cause(ctx)
 		case <-notEmpty:
 		}
 	}
@@ -217,13 +232,15 @@ func (q *Queue[T]) Drain() int {
 		return 0
 	}
 	dropped := 0
+	var item flow.Item[T]
+	defer item.Drop()
 	for {
 		q.mu.Lock()
 		if q.count == 0 {
 			q.mu.Unlock()
 			return dropped
 		}
-		item := q.pop()
+		q.pop(&item)
 		if !q.closed {
 			q.notify(q.notFull)
 		}
@@ -231,9 +248,7 @@ func (q *Queue[T]) Drain() int {
 			q.notify(q.idle)
 		}
 		q.mu.Unlock()
-		if q.traits.Drop != nil {
-			q.traits.Drop(item.value)
-		}
+		item.Drop()
 		dropped++
 	}
 }
@@ -257,75 +272,75 @@ func (q *Queue[T]) Snapshot() Snapshot {
 	return Snapshot{Items: q.count, Active: q.active, Bytes: q.bytes, Time: q.span(), Closed: q.closed}
 }
 
-func (q *Queue[T]) describe(value T) (entry[T], error) {
-	item := entry[T]{value: value}
+func (q *Queue[T]) measure(value T) (size, valueTime int64, err error) {
 	if q.limit.Bytes != 0 {
-		size := q.traits.Size(value)
-		if size < 0 {
-			return entry[T]{}, ErrInvalidSize
+		measured := q.traits.Size(value)
+		if measured < 0 {
+			return 0, 0, ErrInvalidSize
 		}
-		item.size = int64(size)
-		if item.size > q.limit.Bytes {
-			return entry[T]{}, ErrInvalidSize
+		size = int64(measured)
+		if size > q.limit.Bytes {
+			return 0, 0, ErrInvalidSize
 		}
 	}
 	if q.limit.Time != 0 {
-		valueTime, ok := q.traits.Time(value)
+		measured, ok := q.traits.Time(value)
 		if !ok {
-			return entry[T]{}, ErrUnknownTime
+			return 0, 0, ErrUnknownTime
 		}
-		item.time = valueTime
+		valueTime = measured
 	}
-	return item, nil
+	return size, valueTime, nil
 }
 
-func (q *Queue[T]) fits(item entry[T]) bool {
-	if q.count == q.limit.Items || q.limit.Bytes != 0 && item.size > q.limit.Bytes-q.bytes {
+func (q *Queue[T]) fits(size, itemTime int64) bool {
+	if q.count == q.limit.Items || q.limit.Bytes != 0 && size > q.limit.Bytes-q.bytes {
 		return false
 	}
 	if q.limit.Time == 0 || q.count == 0 {
 		return true
 	}
 	minimum, maximum := q.minTime, q.maxTime
-	if item.time < minimum {
-		minimum = item.time
+	if itemTime < minimum {
+		minimum = itemTime
 	}
-	if item.time > maximum {
-		maximum = item.time
+	if itemTime > maximum {
+		maximum = itemTime
 	}
 	return uint64(maximum)-uint64(minimum) <= uint64(q.limit.Time)
 }
 
-func (q *Queue[T]) push(item entry[T]) {
-	index := (q.head + q.count) % len(q.values)
-	q.values[index] = item
+func (q *Queue[T]) push(item *flow.Item[T], size, itemTime int64) {
+	slot := &q.values[(q.head+q.count)%len(q.values)]
+	slot.cell.Move(item)
+	slot.size, slot.time = size, itemTime
 	q.count++
-	q.bytes += item.size
+	q.bytes += size
 	if q.count == 1 {
-		q.minTime, q.maxTime = item.time, item.time
+		q.minTime, q.maxTime = itemTime, itemTime
 	} else if q.limit.Time != 0 {
-		if item.time < q.minTime {
-			q.minTime = item.time
+		if itemTime < q.minTime {
+			q.minTime = itemTime
 		}
-		if item.time > q.maxTime {
-			q.maxTime = item.time
+		if itemTime > q.maxTime {
+			q.maxTime = itemTime
 		}
 	}
 }
 
-func (q *Queue[T]) pop() entry[T] {
-	item := q.values[q.head]
-	var zero entry[T]
-	q.values[q.head] = zero
+func (q *Queue[T]) pop(into *flow.Item[T]) {
+	slot := &q.values[q.head]
+	into.Move(&slot.cell)
+	size, slotTime := slot.size, slot.time
+	slot.size, slot.time = 0, 0
 	q.head = (q.head + 1) % len(q.values)
 	q.count--
-	q.bytes -= item.size
+	q.bytes -= size
 	if q.count == 0 {
 		q.minTime, q.maxTime = 0, 0
-	} else if q.limit.Time != 0 && (item.time == q.minTime || item.time == q.maxTime) {
+	} else if q.limit.Time != 0 && (slotTime == q.minTime || slotTime == q.maxTime) {
 		q.recomputeTime()
 	}
-	return item
 }
 
 func (q *Queue[T]) recomputeTime() {

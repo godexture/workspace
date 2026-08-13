@@ -18,12 +18,10 @@ func main() {
 		os.Exit(int(cli.ExitRuntime))
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	result := cli.Run(ctx, instance, os.Args[1:])
+	// The command owns its own rendering, including of its failures. This
+	// wrapper only turns the classification into a process exit; printing the
+	// joined error here would repeat what the user already read.
+	code := cli.Run(ctx, instance, os.Args[1:]).Code
 	cancel()
-	// The command has already rendered whatever it could. Anything left here
-	// is a failure the streams themselves could not carry.
-	if result.Err != nil && result.Code == cli.ExitRuntime {
-		fmt.Fprintf(os.Stderr, "godec: %v\n", result.Err)
-	}
-	os.Exit(int(result.Code))
+	os.Exit(int(code))
 }

@@ -16,7 +16,7 @@ import (
 )
 
 type writeCollector struct {
-	items  []access.Write
+	items  []flow.Parcel[access.Write]
 	failAt int
 }
 
@@ -24,11 +24,11 @@ func (c *writeCollector) Emit(_ context.Context, input *flow.Item[access.Write])
 	if c.failAt >= 0 && len(c.items) == c.failAt {
 		return errors.New("injected write emission failure")
 	}
-	value, ok := input.Detach()
+	parcel, ok := input.Detach()
 	if !ok {
 		return errors.New("collector received an unowned write")
 	}
-	c.items = append(c.items, value)
+	c.items = append(c.items, parcel)
 	return nil
 }
 
@@ -112,11 +112,11 @@ func TestMuxEmissionFailureReleasesEveryPayloadItAccepted(t *testing.T) {
 	}
 }
 
-func applyWrites(t *testing.T, items []access.Write) []byte {
+func applyWrites(t *testing.T, items []flow.Parcel[access.Write]) []byte {
 	t.Helper()
 	var result []byte
 	for _, item := range items {
-		write := item
+		write := item.Value()
 		switch write.Operation() {
 		case access.AppendOperation:
 			result = write.Bytes().AppendTo(result)

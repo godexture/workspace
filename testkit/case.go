@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -180,7 +181,7 @@ func (r *valueRecorder[T, V]) accept(value T) {
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			r.problems = append(r.problems, fmt.Errorf("output snapshot panicked: %v", recovered))
+			r.problems = append(r.problems, fmt.Errorf("output snapshot panicked: %s", diagnostic.Recovered(recovered)))
 		}
 	}()
 	projected, err := r.snapshot(value)

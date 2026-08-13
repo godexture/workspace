@@ -178,7 +178,7 @@ func TestResolvedFormattingIsRedactedInContainers(t *testing.T) {
 		{name: "resolved pointer", value: &resolved},
 		{name: "view", value: view},
 		{name: "view pointer", value: &view},
-		{name: "resolved value", value: resolved.Value()},
+		{name: "resolved value", value: mustValue(t, resolved)},
 		{name: "public struct", value: publicContainer{Resolved: resolved, View: view}},
 		{name: "public struct pointer", value: &publicContainer{Resolved: resolved, View: view}},
 		{name: "private struct", value: privateContainer{resolved: resolved, view: view}},

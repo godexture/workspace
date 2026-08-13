@@ -122,7 +122,7 @@ island 内は direct typed call とし、edge ごとの interface dispatch を c
 
 ## ownership
 
-ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` だけが解放する。`Detach` で値を取り出した cell も同様に空になる。
+ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` だけが解放する。`Detach` で payload を取り出した cell も同様に空になり、payload は `flow.Parcel` という single-consume token になる。
 
 規則は一つである。
 
@@ -134,13 +134,16 @@ ownership は API の慣習でなく contract として固定する。**所有�
 - `Emit`/`Write` に cell を渡すことは、consume する機会を与えることであって、所有権の無条件移転ではない。
 - linear path は所有権を move し、refcount を増やさない。
 - fan-out でのみ `Fork` で二人目の owner を作る。
-- queue 境界は `Detach` で値を取り出し、`SetWithTraits` で戻す。trait は edge が持つので、queue は値だけを保持し、所有権 token を作らない。
+- queue 境界は cell 同士の `Move` で受け渡す。bounded ring は `flow.Item` を保持するので、生の値と drop trait を別々に持ち回す経路が存在せず、そこから二人目の owner を作れない。
+- call stack の外へ payload を置く必要がある側 (collector、transport) は `Detach` が返す `flow.Parcel` を使う。container が値として持てるよう copy 可能だが、copy は owner ではなく一つの atomic state への handle であり、最初の `Adopt` か `Release` だけが成立する。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
 - public read path は backing `[]byte` / `[]T` を返さない。byte は immutable `buffer.Bytes`、typed sample は immutable `audio.Samples[S]` で読み、mutable slice は `buffer.Edit` / `audio.Editor` / `WriteLease` の明示 writer path だけから得る。
 
-payload を別の item 型へ包み直すだけの段は `flow.Transfer` で move する。source cell を解放せずに空にし、`Detach` で payload を取り出して target を作るため、retain も lease 確保も起きず、どの時点でも owner は一人である。両方を生かす必要がある時だけ `Fork` を使う。`Share` が残ってよいのは schema の `Fork` trait と型自身の `Share` method だけで、hop ごとの retain は production code に存在しない。
+payload を別の item 型へ包み直すだけの段は `flow.Transfer` で move する。source cell を解放せずに空にし、変換結果で target を作るため、retain も lease 確保も起きず、どの時点でも owner は一人である。解放義務は変換の成否で移る。build が失敗すれば元 payload を、成功後に target が保持物を解放できず panic すれば新 payload を、それぞれ一度だけ解放する。両方を生かす必要がある時だけ `Fork` を使う。`Share` が残ってよいのは schema の `Fork` trait と型自身の `Share` method だけで、hop ごとの retain は production code に存在しない。
 
 `flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
+
+宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork`/`Adopt` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。
 
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 

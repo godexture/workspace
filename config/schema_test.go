@@ -54,8 +54,8 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preset resolve failed: %v", err)
 	}
-	if fromPreset.Value().Number != 1 {
-		t.Fatalf("preset number = %d, want 1", fromPreset.Value().Number)
+	if mustValue(t, fromPreset).Number != 1 {
+		t.Fatalf("preset number = %d, want 1", mustValue(t, fromPreset).Number)
 	}
 	if source, _ := fromPreset.Provenance().Source("number"); source != SourcePreset {
 		t.Fatalf("preset provenance = %s, want preset", source)
@@ -65,8 +65,8 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit resolve failed: %v", err)
 	}
-	if resolved.Value().Number != 0 {
-		t.Fatalf("explicit zero = %d, want 0", resolved.Value().Number)
+	if mustValue(t, resolved).Number != 0 {
+		t.Fatalf("explicit zero = %d, want 0", mustValue(t, resolved).Number)
 	}
 	if source, _ := resolved.Provenance().Source("number"); source != SourceExplicit {
 		t.Fatalf("explicit provenance = %s, want explicit", source)
@@ -82,7 +82,7 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if planned.Fingerprint() != resolved.Fingerprint() {
 		t.Fatal("provenance changed the config fingerprint")
 	}
-	fields := schema.summary(planned.Value(), planned.Provenance(), planned.Fingerprint()).Fields()
+	fields := schema.summary(mustValue(t, planned), planned.Provenance(), planned.Fingerprint()).Fields()
 	foundPlanner := false
 	for _, field := range fields {
 		if field.ID == "number" && field.Source == SourcePlanner {
@@ -146,7 +146,7 @@ func TestCanonicalFingerprintIgnoresMapAndRegistrationOrder(t *testing.T) {
 		t.Fatalf("fingerprints differ: %s vs %s", left.Fingerprint(), right.Fingerprint())
 	}
 
-	changed := left.Value()
+	changed := mustValue(t, left)
 	changed.Labels["a"] = 2
 	changedResolved, err := makeSchema(false).ResolveValue(changed)
 	if err != nil {

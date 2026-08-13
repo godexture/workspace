@@ -1,11 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 )
 
 type otherMutableID struct{}
+type fragileID struct{}
 
 type mutableConfig struct {
 	Values []int
@@ -42,7 +45,7 @@ func TestPatchSnapshotsTypedValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if got := resolved.Value().Values; !slices.Equal(got, []int{7, 8}) {
+	if got := mustValue(t, resolved).Values; !slices.Equal(got, []int{7, 8}) {
 		t.Errorf("resolved values = %v, want [7 8]", got)
 	}
 }
@@ -57,14 +60,14 @@ func TestPatchHandsOutIndependentSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first resolve failed: %v", err)
 	}
-	firstValue := first.Value()
+	firstValue := mustValue(t, first)
 	firstValue.Labels["a"] = 99
 
 	second, err := schema.Resolve(patch)
 	if err != nil {
 		t.Fatalf("second resolve failed: %v", err)
 	}
-	if got := second.Value().Labels["a"]; got != 1 {
+	if got := mustValue(t, second).Labels["a"]; got != 1 {
 		t.Errorf("second resolution saw label %d, want 1", got)
 	}
 	if first.Fingerprint() != second.Fingerprint() {
@@ -80,9 +83,9 @@ func TestResolvedValueIsIndependentPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	resolved.Value().Values[0] = 99
-	resolved.Value().Labels["a"] = 99
-	if got := resolved.Value(); got.Values[0] != 1 || got.Labels["a"] != 1 {
+	mustValue(t, resolved).Values[0] = 99
+	mustValue(t, resolved).Labels["a"] = 99
+	if got := mustValue(t, resolved); got.Values[0] != 1 || got.Labels["a"] != 1 {
 		t.Errorf("resolved value = %#v, want the original snapshot", got)
 	}
 	resolved.Diagnostics()
@@ -94,15 +97,73 @@ func TestResolvedValueIsIndependentPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("view resolve failed: %v", err)
 	}
-	shaped, ok := view.Value().(mutableConfig)
+	shaped, ok := mustViewValue(t, view).(mutableConfig)
 	if !ok {
-		t.Fatalf("view value = %T, want mutableConfig", view.Value())
+		t.Fatalf("view value = %T, want mutableConfig", mustViewValue(t, view))
 	}
 	shaped.Values[0] = 99
 	shaped.Labels["a"] = 99
-	compiled, _ := view.Value().(mutableConfig)
+	compiled, _ := mustViewValue(t, view).(mutableConfig)
 	if compiled.Values[0] != 1 || compiled.Labels["a"] != 1 {
 		t.Errorf("second phase saw %#v, want the original snapshot", compiled)
+	}
+}
+
+// A snapshot is the struct copied and every field replaced by its clone, so a
+// clone that fails leaves that field pointing at the retained value. Handing
+// that back would let one caller edit what the next one sees behind an
+// unchanged fingerprint, which is exactly what the snapshot prevents. Catching
+// the panic is not enough; the failure has to reach the caller.
+func TestResolvedValueRefusesToReturnAnAliasAfterACloneFailure(t *testing.T) {
+	var failing atomic.Bool
+	codec := NewCodec(CodecSpec[[]int]{
+		Type:      "fragile",
+		Decode:    func(string) ([]int, error) { return nil, nil },
+		Canonical: func(value []int) ([]byte, error) { return fmt.Appendf(nil, "%v", value), nil },
+		Clone: func(value []int) []int {
+			if failing.Load() {
+				panic("declared clone panicked")
+			}
+			return append([]int(nil), value...)
+		},
+	})
+	schema := Struct[fragileID](func() mutableConfig {
+		return mutableConfig{Values: []int{1, 2}}
+	}).
+		Version("1").
+		AddField(Field("values", func(value *mutableConfig) *[]int { return &value.Values }, codec)).
+		AddField(Field("labels", func(value *mutableConfig) *map[string]int { return &value.Labels }, Map(String(), Int()))).
+		Build()
+
+	resolved, err := schema.Resolve(NewPatch())
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	failing.Store(true)
+
+	if _, err := resolved.Value(); err == nil {
+		t.Fatal("a failed clone returned a value")
+	}
+	view := schema.View()
+	viewed, err := view.Resolve(NewPatch())
+	if err == nil {
+		if _, err := viewed.Value(); err == nil {
+			t.Fatal("a failed clone returned a value through the type-erased view")
+		}
+	}
+
+	failing.Store(false)
+	value, err := resolved.Value()
+	if err != nil {
+		t.Fatalf("snapshot after the clone recovered: %v", err)
+	}
+	value.Values[0] = 99
+	restored, err := resolved.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Values[0] != 1 {
+		t.Errorf("retained snapshot = %v, want the resolved value", restored.Values)
 	}
 }
 

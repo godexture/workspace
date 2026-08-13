@@ -12,6 +12,7 @@ import (
 type flowUnitID struct{}
 type flowUnit struct{ Value int }
 type flowValueID struct{}
+type panicDropID struct{}
 
 var linearValueSchema = schema.Define[flowValueID, int](schema.Traits[int]{})
 
@@ -143,17 +144,17 @@ func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 	}
 }
 
-// Detaching a value for a queue and taking it back must not allocate, so a
-// bounded edge costs no more than a direct call.
+// Handing a payload to a bounded edge and taking it back is a move between
+// cells, so it must not allocate: an edge costs no more than a direct call.
 func TestOwnershipTransferHasNoAllocation(t *testing.T) {
-	traits := linearValueSchema.Traits()
 	allocations := testing.AllocsPerRun(1000, func() {
 		item := NewItem(1, linearValueSchema)
-		stored, ok := item.Detach()
-		if !ok || item.Valid() {
-			t.Fatal("detach did not move the value out of the cell")
+		var stored Item[int]
+		stored.Move(&item)
+		if item.Valid() || !stored.Valid() {
+			t.Fatal("move did not transfer the payload between cells")
 		}
-		item.SetWithTraits(stored, traits.Fork, traits.Drop)
+		item.Move(&stored)
 		item.Drop()
 	})
 	if allocations != 0 {
@@ -232,14 +233,13 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 	})
 }
 
-// Detach is the only way a transport takes a value out of a cell, and it
-// leaves nothing behind that could release the value a second time.
+// Detach is the only way a payload leaves a cell, and it leaves nothing behind
+// that could release the value a second time.
 func TestDetachLeavesNoSecondReleaser(t *testing.T) {
 	var drops atomic.Int32
 	typ := countingSchema(&drops)
-	traits := typ.Traits()
 	item := NewItem(1, typ)
-	value, ok := item.Detach()
+	parcel, ok := item.Detach()
 	if !ok {
 		t.Fatal("detach reported no value")
 	}
@@ -249,12 +249,121 @@ func TestDetachLeavesNoSecondReleaser(t *testing.T) {
 		t.Fatalf("release count after detaching = %d, want 0", drops.Load())
 	}
 	var adopted Item[int]
-	adopted.SetWithTraits(value, traits.Fork, traits.Drop)
+	if !parcel.Adopt(&adopted) {
+		t.Fatal("adopt refused a waiting parcel")
+	}
 	adopted.Drop()
 	adopted.Drop()
 	if drops.Load() != 1 {
 		t.Fatalf("release count after the adopting cell dropped = %d, want 1", drops.Load())
 	}
+}
+
+// A parcel has to be copyable, because a collector holds it by value. Copying
+// it must therefore copy a handle to one state rather than a second owner: the
+// first Adopt or Release wins, and no copy can release the payload again.
+func TestParcelCopiesShareOneConsumption(t *testing.T) {
+	var drops atomic.Int32
+	typ := countingSchema(&drops)
+
+	t.Run("only one copy adopts", func(t *testing.T) {
+		drops.Store(0)
+		item := NewItem(1, typ)
+		parcel, _ := item.Detach()
+		first, second := parcel, parcel
+		var left, right Item[int]
+		if !first.Adopt(&left) {
+			t.Fatal("the first copy did not adopt")
+		}
+		if second.Adopt(&right) || right.Valid() {
+			t.Fatal("a copied parcel adopted the payload a second time")
+		}
+		left.Drop()
+		right.Drop()
+		if drops.Load() != 1 {
+			t.Fatalf("release count = %d, want 1", drops.Load())
+		}
+	})
+
+	t.Run("release after adopt does nothing", func(t *testing.T) {
+		drops.Store(0)
+		item := NewItem(1, typ)
+		parcel, _ := item.Detach()
+		copied := parcel
+		var adopted Item[int]
+		parcel.Adopt(&adopted)
+		copied.Release()
+		copied.Release()
+		if drops.Load() != 0 {
+			t.Fatalf("release count before the adopting cell dropped = %d, want 0", drops.Load())
+		}
+		adopted.Drop()
+		if drops.Load() != 1 {
+			t.Fatalf("release count = %d, want 1", drops.Load())
+		}
+	})
+
+	t.Run("an unadopted parcel releases once", func(t *testing.T) {
+		drops.Store(0)
+		item := NewItem(1, typ)
+		parcel, _ := item.Detach()
+		copied := parcel
+		parcel.Release()
+		copied.Release()
+		if drops.Load() != 1 {
+			t.Fatalf("release count = %d, want 1", drops.Load())
+		}
+		if parcel.Valid() || copied.Valid() {
+			t.Fatal("a consumed parcel still reports a waiting payload")
+		}
+	})
+}
+
+// A declared Drop is third-party code. When the cell that is about to take a
+// payload panics while releasing what it held, the incoming payload has no
+// owner yet, so it must not be stranded by the unwind.
+func TestTakingOverAPanickingReleaseDoesNotStrandTheIncomingPayload(t *testing.T) {
+	var drops atomic.Int32
+	panicking := schema.Define[panicDropID](schema.Traits[int]{
+		Drop: func(int) {
+			drops.Add(1)
+			panic("declared drop panicked")
+		},
+	})
+
+	assertStranded := func(t *testing.T, hand func(target *Item[int])) {
+		t.Helper()
+		drops.Store(0)
+		target := NewItem(1, panicking)
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("the declared drop panic did not propagate")
+				}
+			}()
+			hand(&target)
+		}()
+		if drops.Load() != 2 {
+			t.Errorf("release count = %d, want the held and the incoming payload", drops.Load())
+		}
+	}
+
+	t.Run("Set", func(t *testing.T) {
+		assertStranded(t, func(target *Item[int]) { target.Set(2, panicking) })
+	})
+	t.Run("Fork", func(t *testing.T) {
+		assertStranded(t, func(target *Item[int]) {
+			source := NewItem(2, panicking)
+			source.Fork(target)
+		})
+	})
+	t.Run("Adopt", func(t *testing.T) {
+		assertStranded(t, func(target *Item[int]) {
+			source := NewItem(2, panicking)
+			parcel, _ := source.Detach()
+			parcel.Adopt(target)
+		})
+	})
 }
 
 var errTransferTest = errors.New("transfer build failure")

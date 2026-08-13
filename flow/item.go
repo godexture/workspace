@@ -2,6 +2,7 @@ package flow
 
 import (
 	"errors"
+	"sync/atomic"
 
 	"github.com/godexture/godec/media/schema"
 )
@@ -71,8 +72,24 @@ func (i *Item[T]) Set(value T, typ schema.Type[T]) {
 		return
 	}
 	traits := typ.Traits()
-	i.Drop()
-	i.value, i.fork, i.drop, i.valid = value, traits.Fork, traits.Drop, true
+	i.take(value, traits.Fork, traits.Drop)
+}
+
+// take releases what the cell held and then stores value. A declared Drop is
+// third-party code: if it panics, value has no owner yet and would be stranded
+// by the unwind, so it is released on the way out and the panic continues.
+func (i *Item[T]) take(value T, fork func(T) T, drop func(T)) {
+	if i.valid {
+		stranded := true
+		defer func() {
+			if stranded && drop != nil {
+				drop(value)
+			}
+		}()
+		i.Drop()
+		stranded = false
+	}
+	i.value, i.fork, i.drop, i.valid = value, fork, drop, true
 }
 
 // Valid reports whether the cell still holds an unreleased value.
@@ -126,40 +143,67 @@ func (i *Item[T]) Fork(target *Item[T]) bool {
 	if i.fork != nil {
 		value = i.fork(value)
 	}
-	target.Drop()
-	target.value, target.fork, target.drop, target.valid = value, i.fork, i.drop, true
+	target.take(value, i.fork, i.drop)
 	return true
 }
 
-// Detach empties the cell and returns the held value without releasing it, so
-// the caller becomes responsible for it. A transport that must hold an item
-// outside a call stack uses it together with SetWithTraits; components move
-// cells instead.
-//
-// It returns no token, because a token that can be copied can be released
-// twice, which is exactly what a cell exists to prevent.
-func (i *Item[T]) Detach() (T, bool) {
+// Detach empties the cell into a Parcel, which is how an owned payload leaves
+// a call stack: a collector appends it to a container, a transport stores it.
+// Components move cells instead.
+func (i *Item[T]) Detach() (Parcel[T], bool) {
 	if i == nil || !i.valid {
-		var zero T
-		return zero, false
+		return Parcel[T]{}, false
 	}
-	value := i.value
+	state := &parcel[T]{value: i.value, fork: i.fork, drop: i.drop}
 	i.clear()
-	return value, true
+	return Parcel[T]{state: state}, true
 }
 
-// SetWithTraits takes ownership of value under explicit traits, releasing
-// anything the cell still held. It is the counterpart of Detach for a
-// transport that carries traits separately from the values it stores.
-func (i *Item[T]) SetWithTraits(value T, fork func(T) T, drop func(T)) {
-	if i == nil {
-		if drop != nil {
-			drop(value)
-		}
+// Parcel is one owned payload waiting outside a cell. Unlike a cell it is
+// copyable, because a container has to hold it by value, so it shares one
+// state instead of one owner: the first Adopt or Release wins and every later
+// one does nothing. A copied Parcel therefore cannot release twice, which is
+// the property that makes leaving a cell safe at all.
+type Parcel[T any] struct{ state *parcel[T] }
+
+type parcel[T any] struct {
+	taken atomic.Bool
+	value T
+	fork  func(T) T
+	drop  func(T)
+}
+
+// Valid reports whether the payload is still waiting to be adopted.
+func (p Parcel[T]) Valid() bool { return p.state != nil && !p.state.taken.Load() }
+
+// Value borrows the waiting payload. It stays valid only until the parcel is
+// adopted or released.
+func (p Parcel[T]) Value() T {
+	if p.state == nil {
+		var zero T
+		return zero
+	}
+	return p.state.value
+}
+
+// Adopt moves the payload into target, releasing anything target still held.
+// It reports whether this call was the one that took it.
+func (p Parcel[T]) Adopt(target *Item[T]) bool {
+	if p.state == nil || target == nil || !p.state.taken.CompareAndSwap(false, true) {
+		return false
+	}
+	target.take(p.state.value, p.state.fork, p.state.drop)
+	return true
+}
+
+// Release drops a payload nobody adopted.
+func (p Parcel[T]) Release() {
+	if p.state == nil || !p.state.taken.CompareAndSwap(false, true) {
 		return
 	}
-	i.Drop()
-	i.value, i.fork, i.drop, i.valid = value, fork, drop, true
+	if p.state.drop != nil {
+		p.state.drop(p.state.value)
+	}
 }
 
 func (i *Item[T]) clear() {
@@ -183,11 +227,12 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	value, drop := source.value, source.drop
 	source.clear()
 	// The source cell is empty from here, so its owner cannot release the
-	// value any more. Releasing on every path out of build -- returned error
-	// or panic -- is what keeps that emptying safe.
-	handed := false
+	// value any more. Every path out -- returned error, a panic in build, a
+	// panic while target releases what it held -- has to release exactly one
+	// of the two payloads, and which one depends on how far the hand-off got.
+	built := false
 	defer func() {
-		if !handed && drop != nil {
+		if !built && drop != nil {
 			drop(value)
 		}
 	}()
@@ -195,7 +240,15 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	if err != nil {
 		return err
 	}
-	handed = true
+	// build carried the payload into result, so the obligation moved with it.
+	built = true
+	stored := false
+	defer func() {
+		if !stored {
+			typ.Drop(result)
+		}
+	}()
 	target.Set(result, typ)
+	stored = true
 	return nil
 }

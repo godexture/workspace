@@ -16,11 +16,13 @@ M0〜M6 の実装は、module 境界、typed media path、planner/runtime、file
 | 優先度 | 件数 | 判定 | 現状 |
 |---|---:|---|---|
 | P0 | 0 | 即時の repository-wide stop に相当する問題は確認しなかった | — |
-| P1 | 7 | M7 着手前に contract と回帰 test を直す | 全件解決済み（2026-08-13） |
-| P2 | 4 | M6 再完了または直後の hardening 単位で直す | 全件解決済み（2026-08-13） |
+| P1 | 7 | M7 着手前に contract と回帰 test を直す | 全件解決済み（2026-08-14） |
+| P2 | 4 | M6 再完了または直後の hardening 単位で直す | 全件解決済み（2026-08-14） |
 | P3 | 1 | M7 で責務が増える前に分割する | 解決済み（2026-08-13） |
 
 推奨する進捗上の扱いは、M0/M1 の完了を維持し、M2〜M6 の過去成果を消すのではなく、M6 を `進行中（M0〜M6 review remediation）` へ戻して本書の P1 を閉じることであった。R-01〜R-12 をすべて実装と negative regression test の両方で閉じたため、[M6 再完了条件](#m6-再完了条件) を満たしている。
+
+2026-08-13 の是正に対する再監査で R-01、R-02、R-06、R-07、R-10、R-11 が再 open した。いずれも「対象を一つ直したが、同じ contract を破る別経路が残っていた」型である。2026-08-14 にすべて閉じ、各 finding へ再 open の原因と是正を記録した。
 
 ## 監査範囲
 
@@ -72,9 +74,11 @@ coverage は合否条件にはしていないが、未検査 contract の探索�
 
 ### R-01 [P1] secret が標準 formatting から漏れる
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
-`SecretValue`、`Patch`、`Resolved`、`ResolvedView` に全 verb を安全に処理する formatter を追加した。formatter method が呼ばれない named type や unexported outer field でも raw value を反射表示できない opaque storage とし、struct/pointer/slice/map/interface、typed/type-erased resolved value、主要な verb/flag/width/precision の回帰 test を追加した。`Patch` の表示は schema 解決前であるため preset、field ID、source のみを残し、typed/text value は一律非表示にした。secret contract を検査する test failure 自身も raw value を出力しない。
+2026-08-13 の修正は config 型の formatter だけを直しており、panic recovery が recovered value を文字列化する経路が残っていた。plugin が `panic(errors.New(secret.Reveal()))` すれば credential が diagnostic、Result、CLI 出力へ出る。2026-08-14 に `diagnostic.Recovered` を追加し、plugin の phase panic、Host の invoke、runtime task、observation sink、testkit の Parse/Marshal と output snapshot をすべてそこへ通した。panic 値は panic した側が選ぶ data なので型だけを報告し、Go 自身が生成して caller data を含まない `runtime.Error` だけは message を残す。panic の位置は元から別に保持している stack trace が示す。`diagnostic` と `plugin` の回帰 test が、secret を載せた panic 値を string、error、named type、slice、map、struct、pointer で投げても error と diagnostic detail に出ないことを固定する。
+
+以下は 2026-08-13 の記録である。`SecretValue`、`Patch`、`Resolved`、`ResolvedView` に全 verb を安全に処理する formatter を追加した。formatter method が呼ばれない named type や unexported outer field でも raw value を反射表示できない opaque storage とし、struct/pointer/slice/map/interface、typed/type-erased resolved value、主要な verb/flag/width/precision の回帰 test を追加した。`Patch` の表示は schema 解決前であるため preset、field ID、source のみを残し、typed/text value は一律非表示にした。secret contract を検査する test failure 自身も raw value を出力しない。
 
 **根拠**
 
@@ -95,9 +99,13 @@ debug log、test failure、panic report、observability adapter が一般的な 
 
 ### R-02 [P1] ownership token の複製と panic が exact-once release を破る
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
-複製して二重解放できる transport token を public surface から削除した。所有権を表す値は pointer で渡す `flow.Item` だけになり、`noCopy` により複製を `go vet` が検出する。`flow.Transfer` は source を空にした後 `defer` で unwind を検出し、error と panic の両方で元 payload を一度だけ drop する。詳細は [runtime](runtime.md#ownership) を正本とする。
+2026-08-13 に `Owned[T]` を削除したが、`Item.Detach` が copyable な `T` を返し `SetWithTraits` が同じ値から複数の cell を作れたため、同じ経路が名前を変えて残っていた。`Transfer` も `handed` を `target.Set` より先に立てており、target の `Drop` が panic すると新 payload が誰にも保持されないまま元 payload の解放も無効になっていた。`Set`/`SetWithTraits`/`Fork` にも、保持物の `Drop` が panic した時に受け取り中の payload を失う同型の欠陥があった。
+
+2026-08-14 に次を直した。bounded queue の ring が `flow.Item` を保持するようになり、runtime の hot path から生の値と drop trait を持ち回す経路が消えた（`Move` だけで受け渡すので allocation も増えない）。call stack の外へ payload を置く必要がある collector と transport には `Detach` が返す single-consume な `flow.Parcel` を用意した。container が値として持てるよう copy 可能だが、copy は owner ではなく一つの atomic state への handle であり、最初の `Adopt` か `Release` だけが成立する。`Transfer` は build 成功時点で解放義務を結果へ移し、`target.Set` が完了するまでその義務を保持する。`Set`/`Fork`/`Adopt` は保持物の解放が panic した場合、受け取り中の payload を解放してから panic を通す。`flow` の回帰 test が、parcel の copy が二度 adopt/release できないこと、および三つの経路すべてで panic 時に payload が失われないことを固定する。詳細は [runtime](runtime.md#ownership) を正本とする。
+
+Go では「自分が所有していない値の所有権を宣言する」ことを型で防げないため、`NewItem`/`NewItemWithTraits` に借用値を渡す誤用は残る。cell が保証するのは、一度 cell に入った payload の所有権を `flow` の API で複製できないことである。
 
 R-02 には独立した二つの failure mode がある。
 
@@ -208,9 +216,11 @@ reservation slot の `JUNK` を専用 anchor (`chunkReservation`) の raw chunk 
 
 ### R-06 [P1] immutable request/config が shallow copy で、fingerprint 後に意味が変わる
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
-`Patch` を schema-bound にした。typed entry は `Schema.Key`／`SchemaView.Key` が返す `config.Key` 経由でのみ入り、key が field の宣言 clone を運ぶので `Patch` は set 時と read 時の両方で snapshot を作る。schema を知らない `Set(string, any)` では [C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) に反せず deep clone できないため、この形にした。text entry は immutable なので schema を要さない。他 schema の key、型不一致、無効 key は `Patch` が diagnostic として保持し、解決時に集約する。`Resolved` と `ResolvedView` は exported field をやめ、`Value()` が呼び出しごとに fresh snapshot を返す accessor になった。これにより Shape が受け取った slice/map を書き換えても、同じ fingerprint の後続 Compile は元の値を見る。`Enum` は variadic の backing slice を複製し、`job.NewNode`／`NewAdaptor`／`NewEndpoint` は constructor と getter の両方で patch を clone する。回帰 test は constructor 入力の後書き換え、getter 戻り値の書き換え、Shape callback 内の書き換え、他 schema key、`Enum` の caller mutation を検査する。
+2026-08-13 の `Value()` accessor は snapshot の失敗を捨てていた。snapshot は struct を copy してから field ごとに clone で置き換えるため、clone が panic した field は保持値を指したままになる。それを返すと、fingerprint も diagnostic も変わらないまま Shape が Compile 用の値を書き換えられ、R-06 の中心がそのまま再発していた。2026-08-14 に `Resolved.Value` と `ResolvedView.Value` を `(値, error)` に変え、clone が失敗した snapshot は返さないようにした。panic を閉じ込めるだけでは足りず、失敗そのものを caller へ渡す必要がある。回帰 test は「resolve 時は clone 成功、その後 clone が panic」という順序で、alias が返らないことと、clone が回復した後は元の snapshot が保たれていることを固定する。
+
+以下は 2026-08-13 の記録である。`Patch` を schema-bound にした。typed entry は `Schema.Key`／`SchemaView.Key` が返す `config.Key` 経由でのみ入り、key が field の宣言 clone を運ぶので `Patch` は set 時と read 時の両方で snapshot を作る。schema を知らない `Set(string, any)` では [C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) に反せず deep clone できないため、この形にした。text entry は immutable なので schema を要さない。他 schema の key、型不一致、無効 key は `Patch` が diagnostic として保持し、解決時に集約する。`Resolved` と `ResolvedView` は exported field をやめ、`Value()` が呼び出しごとに fresh snapshot を返す accessor になった。これにより Shape が受け取った slice/map を書き換えても、同じ fingerprint の後続 Compile は元の値を見る。`Enum` は variadic の backing slice を複製し、`job.NewNode`／`NewAdaptor`／`NewEndpoint` は constructor と getter の両方で patch を clone する。回帰 test は constructor 入力の後書き換え、getter 戻り値の書き換え、Shape callback 内の書き換え、他 schema key、`Enum` の caller mutation を検査する。
 
 **根拠**
 
@@ -233,7 +243,9 @@ constructor 後の caller mutation で Job の意味が変わり、[M6-5](task/m
 
 ### R-07 [P1] config の第三者 callback panic が Host/process 境界を越える
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
+
+panic を diagnostic に変換するだけでは、失敗した snapshot が alias を返す経路が残っていた。その部分は R-06 と同じ修正で閉じている。以下は 2026-08-13 の記録である。
 
 `config/callback.go` に共通 helper を置き、宣言された callback へ入る経路をすべてそこから呼ぶ。accessor と `Clone` は field boundary（read/write/decode/normalize）で、`Decode`/`Encode`/`Canonical`/`Normalize`/`Validate` は codec の入口で、schema validator・default factory・preset は schema の入口で捕捉する。失敗は phase と field/schema path を持つ `config.callback-panic` diagnostic か、その操作自身の error になる。recovered 値は secret を含み得るため、diagnostic にも error にも operation 名しか出さない。表示専用の `Encode` は失敗 channel を持たないので `<invalid>` へ縮退する。panic matrix test は accessor、clone、decode、encode、canonical、normalize、validate、schema validator、default factory、preset を網羅し、いずれの経路でも panic 値が漏れないことを検査する。
 
@@ -286,9 +298,11 @@ buffer.Spec{Planes: []buffer.PlaneSpec{
 
 ### R-09 [P2] public testkit が M6 必須の bounded Suggest を検査しない
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
-`testkit.Suggests` を追加した。`Suggestion` は input descriptor、`plugin.Need`、期待 candidate を取り、candidate は redacted な config summary の field 値で表すので secret を test source へ書かずに済む。runner は declared limit、canonical 一意性、component 自身の schema への所属、error diagnostic の不在、繰り返しの一致を検査する。`plugin.Suggest` が panic と invalid config を error にするため、error なしの要求がその両方を覆う。`SuggestContext` は context を持たないので deadline/cancel に依存する余地が構造的に無く、その事実を comment に残した。規則は `verifySuggestions` に切り出し、testkit 自身の test が limit 超過、非再現、重複、未解決 candidate、件数不一致、値不一致、未知 field で実際に落ちることを固定する。coverage registry は `HasSuggest` を宣言した component に Suggest scenario が無ければ失敗する。公式 linear の 5 component すべてに、入力追従・要求 endian 採用・提示なしの 3 scenario を通した。
+2026-08-13 の coverage は `executed` の未知 identity だけを検査し、`suggested` を検査していなかった。「recorded identity はすべて対象 Set に属する」という公開 contract と一致しないため、2026-08-14 に両方を同じ helper で検査するようにし、対象 Set の外にある component の Suggest scenario を記録した場合に失敗する test を足した。
+
+以下は 2026-08-13 の記録である。`testkit.Suggests` を追加した。`Suggestion` は input descriptor、`plugin.Need`、期待 candidate を取り、candidate は redacted な config summary の field 値で表すので secret を test source へ書かずに済む。runner は declared limit、canonical 一意性、component 自身の schema への所属、error diagnostic の不在、繰り返しの一致を検査する。`plugin.Suggest` が panic と invalid config を error にするため、error なしの要求がその両方を覆う。`SuggestContext` は context を持たないので deadline/cancel に依存する余地が構造的に無く、その事実を comment に残した。規則は `verifySuggestions` に切り出し、testkit 自身の test が limit 超過、非再現、重複、未解決 candidate、件数不一致、値不一致、未知 field で実際に落ちることを固定する。coverage registry は `HasSuggest` を宣言した component に Suggest scenario が無ければ失敗する。公式 linear の 5 component すべてに、入力追従・要求 endian 採用・提示なしの 3 scenario を通した。
 
 **根拠**
 
@@ -311,8 +325,13 @@ buffer.Spec{Planes: []buffer.PlaneSpec{
 
 R-10 は export 管理と実 file semantics が結び付いた計画上の欠陥である。
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
+2026-08-13 の実装には二つの穴があった。sequential-only な session は Format 選択時に prefix replay wrapper へ差し替わるが、wrapper が underlying の `Snapshotter` を委譲していなかった。acquire 時には identity を記録済みなので、run 前の照合で現在 identity が空になり、変更されていない source を変更済みと誤判定する。また `NewSnapshot` が空 identity の `WeakSnapshot` を valid とし、Host は nature を比べずに identity だけを比べていたため、弱い identity すら提供しない Provider が検査を通過できた。
+
+2026-08-14 に、wrapper が underlying へ委譲し、underlying が identity を持たない場合だけ `access.ErrNoSnapshot` を返すようにした。Host はそれを「比較対象が無い」として扱い、「比較して一致した」とは区別する。`NewSnapshot` は `NoSnapshot` 以外に空 identity を許さない。照合は nature と identity の両方を見るので、identity を失うことも弱めることも変化として扱われる。回帰 test は wrapper 越しの identity 保持、identity を持たない source での非誤検出、`NewSnapshot` の valid/invalid 組合せを固定する。
+
+以下は 2026-08-13 の記録である。
 `access.Snapshot` を削除せず、local file Provider を実 consumer にした。`access.Snapshotter` を実装する session が現在の content identity を報告し、判断は Host が持つ。Host は acquire 時の identity を記録し、run 開始前と output commit 前に照合して、変化していれば `access/snapshot` failure にする。local file の identity は size と mtime で `WeakSnapshot` として報告する。truncate、grow、mtime が動く overwrite は検出でき、同一 timestamp tick 内の同 size 上書きは検出できない。強い identity は content の読み直しでしか作れないため、nature を偽らず weak と宣言し [capability](capability.md) の B9 に記録した。`StableSize` は渡す byte 列への約束でもあるので、read は acquire 時 size で clamp する。session は開いた path ではなく開いた file を提供するため、path 差し替えは content 変化ではない。coverage registry は `M0`〜`M11` の許可集合だけを受理し、`remote-provider` という擬似 milestone は使えなくなった。同 assignment は削除し、[scope](scope.md#m6-の-contract-分類) の記述も実在 milestone だけを指すよう直した。integration test は truncate、grow、同 size 上書き、path 差し替えを Prepare と Run の間に行う。
 
 **根拠**
@@ -338,9 +357,11 @@ M10 の final coverage と M11 の no-unused-export を閉じられない。さ�
 
 ### R-11 [P2] CLI が rendering/cleanup failure の原因を捨てる
 
-**状態: 解決済み（2026-08-13）**
+**状態: 解決済み（2026-08-14）**
 
-`cli.Run` は分類済み `ExitCode` と、その裏で起きた独立な failure をすべて `errors.Join` した error を持つ `cli.Result` を返す。parse、request、plan、prepare、run、render、close は一つの outcome へ結果を足すだけで、後段の failure が前段の failure を上書きしない。`cmd/godec` だけが code を `os.Exit` へ写す薄い wrapper である。failure matrix test は plan 描画中の stdout 失敗、result 描画時点の stdout 失敗、planning failure 報告中の stderr 失敗、usage error 報告中の stderr 失敗、cancel、plan 描画失敗と close の同時発生を検査し、成功時に error が nil であることも固定する。
+2026-08-13 の集約は、run が失敗した時に `Prepared.Close` が返す同じ failure をもう一度 join しており、独立していない一つの failure を二つとして報告していた。`cmd/godec` も、`cli.Run` が既に描画した diagnostic をもう一度 stderr へ出していた。2026-08-14 に、cli は Close の結果が run failure と同一なら追加せず、`cmd/godec` は分類を `os.Exit` へ写すだけの wrapper に戻した。回帰 test は、出力先が既存 directory で commit に失敗する変換で、join された failure に重複が無いことを固定する。
+
+以下は 2026-08-13 の記録である。`cli.Run` は分類済み `ExitCode` と、その裏で起きた独立な failure をすべて `errors.Join` した error を持つ `cli.Result` を返す。parse、request、plan、prepare、run、render、close は一つの outcome へ結果を足すだけで、後段の failure が前段の failure を上書きしない。`cmd/godec` だけが code を `os.Exit` へ写す薄い wrapper である。failure matrix test は plan 描画中の stdout 失敗、result 描画時点の stdout 失敗、planning failure 報告中の stderr 失敗、usage error 報告中の stderr 失敗、cancel、plan 描画失敗と close の同時発生を検査し、成功時に error が nil であることも固定する。
 
 **根拠**
 
@@ -417,7 +438,7 @@ R-03 と R-06 は公開 API の形を変える。後方互換性が不要な今�
 
 ## M6 再完了条件
 
-本監査に対する M6 再完了は、少なくとも次を満たした時とする。**2026-08-13 時点で全項目を満たした。**
+本監査に対する M6 再完了は、少なくとも次を満たした時とする。**2026-08-14 時点で全項目を満たした。**
 
 - R-01〜R-07 の P1 が実装と negative regression test の両方で閉じている。
 - R-08〜R-11 が閉じているか、実在する roadmap milestone、実 consumer、機械検査可能な完了条件へ割り当てられている。

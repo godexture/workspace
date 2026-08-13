@@ -86,9 +86,13 @@ func TestComponentResolvesTypeErasedPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-	value, ok := resolved.Value().(pluginConfig)
+	snapshot, err := resolved.Value()
+	if err != nil {
+		t.Fatalf("resolved snapshot failed: %v", err)
+	}
+	value, ok := snapshot.(pluginConfig)
 	if !ok || value.Level != 7 {
-		t.Fatalf("resolved value = %#v, want pluginConfig{Level: 7}", resolved.Value())
+		t.Fatalf("resolved value = %#v, want pluginConfig{Level: 7}", snapshot)
 	}
 
 	_, err = component.Resolve(config.NewPatch().SetText("level", "99").SetText("unknown", "1"))

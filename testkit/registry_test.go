@@ -75,3 +75,27 @@ func TestCoverageRejectsExecutableWithoutExecutedTypedCase(t *testing.T) {
 		t.Fatalf("missing executable coverage problems = %v", problems)
 	}
 }
+
+// Coverage claims every recorded identity belongs to the Set it verifies
+// against. A Suggest scenario recorded for a component outside that Set is as
+// wrong as an executed case would be.
+func TestCoverageRejectsForeignSuggestIdentity(t *testing.T) {
+	set := plugin.NewSet(runnerDefinition())
+	coverage := NewCoverage()
+	coverage.record(plugin.IdentityOf[runnerComponentID]())
+	coverage.recordSuggest(plugin.IdentityOf[runnerComponentID]())
+	coverage.recordSuggest(plugin.IdentityOf[coverageForeignID]())
+
+	problems := coverage.executableProblems(set)
+	found := false
+	for _, problem := range problems {
+		if strings.Contains(problem.Error(), "suggested identity") && strings.Contains(problem.Error(), "coverageForeignID") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("foreign Suggest identity was accepted: %v", problems)
+	}
+}
+
+type coverageForeignID struct{}

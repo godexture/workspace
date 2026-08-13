@@ -287,7 +287,7 @@ func (c Component) panicError(code, message string, recovered any) error {
 		diagnostic.ErrorSeverity,
 		diagnostic.Path{Component: c.identity.String()},
 		message,
-		map[string]string{"cause": fmt.Sprint(recovered), "stack": string(debug.Stack())},
+		map[string]string{"cause": diagnostic.Recovered(recovered), "stack": string(debug.Stack())},
 	))
 }
 

@@ -188,9 +188,9 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))
 	} else {
 		implementation.shape = func(ctx ShapeContext, resolved config.ResolvedView) (flow.Shape, error) {
-			value, ok := resolved.Value().(C)
-			if !ok {
-				return flow.Shape{}, errors.New("resolved config has the wrong type for component Shape")
+			value, err := typedConfig[C](resolved)
+			if err != nil {
+				return flow.Shape{}, err
 			}
 			return spec.Shape(ctx, value)
 		}
@@ -199,9 +199,9 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.compile", "component Spec requires Compile"))
 	} else {
 		implementation.compile = func(ctx CompileContext, resolved config.ResolvedView, inputs any) (compiledErased, error) {
-			value, ok := resolved.Value().(C)
-			if !ok {
-				return compiledErased{}, errors.New("resolved config has the wrong type for component Compile")
+			value, err := typedConfig[C](resolved)
+			if err != nil {
+				return compiledErased{}, err
 			}
 			typedInputs, ok := inputs.(flow.Descriptors[D])
 			if !ok {
@@ -266,4 +266,20 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 
 func specItem(code, message string) diagnostic.Item {
 	return diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{}, message, nil)
+}
+
+// typedConfig takes the phase's own snapshot of a resolved config. A failed
+// snapshot is an error rather than a fallback value: the alternative is a
+// config that still aliases what the previous phase saw.
+func typedConfig[C any](resolved config.ResolvedView) (C, error) {
+	var zero C
+	snapshot, err := resolved.Value()
+	if err != nil {
+		return zero, err
+	}
+	value, ok := snapshot.(C)
+	if !ok {
+		return zero, errors.New("resolved config has the wrong type for this component")
+	}
+	return value, nil
 }
