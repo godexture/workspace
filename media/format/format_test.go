@@ -126,7 +126,7 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	if !ok || !trait.HasInspect() {
 		t.Fatalf("read trait = %#v/%v", trait, ok)
 	}
-	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}))
+	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 1<<20))
 	if err != nil || called != 1 {
 		t.Fatalf("Inspect = %#v, %v; calls = %d", inspection, err, called)
 	}

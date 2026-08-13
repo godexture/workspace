@@ -61,12 +61,13 @@ type Usage struct {
 	CacheHits          int
 	ProbeBytes         resource.Bytes
 	ProbeRounds        int
+	InspectBytes       resource.Bytes
 }
 
 func (u Usage) valid(budget job.Budget) bool {
 	return u.States >= 0 && u.Compiles >= 0 && u.Suggestions >= 0 && u.FixpointIterations >= 0 && u.CacheHits >= 0 && u.ProbeRounds >= 0 &&
 		u.States <= budget.States && u.Compiles <= budget.Compiles && u.FixpointIterations <= budget.FixpointIterations &&
-		u.ProbeBytes <= budget.ProbeBytes && u.ProbeRounds <= budget.ProbeRounds
+		u.ProbeBytes <= budget.ProbeBytes && u.ProbeRounds <= budget.ProbeRounds && u.InspectBytes <= budget.InspectBytes
 }
 
 type Platform struct {

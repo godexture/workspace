@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
@@ -71,7 +72,7 @@ func TestInspectHeaderUsesStableSizeForRIFFAndRF64(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			truncated := complete[:len(complete)-2]
-			_, err := inspectHeaderWithStableSize(context.Background(), memoryRandom(truncated), uint64(len(truncated)), metadata.Resolver{})
+			_, err := inspectHeaderWithSize(context.Background(), memoryRandom(truncated), uint64(len(truncated)), true, metadata.Resolver{}, job.DefaultBudget().InspectBytes)
 			if !errors.Is(err, ErrTruncatedData) {
 				t.Fatalf("stable-size inspection error = %v", err)
 			}
@@ -207,4 +208,18 @@ func pcmFormat(channels uint16, rate uint32, bits uint16) []byte {
 	binary.LittleEndian.PutUint16(value[12:14], blockAlign)
 	binary.LittleEndian.PutUint16(value[14:16], bits)
 	return value
+}
+
+// A declared chunk size is content the source controls, so preserving it must
+// not size an allocation beyond the planning budget.
+func TestInspectRefusesToPreserveChunksBeyondTheBudget(t *testing.T) {
+	payload := make([]byte, 4096)
+	value := testWAVE([]byte{1, 0, 2, 0}, 1, 48_000, testChunk{id: "BULK", payload: payload})
+	if _, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 1<<20); err != nil {
+		t.Fatalf("generous budget rejected a preserved chunk: %v", err)
+	}
+	_, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 512)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("narrow budget error = %v, want %v", err, ErrUnsupported)
+	}
 }

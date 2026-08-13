@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 var (
@@ -23,14 +24,20 @@ type InspectContext struct {
 	context  context.Context
 	opening  access.Opening
 	prepared plugin.CompileContext
+	limit    resource.Bytes
 }
 
-func NewInspectContext(ctx context.Context, opening access.Opening, prepared plugin.CompileContext) InspectContext {
+func NewInspectContext(ctx context.Context, opening access.Opening, prepared plugin.CompileContext, limit resource.Bytes) InspectContext {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return InspectContext{context: ctx, opening: opening, prepared: prepared}
+	return InspectContext{context: ctx, opening: opening, prepared: prepared, limit: limit}
 }
+
+// Limit reports the bytes this Inspect may still read. Host enforces it on the
+// opening as well; a Format consults it to refuse an allocation that a
+// declared header size would otherwise dictate.
+func (c InspectContext) Limit() resource.Bytes { return c.limit }
 
 func (c InspectContext) Context() context.Context {
 	if c.context == nil {
@@ -46,7 +53,7 @@ func (c InspectContext) Opening() access.Opening { return c.opening }
 func (c InspectContext) Prepared() plugin.CompileContext { return c.prepared }
 
 func (c InspectContext) Valid() bool {
-	return c.opening.Valid() && c.opening.Direction() == access.SourceDirection
+	return c.opening.Valid() && c.opening.Direction() == access.SourceDirection && c.limit > 0
 }
 
 // Inspection is the erased transport for one Format-owned immutable value.

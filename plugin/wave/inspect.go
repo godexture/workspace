@@ -10,10 +10,12 @@ import (
 	"math"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
@@ -33,7 +35,7 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is negative", ErrMalformed)
 	}
 	resolver, _ := metadata.ResolverOf(ctx.Prepared())
-	value, err := inspectHeaderWithStableSize(ctx.Context(), random, uint64(size), resolver)
+	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.Limit())
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -45,14 +47,11 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 }
 
 func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolver metadata.Resolver) (header, error) {
-	return inspectHeaderWithSize(ctx, reader, 0, false, resolver)
+	return inspectHeaderWithSize(ctx, reader, 0, false, resolver, job.DefaultBudget().InspectBytes)
 }
 
-func inspectHeaderWithStableSize(ctx context.Context, reader access.Random, size uint64, resolver metadata.Resolver) (header, error) {
-	return inspectHeaderWithSize(ctx, reader, size, true, resolver)
-}
-
-func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver) (header, error) {
+func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, limit resource.Bytes) (header, error) {
+	budget := preserveBudget{remaining: uint64(limit)}
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}
@@ -193,7 +192,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			return header{}, fmt.Errorf("%w: chunk exceeds RIFF bounds", ErrMalformed)
 		}
 		if preserve {
-			if err := inspectPreservedChunk(ctx, reader, resolver, document, offset, next, declaredSize, id, anchor); err != nil {
+			if err := inspectPreservedChunk(ctx, reader, resolver, document, &budget, offset, next, declaredSize, id, anchor); err != nil {
 				return header{}, err
 			}
 		}
@@ -229,10 +228,13 @@ func validateSourceEnd(declared, actual uint64, known bool) error {
 	return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrMalformed, declared, actual)
 }
 
-func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {
+func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, budget *preserveBudget, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {
 	length := next - offset
 	if length > uint64(^uint(0)>>1) {
 		return fmt.Errorf("%w: chunk %q exceeds control-plane address space", ErrUnsupported, id)
+	}
+	if err := budget.reserve(length, id); err != nil {
+		return err
 	}
 	raw := make([]byte, int(length))
 	if err := readFullAt(ctx, reader, raw, int64(offset)); err != nil {
@@ -360,4 +362,17 @@ func checkedAdd(left, right uint64) (uint64, bool) {
 		return 0, false
 	}
 	return left + right, true
+}
+
+// preserveBudget bounds what preserved chunks may allocate. A declared chunk
+// size is content the source controls, so the allocation is refused before it
+// is made rather than after a read fails.
+type preserveBudget struct{ remaining uint64 }
+
+func (b *preserveBudget) reserve(length uint64, id string) error {
+	if length > b.remaining {
+		return fmt.Errorf("%w: preserving chunk %q needs %d bytes and %d remain in the Inspect budget", ErrUnsupported, id, length, b.remaining)
+	}
+	b.remaining -= length
+	return nil
 }

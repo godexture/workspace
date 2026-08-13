@@ -65,11 +65,12 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
 	selected.entries = selection.entries
-	contexts, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
+	contexts, inspected, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
 	if err != nil {
 		err = planningDurationError(planningContext, selection.request.Budget(), "inspect", err)
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
+	selection.preselection = selection.preselection.WithInspected(inspected)
 	selected.stores, err = finishProbeStores(selected.stores)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))

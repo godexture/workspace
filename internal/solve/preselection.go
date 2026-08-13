@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type SelectedNode struct {
@@ -172,4 +173,12 @@ func (s Preselection) validFor(graph job.Graph) bool {
 		}
 	}
 	return true
+}
+
+// WithInspected records the bytes Format Inspect read after the preselection
+// was built, so the Plan reports the whole planning budget it consumed.
+func (s Preselection) WithInspected(bytes resource.Bytes) Preselection {
+	result := s.clone()
+	result.usage.InspectBytes += bytes
+	return result
 }
