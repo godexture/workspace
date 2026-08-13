@@ -248,7 +248,7 @@ func run(ctx context.Context, args []string) int {
     }
     defer h.Close()
 
-    return cli.Run(ctx, h, args)
+    return int(cli.Run(ctx, h, args).Code)
 }
 ```
 
