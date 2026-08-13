@@ -292,3 +292,46 @@ func waveTestRIFF(t testing.TB, chunks ...[]byte) []byte {
 	copy(value[8:], body)
 	return value
 }
+
+// The ds64 reservation slot is structural: whichever writer produced it, this
+// muxer recreates it, so preserving it would make it accumulate. A JUNK chunk
+// anywhere else, or at another size, is ordinary content.
+func TestInspectTreatsOnlyTheDs64ReservationSlotAsStructural(t *testing.T) {
+	reservation := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize), 0)
+	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
+	sameSizeElsewhere := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize), 0)
+	otherSizeInSlot := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize+2), 0)
+	dataChunk := waveTestChunk(t, tagDATA, []byte{7, 8}, 0)
+
+	for _, test := range []struct {
+		name  string
+		value []byte
+		want  int
+	}{
+		{
+			name:  "reservation-slot-is-dropped",
+			value: waveTestRIFF(t, reservation, formatChunk, dataChunk),
+			want:  0,
+		},
+		{
+			name:  "same-size-after-format-is-preserved",
+			value: waveTestRIFF(t, formatChunk, sameSizeElsewhere, dataChunk),
+			want:  1,
+		},
+		{
+			name:  "other-size-in-slot-is-preserved",
+			value: waveTestRIFF(t, otherSizeInSlot, formatChunk, dataChunk),
+			want:  1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(test.value), infoTestResolver(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(inspected.metadata.Blocks()); got != test.want {
+				t.Fatalf("preserved blocks = %d, want %d", got, test.want)
+			}
+		})
+	}
+}

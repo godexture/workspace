@@ -13,8 +13,14 @@ const (
 	tagRF64 = "RF64"
 	tagWAVE = "WAVE"
 	tagDS64 = "ds64"
+	tagJUNK = "JUNK"
 	tagFMT  = "fmt "
 	tagDATA = "data"
+
+	// reserveOffset is where a writer places the ds64 placeholder: the first
+	// chunk position, immediately after the RIFF/WAVE signature.
+	reserveOffset   = 12
+	ds64PayloadSize = 28
 
 	formatPCM        = uint16(1)
 	formatExtensible = uint16(0xfffe)

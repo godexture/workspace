@@ -8,8 +8,6 @@ import (
 	"github.com/godexture/godec/media/sample"
 )
 
-const ds64PayloadSize = 28
-
 type muxHeader struct {
 	initial        []byte
 	afterData      []byte
@@ -43,11 +41,10 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 	if len(chunks.beforeFormat) > math.MaxInt-80-len(formatPayload) || len(chunks.beforeData) > math.MaxInt-80-len(formatPayload)-len(chunks.beforeFormat) {
 		return muxHeader{}, fmt.Errorf("%w: WAVE metadata header exceeds runtime address space", ErrUnsupported)
 	}
-	headerSize := 12 + 8 + ds64PayloadSize + len(chunks.beforeFormat) + 8 + len(formatPayload) + len(chunks.beforeData) + 8
+	headerSize := reserveOffset + 8 + ds64PayloadSize + len(chunks.beforeFormat) + 8 + len(formatPayload) + len(chunks.beforeData) + 8
 	value := make([]byte, headerSize)
 	copy(value[0:4], tagRIFF)
 	copy(value[8:12], tagWAVE)
-	reserveOffset := 12
 	copy(value[reserveOffset:], muxReserveChunk())
 	formatOffset := reserveOffset + 8 + ds64PayloadSize
 	copy(value[formatOffset:], chunks.beforeFormat)
@@ -71,7 +68,7 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 
 func muxReserveChunk() []byte {
 	value := make([]byte, 8+ds64PayloadSize)
-	copy(value[0:4], "JUNK")
+	copy(value[0:4], tagJUNK)
 	binary.LittleEndian.PutUint32(value[4:8], ds64PayloadSize)
 	return value
 }

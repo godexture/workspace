@@ -1,7 +1,6 @@
 package wave
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -73,9 +72,6 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			if _, err := infoPayload(payload); err != nil {
 				return muxChunks{}, err
 			}
-		}
-		if placement.kind == chunkRaw && bytes.Equal(payload, muxReserveChunk()) {
-			continue
 		}
 		positioned = append(positioned, positionedMuxChunk{position: placement.position, anchor: placement.anchor, payload: payload})
 	}
