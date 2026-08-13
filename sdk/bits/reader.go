@@ -1,3 +1,8 @@
+// Package bits provides bitstream reading and writing for codec implementations.
+//
+// It has no consumer in the current tree: the codecs that used it are still
+// in _legacy pending the M8 family migration, which also decides whether this
+// stays a public package. Treat the API as unstable until then.
 package bits
 
 // Reader reads bits from a byte buffer. It exposes two API tiers:

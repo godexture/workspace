@@ -3,6 +3,10 @@
 // Transform sizes are always chosen by the caller ahead of time, so the
 // package only implements radix-2 Cooley-Tukey: arbitrary-length
 // algorithms (Bluestein, mixed-radix) are out of scope by design.
+//
+// It has no consumer in the current tree: the codecs that used it are still
+// in _legacy pending the M8 family migration, which also decides whether this
+// stays a public package. Treat the API as unstable until then.
 package fft
 
 import (

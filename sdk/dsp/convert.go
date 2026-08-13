@@ -1,3 +1,9 @@
+// Package dsp provides sample conversion, gain, and packing helpers.
+//
+// Its only consumer is an unreached ADPCM predictor; the codecs that used the
+// rest are still in _legacy pending the M8 family migration, which also
+// decides whether this stays a public package. Treat the API as unstable
+// until then.
 package dsp
 
 func convertF32ToS16Scalar(destination []int16, source []float32) {

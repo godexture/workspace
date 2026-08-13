@@ -3,6 +3,10 @@
 // pool: every pending entry that needs to block a waiter shares one
 // lazily-created channel instead of owning its own, so signaling costs one
 // channel per contended wait rather than one per job.
+//
+// It has no consumer in the current tree: the codecs that used it are still
+// in _legacy pending the M8 family migration, which also decides whether this
+// stays a public package. Treat the API as unstable until then.
 package parallel
 
 import "sync"

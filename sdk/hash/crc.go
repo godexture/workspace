@@ -1,5 +1,10 @@
 //go:generate go run generate.go
 
+// Package hash provides CRC and FNV checksums for codec implementations.
+//
+// It has no consumer in the current tree: the codecs that used it are still
+// in _legacy pending the M8 family migration, which also decides whether this
+// stays a public package. Treat the API as unstable until then.
 package hash
 
 // CRC8 computes the FLAC frame header checksum (polynomial 0x07, no

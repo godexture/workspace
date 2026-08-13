@@ -17,8 +17,10 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| WAVE (RIFF) format | demux/mux、chunk 解析、raw chunk 保持 | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の RIFF/Extensible、malformed/truncated vector と `TestWAVEMetadataRoundTripUsesTagBoundParser` の未知 chunk/INFO exact roundtrip |
-| PCM codec | 複数 bit depth、left-justify | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の 12/16 valid bits、little/big endian、mono/stereo decode/encode exact と Fast/Realtime file roundtrip |
+| WAVE (RIFF) の framing | demux/mux、chunk 解析、raw chunk 保持、RF64 | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の RIFF/Extensible、malformed/truncated vector と `TestWAVEMetadataRoundTripUsesTagBoundParser` の未知 chunk/INFO exact roundtrip |
+| WAVE/PCM の 16 bit・mono/stereo | 16 bit container、valid bits 1〜16、little/big endian | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の 12/16 valid bits、little/big endian、mono/stereo decode/encode exact と Fast/Realtime file roundtrip |
+| WAVE/PCM の 8/24/32 bit と float | 旧経路は S8/S16/S24/S32/F32 を扱った | 維持 | M8 | 現行は 16 bit container のみ受理し、他は `ErrUnsupported` で明示的に拒否する。`media/sample` へ S32P/F32P を足す作業が [audio](audio.md) の typed sample contract と同じ範囲にあるため、M8 の family 移行と同時に戻す。仕様 vector + lossless roundtrip exact |
+| WAVE/PCM の 3 channel 以上 | 旧経路は multichannel layout を扱った | 維持 | M8 | 現行は mono/stereo のみ受理し、他は `ErrUnsupported` で明示的に拒否する。`sample.Layout` の拡張と WAVE channel mask を M8 で戻す。仕様 vector + channel mask 照合 |
 | ADPCM (IMA, MS) | encode/decode | 維持 | M8 | 仕様 vector + roundtrip |
 | G.711 (A-law, μ-law) | encode/decode | 維持 | M8 | 仕様 table 照合 |
 | MP3 format | elementary stream、Xing/VBRI header、scan | 維持 | M8 | 仕様 vector |
