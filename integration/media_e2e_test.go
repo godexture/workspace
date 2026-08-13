@@ -239,6 +239,10 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 		0x34, 0x12, 0xcc, 0xed,
 		0x00, 0x00, 0x01, 0x00,
 	}
+	// A non-zero chunk in the ds64 reservation slot is legal RIFF and is bytes
+	// the source owns, so it must come back in the same slot rather than as a
+	// regenerated run of zeros.
+	reservation := riffChunk("JUNK", bytes.Repeat([]byte{0x5a}, ds64ReservationSize), 0)
 	beforeFormat := riffChunk("PRE!", []byte{1, 2, 3}, 0x91)
 	formatChunk := riffChunk("fmt ", pcmFormat(2, 48_000, 16), 0)
 	infoChunk := riffInfo(
@@ -248,7 +252,7 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 	)
 	dataChunk := riffChunk("data", payload, 0)
 	afterData := riffChunk("POST", []byte{7, 8, 9}, 0xb3)
-	inputBytes := riffFile(beforeFormat, formatChunk, infoChunk, dataChunk, afterData)
+	inputBytes := riffFile(reservation, beforeFormat, formatChunk, infoChunk, dataChunk, afterData)
 
 	for _, preset := range []job.Preset{job.Fast, job.Realtime} {
 		t.Run(preset.String(), func(t *testing.T) {
@@ -330,8 +334,11 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			if !bytes.Equal(chunkPayload(t, chunks, "data"), payload) {
 				t.Fatalf("round-trip PCM = %x, want %x", chunkPayload(t, chunks, "data"), payload)
 			}
+			if !bytes.Equal(encoded[12:12+len(reservation)], reservation) {
+				t.Fatalf("reservation slot = %x, want %x", encoded[12:12+len(reservation)], reservation)
+			}
 			got := preservedChunks(chunks)
-			want := [][]byte{beforeFormat, infoChunk, afterData}
+			want := [][]byte{reservation, beforeFormat, infoChunk, afterData}
 			if len(got) != len(want) {
 				t.Fatalf("round-trip metadata chunks = %x", got)
 			}
@@ -469,6 +476,10 @@ type riffTestChunk struct {
 	raw     []byte
 }
 
+// ds64ReservationSize is the ds64 payload length a RIFF writer reserves so a
+// later promotion to RF64 does not move any other chunk.
+const ds64ReservationSize = 28
+
 func riffChunk(identity string, payload []byte, padding byte) []byte {
 	if len(identity) != 4 {
 		panic("RIFF chunk identity must contain four bytes")
@@ -540,15 +551,27 @@ func chunkPayload(t testing.TB, chunks []riffTestChunk, identity string) []byte 
 	return nil
 }
 
+// writerReservation is the empty ds64 slot the WAVE muxer creates when the
+// input carried none. It is the only JUNK chunk the writer owns; every other
+// one, including a non-zero chunk in the same slot, is input-derived content
+// that has to survive the round trip byte for byte.
+func writerReservation() []byte {
+	value := make([]byte, 8+ds64ReservationSize)
+	copy(value[0:4], "JUNK")
+	binary.LittleEndian.PutUint32(value[4:8], ds64ReservationSize)
+	return value
+}
+
 func preservedChunks(chunks []riffTestChunk) [][]byte {
 	result := make([][]byte, 0, len(chunks))
 	for _, chunk := range chunks {
-		switch chunk.id {
-		case "JUNK", "fmt ", "data":
+		if chunk.id == "fmt " || chunk.id == "data" {
 			continue
-		default:
-			result = append(result, chunk.raw)
 		}
+		if chunk.id == "JUNK" && bytes.Equal(chunk.raw, writerReservation()) {
+			continue
+		}
+		result = append(result, chunk.raw)
 	}
 	return result
 }

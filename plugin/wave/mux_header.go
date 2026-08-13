@@ -46,7 +46,7 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 	value := make([]byte, headerSize)
 	copy(value[0:4], tagRIFF)
 	copy(value[8:12], tagWAVE)
-	copy(value[reserveOffset:], muxReserveChunk())
+	copy(value[reserveOffset:], reserveChunkOf(chunks))
 	formatOffset := reserveOffset + 8 + ds64PayloadSize
 	copy(value[formatOffset:], chunks.beforeFormat)
 	formatOffset += len(chunks.beforeFormat)
@@ -68,7 +68,15 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 	}, nil
 }
 
-func muxReserveChunk() []byte {
+// reserveChunkOf writes the input's own reservation chunk back into the slot
+// it came from, so a RIFF input that carried a non-zero JUNK there round-trips
+// byte for byte. A file that needs RF64 loses those bytes: ds64 must occupy
+// this slot, and the header layout is fixed before the data size is known, so
+// there is nowhere else to keep them without moving every following chunk.
+func reserveChunkOf(chunks muxChunks) []byte {
+	if len(chunks.reservation) != 0 {
+		return chunks.reservation
+	}
 	value := make([]byte, 8+ds64PayloadSize)
 	copy(value[0:4], tagJUNK)
 	binary.LittleEndian.PutUint32(value[4:8], ds64PayloadSize)

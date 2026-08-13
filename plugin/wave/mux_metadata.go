@@ -11,6 +11,7 @@ import (
 )
 
 type muxChunks struct {
+	reservation  []byte
 	beforeFormat []byte
 	beforeData   []byte
 	afterData    []byte
@@ -88,6 +89,12 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 	for _, chunk := range positioned {
 		var err error
 		switch chunk.anchor {
+		case chunkReservation:
+			if result.reservation != nil {
+				err = fmt.Errorf("%w: WAVE reservation slot is claimed twice", ErrMalformed)
+				break
+			}
+			result.reservation, err = reservationChunk(chunk.payload)
 		case chunkBeforeFormat:
 			result.beforeFormat, err = appendMuxChunk(result.beforeFormat, chunk.payload)
 		case chunkBeforeData:
@@ -120,6 +127,16 @@ func validateMuxChunk(value []byte) (string, error) {
 		return "", fmt.Errorf("%w: preserved WAVE chunk %q has inconsistent size", ErrMalformed, identity)
 	}
 	return identity, nil
+}
+
+// reservationChunk accepts only a chunk that fits the slot it is written back
+// into: the writer's header layout is fixed before the data size is known, so
+// the slot cannot grow or shrink for preserved content.
+func reservationChunk(payload []byte) ([]byte, error) {
+	if len(payload) != 8+ds64PayloadSize || string(payload[0:4]) != tagJUNK {
+		return nil, fmt.Errorf("%w: WAVE reservation chunk must be a %d byte JUNK chunk", ErrMalformed, 8+ds64PayloadSize)
+	}
+	return append([]byte(nil), payload...), nil
 }
 
 func appendMuxChunk(destination, payload []byte) ([]byte, error) {
