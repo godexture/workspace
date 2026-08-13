@@ -327,13 +327,8 @@ type accessReadPassOperator struct {
 }
 
 func (o *accessReadPassOperator) Ports() flow.Shape { return o.shape.Clone() }
-func (o *accessReadPassOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
-	owned := input.Take()
-	if err := output.Emit(ctx, flow.NewInput(owned.Value(), access.Bytes())); err != nil {
-		owned.Release()
-		return err
-	}
-	return nil
+func (o *accessReadPassOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
+	return output.Emit(ctx, input)
 }
 func (*accessReadPassOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
 func (o *accessReadPassOperator) Finalize(context.Context) error {
@@ -355,19 +350,15 @@ type accessWritePassOperator struct {
 }
 
 func (o *accessWritePassOperator) Ports() flow.Shape { return o.shape.Clone() }
-func (o *accessWritePassOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
-	owned := input.Take()
-	write, err := access.Append(owned.Value())
+func (o *accessWritePassOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
+	write, err := access.Append(input.Value().Share())
 	if err != nil {
-		owned.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	return nil
+	item := flow.NewItem(write, access.Writes())
+	defer item.Drop()
+	return output.Emit(ctx, &item)
 }
 func (*accessWritePassOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }
 func (o *accessWritePassOperator) Close() error {

@@ -37,13 +37,13 @@ func openSource(shape flow.Shape, opening access.Opening, buffers *buffer.Alloca
 func (o *sourceOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*sourceOperator) Close() error        { return nil }
 
-func (o *sourceOperator) Read(ctx context.Context) (flow.Input[buffer.Handle], error) {
+func (o *sourceOperator) Read(ctx context.Context, into *flow.Item[buffer.Handle]) error {
 	if o.done {
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: blockSize}}})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	defer lease.Discard()
 
@@ -71,25 +71,30 @@ func (o *sourceOperator) Read(ctx context.Context) (flow.Input[buffer.Handle], e
 		return nil
 	})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	if count == 0 && eof {
 		o.done = true
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 
 	payload, err := lease.Commit()
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	if count != blockSize {
-		payload, err = o.resize(payload, count)
-		if err != nil {
-			return flow.Input[buffer.Handle]{}, err
+		// A zero-copy narrowing keeps the read inside the grant this component
+		// declared; allocating a second exact buffer would need twice it.
+		exact, rangeErr := payload.Range(0, count)
+		payload.Release()
+		if rangeErr != nil {
+			return rangeErr
 		}
+		payload = exact
 	}
 	o.done = eof
-	return flow.NewInput(payload, access.Bytes()), nil
+	*into = flow.NewItem(payload, access.Bytes())
+	return nil
 }
 
 func (o *sourceOperator) read(ctx context.Context, destination []byte) (int, error) {
@@ -99,23 +104,4 @@ func (o *sourceOperator) read(ctx context.Context, destination []byte) (int, err
 	count, err := o.random.ReadAt(ctx, destination, o.offset)
 	o.offset += int64(count)
 	return count, err
-}
-
-func (o *sourceOperator) resize(full buffer.Handle, size int) (buffer.Handle, error) {
-	exact, err := o.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: size}}})
-	if err != nil {
-		full.Release()
-		return buffer.Handle{}, err
-	}
-	defer exact.Discard()
-	if err := exact.Fill(func(storage buffer.Mutable) error {
-		copy(storage.Bytes(), full.Bytes()[:size])
-		return nil
-	}); err != nil {
-		full.Release()
-		return buffer.Handle{}, err
-	}
-	result, err := exact.Commit()
-	full.Release()
-	return result, err
 }

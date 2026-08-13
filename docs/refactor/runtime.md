@@ -122,18 +122,24 @@ island 内は direct typed call とし、edge ごとの interface dispatch を c
 
 ## ownership
 
-ownership は API の慣習でなく contract として固定する。
+ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` または `Consume` だけが解放する。
 
-- Reader が item を返した時点で consumer に ownership が移る。
-- Writer が成功した時点で writer に ownership が移る。
-- Writer が失敗した場合に誰が所有するかを API 全体で統一する。推奨は「呼び出し元が保持」である。
+規則は一つである。
+
+> **自分が作った item と受け取った item は `defer ... Drop()` する。**
+
+誰かが consume すれば deferred な `Drop` は何もせず、誰も consume しなければ作った側が解放する。したがって「成功時／失敗時に誰が所有するか」を段階ごとに決める必要がない。panic 巻き戻し中も deferred `Drop` が走るため、runtime 側に item 用の panic cleanup を持たない。
+
+- Reader は呼び出し元の cell を満たす。EOF では cell を空のまま返す。
+- `Emit`/`Write` に cell を渡すことは、consume する機会を与えることであって、所有権の無条件移転ではない。
 - linear path は所有権を move し、refcount を増やさない。
-- fan-out でのみ `Fork`/retain を行う。
-- drop/cancel/queue drain は owner が `Drop` を呼ぶ。
+- fan-out でのみ `Fork` で二人目の owner を作る。
+- queue 境界は `Consume` で cell から所有権を切り離し、`Adopt` で戻す。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
-- plugin が call を越えて保持する時だけ `Share` を明示する。
 
-`Processor` は call 中に `Input` を借用し、成功を返す直前にだけ consume する。失敗時は caller が保持するため、runtime が drop できる。低水準 `Operator` には ownership rule を conformance test する。
+`flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
+
+多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 
 fan-out が一つなら refcount atomic を通らない設計にする。複数 consumer の時も、一 item につき必要最小限の retained handle だけを作る。
 

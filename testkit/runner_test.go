@@ -89,8 +89,8 @@ func TestFormatUsesAccessBoundaryInspection(t *testing.T) {
 			Want:  WantPlanError[buffer.Handle](errRunnerPlan),
 		},
 	)
-	if got := inspections.Load(); got != 6 {
-		t.Fatalf("Inspect calls = %d, want four successful and two rejected planning scenarios", got)
+	if got := inspections.Load(); got != 7 {
+		t.Fatalf("Inspect calls = %d, want four successful, one rejected-sink, and two rejected planning scenarios", got)
 	}
 	if got := probes.Load(); got != 4 {
 		t.Fatalf("Probe calls = %d, want one request and one terminal result per case", got)
@@ -188,15 +188,15 @@ type runnerOperator runnerPlan
 
 func (o runnerOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (runnerOperator) Close() error        { return nil }
-func (o runnerOperator) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
+func (o runnerOperator) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
 	if input.Value() == -2 {
 		return errRunnerRun
 	}
 	if input.Value() < 0 {
 		return diagnostic.NewError(diagnostic.NewItem("runner.negative", diagnostic.ErrorSeverity, diagnostic.Path{}, "negative fixture", nil))
 	}
-	value := flow.NewInput(input.Value()*o.factor, runnerType)
-	if err := output.Emit(ctx, value); err != nil {
+	value := flow.NewItem(input.Value()*o.factor, runnerType)
+	if err := output.Emit(ctx, &value); err != nil {
 		return err
 	}
 	input.Drop()
@@ -208,12 +208,7 @@ type runnerByteOperator struct{ shape flow.Shape }
 
 func (o runnerByteOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (runnerByteOperator) Close() error        { return nil }
-func (runnerByteOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
-	owned := input.Take()
-	if err := output.Emit(ctx, flow.NewInput(owned.Value(), access.Bytes())); err != nil {
-		owned.Release()
-		return err
-	}
-	return nil
+func (runnerByteOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
+	return output.Emit(ctx, input)
 }
 func (runnerByteOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }

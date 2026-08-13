@@ -67,56 +67,94 @@ func TestShapeEqualityUsesSchemaIdentityAndPayload(t *testing.T) {
 	}
 }
 
-func TestInputOwnershipMoveFanoutFailureAndDrop(t *testing.T) {
-	var drops atomic.Int32
-	typ := schema.Define[flowValueID, int](schema.Traits[int]{
+func countingSchema(drops *atomic.Int32) schema.Type[int] {
+	return schema.Define[flowValueID, int](schema.Traits[int]{
 		Fork: func(value int) int { return value },
 		Drop: func(int) { drops.Add(1) },
 	})
-	input := NewInput(42, typ)
-	shared := input.Share()
-	owned := input.Take()
-	if !input.Valid() || !owned.Valid() || !shared.Valid() {
-		t.Fatal("value input state after share/take is invalid")
+}
+
+// A deferred Drop is the whole ownership rule, so it must stay correct when
+// something downstream has already consumed the cell.
+func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing.T) {
+	var drops atomic.Int32
+	typ := countingSchema(&drops)
+
+	moved := func() {
+		item := NewItem(1, typ)
+		defer item.Drop()
+		var downstream Item[int]
+		downstream.Move(&item)
+		downstream.Drop()
 	}
-	owned.Release()
-	shared.Release()
-	if drops.Load() != 2 {
-		t.Fatalf("drop count after fan-out = %d", drops.Load())
+	moved()
+	if drops.Load() != 1 {
+		t.Fatalf("release count after a move = %d, want 1", drops.Load())
 	}
 
-	failed := NewInput(7, typ)
-	// A failed writer leaves the input untouched; the caller can drop it.
-	failed.Drop()
+	abandoned := func() {
+		item := NewItem(2, typ)
+		defer item.Drop()
+	}
+	abandoned()
+	if drops.Load() != 2 {
+		t.Fatalf("release count after an unconsumed cell = %d, want 2", drops.Load())
+	}
+
+	repeated := NewItem(3, typ)
+	repeated.Drop()
+	repeated.Drop()
 	if drops.Load() != 3 {
-		t.Fatalf("drop count after failed write = %d", drops.Load())
+		t.Fatalf("release count after repeated Drop = %d, want 3", drops.Load())
 	}
 }
 
-func TestInputCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
+func TestForkIsTheOnlyRetainAndEachOwnerReleasesOnce(t *testing.T) {
 	var drops atomic.Int32
-	input := NewInputWithTraits(8, func(value int) int { return value + 1 }, func(int) { drops.Add(1) })
-	shared := input.Share()
-	if shared.Value() != 9 {
+	typ := countingSchema(&drops)
+	original := NewItem(42, typ)
+	var branch Item[int]
+	if !original.Fork(&branch) || !original.Valid() || !branch.Valid() {
+		t.Fatal("fork did not produce two independent owners")
+	}
+	branch.Drop()
+	if drops.Load() != 1 {
+		t.Fatalf("release count after dropping a branch = %d, want 1", drops.Load())
+	}
+	original.Drop()
+	if drops.Load() != 2 {
+		t.Fatalf("release count after dropping the original = %d, want 2", drops.Load())
+	}
+}
+
+func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
+	var drops atomic.Int32
+	item := NewItemWithTraits(8, func(value int) int { return value + 1 }, func(int) { drops.Add(1) })
+	var branch Item[int]
+	item.Fork(&branch)
+	if branch.Value() != 9 {
 		t.Fatal("third-party fork trait was not used")
 	}
-	shared.Release()
-	input.Drop()
+	branch.Drop()
+	item.Drop()
 	if drops.Load() != 2 {
 		t.Fatalf("drop count = %d", drops.Load())
 	}
 }
 
-func TestLinearInputTakeHasNoAllocation(t *testing.T) {
+// Detaching ownership for a queue and taking it back must not allocate, so a
+// bounded edge costs no more than a direct call.
+func TestOwnershipTransferHasNoAllocation(t *testing.T) {
 	allocations := testing.AllocsPerRun(1000, func() {
-		input := NewInput(1, linearValueSchema)
-		owner := input.Take()
-		if !owner.Valid() {
-			t.Fatal("linear input was invalid")
+		item := NewItem(1, linearValueSchema)
+		stored := item.Consume()
+		if !stored.Valid() || item.Valid() {
+			t.Fatal("consume did not move ownership out of the cell")
 		}
-		owner.Release()
+		item.Adopt(stored)
+		item.Drop()
 	})
 	if allocations != 0 {
-		t.Fatalf("linear input hop allocations = %v, want 0", allocations)
+		t.Fatalf("linear ownership transfer allocations = %v, want 0", allocations)
 	}
 }

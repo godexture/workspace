@@ -39,31 +39,35 @@ func decoderComponent() plugin.Component {
 			}, nil
 		},
 		Open: func(_ plugin.OpenContext, plan decoderPlan) (flow.Operator, error) {
-			return decoderOperator{shape: plan.shape.Clone()}, nil
+			return &decoderOperator{shape: plan.shape.Clone()}, nil
 		},
 	}
 	return plugin.NewComponent[decoderID](plugin.Descriptor{DisplayName: "ACME increment decoder"}, configurationSchema(),
 		plugin.WithSpec(spec), plugin.WithProcessor("packets", codec.Packets(), "values", Values()))
 }
 
-type decoderOperator struct{ shape flow.Shape }
+type decoderOperator struct {
+	shape flow.Shape
+	out   flow.Item[Value]
+}
 
-func (o decoderOperator) Ports() flow.Shape { return o.shape.Clone() }
-func (decoderOperator) Close() error        { return nil }
+func (o *decoderOperator) Ports() flow.Shape { return o.shape.Clone() }
+func (*decoderOperator) Close() error        { return nil }
 
-func (decoderOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[Value]) error {
+func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[Value]) error {
 	if !input.Valid() {
 		return errors.New("ACME decoder received invalid packet")
 	}
 	defer input.Drop()
 	for _, value := range input.Value().Bytes() {
-		item := flow.NewInput(Value{Number: value + 1}, Values())
-		if err := output.Emit(ctx, item); err != nil {
-			item.Drop()
+		o.out.Set(Value{Number: value + 1}, Values())
+		err := output.Emit(ctx, &o.out)
+		o.out.Drop()
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (decoderOperator) Flush(context.Context, flow.Emitter[Value]) error { return nil }
+func (*decoderOperator) Flush(context.Context, flow.Emitter[Value]) error { return nil }

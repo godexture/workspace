@@ -319,14 +319,14 @@ type closer interface {
 }
 
 type scopeBinder interface{ bindScope(*Scope) }
-type cleaner interface{ cleanup() }
 
 // Scope is task-local panic context. It intentionally uses no atomics because
 // the owning execution task is the only writer and panic recovery reads it in
-// that same goroutine.
+// that same goroutine. It carries no item cleanup: every cell is released by
+// the deferred Drop of the task that owns it, which also runs while a panic
+// unwinds.
 type Scope struct {
-	node     string
-	cleaners []cleaner
+	node string
 }
 
 func NewScope(node string) *Scope { return &Scope{node: node} }
@@ -340,31 +340,6 @@ func (s *Scope) set(node string) {
 	if s != nil {
 		s.node = node
 	}
-}
-func (s *Scope) add(value cleaner) {
-	if s != nil && value != nil {
-		s.cleaners = append(s.cleaners, value)
-	}
-}
-func (s *Scope) Cleanup() {
-	if s == nil {
-		return
-	}
-	var first any
-	for index := len(s.cleaners) - 1; index >= 0; index-- {
-		if recovered := cleanupOne(s.cleaners[index]); recovered != nil && first == nil {
-			first = recovered
-		}
-	}
-	if first != nil {
-		panic(first)
-	}
-}
-
-func cleanupOne(value cleaner) (recovered any) {
-	defer func() { recovered = recover() }()
-	value.cleanup()
-	return nil
 }
 
 type delivery[T any] interface {
@@ -467,29 +442,31 @@ func (t Task) BindScope(scope *Scope) {
 	}
 }
 
+// sourceTask reuses one ownership cell for the whole stream. Anything the
+// chain leaves unconsumed — including during panic unwinding — is released by
+// the deferred Drop, so no stage needs a failure-path ownership rule.
 func sourceTask[T any](reader flow.Reader[T], next delivery[T]) Task {
 	return Task{finish: next.close, run: func(ctx context.Context) error {
+		var item flow.Item[T]
+		defer item.Drop()
 		for {
-			input, err := reader.Read(ctx)
+			err := reader.Read(ctx, &item)
 			if errors.Is(err, io.EOF) {
-				if input.Valid() {
-					input.Drop()
+				if item.Valid() {
 					return ErrReadWithItem
 				}
 				return nil
 			}
 			if err != nil {
-				if input.Valid() {
-					input.Drop()
+				if item.Valid() {
 					return errors.Join(ErrReadWithItem, err)
 				}
 				return err
 			}
-			if !input.Valid() {
+			if !item.Valid() {
 				return ErrInvalidItem
 			}
-			if err := next.Emit(ctx, input); err != nil {
-				input.Drop()
+			if err := next.Emit(ctx, &item); err != nil {
 				return err
 			}
 		}
@@ -497,57 +474,35 @@ func sourceTask[T any](reader flow.Reader[T], next delivery[T]) Task {
 }
 
 type writerDelivery[T any] struct {
-	writer  flow.Writer[T]
-	node    string
-	scope   *Scope
-	current flow.Input[T]
-	active  bool
+	writer flow.Writer[T]
+	node   string
+	scope  *Scope
 }
 
-func (w *writerDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+func (w *writerDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
 	previous := w.scope.Node()
 	w.scope.set(w.node)
-	w.current = input
-	w.active = true
-	err := w.writer.Write(ctx, input)
-	w.active = false
-	w.current = flow.Input[T]{}
+	err := w.writer.Write(ctx, item)
 	w.scope.set(previous)
 	return err
 }
 
 func (*writerDelivery[T]) close(context.Context) error { return nil }
-func (w *writerDelivery[T]) bindScope(scope *Scope) {
-	w.scope = scope
-	scope.add(w)
-}
-func (w *writerDelivery[T]) cleanup() {
-	if w.active {
-		w.current.Drop()
-		w.active = false
-		w.current = flow.Input[T]{}
-	}
-}
+func (w *writerDelivery[T]) bindScope(scope *Scope)    { w.scope = scope }
 
 type processorDelivery[I, O any] struct {
 	processor flow.Processor[I, O]
 	next      delivery[O]
 	node      string
 	scope     *Scope
-	current   flow.Input[I]
-	active    bool
 	once      sync.Once
 	closeErr  error
 }
 
-func (p *processorDelivery[I, O]) Emit(ctx context.Context, input flow.Input[I]) error {
+func (p *processorDelivery[I, O]) Emit(ctx context.Context, item *flow.Item[I]) error {
 	previous := p.scope.Node()
 	p.scope.set(p.node)
-	p.current = input
-	p.active = true
-	err := p.processor.Process(ctx, input, p.next)
-	p.active = false
-	p.current = flow.Input[I]{}
+	err := p.processor.Process(ctx, item, p.next)
 	p.scope.set(previous)
 	return err
 }
@@ -564,31 +519,16 @@ func (p *processorDelivery[I, O]) close(ctx context.Context) error {
 
 func (p *processorDelivery[I, O]) bindScope(scope *Scope) {
 	p.scope = scope
-	scope.add(p)
 	if next, ok := p.next.(scopeBinder); ok {
 		next.bindScope(scope)
 	}
 }
 
-func (p *processorDelivery[I, O]) cleanup() {
-	if p.active {
-		p.current.Drop()
-		p.active = false
-		p.current = flow.Input[I]{}
-	}
-}
-
 type fanoutDelivery[T any] struct {
-	outputs         []delivery[T]
-	values          []T
-	pending         []bool
-	fork            func(T) T
-	drop            func(T)
-	original        flow.Input[T]
-	originalPending bool
-	active          bool
-	once            sync.Once
-	closeErr        error
+	outputs  []delivery[T]
+	branches []flow.Item[T]
+	once     sync.Once
+	closeErr error
 }
 
 func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
@@ -614,55 +554,34 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 			outputs[index] = output
 		}
 		return linkOf[T](&fanoutDelivery[T]{
-			outputs: outputs,
-			values:  make([]T, len(outputs)-1),
-			pending: make([]bool, len(outputs)-1),
-			fork:    traits.Fork,
-			drop:    traits.Drop,
+			outputs:  outputs,
+			branches: make([]flow.Item[T], len(outputs)-1),
 		}), nil
 	}
 }
 
-func (f *fanoutDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
-	f.original = input
-	f.originalPending = true
-	f.active = true
-	value := input.Value()
-	for index := range f.values {
-		f.values[index] = value
-		if f.fork != nil {
-			f.values[index] = f.fork(value)
+// Emit forks one owner per extra output and hands the original to the last
+// one. Branch cells are reused across items, and the deferred release covers
+// every failure and panic path without per-branch bookkeeping.
+func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
+	defer f.dropBranches()
+	for index := range f.branches {
+		if !item.Fork(&f.branches[index]) {
+			return ErrInvalidItem
 		}
-		f.pending[index] = true
 	}
-	for index, output := range f.outputs[:len(f.outputs)-1] {
-		branch := flow.NewInputWithTraits(f.values[index], f.fork, f.drop)
-		f.pending[index] = false
-		if err := output.Emit(ctx, branch); err != nil {
-			branch.Drop()
-			for remaining := index + 1; remaining < len(f.values); remaining++ {
-				if f.drop != nil {
-					f.drop(f.values[remaining])
-				}
-			}
-			f.clearValues()
-			f.active = false
-			f.originalPending = false
-			f.original = flow.Input[T]{}
+	for index := range f.branches {
+		if err := f.outputs[index].Emit(ctx, &f.branches[index]); err != nil {
 			return err
 		}
 	}
-	f.originalPending = false
-	if err := f.outputs[len(f.outputs)-1].Emit(ctx, input); err != nil {
-		f.clearValues()
-		f.active = false
-		f.original = flow.Input[T]{}
-		return err
+	return f.outputs[len(f.outputs)-1].Emit(ctx, item)
+}
+
+func (f *fanoutDelivery[T]) dropBranches() {
+	for index := range f.branches {
+		f.branches[index].Drop()
 	}
-	f.clearValues()
-	f.active = false
-	f.original = flow.Input[T]{}
-	return nil
 }
 
 func (f *fanoutDelivery[T]) close(ctx context.Context) error {
@@ -679,7 +598,6 @@ func (f *fanoutDelivery[T]) close(ctx context.Context) error {
 }
 
 func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
-	scope.add(f)
 	for _, output := range f.outputs {
 		if value, ok := output.(scopeBinder); ok {
 			value.bindScope(scope)
@@ -687,59 +605,24 @@ func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
 	}
 }
 
-func (f *fanoutDelivery[T]) cleanup() {
-	if !f.active {
-		return
-	}
-	if f.originalPending {
-		f.original.Drop()
-	}
-	for index, pending := range f.pending {
-		if pending && f.drop != nil {
-			f.drop(f.values[index])
-		}
-	}
-	f.clearValues()
-	clear(f.pending)
-	f.original = flow.Input[T]{}
-	f.originalPending = false
-	f.active = false
-}
-
-func (f *fanoutDelivery[T]) clearValues() {
-	var zero T
-	for index := range f.values {
-		f.values[index] = zero
-	}
-}
-
 type bufferDelivery[T any] struct {
-	queue   *queue.Queue[flow.Input[T]]
-	current flow.Input[T]
-	active  bool
+	queue *queue.Queue[flow.Owned[T]]
 }
 
-func (b *bufferDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
-	b.current = input
-	b.active = true
-	err := b.queue.Push(ctx, input)
-	b.active = false
-	b.current = flow.Input[T]{}
-	return err
+// Emit detaches ownership into the queue. A rejected push never stores the
+// value, so the cell takes it back and the producer stays responsible.
+func (b *bufferDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
+	owned := item.Consume()
+	if err := b.queue.Push(ctx, owned); err != nil {
+		item.Adopt(owned)
+		return err
+	}
+	return nil
 }
 
 func (b *bufferDelivery[T]) close(context.Context) error {
 	b.queue.Close()
 	return nil
-}
-
-func (b *bufferDelivery[T]) bindScope(scope *Scope) { scope.add(b) }
-func (b *bufferDelivery[T]) cleanup() {
-	if b.active {
-		b.current.Drop()
-		b.active = false
-		b.current = flow.Input[T]{}
-	}
 }
 
 func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link, Task, error) {
@@ -748,14 +631,7 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 		if err != nil {
 			return Link{}, Task{}, err
 		}
-		queueTraits := queue.Traits[flow.Input[T]]{Drop: func(input flow.Input[T]) { input.Drop() }}
-		if traits.Size != nil {
-			queueTraits.Size = func(input flow.Input[T]) int { return traits.Size(input.Value()) }
-		}
-		if traits.Time != nil {
-			queueTraits.Time = func(input flow.Input[T]) (int64, bool) { return traits.Time(input.Value()) }
-		}
-		edge, err := queue.New(limit, queueTraits)
+		edge, err := queue.New(limit, ownedTraits(traits))
 		if err != nil {
 			return Link{}, Task{}, err
 		}
@@ -765,18 +641,20 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			barrier: edge.WaitIdle,
 			run: func(ctx context.Context) error {
 				defer edge.Drain()
+				var item flow.Item[T]
+				defer item.Drop()
 				for {
-					input, err := edge.Pop(ctx)
+					owned, err := edge.Pop(ctx)
 					if errors.Is(err, io.EOF) {
 						return target.close(ctx)
 					}
 					if err != nil {
 						return err
 					}
-					emitErr := target.Emit(ctx, input)
+					item.Adopt(owned)
+					emitErr := target.Emit(ctx, &item)
 					edge.Complete()
 					if emitErr != nil {
-						input.Drop()
 						return emitErr
 					}
 				}
@@ -786,32 +664,39 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 	}
 }
 
-type observedDelivery[T any] struct {
-	next    delivery[T]
-	local   *observe.Local
-	size    func(T) int
-	time    func(T) (int64, bool)
-	current flow.Input[T]
-	active  bool
+// ownedTraits projects schema traits onto detached ownership so a queue can
+// size, time, and release what it holds without knowing about cells.
+func ownedTraits[T any](traits schema.Traits[T]) queue.Traits[flow.Owned[T]] {
+	result := queue.Traits[flow.Owned[T]]{Drop: func(value flow.Owned[T]) { value.Release() }}
+	if traits.Size != nil {
+		result.Size = func(value flow.Owned[T]) int { return traits.Size(value.Value()) }
+	}
+	if traits.Time != nil {
+		result.Time = func(value flow.Owned[T]) (int64, bool) { return traits.Time(value.Value()) }
+	}
+	return result
 }
 
-func (o *observedDelivery[T]) Emit(ctx context.Context, input flow.Input[T]) error {
-	o.current = input
-	o.active = true
+type observedDelivery[T any] struct {
+	next  delivery[T]
+	local *observe.Local
+	size  func(T) int
+	time  func(T) (int64, bool)
+}
+
+func (o *observedDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
 	var bytes uint64
 	if o.size != nil {
-		if value := o.size(input.Value()); value > 0 {
+		if value := o.size(item.Value()); value > 0 {
 			bytes = uint64(value)
 		}
 	}
 	var media int64
 	var timed bool
 	if o.time != nil {
-		media, timed = o.time(input.Value())
+		media, timed = o.time(item.Value())
 	}
-	o.active = false
-	o.current = flow.Input[T]{}
-	if err := o.next.Emit(ctx, input); err != nil {
+	if err := o.next.Emit(ctx, item); err != nil {
 		return err
 	}
 	o.local.Add(bytes, media, timed)
@@ -825,17 +710,8 @@ func (o *observedDelivery[T]) close(ctx context.Context) error {
 }
 
 func (o *observedDelivery[T]) bindScope(scope *Scope) {
-	scope.add(o)
 	if next, ok := o.next.(scopeBinder); ok {
 		next.bindScope(scope)
-	}
-}
-
-func (o *observedDelivery[T]) cleanup() {
-	if o.active {
-		o.current.Drop()
-		o.active = false
-		o.current = flow.Input[T]{}
 	}
 }
 
@@ -858,15 +734,9 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 	if count < 2 {
 		return nil, Task{}, ErrBinding
 	}
-	edges := make([]*queue.Queue[flow.Input[I]], count)
+	edges := make([]*queue.Queue[flow.Owned[I]], count)
 	links := make([]Link, count)
-	queueTraits := queue.Traits[flow.Input[I]]{Drop: func(input flow.Input[I]) { input.Drop() }}
-	if traits.Size != nil {
-		queueTraits.Size = func(input flow.Input[I]) int { return traits.Size(input.Value()) }
-	}
-	if traits.Time != nil {
-		queueTraits.Time = func(input flow.Input[I]) (int64, bool) { return traits.Time(input.Value()) }
-	}
+	queueTraits := ownedTraits(traits)
 	for index := range edges {
 		edge, err := queue.New(limit, queueTraits)
 		if err != nil {
@@ -878,22 +748,25 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, inputs: make([]flow.Input[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
+	for index := range state.items {
+		state.batch[index] = &state.items[index]
+	}
 	task := Task{
 		close:   state.close,
 		discard: state.discard,
 		barrier: state.barrier,
 		finish:  state.finish,
 		run:     state.run,
-		bind:    func(scope *Scope) { scope.add(state) },
 	}
 	return links, task, nil
 }
 
 type zipState[I, O any] struct {
 	joiner    flow.Joiner[I, O]
-	edges     []*queue.Queue[flow.Input[I]]
-	inputs    []flow.Input[I]
+	edges     []*queue.Queue[flow.Owned[I]]
+	items     []flow.Item[I]
+	batch     []*flow.Item[I]
 	read      int
 	next      delivery[O]
 	time      func(I) (int64, bool)
@@ -923,30 +796,27 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 		}
 		close(s.done)
 	}()
+	defer s.release()
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
-			input, err := edge.Pop(ctx)
+			owned, err := edge.Pop(ctx)
 			if errors.Is(err, io.EOF) {
-				s.cleanup()
 				return nil
 			}
 			if err != nil {
-				s.cleanup()
 				return err
 			}
-			s.inputs[index] = input
+			s.items[index].Adopt(owned)
 			s.read++
 		}
 		if !s.withinWatermark() {
-			s.cleanup()
 			return ErrWatermark
 		}
-		if err := s.joiner.Process(ctx, flow.NewBatch(s.inputs), s.next); err != nil {
-			s.cleanup()
+		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
 			return err
 		}
-		s.cleanup()
+		s.release()
 	}
 }
 
@@ -955,8 +825,8 @@ func (s *zipState[I, O]) withinWatermark() bool {
 		return true
 	}
 	minimum, maximum := int64(0), int64(0)
-	for index, input := range s.inputs[:s.read] {
-		value, ok := s.time(input.Value())
+	for index := 0; index < s.read; index++ {
+		value, ok := s.time(s.items[index].Value())
 		if !ok {
 			return false
 		}
@@ -970,12 +840,13 @@ func (s *zipState[I, O]) withinWatermark() bool {
 	return uint64(maximum)-uint64(minimum) <= uint64(s.watermark)
 }
 
-func (s *zipState[I, O]) cleanup() {
-	dropInputs(s.inputs[:s.read])
+// release drops whatever the joiner left behind and returns the group's slots
+// to their queues. A Joiner may consume any subset of the batch.
+func (s *zipState[I, O]) release() {
 	for index := 0; index < s.read; index++ {
+		s.items[index].Drop()
 		s.edges[index].Complete()
 	}
-	clear(s.inputs)
 	s.read = 0
 }
 
@@ -992,10 +863,4 @@ func (s *zipState[I, O]) barrier(ctx context.Context) error {
 func (s *zipState[I, O]) finish(ctx context.Context) error {
 	s.once.Do(func() { s.err = errors.Join(s.joiner.Flush(ctx, s.next), s.next.close(ctx)) })
 	return s.err
-}
-
-func dropInputs[T any](inputs []flow.Input[T]) {
-	for _, input := range inputs {
-		input.Drop()
-	}
 }

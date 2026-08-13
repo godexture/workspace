@@ -102,28 +102,29 @@ type lifecycleSource struct {
 	index int
 }
 
-func (s *lifecycleSource) Read(ctx context.Context) (flow.Input[int], error) {
+func (s *lifecycleSource) Read(ctx context.Context, into *flow.Item[int]) error {
 	if s.state.block {
 		<-ctx.Done()
-		return flow.Input[int]{}, ctx.Err()
+		return ctx.Err()
 	}
 	if s.index == 3 {
 		s.state.add("eof/source")
-		return flow.Input[int]{}, io.EOF
+		return io.EOF
 	}
 	value := s.index + 1
 	s.index++
 	s.state.add("read/source")
-	return flow.NewInput(value, lifecycleType), nil
+	*into = flow.NewItem(value, lifecycleType)
+	return nil
 }
 
 type lifecycleProcessor struct{ *lifecycleBase }
 
-func (p *lifecycleProcessor) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
+func (p *lifecycleProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
 	p.state.add("process/processor")
 	p.state.panicIf("process/processor")
-	item := flow.NewInput(input.Value()*2, lifecycleType)
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(input.Value()*2, lifecycleType)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -145,7 +146,7 @@ func (p *lifecycleProcessor) Flush(context.Context, flow.Emitter[int]) error {
 
 type lifecycleSink struct{ *lifecycleBase }
 
-func (s *lifecycleSink) Write(_ context.Context, input flow.Input[int]) error {
+func (s *lifecycleSink) Write(_ context.Context, input *flow.Item[int]) error {
 	phase := "write/" + s.name
 	s.state.add(phase)
 	if err := s.state.failure(phase); err != nil {

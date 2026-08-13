@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
 )
@@ -28,6 +29,7 @@ type Fixture[T any] struct {
 	descriptor stream.Descriptor
 	typ        schema.Type[T]
 	values     []T
+	owners     *owners
 	verify     func() error
 }
 
@@ -37,7 +39,7 @@ func Values[T any](descriptor stream.Descriptor, typ schema.Type[T], values ...T
 	for index, value := range values {
 		owned[index] = typ.Fork(value)
 	}
-	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned}
+	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned, owners: &owners{}}
 }
 
 func (f Fixture[T]) valid() bool {
@@ -45,11 +47,19 @@ func (f Fixture[T]) valid() bool {
 }
 
 func (f Fixture[T]) clone() Fixture[T] {
-	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values))}
+	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values)), owners: &owners{}}
 	for index, value := range f.values {
 		result.values[index] = f.typ.Fork(value)
 	}
 	return result
+}
+
+// emit hands the next unread value to the runtime under ownership accounting.
+func (f *Fixture[T]) emit(index int) flow.Item[T] {
+	value := f.values[index]
+	var zero T
+	f.values[index] = zero
+	return ownedItem(value, f.typ, f.owners)
 }
 
 func (f *Fixture[T]) close() error {
@@ -62,10 +72,11 @@ func (f *Fixture[T]) close() error {
 		f.values[index] = zero
 	}
 	f.values = nil
+	problems := []error{f.owners.verify()}
 	if f.verify != nil {
-		return f.verify()
+		problems = append(problems, f.verify())
 	}
-	return nil
+	return errors.Join(problems...)
 }
 
 type recorder[T any] interface {

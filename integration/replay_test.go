@@ -83,13 +83,13 @@ type replaySourceOperator struct {
 func (o *replaySourceOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*replaySourceOperator) Close() error        { return nil }
 
-func (o *replaySourceOperator) Read(ctx context.Context) (flow.Input[buffer.Handle], error) {
+func (o *replaySourceOperator) Read(ctx context.Context, into *flow.Item[buffer.Handle]) error {
 	if o.done {
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: replayBlockSize}}})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	defer lease.Discard()
 	count := 0
@@ -116,26 +116,27 @@ func (o *replaySourceOperator) Read(ctx context.Context) (flow.Input[buffer.Hand
 		return nil
 	})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	if count == 0 && eof {
 		o.done = true
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	payload, err := lease.Commit()
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	if count != replayBlockSize {
 		exact, rangeErr := payload.Range(0, count)
 		payload.Release()
 		if rangeErr != nil {
-			return flow.Input[buffer.Handle]{}, rangeErr
+			return rangeErr
 		}
 		payload = exact
 	}
 	o.done = eof
-	return flow.NewInput(payload, access.Bytes()), nil
+	*into = flow.NewItem(payload, access.Bytes())
+	return nil
 }
 
 func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) {

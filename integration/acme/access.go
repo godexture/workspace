@@ -176,13 +176,13 @@ type sourceOperator struct {
 func (o *sourceOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*sourceOperator) Close() error        { return nil }
 
-func (o *sourceOperator) Read(ctx context.Context) (flow.Input[buffer.Handle], error) {
+func (o *sourceOperator) Read(ctx context.Context, into *flow.Item[buffer.Handle]) error {
 	if o.done {
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	lease, err := o.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: maxObjectBytes}}})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	defer lease.Discard()
 	count := 0
@@ -212,26 +212,27 @@ func (o *sourceOperator) Read(ctx context.Context) (flow.Input[buffer.Handle], e
 		return nil
 	})
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	if count == 0 {
 		o.done = true
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	full, err := lease.Commit()
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
 	payload := full
 	if count != maxObjectBytes {
 		payload, err = full.Range(0, count)
 		full.Release()
 		if err != nil {
-			return flow.Input[buffer.Handle]{}, err
+			return err
 		}
 	}
 	o.done = true
-	return flow.NewInput(payload, access.Bytes()), nil
+	*into = flow.NewItem(payload, access.Bytes())
+	return nil
 }
 
 func mustCapabilities(values ...access.Capability) access.Capabilities {

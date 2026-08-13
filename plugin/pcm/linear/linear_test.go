@@ -80,16 +80,16 @@ type fixtureSource struct {
 	buffers *buffer.Allocator
 }
 
-func (s *fixtureSource) Read(ctx context.Context) (flow.Input[buffer.Handle], error) {
+func (s *fixtureSource) Read(ctx context.Context, into *flow.Item[buffer.Handle]) error {
 	if s.state.block {
 		<-ctx.Done()
-		return flow.Input[buffer.Handle]{}, context.Cause(ctx)
+		return context.Cause(ctx)
 	}
 	s.state.mu.Lock()
 	if s.state.read {
 		s.state.events = append(s.state.events, "eof")
 		s.state.mu.Unlock()
-		return flow.Input[buffer.Handle]{}, io.EOF
+		return io.EOF
 	}
 	s.state.read = true
 	value := append([]byte(nil), s.state.input...)
@@ -97,9 +97,10 @@ func (s *fixtureSource) Read(ctx context.Context) (flow.Input[buffer.Handle], er
 	s.state.mu.Unlock()
 	handle, err := s.buffers.FromBytes(value, 1)
 	if err != nil {
-		return flow.Input[buffer.Handle]{}, err
+		return err
 	}
-	return flow.NewInput(handle, access.Bytes()), nil
+	*into = flow.NewItem(handle, access.Bytes())
+	return nil
 }
 
 type fixtureObserver struct {
@@ -107,7 +108,7 @@ type fixtureObserver struct {
 	state *fixtureState
 }
 
-func (o *fixtureObserver) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[audio.Frame[int16]]) error {
+func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Frame[int16]], output flow.Emitter[audio.Frame[int16]]) error {
 	frame := input.Value()
 	o.state.mu.Lock()
 	if o.state.planes == nil {
@@ -126,8 +127,8 @@ func (o *fixtureObserver) Process(ctx context.Context, input flow.Input[audio.Fr
 	}
 	o.state.events = append(o.state.events, "frame")
 	o.state.mu.Unlock()
-	forwarded := flow.NewInput(frame.Share(), sample.S16())
-	if err := output.Emit(ctx, forwarded); err != nil {
+	forwarded := flow.NewItem(frame.Share(), sample.S16())
+	if err := output.Emit(ctx, &forwarded); err != nil {
 		forwarded.Drop()
 		return err
 	}
@@ -150,7 +151,7 @@ type fixtureSink struct {
 	state *fixtureState
 }
 
-func (s *fixtureSink) Write(_ context.Context, input flow.Input[access.Write]) error {
+func (s *fixtureSink) Write(_ context.Context, input *flow.Item[access.Write]) error {
 	s.state.mu.Lock()
 	s.state.output = append(s.state.output, input.Value().Bytes()...)
 	s.state.events = append(s.state.events, "write")

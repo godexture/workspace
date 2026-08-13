@@ -51,31 +51,27 @@ type boundarySession struct{ capabilities access.Capabilities }
 
 func (o boundaryOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (boundaryOperator) Close() error        { return nil }
-func (boundarySourceOperator) Read(context.Context) (flow.Input[buffer.Handle], error) {
-	return flow.Input[buffer.Handle]{}, io.EOF
+func (boundarySourceOperator) Read(context.Context, *flow.Item[buffer.Handle]) error {
+	return io.EOF
 }
-func (boundaryTransformOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
-	payload := input.Take().Value()
-	write, err := access.Append(payload)
+func (boundaryTransformOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
+	write, err := access.Append(input.Value().Share())
 	if err != nil {
-		payload.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	return nil
+	item := flow.NewItem(write, access.Writes())
+	defer item.Drop()
+	return output.Emit(ctx, &item)
 }
 func (boundaryTransformOperator) Flush(context.Context, flow.Emitter[access.Write]) error {
 	return nil
 }
-func (boundarySinkOperator) Write(_ context.Context, input flow.Input[access.Write]) error {
+func (boundarySinkOperator) Write(_ context.Context, input *flow.Item[access.Write]) error {
 	input.Drop()
 	return nil
 }
-func (boundaryByteSinkOperator) Write(_ context.Context, input flow.Input[buffer.Handle]) error {
+func (boundaryByteSinkOperator) Write(_ context.Context, input *flow.Item[buffer.Handle]) error {
 	input.Drop()
 	return nil
 }

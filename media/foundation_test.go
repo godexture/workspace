@@ -89,12 +89,13 @@ type skeletonSourceOperator struct {
 func (o *skeletonSourceOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonSourceOperator) Close() error      { return nil }
 
-func (o *skeletonSourceOperator) Read(context.Context) (flow.Input[[]byte], error) {
+func (o *skeletonSourceOperator) Read(_ context.Context, into *flow.Item[[]byte]) error {
 	if o.emitted {
-		return flow.Input[[]byte]{}, io.EOF
+		return io.EOF
 	}
 	o.emitted = true
-	return flow.NewInput(append([]byte(nil), o.data...), skeletonBytesSchema), nil
+	*into = flow.NewItem(append([]byte(nil), o.data...), skeletonBytesSchema)
+	return nil
 }
 
 type skeletonDemuxerOperator struct{ shape flow.Shape }
@@ -102,7 +103,7 @@ type skeletonDemuxerOperator struct{ shape flow.Shape }
 func (o *skeletonDemuxerOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonDemuxerOperator) Close() error      { return nil }
 
-func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[[]byte], output flow.Emitter[packet.Chunk]) error {
+func (o *skeletonDemuxerOperator) Process(ctx context.Context, input *flow.Item[[]byte], output flow.Emitter[packet.Chunk]) error {
 	if !input.Valid() {
 		return fmt.Errorf("demuxer input was not owned")
 	}
@@ -122,8 +123,8 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input flow.Input[
 			return err
 		}
 		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence)*48)), payload)
-		item := flow.NewInput(chunk, skeletonChunkSchema)
-		if err := output.Emit(ctx, item); err != nil {
+		item := flow.NewItem(chunk, skeletonChunkSchema)
+		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
 			return err
 		}
@@ -141,15 +142,15 @@ type skeletonParserOperator struct{ shape flow.Shape }
 func (o *skeletonParserOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonParserOperator) Close() error      { return nil }
 
-func (o *skeletonParserOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[packet.Packet]) error {
+func (o *skeletonParserOperator) Process(ctx context.Context, input *flow.Item[packet.Chunk], output flow.Emitter[packet.Packet]) error {
 	if !input.Valid() {
 		return fmt.Errorf("parser input was not owned")
 	}
 	chunk := input.Value()
 	payload := chunk.Payload().Share()
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes())/2))), payload)
-	item := flow.NewInput(value, skeletonPacketSchema)
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(value, skeletonPacketSchema)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -166,7 +167,7 @@ type skeletonCodecOperator struct{ shape flow.Shape }
 func (o *skeletonCodecOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonCodecOperator) Close() error      { return nil }
 
-func (o *skeletonCodecOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
+func (o *skeletonCodecOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
 	if !input.Valid() {
 		return fmt.Errorf("decoder input was not owned")
 	}
@@ -177,8 +178,8 @@ func (o *skeletonCodecOperator) Process(ctx context.Context, input flow.Input[pa
 		payload.Release()
 		return err
 	}
-	item := flow.NewInput(frame, skeletonFrameSchema)
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(frame, skeletonFrameSchema)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -201,7 +202,7 @@ type skeletonEncoderOperator struct {
 func (o *skeletonEncoderOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonEncoderOperator) Close() error      { return nil }
 
-func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
+func (o *skeletonEncoderOperator) Process(ctx context.Context, input *flow.Item[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
 	if !input.Valid() {
 		return fmt.Errorf("encoder input was not owned")
 	}
@@ -217,8 +218,8 @@ func (o *skeletonEncoderOperator) Process(ctx context.Context, input flow.Input[
 	payload := frame.Planes().Share()
 	value := packet.NewPacket(uint64(pts.Value()), pts, timing.UnknownDTS(), duration, payload)
 	if o.hasPending {
-		item := flow.NewInput(o.pending, skeletonPacketSchema)
-		if err := output.Emit(ctx, item); err != nil {
+		item := flow.NewItem(o.pending, skeletonPacketSchema)
+		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
 			value.Release()
 			o.pending = packet.Packet{}
@@ -236,9 +237,9 @@ func (o *skeletonEncoderOperator) Flush(ctx context.Context, output flow.Emitter
 	if !o.hasPending {
 		return nil
 	}
-	item := flow.NewInput(o.pending, skeletonPacketSchema)
+	item := flow.NewItem(o.pending, skeletonPacketSchema)
 	o.hasPending = false
-	if err := output.Emit(ctx, item); err != nil {
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -423,15 +424,15 @@ type skeletonMuxerOperator struct {
 func (o *skeletonMuxerOperator) Ports() flow.Shape { return o.shape }
 func (o *skeletonMuxerOperator) Close() error      { return nil }
 
-func (o *skeletonMuxerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[packet.Chunk]) error {
+func (o *skeletonMuxerOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[packet.Chunk]) error {
 	if !input.Valid() {
 		return fmt.Errorf("muxer input was not owned")
 	}
 	value := input.Value()
 	payload := value.Payload().Share()
 	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
-	item := flow.NewInput(chunk, skeletonChunkSchema)
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(chunk, skeletonChunkSchema)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -546,13 +547,12 @@ type skeletonByteWriter struct {
 	bytes []byte
 }
 
-func (w *skeletonByteWriter) Write(_ context.Context, input flow.Input[[]byte]) error {
-	owner := input.Take()
-	if !owner.Valid() {
+func (w *skeletonByteWriter) Write(_ context.Context, input *flow.Item[[]byte]) error {
+	defer input.Drop()
+	if !input.Valid() {
 		return fmt.Errorf("byte writer input was not owned")
 	}
-	w.bytes = append(w.bytes, owner.Value()...)
-	owner.Release()
+	w.bytes = append(w.bytes, input.Value()...)
 	return nil
 }
 
@@ -561,39 +561,38 @@ type skeletonChunkWriter struct {
 	items int
 }
 
-func (w *skeletonChunkWriter) Write(ctx context.Context, input flow.Input[packet.Chunk]) error {
+func (w *skeletonChunkWriter) Write(ctx context.Context, input *flow.Item[packet.Chunk]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return fmt.Errorf("chunk writer input was not owned")
 	}
-	value := input.Value()
-	bytes := append([]byte(nil), value.Bytes()...)
-	byteInput := flow.NewInput(bytes, skeletonBytesSchema)
-	if err := w.sink.Write(ctx, byteInput); err != nil {
-		byteInput.Drop()
+	bytes := append([]byte(nil), input.Value().Bytes()...)
+	byteInput := flow.NewItem(bytes, skeletonBytesSchema)
+	defer byteInput.Drop()
+	if err := w.sink.Write(ctx, &byteInput); err != nil {
 		return err
 	}
-	input.Drop()
 	w.items++
 	return nil
 }
 
 type skeletonWriterEmitter[T any] struct{ sink flow.Writer[T] }
 
-func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input flow.Input[T]) error {
+func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input *flow.Item[T]) error {
 	return e.sink.Write(ctx, input)
 }
 
 type skeletonEmitter[T any] struct {
-	items []flow.Input[T]
+	items []flow.Owned[T]
 }
 
-func (e *skeletonEmitter[T]) Emit(_ context.Context, input flow.Input[T]) error {
-	e.items = append(e.items, input)
+func (e *skeletonEmitter[T]) Emit(_ context.Context, input *flow.Item[T]) error {
+	e.items = append(e.items, input.Consume())
 	return nil
 }
 
 type skeletonItem[T any] struct {
-	input      flow.Input[T]
+	input      flow.Owned[T]
 	descriptor stream.Descriptor
 }
 
@@ -900,18 +899,18 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	packetOutput := &skeletonEmitter[packet.Packet]{}
 	frameOutput := &skeletonEmitter[audio.Frame[int16]]{}
 	encodedPacketOutput := &skeletonEmitter[packet.Packet]{}
-	byteInput, err := source.Read(ctx)
-	if err != nil {
+	var byteCell flow.Item[[]byte]
+	if err := source.Read(ctx, &byteCell); err != nil {
 		t.Fatal(err)
 	}
-	byteItem := skeletonItem[[]byte]{input: byteInput, descriptor: descriptors.source.outputs["bytes"]}
+	byteItem := skeletonItem[[]byte]{input: byteCell.Consume(), descriptor: descriptors.source.outputs["bytes"]}
 	if _, ok := skeletonSampleRate.Get(byteItem.descriptor.Properties()); ok {
 		t.Fatal("demuxer input unexpectedly had the generated sample-rate property")
 	}
 	if err := descriptors.demuxer.accept("bytes", byteItem.descriptor); err != nil {
 		t.Fatal(err)
 	}
-	if err := demuxer.Process(ctx, byteItem.input, chunkOutput); err != nil {
+	if err := processOwned(ctx, byteItem.input, chunkOutput, demuxer.Process); err != nil {
 		t.Fatal(err)
 	}
 	rate, ok := skeletonSampleRate.Get(descriptors.decoder.inputs["packets"].Properties())
@@ -924,7 +923,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.parser.accept("chunks", chunk.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := parser.Process(ctx, chunk.input, packetOutput); err != nil {
+		if err := processOwned(ctx, chunk.input, packetOutput, parser.Process); err != nil {
 			t.Fatal(err)
 		}
 		for _, packetInput := range packetOutput.items {
@@ -933,7 +932,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 			if err := descriptors.decoder.accept("packets", packetValue.descriptor); err != nil {
 				t.Fatal(err)
 			}
-			if err := decoder.Process(ctx, packetValue.input, frameOutput); err != nil {
+			if err := processOwned(ctx, packetValue.input, frameOutput, decoder.Process); err != nil {
 				t.Fatal(err)
 			}
 			for _, frameInput := range frameOutput.items {
@@ -942,7 +941,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 				if err := descriptors.encoder.accept("frames", frame.descriptor); err != nil {
 					t.Fatal(err)
 				}
-				if err := encoder.Process(ctx, frame.input, encodedPacketOutput); err != nil {
+				if err := processOwned(ctx, frame.input, encodedPacketOutput, encoder.Process); err != nil {
 					t.Fatal(err)
 				}
 				for _, encodedPacketInput := range encodedPacketOutput.items {
@@ -950,7 +949,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 					if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 						t.Fatal(err)
 					}
-					if err := muxer.Process(ctx, encodedPacket.input, chunkEmitter); err != nil {
+					if err := processOwned(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -966,14 +965,16 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := muxer.Process(ctx, encodedPacket.input, chunkEmitter); err != nil {
+		if err := processOwned(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := muxer.Flush(ctx, chunkEmitter); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := source.Read(ctx); err != io.EOF {
+	var tail flow.Item[[]byte]
+	if err := source.Read(ctx, &tail); err != io.EOF {
+		tail.Drop()
 		t.Fatalf("second source read = %v, want EOF", err)
 	}
 	if string(byteWriter.bytes) != string(inputBytes) {
@@ -1114,4 +1115,13 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 	if shape.Inputs[0].Schema().Identity() != video.Identity() {
 		t.Fatal("port did not carry the declaring schema identity")
 	}
+}
+
+// processOwned adopts stored ownership into a cell for one direct Process
+// call, mirroring what a runtime delivery does around a bounded edge.
+func processOwned[I, O any](ctx context.Context, owned flow.Owned[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
+	var cell flow.Item[I]
+	cell.Adopt(owned)
+	defer cell.Drop()
+	return process(ctx, &cell, output)
 }

@@ -31,7 +31,7 @@ func (o specOperator) Close() error      { return nil }
 
 type specProcessorOperator struct{ specOperator }
 
-func (specProcessorOperator) Process(context.Context, flow.Input[specUnit], flow.Emitter[specUnit]) error {
+func (specProcessorOperator) Process(context.Context, *flow.Item[specUnit], flow.Emitter[specUnit]) error {
 	return nil
 }
 

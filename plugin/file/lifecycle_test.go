@@ -35,22 +35,18 @@ type lifecycleOperator struct{ shape flow.Shape }
 func (o lifecycleOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (lifecycleOperator) Close() error        { return nil }
 
-func (o lifecycleOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
+func (o lifecycleOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("lifecycle pass received invalid bytes")
 	}
-	payload := input.Take().Value()
-	write, err := access.Append(payload)
+	write, err := access.Append(input.Value().Share())
 	if err != nil {
-		payload.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	return nil
+	item := flow.NewItem(write, access.Writes())
+	defer item.Drop()
+	return output.Emit(ctx, &item)
 }
 
 func (lifecycleOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }

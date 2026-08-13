@@ -41,19 +41,15 @@ var spoolPatch = []byte("SIZE")
 func (o *spoolOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*spoolOperator) Close() error        { return nil }
 
-func (o *spoolOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[access.Write]) error {
-	payload := input.Take().Value()
-	write, err := access.Append(payload)
+func (o *spoolOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
+	write, err := access.Append(input.Value().Share())
 	if err != nil {
-		payload.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	return nil
+	item := flow.NewItem(write, access.Writes())
+	defer item.Drop()
+	return output.Emit(ctx, &item)
 }
 
 func (o *spoolOperator) Finalize(context.Context) error {
@@ -77,8 +73,8 @@ func (o *spoolOperator) Flush(ctx context.Context, output flow.Emitter[access.Wr
 		payload.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(write, access.Writes())
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}

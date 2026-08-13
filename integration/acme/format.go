@@ -167,6 +167,7 @@ func readFullAt(ctx context.Context, reader access.Random, destination []byte, o
 }
 
 type readerOperator struct {
+	out      flow.Item[packet.Packet]
 	shape    flow.Shape
 	offset   int64
 	absolute int64
@@ -177,7 +178,7 @@ type readerOperator struct {
 func (o *readerOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*readerOperator) Close() error        { return nil }
 
-func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[packet.Packet]) error {
+func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[packet.Packet]) error {
 	if !input.Valid() {
 		return ErrMalformed
 	}
@@ -196,10 +197,9 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Ha
 	if err != nil {
 		return err
 	}
-	value := packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload)
-	item := flow.NewInput(value, codec.Packets())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
+	o.out.Set(packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload), codec.Packets())
+	defer o.out.Drop()
+	if err := output.Emit(ctx, &o.out); err != nil {
 		return err
 	}
 	o.sequence++

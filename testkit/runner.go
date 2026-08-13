@@ -34,6 +34,7 @@ const (
 type fixturePluginID struct{}
 type fixtureSourceID struct{}
 type fixtureSinkID struct{}
+type fixtureRejectID struct{}
 type fixtureConfigID struct{}
 
 type fixtureConfig struct{}
@@ -123,6 +124,9 @@ func runOne[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O], test
 		return newScenario(kind, subject, test.Config, master.clone(), test.Want.newRecorder())
 	}
 	executeCase(t, subject.identity, test.Want.failure, factory)
+	if test.Want.failure.stage == 0 && acceptsRejection(kind, subject) {
+		runRejected(t, kind, subject, test, master.clone())
+	}
 	subject.coverage.record(subject.identity)
 }
 
@@ -410,15 +414,30 @@ func assertLifecycle(t testing.TB, state *lifecycleState, requireEOF bool) {
 	}
 }
 
-func newScenario[I, O any](kind runnerKind, subject Subject[I, O], patch config.Patch, input Fixture[I], output recorder[O]) (*scenarioCore, error) {
+// scenarioOption adjusts how the testkit fixture pair behaves. Cases never see
+// these; they exist so the runner can drive the same subject through its
+// success and failure paths.
+type scenarioOption func(*scenarioSettings)
+
+type scenarioSettings struct{ reject *rejection }
+
+func withRejection(value *rejection) scenarioOption {
+	return func(settings *scenarioSettings) { settings.reject = value }
+}
+
+func newScenario[I, O any](kind runnerKind, subject Subject[I, O], patch config.Patch, input Fixture[I], output recorder[O], options ...scenarioOption) (*scenarioCore, error) {
+	settings := scenarioSettings{}
+	for _, option := range options {
+		option(&settings)
+	}
 	state := &lifecycleState{}
-	fixture := fixtureDefinition(kind, subject, &input, output, state)
+	fixture := fixtureDefinition(kind, subject, &input, output, state, settings)
 	set := subject.set.Add(fixture)
 	instance, err := host.New(host.Plugins(set))
 	if err != nil {
 		return nil, err
 	}
-	request, closers, err := scenarioJob(kind, subject, set, patch, &input)
+	request, closers, err := scenarioJob(kind, subject, set, patch, &input, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +457,7 @@ func newScenario[I, O any](kind runnerKind, subject Subject[I, O], patch config.
 	}, nil
 }
 
-func scenarioJob[I, O any](kind runnerKind, subject Subject[I, O], set plugin.Set, patch config.Patch, input *Fixture[I]) (job.Job, []io.Closer, error) {
+func scenarioJob[I, O any](kind runnerKind, subject Subject[I, O], set plugin.Set, patch config.Patch, input *Fixture[I], settings scenarioSettings) (job.Job, []io.Closer, error) {
 	source := job.NewNode("fixture-source", plugin.IdentityOf[fixtureSourceID](), config.NewPatch())
 	target := job.NewNode("subject", subject.identity, patch)
 	sink := job.NewNode("fixture-sink", plugin.IdentityOf[fixtureSinkID](), config.NewPatch())
@@ -454,18 +473,15 @@ func scenarioJob[I, O any](kind runnerKind, subject Subject[I, O], set plugin.Se
 			return job.Job{}, nil, errors.New("Format subject must carry exactly one read or write trait")
 		}
 		if hasRead {
-			return readFormatJob(subject, input, read, target, sink)
+			return readFormatJob(subject, input, read, target, sink, settings)
 		}
 		return writeFormatJob(subject, input, write, source, target)
 	}
 
-	graph, err := job.NewGraph(
-		[]job.Node{source, target, sink},
-		[]job.Edge{
-			job.Connect(job.At(source.ID(), "out"), job.At(target.ID(), subject.input.id)),
-			job.Connect(job.At(target.ID(), subject.output.id), job.At(sink.ID(), "in")),
-		},
-	)
+	nodes := []job.Node{source, target, sink}
+	edges := []job.Edge{job.Connect(job.At(source.ID(), "out"), job.At(target.ID(), subject.input.id))}
+	nodes, edges = appendRejection(nodes, edges, subject.output.id, target, sink, "in", settings)
+	graph, err := job.NewGraph(nodes, edges)
 	if err != nil {
 		return job.Job{}, nil, err
 	}
@@ -473,7 +489,20 @@ func scenarioJob[I, O any](kind runnerKind, subject Subject[I, O], set plugin.Se
 	return request, nil, err
 }
 
-func readFormatJob[I, O any](subject Subject[I, O], input *Fixture[I], trait mediaformat.ReadTrait, target, sink job.Node) (job.Job, []io.Closer, error) {
+// appendRejection routes the subject through the rejecting processor before
+// its downstream consumer, so the failure reaches the subject's own Emit.
+func appendRejection(nodes []job.Node, edges []job.Edge, outputPort string, target, consumer job.Node, consumerPort string, settings scenarioSettings) ([]job.Node, []job.Edge) {
+	if settings.reject == nil {
+		return nodes, append(edges, job.Connect(job.At(target.ID(), outputPort), job.At(consumer.ID(), consumerPort)))
+	}
+	reject := job.NewNode("fixture-reject", plugin.IdentityOf[fixtureRejectID](), config.NewPatch())
+	return append(nodes, reject), append(edges,
+		job.Connect(job.At(target.ID(), outputPort), job.At(reject.ID(), "in")),
+		job.Connect(job.At(reject.ID(), "out"), job.At(consumer.ID(), consumerPort)),
+	)
+}
+
+func readFormatJob[I, O any](subject Subject[I, O], input *Fixture[I], trait mediaformat.ReadTrait, target, sink job.Node, settings scenarioSettings) (job.Job, []io.Closer, error) {
 	if subject.input.schema.Identity() != access.Bytes().Identity() {
 		return job.Job{}, nil, errors.New("read Format input schema must be access.Bytes")
 	}
@@ -487,10 +516,8 @@ func readFormatJob[I, O any](subject Subject[I, O], input *Fixture[I], trait med
 	if err != nil {
 		return job.Job{}, nil, err
 	}
-	graph, err := job.NewGraph(
-		[]job.Node{target, sink},
-		[]job.Edge{job.Connect(job.At(target.ID(), subject.output.id), job.At(sink.ID(), "in"))},
-	)
+	nodes, edges := appendRejection([]job.Node{target, sink}, nil, subject.output.id, target, sink, "in", settings)
+	graph, err := job.NewGraph(nodes, edges)
 	if err != nil {
 		return job.Job{}, nil, err
 	}
@@ -544,7 +571,7 @@ func componentOf(set plugin.Set, identity plugin.Identity) (plugin.Component, bo
 	return plugin.Component{}, false
 }
 
-func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *Fixture[I], output recorder[O], state *lifecycleState) plugin.Definition {
+func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *Fixture[I], output recorder[O], state *lifecycleState, settings scenarioSettings) plugin.Definition {
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", subject.input.schema)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", subject.output.schema)}, nil)
@@ -576,6 +603,10 @@ func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *
 			return &fixtureWriter[O]{shape: sinkShape, output: output, state: state}, nil
 		},
 	}
+	components := []plugin.Component{}
+	if settings.reject != nil {
+		components = append(components, rejectComponent(subject, settings.reject))
+	}
 	sourceOptions := []plugin.ComponentOption{plugin.WithSpec(sourceSpec), plugin.WithReader("out", subject.input.schema)}
 	sinkOptions := []plugin.ComponentOption{plugin.WithSpec(sinkSpec), plugin.WithWriter("in", subject.output.schema)}
 	if kind == formatRunner {
@@ -600,8 +631,54 @@ func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *
 	}
 	source := plugin.NewComponent[fixtureSourceID](plugin.Descriptor{DisplayName: "testkit source"}, schema, sourceOptions...)
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "testkit sink"}, schema, sinkOptions...)
-	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "testkit fixtures", Version: "1"}, source, sink)
+	components = append(components, source, sink)
+	return plugin.Define[fixturePluginID](plugin.Descriptor{DisplayName: "testkit fixtures", Version: "1"}, components...)
 }
+
+// rejectComponent is a pass-through processor that refuses one item. Host
+// fuses adjacent linear processors into a single island, so the subject sees
+// its Emit fail inside its own Process call.
+func rejectComponent[I, O any](subject Subject[I, O], reject *rejection) plugin.Component {
+	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
+	shape := flow.NewShape([]flow.Port{flow.In("in", subject.output.schema)}, []flow.Port{flow.Out("out", subject.output.schema)})
+	spec := plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
+		Shape: plugin.StaticShape[fixtureConfig](shape),
+		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
+			input, ok := inputs.One("in")
+			if !ok {
+				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{
+					plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("testkit.reject")),
+				}}, nil
+			}
+			return plugin.Compiled[fixturePlan, stream.Descriptor]{
+				Plan:    fixturePlan{shape: shape.Clone()},
+				Outputs: flow.NewDescriptors(flow.Describe("out", input)),
+			}, nil
+		},
+		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
+			return &rejectOperator[O]{shape: shape.Clone(), reject: reject}, nil
+		},
+	}
+	return plugin.NewComponent[fixtureRejectID](plugin.Descriptor{DisplayName: "testkit rejection"}, schema,
+		plugin.WithSpec(spec), plugin.WithProcessor("in", subject.output.schema, "out", subject.output.schema))
+}
+
+type rejectOperator[T any] struct {
+	shape  flow.Shape
+	reject *rejection
+}
+
+func (o *rejectOperator[T]) Ports() flow.Shape { return o.shape.Clone() }
+func (*rejectOperator[T]) Close() error        { return nil }
+
+func (o *rejectOperator[T]) Process(ctx context.Context, input *flow.Item[T], output flow.Emitter[T]) error {
+	if err := o.reject.accept(); err != nil {
+		return err
+	}
+	return output.Emit(ctx, input)
+}
+
+func (*rejectOperator[T]) Flush(context.Context, flow.Emitter[T]) error { return nil }
 
 type fixtureReader[T any] struct {
 	shape  flow.Shape
@@ -614,21 +691,19 @@ type fixtureReader[T any] struct {
 
 func (r *fixtureReader[T]) Ports() flow.Shape { return r.shape.Clone() }
 
-func (r *fixtureReader[T]) Read(ctx context.Context) (flow.Input[T], error) {
+func (r *fixtureReader[T]) Read(ctx context.Context, into *flow.Item[T]) error {
 	if err := ctx.Err(); err != nil {
-		return flow.Input[T]{}, err
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.index >= len(r.input.values) {
 		r.state.eof.Add(1)
-		return flow.Input[T]{}, io.EOF
+		return io.EOF
 	}
-	value := r.input.values[r.index]
-	var zero T
-	r.input.values[r.index] = zero
+	*into = r.input.emit(r.index)
 	r.index++
-	return flow.NewInput(value, r.input.typ), nil
+	return nil
 }
 
 func (r *fixtureReader[T]) Close() error {
@@ -650,12 +725,12 @@ type fixtureWriter[T any] struct {
 
 func (w *fixtureWriter[T]) Ports() flow.Shape { return w.shape.Clone() }
 
-func (w *fixtureWriter[T]) Write(_ context.Context, input flow.Input[T]) error {
+func (w *fixtureWriter[T]) Write(_ context.Context, input *flow.Item[T]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("testkit sink received an invalid input")
 	}
 	w.output.accept(input.Value())
-	input.Drop()
 	return nil
 }
 

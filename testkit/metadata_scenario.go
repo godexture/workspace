@@ -275,11 +275,7 @@ type metadataAnchorOperator struct{ shape flow.Shape }
 
 func (o metadataAnchorOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (metadataAnchorOperator) Close() error        { return nil }
-func (metadataAnchorOperator) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
-	if err := output.Emit(ctx, flow.NewInput(input.Value(), metadataAnchorType)); err != nil {
-		return err
-	}
-	input.Drop()
-	return nil
+func (metadataAnchorOperator) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	return output.Emit(ctx, input)
 }
 func (metadataAnchorOperator) Flush(context.Context, flow.Emitter[int]) error { return nil }

@@ -53,12 +53,14 @@ func openOperation(plan componentPlan, buffers *buffer.Allocator) (flow.Operator
 
 type readerOperator struct {
 	operatorBase
+	out           flow.Item[packet.Chunk]
 	configuration configuration
 	sequence      uint64
 	sampleOffset  int64
 }
 
-func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[packet.Chunk]) error {
+func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[packet.Chunk]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("raw PCM reader received unowned bytes")
 	}
@@ -68,17 +70,6 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Ha
 		return ErrPartialSample
 	}
 	chunkBytes := o.configuration.ChunkSamples * frameBytes
-	if len(data) > 0 && len(data) <= chunkBytes {
-		payload := input.Take().Value()
-		chunk := packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload)
-		item := flow.NewInput(chunk, format.Chunks())
-		if err := output.Emit(ctx, item); err != nil {
-			return err
-		}
-		o.sequence++
-		o.sampleOffset += int64(len(data) / frameBytes)
-		return nil
-	}
 	for offset := 0; offset < len(data); offset += chunkBytes {
 		end := offset + chunkBytes
 		if end > len(data) {
@@ -89,16 +80,15 @@ func (o *readerOperator) Process(ctx context.Context, input flow.Input[buffer.Ha
 			return err
 		}
 		samples := int64((end - offset) / frameBytes)
-		chunk := packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload)
-		item := flow.NewInput(chunk, format.Chunks())
-		if err := output.Emit(ctx, item); err != nil {
-			item.Drop()
+		o.out.Set(packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload), format.Chunks())
+		err = output.Emit(ctx, &o.out)
+		o.out.Drop()
+		if err != nil {
 			return err
 		}
 		o.sequence++
 		o.sampleOffset += samples
 	}
-	input.Drop()
 	return nil
 }
 
@@ -106,10 +96,12 @@ func (*readerOperator) Flush(context.Context, flow.Emitter[packet.Chunk]) error 
 
 type parserOperator struct {
 	operatorBase
+	out           flow.Item[packet.Packet]
 	configuration configuration
 }
 
-func (o *parserOperator) Process(ctx context.Context, input flow.Input[packet.Chunk], output flow.Emitter[packet.Packet]) error {
+func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Chunk], output flow.Emitter[packet.Packet]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("linear PCM parser received an unowned chunk")
 	}
@@ -121,23 +113,21 @@ func (o *parserOperator) Process(ctx context.Context, input flow.Input[packet.Ch
 	payload := chunk.Payload().Share()
 	duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), duration, payload).WithSideData(chunk.SideData())
-	item := flow.NewInput(value, codec.Packets())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	input.Drop()
-	return nil
+	o.out.Set(value, codec.Packets())
+	defer o.out.Drop()
+	return output.Emit(ctx, &o.out)
 }
 
 func (*parserOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error { return nil }
 
 type decoderOperator struct {
 	operatorBase
+	out           flow.Item[audio.Frame[int16]]
 	configuration configuration
 }
 
-func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
+func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("linear PCM decoder received an unowned packet")
 	}
@@ -187,24 +177,22 @@ func (o *decoderOperator) Process(ctx context.Context, input flow.Input[packet.P
 		return err
 	}
 	frame = frame.WithSideData(value.SideData())
-	item := flow.NewInput(frame, sample.S16())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	input.Drop()
-	return nil
+	o.out.Set(frame, sample.S16())
+	defer o.out.Drop()
+	return output.Emit(ctx, &o.out)
 }
 
 func (*decoderOperator) Flush(context.Context, flow.Emitter[audio.Frame[int16]]) error { return nil }
 
 type encoderOperator struct {
 	operatorBase
+	out           flow.Item[packet.Packet]
 	configuration configuration
 	sequence      uint64
 }
 
-func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
+func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("linear PCM encoder received an unowned frame")
 	}
@@ -248,21 +236,24 @@ func (o *encoderOperator) Process(ctx context.Context, input flow.Input[audio.Fr
 		timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))),
 		payload,
 	).WithSideData(frame.SideData())
-	item := flow.NewInput(packetValue, codec.Packets())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
+	o.out.Set(packetValue, codec.Packets())
+	defer o.out.Drop()
+	if err := output.Emit(ctx, &o.out); err != nil {
 		return err
 	}
 	o.sequence++
-	input.Drop()
 	return nil
 }
 
 func (*encoderOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error { return nil }
 
-type writerOperator struct{ operatorBase }
+type writerOperator struct {
+	operatorBase
+	out flow.Item[access.Write]
+}
 
-func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[access.Write]) error {
+func (o *writerOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("raw PCM writer received an unowned packet")
 	}
@@ -275,13 +266,9 @@ func (o *writerOperator) Process(ctx context.Context, input flow.Input[packet.Pa
 		value.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	input.Drop()
-	return nil
+	o.out.Set(write, access.Writes())
+	defer o.out.Drop()
+	return output.Emit(ctx, &o.out)
 }
 
 func (*writerOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }

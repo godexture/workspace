@@ -13,6 +13,7 @@ import (
 )
 
 type muxer struct {
+	out           flow.Item[access.Write]
 	shape         flow.Shape
 	buffers       *buffer.Allocator
 	header        muxHeader
@@ -29,7 +30,8 @@ func newMuxer(plan muxPlan, buffers *buffer.Allocator) *muxer {
 func (m *muxer) Ports() flow.Shape { return m.shape.Clone() }
 func (*muxer) Close() error        { return nil }
 
-func (m *muxer) Process(ctx context.Context, input flow.Input[packet.Packet], output flow.Emitter[access.Write]) error {
+func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
 	if m.finalized {
 		return errors.New("WAVE muxer received a packet after finalization")
 	}
@@ -57,13 +59,12 @@ func (m *muxer) Process(ctx context.Context, input flow.Input[packet.Packet], ou
 		handle.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
+	m.out.Set(write, access.Writes())
+	defer m.out.Drop()
+	if err := output.Emit(ctx, &m.out); err != nil {
 		return err
 	}
 	m.dataSize = nextSize
-	input.Drop()
 	return nil
 }
 
@@ -155,10 +156,7 @@ func (m *muxer) emit(ctx context.Context, payload []byte, build func(buffer.Hand
 		handle.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	return nil
+	m.out.Set(write, access.Writes())
+	defer m.out.Drop()
+	return output.Emit(ctx, &m.out)
 }

@@ -36,7 +36,7 @@ type waveDecoyOperator struct{ shape flow.Shape }
 
 func (o waveDecoyOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (waveDecoyOperator) Close() error        { return nil }
-func (waveDecoyOperator) Process(context.Context, flow.Input[packet.Chunk], flow.Emitter[packet.Packet]) error {
+func (waveDecoyOperator) Process(context.Context, *flow.Item[packet.Chunk], flow.Emitter[packet.Packet]) error {
 	return errors.New("other-tag parser was opened")
 }
 func (waveDecoyOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error { return nil }

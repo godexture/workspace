@@ -41,13 +41,14 @@ type failureDropReader struct {
 	emitted   *atomic.Int64
 }
 
-func (r *failureDropReader) Read(context.Context) (flow.Input[int], error) {
+func (r *failureDropReader) Read(_ context.Context, into *flow.Item[int]) error {
 	if r.remaining == 0 {
-		return flow.Input[int]{}, io.EOF
+		return io.EOF
 	}
 	r.remaining--
 	r.emitted.Add(1)
-	return flow.NewInput(r.remaining, r.typ), nil
+	*into = flow.NewItem(r.remaining, r.typ)
+	return nil
 }
 
 type failureDropWriter struct {
@@ -56,7 +57,7 @@ type failureDropWriter struct {
 	writes int
 }
 
-func (w *failureDropWriter) Write(_ context.Context, input flow.Input[int]) error {
+func (w *failureDropWriter) Write(_ context.Context, input *flow.Item[int]) error {
 	if w.writes == w.failAt {
 		return errFailureDropSink
 	}

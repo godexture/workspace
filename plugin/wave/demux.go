@@ -14,6 +14,7 @@ import (
 )
 
 type demuxer struct {
+	out         flow.Item[packet.Chunk]
 	shape       flow.Shape
 	buffers     *buffer.Allocator
 	dataOffset  int64
@@ -40,7 +41,7 @@ func newDemuxer(plan demuxPlan, buffers *buffer.Allocator) *demuxer {
 func (d *demuxer) Ports() flow.Shape { return d.shape.Clone() }
 func (*demuxer) Close() error        { return nil }
 
-func (d *demuxer) Process(ctx context.Context, input flow.Input[buffer.Handle], output flow.Emitter[packet.Chunk]) error {
+func (d *demuxer) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[packet.Chunk]) error {
 	if !input.Valid() {
 		return errors.New("WAVE demuxer received unowned bytes")
 	}
@@ -140,10 +141,9 @@ func (d *demuxer) emitCopy(ctx context.Context, value []byte, output flow.Emitte
 
 func (d *demuxer) emit(ctx context.Context, payload buffer.Handle, output flow.Emitter[packet.Chunk]) error {
 	frames := len(payload.Bytes()) / d.blockAlign
-	chunk := packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload)
-	item := flow.NewInput(chunk, mediaformat.Chunks())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
+	d.out.Set(packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload), mediaformat.Chunks())
+	defer d.out.Drop()
+	if err := output.Emit(ctx, &d.out); err != nil {
 		return err
 	}
 	d.sequence++

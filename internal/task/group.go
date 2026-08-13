@@ -23,7 +23,6 @@ type PanicError struct {
 	Location string
 	Value    any
 	Stack    []byte
-	Cleanup  any
 }
 
 func (e *PanicError) Error() string {
@@ -99,13 +98,13 @@ func (g *Group) Context() context.Context {
 // plugin.TaskStarter without exposing cancellation or join ownership to a
 // component.
 func (g *Group) Start(name string, work func(context.Context) error) error {
-	return g.StartScoped(name, nil, nil, work)
+	return g.StartScoped(name, nil, work)
 }
 
 // StartScoped is the runtime-only form used by an execution island. location
 // is read in the panicking goroutine after recovery, so it can identify the
 // last direct-call node without synchronization or an item-loop defer.
-func (g *Group) StartScoped(name string, location func() string, cleanup func(), work func(context.Context) error) error {
+func (g *Group) StartScoped(name string, location func() string, work func(context.Context) error) error {
 	if g == nil || strings.TrimSpace(name) == "" || work == nil {
 		return ErrInvalidTask
 	}
@@ -120,11 +119,11 @@ func (g *Group) StartScoped(name string, location func() string, cleanup func(),
 	g.running[id] = name
 	g.mu.Unlock()
 
-	go g.run(id, name, location, cleanup, work)
+	go g.run(id, name, location, work)
 	return nil
 }
 
-func (g *Group) run(id uint64, name string, location func() string, cleanup func(), work func(context.Context) error) {
+func (g *Group) run(id uint64, name string, location func() string, work func(context.Context) error) {
 	var failure error
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -137,21 +136,11 @@ func (g *Group) run(id uint64, name string, location func() string, cleanup func
 				Location: where,
 				Value:    recovered,
 				Stack:    append([]byte(nil), debug.Stack()...),
-				Cleanup:  cleanupPanic(cleanup),
 			}
 		}
 		g.finish(id, name, failure)
 	}()
 	failure = work(g.ctx)
-}
-
-func cleanupPanic(cleanup func()) (recovered any) {
-	if cleanup == nil {
-		return nil
-	}
-	defer func() { recovered = recover() }()
-	cleanup()
-	return nil
 }
 
 func (g *Group) finish(id uint64, name string, failure error) {

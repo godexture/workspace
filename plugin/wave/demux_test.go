@@ -12,10 +12,10 @@ import (
 	"github.com/godexture/godec/media/packet"
 )
 
-type chunkCollector struct{ items []flow.Input[packet.Chunk] }
+type chunkCollector struct{ items []flow.Owned[packet.Chunk] }
 
-func (c *chunkCollector) Emit(_ context.Context, input flow.Input[packet.Chunk]) error {
-	c.items = append(c.items, input)
+func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk]) error {
+	c.items = append(c.items, input.Consume())
 	return nil
 }
 
@@ -44,7 +44,8 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := operator.Process(context.Background(), flow.NewInput(handle, access.Bytes()), collector); err != nil {
+		item := flow.NewItem(handle, access.Bytes())
+		if err := operator.Process(context.Background(), &item, collector); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -68,7 +69,7 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Value().Payload().Layout(), collector.items[1].Value().Payload().Layout())
 	}
 	for _, item := range collector.items {
-		item.Drop()
+		item.Release()
 	}
 	if sourceBuffers.Used() != 0 || reframeBuffers.Used() != 0 {
 		t.Fatalf("retained payload = source %d, reframe %d", sourceBuffers.Used(), reframeBuffers.Used())
@@ -88,13 +89,14 @@ func TestDemuxFlushRejectsTruncatedData(t *testing.T) {
 	}
 	operator := newDemuxer(demuxPlan{shape: demuxerShape(), header: inspected}, allocator)
 	collector := &chunkCollector{}
-	if err := operator.Process(context.Background(), flow.NewInput(handle, access.Bytes()), collector); err != nil {
+	truncatedItem := flow.NewItem(handle, access.Bytes())
+	if err := operator.Process(context.Background(), &truncatedItem, collector); err != nil {
 		t.Fatal(err)
 	}
 	if err := operator.Flush(context.Background(), collector); !errors.Is(err, ErrTruncatedData) {
 		t.Fatalf("Flush error = %v", err)
 	}
 	for _, item := range collector.items {
-		item.Drop()
+		item.Release()
 	}
 }

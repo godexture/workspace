@@ -33,22 +33,22 @@ type templateReader struct {
 	index  int
 }
 
-func (r *templateReader) Read(context.Context) (flow.Input[int], error) {
+func (r *templateReader) Read(_ context.Context, into *flow.Item[int]) error {
 	if r.index == len(r.values) {
-		return flow.Input[int]{}, io.EOF
+		return io.EOF
 	}
 	typ := r.typ
 	if !typ.Valid() {
 		typ = templateInput
 	}
-	value := flow.NewInput(r.values[r.index], typ)
+	*into = flow.NewItem(r.values[r.index], typ)
 	r.index++
-	return value, nil
+	return nil
 }
 
 type panickingProcessor struct{ templateOperator }
 
-func (*panickingProcessor) Process(context.Context, flow.Input[int], flow.Emitter[int]) error {
+func (*panickingProcessor) Process(context.Context, *flow.Item[int], flow.Emitter[int]) error {
 	panic("processor panic")
 }
 
@@ -60,7 +60,7 @@ type failingWriter struct {
 	writes int
 }
 
-func (w *failingWriter) Write(_ context.Context, input flow.Input[int]) error {
+func (w *failingWriter) Write(_ context.Context, input *flow.Item[int]) error {
 	if w.writes == w.failAt {
 		return errors.New("sink failure")
 	}
@@ -76,9 +76,9 @@ type templateProcessor struct {
 	add int
 }
 
-func (p *templateProcessor) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
-	item := flow.NewInput(input.Value()+p.add, p.out)
-	if err := output.Emit(ctx, item); err != nil {
+func (p *templateProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	item := flow.NewItem(input.Value()+p.add, p.out)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -94,7 +94,7 @@ type templateWriter struct {
 	values []int
 }
 
-func (w *templateWriter) Write(_ context.Context, input flow.Input[int]) error {
+func (w *templateWriter) Write(_ context.Context, input *flow.Item[int]) error {
 	w.mu.Lock()
 	w.values = append(w.values, input.Value())
 	w.mu.Unlock()

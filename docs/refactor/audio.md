@@ -97,14 +97,17 @@ stream copy の場合は decoded audio schema 自体を通らない。
 ```go
 func (p *Gain) Process(
     _ context.Context,
-    in flow.Input[*audio.Frame[float32]],
-    out flow.Emitter[*audio.Frame[float32]],
+    in *flow.Item[audio.Frame[float32]],
+    out flow.Emitter[audio.Frame[float32]],
 ) error {
-    frame := in.Edit()
+    defer in.Drop()
+    frame := in.Value().Edit()
     for plane := range frame.Planes() {
         gain.Apply(frame.Plane(plane), p.factor)
     }
-    return out.Move(frame)
+    p.out.Set(frame, sample.F32())
+    defer p.out.Drop()
+    return out.Emit(ctx, &p.out)
 }
 ```
 

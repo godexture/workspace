@@ -28,20 +28,20 @@ func ExampleNewShape() {
 
 // Share retains a value without consuming the borrowed input; Take transfers
 // its existing ownership instead.
-func ExampleInput_Share() {
+func ExampleItem_Fork() {
 	retains := 0
 	releases := 0
-	input := flow.NewInputWithTraits(7, func(value int) int {
+	item := flow.NewItemWithTraits(7, func(value int) int {
 		retains++
 		return value
 	}, func(int) {
 		releases++
 	})
+	defer item.Drop()
 
-	shared := input.Share()
-	owned := input.Take()
-	shared.Release()
-	owned.Release()
+	var branch flow.Item[int]
+	item.Fork(&branch)
+	branch.Drop()
 	fmt.Println(retains, releases)
-	// Output: 1 2
+	// Output: 1 1
 }

@@ -52,13 +52,13 @@ type sliceReader struct {
 	index  int
 }
 
-func (r *sliceReader) Read(context.Context) (flow.Input[owned], error) {
+func (r *sliceReader) Read(_ context.Context, into *flow.Item[owned]) error {
 	if r.index == len(r.values) {
-		return flow.Input[owned]{}, io.EOF
+		return io.EOF
 	}
-	value := flow.NewInput(r.values[r.index], r.typ)
+	*into = flow.NewItem(r.values[r.index], r.typ)
 	r.index++
-	return value, nil
+	return nil
 }
 
 type mapProcessor struct {
@@ -68,14 +68,11 @@ type mapProcessor struct {
 	flush  atomic.Int32
 }
 
-func (p *mapProcessor) Process(ctx context.Context, input flow.Input[owned], output flow.Emitter[owned]) error {
-	item := flow.NewInput(owned{value: input.Value().value + 10}, p.output)
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
-		return err
-	}
-	input.Drop()
-	return nil
+func (p *mapProcessor) Process(ctx context.Context, input *flow.Item[owned], output flow.Emitter[owned]) error {
+	defer input.Drop()
+	item := flow.NewItem(owned{value: input.Value().value + 10}, p.output)
+	defer item.Drop()
+	return output.Emit(ctx, &item)
 }
 
 func (p *mapProcessor) Flush(context.Context, flow.Emitter[owned]) error {
@@ -90,7 +87,7 @@ type recordingWriter struct {
 	failure error
 }
 
-func (w *recordingWriter) Write(_ context.Context, input flow.Input[owned]) error {
+func (w *recordingWriter) Write(_ context.Context, input *flow.Item[owned]) error {
 	if w.failure != nil {
 		return w.failure
 	}
@@ -182,8 +179,8 @@ func TestFanoutRetainsRollbackOwnerAcrossPartialFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := flow.NewInput(owned{value: 9}, typ)
-	if err := target.Emit(context.Background(), input); !errors.Is(err, want) {
+	input := flow.NewItem(owned{value: 9}, typ)
+	if err := target.Emit(context.Background(), &input); !errors.Is(err, want) {
 		t.Fatalf("fan-out error = %v", err)
 	}
 	input.Drop()
@@ -206,7 +203,9 @@ func TestOneOutputFanoutIsLinearMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	target, _ := deliveryOf[owned](linear)
-	if err := target.Emit(context.Background(), flow.NewInput(owned{value: 4}, typ)); err != nil {
+	item := flow.NewItem(owned{value: 4}, typ)
+	defer item.Drop()
+	if err := target.Emit(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
 	if owners.forks.Load() != 0 || owners.drops.Load() != 1 {
@@ -221,7 +220,7 @@ type editingFrameWriter struct {
 	value     int16
 }
 
-func (w *editingFrameWriter) Write(_ context.Context, input flow.Input[audio.Frame[int16]]) error {
+func (w *editingFrameWriter) Write(_ context.Context, input *flow.Item[audio.Frame[int16]]) error {
 	edit, err := input.Value().Edit(w.allocator)
 	if err != nil {
 		return err
@@ -249,7 +248,7 @@ type readingFrameWriter struct {
 	value int16
 }
 
-func (w *readingFrameWriter) Write(_ context.Context, input flow.Input[audio.Frame[int16]]) error {
+func (w *readingFrameWriter) Write(_ context.Context, input *flow.Item[audio.Frame[int16]]) error {
 	samples, err := input.Value().PlaneSamples(0)
 	if err != nil {
 		return err
@@ -297,7 +296,9 @@ func TestAudioFanoutCopiesOnlyModifyingBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := target.Emit(context.Background(), flow.NewInput(frame, typ)); err != nil {
+	item := flow.NewItem(frame, typ)
+	defer item.Drop()
+	if err := target.Emit(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
 	if left.copies != 1 || left.value != 9 || right.value != 0 {
@@ -346,20 +347,26 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	}
 }
 
-type intOperator struct{ operatorBase }
-
-func (p intOperator) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
-	return output.Emit(ctx, flow.NewInputWithTraits(input.Value()+1, nil, nil))
+type intOperator struct {
+	operatorBase
+	out flow.Item[int]
 }
 
-func (intOperator) Flush(context.Context, flow.Emitter[int]) error { return nil }
+func (p *intOperator) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	defer input.Drop()
+	p.out = flow.NewItemWithTraits(input.Value()+1, nil, nil)
+	defer p.out.Drop()
+	return output.Emit(ctx, &p.out)
+}
+
+func (*intOperator) Flush(context.Context, flow.Emitter[int]) error { return nil }
 
 type intWriter struct {
 	operatorBase
 	value int
 }
 
-func (w *intWriter) Write(_ context.Context, input flow.Input[int]) error {
+func (w *intWriter) Write(_ context.Context, input *flow.Item[int]) error {
 	w.value = input.Value()
 	return nil
 }
@@ -376,7 +383,7 @@ func TestLinearProcessorHopAllocatesZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link, err := NewProcessor("in", in, "out", out).Prepend(intOperator{operatorBase{processorShape}}, next)
+	link, err := NewProcessor("in", in, "out", out).Prepend(&intOperator{operatorBase: operatorBase{processorShape}}, next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,8 +391,11 @@ func TestLinearProcessorHopAllocatesZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var cell flow.Item[int]
+	defer cell.Drop()
 	allocations := testing.AllocsPerRun(1000, func() {
-		if err := target.Emit(context.Background(), flow.NewInputWithTraits(1, nil, nil)); err != nil {
+		cell.Set(1, in)
+		if err := target.Emit(context.Background(), &cell); err != nil {
 			panic(err)
 		}
 	})
@@ -419,8 +429,9 @@ type intReader struct {
 	typ schema.Type[int]
 }
 
-func (r *intReader) Read(context.Context) (flow.Input[int], error) {
-	return flow.NewInput(1, r.typ), nil
+func (r *intReader) Read(_ context.Context, into *flow.Item[int]) error {
+	*into = flow.NewItem(1, r.typ)
+	return nil
 }
 
 type sumJoiner struct {
@@ -435,8 +446,8 @@ func (j *sumJoiner) Process(ctx context.Context, batch flow.Batch[owned], output
 	if !leftOK || !rightOK {
 		return errors.New("invalid zip batch")
 	}
-	item := flow.NewInput(owned{value: left.value + right.value}, j.output)
-	if err := output.Emit(ctx, item); err != nil {
+	item := flow.NewItem(owned{value: left.value + right.value}, j.output)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -477,12 +488,16 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- task.Run(context.Background()) }()
 	for _, pair := range [][2]int{{1, 10}, {2, 20}} {
-		if err := left.Emit(context.Background(), flow.NewInput(owned{value: pair[0]}, in)); err != nil {
+		leftItem := flow.NewItem(owned{value: pair[0]}, in)
+		if err := left.Emit(context.Background(), &leftItem); err != nil {
 			t.Fatal(err)
 		}
-		if err := right.Emit(context.Background(), flow.NewInput(owned{value: pair[1]}, in)); err != nil {
+		leftItem.Drop()
+		rightItem := flow.NewItem(owned{value: pair[1]}, in)
+		if err := right.Emit(context.Background(), &rightItem); err != nil {
 			t.Fatal(err)
 		}
+		rightItem.Drop()
 	}
 	if err := left.close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -530,10 +545,14 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	go func() { result <- task.Run(context.Background()) }()
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
-	if err := left.Emit(context.Background(), flow.NewInput(owned{value: 1}, in)); err != nil {
+	leftItem := flow.NewItem(owned{value: 1}, in)
+	defer leftItem.Drop()
+	if err := left.Emit(context.Background(), &leftItem); err != nil {
 		t.Fatal(err)
 	}
-	if err := right.Emit(context.Background(), flow.NewInput(owned{value: 10}, in)); err != nil {
+	rightItem := flow.NewItem(owned{value: 10}, in)
+	defer rightItem.Drop()
+	if err := right.Emit(context.Background(), &rightItem); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-result; !errors.Is(err, ErrWatermark) {

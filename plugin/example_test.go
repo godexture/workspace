@@ -38,8 +38,8 @@ type exampleOperator struct{ shape flow.Shape }
 
 func (o exampleOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (exampleOperator) Close() error        { return nil }
-func (exampleOperator) Read(context.Context) (flow.Input[exampleUnit], error) {
-	return flow.Input[exampleUnit]{}, io.EOF
+func (exampleOperator) Read(_ context.Context, into *flow.Item[exampleUnit]) error {
+	return io.EOF
 }
 
 func Codec() plugin.Definition {

@@ -170,16 +170,17 @@ type ownershipSource struct {
 }
 
 func (o *ownershipSource) Ports() flow.Shape { return o.shape.Clone() }
-func (o *ownershipSource) Read(ctx context.Context) (flow.Input[int], error) {
+func (o *ownershipSource) Read(ctx context.Context, into *flow.Item[int]) error {
 	if err := ctx.Err(); err != nil {
-		return flow.Input[int]{}, err
+		return err
 	}
 	if o.read {
 		o.state.eof.Add(1)
-		return flow.Input[int]{}, io.EOF
+		return io.EOF
 	}
 	o.read = true
-	return flow.NewInput(7, ownershipType), nil
+	*into = flow.NewItem(7, ownershipType)
+	return nil
 }
 func (o *ownershipSource) Close() error {
 	if !o.closed {
@@ -197,12 +198,12 @@ type ownershipSink struct {
 }
 
 func (o *ownershipSink) Ports() flow.Shape { return o.shape.Clone() }
-func (o *ownershipSink) Write(_ context.Context, input flow.Input[int]) error {
+func (o *ownershipSink) Write(_ context.Context, input *flow.Item[int]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("testkit direct sink received an invalid item")
 	}
 	o.received.Store(int32(input.Value()))
-	input.Drop()
 	return nil
 }
 func (o *ownershipSink) Close() error {

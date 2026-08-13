@@ -72,6 +72,7 @@ func writerComponent() plugin.Component {
 }
 
 type writerOperator struct {
+	out     flow.Item[access.Write]
 	shape   flow.Shape
 	buffers *buffer.Allocator
 	header  []byte
@@ -81,7 +82,8 @@ type writerOperator struct {
 func (o *writerOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*writerOperator) Close() error        { return nil }
 
-func (o *writerOperator) Process(ctx context.Context, input flow.Input[Value], output flow.Emitter[access.Write]) error {
+func (o *writerOperator) Process(ctx context.Context, input *flow.Item[Value], output flow.Emitter[access.Write]) error {
+	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("ACME writer received invalid value")
 	}
@@ -115,13 +117,12 @@ func (o *writerOperator) Process(ctx context.Context, input flow.Input[Value], o
 		handle.Release()
 		return err
 	}
-	item := flow.NewInput(write, access.Writes())
-	if err := output.Emit(ctx, item); err != nil {
-		item.Drop()
+	o.out.Set(write, access.Writes())
+	defer o.out.Drop()
+	if err := output.Emit(ctx, &o.out); err != nil {
 		return err
 	}
 	o.wrote = true
-	input.Drop()
 	return nil
 }
 

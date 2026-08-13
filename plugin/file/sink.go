@@ -48,25 +48,20 @@ func openSink(shape flow.Shape, opening access.Opening) (flow.Operator, error) {
 func (o *sinkOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (*sinkOperator) Close() error        { return nil }
 
-func (o *sinkOperator) Write(ctx context.Context, input flow.Input[access.Write]) error {
+func (o *sinkOperator) Write(ctx context.Context, input *flow.Item[access.Write]) error {
+	defer input.Drop()
 	if !input.Valid() || !input.Value().Valid() {
 		return errors.New("file sink received an invalid write")
 	}
 	write := input.Value()
-	var err error
 	switch write.Operation() {
 	case access.AppendOperation:
-		err = o.append(ctx, write.Bytes())
+		return o.append(ctx, write.Bytes())
 	case access.PatchOperation:
-		err = o.patch(ctx, write.Offset(), write.Bytes())
+		return o.patch(ctx, write.Offset(), write.Bytes())
 	default:
-		err = errors.New("file sink received an unknown write operation")
+		return errors.New("file sink received an unknown write operation")
 	}
-	if err != nil {
-		return err
-	}
-	input.Drop()
-	return nil
 }
 
 func (o *sinkOperator) append(ctx context.Context, payload []byte) error {

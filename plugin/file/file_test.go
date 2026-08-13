@@ -139,13 +139,13 @@ func TestSourceFillsBlocksAcrossShortReadsAndReallocatesOnlyTail(t *testing.T) {
 	}
 	reader := opened.(*sourceOperator)
 
-	first, err := reader.Read(context.Background())
-	if err != nil {
+	var first, second flow.Item[buffer.Handle]
+	defer first.Drop()
+	defer second.Drop()
+	if err := reader.Read(context.Background(), &first); err != nil {
 		t.Fatal(err)
 	}
-	second, err := reader.Read(context.Background())
-	if err != nil {
-		first.Drop()
+	if err := reader.Read(context.Background(), &second); err != nil {
 		t.Fatal(err)
 	}
 	if got := first.Value().Layout().Size; got != blockSize {
@@ -160,7 +160,9 @@ func TestSourceFillsBlocksAcrossShortReadsAndReallocatesOnlyTail(t *testing.T) {
 	}
 	first.Drop()
 	second.Drop()
-	if _, err := reader.Read(context.Background()); err != io.EOF {
+	var tail flow.Item[buffer.Handle]
+	if err := reader.Read(context.Background(), &tail); err != io.EOF {
+		tail.Drop()
 		t.Fatalf("final read error = %v", err)
 	}
 	if allocator.Used() != 0 {
@@ -202,7 +204,8 @@ func TestSinkReplacesOnlyAtCommitAndReturnsPayloadGrant(t *testing.T) {
 		handle.Release()
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(write, access.Writes())); err != nil {
+	writeItem := flow.NewItem(write, access.Writes())
+	if err := operator.Write(context.Background(), &writeItem); err != nil {
 		t.Fatal(err)
 	}
 	if allocator.Used() != 0 {
@@ -305,7 +308,8 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 		appendPayload.Release()
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(appendWrite, access.Writes())); err != nil {
+	appendItem := flow.NewItem(appendWrite, access.Writes())
+	if err := operator.Write(context.Background(), &appendItem); err != nil {
 		t.Fatal(err)
 	}
 
@@ -318,7 +322,8 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 		patchPayload.Release()
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(patchWrite, access.Writes())); err != nil {
+	patchItem := flow.NewItem(patchWrite, access.Writes())
+	if err := operator.Write(context.Background(), &patchItem); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(session.data); got != "abXYef" {
@@ -332,7 +337,7 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 	}
 }
 
-func TestSinkRejectsOverflowWithoutConsumingPayload(t *testing.T) {
+func TestSinkRejectsOverflowWithoutWritingAndReleasesPayload(t *testing.T) {
 	session := &recordingSinkSession{limit: 1}
 	selection := selection(t, session.Capabilities(), access.RandomWrite)
 	opening, err := access.NewOpening(access.SinkDirection, session, selection, access.AtomicReplace)
@@ -356,18 +361,16 @@ func TestSinkRejectsOverflowWithoutConsumingPayload(t *testing.T) {
 		payload.Release()
 		t.Fatal(err)
 	}
-	input := flow.NewInput(write, access.Writes())
-	if err := opened.(*sinkOperator).Write(context.Background(), input); err == nil {
-		input.Drop()
+	input := flow.NewItem(write, access.Writes())
+	defer input.Drop()
+	if err := opened.(*sinkOperator).Write(context.Background(), &input); err == nil {
 		t.Fatal("overflowing patch was accepted")
 	}
-	if allocator.Used() == 0 || session.calls != 0 {
-		input.Drop()
-		t.Fatalf("failed write ownership/calls = %d/%d", allocator.Used(), session.calls)
+	if session.calls != 0 {
+		t.Fatalf("rejected write reached the session %d times", session.calls)
 	}
-	input.Drop()
-	if allocator.Used() != 0 {
-		t.Fatalf("caller release retained %d payload bytes", allocator.Used())
+	if input.Valid() || allocator.Used() != 0 {
+		t.Fatalf("rejected write left %d payload bytes owned by its caller", allocator.Used())
 	}
 }
 
@@ -567,7 +570,8 @@ func writeBytes(t *testing.T, operator *sinkOperator, value []byte) {
 		handle.Release()
 		t.Fatal(err)
 	}
-	if err := operator.Write(context.Background(), flow.NewInput(write, access.Writes())); err != nil {
+	writeItem := flow.NewItem(write, access.Writes())
+	if err := operator.Write(context.Background(), &writeItem); err != nil {
 		handle.Release()
 		t.Fatal(err)
 	}

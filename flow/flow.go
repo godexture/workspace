@@ -193,170 +193,56 @@ func (s Shape) Validate() error {
 	return nil
 }
 
-// Input is a value-type borrowed view. The schema trait supplies fork and
-// drop operations. It deliberately carries no runtime claim/refcount state:
-// conformance instrumentation, rather than the release hot path, detects
-// double Take or use-after-Take in later milestones.
-type Input[T any] struct {
-	value T
-	fork  func(T) T
-	drop  func(T)
-	valid bool
-}
-
-func NewInput[T any](value T, typ schema.Type[T]) Input[T] {
-	if !typ.Valid() {
-		return Input[T]{}
-	}
-	traits := typ.Traits()
-	return NewInputWithTraits(value, traits.Fork, traits.Drop)
-}
-
-func NewInputWithTraits[T any](value T, fork func(T) T, drop func(T)) Input[T] {
-	return Input[T]{value: value, fork: fork, drop: drop, valid: true}
-}
-
-func (i Input[T]) Valid() bool { return i.valid }
-
-// Value is a borrow valid only during the current call. The owner must not be
-// released while the borrow is in use.
-func (i Input[T]) Value() T { return i.value }
-
-// Take moves the item to an Owned value. The caller must not use or drop the
-// Input after taking it.
-func (i Input[T]) Take() Owned[T] {
-	if !i.valid {
-		return Owned[T]{}
-	}
-	return Owned[T]{value: i.value, fork: i.fork, drop: i.drop, valid: true}
-}
-
-// Share creates a retained value through the schema's Fork trait. The input
-// remains borrowed and is not consumed.
-func (i Input[T]) Share() Shared[T] {
-	if !i.valid {
-		return Shared[T]{}
-	}
-	value := i.value
-	if i.fork != nil {
-		value = i.fork(value)
-	}
-	return Shared[T]{value: value, fork: i.fork, drop: i.drop, valid: true}
-}
-
-func (i Input[T]) Drop() {
-	if i.valid && i.drop != nil {
-		i.drop(i.value)
-	}
-}
-
-// Owned is the explicit owner returned by Input.Take. Release is a move
-// operation and must be called once by its owner.
-type Owned[T any] struct {
-	value T
-	fork  func(T) T
-	drop  func(T)
-	valid bool
-}
-
-func (o Owned[T]) Valid() bool { return o.valid }
-func (o Owned[T]) Value() T    { return o.value }
-
-func (o Owned[T]) Share() Shared[T] {
-	if !o.valid {
-		return Shared[T]{}
-	}
-	value := o.value
-	if o.fork != nil {
-		value = o.fork(value)
-	}
-	return Shared[T]{value: value, fork: o.fork, drop: o.drop, valid: true}
-}
-
-func (o Owned[T]) Release() {
-	if o.valid && o.drop != nil {
-		o.drop(o.value)
-	}
-}
-
-func (o Owned[T]) Close() error {
-	o.Release()
-	return nil
-}
-
-// Shared is a retained value obtained from Input.Share or Owned.Share.
-type Shared[T any] struct {
-	value T
-	fork  func(T) T
-	drop  func(T)
-	valid bool
-}
-
-func (s Shared[T]) Valid() bool { return s.valid }
-func (s Shared[T]) Value() T    { return s.value }
-
-func (s Shared[T]) Release() {
-	if s.valid && s.drop != nil {
-		s.drop(s.value)
-	}
-}
-
-func (s Shared[T]) Close() error {
-	s.Release()
-	return nil
-}
-
-// Reader returns ownership to its consumer with each successful Read.
+// Reader fills the caller's cell with the next item. It reports io.EOF when
+// the stream is complete and leaves the cell empty.
 type Reader[T any] interface {
-	Read(context.Context) (Input[T], error)
+	Read(context.Context, *Item[T]) error
 }
 
-// Writer consumes an Input only after it has successfully accepted it. On an
-// error the writer must leave the Input untouched, so the caller retains
-// ownership.
+// Writer accepts one item. Consuming the cell claims ownership; leaving it
+// alone returns the item to whoever passed the pointer.
 type Writer[T any] interface {
-	Write(context.Context, Input[T]) error
+	Write(context.Context, *Item[T]) error
 }
 
-// Emitter follows the same move-on-success rule as Writer.
+// Emitter follows the same rule as Writer.
 type Emitter[T any] interface {
-	Emit(context.Context, Input[T]) error
+	Emit(context.Context, *Item[T]) error
 }
 
-// Batch is a call-scoped borrowed view of one deterministic fan-in group. It
-// exposes no consume operation; runtime retains every owner until Process
-// returns and then applies the success/error ownership rule as a unit.
-type Batch[T any] struct{ inputs []Input[T] }
+// Batch is one deterministic fan-in group. Each cell follows the ordinary
+// ownership rule, so a Joiner may consume some, all, or none of them.
+type Batch[T any] struct{ items []*Item[T] }
 
-func NewBatch[T any](inputs []Input[T]) Batch[T] { return Batch[T]{inputs: inputs} }
-func (b Batch[T]) Len() int                      { return len(b.inputs) }
+func NewBatch[T any](items []*Item[T]) Batch[T] { return Batch[T]{items: items} }
+
+func (b Batch[T]) Len() int { return len(b.items) }
+
+// At returns the cell at index, or nil when the index is out of range.
+func (b Batch[T]) At(index int) *Item[T] {
+	if index < 0 || index >= len(b.items) {
+		return nil
+	}
+	return b.items[index]
+}
 
 func (b Batch[T]) Value(index int) (T, bool) {
-	if index < 0 || index >= len(b.inputs) || !b.inputs[index].Valid() {
+	item := b.At(index)
+	if !item.Valid() {
 		var zero T
 		return zero, false
 	}
-	return b.inputs[index].Value(), true
+	return item.Value(), true
 }
 
-func (b Batch[T]) Share(index int) (Shared[T], bool) {
-	if index < 0 || index >= len(b.inputs) || !b.inputs[index].Valid() {
-		return Shared[T]{}, false
-	}
-	return b.inputs[index].Share(), true
-}
-
-// Processor is the common one-item transform contract. Process consumes its
-// input only when it succeeds; on error the caller retains ownership. Flush
-// handles delayed output without introducing a second runtime model.
+// Processor is the common one-item transform contract. Flush handles delayed
+// output without introducing a second runtime model.
 type Processor[I, O any] interface {
-	Process(context.Context, Input[I], Emitter[O]) error
+	Process(context.Context, *Item[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error
 }
 
 // Joiner transforms deterministic groups from a homogeneous many-input port.
-// Inputs are borrowed for the call; runtime consumes the group on success and
-// retains then drops it after a failed call.
 type Joiner[I, O any] interface {
 	Process(context.Context, Batch[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error

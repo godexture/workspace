@@ -43,20 +43,21 @@ type performanceReader struct {
 	remaining int
 }
 
-func (r *performanceReader) Read(context.Context) (flow.Input[int], error) {
+func (r *performanceReader) Read(_ context.Context, into *flow.Item[int]) error {
 	if r.remaining == 0 {
-		return flow.Input[int]{}, io.EOF
+		return io.EOF
 	}
 	value := performanceItems - r.remaining
 	r.remaining--
-	return flow.NewInput(value, performanceSchema), nil
+	*into = flow.NewItem(value, performanceSchema)
+	return nil
 }
 
 type performanceProcessor struct{ performanceOperator }
 
-func (*performanceProcessor) Process(ctx context.Context, input flow.Input[int], output flow.Emitter[int]) error {
-	item := flow.NewInput(input.Value()+1, performanceSchema)
-	if err := output.Emit(ctx, item); err != nil {
+func (*performanceProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	item := flow.NewItem(input.Value()+1, performanceSchema)
+	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
 	}
@@ -76,7 +77,7 @@ type performanceWriter struct {
 	state *performanceState
 }
 
-func (w *performanceWriter) Write(_ context.Context, input flow.Input[int]) error {
+func (w *performanceWriter) Write(_ context.Context, input *flow.Item[int]) error {
 	w.state.count++
 	w.state.sum += int64(input.Value())
 	input.Drop()
