@@ -164,7 +164,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	return Compilation{
 		component:      component.identity,
 		implementation: component.implementation,
-		config:         resolved.Fingerprint,
+		config:         resolved.Fingerprint(),
 		shape:          shape.Clone(),
 		plan:           compiled.plan,
 		outputs:        outputs,
@@ -207,10 +207,10 @@ func Suggest[D any](component Component, ctx SuggestContext, input D, need Need[
 		if err != nil {
 			return nil, component.phaseError("plugin.suggest-config", "component Suggest returned an invalid config", err.Error())
 		}
-		if _, exists := seen[resolved.Fingerprint]; exists {
-			return nil, component.phaseError("plugin.suggest-duplicate", "component Suggest returned duplicate canonical config", resolved.Fingerprint.String())
+		if _, exists := seen[resolved.Fingerprint()]; exists {
+			return nil, component.phaseError("plugin.suggest-duplicate", "component Suggest returned duplicate canonical config", resolved.Fingerprint().String())
 		}
-		seen[resolved.Fingerprint] = struct{}{}
+		seen[resolved.Fingerprint()] = struct{}{}
 		candidates = append(candidates, resolved)
 	}
 	return candidates, nil
@@ -267,7 +267,7 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 
 func (c Component) validateResolved(resolved config.ResolvedView) error {
 	identity := c.schema.Description().Identity
-	if resolved.Schema != identity || resolved.Fingerprint.IsZero() {
+	if resolved.Schema() != identity || resolved.Fingerprint().IsZero() {
 		return c.phaseError("plugin.config", "resolved config does not belong to this component schema", "")
 	}
 	return nil

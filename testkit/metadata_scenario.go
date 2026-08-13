@@ -68,7 +68,7 @@ func newMetadataScenario(subject MetadataSubject, test MetadataCase) (*scenarioC
 		resolver: resolver,
 		input:    test.Input,
 		want:     test.Want,
-		config:   resolved.Fingerprint.String(),
+		config:   resolved.Fingerprint().String(),
 	}
 	anchorFinish := base.finish
 	base.selected = anchor.identity

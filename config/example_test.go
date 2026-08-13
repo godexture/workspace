@@ -40,10 +40,10 @@ func ExampleSchema_Resolve() {
 		panic(err)
 	}
 
-	compression, _ := resolved.Provenance.Source("compression")
-	verify, _ := resolved.Provenance.Source("verify")
-	fmt.Println(resolved.Value.Compression, compression)
-	fmt.Println(resolved.Value.Verify, verify)
+	compression, _ := resolved.Provenance().Source("compression")
+	verify, _ := resolved.Provenance().Source("verify")
+	fmt.Println(resolved.Value().Compression, compression)
+	fmt.Println(resolved.Value().Verify, verify)
 	// Output:
 	// 0 preset
 	// true explicit

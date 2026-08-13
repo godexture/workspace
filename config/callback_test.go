@@ -133,13 +133,13 @@ func TestCallbackPanicBecomesDiagnostic(t *testing.T) {
 				t.Fatal("panicking callback resolved without an error")
 			}
 			assertNoPanicSecret(t, err.Error())
-			for _, item := range resolved.Diagnostics {
+			for _, item := range resolved.Diagnostics() {
 				assertNoPanicSecret(t, item.Message)
 				for key, value := range item.Detail {
 					assertNoPanicSecret(t, key+"="+value)
 				}
 			}
-			if resolved.Fingerprint != (Fingerprint{}) {
+			if resolved.Fingerprint() != (Fingerprint{}) {
 				t.Error("a panicking callback produced a fingerprint")
 			}
 		})

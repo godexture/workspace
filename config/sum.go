@@ -16,8 +16,12 @@ type Choice[T comparable] struct {
 	Value T
 }
 
-// Enum returns a codec whose canonical representation is the choice ID.
-func Enum[T comparable](choices ...Choice[T]) Codec[T] {
+// Enum returns a codec whose canonical representation is the choice ID. The
+// variadic argument is copied because its backing array belongs to the caller;
+// without the copy, a later write there would change what a built schema
+// decodes, encodes, and canonicalizes.
+func Enum[T comparable](values ...Choice[T]) Codec[T] {
+	choices := append([]Choice[T](nil), values...)
 	result := NewCodec(CodecSpec[T]{
 		Type: "enum",
 		Decode: func(value string) (T, error) {

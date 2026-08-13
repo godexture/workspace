@@ -122,7 +122,7 @@ func TestNewFileJobAllowsExplicitFormatAndExtensionlessOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selector = selector.WithConfig(config.NewPatch().Set("rate", 48_000))
+	selector = selector.WithConfig(config.NewPatch().Set(readerKey(t, "rate"), 48_000))
 	request, err := standard.NewFileJob("input.wav", "output", standard.WithInputFormat(selector))
 	if err != nil {
 		t.Fatal(err)
@@ -169,3 +169,19 @@ func TestNewFileJobForwardsPolicyAndBudget(t *testing.T) {
 }
 
 type extraTraitKey struct{}
+
+func readerKey(t *testing.T, field string) config.Key {
+	t.Helper()
+	for _, component := range standard.Set().Components() {
+		if component.Identity() != linear.ReaderIdentity() {
+			continue
+		}
+		key, ok := component.Schema().Key(field)
+		if !ok {
+			t.Fatalf("linear reader schema has no %s field", field)
+		}
+		return key
+	}
+	t.Fatal("standard composition has no linear reader component")
+	return config.Key{}
+}

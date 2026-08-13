@@ -46,6 +46,7 @@ type FieldSpec[C any] struct {
 	dependsOn    []string
 	read         func(*C) (any, error)
 	write        func(*C, any) error
+	snapshot     func(any) (any, error)
 	target       func(*C) uintptr
 	encode       func(any) string
 	decode       func(string) (any, error)
@@ -109,6 +110,14 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 			}
 			return codec.validateValue(typed)
 		},
+		snapshot: func(value any) (cloned any, err error) {
+			typed, ok := value.(T)
+			if !ok {
+				return nil, fmt.Errorf("field value has type %T, want %s", value, reflect.TypeFor[T]())
+			}
+			defer guardError(operationClone, &err)
+			return codec.Clone(typed), nil
+		},
 		construction: codec.constructionItems(),
 	}
 	if accessor == nil {
@@ -160,6 +169,10 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 		return reflect.ValueOf(value).Pointer()
 	}
 	return result
+}
+
+func (field FieldSpec[C]) key(schema string) Key {
+	return Key{schema: schema, field: field.id, typ: field.description.Type, clone: field.snapshot}
 }
 
 func cloneFieldSpec[C any](field FieldSpec[C]) FieldSpec[C] {

@@ -188,7 +188,7 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))
 	} else {
 		implementation.shape = func(ctx ShapeContext, resolved config.ResolvedView) (flow.Shape, error) {
-			value, ok := resolved.Value.(C)
+			value, ok := resolved.Value().(C)
 			if !ok {
 				return flow.Shape{}, errors.New("resolved config has the wrong type for component Shape")
 			}
@@ -199,7 +199,7 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.compile", "component Spec requires Compile"))
 	} else {
 		implementation.compile = func(ctx CompileContext, resolved config.ResolvedView, inputs any) (compiledErased, error) {
-			value, ok := resolved.Value.(C)
+			value, ok := resolved.Value().(C)
 			if !ok {
 				return compiledErased{}, errors.New("resolved config has the wrong type for component Compile")
 			}

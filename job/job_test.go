@@ -18,6 +18,35 @@ type jobSourceID struct{}
 type jobSinkID struct{}
 type jobFormatID struct{}
 
+type jobTestConfig struct {
+	Rate   int
+	Layout string
+	Mode   string
+}
+
+func jobTestSchema() config.Schema[jobTestConfig] {
+	return config.Struct[jobTestConfig](func() jobTestConfig { return jobTestConfig{} }).
+		Version("1").
+		AddField(config.Field("rate", func(value *jobTestConfig) *int { return &value.Rate }, config.Int())).
+		AddField(config.Field("layout", func(value *jobTestConfig) *string { return &value.Layout }, config.String())).
+		AddField(config.Field("mode", func(value *jobTestConfig) *string { return &value.Mode }, config.String())).
+		Build()
+}
+
+func mustJobKey(t *testing.T, field string) config.Key {
+	t.Helper()
+	key, ok := jobTestSchema().Key(field)
+	if !ok {
+		t.Fatalf("job test schema has no %s field", field)
+	}
+	return key
+}
+
+func jobPatch(t *testing.T, field string, value any) config.Patch {
+	t.Helper()
+	return config.NewPatch().Set(mustJobKey(t, field), value)
+}
+
 type jobDirectHandle struct{ closed atomic.Int32 }
 
 func (h *jobDirectHandle) Close() error {
@@ -84,7 +113,7 @@ func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
 	if _, ok := byExtension.Config(); ok {
 		t.Fatal("selector unexpectedly has explicit config")
 	}
-	configured := byExtension.WithConfig(config.NewPatch().Set("rate", 48_000))
+	configured := byExtension.WithConfig(jobPatch(t, "rate", 48_000))
 	patch, ok := configured.Config()
 	if !ok || len(patch.FieldIDs()) != 1 || patch.FieldIDs()[0] != "rate" {
 		t.Fatalf("selector config = %v/%v", patch.FieldIDs(), ok)
@@ -110,7 +139,7 @@ func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
 		t.Fatal("Job lost input Format hint")
 	}
 	returned, _ := hint.Config()
-	returned = returned.Set("layout", "stereo")
+	returned = returned.Set(mustJobKey(t, "layout"), "stereo")
 	preserved, _ := request.Inputs()[0].FormatHint()
 	preservedPatch, _ := preserved.Config()
 	if fields := preservedPatch.FieldIDs(); len(fields) != 1 || fields[0] != "rate" {
@@ -133,7 +162,7 @@ func TestFormatSelectorsAreExclusiveAndPreserveExplicitConfig(t *testing.T) {
 
 func TestDirectChoiceCarriesTypedResourceAndExplicitAdaptor(t *testing.T) {
 	handle := &jobDirectHandle{}
-	adaptor, err := NewAdaptor(plugin.IdentityOf[jobSourceID](), config.NewPatch().Set("mode", "test"))
+	adaptor, err := NewAdaptor(plugin.IdentityOf[jobSourceID](), jobPatch(t, "mode", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,5 +343,31 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing policy diagnostics = %v", want)
+	}
+}
+
+// A Job is an immutable request. Writing through the slice a caller passed to
+// a node constructor, or through the patch its getter returned, must not
+// change what the node means.
+func TestNodeConfigIsSnapshottedOnBothSides(t *testing.T) {
+	schema := jobTestSchema()
+	key, ok := schema.Key("layout")
+	if !ok {
+		t.Fatal("job test schema has no layout field")
+	}
+	node := NewNode("node", plugin.IdentityOf[jobSourceID](), config.NewPatch().Set(key, "stereo"))
+
+	returned := node.Config()
+	returned = returned.Set(mustJobKey(t, "mode"), "changed")
+
+	resolved, err := schema.Resolve(node.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Value(); got.Layout != "stereo" || got.Mode != "" {
+		t.Fatalf("node config = %#v, want only the layout the constructor received", got)
+	}
+	if fields := node.Config().FieldIDs(); len(fields) != 1 || fields[0] != "layout" {
+		t.Fatalf("node config fields = %v, want [layout]", fields)
 	}
 }

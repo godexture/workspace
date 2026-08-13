@@ -54,10 +54,10 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preset resolve failed: %v", err)
 	}
-	if fromPreset.Value.Number != 1 {
-		t.Fatalf("preset number = %d, want 1", fromPreset.Value.Number)
+	if fromPreset.Value().Number != 1 {
+		t.Fatalf("preset number = %d, want 1", fromPreset.Value().Number)
 	}
-	if source, _ := fromPreset.Provenance.Source("number"); source != SourcePreset {
+	if source, _ := fromPreset.Provenance().Source("number"); source != SourcePreset {
 		t.Fatalf("preset provenance = %s, want preset", source)
 	}
 
@@ -65,10 +65,10 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit resolve failed: %v", err)
 	}
-	if resolved.Value.Number != 0 {
-		t.Fatalf("explicit zero = %d, want 0", resolved.Value.Number)
+	if resolved.Value().Number != 0 {
+		t.Fatalf("explicit zero = %d, want 0", resolved.Value().Number)
 	}
-	if source, _ := resolved.Provenance.Source("number"); source != SourceExplicit {
+	if source, _ := resolved.Provenance().Source("number"); source != SourceExplicit {
 		t.Fatalf("explicit provenance = %s, want explicit", source)
 	}
 
@@ -76,13 +76,13 @@ func TestSchemaResolveOrderAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planner resolve failed: %v", err)
 	}
-	if source, _ := planned.Provenance.Source("number"); source != SourcePlanner {
+	if source, _ := planned.Provenance().Source("number"); source != SourcePlanner {
 		t.Fatalf("planner provenance = %s, want planner", source)
 	}
-	if planned.Fingerprint != resolved.Fingerprint {
+	if planned.Fingerprint() != resolved.Fingerprint() {
 		t.Fatal("provenance changed the config fingerprint")
 	}
-	fields := schema.summary(planned.Value, planned.Provenance, planned.Fingerprint).Fields()
+	fields := schema.summary(planned.Value(), planned.Provenance(), planned.Fingerprint()).Fields()
 	foundPlanner := false
 	for _, field := range fields {
 		if field.ID == "number" && field.Source == SourcePlanner {
@@ -142,17 +142,17 @@ func TestCanonicalFingerprintIgnoresMapAndRegistrationOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("right resolve failed: %v", err)
 	}
-	if left.Fingerprint != right.Fingerprint {
-		t.Fatalf("fingerprints differ: %s vs %s", left.Fingerprint, right.Fingerprint)
+	if left.Fingerprint() != right.Fingerprint() {
+		t.Fatalf("fingerprints differ: %s vs %s", left.Fingerprint(), right.Fingerprint())
 	}
 
-	changed := left.Value
+	changed := left.Value()
 	changed.Labels["a"] = 2
 	changedResolved, err := makeSchema(false).ResolveValue(changed)
 	if err != nil {
 		t.Fatalf("changed resolve failed: %v", err)
 	}
-	if left.Fingerprint == changedResolved.Fingerprint {
+	if left.Fingerprint() == changedResolved.Fingerprint() {
 		t.Fatal("fingerprint did not change with map value")
 	}
 }

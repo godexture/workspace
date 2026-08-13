@@ -79,15 +79,15 @@ func TestNestedSliceOfSpecsHasStableFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if left.Fingerprint != right.Fingerprint {
-		t.Fatalf("nested field order changed the fingerprint: %s vs %s", left.Fingerprint, right.Fingerprint)
+	if left.Fingerprint() != right.Fingerprint() {
+		t.Fatalf("nested field order changed the fingerprint: %s vs %s", left.Fingerprint(), right.Fingerprint())
 	}
 
 	changed, err := makeSchema(false).ResolveValue(encoderConfig{Windows: []spec{{Kind: "tukey", Parameter: 0.9}}})
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if changed.Fingerprint == left.Fingerprint {
+	if changed.Fingerprint() == left.Fingerprint() {
 		t.Fatal("a different window parameter produced the same fingerprint")
 	}
 }

@@ -68,7 +68,7 @@ func (r rank) add(result candidateResult, policy job.Policy) rank {
 		r.resource3 = saturatingAdd(r.resource3, memory)
 	}
 	r.steps = saturatingInt(r.steps, 1)
-	r.tie += "\x00" + result.bridge.component.Identity().String() + "@" + result.config.Fingerprint.String()
+	r.tie += "\x00" + result.bridge.component.Identity().String() + "@" + result.config.Fingerprint().String()
 	return r
 }
 

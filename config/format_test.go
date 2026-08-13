@@ -85,12 +85,35 @@ func TestSecretValueFormattingIsRedactedInContainers(t *testing.T) {
 	}
 }
 
+type revealingConfig struct {
+	Typed map[string]revealingValue
+}
+
+func revealingSchema() Schema[revealingConfig] {
+	element := NewCodec(CodecSpec[revealingValue]{
+		Type:      "revealing",
+		Decode:    func(value string) (revealingValue, error) { return revealingValue(value), nil },
+		Canonical: func(value revealingValue) ([]byte, error) { return []byte(value), nil },
+		Clone:     func(value revealingValue) revealingValue { return value },
+	})
+	return Struct[revealingConfig](func() revealingConfig {
+		return revealingConfig{Typed: map[string]revealingValue{}}
+	}).
+		Version("1").
+		AddField(Field("typed", func(value *revealingConfig) *map[string]revealingValue { return &value.Typed }, Map(String(), element))).
+		Build()
+}
+
 func TestPatchFormattingHidesAllValuesInContainers(t *testing.T) {
 	const raw = "r01-patch-value"
+	key, ok := revealingSchema().Key("typed")
+	if !ok {
+		t.Fatal("revealing schema has no typed field key")
+	}
 	patch := NewPatch().
 		Preset("fast").
 		SetText("token", raw).
-		Set("typed", map[string]any{"nested": revealingValue(raw)}).
+		Set(key, map[string]revealingValue{"nested": revealingValue(raw)}).
 		Planned()
 
 	type publicContainer struct {
@@ -155,7 +178,7 @@ func TestResolvedFormattingIsRedactedInContainers(t *testing.T) {
 		{name: "resolved pointer", value: &resolved},
 		{name: "view", value: view},
 		{name: "view pointer", value: &view},
-		{name: "resolved value", value: resolved.Value},
+		{name: "resolved value", value: resolved.Value()},
 		{name: "public struct", value: publicContainer{Resolved: resolved, View: view}},
 		{name: "public struct pointer", value: &publicContainer{Resolved: resolved, View: view}},
 		{name: "private struct", value: privateContainer{resolved: resolved, view: view}},

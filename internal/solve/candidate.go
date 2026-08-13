@@ -144,7 +144,7 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	if err != nil {
 		return candidateResult{}, rejectError{code: "descriptor"}
 	}
-	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint, input: fingerprint, environment: p.environment, prepared: preparedKey}
+	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint(), input: fingerprint, environment: p.environment, prepared: preparedKey}
 	for _, entry := range p.cache[key] {
 		if entry.input.SameState(input) {
 			p.usage.CacheHits++
@@ -216,7 +216,7 @@ func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin
 	resolved, err := candidate.component.Resolve(patch)
 	if err == nil {
 		values = append(values, resolved)
-		seen[resolved.Fingerprint] = struct{}{}
+		seen[resolved.Fingerprint()] = struct{}{}
 	}
 	if fixed != nil {
 		if err != nil {
@@ -232,7 +232,7 @@ func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin
 		return values, 0, false, rejectError{code: rejectionCode(err)}
 	}
 	sort.Slice(suggested, func(left, right int) bool {
-		return suggested[left].Fingerprint.String() < suggested[right].Fingerprint.String()
+		return suggested[left].Fingerprint().String() < suggested[right].Fingerprint().String()
 	})
 	limited := len(suggested) > remaining
 	if limited {
@@ -249,14 +249,14 @@ func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin
 		if resolveErr != nil {
 			return nil, 0, false, rejectError{code: rejectionCode(resolveErr)}
 		}
-		if _, exists := seen[planned.Fingerprint]; exists {
+		if _, exists := seen[planned.Fingerprint()]; exists {
 			continue
 		}
-		seen[planned.Fingerprint] = struct{}{}
+		seen[planned.Fingerprint()] = struct{}{}
 		values = append(values, planned)
 	}
 	sort.Slice(values, func(left, right int) bool {
-		return values[left].Fingerprint.String() < values[right].Fingerprint.String()
+		return values[left].Fingerprint().String() < values[right].Fingerprint().String()
 	})
 	return values, suggestionCount, limited, nil
 }

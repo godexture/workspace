@@ -86,20 +86,48 @@ func cloneSchemaDescription(description SchemaDescription) SchemaDescription {
 	return description
 }
 
-// ResolvedView is the type-erased result of resolving a component patch. Value
-// contains the schema's concrete configuration behind an any boundary.
+// ResolvedView is the type-erased result of resolving a component patch. Its
+// concrete configuration stays behind an accessor that hands out a fresh
+// snapshot: Shape and Compile are separate phases over the same fingerprint,
+// and neither may change what the other sees.
 type ResolvedView struct {
-	Schema      string
-	Value       any
-	Provenance  Provenance
-	Diagnostics []diagnostic.Item
-	Fingerprint Fingerprint
+	schema      string
+	value       any
+	clone       func(any) (any, error)
+	provenance  Provenance
+	diagnostics []diagnostic.Item
+	fingerprint Fingerprint
 	summary     Summary
 }
 
+// Schema returns the identity of the schema that produced this view.
+func (v ResolvedView) Schema() string { return v.schema }
+
+// Value returns an independent snapshot of the resolved configuration behind
+// an any boundary. It is nil when resolution produced no value.
+func (v ResolvedView) Value() any {
+	if v.clone == nil {
+		return v.value
+	}
+	cloned, err := v.clone(v.value)
+	if err != nil {
+		return nil
+	}
+	return cloned
+}
+
+// Provenance reports which stage supplied each registered field.
+func (v ResolvedView) Provenance() Provenance { return cloneProvenance(v.provenance) }
+
+// Diagnostics returns the resolution diagnostics.
+func (v ResolvedView) Diagnostics() []diagnostic.Item { return cloneItems(v.diagnostics) }
+
+// Fingerprint identifies the canonical resolved value.
+func (v ResolvedView) Fingerprint() Fingerprint { return v.fingerprint }
+
 // String reports only schema and fingerprint identity metadata.
 func (v ResolvedView) String() string {
-	return "resolved config schema=" + strconv.Quote(v.Schema) + " fingerprint=" + v.Fingerprint.String()
+	return "resolved config schema=" + strconv.Quote(v.schema) + " fingerprint=" + v.fingerprint.String()
 }
 
 // Format prevents every fmt verb, including %#v, from traversing Value.
@@ -116,9 +144,19 @@ type SchemaView struct {
 	valid        bool
 	diagnostics  []diagnostic.Item
 	description  SchemaDescription
+	key          func(string) (Key, bool)
 	resolve      func(Patch) (ResolvedView, error)
 	resolveValue func(any) (ResolvedView, error)
 	patch        func(ResolvedView) (Patch, error)
+}
+
+// Key returns the patch key for a registered field of the captured schema. It
+// is how a caller that only has a type-erased view builds a typed patch.
+func (v SchemaView) Key(id string) (Key, bool) {
+	if v.key == nil {
+		return Key{}, false
+	}
+	return v.key(id)
 }
 
 // Valid reports whether the captured schema was built without errors.
@@ -142,7 +180,7 @@ func (v SchemaView) Description() SchemaDescription { return cloneSchemaDescript
 func (v SchemaView) Resolve(patch Patch) (ResolvedView, error) {
 	if v.resolve == nil {
 		items := v.Diagnostics()
-		return ResolvedView{Schema: v.description.Identity, Diagnostics: cloneItems(items)}, diagnosticError(items)
+		return ResolvedView{schema: v.description.Identity, diagnostics: cloneItems(items)}, diagnosticError(items)
 	}
 	return v.resolve(patch)
 }
@@ -152,7 +190,7 @@ func (v SchemaView) Resolve(patch Patch) (ResolvedView, error) {
 func (v SchemaView) ResolveValue(value any) (ResolvedView, error) {
 	if v.resolveValue == nil {
 		items := v.Diagnostics()
-		return ResolvedView{Schema: v.description.Identity, Diagnostics: cloneItems(items)}, diagnosticError(items)
+		return ResolvedView{schema: v.description.Identity, diagnostics: cloneItems(items)}, diagnosticError(items)
 	}
 	return v.resolveValue(value)
 }
@@ -161,7 +199,7 @@ func (v SchemaView) ResolveValue(value any) (ResolvedView, error) {
 // used internally when a planner inserts a suggested config into a resolved
 // graph; Patch itself does not expose stored values.
 func (v SchemaView) Patch(resolved ResolvedView) (Patch, error) {
-	if v.patch == nil || resolved.Schema != v.description.Identity || resolved.Fingerprint.IsZero() {
+	if v.patch == nil || resolved.schema != v.description.Identity || resolved.fingerprint.IsZero() {
 		item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config does not belong to this schema", nil)
 		return Patch{}, diagnostic.NewError(item)
 	}
@@ -188,41 +226,47 @@ func (s Schema[C]) View() SchemaView {
 		valid:       s.Valid(),
 		diagnostics: s.Diagnostics(),
 		description: s.Description(),
+		key:         s.Key,
 		resolve: func(patch Patch) (ResolvedView, error) {
 			resolved, err := s.Resolve(patch)
-			return ResolvedView{
-				Schema:      s.identity,
-				Value:       resolved.Value,
-				Provenance:  cloneProvenance(resolved.Provenance),
-				Diagnostics: cloneItems(resolved.Diagnostics),
-				Fingerprint: resolved.Fingerprint,
-				summary:     s.summary(resolved.Value, resolved.Provenance, resolved.Fingerprint),
-			}, err
+			return s.resolvedView(resolved), err
 		},
 		resolveValue: func(value any) (ResolvedView, error) {
 			typed, ok := value.(C)
 			if !ok {
 				item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "complete config value has the wrong type", nil)
-				return ResolvedView{Schema: s.identity, Diagnostics: []diagnostic.Item{item}}, diagnostic.NewError(item)
+				return ResolvedView{schema: s.identity, diagnostics: []diagnostic.Item{item}}, diagnostic.NewError(item)
 			}
 			resolved, err := s.ResolveValue(typed)
-			return ResolvedView{
-				Schema:      s.identity,
-				Value:       resolved.Value,
-				Provenance:  cloneProvenance(resolved.Provenance),
-				Diagnostics: cloneItems(resolved.Diagnostics),
-				Fingerprint: resolved.Fingerprint,
-				summary:     s.summary(resolved.Value, resolved.Provenance, resolved.Fingerprint),
-			}, err
+			return s.resolvedView(resolved), err
 		},
 		patch: func(resolved ResolvedView) (Patch, error) {
-			value, ok := resolved.Value.(C)
+			value, ok := resolved.Value().(C)
 			if !ok {
 				item := diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config value has the wrong type", nil)
 				return Patch{}, diagnostic.NewError(item)
 			}
 			return s.patch(value)
 		},
+	}
+}
+
+func (s Schema[C]) resolvedView(resolved Resolved[C]) ResolvedView {
+	return ResolvedView{
+		schema: s.identity,
+		value:  resolved.value,
+		clone: func(value any) (any, error) {
+			typed, ok := value.(C)
+			if !ok {
+				return nil, diagnostic.NewError(diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "resolved config value has the wrong type", nil))
+			}
+			snapshot, _ := s.snapshot(typed)
+			return snapshot, nil
+		},
+		provenance:  cloneProvenance(resolved.provenance),
+		diagnostics: cloneItems(resolved.diagnostics),
+		fingerprint: resolved.fingerprint,
+		summary:     s.summary(resolved.value, resolved.provenance, resolved.fingerprint),
 	}
 }
 

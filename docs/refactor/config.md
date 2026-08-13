@@ -74,6 +74,8 @@ Patch {
 
 `Patch` は surface 間の公開 Go struct を兼ねる wire DTO ではない。各 surface が versioned DTO/flag を受け取り、schema の field codec を使って `Patch` に投影する。unknown field は error にする。
 
+`Patch` の entry は二種類ある。surface の text は schema を必要とせず、target field の codec が解決時に decode と clone を行う。typed 値は `Schema.Key`／`SchemaView.Key` が返す `config.Key` を通してのみ入れられる。key は field の宣言 clone を運ぶため、`Patch` は caller の slice/map/pointer を共有せず snapshot を保持できる。[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) が任意の Go 値を推測して複製することを禁じている以上、field 名だけを受け取る typed setter は immutable な request を作れない。他 schema の key、型不一致、無効な key は `Patch` が diagnostic として保持し、解決時に他の diagnostic と一緒に報告する。
+
 ### Resolved
 
 解決結果は概念上、次を持つ。
@@ -85,6 +87,8 @@ Patch {
 - `Provenance`: field ごとの `default`、`preset`、`explicit`、`normalized`
 - `Diagnostics`: deprecated alias ではなく、丸めや正規化等の説明
 - `Fingerprint`: planner memoization と Plan 再現性のための canonical identity
+
+これらは exported field ではなく accessor である。`Value` は呼ばれるたびに schema codec で fresh snapshot を返すため、Shape が受け取った slice/map を書き換えても、同じ fingerprint の後続 Compile は元の値を見る。phase ごとの snapshot は type-erased な `ResolvedView` でも同じである。
 
 `Resolved` の内部に surface 固有 flag object や生の string map を保持しない。secret は Plan、log、diagnostic では必ず redaction する。
 

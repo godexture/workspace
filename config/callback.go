@@ -13,6 +13,7 @@ import "github.com/godexture/godec/diagnostic"
 const (
 	operationRead      = "read"
 	operationWrite     = "write"
+	operationClone     = "clone"
 	operationDecode    = "decode"
 	operationEncode    = "encode"
 	operationCanonical = "canonical"

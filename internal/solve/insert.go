@@ -88,7 +88,7 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 }
 
 func automaticNodeID(edge job.Edge, index int, result candidateResult, used map[job.NodeID]struct{}) job.NodeID {
-	base := edge.From().String() + "->" + edge.To().String() + "\x00" + strconv.Itoa(index) + "\x00" + result.bridge.component.Identity().String() + "\x00" + result.config.Fingerprint.String()
+	base := edge.From().String() + "->" + edge.To().String() + "\x00" + strconv.Itoa(index) + "\x00" + result.bridge.component.Identity().String() + "\x00" + result.config.Fingerprint().String()
 	for nonce := 0; ; nonce++ {
 		digest := sha256.Sum256([]byte(base + "\x00" + strconv.Itoa(nonce)))
 		id := job.NodeID("auto-" + hex.EncodeToString(digest[:8]))

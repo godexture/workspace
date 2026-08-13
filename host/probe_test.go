@@ -294,7 +294,11 @@ func TestFallbackRequiresExplicitHintAndRequiredConfig(t *testing.T) {
 	if _, err := instance.chooseFormat(probeBoundary(), candidates, hint); diagnostic.ItemsOf(err)[0].Code != "prepare.format-config-required" {
 		t.Fatalf("fallback without config = %v", err)
 	}
-	hint = hint.WithConfig(config.NewPatch().Set("rate", 1))
+	rate, hasRate := component.Schema().Key("rate")
+	if !hasRate {
+		t.Fatal("fallback component has no rate field key")
+	}
+	hint = hint.WithConfig(config.NewPatch().Set(rate, 1))
 	choice, err := instance.chooseFormat(probeBoundary(), candidates, hint)
 	if err != nil {
 		t.Fatal(err)

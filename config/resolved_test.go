@@ -49,10 +49,10 @@ func TestSchemaSnapshotsFactorySourceAndSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	resolved.Value.Exported[0] = 99
-	resolved.Value.Nested.Values[0] = 99
+	resolved.Value().Exported[0] = 99
+	resolved.Value().Nested.Values[0] = 99
 	next, err := schema.Resolve(NewPatch())
-	if err != nil || next.Value.Exported[0] != 1 || next.Value.Nested.Values[0] != 3 {
-		t.Fatalf("resolved value affected later snapshot: %#v, %v", next.Value, err)
+	if err != nil || next.Value().Exported[0] != 1 || next.Value().Nested.Values[0] != 3 {
+		t.Fatalf("resolved value affected later snapshot: %#v, %v", next.Value(), err)
 	}
 }

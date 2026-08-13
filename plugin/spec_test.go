@@ -89,7 +89,7 @@ func TestComponentSpecShapesCompilesAndOpensSelectedPlan(t *testing.T) {
 	if diagnostics := component.Diagnostics(); len(diagnostics) != 0 {
 		t.Fatalf("component diagnostics = %v", diagnostics)
 	}
-	resolved, err := component.Resolve(config.NewPatch().Set("level", 2))
+	resolved, err := component.Resolve(componentPatch(t, component, "level", 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestSuggestIsBoundedCanonicalAndDoesNotOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 2 || len(second) != 2 || first[0].Fingerprint != second[0].Fingerprint || first[1].Fingerprint != second[1].Fingerprint {
+	if len(first) != 2 || len(second) != 2 || first[0].Fingerprint() != second[0].Fingerprint() || first[1].Fingerprint() != second[1].Fingerprint() {
 		t.Fatalf("suggestions are not deterministic: %#v %#v", first, second)
 	}
 	if opened.Load() != 0 {
@@ -433,7 +433,7 @@ func TestDynamicShapeComesFromResolvedConfig(t *testing.T) {
 		},
 	}
 	component := NewComponent[mixerComponentID](Descriptor{DisplayName: "mixer"}, schemaValue, WithSpec(spec))
-	resolved, err := component.Resolve(config.NewPatch().Set("inputs", 4))
+	resolved, err := component.Resolve(componentPatch(t, component, "inputs", 4))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func hasItem(items []diagnostic.Item, code string) bool {
 
 func TestCompileVisibleResultIsRepeatable(t *testing.T) {
 	component := NewComponent[specUnitID](Descriptor{DisplayName: "repeatable"}, pluginSchema(1), WithSpec(testSpec(nil, nil)))
-	resolved, _ := component.Resolve(config.NewPatch().Set("level", 2))
+	resolved, _ := component.Resolve(componentPatch(t, component, "level", 2))
 	inputs := flow.NewDescriptors(flow.Describe("in", 5))
 	first, err := Compile(component, CompileContext{}, resolved, inputs)
 	if err != nil {
@@ -599,4 +599,53 @@ func TestOpenEnforcesDeclaredFinalizerCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = operator.Close()
+}
+
+type phaseConfigID struct{}
+type phaseComponentID struct{}
+
+type phaseConfig struct{ Values []int }
+
+// Shape and Compile are separate phases over one resolved config with one
+// fingerprint. A component that writes through the slice it received in Shape
+// must not change what Compile sees, or the plan would stop matching the
+// identity it was cached under.
+func TestShapeCannotChangeWhatCompileSees(t *testing.T) {
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
+	schemaValue := config.Struct[phaseConfigID](func() phaseConfig { return phaseConfig{Values: []int{1, 2}} }).
+		Version("1").
+		AddField(config.Field("values", func(value *phaseConfig) *[]int { return &value.Values }, config.Slice(config.Int()))).
+		Build()
+	spec := Spec[phaseConfig, specPlan, int]{
+		Shape: func(_ ShapeContext, value phaseConfig) (flow.Shape, error) {
+			value.Values[0] = 99
+			return shape, nil
+		},
+		Compile: func(_ CompileContext, value phaseConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+			input, _ := inputs.One("in")
+			return Compiled[specPlan, int]{
+				Plan:    specPlan{shape: shape, value: input},
+				Outputs: flow.NewDescriptors(flow.Describe("out", value.Values[0])),
+			}, nil
+		},
+		Open: func(OpenContext, specPlan) (flow.Operator, error) { return specOperator{shape: shape}, nil },
+	}
+	component := NewComponent[phaseComponentID](Descriptor{DisplayName: "phase"}, schemaValue, WithSpec(spec))
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := component.Shape(ShapeContext{}, resolved); err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 5)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs, _ := OutputsOf[int](compiled)
+	value, _ := outputs.One("out")
+	if value != 1 {
+		t.Errorf("Compile saw a config element of %d, want the resolved 1", value)
+	}
 }

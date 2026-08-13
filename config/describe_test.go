@@ -38,7 +38,7 @@ func TestSchemaViewResolvesCompleteTypedValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Schema != schema.Description().Identity || resolved.Fingerprint.IsZero() || resolved.Value.(value).Mode != 3 {
+	if resolved.Schema() != schema.Description().Identity || resolved.Fingerprint().IsZero() || resolved.Value().(value).Mode != 3 {
 		t.Fatalf("resolved view = %#v", resolved)
 	}
 	if _, err := view.ResolveValue(struct{ Mode int }{Mode: 3}); err == nil {
@@ -58,13 +58,17 @@ func TestSchemaViewSummaryAndPatch(t *testing.T) {
 		AddField(Field("count", func(item *value) *int { return &item.Count }, Int())).
 		Build()
 	view := schema.View()
-	resolved, err := view.Resolve(NewPatch().Set("count", 3))
+	count, ok := view.Key("count")
+	if !ok {
+		t.Fatal("schema view has no count field key")
+	}
+	resolved, err := view.Resolve(NewPatch().Set(count, 3))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	summary := resolved.Summary()
-	if !summary.Valid() || summary.Schema() != schema.Description().Identity || summary.Version() != "2" || summary.Fingerprint() != resolved.Fingerprint {
+	if !summary.Valid() || summary.Schema() != schema.Description().Identity || summary.Version() != "2" || summary.Fingerprint() != resolved.Fingerprint() {
 		t.Fatalf("summary identity = %#v", summary)
 	}
 	fields := summary.Fields()
@@ -84,7 +88,7 @@ func TestSchemaViewSummaryAndPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roundTrip.Fingerprint != resolved.Fingerprint || !reflect.DeepEqual(roundTrip.Value, resolved.Value) {
+	if roundTrip.Fingerprint() != resolved.Fingerprint() || !reflect.DeepEqual(roundTrip.Value(), resolved.Value()) {
 		t.Fatalf("round trip = %#v, want %#v", roundTrip, resolved)
 	}
 }

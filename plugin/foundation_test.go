@@ -35,6 +35,17 @@ func pluginSchema(defaultLevel int) config.Schema[pluginConfig] {
 		Build()
 }
 
+// componentPatch builds a typed patch through the component's own schema key,
+// which is the only route a caller has to a snapshotting patch entry.
+func componentPatch(t *testing.T, component Component, field string, value any) config.Patch {
+	t.Helper()
+	key, ok := component.Schema().Key(field)
+	if !ok {
+		t.Fatalf("component %s has no %s field key", component.Identity(), field)
+	}
+	return config.NewPatch().Set(key, value)
+}
+
 func pluginDescriptor(name string) Descriptor {
 	return Descriptor{DisplayName: name, Version: "1.0.0", License: "MIT"}
 }
@@ -75,9 +86,9 @@ func TestComponentResolvesTypeErasedPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
-	value, ok := resolved.Value.(pluginConfig)
+	value, ok := resolved.Value().(pluginConfig)
 	if !ok || value.Level != 7 {
-		t.Fatalf("resolved value = %#v, want pluginConfig{Level: 7}", resolved.Value)
+		t.Fatalf("resolved value = %#v, want pluginConfig{Level: 7}", resolved.Value())
 	}
 
 	_, err = component.Resolve(config.NewPatch().SetText("level", "99").SetText("unknown", "1"))

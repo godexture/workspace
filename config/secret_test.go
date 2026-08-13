@@ -14,10 +14,10 @@ func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secret resolve failed: %v", err)
 	}
-	if strings.Contains(fmt.Sprint(resolved.Value), "super-secret") || strings.Contains(resolved.String(), "super-secret") {
+	if strings.Contains(fmt.Sprint(resolved.Value()), "super-secret") || strings.Contains(resolved.String(), "super-secret") {
 		t.Fatal("secret leaked through public representation")
 	}
-	if got := resolved.Value.Secret.Reveal(); got != "super-secret" {
+	if got := resolved.Value().Secret.Reveal(); got != "super-secret" {
 		t.Fatal("secret reveal did not return the original value")
 	}
 
@@ -127,7 +127,7 @@ func TestResolvedSummaryOmitsSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roundTrip.Fingerprint != resolved.Fingerprint || roundTrip.Value.(secretConfig).Token.Reveal() != "live-secret" {
+	if roundTrip.Fingerprint() != resolved.Fingerprint() || roundTrip.Value().(secretConfig).Token.Reveal() != "live-secret" {
 		t.Fatal("secret round trip failed")
 	}
 }

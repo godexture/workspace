@@ -84,24 +84,24 @@ func TestCompositionKeepsNormalization(t *testing.T) {
 		t.Fatalf("resolve failed: %v", err)
 	}
 
-	if got := resolved.Value.Items[0].Value; got != "item" {
+	if got := resolved.Value().Items[0].Value; got != "item" {
 		t.Errorf("slice element = %q, want %q", got, "item")
 	}
-	if got := resolved.Value.Labels["key"].Value; got != "label" {
+	if got := resolved.Value().Labels["key"].Value; got != "label" {
 		t.Errorf("map value = %q, want %q", got, "label")
 	}
-	if got := resolved.Value.Nested.Name; got != "nested" {
+	if got := resolved.Value().Nested.Name; got != "nested" {
 		t.Errorf("nested field = %q, want %q", got, "nested")
 	}
-	if got := resolved.Value.Choice.Value; got != "choice" {
+	if got := resolved.Value().Choice.Value; got != "choice" {
 		t.Errorf("union variant value = %q, want %q", got, "choice")
 	}
-	if got := resolved.Value.Token.Reveal(); got != compositionSecret {
+	if got := resolved.Value().Token.Reveal(); got != compositionSecret {
 		t.Errorf("secret value = %q, want %q", got, compositionSecret)
 	}
 
 	for _, field := range []string{"items", "labels", "nested", "choice", "token"} {
-		source, ok := resolved.Provenance.Source(field)
+		source, ok := resolved.Provenance().Source(field)
 		if !ok || source != SourceNormalized {
 			t.Errorf("provenance for %s = %v (present %t), want normalized", field, source, ok)
 		}
@@ -116,7 +116,7 @@ func TestCompositionReportsNormalizationPaths(t *testing.T) {
 		t.Fatalf("resolve failed: %v", err)
 	}
 	paths := make(map[string]diagnostic.Severity)
-	for _, item := range resolved.Diagnostics {
+	for _, item := range resolved.Diagnostics() {
 		if item.Code == codeTrimmed {
 			paths[item.Path.String()] = item.Severity
 		}
@@ -142,7 +142,7 @@ func TestCompositionRedactsSecretDiagnostics(t *testing.T) {
 		t.Fatalf("resolve failed: %v", err)
 	}
 	found := false
-	for _, item := range resolved.Diagnostics {
+	for _, item := range resolved.Diagnostics() {
 		if !strings.HasPrefix(item.Path.String(), "token") {
 			continue
 		}
@@ -155,9 +155,9 @@ func TestCompositionRedactsSecretDiagnostics(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("secret normalization produced no diagnostic; got %v", resolved.Diagnostics)
+		t.Errorf("secret normalization produced no diagnostic; got %v", resolved.Diagnostics())
 	}
-	for _, item := range resolved.Diagnostics {
+	for _, item := range resolved.Diagnostics() {
 		if strings.Contains(item.Message, compositionSecret) {
 			t.Errorf("secret leaked into message %q", item.Message)
 		}
@@ -187,7 +187,7 @@ func TestCompositionFingerprintsNormalizedValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve of the normalized value failed: %v", err)
 	}
-	if resolved.Fingerprint != direct.Fingerprint {
-		t.Errorf("normalized fingerprint %s differs from the pre-normalized one %s", resolved.Fingerprint, direct.Fingerprint)
+	if resolved.Fingerprint() != direct.Fingerprint() {
+		t.Errorf("normalized fingerprint %s differs from the pre-normalized one %s", resolved.Fingerprint(), direct.Fingerprint())
 	}
 }

@@ -85,7 +85,11 @@ func ExampleWithReader() {
 // private plan can only be consumed later by the component that created it.
 func ExampleCompile() {
 	component := Codec().Components()[0]
-	resolved, err := component.Resolve(config.NewPatch().Set("level", 7))
+	level, ok := component.Schema().Key("level")
+	if !ok {
+		panic("example codec has no level field")
+	}
+	resolved, err := component.Resolve(config.NewPatch().Set(level, 7))
 	if err != nil {
 		panic(err)
 	}

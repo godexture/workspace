@@ -52,19 +52,19 @@ func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 	Component(t, subject,
 		Case[int, int]{
 			Name:   "success",
-			Config: config.NewPatch().Set("factor", 2),
+			Config: config.NewPatch().Set(runnerKey(t, "factor"), 2),
 			Input:  Values(descriptor, runnerType, 3, 5),
 			Want:   EqualValues(6, 10),
 		},
 		Case[int, int]{
 			Name:   "failure-cleanup",
-			Config: config.NewPatch().Set("factor", 2),
+			Config: config.NewPatch().Set(runnerKey(t, "factor"), 2),
 			Input:  Values(descriptor, runnerType, -1),
 			Want:   Fails[int]("runner.negative"),
 		},
 		Case[int, int]{
 			Name:   "execution-error",
-			Config: config.NewPatch().Set("factor", 2),
+			Config: config.NewPatch().Set(runnerKey(t, "factor"), 2),
 			Input:  Values(descriptor, runnerType, -2),
 			Want:   WantRunError[int](errRunnerRun),
 		},
@@ -212,3 +212,12 @@ func (runnerByteOperator) Process(ctx context.Context, input *flow.Item[buffer.H
 	return output.Emit(ctx, input)
 }
 func (runnerByteOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
+
+func runnerKey(t *testing.T, field string) config.Key {
+	t.Helper()
+	key, ok := runnerDefinition().Components()[0].Schema().Key(field)
+	if !ok {
+		t.Fatalf("runner fixture schema has no %s field", field)
+	}
+	return key
+}

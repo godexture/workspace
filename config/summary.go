@@ -53,7 +53,10 @@ func (s Schema[C]) patch(value C) (Patch, error) {
 		if err != nil {
 			return Patch{}, err
 		}
-		result = result.Set(field.id, fieldValue)
+		result = result.Set(field.key(s.identity), fieldValue)
+	}
+	if len(result.problems) != 0 {
+		return Patch{}, diagnosticError(result.problems)
 	}
 	return result, nil
 }
