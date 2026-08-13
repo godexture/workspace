@@ -20,7 +20,10 @@ var (
 	ErrInvalidHandle    = errors.New("buffer handle is invalid")
 	ErrRange            = errors.New("buffer range is out of bounds")
 	ErrEditAllocator    = errors.New("copy-on-write requires a payload allocator")
+	ErrLayoutOverflow   = errors.New("buffer layout size overflows the address space")
 )
+
+const maxInt = int(^uint(0) >> 1)
 
 type PlaneSpec struct {
 	Size    int
@@ -169,6 +172,11 @@ func (a *Allocator) release(size int64) {
 	}
 }
 
+// layoutOf resolves a plane specification into absolute offsets. A layout is
+// content the caller controls, so every sum is checked before it is made: an
+// unchecked int addition can overflow twice and land back on a small positive
+// size, which would record a plane far outside a backing allocation that the
+// allocator then under-charges.
 func layoutOf(spec Spec) (Layout, int, error) {
 	alignment := spec.Alignment
 	if alignment == 0 {
@@ -183,21 +191,74 @@ func layoutOf(spec Spec) (Layout, int, error) {
 		if plane.Size < 0 || plane.Padding < 0 {
 			return Layout{}, 0, fmt.Errorf("plane %d: %w", index, ErrInvalidPlane)
 		}
-		position = align(position, alignment)
-		planes[index] = Plane{Offset: position, Size: plane.Size, Padding: plane.Padding}
-		position += plane.Size + plane.Padding
-		if position < 0 {
-			return Layout{}, 0, errors.New("buffer size overflow")
+		offset, ok := alignUp(position, alignment)
+		if !ok {
+			return Layout{}, 0, planeOverflow(index)
 		}
+		extent, ok := checkedAdd(plane.Size, plane.Padding)
+		if !ok {
+			return Layout{}, 0, planeOverflow(index)
+		}
+		end, ok := checkedAdd(offset, extent)
+		if !ok {
+			return Layout{}, 0, planeOverflow(index)
+		}
+		planes[index] = Plane{Offset: offset, Size: plane.Size, Padding: plane.Padding}
+		position = end
 	}
 	rawSize := position
 	if rawSize == 0 {
 		rawSize = 1
 	}
-	if rawSize > int(^uint(0)>>1)-(alignment-1) {
-		return Layout{}, 0, errors.New("buffer size overflow")
+	if rawSize > maxInt-(alignment-1) {
+		return Layout{}, 0, ErrLayoutOverflow
 	}
-	return Layout{Alignment: alignment, Size: position, Planes: planes, ReadOnly: spec.ReadOnly, Shared: spec.Shared}, rawSize, nil
+	layout := Layout{Alignment: alignment, Size: position, Planes: planes, ReadOnly: spec.ReadOnly, Shared: spec.Shared}
+	if err := validateLayout(layout); err != nil {
+		return Layout{}, 0, err
+	}
+	return layout, rawSize, nil
+}
+
+// validateLayout asserts the invariant every reader relies on: each plane,
+// including its padding, lies inside the allocation the layout describes.
+func validateLayout(layout Layout) error {
+	if layout.Size < 0 {
+		return ErrLayoutOverflow
+	}
+	for index, plane := range layout.Planes {
+		if plane.Offset < 0 || plane.Size < 0 || plane.Padding < 0 {
+			return fmt.Errorf("plane %d: %w", index, ErrInvalidPlane)
+		}
+		extent, ok := checkedAdd(plane.Size, plane.Padding)
+		if !ok {
+			return planeOverflow(index)
+		}
+		end, ok := checkedAdd(plane.Offset, extent)
+		if !ok || end > layout.Size {
+			return planeOverflow(index)
+		}
+	}
+	return nil
+}
+
+func planeOverflow(index int) error {
+	return fmt.Errorf("plane %d: %w", index, ErrLayoutOverflow)
+}
+
+func checkedAdd(left, right int) (int, bool) {
+	if right > maxInt-left {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func alignUp(value, alignment int) (int, bool) {
+	mask := alignment - 1
+	if value > maxInt-mask {
+		return 0, false
+	}
+	return (value + mask) &^ mask, true
 }
 
 func allocateStorage(layout Layout, rawSize int) *storage {
@@ -209,11 +270,6 @@ func allocateStorage(layout Layout, rawSize int) *storage {
 	state := &storage{data: data, layout: layout}
 	state.refs.Store(1)
 	return state
-}
-
-func align(value, alignment int) int {
-	mask := alignment - 1
-	return (value + mask) &^ mask
 }
 
 func newLease(state *storage, offset int, layout Layout) *lease {
@@ -354,12 +410,11 @@ func (e *Edit) MutablePlane(index int) ([]byte, error) {
 	if index < 0 || index >= len(planes) {
 		return nil, ErrPlaneIndex
 	}
-	plane := planes[index]
 	data, err := e.working.mutableBytes()
 	if err != nil {
 		return nil, err
 	}
-	return data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+	return planeSlice(data, planes[index])
 }
 
 func (e *Edit) Copied() bool { return e != nil && e.active && e.copied }
@@ -459,8 +514,11 @@ func (v View) PlaneAligned(index, alignment int) (bool, error) {
 	if planes[index].Size == 0 {
 		return true, nil
 	}
-	data := v.lease.bytes()
-	return uintptr(unsafe.Pointer(&data[planes[index].Offset]))%uintptr(alignment) == 0, nil
+	plane, err := planeSlice(v.lease.bytes(), planes[index])
+	if err != nil {
+		return false, err
+	}
+	return uintptr(unsafe.Pointer(&plane[0]))%uintptr(alignment) == 0, nil
 }
 
 func (h Handle) mutableBytes() ([]byte, error) {
@@ -519,8 +577,19 @@ func (m Mutable) Plane(index int) ([]byte, error) {
 	if index < 0 || index >= len(planes) {
 		return nil, ErrPlaneIndex
 	}
-	plane := planes[index]
-	return m.storage.data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+	return planeSlice(m.storage.data, planes[index])
+}
+
+// planeSlice refuses a plane that does not fit the allocation it was recorded
+// against. layoutOf already rejects such a plane, so reaching this is a bug in
+// the buffer package rather than in a caller; returning an error keeps it from
+// becoming a slice-bounds panic inside a third-party component.
+func planeSlice(data []byte, plane Plane) ([]byte, error) {
+	end, ok := checkedAdd(plane.Offset, plane.Size)
+	if !ok || plane.Offset < 0 || plane.Size < 0 || end > len(data) {
+		return nil, ErrRange
+	}
+	return data[plane.Offset:end:end], nil
 }
 
 type writeLeaseState uint32
