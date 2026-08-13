@@ -3,7 +3,6 @@ package wave
 
 import (
 	"github.com/godexture/godec/media/carrier"
-	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
@@ -49,7 +48,6 @@ func Plugin() plugin.Definition {
 	declarations := []plugin.Declaration{InfoBinding()}
 	declarations = append(declarations, tag.Declarations()...)
 	declarations = append(declarations, sample.Declarations()...)
-	declarations = append(declarations, codec.Declarations()...)
 	return definition.WithDeclarations(declarations...)
 }
 

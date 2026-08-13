@@ -45,6 +45,5 @@ func Plugin() plugin.Definition {
 		metadata.Bind(LabelCarrier(), EncodingIdentity()),
 		plugin.DeclareKey(Label()),
 	}
-	declarations = append(declarations, codec.Declarations()...)
 	return definition.WithDeclarations(declarations...)
 }

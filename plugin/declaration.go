@@ -36,6 +36,32 @@ type Declaration struct {
 	targets  []DeclarationTarget
 	problems []string
 	owner    Identity
+	requires []Declaration
+}
+
+// WithVocabulary returns a copy of d that carries the key declarations its
+// namespace depends on. Composition expands them alongside d, so a plugin that
+// contributes d never has to know which vocabulary it implies, and composing
+// that plugin alone cannot leave the declaration missing.
+//
+// Requirements are expanded one level: a vocabulary declaration describes a
+// key, not a further dependency.
+func (d Declaration) WithVocabulary(values ...Declaration) Declaration {
+	result := d.clone()
+	for _, value := range values {
+		result.requires = append(result.requires, value.clone())
+	}
+	return result
+}
+
+// expand returns d followed by the vocabulary it requires, all under owner.
+func (d Declaration) expand(owner Identity) []Declaration {
+	result := make([]Declaration, 0, 1+len(d.requires))
+	result = append(result, d.withOwner(owner))
+	for _, required := range d.requires {
+		result = append(result, required.withOwner(owner))
+	}
+	return result
 }
 
 // Declare constructs a component declaration in the namespace of Namespace.
@@ -163,6 +189,7 @@ func (d Declaration) withOwner(owner Identity) Declaration {
 func (d Declaration) clone() Declaration {
 	d.targets = append([]DeclarationTarget(nil), d.targets...)
 	d.problems = append([]string(nil), d.problems...)
+	d.requires = cloneDeclarations(d.requires)
 	return d
 }
 

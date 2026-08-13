@@ -60,7 +60,7 @@ func (s Set) AddDeclaration(declaration Declaration) Set {
 	result := Set{
 		definitions:  make([]Definition, len(s.definitions)),
 		problems:     cloneItems(s.problems),
-		declarations: append(cloneDeclarations(s.declarations), declaration.withOwner(Identity{})),
+		declarations: append(cloneDeclarations(s.declarations), declaration.expand(Identity{})...),
 	}
 	for index, definition := range s.definitions {
 		result.definitions[index] = definition.clone()
@@ -94,7 +94,7 @@ func (s Set) OverrideDeclaration(target DeclarationKey, replacement Declaration)
 	if !replaced {
 		return s.withProblem(diagnostic.NewItem("plugin.declaration-override", diagnostic.ErrorSeverity, diagnostic.Path{}, "declaration override target is not present", nil))
 	}
-	result.declarations = append(result.declarations, replacement.withOwner(Identity{}))
+	result.declarations = append(result.declarations, replacement.expand(Identity{})...)
 	return result
 }
 

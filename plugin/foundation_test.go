@@ -13,6 +13,7 @@ import (
 type testPluginID struct{}
 type secondPluginID struct{}
 type testComponentID struct{}
+type otherComponentID struct{}
 type secondComponentID struct{}
 type foundationUnitID struct{}
 type foundationDeclarationID struct{}
@@ -277,13 +278,25 @@ func TestDefinitionOwnsDeclarationsImmutably(t *testing.T) {
 	}
 }
 
-func TestDefinitionRetainsInvalidAndDuplicateDeclarations(t *testing.T) {
+// Repeating one declaration is harmless and now expected, because two bindings
+// can carry the same vocabulary. Two declarations that disagree about a key are
+// still a composition error, and both are retained for Host to report.
+func TestDefinitionRetainsInvalidAndConflictingDeclarations(t *testing.T) {
 	component := foundationComponent[testComponentID](pluginDescriptor("component"), pluginSchema(1))
+	other := foundationComponent[otherComponentID](pluginDescriptor("other"), pluginSchema(1))
 	valid := Declare[foundationDeclarationID]("owned", component.Identity())
 	invalid := Declare[foundationDeclarationID]("", component.Identity())
+	repeated := Define[testPluginID](pluginDescriptor("plugin"), component).
+		WithDeclarations(valid).
+		WithDeclarations(valid)
+	if hasDiagnosticItem(repeated.Diagnostics(), "plugin.declaration-duplicate") {
+		t.Fatalf("an identical repeat was reported as a conflict: %v", repeated.Diagnostics())
+	}
+
+	conflicting := Declare[foundationDeclarationID]("owned", other.Identity())
 	definition := Define[testPluginID](pluginDescriptor("plugin"), component).
 		WithDeclarations(valid).
-		WithDeclarations(valid, invalid)
+		WithDeclarations(conflicting, invalid)
 
 	if len(definition.Declarations()) != 3 {
 		t.Fatalf("definition discarded a declaration: %#v", definition.Declarations())

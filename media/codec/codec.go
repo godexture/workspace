@@ -67,12 +67,14 @@ type Binding = plugin.Declaration
 
 type bindingNamespace struct{}
 
+// Bind carries the codec tag key declaration, so a plugin that contributes a
+// binding never has to remember the vocabulary the binding depends on.
 func Bind(key format.Tag, value Codec, parser Parser) Binding {
 	targets := []plugin.Identity{value.Identity()}
 	if parser.Valid() {
 		targets = append(targets, parser.Identity())
 	}
-	return plugin.Declare[bindingNamespace](key.String(), targets...)
+	return plugin.Declare[bindingNamespace](key.String(), targets...).WithVocabulary(Declarations()...)
 }
 
 func BindWithoutParser(key format.Tag, value Codec) Binding {

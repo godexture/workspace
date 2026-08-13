@@ -76,7 +76,6 @@ func Plugin() plugin.Definition {
 	)
 	declarations := []plugin.Declaration{Binding()}
 	declarations = append(declarations, sample.Declarations()...)
-	declarations = append(declarations, codec.Declarations()...)
 	return definition.WithDeclarations(declarations...)
 }
 

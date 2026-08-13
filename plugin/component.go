@@ -284,37 +284,38 @@ func Define[Marker any](descriptor Descriptor, components ...Component) Definiti
 // complete composition error instead of silently dropping them.
 func (d Definition) WithDeclarations(values ...Declaration) Definition {
 	result := d.clone()
-	seen := make(map[DeclarationKey]struct{}, len(result.declarations)+len(values))
+	seen := make(map[DeclarationKey]Declaration, len(result.declarations)+len(values))
 	for _, declaration := range result.declarations {
 		if declaration.Key().Valid() {
-			seen[declaration.Key()] = struct{}{}
+			seen[declaration.Key()] = declaration
 		}
 	}
-	for _, value := range values {
-		declaration := value.withOwner(result.identity)
-		result.declarations = append(result.declarations, declaration)
-		if problem := declaration.Problem(); problem != nil {
-			result.problems = append(result.problems, diagnostic.NewItem(
-				"plugin.declaration",
-				diagnostic.ErrorSeverity,
-				diagnostic.Path{Descriptor: declaration.Key().String()},
-				"owned composition declaration is invalid",
-				map[string]string{"cause": problem.Error()},
-			))
+	for _, carrier := range values {
+		for _, declaration := range carrier.expand(result.identity) {
+			result.declarations = append(result.declarations, declaration)
+			if problem := declaration.Problem(); problem != nil {
+				result.problems = append(result.problems, diagnostic.NewItem(
+					"plugin.declaration",
+					diagnostic.ErrorSeverity,
+					diagnostic.Path{Descriptor: declaration.Key().String()},
+					"owned composition declaration is invalid",
+					map[string]string{"cause": problem.Error()},
+				))
+			}
+			if !declaration.Key().Valid() {
+				continue
+			}
+			if previous, exists := seen[declaration.Key()]; exists && !previous.SameTargets(declaration) {
+				result.problems = append(result.problems, diagnostic.NewItem(
+					"plugin.declaration-duplicate",
+					diagnostic.ErrorSeverity,
+					diagnostic.Path{Descriptor: declaration.Key().String()},
+					"definition owns conflicting declarations for one key",
+					nil,
+				))
+			}
+			seen[declaration.Key()] = declaration
 		}
-		if !declaration.Key().Valid() {
-			continue
-		}
-		if _, exists := seen[declaration.Key()]; exists {
-			result.problems = append(result.problems, diagnostic.NewItem(
-				"plugin.declaration-duplicate",
-				diagnostic.ErrorSeverity,
-				diagnostic.Path{Descriptor: declaration.Key().String()},
-				"definition owns the same declaration key more than once",
-				nil,
-			))
-		}
-		seen[declaration.Key()] = struct{}{}
 	}
 	return result
 }
