@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/surface"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -93,14 +92,6 @@ func (i invocation) request() (job.Job, error) {
 	}
 	if err != nil {
 		return job.Job{}, err
-	}
-	if err := file.ValidateDistinct(i.input, i.output); err != nil {
-		for _, item := range diagnostic.ItemsOf(err) {
-			if item.Code == "file.same-path" {
-				return job.Job{}, err
-			}
-		}
-		return job.Job{}, planningRequestError{cause: err}
 	}
 	return request, nil
 }

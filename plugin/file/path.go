@@ -1,6 +1,7 @@
 package file
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/godexture/godec/access"
-	"github.com/godexture/godec/diagnostic"
 )
 
 var errReference = errors.New("file reference is not a local filesystem path")
@@ -44,36 +44,31 @@ func Reference(path string) (access.Reference, error) {
 	return reference, nil
 }
 
-// ValidateDistinct rejects file-to-file operations whose input and output
-// identify the same file. In-place replacement requires a separate explicit
-// contract because a successful commit destroys the original input.
-func ValidateDistinct(inputPath, outputPath string) error {
-	input, err := absolutePath(inputPath)
+// equivalent reports whether two file references denote one file. Names that
+// differ can still name the same object through a link or a case-insensitive
+// volume, which only the filesystem can resolve; a target that does not exist
+// yet is compared by normalized path.
+func equivalent(_ context.Context, target, other access.Reference) (bool, error) {
+	left, err := pathOf(target)
 	if err != nil {
-		return err
+		return false, err
 	}
-	output, err := absolutePath(outputPath)
+	right, err := pathOf(other)
 	if err != nil {
-		return err
+		return false, err
 	}
-	outputInfo, err := os.Stat(output)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if equalPath(input, output) {
-			return sameFileDiagnostic()
-		}
-		return nil
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	if errors.Is(leftErr, os.ErrNotExist) || errors.Is(rightErr, os.ErrNotExist) {
+		return equalPath(left, right), nil
 	}
-	inputInfo, err := os.Stat(input)
-	if err != nil {
-		return err
+	if leftErr != nil {
+		return false, leftErr
 	}
-	if os.SameFile(inputInfo, outputInfo) {
-		return sameFileDiagnostic()
+	if rightErr != nil {
+		return false, rightErr
 	}
-	return nil
+	return os.SameFile(leftInfo, rightInfo), nil
 }
 
 func absolutePath(path string) (string, error) {
@@ -92,16 +87,6 @@ func equalPath(left, right string) bool {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
-}
-
-func sameFileDiagnostic() error {
-	return diagnostic.NewError(diagnostic.NewItem(
-		"file.same-path",
-		diagnostic.ErrorSeverity,
-		diagnostic.Path{},
-		"input and output identify the same file; in-place conversion is not enabled",
-		nil,
-	))
 }
 
 func pathOf(reference access.Reference) (string, error) {

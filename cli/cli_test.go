@@ -145,7 +145,7 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 		{name: "usage", ctx: t.Context(), args: []string{wavePath}, want: ExitUsage, text: "usage error"},
 		{name: "planning", ctx: t.Context(), args: []string{rawPath, filepath.Join(directory, "planning.wav")}, want: ExitPlanning, text: "prepare.format-config-required"},
 		{name: "input inspection", ctx: t.Context(), args: []string{filepath.Join(directory, "missing.wav"), existingOutput}, want: ExitPlanning, text: "missing.wav"},
-		{name: "same file", ctx: t.Context(), args: []string{wavePath, wavePath}, want: ExitUsage, text: "file.same-path"},
+		{name: "same file", ctx: t.Context(), args: []string{wavePath, wavePath}, want: ExitPlanning, text: "prepare.boundary-conflict"},
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()

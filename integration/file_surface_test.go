@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -308,22 +309,45 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 		})
 	}
 
+	// Host owns the guard, so every entry point is covered: the one-call
+	// convenience, a Job the caller builds and runs itself, and anything else
+	// that reaches Prepare.
 	t.Run("same path rejected", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "audio.wav")
-		if err := os.WriteFile(path, inputBytes, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		err := standard.Convert(t.Context(), path, path)
-		items := host.Diagnostics(err)
-		if len(items) != 1 || items[0].Code != "file.same-path" {
-			t.Fatalf("same-path diagnostic = %#v, %v", items, err)
-		}
-		encoded, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(encoded, inputBytes) {
-			t.Fatal("same-path rejection changed the original input")
+		for _, entry := range []struct {
+			name string
+			run  func(string) error
+		}{
+			{name: "convenience", run: func(path string) error { return standard.Convert(t.Context(), path, path) }},
+			{name: "job", run: func(path string) error {
+				request, err := standard.NewFileJob(path, path)
+				if err != nil {
+					return err
+				}
+				instance, err := standard.NewHost()
+				if err != nil {
+					return err
+				}
+				_, err = instance.Run(t.Context(), request)
+				return err
+			}},
+		} {
+			t.Run(entry.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "audio.wav")
+				if err := os.WriteFile(path, inputBytes, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				err := entry.run(path)
+				if !hasDiagnostic(host.Diagnostics(err), "prepare.boundary-conflict") {
+					t.Fatalf("same-path diagnostic = %#v, %v", host.Diagnostics(err), err)
+				}
+				encoded, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if !bytes.Equal(encoded, inputBytes) {
+					t.Fatal("same-path rejection changed the original input")
+				}
+			})
 		}
 	})
 
@@ -425,4 +449,13 @@ func assertOutputFormatNode(t testing.TB, value plan.Plan, extension string) {
 		}
 	}
 	t.Fatalf("output Format component %s is absent", want)
+}
+
+func hasDiagnostic(items []diagnostic.Item, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }

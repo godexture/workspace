@@ -66,7 +66,7 @@ func sourceComponent() plugin.Component {
 func sinkComponent() plugin.Component {
 	return sinkComponentWith(
 		plugin.Descriptor{DisplayName: "File sink"},
-		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink),
+		access.Sink("file", sinkCapabilities(), access.AtomicReplace, acquireSink, access.WithEquivalence(equivalent)),
 	)
 }
 

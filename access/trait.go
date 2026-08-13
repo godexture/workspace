@@ -72,21 +72,43 @@ func (t SourceTrait) manifest() string {
 	return traitManifest("source", t.scheme, t.capabilities, 0)
 }
 
+// EquivalentFunc reports whether two references of one scheme denote the same
+// underlying object. Resolving that is scheme-specific, so only a Provider can
+// answer it.
+type EquivalentFunc func(context.Context, Reference, Reference) (bool, error)
+
 // SinkTrait is the typed access view of a sink component trait.
 type SinkTrait struct {
 	scheme       string
 	capabilities Capabilities
 	transaction  TransactionClass
 	acquire      AcquireFunc
+	equivalent   EquivalentFunc
+}
+
+// SinkOption adjusts what a sink trait can answer beyond acquiring sessions.
+type SinkOption func(*SinkTrait)
+
+// WithEquivalence lets a sink report that its target is the same object as
+// another reference. Prepare compares every boundary pair before acquiring, so
+// a job whose output would destroy its own input is rejected before any
+// session opens. Without it, only canonical reference equality is checked.
+func WithEquivalence(equivalent EquivalentFunc) SinkOption {
+	return func(trait *SinkTrait) { trait.equivalent = equivalent }
 }
 
 // Sink attaches an Access sink trait to a 1-input/0-output component.
-func Sink(scheme string, capabilities Capabilities, transaction TransactionClass, acquire AcquireFunc) plugin.ComponentOption {
+func Sink(scheme string, capabilities Capabilities, transaction TransactionClass, acquire AcquireFunc, options ...SinkOption) plugin.ComponentOption {
 	trait := SinkTrait{
 		scheme:       normalizeScheme(scheme),
 		capabilities: cloneCapabilities(capabilities),
 		transaction:  transaction,
 		acquire:      acquire,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(&trait)
+		}
 	}
 	return plugin.WithTrait(sinkKey, trait.manifest(), plugin.PortShapeRequired, trait)
 }
@@ -112,8 +134,17 @@ func (t SinkTrait) Acquire(ctx context.Context, reference Reference, selected Se
 	return t.acquire(ctx, reference, selected)
 }
 
+// Equivalent reports whether target denotes the same object as other. A sink
+// that declares no test answers false without error.
+func (t SinkTrait) Equivalent(ctx context.Context, target, other Reference) (bool, error) {
+	if t.equivalent == nil || !t.Valid() {
+		return false, nil
+	}
+	return t.equivalent(ctx, target, other)
+}
+
 func (t SinkTrait) manifest() string {
-	return traitManifest("sink", t.scheme, t.capabilities, t.transaction)
+	return traitManifest("sink", t.scheme, t.capabilities, t.transaction) + "|equivalence=" + boolToken(t.equivalent != nil)
 }
 
 func normalizeScheme(value string) string {
@@ -132,4 +163,11 @@ func traitManifest(direction, scheme string, capabilities Capabilities, transact
 		names[index] = string(capability)
 	}
 	return direction + "|scheme=" + scheme + "|cap=" + strings.Join(names, ",") + "|transaction=" + strconv.Itoa(int(transaction))
+}
+
+func boolToken(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }

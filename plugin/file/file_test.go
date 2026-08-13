@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/access"
-	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/buffer"
@@ -495,23 +494,38 @@ func TestValidateDistinctRejectsEquivalentFileIdentities(t *testing.T) {
 		tests["path case"] = strings.ToUpper(input)
 	}
 
+	same := func(t *testing.T, left, right string) bool {
+		t.Helper()
+		leftReference, err := Reference(left)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rightReference, err := Reference(right)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := equivalent(t.Context(), leftReference, rightReference)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
 	for name, output := range tests {
 		t.Run(name, func(t *testing.T) {
-			items := diagnostic.ItemsOf(ValidateDistinct(input, output))
-			if len(items) != 1 || items[0].Code != "file.same-path" {
-				t.Fatalf("same-file diagnostic = %#v", items)
+			if !same(t, output, input) {
+				t.Fatalf("%s was not recognized as the same file", name)
 			}
 		})
 	}
-	if err := ValidateDistinct(input, filepath.Join(directory, "missing.wav")); err != nil {
-		t.Fatalf("distinct missing output rejected: %v", err)
+	if same(t, filepath.Join(directory, "missing.wav"), input) {
+		t.Fatal("a missing distinct output was reported as the same file")
 	}
 	distinct := filepath.Join(directory, "existing.wav")
 	if err := os.WriteFile(distinct, []byte("output"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateDistinct(input, distinct); err != nil {
-		t.Fatalf("distinct existing output rejected: %v", err)
+	if same(t, distinct, input) {
+		t.Fatal("a distinct existing output was reported as the same file")
 	}
 }
 

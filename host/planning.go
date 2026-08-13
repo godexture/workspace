@@ -45,6 +45,9 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	if err := h.validatePinnedFormatSelectors(normalized.Request(), normalized.Boundaries().Entries()); err != nil {
 		return inputPlan{}, errors.Join(err, closeRequestDirects(request))
 	}
+	if err := h.validateBoundaries(ctx, normalized.Boundaries().Entries()); err != nil {
+		return inputPlan{}, errors.Join(err, closeRequestDirects(request))
+	}
 	planningContext, cancel := internalplanning.Start(ctx, normalized.Request().Budget().Duration)
 	defer cancel()
 	selected := inputPlan{entries: normalized.Boundaries().Entries()}
