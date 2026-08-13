@@ -207,6 +207,11 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	if rootEnd == 0 || offset != rootEnd {
 		return header{}, fmt.Errorf("%w: RIFF chunk scan did not reach the declared end", ErrMalformed)
 	}
+	if sizeKnown && sourceSize > rootEnd {
+		if err := inspectTrailer(ctx, reader, document, &budget, rootEnd, sourceSize); err != nil {
+			return header{}, err
+		}
+	}
 	parsed, err := document.Build()
 	if err != nil {
 		return header{}, fmt.Errorf("%w: WAVE metadata document: %w", ErrMalformed, err)
@@ -218,14 +223,15 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	return result, nil
 }
 
+// validateSourceEnd rejects a RIFF chunk that claims more than the source
+// holds. Bytes past the chunk are not an error: appended tags and encoder
+// padding are common, and the spec makes the size field the chunk boundary,
+// not the file boundary. Inspect preserves that region instead.
 func validateSourceEnd(declared, actual uint64, known bool) error {
-	if !known || declared == actual {
+	if !known || declared <= actual {
 		return nil
 	}
-	if declared > actual {
-		return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrTruncatedData, declared, actual)
-	}
-	return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrMalformed, declared, actual)
+	return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrTruncatedData, declared, actual)
 }
 
 func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, budget *preserveBudget, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {
@@ -374,5 +380,29 @@ func (b *preserveBudget) reserve(length uint64, id string) error {
 		return fmt.Errorf("%w: preserving chunk %q needs %d bytes and %d remain in the Inspect budget", ErrUnsupported, id, length, b.remaining)
 	}
 	b.remaining -= length
+	return nil
+}
+
+// inspectTrailer preserves the bytes past the RIFF chunk as one opaque block.
+// They are not a chunk, so they carry no header and are written back outside
+// the RIFF size.
+func inspectTrailer(ctx context.Context, reader access.Random, builder *metadata.Builder, budget *preserveBudget, start, end uint64) error {
+	length := end - start
+	if length > uint64(^uint(0)>>1) || start > math.MaxInt64 {
+		return fmt.Errorf("%w: trailing region exceeds control-plane address space", ErrUnsupported)
+	}
+	if err := budget.reserve(length, "trailer"); err != nil {
+		return err
+	}
+	raw := make([]byte, int(length))
+	if err := readFullAt(ctx, reader, raw, int64(start)); err != nil {
+		return fmt.Errorf("%w: trailing region at %d: %w", ErrMalformed, start, err)
+	}
+	builder.AddBlock(metadata.NewRawBlock(
+		newChunkBlockID(start, chunkAfterRIFF, chunkRaw),
+		rawChunkCarrier(),
+		plugin.Identity{},
+		metadata.NewBlob("application/octet-stream", raw),
+	))
 	return nil
 }

@@ -17,6 +17,9 @@ const (
 	chunkBeforeFormat chunkAnchor = iota + 1
 	chunkBeforeData
 	chunkAfterData
+	// chunkAfterRIFF is the region past the RIFF chunk. It is not a chunk at
+	// all, so it is written back outside the RIFF size rather than inside it.
+	chunkAfterRIFF
 )
 
 type chunkKind uint8
@@ -76,6 +79,8 @@ func (a chunkAnchor) token() string {
 		return "before-data"
 	case chunkAfterData:
 		return "after-data"
+	case chunkAfterRIFF:
+		return "after-riff"
 	default:
 		return "invalid"
 	}
@@ -89,6 +94,8 @@ func parseChunkAnchor(value string) (chunkAnchor, bool) {
 		return chunkBeforeData, true
 	case "after-data":
 		return chunkAfterData, true
+	case "after-riff":
+		return chunkAfterRIFF, true
 	default:
 		return 0, false
 	}

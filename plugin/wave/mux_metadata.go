@@ -14,6 +14,7 @@ type muxChunks struct {
 	beforeFormat []byte
 	beforeData   []byte
 	afterData    []byte
+	trailer      []byte
 }
 
 type positionedMuxChunk struct {
@@ -61,6 +62,12 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		default:
 			return muxChunks{}, fmt.Errorf("%w: WAVE metadata chunk %s has an unsupported kind", ErrUnsupported, block.ID())
 		}
+		// The trailing region is raw bytes past the RIFF chunk, so it carries
+		// no chunk header to validate.
+		if placement.anchor == chunkAfterRIFF {
+			positioned = append(positioned, positionedMuxChunk{position: placement.position, anchor: placement.anchor, payload: payload})
+			continue
+		}
 		identity, err := validateMuxChunk(payload)
 		if err != nil {
 			return muxChunks{}, fmt.Errorf("%s: %w", block.ID(), err)
@@ -87,6 +94,8 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			result.beforeData, err = appendMuxChunk(result.beforeData, chunk.payload)
 		case chunkAfterData:
 			result.afterData, err = appendMuxChunk(result.afterData, chunk.payload)
+		case chunkAfterRIFF:
+			result.trailer, err = appendMuxChunk(result.trailer, chunk.payload)
 		default:
 			err = fmt.Errorf("%w: WAVE metadata chunk has an invalid anchor", ErrMalformed)
 		}

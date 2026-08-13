@@ -335,3 +335,55 @@ func TestInspectTreatsOnlyTheDs64ReservationSlotAsStructural(t *testing.T) {
 		})
 	}
 }
+
+// Appended tags and encoder padding past the RIFF chunk are common. The spec
+// makes the size field the chunk boundary, not the file boundary, so the
+// region is preserved and written back outside the RIFF size.
+func TestInspectPreservesBytesPastTheRIFFChunk(t *testing.T) {
+	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
+	dataChunk := waveTestChunk(t, tagDATA, []byte{7, 8}, 0)
+	value := waveTestRIFF(t, formatChunk, dataChunk)
+	trailer := []byte("ID3\x04appended")
+	source := append(append([]byte(nil), value...), trailer...)
+
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(source), uint64(len(source)), true, infoTestResolver(t), 1<<20)
+	if err != nil {
+		t.Fatalf("trailing bytes rejected the stream: %v", err)
+	}
+	blocks := inspected.metadata.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("preserved blocks = %d, want the trailing region only", len(blocks))
+	}
+	if got := blocks[0].Payload().AppendTo(nil); !bytes.Equal(got, trailer) {
+		t.Fatalf("preserved trailer = %q, want %q", got, trailer)
+	}
+
+	chunks, err := marshalMuxChunks(t.Context(), infoTestResolver(t), inspected.metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(chunks.trailer, trailer) {
+		t.Fatalf("mux trailer = %q, want %q", chunks.trailer, trailer)
+	}
+	header, err := newMuxHeaderWithChunks(inspected.description, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The trailing region sits past the RIFF chunk, so it must not change the
+	// size the header declares.
+	plain, err := newMuxHeaderWithChunks(inspected.description, muxChunks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withTrailer, err := header.finalize(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := plain.finalize(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withTrailer.fileSize != without.fileSize {
+		t.Fatalf("RIFF-scoped size with trailer = %d, without = %d", withTrailer.fileSize, without.fileSize)
+	}
+}

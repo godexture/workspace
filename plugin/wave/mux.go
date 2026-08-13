@@ -101,6 +101,11 @@ func (m *muxer) Flush(ctx context.Context, output flow.Emitter[access.Write]) er
 			return err
 		}
 	}
+	if len(m.header.trailer) != 0 {
+		if err := m.emitAppend(ctx, m.header.trailer, output); err != nil {
+			return err
+		}
+	}
 	for _, patch := range finalized.patches {
 		if err := m.emitPatch(ctx, patch, output); err != nil {
 			return err

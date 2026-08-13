@@ -11,6 +11,7 @@ import (
 type muxHeader struct {
 	initial        []byte
 	afterData      []byte
+	trailer        []byte
 	reserveOffset  int64
 	dataSizeOffset int64
 	dataOffset     int64
@@ -59,6 +60,7 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 	return muxHeader{
 		initial:        value,
 		afterData:      append([]byte(nil), chunks.afterData...),
+		trailer:        append([]byte(nil), chunks.trailer...),
 		reserveOffset:  int64(reserveOffset),
 		dataSizeOffset: int64(dataOffset + 4),
 		dataOffset:     int64(headerSize),
@@ -159,16 +161,18 @@ func (h muxHeader) outputSize(dataSize uint64) (int, uint64, error) {
 	if dataSize > math.MaxUint64-padding || dataSize+padding > math.MaxUint64-suffix || uint64(h.dataOffset) > math.MaxUint64-dataSize-padding-suffix {
 		return 0, 0, fmt.Errorf("%w: WAVE output size overflows", ErrUnsupported)
 	}
-	fileSize := uint64(h.dataOffset) + dataSize + padding + suffix
-	if fileSize > math.MaxInt64 {
+	// riffEnd is where the RIFF chunk stops. A preserved trailing region sits
+	// past it and never counts toward the RIFF or ds64 size.
+	riffEnd := uint64(h.dataOffset) + dataSize + padding + suffix
+	trailer := uint64(len(h.trailer))
+	if riffEnd > math.MaxInt64 || riffEnd > math.MaxUint64-trailer || riffEnd+trailer > math.MaxInt64 {
 		return 0, 0, fmt.Errorf("%w: WAVE output exceeds runtime offsets", ErrUnsupported)
 	}
-	return int(padding), fileSize, nil
+	return int(padding), riffEnd, nil
 }
 
+// payloadBytes is the largest single buffer the muxer emits from its own
+// grant: the header, the region after the data chunk, or the trailing region.
 func (h muxHeader) payloadBytes() int {
-	if len(h.afterData) > len(h.initial) {
-		return len(h.afterData)
-	}
-	return len(h.initial)
+	return max(len(h.initial), len(h.afterData), len(h.trailer))
 }
