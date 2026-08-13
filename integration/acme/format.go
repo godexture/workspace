@@ -185,15 +185,15 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 	defer input.Drop()
 	data := input.Value().Bytes()
 	start := o.absolute
-	o.absolute += int64(len(data))
+	o.absolute += int64(data.Len())
 	local := 0
 	if start < o.offset {
 		local = int(o.offset - start)
-		if local >= len(data) {
+		if local >= data.Len() {
 			return nil
 		}
 	}
-	payload, err := input.Value().Range(local, len(data)-local)
+	payload, err := input.Value().Range(local, data.Len()-local)
 	if err != nil {
 		return err
 	}

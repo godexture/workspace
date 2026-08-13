@@ -76,7 +76,7 @@ small hermetic fixture、cross-plugin fixture、full conformance corpus、benchm
 - checked timestamp rescale、overflow、rounding
 - graph schema/multiplicity/cycle/reachability/finalizer validation
 - planner の canonical ordering、budget、same-input Plan fingerprint
-- ownership move、fan-out、write failure、drop、cancel drain
+- ownership move、fan-out sibling isolation、immutable read view、write failure、drop、cancel drain
 - allocator の zeroed/overwrite lease と Job 終了時の解放
 - transactional Open、reverse rollback、Finalize/Commit outcome
 - primary failure と cleanup failure の集約
@@ -111,6 +111,7 @@ typed case 層は `Component`、`Format`、`Codec`、`Metadata Encoding`、`Acce
 - selected component だけを `Open` する lifecycle
 - cancel、EOF、Flush、Finalize、Close
 - ownership leak、double drop、declared schema と実 item
+- read-only/shared media が raw mutable slice を公開せず、変更 branch だけが editor 経由で COW すること
 - variant accuracy/repeatability/platform declaration
 - panic/error boundary
 - empty、truncated、oversized input

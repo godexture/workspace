@@ -35,7 +35,7 @@ func (c Chunk) WithSideData(value side.Data) Chunk { c.sideData = value; return 
 // Payload returns a borrowed view valid until the chunk owner is released.
 // Call View.Share when the payload must outlive this chunk.
 func (c Chunk) Payload() buffer.View { return c.payload.Borrow() }
-func (c Chunk) Bytes() []byte        { return c.payload.Bytes() }
+func (c Chunk) Bytes() buffer.Bytes  { return c.payload.Bytes() }
 func (c Chunk) Share() Chunk         { c.payload = c.payload.Share(); return c }
 func (c Chunk) Release()             { c.payload.Release() }
 
@@ -76,7 +76,7 @@ func (p Packet) WithSideData(value side.Data) Packet { p.sideData = value; retur
 // Payload returns a borrowed view valid until the packet owner is released.
 // Call View.Share when the payload must outlive this packet.
 func (p Packet) Payload() buffer.View { return p.payload.Borrow() }
-func (p Packet) Bytes() []byte        { return p.payload.Bytes() }
+func (p Packet) Bytes() buffer.Bytes  { return p.payload.Bytes() }
 func (p Packet) Share() Packet {
 	p.payload = p.payload.Share()
 	return p

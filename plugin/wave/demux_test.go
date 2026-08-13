@@ -64,7 +64,7 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if !item.Valid() {
 			t.Fatalf("invalid chunk item = %#v", item)
 		}
-		decoded = append(decoded, item.Bytes()...)
+		decoded = item.Bytes().AppendTo(decoded)
 	}
 	if !bytes.Equal(decoded, payload) {
 		t.Fatalf("demux payload = %v", decoded)

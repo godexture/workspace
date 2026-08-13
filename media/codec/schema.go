@@ -10,7 +10,7 @@ type packetSchemaID struct{}
 var packetSchema = schema.Define[packetSchemaID](schema.Traits[packet.Packet]{
 	Fork: func(value packet.Packet) packet.Packet { return value.Share() },
 	Drop: func(value packet.Packet) { value.Release() },
-	Size: func(value packet.Packet) int { return len(value.Bytes()) },
+	Size: func(value packet.Packet) int { return value.Bytes().Len() },
 	Time: func(value packet.Packet) (int64, bool) {
 		pts, ok := value.PTS().Get()
 		return pts.Int64(), ok

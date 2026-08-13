@@ -91,7 +91,10 @@ func sinkComponentWith(descriptor plugin.Descriptor, traits ...plugin.ComponentO
 					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.DescriptorNeed("file.carrier", desired))},
 				}, nil
 			}
-			return plugin.Compiled[sinkPlan, stream.Descriptor]{Plan: sinkPlan{shape: shape.Clone()}}, nil
+			return plugin.Compiled[sinkPlan, stream.Descriptor]{
+				Plan:      sinkPlan{shape: shape.Clone()},
+				Resources: resource.Request{Memory: blockSize},
+			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan sinkPlan) (flow.Operator, error) {
 			opening, ok := plugin.Boundary[access.Opening](ctx)

@@ -18,6 +18,61 @@ type Sample interface {
 		~float32 | ~float64
 }
 
+// Samples is an immutable borrowed sample view. Mutable sample slices are
+// available only from Editor.
+type Samples[S Sample] struct {
+	data buffer.Bytes
+	len  int
+}
+
+func (s Samples[S]) Valid() bool { return s.data.Valid() }
+
+// Len reports the recorded sample count and does not revalidate the
+// originating frame, so it stays cheap in loop conditions. Every read still
+// fails or panics once that frame is released; use Valid to test liveness.
+func (s Samples[S]) Len() int { return s.len }
+
+// At reads one sample and revalidates the originating frame on every call, so
+// it suits incidental access only. Read ranges through CopyTo or AppendTo, or
+// drain the byte plane with buffer.Bytes.Blocks.
+func (s Samples[S]) At(index int) S {
+	if index < 0 || index >= s.len {
+		panic("audio sample index out of range")
+	}
+	var value S
+	size := int(unsafe.Sizeof(value))
+	view, err := s.data.Slice(index*size, size)
+	if err != nil {
+		panic("audio samples outlived their originating frame")
+	}
+	view.CopyTo(unsafe.Slice((*byte)(unsafe.Pointer(&value)), size))
+	return value
+}
+
+func (s Samples[S]) CopyTo(destination []S) int {
+	count := min(len(destination), s.len)
+	if count == 0 {
+		return 0
+	}
+	size := int(unsafe.Sizeof(*new(S)))
+	data, err := s.data.Slice(0, count*size)
+	if err != nil {
+		return 0
+	}
+	bytes := unsafe.Slice((*byte)(unsafe.Pointer(&destination[0])), count*size)
+	return data.CopyTo(bytes) / size
+}
+
+func (s Samples[S]) AppendTo(destination []S) []S {
+	if !s.data.Valid() {
+		return destination
+	}
+	start := len(destination)
+	destination = append(destination, make([]S, s.len)...)
+	s.CopyTo(destination[start:])
+	return destination
+}
+
 var (
 	ErrInvalidSampleCount = errors.New("audio sample count must be non-negative")
 	ErrInvalidPlanes      = errors.New("audio frame planes do not match sample count")
@@ -52,11 +107,12 @@ func NewFrame[S Sample](pts timing.OptionalPTS, samples int, planes buffer.Handl
 			return Frame[S]{}, ErrInvalidPlanes
 		}
 		if samples != 0 {
-			bytes, err := planes.Plane(index)
-			if err != nil || len(bytes) < required {
+			plane, err := planes.Plane(index)
+			if err != nil || plane.Len() < required {
 				return Frame[S]{}, ErrInvalidPlanes
 			}
-			if uintptr(unsafe.Pointer(&bytes[0]))%unsafe.Alignof(*new(S)) != 0 {
+			aligned, alignErr := planes.PlaneAligned(index, int(unsafe.Alignof(*new(S))))
+			if alignErr != nil || !aligned {
 				return Frame[S]{}, ErrSampleAlignment
 			}
 		}
@@ -74,20 +130,17 @@ func (f Frame[S]) WithSideData(value side.Data) Frame[S] { f.sideData = value; r
 
 // Planes returns a borrowed view valid until the frame owner is released.
 // Call View.Share when the planes must outlive this frame.
-func (f Frame[S]) Planes() buffer.View             { return f.planes.Borrow() }
-func (f Frame[S]) Plane(index int) ([]byte, error) { return f.planes.Borrow().Plane(index) }
+func (f Frame[S]) Planes() buffer.View                   { return f.planes.Borrow() }
+func (f Frame[S]) Plane(index int) (buffer.Bytes, error) { return f.planes.Borrow().Plane(index) }
 
 // PlaneSamples returns a borrowed typed plane valid until the frame owner is
 // released. The constructor has already checked length and scalar alignment.
-func (f Frame[S]) PlaneSamples(index int) ([]S, error) {
+func (f Frame[S]) PlaneSamples(index int) (Samples[S], error) {
 	plane, err := f.Plane(index)
 	if err != nil {
-		return nil, err
+		return Samples[S]{}, err
 	}
-	if f.samples == 0 {
-		return []S{}, nil
-	}
-	return unsafe.Slice((*S)(unsafe.Pointer(&plane[0])), f.samples), nil
+	return Samples[S]{data: plane, len: f.samples}, nil
 }
 
 func (f Frame[S]) Share() Frame[S] {
@@ -124,7 +177,7 @@ func (e *Editor[S]) PlaneSamples(index int) ([]S, error) {
 	if e == nil {
 		return nil, buffer.ErrLeaseState
 	}
-	plane, err := e.edit.Plane(index)
+	plane, err := e.edit.MutablePlane(index)
 	if err != nil {
 		return nil, err
 	}

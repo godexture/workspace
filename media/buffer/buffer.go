@@ -124,17 +124,17 @@ func (a *Allocator) Allocate(spec Spec) (Handle, error) {
 }
 
 func (a *Allocator) FromBytes(value []byte, alignment int) (Handle, error) {
-	result, err := a.Allocate(Spec{Alignment: alignment, Planes: []PlaneSpec{{Size: len(value)}}})
+	lease, err := a.Overwrite(Spec{Alignment: alignment, Planes: []PlaneSpec{{Size: len(value)}}})
 	if err != nil {
 		return Handle{}, err
 	}
-	mutable, err := result.MutableBytes()
-	if err != nil {
-		result.Release()
+	if err := lease.Fill(func(destination Mutable) error {
+		copy(destination.Bytes(), value)
+		return nil
+	}); err != nil {
 		return Handle{}, err
 	}
-	copy(mutable, value)
-	return result, nil
+	return lease.Commit()
 }
 
 // Overwrite reserves private backing memory without publishing a readable
@@ -270,22 +270,15 @@ func (h Handle) Range(offset, size int) (Handle, error) {
 
 func (h Handle) Layout() Layout { return h.Borrow().Layout() }
 
-func (h Handle) Bytes() []byte { return h.Borrow().Bytes() }
+func (h Handle) Bytes() Bytes { return h.Borrow().Bytes() }
 
-func (h Handle) MutableBytes() ([]byte, error) {
-	if !h.Valid() {
-		return nil, ErrInvalidHandle
-	}
-	if h.lease.layout.ReadOnly {
-		return nil, ErrReadOnly
-	}
-	if h.lease.layout.Shared || h.lease.storage.refs.Load() != 1 {
-		return nil, ErrShared
-	}
-	return h.lease.bytes(), nil
+func (h Handle) Plane(index int) (Bytes, error) { return h.Borrow().Plane(index) }
+
+// PlaneAligned reports whether a plane begins at the requested power-of-two
+// alignment without exposing its address.
+func (h Handle) PlaneAligned(index, alignment int) (bool, error) {
+	return h.Borrow().PlaneAligned(index, alignment)
 }
-
-func (h Handle) Plane(index int) ([]byte, error) { return h.Borrow().Plane(index) }
 
 func (h Handle) ReadOnly() bool {
 	return h.Valid() && h.lease.layout.ReadOnly
@@ -320,7 +313,12 @@ func (h Handle) Edit(allocator *Allocator) (Edit, error) {
 	if err != nil {
 		return Edit{}, err
 	}
-	copy(working.Bytes(), h.Bytes())
+	mutable, err := working.mutableBytes()
+	if err != nil {
+		working.Release()
+		return Edit{}, err
+	}
+	h.Bytes().CopyTo(mutable)
 	return Edit{original: h, working: working, copied: true, active: true}, nil
 }
 
@@ -345,14 +343,23 @@ func (e *Edit) MutableBytes() ([]byte, error) {
 	if e == nil || !e.active || !e.working.Valid() {
 		return nil, ErrLeaseState
 	}
-	return e.working.MutableBytes()
+	return e.working.mutableBytes()
 }
 
-func (e *Edit) Plane(index int) ([]byte, error) {
+func (e *Edit) MutablePlane(index int) ([]byte, error) {
 	if e == nil || !e.active || !e.working.Valid() {
 		return nil, ErrLeaseState
 	}
-	return e.working.Plane(index)
+	planes := e.working.lease.layout.Planes
+	if index < 0 || index >= len(planes) {
+		return nil, ErrPlaneIndex
+	}
+	plane := planes[index]
+	data, err := e.working.mutableBytes()
+	if err != nil {
+		return nil, err
+	}
+	return data[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
 }
 
 func (e *Edit) Copied() bool { return e != nil && e.active && e.copied }
@@ -419,24 +426,54 @@ func (v View) Layout() Layout {
 	return v.lease.layout.Clone()
 }
 
-func (v View) Bytes() []byte {
+func (v View) Bytes() Bytes {
 	if !v.Valid() {
-		return nil
+		return Bytes{}
 	}
-	return v.lease.bytes()
+	return Bytes{lease: v.lease, size: v.lease.layout.Size}
 }
 
-func (v View) Plane(index int) ([]byte, error) {
+func (v View) Plane(index int) (Bytes, error) {
 	if !v.Valid() {
-		return nil, errors.New("invalid buffer view")
+		return Bytes{}, errors.New("invalid buffer view")
 	}
 	planes := v.lease.layout.Planes
 	if index < 0 || index >= len(planes) {
-		return nil, ErrPlaneIndex
+		return Bytes{}, ErrPlaneIndex
 	}
 	plane := planes[index]
-	bytes := v.lease.bytes()
-	return bytes[plane.Offset : plane.Offset+plane.Size : plane.Offset+plane.Size], nil
+	return Bytes{lease: v.lease, offset: plane.Offset, size: plane.Size}, nil
+}
+
+func (v View) PlaneAligned(index, alignment int) (bool, error) {
+	if !v.Valid() {
+		return false, ErrInvalidHandle
+	}
+	if alignment < 1 || alignment&(alignment-1) != 0 {
+		return false, ErrInvalidAlignment
+	}
+	planes := v.lease.layout.Planes
+	if index < 0 || index >= len(planes) {
+		return false, ErrPlaneIndex
+	}
+	if planes[index].Size == 0 {
+		return true, nil
+	}
+	data := v.lease.bytes()
+	return uintptr(unsafe.Pointer(&data[planes[index].Offset]))%uintptr(alignment) == 0, nil
+}
+
+func (h Handle) mutableBytes() ([]byte, error) {
+	if !h.Valid() {
+		return nil, ErrInvalidHandle
+	}
+	if h.lease.layout.ReadOnly {
+		return nil, ErrReadOnly
+	}
+	if h.lease.layout.Shared || h.lease.storage.refs.Load() != 1 {
+		return nil, ErrShared
+	}
+	return h.lease.bytes(), nil
 }
 
 func (v View) ReadOnly() bool {

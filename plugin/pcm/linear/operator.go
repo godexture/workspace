@@ -2,9 +2,7 @@ package linear
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
-	"fmt"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
@@ -66,14 +64,14 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 	}
 	data := input.Value().Bytes()
 	frameBytes := o.configuration.Layout.Channels() * 2
-	if frameBytes == 0 || len(data)%frameBytes != 0 {
+	if frameBytes == 0 || data.Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
 	chunkBytes := o.configuration.ChunkSamples * frameBytes
-	for offset := 0; offset < len(data); offset += chunkBytes {
+	for offset := 0; offset < data.Len(); offset += chunkBytes {
 		end := offset + chunkBytes
-		if end > len(data) {
-			end = len(data)
+		if end > data.Len() {
+			end = data.Len()
 		}
 		payload, err := input.Value().Range(offset, end-offset)
 		if err != nil {
@@ -106,11 +104,11 @@ func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Ch
 		return errors.New("linear PCM parser received an unowned chunk")
 	}
 	frameBytes := o.configuration.Layout.Channels() * 2
-	if frameBytes == 0 || len(input.Value().Bytes())%frameBytes != 0 {
+	if frameBytes == 0 || input.Value().Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
 	transferErr := flow.Transfer(input, &o.out, codec.Packets(), func(chunk packet.Chunk) (packet.Packet, error) {
-		duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
+		duration := timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len() / frameBytes)))
 		sequence, pts, sideData := chunk.Sequence(), chunk.PTS(), chunk.SideData()
 		return packet.NewPacket(sequence, pts, timing.UnknownDTS(), duration, chunk.Detach()).WithSideData(sideData), nil
 	})
@@ -127,6 +125,7 @@ type decoderOperator struct {
 	operatorBase
 	out           flow.Item[audio.Frame[int16]]
 	configuration configuration
+	scratch       [pcmBlockBytes]byte
 }
 
 func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[audio.Frame[int16]]) error {
@@ -137,10 +136,10 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 	value := input.Value()
 	channels := o.configuration.Layout.Channels()
 	frameBytes := channels * 2
-	if channels == 0 || len(value.Bytes())%frameBytes != 0 {
+	if channels == 0 || value.Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
-	samples := len(value.Bytes()) / frameBytes
+	samples := value.Bytes().Len() / frameBytes
 	planes := make([]buffer.PlaneSpec, channels)
 	for index := range planes {
 		planes[index].Size = samples * 2
@@ -150,22 +149,18 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 		return err
 	}
 	defer lease.Discard()
-	order := byteOrder(o.configuration.Endian)
 	shift := uint(16 - o.configuration.ValidBits)
 	encoded := value.Bytes()
 	err = lease.Fill(func(storage buffer.Mutable) error {
+		var destinations [2][]byte
 		for channel := 0; channel < channels; channel++ {
 			plane, err := storage.Plane(channel)
 			if err != nil {
 				return err
 			}
-			for index := 0; index < samples; index++ {
-				offset := (index*channels + channel) * 2
-				value := int16(order.Uint16(encoded[offset : offset+2]))
-				binary.NativeEndian.PutUint16(plane[index*2:index*2+2], uint16(value>>shift))
-			}
+			destinations[channel] = plane
 		}
-		return nil
+		return decodePCM(encoded, o.scratch[:], destinations, channels, samples, shift, o.configuration.Endian == sample.LittleEndian)
 	})
 	if err != nil {
 		return err
@@ -192,6 +187,7 @@ type encoderOperator struct {
 	out           flow.Item[packet.Packet]
 	configuration configuration
 	sequence      uint64
+	scratch       [pcmBlockBytes / 2]int16
 }
 
 func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Frame[int16]], output flow.Emitter[packet.Packet]) error {
@@ -209,21 +205,9 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 		return err
 	}
 	defer lease.Discard()
-	order := byteOrder(o.configuration.Endian)
 	shift := uint(16 - o.configuration.ValidBits)
 	err = lease.Fill(func(storage buffer.Mutable) error {
-		encoded := storage.Bytes()
-		for channel := 0; channel < channels; channel++ {
-			plane, err := frame.PlaneSamples(channel)
-			if err != nil {
-				return err
-			}
-			for index, value := range plane {
-				offset := (index*channels + channel) * 2
-				order.PutUint16(encoded[offset:offset+2], uint16(value)<<shift)
-			}
-		}
-		return nil
+		return encodePCM(frame, o.scratch[:], storage.Bytes(), channels, shift, o.configuration.Endian == sample.LittleEndian)
 	})
 	if err != nil {
 		return err
@@ -271,14 +255,3 @@ func (o *writerOperator) Process(ctx context.Context, input *flow.Item[packet.Pa
 }
 
 func (*writerOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }
-
-func byteOrder(value sample.Endian) binary.ByteOrder {
-	switch value {
-	case sample.LittleEndian:
-		return binary.LittleEndian
-	case sample.BigEndian:
-		return binary.BigEndian
-	default:
-		panic(fmt.Sprintf("unsupported PCM endian %q", value))
-	}
-}

@@ -131,6 +131,10 @@ adopted.Drop()
 
 ### R-03 [P1] borrowed read-only view が mutable slice を返し COW を迂回できる
 
+**状態: 解決済み（2026-08-13）**
+
+byte payload は private backing の immutable `buffer.Bytes`、typed plane は immutable `audio.Samples[S]` を返す API へ一括移行した。両 view は length/index、copy/append と必要な read/compare 操作だけを提供し、borrowed/read-only/shared backing の `[]byte` / `[]T` を返さない。view/reader は raw slice header を保持せず originating lease と範囲を操作時に検証するため、owner 解放後に backing を読み続けたり allocator grant を暗黙に延長したりできない。mutable slice は `buffer.Edit`、`audio.Editor`、`buffer.Mutable` / `WriteLease` の明示 writer path に限定し、`Allocator.FromBytes` も `WriteLease` で初期化する。fan-out sibling isolation、owner 解放後の view expiration と別 `Share` owner の独立 lifetime、immutable copy の独立性、exclusive editor の backing reuse と zero allocation を回帰 test で固定した。payload size に比例する読み取りは `buffer.Bytes.Blocks` が唯一の実装であり、official PCM hot loop と file sink はそれを計上済み scratch で呼ぶだけで allocation を持たない。理論下限の direct slice reference との同一 process paired median は decode `1.54`、encode `1.77` で 2 倍 trigger 未満、R-03 以前の `binary.ByteOrder` loop 比では decode/encode とも速い。file sink の scratch drain は payload-size 比例の copy を 1 pass 増やすが、比例する allocation は持たない。
+
 **根拠**
 
 - [`buffer.View`](../../media/buffer/buffer.go)（74〜77 行目）は read-only borrow と説明されるが、`View.Bytes`（422〜426 行目）と `View.Plane`（429〜439 行目）は backing storage そのものの `[]byte` を返す。

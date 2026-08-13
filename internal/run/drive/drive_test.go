@@ -253,7 +253,9 @@ func (w *readingFrameWriter) Write(_ context.Context, input *flow.Item[audio.Fra
 	if err != nil {
 		return err
 	}
-	w.value = samples[0]
+	copy := samples.AppendTo(nil)
+	copy[0] = 7
+	w.value = samples.At(0)
 	input.Drop()
 	return nil
 }

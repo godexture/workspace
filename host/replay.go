@@ -35,7 +35,7 @@ func (s *probeStore) ReplaySession(session access.Session) (access.Session, erro
 		if !chunk.Valid() {
 			return nil, errors.New("prefix replay contains an invalid probe handle")
 		}
-		total += int64(len(chunk.Bytes()))
+		total += int64(chunk.Bytes().Len())
 	}
 	if total != s.offset {
 		return nil, errors.New("prefix replay does not cover the consumed sequential range")
@@ -64,10 +64,14 @@ func (s *replaySession) Read(ctx context.Context, destination []byte) (int, erro
 	written := 0
 	for written < len(destination) && s.chunk < len(s.chunks) {
 		value := s.chunks[s.chunk].Bytes()
-		count := copy(destination[written:], value[s.offset:])
+		remaining, err := value.From(s.offset)
+		if err != nil {
+			return written, err
+		}
+		count := remaining.CopyTo(destination[written:])
 		written += count
 		s.offset += count
-		if s.offset == len(value) {
+		if s.offset == value.Len() {
 			s.chunks[s.chunk].Release()
 			s.chunks[s.chunk] = buffer.Handle{}
 			s.chunk++

@@ -148,7 +148,7 @@ func (o *skeletonParserOperator) Process(ctx context.Context, input *flow.Item[p
 	}
 	chunk := input.Value()
 	payload := chunk.Payload().Share()
-	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes())/2))), payload)
+	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len()/2))), payload)
 	item := flow.NewItem(value, skeletonPacketSchema)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
@@ -173,7 +173,7 @@ func (o *skeletonCodecOperator) Process(ctx context.Context, input *flow.Item[pa
 	}
 	value := input.Value()
 	payload := value.Payload().Share()
-	frame, err := audio.NewFrame[int16](value.PTS(), len(value.Bytes())/2, payload)
+	frame, err := audio.NewFrame[int16](value.PTS(), value.Bytes().Len()/2, payload)
 	if err != nil {
 		payload.Release()
 		return err
@@ -566,7 +566,7 @@ func (w *skeletonChunkWriter) Write(ctx context.Context, input *flow.Item[packet
 	if !input.Valid() {
 		return fmt.Errorf("chunk writer input was not owned")
 	}
-	bytes := append([]byte(nil), input.Value().Bytes()...)
+	bytes := input.Value().Bytes().AppendTo(nil)
 	byteInput := flow.NewItem(bytes, skeletonBytesSchema)
 	defer byteInput.Drop()
 	if err := w.sink.Write(ctx, &byteInput); err != nil {

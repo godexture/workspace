@@ -119,14 +119,14 @@ func applyWrites(t *testing.T, items []access.Write) []byte {
 		write := item
 		switch write.Operation() {
 		case access.AppendOperation:
-			result = append(result, write.Bytes()...)
+			result = write.Bytes().AppendTo(result)
 		case access.PatchOperation:
-			end := int(write.Offset()) + len(write.Bytes())
+			end := int(write.Offset()) + write.Bytes().Len()
 			if end > len(result) {
 				item.Release()
 				t.Fatalf("patch [%d,%d) exceeds %d emitted bytes", write.Offset(), end, len(result))
 			}
-			copy(result[int(write.Offset()):end], write.Bytes())
+			write.Bytes().CopyTo(result[int(write.Offset()):end])
 		default:
 			item.Release()
 			t.Fatalf("unknown write operation %v", write.Operation())

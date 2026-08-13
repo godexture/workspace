@@ -557,7 +557,7 @@ func carrierBytes[T any](values []T) ([]byte, error) {
 		if !ok || !handle.Valid() {
 			return nil, errors.New("read Format fixture contains a non-byte payload")
 		}
-		result = append(result, handle.Bytes()...)
+		result = handle.Bytes().AppendTo(result)
 	}
 	return result, nil
 }

@@ -39,7 +39,7 @@ func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], ou
 		return errors.New("WAVE muxer received an invalid packet")
 	}
 	payload := input.Value().Payload()
-	size := len(payload.Bytes())
+	size := payload.Bytes().Len()
 	if uint64(size)%m.header.blockAlign != 0 {
 		return ErrPartialBlock
 	}

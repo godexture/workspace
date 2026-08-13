@@ -51,7 +51,7 @@ func (w Write) Valid() bool {
 func (w Write) Operation() WriteOperation { return w.operation }
 func (w Write) Offset() int64             { return w.offset }
 func (w Write) Payload() buffer.View      { return w.payload.Borrow() }
-func (w Write) Bytes() []byte             { return w.payload.Bytes() }
+func (w Write) Bytes() buffer.Bytes       { return w.payload.Bytes() }
 
 func (w Write) Share() Write {
 	w.payload = w.payload.Share()

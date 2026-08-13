@@ -136,6 +136,7 @@ ownership は API の慣習でなく contract として固定する。**所有�
 - fan-out でのみ `Fork` で二人目の owner を作る。
 - queue 境界は `Detach` で値を取り出し、`SetWithTraits` で戻す。trait は edge が持つので、queue は値だけを保持し、所有権 token を作らない。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
+- public read path は backing `[]byte` / `[]T` を返さない。byte は immutable `buffer.Bytes`、typed sample は immutable `audio.Samples[S]` で読み、mutable slice は `buffer.Edit` / `audio.Editor` / `WriteLease` の明示 writer path だけから得る。
 
 payload を別の item 型へ包み直すだけの段は `flow.Transfer` で move する。source cell を解放せずに空にし、`Detach` で payload を取り出して target を作るため、retain も lease 確保も起きず、どの時点でも owner は一人である。両方を生かす必要がある時だけ `Fork` を使う。`Share` が残ってよいのは schema の `Fork` trait と型自身の `Share` method だけで、hop ごとの retain は production code に存在しない。
 
@@ -144,6 +145,8 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 
 fan-out が一つなら refcount atomic を通らない設計にする。複数 consumer の時も、一 item につき必要最小限の retained handle だけを作る。
+
+fan-out 後の sibling isolation は「書き換えないという慣習」ではなく API surface で強制する。read view から作った mutable copyを変更しても backing は変わらず、変更 branch が `Edit` した場合だけ exclusive backing を再利用するか、その branch 用の copy を allocator から得る。read-only/shared handle に raw backing slice を返す compatibility API は置かない。
 
 ## state の所有者
 

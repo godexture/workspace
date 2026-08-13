@@ -31,6 +31,24 @@ type recordingSinkSession struct {
 	calls int
 }
 
+type discardSinkSession struct{ writes int }
+
+func (*discardSinkSession) Capabilities() access.Capabilities {
+	capabilities, _ := access.NewCapabilities(access.RandomWrite)
+	return capabilities
+}
+
+func (*discardSinkSession) Close() error                        { return nil }
+func (*discardSinkSession) Flush(context.Context) error         { return nil }
+func (*discardSinkSession) Sync(context.Context) error          { return nil }
+func (*discardSinkSession) PrepareCommit(context.Context) error { return nil }
+func (*discardSinkSession) Commit(context.Context) error        { return nil }
+func (*discardSinkSession) Abort(context.Context) error         { return nil }
+func (s *discardSinkSession) WriteAt(_ context.Context, source []byte, _ int64) (int, error) {
+	s.writes++
+	return len(source), nil
+}
+
 func (*recordingSinkSession) Capabilities() access.Capabilities {
 	capabilities, _ := access.NewCapabilities(access.RandomWrite)
 	return capabilities
@@ -153,7 +171,8 @@ func TestSourceFillsBlocksAcrossShortReadsAndReallocatesOnlyTail(t *testing.T) {
 	if got := second.Value().Layout().Size; got != 137 {
 		t.Fatalf("tail size = %d", got)
 	}
-	joined := append(append([]byte(nil), first.Value().Bytes()...), second.Value().Bytes()...)
+	joined := first.Value().Bytes().AppendTo(nil)
+	joined = second.Value().Bytes().AppendTo(joined)
 	if !bytes.Equal(joined, data) {
 		t.Fatal("file source changed byte order or content")
 	}
@@ -333,6 +352,52 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 	}
 	if allocator.Used() != 0 {
 		t.Fatalf("positioned sink retained %d payload bytes", allocator.Used())
+	}
+}
+
+func TestSinkReusesBoundedScratchWithoutPayloadSizedAllocation(t *testing.T) {
+	session := &discardSinkSession{}
+	selection := selection(t, session.Capabilities(), access.RandomWrite)
+	opening, err := access.NewOpening(access.SinkDirection, session, selection, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := openSink(sinkShape(), opening)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := opened.(*sinkOperator)
+	data := make([]byte, blockSize*3+17)
+	allocator, err := buffer.NewAllocator(int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeItem := func() flow.Item[access.Write] {
+		payload, allocErr := allocator.FromBytes(data, 1)
+		if allocErr != nil {
+			panic(allocErr)
+		}
+		write, writeErr := access.Append(payload)
+		if writeErr != nil {
+			panic(writeErr)
+		}
+		return flow.NewItem(write, access.Writes())
+	}
+	baseline := testing.AllocsPerRun(100, func() {
+		item := makeItem()
+		item.Drop()
+	})
+	total := testing.AllocsPerRun(100, func() {
+		item := makeItem()
+		if writeErr := operator.Write(context.Background(), &item); writeErr != nil {
+			panic(writeErr)
+		}
+	})
+	if allocations := total - baseline; allocations != 0 {
+		t.Fatalf("sink write allocations = %v (fixture %v, total %v)", allocations, baseline, total)
+	}
+	if session.writes < 4 || allocator.Used() != 0 {
+		t.Fatalf("sink scratch writes = %d, retained = %d", session.writes, allocator.Used())
 	}
 }
 

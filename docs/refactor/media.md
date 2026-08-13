@@ -120,6 +120,8 @@ Decoder -> Frame -> Encoder -> codec Packet -> optional Bitstream Filter -> Form
 
 すでに packetized された container では Parser は identity または不要である。bitstream filter は `Packet -> Packet` component であり、decoder/encoder とは独立する。
 
+`Chunk` と `Packet` の payload、Access boundary の byte handle、positioned write はすべて同じ immutable `buffer.Bytes` view を返す。view は private backing に対する `Len` / `At` / zero-copy `Slice` / `From` と copy/read/compare 操作だけを持ち、`[]byte` を公開・保持しない。payload size に比例する読み取りは `Blocks` を使う。`Blocks` は caller 所有の scratch へ block 単位で `CopyTo` し、backing を公開せずに lifetime 検査を block ごと一度で済ませる。`At` は呼出しごとに lifetime を検査するため単発の参照専用であり、`Len` は検査せず記録済みの範囲を返す cheap accessor である。originating lease と範囲だけを持つため owner 解放後は無効になり、view が allocation lifetime や allocator grant を暗黙に延長しない。raw mutable backing は `buffer.Edit` または未公開 allocation を初期化する `WriteLease` の明示 writer path にだけ存在する。この制約により、borrow、read-only handle、fan-out 後の shared handle のどこから読んでも COW を迂回できない。
+
 未知の codec tag/sample entry は raw carrier として保持し、対応 Binding がないことを structured diagnostic にする。
 
 ## Format、Codec、Carrier、Metadata
