@@ -37,7 +37,9 @@ func (p Program) Resources() (resource.Request, error) {
 }
 
 // NodeResources expands one component's per-item payload request by the
-// maximum number of downstream queue slots that can retain its storage.
+// maximum number of places that can retain its storage at once: every
+// downstream queue slot, plus the item each reachable operator holds while it
+// works.
 func (p Program) NodeResources(id job.NodeID) (resource.Request, error) {
 	if !p.Valid() {
 		return resource.Request{}, errors.New("program is invalid")
@@ -90,7 +92,14 @@ func inFlightMultiplier(node string, edges []plan.Edge, runtime plan.Runtime) (u
 			pending = append(pending, next)
 		}
 	}
-	multiplier := uint64(1)
+	// A payload is retained by two kinds of holder, and the grant has to cover
+	// both. Queue slots are the obvious one. The other is the operator itself:
+	// every node reachable from here runs one operator that holds the item it
+	// is working on, and a zero-copy stage keeps the producer's storage alive
+	// for as long as it holds the value derived from it. Counting only the
+	// queues starves the producer once the pipeline is deep enough to fill
+	// them, which stalls conversion of any input larger than the grant.
+	multiplier := uint64(len(reachable))
 	for _, buffer := range runtime.Buffers {
 		if _, ok := reachable[buffer.FromNode]; !ok {
 			continue

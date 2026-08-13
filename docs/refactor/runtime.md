@@ -181,8 +181,9 @@ codecのCRC、Huffman、G.711、window coefficient等の固定tableはhot path�
 `sync.Pool`はGCが任意に内容を捨てるcacheであり、上限、retention、tenant、zeroingを表現できない。したがってresource manager、ownership contract、correctnessの根拠にはしない。
 
 - payload allocatorはHost/Jobのgrantに属し、予約capacityをqueue・block・worker slot単位でaccountする。
-- **component が宣言する payload memory は「in-flight 1 item 分」であり、queue 容量分の乗算は Host が行う。** payload は下流へ move されるため、生成した component の allocator は「その component が同時に生かしうる item 数」分だけ必要になる。その数は bounded queue の容量で決まり、queue 容量は Host policy なので component は知らない（`plugin.CompileContext` は Compile を pure に保つため policy を渡さない）。したがって Host が Plan の queue 容量から in-flight 上限を導き、`宣言値 × (1 + そのノードから下流に到達可能な queue 容量の合計)` を予約する。component 側の宣言は 1 item 分のままでよい。
-- **grant は最大 in-flight bytes 以上でなければならない。** payload allocator には backpressure が無く、上限超過は待機ではなく即時 error になる。queue が item 数で backpressure を効かせている間に allocator が byte で失敗すると、正常な流量が resource error として現れる。したがって「queue が許す最大 item 数を同時に確保できる」ことを予約側が保証する。
+- **component が宣言する payload memory は「in-flight 1 item 分」であり、同時保持数の乗算は Host が行う。** payload は下流へ move されるため、生成した component の allocator は「その component が同時に生かしうる item 数」分だけ必要になる。その数は Host policy に属する topology と queue 容量で決まり、component は知らない（`plugin.CompileContext` は Compile を pure に保つため policy を渡さない）。したがって Host が Plan から上限を導き、`宣言値 × (そのノードから到達可能な node 数 + 下流に到達可能な queue 容量の合計)` を予約する。component 側の宣言は 1 item 分のままでよい。
+- **payload を保持するのは queue slot だけではない。** 到達可能な各 node の operator は処理中の item を一つ保持し、zero-copy 段はその item を持つ間 producer の storage を生かし続ける。queue slot だけを数えると、pipeline が深いほど producer が自分の grant を先に使い切り、grant を超える入力の変換が入力終端ではなく途中で停止する。node 数の項はこの保持分を賄う（F54）。
+- **grant は最大 in-flight bytes 以上でなければならない。** payload allocator には backpressure が無く、上限超過は待機ではなく即時 error になる。queue が item 数で backpressure を効かせている間に allocator が byte で失敗すると、正常な流量が resource error として現れる。したがって「同時に保持されうる最大 item 数を確保できる」ことを予約側が保証する。
 - codec workspaceはsequential instanceに一つ、parallel pathではgranted concurrency分をOpen時に用意する。worker contextまたはbounded instance cacheで再利用し、process-wide poolへ逃がさない。
 - cache可能な最大capacityと総retained bytesをgrantに含め、Job終了時にreleaseする。process cacheを設ける場合もHostが明示所有し、上限とisolation domainを持つ。
 - central trackerをpacket/frameごとに呼ばない。edge/local allocatorがgrant内のcounterを更新し、観測時だけ集約する。

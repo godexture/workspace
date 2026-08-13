@@ -76,6 +76,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F51 | floating container tag、root lockを使わないclient build、published旧moduleへfallbackし得るserver build、remote asset、未固定 toolchain が network-off rebuild を妨げる。 | [supply](supply.md) | M10 |
 | F52 | `sdk/bits` の独自 `production` tag が assertion semantics を変える一方、release/CIで同値性と使用条件が固定されていない。 | [performance](performance.md)、[quality](quality.md) | M8 |
 | F53 | global registry、mutable CPU feature、shallow-copy default、process-wide pool/WASM job map が Host/Job の owner、resource budget、test isolation を迂回する。 | [runtime](runtime.md)、[config](config.md)。**Host/Job owner と旧 global surface、`sdk/dsp` の exported mutable feature は完了（M5 review）**。process snapshot を新 item loop から参照せず、Plan/Program に direct variant を固定する責務は M8 | M2/M5/M8 |
+| F54 | node payload grant が下流 queue slot だけを数え、各 operator が処理中に保持する item を数えないため、zero-copy 段が producer の storage を保持したまま grant を使い切り、grant を超える入力の変換が途中で停止する。 | [runtime](runtime.md)。**完了（M6 review）**: `inFlightMultiplier` が reachable node 数と queue slot 数の和を返す。回帰は `standard` の grant 超過変換 test が固定する | M6 |
 
 ## 監査結果の利用規則
 
