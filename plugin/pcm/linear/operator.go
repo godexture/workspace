@@ -105,16 +105,19 @@ func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Ch
 	if !input.Valid() {
 		return errors.New("linear PCM parser received an unowned chunk")
 	}
-	chunk := input.Value()
 	frameBytes := o.configuration.Layout.Channels() * 2
-	if frameBytes == 0 || len(chunk.Bytes())%frameBytes != 0 {
+	if frameBytes == 0 || len(input.Value().Bytes())%frameBytes != 0 {
 		return ErrPartialSample
 	}
-	payload := chunk.Payload().Share()
-	duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
-	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), duration, payload).WithSideData(chunk.SideData())
-	o.out.Set(value, codec.Packets())
+	transferErr := flow.Transfer(input, &o.out, codec.Packets(), func(chunk packet.Chunk) (packet.Packet, error) {
+		duration := timing.SomeDuration(timing.NewDuration(int64(len(chunk.Bytes()) / frameBytes)))
+		sequence, pts, sideData := chunk.Sequence(), chunk.PTS(), chunk.SideData()
+		return packet.NewPacket(sequence, pts, timing.UnknownDTS(), duration, chunk.Detach()).WithSideData(sideData), nil
+	})
 	defer o.out.Drop()
+	if transferErr != nil {
+		return transferErr
+	}
 	return output.Emit(ctx, &o.out)
 }
 
@@ -254,20 +257,16 @@ type writerOperator struct {
 
 func (o *writerOperator) Process(ctx context.Context, input *flow.Item[packet.Packet], output flow.Emitter[access.Write]) error {
 	defer input.Drop()
-	if !input.Valid() {
-		return errors.New("raw PCM writer received an unowned packet")
-	}
-	value := input.Value().Payload().Share()
-	if !value.Valid() {
+	if !input.Value().Valid() {
 		return errors.New("raw PCM writer received an invalid packet payload")
 	}
-	write, err := access.Append(value)
-	if err != nil {
-		value.Release()
-		return err
-	}
-	o.out.Set(write, access.Writes())
+	transferErr := flow.Transfer(input, &o.out, access.Writes(), func(value packet.Packet) (access.Write, error) {
+		return access.Append(value.Detach())
+	})
 	defer o.out.Drop()
+	if transferErr != nil {
+		return transferErr
+	}
 	return output.Emit(ctx, &o.out)
 }
 

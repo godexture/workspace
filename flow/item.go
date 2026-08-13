@@ -1,6 +1,14 @@
 package flow
 
-import "github.com/godexture/godec/media/schema"
+import (
+	"errors"
+
+	"github.com/godexture/godec/media/schema"
+)
+
+// ErrTransfer reports a linear hand-off whose source, target, or conversion is
+// missing.
+var ErrTransfer = errors.New("flow item transfer is invalid")
 
 // noCopy makes `go vet` reject copies of a value that carries a release
 // obligation. Constructing and returning a cell stays legal; aliasing one,
@@ -149,6 +157,32 @@ func (i *Item[T]) Adopt(value Owned[T]) {
 func (i *Item[T]) clear() {
 	var zero T
 	i.value, i.fork, i.drop, i.valid = zero, nil, nil, false
+}
+
+// Transfer moves ownership from source into target, rewrapping the payload
+// for a different item type. It is the linear hand-off: source is emptied
+// without releasing, so the payload is never retained and no second owner
+// exists at any point.
+//
+// build must carry source's payload into its result, which is what makes the
+// unreleased source correct. Detaching the payload is therefore the last thing
+// build should do, because a failure afterwards strands it. Use Fork instead
+// when both items must stay alive.
+func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], build func(I) (O, error)) error {
+	if source == nil || target == nil || !source.valid || build == nil {
+		return ErrTransfer
+	}
+	value, drop := source.value, source.drop
+	source.clear()
+	result, err := build(value)
+	if err != nil {
+		if drop != nil {
+			drop(value)
+		}
+		return err
+	}
+	target.Set(result, typ)
+	return nil
 }
 
 // Owned is ownership detached from a cell so a transport can store it across

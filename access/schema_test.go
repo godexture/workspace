@@ -88,8 +88,9 @@ func TestWriteConstructorsRejectInvalidPayloadAndOffset(t *testing.T) {
 		handle.Release()
 		t.Fatalf("negative patch error = %v", err)
 	}
-	if !handle.Valid() {
-		t.Fatal("failed construction consumed its payload")
+	// A rejected write owns the payload it was handed, so converting an item
+	// into a positioned write cannot strand one on the failure path.
+	if handle.Valid() || allocator.Used() != 0 {
+		t.Fatalf("rejected construction retained %d payload bytes", allocator.Used())
 	}
-	handle.Release()
 }

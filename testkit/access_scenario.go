@@ -352,12 +352,11 @@ type accessWritePassOperator struct {
 func (o *accessWritePassOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (o *accessWritePassOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
 	defer input.Drop()
-	write, err := access.Append(input.Value().Share())
-	if err != nil {
+	var item flow.Item[access.Write]
+	defer item.Drop()
+	if err := flow.Transfer(input, &item, access.Writes(), access.Append); err != nil {
 		return err
 	}
-	item := flow.NewItem(write, access.Writes())
-	defer item.Drop()
 	return output.Emit(ctx, &item)
 }
 func (*accessWritePassOperator) Flush(context.Context, flow.Emitter[access.Write]) error { return nil }

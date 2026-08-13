@@ -114,7 +114,6 @@ func (o *writerOperator) Process(ctx context.Context, input *flow.Item[Value], o
 	}
 	write, err := access.Append(handle)
 	if err != nil {
-		handle.Release()
 		return err
 	}
 	o.out.Set(write, access.Writes())

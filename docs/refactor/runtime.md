@@ -137,6 +137,8 @@ ownership は API の慣習でなく contract として固定する。**所有�
 - queue 境界は `Consume` で cell から所有権を切り離し、`Adopt` で戻す。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
 
+payload を別の item 型へ包み直すだけの段は `flow.Transfer` で move する。source cell を解放せずに空にし、`Detach` で payload を取り出して target を作るため、retain も lease 確保も起きず、どの時点でも owner は一人である。両方を生かす必要がある時だけ `Fork` を使う。`Share` が残ってよいのは schema の `Fork` trait と型自身の `Share` method だけで、hop ごとの retain は production code に存在しない。
+
 `flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
 
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。

@@ -25,6 +25,9 @@ type Write struct {
 	payload   buffer.Handle
 }
 
+// Append and Patch take ownership of payload. A rejected write releases it, so
+// converting an item into a positioned write never strands a payload on the
+// failure path.
 func Append(payload buffer.Handle) (Write, error) {
 	return newWrite(AppendOperation, 0, payload)
 }
@@ -35,6 +38,7 @@ func Patch(offset int64, payload buffer.Handle) (Write, error) {
 
 func newWrite(operation WriteOperation, offset int64, payload buffer.Handle) (Write, error) {
 	if !operation.Valid() || offset < 0 || !payload.Valid() {
+		payload.Release()
 		return Write{}, ErrInvalidWrite
 	}
 	return Write{operation: operation, offset: offset, payload: payload}, nil

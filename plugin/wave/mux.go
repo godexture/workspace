@@ -53,13 +53,11 @@ func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], ou
 	if err := m.emitHeader(ctx, output); err != nil {
 		return err
 	}
-	handle := payload.Share()
-	write, err := access.Append(handle)
-	if err != nil {
-		handle.Release()
+	if err := flow.Transfer(input, &m.out, access.Writes(), func(value packet.Packet) (access.Write, error) {
+		return access.Append(value.Detach())
+	}); err != nil {
 		return err
 	}
-	m.out.Set(write, access.Writes())
 	defer m.out.Drop()
 	if err := output.Emit(ctx, &m.out); err != nil {
 		return err
@@ -153,7 +151,6 @@ func (m *muxer) emit(ctx context.Context, payload []byte, build func(buffer.Hand
 	}
 	write, err := build(handle)
 	if err != nil {
-		handle.Release()
 		return err
 	}
 	m.out.Set(write, access.Writes())

@@ -39,6 +39,15 @@ func (c Chunk) Bytes() []byte        { return c.payload.Bytes() }
 func (c Chunk) Share() Chunk         { c.payload = c.payload.Share(); return c }
 func (c Chunk) Release()             { c.payload.Release() }
 
+// Detach hands the owned payload to the caller and empties the chunk, so
+// Release afterwards does nothing. It rewraps a payload for another item type
+// without retaining it; Share is for the case where both must stay alive.
+func (c *Chunk) Detach() buffer.Handle {
+	payload := c.payload
+	c.payload = buffer.Handle{}
+	return payload
+}
+
 // Packet is the unit requested by a codec parser/decoder. Its timestamp types
 // are distinct and optional; a zero value is a valid timestamp when present.
 type Packet struct {
@@ -73,6 +82,15 @@ func (p Packet) Share() Packet {
 	return p
 }
 func (p Packet) Release() { p.payload.Release() }
+
+// Detach hands the owned payload to the caller and empties the packet, so
+// Release afterwards does nothing. It rewraps a payload for another item type
+// without retaining it; Share is for the case where both must stay alive.
+func (p *Packet) Detach() buffer.Handle {
+	payload := p.payload
+	p.payload = buffer.Handle{}
+	return payload
+}
 
 // Filter is a packet-to-packet transformation independent of a decoder or
 // encoder. It may return the input unchanged when no transformation is needed.

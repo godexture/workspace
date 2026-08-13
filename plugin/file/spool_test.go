@@ -43,12 +43,11 @@ func (*spoolOperator) Close() error        { return nil }
 
 func (o *spoolOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
 	defer input.Drop()
-	write, err := access.Append(input.Value().Share())
-	if err != nil {
+	var item flow.Item[access.Write]
+	defer item.Drop()
+	if err := flow.Transfer(input, &item, access.Writes(), access.Append); err != nil {
 		return err
 	}
-	item := flow.NewItem(write, access.Writes())
-	defer item.Drop()
 	return output.Emit(ctx, &item)
 }
 
