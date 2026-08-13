@@ -31,4 +31,5 @@
 ## 現在の注記
 
 - [M6 review 修正](task/m6-fix.md) の 12 単位を実装・文書・回帰 test へ反映し、Access capability の宣言と実 view、file transaction、WAVE truncation、Plan provenance、standard surface を一致させた。
-- 次の作業は M7 着手前監査である。MP4 (ISO BMFF)、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` の責務を、各単位が端から端まで green の実 consumer を持つ sub-unit へ分割してから実装する。この監査と分割自体は M6 review 修正のスコープに含めない。
+- M6 後の review で `flow` の所有権 contract を作り直した。所有権を pointer で渡す cell (`flow.Item`) が表し、規則は「作った item と受け取った item は `defer ... Drop()` する」の一つになった。`Input`/`Owned`/`Shared` の 3 型と Processor/Joiner で異なる 2 つの規則、runtime 側の item panic cleanup、`Scope` の cleaner が消え、`noCopy` により所有権の複製を `go vet` が検出する。詳細は [runtime](runtime.md#ownership) を正本とする。
+- 次の作業は M7 着手前監査である。MP4 (ISO BMFF)、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` の責務を、各単位が端から端まで green の実 consumer を持つ sub-unit へ分割してから実装する。**loss report と metadata raw preservation は実 consumer として MP4 の metadata encoding (`ilst`/`udta`) を要するため、分割時にその単位を落とさない。** この監査と分割自体は M6 review 修正のスコープに含めない。

@@ -56,4 +56,6 @@
 - docs の link/anchor 検査: `go run ./tools/cmd/docs-check` (at the workspace root)。設計文書を変更した時、または milestone の完了確認時に使う
 - nested module `tools` が root module への暗黙の local source 解決に依存していないことを確認する場合は、`tools` 内で `GOWORK=off go build ./...` を実行する。
 
-CLI、WASM、JS、demo web は M5 の capability hiatus で repository から外れている。M9 で新 surface を追加した時点で、その toolchain と real-browser lifecycle gate をこの節へ追加する。
+- 公式 CLI の動作確認: `go run ./cmd/godec INPUT OUTPUT`、preview は `go run ./cmd/godec --plan INPUT OUTPUT`。surface に触れる変更で使う
+
+WASM、JS、demo web は M5 の capability hiatus で repository から外れている。M9 で新 surface を追加した時点で、その toolchain と real-browser lifecycle gate をこの節へ追加する。

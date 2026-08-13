@@ -136,7 +136,7 @@ func (c Component) Diagnostics() []diagnostic.Item {
 		items = append(items, c.schema.Diagnostics()...)
 	}
 	if c.implementation == nil && len(c.traits) == 0 {
-		items = append(items, diagnostic.NewItem("plugin.spec", diagnostic.ErrorSeverity, componentPath, "component requires a typed Spec", nil))
+		items = append(items, diagnostic.NewItem("plugin.spec", diagnostic.ErrorSeverity, componentPath, "component requires a typed Spec with ports, or at least one trait", nil))
 	} else if c.implementation != nil {
 		items = append(items, c.implementation.problems...)
 	}
