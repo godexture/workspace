@@ -15,6 +15,7 @@ import (
 type Coverage struct {
 	mu        sync.Mutex
 	executed  map[plugin.Identity]int
+	suggested map[plugin.Identity]int
 	uncovered map[string]string
 }
 
@@ -22,6 +23,7 @@ type Coverage struct {
 func NewCoverage() *Coverage {
 	return &Coverage{
 		executed:  make(map[plugin.Identity]int),
+		suggested: make(map[plugin.Identity]int),
 		uncovered: make(map[string]string),
 	}
 }
@@ -121,8 +123,21 @@ func (c *Coverage) record(identity plugin.Identity) {
 	c.executed[identity]++
 }
 
+func (c *Coverage) recordSuggest(identity plugin.Identity) {
+	if c == nil || identity.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.suggested == nil {
+		c.suggested = make(map[plugin.Identity]int)
+	}
+	c.suggested[identity]++
+}
+
 // VerifyExecutable fails unless every executable component in set ran at
-// least one typed case, and every recorded identity belongs to set.
+// least one typed case, every component that declares Suggest ran at least one
+// Suggest scenario, and every recorded identity belongs to set.
 func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	t.Helper()
 	for _, problem := range c.executableProblems(set) {
@@ -139,14 +154,25 @@ func (c *Coverage) executableProblems(set plugin.Set) []error {
 	for identity, count := range c.executed {
 		executed[identity] = count
 	}
+	suggested := make(map[plugin.Identity]int, len(c.suggested))
+	for identity, count := range c.suggested {
+		suggested[identity] = count
+	}
 	c.mu.Unlock()
 
 	known := make(map[plugin.Identity]bool)
 	var problems []error
 	for _, component := range set.Components() {
-		known[component.Identity()] = component.View().Executable
-		if component.View().Executable && executed[component.Identity()] == 0 {
+		view := component.View()
+		known[component.Identity()] = view.Executable
+		if view.Executable && executed[component.Identity()] == 0 {
 			problems = append(problems, fmt.Errorf("testkit typed coverage: executable component %s has no executed typed case", component.Identity()))
+		}
+		// Suggest is a declared planner-facing contract with its own bounds. A
+		// component that offers it and is never asked passes the executable
+		// gate while nothing has checked that contract at all.
+		if view.HasSuggest && suggested[component.Identity()] == 0 {
+			problems = append(problems, fmt.Errorf("testkit typed coverage: component %s declares Suggest but has no Suggest scenario", component.Identity()))
 		}
 	}
 	var unknown []string

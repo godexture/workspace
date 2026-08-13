@@ -20,6 +20,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	testkit.Plugin(t, wave.Plugin())
 	runFileCases(t, set, coverage)
 	runLinearCases(t, set, coverage)
+	runLinearSuggestions(t, set, coverage)
 	runWAVECases(t, set, coverage)
 	runRIFFInfoCases(t, set, coverage)
 
