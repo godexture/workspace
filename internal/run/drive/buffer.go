@@ -42,11 +42,20 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			return Link{}, Task{}, err
 		}
 		task := Task{
-			close:   edge.Close,
-			discard: func() { edge.Drain() },
+			close: edge.Close,
+			discard: func() error {
+				_, err := edge.Drain()
+				return err
+			},
 			barrier: edge.WaitIdle,
-			run: func(ctx context.Context) error {
-				defer edge.Drain()
+			run: func(ctx context.Context) (err error) {
+				// The loop leaves whatever it had not emitted in the ring, so
+				// draining it is part of returning, and a payload that cannot
+				// be released is part of the answer.
+				defer func() {
+					_, drainErr := edge.Drain()
+					err = errors.Join(err, drainErr)
+				}()
 				var item flow.Item[T]
 				defer item.Drop()
 				for {

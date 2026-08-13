@@ -8,13 +8,16 @@ import (
 	"github.com/godexture/godec/diagnostic"
 )
 
+// SinkPanicError keeps the stack a sink panicked from, not the value it
+// panicked with: that value belongs to the sink and can be anything it was
+// holding.
 type SinkPanicError struct {
-	Value any
-	Stack []byte
+	Summary string
+	Stack   []byte
 }
 
 func (e *SinkPanicError) Error() string {
-	return "observation sink panicked: " + diagnostic.Recovered(e.Value)
+	return "observation sink panicked: " + e.Summary
 }
 func (e *SinkPanicError) StackTrace() []byte {
 	return append([]byte(nil), e.Stack...)
@@ -78,7 +81,7 @@ func (c *Collector) dropPending() {
 func invokeSink(ctx context.Context, sink Sink, event Event) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = &SinkPanicError{Value: recovered, Stack: append([]byte(nil), debug.Stack()...)}
+			err = &SinkPanicError{Summary: diagnostic.Recovered(recovered), Stack: append([]byte(nil), debug.Stack()...)}
 		}
 	}()
 	return sink(ctx, event.clone())

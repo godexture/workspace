@@ -258,90 +258,34 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 	})
 }
 
-// Detach is the only way a payload leaves a cell, and it leaves nothing behind
-// that could release the value a second time.
-func TestDetachLeavesNoSecondReleaser(t *testing.T) {
+// A container cannot hold cells by value, so a collector holds pointers to
+// them and moves each payload into its own cell. That keeps the release
+// obligation in exactly one place per payload with no second representation of
+// ownership to copy.
+func TestCellsMoveIntoAContainerWithoutASecondOwner(t *testing.T) {
 	var drops atomic.Int32
 	typ := countingSchema(&drops)
-	item := NewItem(1, typ)
-	parcel, ok := item.Detach()
-	if !ok {
-		t.Fatal("detach reported no value")
+
+	var collected []*Item[int]
+	for value := 1; value <= 3; value++ {
+		emitted := NewItem(value, typ)
+		stored := new(Item[int])
+		stored.Move(&emitted)
+		if emitted.Valid() || !stored.Valid() {
+			t.Fatal("moving into a container cell left two owners")
+		}
+		collected = append(collected, stored)
 	}
-	item.Drop()
-	item.Drop()
 	if drops.Load() != 0 {
-		t.Fatalf("release count after detaching = %d, want 0", drops.Load())
+		t.Fatalf("release count while collected = %d, want 0", drops.Load())
 	}
-	var adopted Item[int]
-	if !parcel.Adopt(&adopted) {
-		t.Fatal("adopt refused a waiting parcel")
+	for _, stored := range collected {
+		stored.Drop()
+		stored.Drop()
 	}
-	adopted.Drop()
-	adopted.Drop()
-	if drops.Load() != 1 {
-		t.Fatalf("release count after the adopting cell dropped = %d, want 1", drops.Load())
+	if drops.Load() != 3 {
+		t.Fatalf("release count after draining the container = %d, want 3", drops.Load())
 	}
-}
-
-// A parcel has to be copyable, because a collector holds it by value. Copying
-// it must therefore copy a handle to one state rather than a second owner: the
-// first Adopt or Release wins, and no copy can release the payload again.
-func TestParcelCopiesShareOneConsumption(t *testing.T) {
-	var drops atomic.Int32
-	typ := countingSchema(&drops)
-
-	t.Run("only one copy adopts", func(t *testing.T) {
-		drops.Store(0)
-		item := NewItem(1, typ)
-		parcel, _ := item.Detach()
-		first, second := parcel, parcel
-		var left, right Item[int]
-		if !first.Adopt(&left) {
-			t.Fatal("the first copy did not adopt")
-		}
-		if second.Adopt(&right) || right.Valid() {
-			t.Fatal("a copied parcel adopted the payload a second time")
-		}
-		left.Drop()
-		right.Drop()
-		if drops.Load() != 1 {
-			t.Fatalf("release count = %d, want 1", drops.Load())
-		}
-	})
-
-	t.Run("release after adopt does nothing", func(t *testing.T) {
-		drops.Store(0)
-		item := NewItem(1, typ)
-		parcel, _ := item.Detach()
-		copied := parcel
-		var adopted Item[int]
-		parcel.Adopt(&adopted)
-		copied.Release()
-		copied.Release()
-		if drops.Load() != 0 {
-			t.Fatalf("release count before the adopting cell dropped = %d, want 0", drops.Load())
-		}
-		adopted.Drop()
-		if drops.Load() != 1 {
-			t.Fatalf("release count = %d, want 1", drops.Load())
-		}
-	})
-
-	t.Run("an unadopted parcel releases once", func(t *testing.T) {
-		drops.Store(0)
-		item := NewItem(1, typ)
-		parcel, _ := item.Detach()
-		copied := parcel
-		parcel.Release()
-		copied.Release()
-		if drops.Load() != 1 {
-			t.Fatalf("release count = %d, want 1", drops.Load())
-		}
-		if parcel.Valid() || copied.Valid() {
-			t.Fatal("a consumed parcel still reports a waiting payload")
-		}
-	})
 }
 
 // A declared Drop is third-party code. When the cell that is about to take a
@@ -382,13 +326,47 @@ func TestTakingOverAPanickingReleaseDoesNotStrandTheIncomingPayload(t *testing.T
 			source.Fork(target)
 		})
 	})
-	t.Run("Adopt", func(t *testing.T) {
-		assertStranded(t, func(target *Item[int]) {
-			source := NewItem(2, panicking)
-			parcel, _ := source.Detach()
-			parcel.Adopt(target)
-		})
-	})
 }
 
 var errTransferTest = errors.New("transfer build failure")
+
+// A group of owners is released together. One release that panics must not
+// strand the owners behind it, and cleanup runs where no recovery boundary is
+// left, so the failures are reported rather than raised.
+func TestDropAllReleasesEveryCellAndReportsTheFailures(t *testing.T) {
+	var released atomic.Int32
+	panicking := schema.Define[panicDropID](schema.Traits[int]{
+		Drop: func(value int) {
+			released.Add(1)
+			if value%2 == 0 {
+				panic("declared drop panicked")
+			}
+		},
+	})
+	cells := make([]Item[int], 4)
+	for index := range cells {
+		cells[index].Set(index, panicking)
+	}
+
+	err := DropAll(cells)
+	if err == nil {
+		t.Fatal("a panicking release was not reported")
+	}
+	if released.Load() != 4 {
+		t.Fatalf("released cells = %d, want every cell released", released.Load())
+	}
+	if strings.Contains(err.Error(), "declared drop panicked") {
+		t.Errorf("the recovered panic value reached the report: %v", err)
+	}
+	for index := range cells {
+		if cells[index].Valid() {
+			t.Fatalf("cell %d still holds a payload", index)
+		}
+	}
+	if err := DropAll(cells); err != nil {
+		t.Fatalf("releasing empty cells reported %v", err)
+	}
+	if released.Load() != 4 {
+		t.Fatal("an already released cell was released again")
+	}
+}

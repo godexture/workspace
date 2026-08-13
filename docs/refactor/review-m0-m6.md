@@ -22,7 +22,7 @@ M0〜M6 の実装は、module 境界、typed media path、planner/runtime、file
 
 推奨する進捗上の扱いは、M0/M1 の完了を維持し、M2〜M6 の過去成果を消すのではなく、M6 を `進行中（M0〜M6 review remediation）` へ戻して本書の P1 を閉じることであった。R-01〜R-12 をすべて実装と negative regression test の両方で閉じたため、[M6 再完了条件](#m6-再完了条件) を満たしている。
 
-2026-08-13 の是正に対する再監査で R-01、R-02、R-06、R-07、R-10、R-11 が再 open した。いずれも「対象を一つ直したが、同じ contract を破る別経路が残っていた」型である。2026-08-14 にすべて閉じ、各 finding へ再 open の原因と是正を記録した。
+2026-08-13 の是正に対する再監査で R-01、R-02、R-06、R-07、R-10、R-11 が再 open し、続く再監査で R-01 と R-02 がさらに再 open した。いずれも「対象を一つ直したが、同じ contract を破る別経路が残っていた」型である。2026-08-14 にすべて閉じ、各 finding へ再 open の原因と是正を記録した。
 
 ## 監査範囲
 
@@ -76,7 +76,7 @@ coverage は合否条件にはしていないが、未検査 contract の探索�
 
 **状態: 解決済み（2026-08-14）**
 
-2026-08-13 の修正は config 型の formatter だけを直しており、panic recovery が recovered value を文字列化する経路が残っていた。plugin が `panic(errors.New(secret.Reveal()))` すれば credential が diagnostic、Result、CLI 出力へ出る。2026-08-14 に `diagnostic.Recovered` を追加し、plugin の phase panic、Host の invoke、runtime task、observation sink、testkit の Parse/Marshal と output snapshot をすべてそこへ通した。panic 値は panic した側が選ぶ data なので型だけを報告し、Go 自身が生成して caller data を含まない `runtime.Error` だけは message を残す。panic の位置は元から別に保持している stack trace が示す。`diagnostic` と `plugin` の回帰 test が、secret を載せた panic 値を string、error、named type、slice、map、struct、pointer で投げても error と diagnostic detail に出ないことを固定する。
+2026-08-13 の修正は config 型の formatter だけを直しており、panic recovery が recovered value を文字列化する経路が残っていた。plugin が `panic(errors.New(secret.Reveal()))` すれば credential が diagnostic、Result、CLI 出力へ出る。2026-08-14 に `diagnostic.Recovered` を追加し、plugin の phase panic、Host の invoke、runtime task、observation sink、testkit の Parse/Marshal と output snapshot をすべてそこへ通した。panic 値は panic した側が選ぶ data なので型だけを報告し、message を残すのは `runtime` package が宣言した型だけとする。`runtime.Error` は公開 interface であり第三者も実装できるため、interface の充足ではなく宣言 package で判定する。panic 値を保持していた `task.PanicError` と `observe.SinkPanicError` も、`%#v` で raw value が出るため保持をやめ、安全な要約と stack だけを持つ。panic の位置は元から別に保持している stack trace が示す。`diagnostic` と `plugin` の回帰 test が、secret を載せた panic 値を string、error、named type、slice、map、struct、pointer で投げても error と diagnostic detail に出ないことを固定する。
 
 以下は 2026-08-13 の記録である。`SecretValue`、`Patch`、`Resolved`、`ResolvedView` に全 verb を安全に処理する formatter を追加した。formatter method が呼ばれない named type や unexported outer field でも raw value を反射表示できない opaque storage とし、struct/pointer/slice/map/interface、typed/type-erased resolved value、主要な verb/flag/width/precision の回帰 test を追加した。`Patch` の表示は schema 解決前であるため preset、field ID、source のみを残し、typed/text value は一律非表示にした。secret contract を検査する test failure 自身も raw value を出力しない。
 
@@ -103,7 +103,7 @@ debug log、test failure、panic report、observability adapter が一般的な 
 
 2026-08-13 に `Owned[T]` を削除したが、`Item.Detach` が copyable な `T` を返し `SetWithTraits` が同じ値から複数の cell を作れたため、同じ経路が名前を変えて残っていた。`Transfer` も `handed` を `target.Set` より先に立てており、target の `Drop` が panic すると新 payload が誰にも保持されないまま元 payload の解放も無効になっていた。`Set`/`SetWithTraits`/`Fork` にも、保持物の `Drop` が panic した時に受け取り中の payload を失う同型の欠陥があった。
 
-2026-08-14 に次を直した。bounded queue の ring が `flow.Item` を保持するようになり、runtime の hot path から生の値と drop trait を持ち回す経路が消えた（`Move` だけで受け渡すので allocation も増えない）。call stack の外へ payload を置く必要がある collector と transport には `Detach` が返す single-consume な `flow.Parcel` を用意した。container が値として持てるよう copy 可能だが、copy は owner ではなく一つの atomic state への handle であり、最初の `Adopt` か `Release` だけが成立する。`Set` は「渡された payload を保持するか解放するかのどちらかを必ず行う」ようになり、保持物の解放が panic した場合も受け取り中の payload を解放してから panic を通す。`Fork` と `Adopt` も同じ経路を使う。`Transfer` は build が成功した時点で解放義務を結果へ移し、その後は `Set` の不変条件に委ねる。`flow` の回帰 test が、parcel の copy が二度 adopt/release できないこと、および三つの経路すべてで panic 時に payload が失われないことを固定する。詳細は [runtime](runtime.md#ownership) を正本とする。
+2026-08-14 に次を直した。bounded queue の ring が `flow.Item` を保持するようになり、runtime の hot path から生の値と drop trait を持ち回す経路が消えた（`Move` だけで受け渡すので allocation も増えない）。call stack の外へ payload を置く必要がある collector と transport は cell を heap に置いて `[]*flow.Item[T]` のように保持する。最初は single-consume token (`Parcel`) を用意したが、`Value()` から生の値を取り出せば `NewItemWithTraits` で二人目を作れてしまい escape hatch が残るうえ、queue が `Move` へ移った後は非 test consumer も無かったため削除した。`Set` は「渡された payload を保持するか解放するかのどちらかを必ず行う」ようになり、保持物の解放が panic した場合も受け取り中の payload を解放してから panic を通す。`Fork` と `Adopt` も同じ経路を使う。`Transfer` は build が成功した時点で解放義務を結果へ移し、その後は `Set` の不変条件に委ねる。さらに、第三者 `Drop` を runtime mutex の内側で呼ばないようにした。`Pop` は受け取り先 cell の解放を lock の外で先に行い、`Drain` は ring 全体を lock 下で取り出してから解放する。lock 中の panic は mutex を握ったままにし、後片付けをするはずの `Drain` が同じ mutex で止まるため、panic が recovery boundary へ到達しなかった。複数 owner の後片付け（queue drain、fan-out branch、fan-in batch）は `flow.DropAll` に集約し、一件が panic しても残りを解放してから failure をまとめて返す。cleanup は recovery boundary を失った経路で走るため、panic ではなく error で伝える。`flow`、`queue` の回帰 test が、panic 後に mutex が解放されていること、全 owner が解放されること、`Set`/`Fork`/`Transfer` の panic 時に payload が失われないことを固定する。詳細は [runtime](runtime.md#ownership) を正本とする。
 
 Go では「自分が所有していない値の所有権を宣言する」ことを型で防げないため、`NewItem`/`NewItemWithTraits` に借用値を渡す誤用は残る。cell が保証するのは、一度 cell に入った payload の所有権を `flow` の API で複製できないことである。
 

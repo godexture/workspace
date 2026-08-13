@@ -15,7 +15,7 @@ type Task struct {
 	barrier func(context.Context) error
 	finish  func(context.Context) error
 	close   func()
-	discard func()
+	discard func() error
 	bind    func(*Scope)
 }
 
@@ -37,10 +37,15 @@ func (t Task) Close() {
 // Discard releases queued owners after every producer and consumer using the
 // task has joined. It is deliberately separate from Close: closing wakes
 // tasks, while discarding is only race-free after they have stopped.
-func (t Task) Discard() {
-	if t.discard != nil {
-		t.discard()
+//
+// It reports rather than panics. Discard is the last cleanup on paths that
+// have already lost their recovery boundary, and a declared Drop that panics
+// there must not take the remaining owners with it.
+func (t Task) Discard() error {
+	if t.discard == nil {
+		return nil
 	}
+	return t.discard()
 }
 
 func (t Task) Finish(ctx context.Context) error {

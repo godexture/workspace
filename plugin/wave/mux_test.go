@@ -16,7 +16,7 @@ import (
 )
 
 type writeCollector struct {
-	items  []flow.Parcel[access.Write]
+	items  []*flow.Item[access.Write]
 	failAt int
 }
 
@@ -24,11 +24,12 @@ func (c *writeCollector) Emit(_ context.Context, input *flow.Item[access.Write])
 	if c.failAt >= 0 && len(c.items) == c.failAt {
 		return errors.New("injected write emission failure")
 	}
-	parcel, ok := input.Detach()
-	if !ok {
+	if !input.Valid() {
 		return errors.New("collector received an unowned write")
 	}
-	c.items = append(c.items, parcel)
+	stored := new(flow.Item[access.Write])
+	stored.Move(input)
+	c.items = append(c.items, stored)
 	return nil
 }
 
@@ -105,14 +106,14 @@ func TestMuxEmissionFailureReleasesEveryPayloadItAccepted(t *testing.T) {
 		t.Fatalf("failed emission accepted %d writes, want the header only", len(collector.items))
 	}
 	for _, item := range collector.items {
-		item.Release()
+		item.Drop()
 	}
 	if muxBuffers.Used() != 0 || packetBuffers.Used() != 0 {
 		t.Fatalf("failure retained payload = header %d, packet %d", muxBuffers.Used(), packetBuffers.Used())
 	}
 }
 
-func applyWrites(t *testing.T, items []flow.Parcel[access.Write]) []byte {
+func applyWrites(t *testing.T, items []*flow.Item[access.Write]) []byte {
 	t.Helper()
 	var result []byte
 	for _, item := range items {
@@ -123,15 +124,15 @@ func applyWrites(t *testing.T, items []flow.Parcel[access.Write]) []byte {
 		case access.PatchOperation:
 			end := int(write.Offset()) + write.Bytes().Len()
 			if end > len(result) {
-				item.Release()
+				item.Drop()
 				t.Fatalf("patch [%d,%d) exceeds %d emitted bytes", write.Offset(), end, len(result))
 			}
 			write.Bytes().CopyTo(result[int(write.Offset()):end])
 		default:
-			item.Release()
+			item.Drop()
 			t.Fatalf("unknown write operation %v", write.Operation())
 		}
-		item.Release()
+		item.Drop()
 	}
 	return result
 }

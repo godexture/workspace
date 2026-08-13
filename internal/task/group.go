@@ -19,19 +19,19 @@ var (
 	ErrInvalidTask = errors.New("task name and function are required")
 )
 
-// PanicError preserves the recovered value and stack from one task boundary.
-// Value stays available to a caller that decides it is safe to look at; the
-// error text never renders it, because a panic value can be the data the
-// panicking code was handling.
+// PanicError preserves where a task panicked and the stack it panicked from.
+// It does not keep the recovered value: a panic value is chosen by the code
+// that panicked and can be the data it was handling, so retaining it would put
+// that data into anything that renders this error, including %#v.
 type PanicError struct {
 	Name     string
 	Location string
-	Value    any
+	Summary  string
 	Stack    []byte
 }
 
 func (e *PanicError) Error() string {
-	return fmt.Sprintf("task %q panicked: %s", e.Name, diagnostic.Recovered(e.Value))
+	return fmt.Sprintf("task %q panicked: %s", e.Name, e.Summary)
 }
 
 // Failure associates an error with the task that returned or panicked.
@@ -139,7 +139,7 @@ func (g *Group) run(id uint64, name string, location func() string, work func(co
 			failure = &PanicError{
 				Name:     name,
 				Location: where,
-				Value:    recovered,
+				Summary:  diagnostic.Recovered(recovered),
 				Stack:    append([]byte(nil), debug.Stack()...),
 			}
 		}

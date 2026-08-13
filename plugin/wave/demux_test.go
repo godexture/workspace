@@ -12,14 +12,15 @@ import (
 	"github.com/godexture/godec/media/packet"
 )
 
-type chunkCollector struct{ items []flow.Parcel[packet.Chunk] }
+type chunkCollector struct{ items []*flow.Item[packet.Chunk] }
 
 func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk]) error {
-	parcel, ok := input.Detach()
-	if !ok {
+	if !input.Valid() {
 		return errors.New("collector received an unowned chunk")
 	}
-	c.items = append(c.items, parcel)
+	stored := new(flow.Item[packet.Chunk])
+	stored.Move(input)
+	c.items = append(c.items, stored)
 	return nil
 }
 
@@ -73,7 +74,7 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Value().Payload().Layout(), collector.items[1].Value().Payload().Layout())
 	}
 	for _, item := range collector.items {
-		item.Release()
+		item.Drop()
 	}
 	if sourceBuffers.Used() != 0 || reframeBuffers.Used() != 0 {
 		t.Fatalf("retained payload = source %d, reframe %d", sourceBuffers.Used(), reframeBuffers.Used())
@@ -101,6 +102,6 @@ func TestDemuxFlushRejectsTruncatedData(t *testing.T) {
 		t.Fatalf("Flush error = %v", err)
 	}
 	for _, item := range collector.items {
-		item.Release()
+		item.Drop()
 	}
 }

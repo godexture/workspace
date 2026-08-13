@@ -583,20 +583,21 @@ func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input *flow.Item[T])
 }
 
 type skeletonEmitter[T any] struct {
-	items []flow.Parcel[T]
+	items []*flow.Item[T]
 }
 
 func (e *skeletonEmitter[T]) Emit(_ context.Context, input *flow.Item[T]) error {
-	parcel, ok := input.Detach()
-	if !ok {
+	if !input.Valid() {
 		return fmt.Errorf("collector received an unowned item")
 	}
-	e.items = append(e.items, parcel)
+	stored := new(flow.Item[T])
+	stored.Move(input)
+	e.items = append(e.items, stored)
 	return nil
 }
 
 type skeletonItem[T any] struct {
-	input      flow.Parcel[T]
+	input      *flow.Item[T]
 	descriptor stream.Descriptor
 }
 
@@ -907,15 +908,14 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err := source.Read(ctx, &byteCell); err != nil {
 		t.Fatal(err)
 	}
-	byteParcel, _ := byteCell.Detach()
-	byteItem := skeletonItem[[]byte]{input: byteParcel, descriptor: descriptors.source.outputs["bytes"]}
+	byteItem := skeletonItem[[]byte]{input: &byteCell, descriptor: descriptors.source.outputs["bytes"]}
 	if _, ok := skeletonSampleRate.Get(byteItem.descriptor.Properties()); ok {
 		t.Fatal("demuxer input unexpectedly had the generated sample-rate property")
 	}
 	if err := descriptors.demuxer.accept("bytes", byteItem.descriptor); err != nil {
 		t.Fatal(err)
 	}
-	if err := processParcel(ctx, byteItem.input, chunkOutput, demuxer.Process); err != nil {
+	if err := processCell(ctx, byteItem.input, chunkOutput, demuxer.Process); err != nil {
 		t.Fatal(err)
 	}
 	rate, ok := skeletonSampleRate.Get(descriptors.decoder.inputs["packets"].Properties())
@@ -928,7 +928,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.parser.accept("chunks", chunk.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := processParcel(ctx, chunk.input, packetOutput, parser.Process); err != nil {
+		if err := processCell(ctx, chunk.input, packetOutput, parser.Process); err != nil {
 			t.Fatal(err)
 		}
 		for _, packetInput := range packetOutput.items {
@@ -937,7 +937,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 			if err := descriptors.decoder.accept("packets", packetValue.descriptor); err != nil {
 				t.Fatal(err)
 			}
-			if err := processParcel(ctx, packetValue.input, frameOutput, decoder.Process); err != nil {
+			if err := processCell(ctx, packetValue.input, frameOutput, decoder.Process); err != nil {
 				t.Fatal(err)
 			}
 			for _, frameInput := range frameOutput.items {
@@ -946,7 +946,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 				if err := descriptors.encoder.accept("frames", frame.descriptor); err != nil {
 					t.Fatal(err)
 				}
-				if err := processParcel(ctx, frame.input, encodedPacketOutput, encoder.Process); err != nil {
+				if err := processCell(ctx, frame.input, encodedPacketOutput, encoder.Process); err != nil {
 					t.Fatal(err)
 				}
 				for _, encodedPacketInput := range encodedPacketOutput.items {
@@ -954,7 +954,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 					if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 						t.Fatal(err)
 					}
-					if err := processParcel(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
+					if err := processCell(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -970,7 +970,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := processParcel(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
+		if err := processCell(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1130,13 +1130,13 @@ func processOwned[I, O any](ctx context.Context, value I, typ schema.Type[I], ou
 	return process(ctx, &cell, output)
 }
 
-// processParcel adopts a payload a collector kept outside the call stack, so
-// the collected item is consumed exactly once.
-func processParcel[I, O any](ctx context.Context, parcel flow.Parcel[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
-	var cell flow.Item[I]
+// processCell consumes a cell a collector kept outside the call stack. The
+// collector owns one cell per payload, so consuming it here is the only place
+// that payload can be released.
+func processCell[I, O any](ctx context.Context, cell *flow.Item[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
 	defer cell.Drop()
-	if !parcel.Adopt(&cell) {
+	if !cell.Valid() {
 		return fmt.Errorf("collected item was already consumed")
 	}
-	return process(ctx, &cell, output)
+	return process(ctx, cell, output)
 }

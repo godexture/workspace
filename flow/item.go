@@ -2,8 +2,8 @@ package flow
 
 import (
 	"errors"
-	"sync/atomic"
 
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -23,9 +23,8 @@ func (*noCopy) Unlock() {}
 // Item is one owned value in transit.
 //
 // An Item is a cell, not a value: it is always passed as a pointer, and the
-// first Drop or Detach releases or removes it while every later one does
-// nothing. That
-// single rule replaces per-call ownership protocols. A stage creates or
+// first Drop or Move releases or removes it while every later one does
+// nothing. That single rule replaces per-call ownership protocols. A stage creates or
 // receives a cell, defers Drop, and passes the pointer on; whoever consumes it
 // wins, and if nobody does, the deferred Drop releases it. Success and failure
 // need no distinction, because a consumed cell is already empty when the
@@ -151,65 +150,6 @@ func (i *Item[T]) Fork(target *Item[T]) bool {
 	return true
 }
 
-// Detach empties the cell into a Parcel, which is how an owned payload leaves
-// a call stack: a collector appends it to a container, a transport stores it.
-// Components move cells instead.
-func (i *Item[T]) Detach() (Parcel[T], bool) {
-	if i == nil || !i.valid {
-		return Parcel[T]{}, false
-	}
-	state := &parcel[T]{value: i.value, fork: i.fork, drop: i.drop}
-	i.clear()
-	return Parcel[T]{state: state}, true
-}
-
-// Parcel is one owned payload waiting outside a cell. Unlike a cell it is
-// copyable, because a container has to hold it by value, so it shares one
-// state instead of one owner: the first Adopt or Release wins and every later
-// one does nothing. A copied Parcel therefore cannot release twice, which is
-// the property that makes leaving a cell safe at all.
-type Parcel[T any] struct{ state *parcel[T] }
-
-type parcel[T any] struct {
-	taken atomic.Bool
-	value T
-	fork  func(T) T
-	drop  func(T)
-}
-
-// Valid reports whether the payload is still waiting to be adopted.
-func (p Parcel[T]) Valid() bool { return p.state != nil && !p.state.taken.Load() }
-
-// Value borrows the waiting payload. It stays valid only until the parcel is
-// adopted or released.
-func (p Parcel[T]) Value() T {
-	if p.state == nil {
-		var zero T
-		return zero
-	}
-	return p.state.value
-}
-
-// Adopt moves the payload into target, releasing anything target still held.
-// It reports whether this call was the one that took it.
-func (p Parcel[T]) Adopt(target *Item[T]) bool {
-	if p.state == nil || target == nil || !p.state.taken.CompareAndSwap(false, true) {
-		return false
-	}
-	target.take(p.state.value, p.state.fork, p.state.drop)
-	return true
-}
-
-// Release drops a payload nobody adopted.
-func (p Parcel[T]) Release() {
-	if p.state == nil || !p.state.taken.CompareAndSwap(false, true) {
-		return
-	}
-	if p.state.drop != nil {
-		p.state.drop(p.state.value)
-	}
-}
-
 func (i *Item[T]) clear() {
 	var zero T
 	i.value, i.fork, i.drop, i.valid = zero, nil, nil, false
@@ -246,5 +186,33 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	}
 	built = true
 	target.Set(result, typ)
+	return nil
+}
+
+// DropAll releases every cell in order and keeps going when one of them
+// panics.
+//
+// A declared Drop is third-party code. Releasing a group of owners one panic
+// at a time would strand every owner after the first failure, which is exactly
+// what cleanup exists to prevent, so each release is isolated and the failures
+// are reported together afterwards. It never panics: cleanup runs on paths
+// that have no recovery boundary left.
+func DropAll[T any](cells []Item[T]) error {
+	var problems []error
+	for index := range cells {
+		if err := dropOne(&cells[index]); err != nil {
+			problems = append(problems, err)
+		}
+	}
+	return errors.Join(problems...)
+}
+
+func dropOne[T any](cell *Item[T]) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = errors.New("flow item release panicked: " + diagnostic.Recovered(recovered))
+		}
+	}()
+	cell.Drop()
 	return nil
 }

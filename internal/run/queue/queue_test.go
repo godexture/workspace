@@ -140,10 +140,11 @@ func TestQueueDrainDropsEachOwnerOnce(t *testing.T) {
 		}
 	}
 	queue.Close()
-	if got := queue.Drain(); got != 5 || drops.Load() != 5 {
-		t.Fatalf("drain = %d, drops = %d", got, drops.Load())
+	got, err := queue.Drain()
+	if got != 5 || err != nil || drops.Load() != 5 {
+		t.Fatalf("drain = %d, error %v, drops = %d", got, err, drops.Load())
 	}
-	if queue.Drain() != 0 || drops.Load() != 5 {
+	if again, err := queue.Drain(); again != 0 || err != nil || drops.Load() != 5 {
 		t.Fatal("repeated drain released an owner twice")
 	}
 }
@@ -254,5 +255,68 @@ func TestQueueTransferAllocatesZero(t *testing.T) {
 	})
 	if allocations != 0 {
 		t.Fatalf("queue transfer allocations = %v", allocations)
+	}
+}
+
+// A declared Drop belongs to a third party and can panic. Running one while
+// holding the ring's mutex would leave it locked forever, and the deferred
+// Drain that would otherwise clean up waits on that same mutex, so the panic
+// would never reach a recovery boundary.
+func TestQueueNeverHoldsItsLockAcrossADeclaredDrop(t *testing.T) {
+	queue, err := New[item](Limit{Items: 4}, Traits[item]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pushValue(context.Background(), queue, item{value: 1}, nil); err != nil {
+		t.Fatal(err)
+	}
+	into := flow.NewItemWithTraits(item{value: 2}, nil, func(item) { panic("declared drop panicked") })
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		return queue.Pop(context.Background(), &into)
+	}()
+	if recovered == nil {
+		t.Fatal("the declared drop panic did not propagate")
+	}
+	if !queue.mu.TryLock() {
+		t.Fatal("the queue kept its lock after a declared drop panicked")
+	}
+	queue.mu.Unlock()
+	if _, err := queue.Drain(); err != nil {
+		t.Fatalf("drain after the panic failed: %v", err)
+	}
+}
+
+// Drain releases owners, so one that cannot be released must not strand the
+// ones behind it. Every owner is released and the failures are reported
+// together rather than as a panic, because Drain runs where no recovery
+// boundary is left.
+func TestQueueDrainReleasesEveryOwnerDespiteAPanickingDrop(t *testing.T) {
+	queue, err := New[item](Limit{Items: 4}, Traits[item]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var released atomic.Int32
+	for index := 0; index < 3; index++ {
+		value := item{value: index}
+		drop := func(item) {
+			released.Add(1)
+			if value.value == 0 {
+				panic("declared drop panicked")
+			}
+		}
+		if err := pushValue(context.Background(), queue, value, drop); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dropped, err := queue.Drain()
+	if dropped != 3 {
+		t.Fatalf("drain = %d, want 3", dropped)
+	}
+	if err == nil {
+		t.Fatal("a panicking release was not reported")
+	}
+	if released.Load() != 3 {
+		t.Fatalf("released owners = %d, want every owner released", released.Load())
 	}
 }

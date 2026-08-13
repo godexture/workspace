@@ -66,21 +66,22 @@ func (s *zipState[I, O]) close() {
 	}
 }
 
-func (s *zipState[I, O]) discard() {
+func (s *zipState[I, O]) discard() error {
+	problems := make([]error, 0, len(s.edges))
 	for _, edge := range s.edges {
-		edge.Drain()
+		_, err := edge.Drain()
+		problems = append(problems, err)
 	}
+	return errors.Join(problems...)
 }
 
-func (s *zipState[I, O]) run(ctx context.Context) error {
+func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 	defer func() {
 		s.close()
-		for _, edge := range s.edges {
-			edge.Drain()
-		}
+		err = errors.Join(err, s.discard())
 		close(s.done)
 	}()
-	defer s.release()
+	defer func() { err = errors.Join(err, s.release()) }()
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
@@ -125,12 +126,17 @@ func (s *zipState[I, O]) withinWatermark() bool {
 
 // release drops whatever the joiner left behind and returns the group's slots
 // to their queues. A Joiner may consume any subset of the batch.
-func (s *zipState[I, O]) release() {
-	for index := 0; index < s.read; index++ {
-		s.items[index].Drop()
+//
+// Returning the slots is queue bookkeeping and happens first, so a declared
+// Drop that panics cannot leave an edge permanently short of capacity, and
+// every remaining payload is released before the failure is reported.
+func (s *zipState[I, O]) release() error {
+	read := s.read
+	s.read = 0
+	for index := 0; index < read; index++ {
 		s.edges[index].Complete()
 	}
-	s.read = 0
+	return flow.DropAll(s.items[:read])
 }
 
 func (s *zipState[I, O]) barrier(ctx context.Context) error {

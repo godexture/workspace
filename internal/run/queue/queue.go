@@ -129,7 +129,13 @@ func (q *Queue[T]) Push(ctx context.Context, item *flow.Item[T]) error {
 	}
 }
 
-// Pop moves the oldest queued payload into into, releasing anything it held.
+// Pop moves the oldest queued payload into into.
+//
+// Anything into still held is released first and outside the lock. A declared
+// Drop is third-party code, and running it while holding the ring's mutex
+// would leave that mutex locked forever if it panicked: the deferred Drain
+// that would otherwise clean up waits on the same mutex, so the panic would
+// never reach a recovery boundary.
 func (q *Queue[T]) Pop(ctx context.Context, into *flow.Item[T]) error {
 	if q == nil {
 		return io.EOF
@@ -137,6 +143,7 @@ func (q *Queue[T]) Pop(ctx context.Context, into *flow.Item[T]) error {
 	if into == nil {
 		return ErrInvalidItem
 	}
+	into.Drop()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -225,32 +232,30 @@ func (q *Queue[T]) Close() {
 	q.mu.Unlock()
 }
 
-// Drain drops all queued owners and returns their count. It is safe to call
-// repeatedly; callers normally close/cancel producers before draining.
-func (q *Queue[T]) Drain() int {
+// Drain releases all queued owners and returns their count.
+//
+// It takes the whole ring out under the lock and releases the cells after
+// letting it go, so a declared Drop never runs while the mutex is held and one
+// that panics cannot strand the owners behind it. Drain is cleanup and runs
+// where no recovery boundary is left, so it reports rather than panics. It is
+// safe to call repeatedly; callers normally close or cancel producers first.
+func (q *Queue[T]) Drain() (int, error) {
 	if q == nil {
-		return 0
+		return 0, nil
 	}
-	dropped := 0
-	var item flow.Item[T]
-	defer item.Drop()
-	for {
-		q.mu.Lock()
-		if q.count == 0 {
-			q.mu.Unlock()
-			return dropped
-		}
-		q.pop(&item)
-		if !q.closed {
-			q.notify(q.notFull)
-		}
-		if q.count == 0 && q.active == 0 {
-			q.notify(q.idle)
-		}
-		q.mu.Unlock()
-		item.Drop()
-		dropped++
+	q.mu.Lock()
+	queued := make([]flow.Item[T], q.count)
+	for index := range queued {
+		q.pop(&queued[index])
 	}
+	if !q.closed {
+		q.notify(q.notFull)
+	}
+	if q.count == 0 && q.active == 0 {
+		q.notify(q.idle)
+	}
+	q.mu.Unlock()
+	return len(queued), flow.DropAll(queued)
 }
 
 type Snapshot struct {

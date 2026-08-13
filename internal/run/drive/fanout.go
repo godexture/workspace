@@ -50,8 +50,11 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 // Emit forks one owner per extra output and hands the original to the last
 // one. Branch cells are reused across items, and the deferred release covers
 // every failure and panic path without per-branch bookkeeping.
-func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
-	defer f.dropBranches()
+func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) (err error) {
+	// Every branch a consumer did not take has to be released, including when
+	// one of those releases fails: a fan-out holds several owners of one item,
+	// and stopping at the first broken Drop would strand the rest.
+	defer func() { err = errors.Join(err, flow.DropAll(f.branches)) }()
 	for index := range f.branches {
 		if !item.Fork(&f.branches[index]) {
 			return ErrInvalidItem
@@ -63,12 +66,6 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error 
 		}
 	}
 	return f.outputs[len(f.outputs)-1].Emit(ctx, item)
-}
-
-func (f *fanoutDelivery[T]) dropBranches() {
-	for index := range f.branches {
-		f.branches[index].Drop()
-	}
 }
 
 func (f *fanoutDelivery[T]) close(ctx context.Context) error {
