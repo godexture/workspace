@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/godexture/godec/access"
@@ -17,6 +18,7 @@ type acquiredSession struct {
 	actual   access.Capabilities
 	selected access.Selection
 	opening  access.Opening
+	snapshot access.Snapshot
 }
 
 func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.BoundaryDirection) (sessions []acquiredSession, err error) {
@@ -114,8 +116,55 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			sessions[len(sessions)-1].selected = selection
 		}
 		sessions[len(sessions)-1].opening = opening
+		if projection.Direction == plan.InputBoundary {
+			snapshot, snapshotErr := readSnapshot(ctx, session)
+			if snapshotErr != nil {
+				return sessions, sessionDiagnostic("prepare.access-snapshot", projection, "Access source session could not report its content identity", map[string]string{"error": snapshotErr.Error()})
+			}
+			sessions[len(sessions)-1].snapshot = snapshot
+		}
 	}
 	return sessions, nil
+}
+
+func readSnapshot(ctx context.Context, session access.Session) (access.Snapshot, error) {
+	reporter, ok := access.SnapshotOf(session)
+	if !ok {
+		return access.Snapshot{}, nil
+	}
+	snapshot, err := reporter.Snapshot(ctx)
+	if err != nil {
+		return access.Snapshot{}, err
+	}
+	if !snapshot.Valid() {
+		return access.Snapshot{}, access.ErrInvalidSnapshot
+	}
+	return snapshot, nil
+}
+
+// verifySnapshots re-reads the content identity of every source that reports
+// one. Probe, Inspect, and Compile turned the acquired bytes into planning
+// facts, so a source that has changed underneath must end the job instead of
+// executing a Plan that describes different content.
+func verifySnapshots(ctx context.Context, phase Phase, sessions []acquiredSession) *Failure {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for _, session := range sessions {
+		if !session.snapshot.Valid() {
+			continue
+		}
+		current, err := readSnapshot(ctx, session.value)
+		if err != nil {
+			failure := failureOf(phase, session.node, "access/snapshot", err)
+			return &failure
+		}
+		if current.Identity() != session.snapshot.Identity() {
+			failure := failureOf(phase, session.node, "access/snapshot", fmt.Errorf("source content changed after planning: %s became %s", session.snapshot.Identity(), current.Identity()))
+			return &failure
+		}
+	}
+	return nil
 }
 
 func capabilitySubset(required, actual access.Capabilities) bool {

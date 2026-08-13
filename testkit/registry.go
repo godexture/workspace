@@ -35,9 +35,23 @@ type UncoveredContract struct {
 	Milestone string
 }
 
+// Milestones is the roadmap a coverage gap can be assigned to. An owner
+// outside it reads like a plan but is one: nothing schedules it and nothing
+// ever closes it, which is how an unowned export stays in the tree.
+var Milestones = []string{"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11"}
+
+func knownMilestone(value string) bool {
+	for _, milestone := range Milestones {
+		if milestone == value {
+			return true
+		}
+	}
+	return false
+}
+
 // AssignUncovered records one intentionally uncovered contract and the
-// milestone responsible for closing it. Empty and repeated identities are
-// rejected so absence cannot silently masquerade as an assignment.
+// milestone responsible for closing it. Empty, repeated, and off-roadmap
+// assignments are rejected so absence cannot silently masquerade as one.
 func (c *Coverage) AssignUncovered(identity, milestone string) error {
 	identity = strings.TrimSpace(identity)
 	milestone = strings.TrimSpace(milestone)
@@ -49,6 +63,9 @@ func (c *Coverage) AssignUncovered(identity, milestone string) error {
 	}
 	if milestone == "" {
 		return fmt.Errorf("testkit typed coverage: uncovered contract %s has no responsible milestone", identity)
+	}
+	if !knownMilestone(milestone) {
+		return fmt.Errorf("testkit typed coverage: uncovered contract %s names %q, which is not one of %s", identity, milestone, strings.Join(Milestones, ", "))
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

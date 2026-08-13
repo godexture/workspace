@@ -165,7 +165,9 @@ M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prep
 
 M6 で実 consumer を得る宣言は次である。`media/format` の Probe/Inspect と capability alternative、`media/carrier` の carrier identity、`metadata.RawBlock` の raw preservation、`media/codec` の codec Binding、`access` の Source/Sink capability と `Own`/`Borrow`、`ProbeView`/`RangeRequest`、`SpoolSpec`/`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、transaction class と `access.Transaction`/`Flusher`/`Syncer` の file 実装である。いずれも WAVE Format または local file Provider が実 consumer になる。
 
-M6 でも宣言に留める contract と担当は次である。`metadata.Mapping` と loss report は実 encoding 間変換が現れる M7、`stream.Event` の live topology 既定 policy と `flow.FanInPolicy` の zip 以外は実 component が現れる M7 以降、`endpoint` の Device/DeviceQuery と realtime clock は M9、`access.Snapshot` の再取得と retry は remote Provider を作る milestone が担当する。M6 で使わないと判断したものは、この節へ担当を書いてから残す。
+M6 でも宣言に留める contract と担当は次である。`metadata.Mapping` と loss report は実 encoding 間変換が現れる M7、`stream.Event` の live topology 既定 policy と `flow.FanInPolicy` の zip 以外は実 component が現れる M7 以降、`endpoint` の Device/DeviceQuery と realtime clock は M9 が担当する。M6 で使わないと判断したものは、この節へ担当を書いてから残す。担当は正本 roadmap の `M0`〜`M11` に実在する milestone でなければならず、`testkit.Coverage.AssignUncovered` がその許可集合を機械的に検査する。「remote Provider を作る milestone」のような roadmap 外の文字列は owner にしない。
+
+`access.Snapshot` は M6 review で実 consumer を得た。local file Provider が `access.Snapshotter` として content identity を報告し、Host が phase 間で照合する。意味は [access](access.md#snapshotretry再現性) を正本とする。再取得と retry は operation 自体が無いため宣言も置かず、remote Provider を実装する milestone が実操作と同時に導入する。
 
 M6 review では、操作 view と consumer を持たなかった `Reopen` と `ConcurrentRead`、blocked syscall を解除できない file Provider が誤って宣言していた `CancelableRead` を削除した。`Reopen` と `ConcurrentRead` は HTTP/S3 等の remote Provider を実装する milestone で、再取得操作・snapshot semantics・並行 range consumer と同時にだけ再導入する。`CancelableRead` は blocked I/O を context cancel または Close で実際に解除できる Provider と、その保証を検査する test が同じ milestone にある場合だけ再導入する。session factory は stdin/stdout を扱う M9 で複数 session を生成する実 consumer が必要になった場合に限り再設計する。
 

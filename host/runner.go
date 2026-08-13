@@ -102,12 +102,26 @@ func (r *runner) execute() {
 		r.cleanup()
 		return
 	}
+	// The Plan describes the bytes Probe and Inspect saw. Confirm the sources
+	// still hold them before opening operators, and again before an output is
+	// committed, so a source that changed under the job cannot produce a
+	// successful conversion of content nobody planned for.
+	if failure := verifySnapshots(r.ctx, RunPhase, r.prepared.sessions); failure != nil {
+		r.setPrimary(*failure)
+		r.cleanup()
+		return
+	}
 	if failure := r.open(); failure != nil {
 		r.setPrimary(*failure)
 		r.cleanup()
 		return
 	}
 	if failure := r.runData(); failure != nil {
+		r.setPrimary(*failure)
+		r.cleanup()
+		return
+	}
+	if failure := verifySnapshots(r.ctx, RunPhase, r.prepared.sessions); failure != nil {
 		r.setPrimary(*failure)
 		r.cleanup()
 		return

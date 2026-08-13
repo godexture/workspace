@@ -385,6 +385,10 @@ random range、reopen、retry が同じ content を指す保証を Access が提
 
 strong snapshot がない source はその事実を Plan に記録する。probe/inspect 後に content identity が変わった場合、黙って別 content を実行せず、再 Prepare または failure にする。
 
+M6 の実装は次のとおりである。`StableSize` を広告する session は `access.Snapshotter` を実装し、現在の content identity を報告する。判断は session ではなく Host が持ち、acquire 時の identity を記録して run 開始前と output commit 前に照合し、変化していれば `access/snapshot` failure にする。
+
+local file の identity は size と mtime であり、`WeakSnapshot` として報告する。truncate、grow、mtime が動く overwrite は検出できるが、同一 timestamp tick 内の同 size 書き換えは区別できない。強い identity は content を読み直すしかないため、nature を偽らずに weak と宣言する。session は開いた path ではなく開いた file を提供するので、path 差し替えは content の変化ではなく、acquire した bytes をそのまま実行する。`StableSize` は session が渡す byte 列への約束でもあるため、read は acquire 時 size で clamp し、後から追記された byte を返さない。
+
 retry は idempotent な operation と既知 offset に限定する。途中から別 objectへ接続したり、sequential byte を重複/欠落させたりしない。live Endpoint の reconnect は byte retry ではなく discontinuity/event policy として扱う。
 
 ## observability と resource
