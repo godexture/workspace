@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"fmt"
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
@@ -31,6 +30,7 @@ const (
 	codeUnregisteredField  = "config.unregistered-field"
 	codeInvalidAlias       = "config.invalid-alias"
 	codeSecretRedacted     = "config.secret-redacted"
+	codeCallbackPanic      = "config.callback-panic"
 )
 
 type presetSpec[C any] struct {
@@ -341,13 +341,10 @@ func (s Schema[C]) validateSchema(value C) []diagnostic.Item {
 	if s.validate == nil {
 		return nil
 	}
-	var items []diagnostic.Item
-	validated, snapshotItems := s.snapshot(value)
-	items = append(items, snapshotItems...)
-	for _, item := range s.validate(validated) {
-		items = append(items, item)
-	}
-	return items
+	validated, items := s.snapshot(value)
+	return append(items, guardItems(operationSchema, diagnostic.Path{}, func() []diagnostic.Item {
+		return s.validate(validated)
+	})...)
 }
 
 func (s Schema[C]) canonicalValue(value C) ([]byte, []diagnostic.Item) {
@@ -382,21 +379,16 @@ func (s Schema[C]) defaultValue() (C, []diagnostic.Item) {
 		var zero C
 		return zero, []diagnostic.Item{diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory is required", nil)}
 	}
-	var value C
-	panicked := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				panicked = true
-				value = *new(C)
-			}
-		}()
-		value = s.defaults()
-	}()
-	if panicked {
-		return value, []diagnostic.Item{diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory panicked", nil)}
+	value, err := callDefaults(s.defaults)
+	if err != nil {
+		return value, []diagnostic.Item{panicItem(operationDefault, diagnostic.Path{})}
 	}
 	return s.snapshot(value)
+}
+
+func callDefaults[C any](defaults func() C) (value C, err error) {
+	defer guardError(operationDefault, &err)
+	return defaults(), nil
 }
 
 func (s Schema[C]) snapshot(value C) (C, []diagnostic.Item) {
@@ -432,11 +424,7 @@ func (s Schema[C]) schemaProblems() []diagnostic.Item {
 }
 
 func callPreset[C any](apply func(*C), value *C) (err error) {
-	defer func() {
-		if recover() != nil {
-			err = fmt.Errorf("preset panicked")
-		}
-	}()
+	defer guardError(operationPreset, &err)
 	apply(value)
 	return nil
 }

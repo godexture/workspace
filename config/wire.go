@@ -56,12 +56,12 @@ func (s Schema[C]) encodeJSON(value C) string {
 		}
 		fieldValue, err := field.read(&value)
 		if err != nil || field.encode == nil {
-			return "<invalid>"
+			return invalidText
 		}
 		encoded := surfaceJSON(field.encode(fieldValue))
 		key, marshalErr := json.Marshal(field.id)
 		if marshalErr != nil {
-			return "<invalid>"
+			return invalidText
 		}
 		parts = append(parts, string(key)+":"+encoded)
 	}

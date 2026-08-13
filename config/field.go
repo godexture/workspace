@@ -80,15 +80,16 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 		encode: func(value any) string {
 			typed, ok := value.(T)
 			if !ok {
-				return "<invalid>"
+				return invalidText
 			}
 			return codec.Encode(typed)
 		},
-		decode: func(value string) (any, error) {
+		decode: func(value string) (cloned any, err error) {
 			decoded, err := codec.Decode(value)
 			if err != nil {
 				return nil, err
 			}
+			defer guardError(operationDecode, &err)
 			return codec.Clone(decoded), nil
 		},
 		normalize: func(value any) (any, []diagnostic.Item) {
@@ -96,8 +97,10 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 			if !ok {
 				return value, []diagnostic.Item{diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.Path{}, "field value has the wrong type", nil)}
 			}
-			normalized, items := codec.normalizeValue(typed)
-			return codec.Clone(normalized), items
+			return guardNormalize(operationNormalize, diagnostic.Path{}, value, func() (any, []diagnostic.Item) {
+				normalized, items := codec.normalizeValue(typed)
+				return codec.Clone(normalized), items
+			})
 		},
 		validate: func(value any) []diagnostic.Item {
 			typed, ok := value.(T)
@@ -114,17 +117,18 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 	if !codec.Valid() {
 		result.construction = append(result.construction, diagnostic.NewItem(codeMissingCodec, diagnostic.ErrorSeverity, diagnostic.Path{}, "field codec must provide decode, encode, canonical, clone, normalize, and validation operations", nil))
 	}
-	result.read = func(config *C) (any, error) {
+	result.read = func(config *C) (value any, err error) {
 		if accessor == nil {
 			return nil, fmt.Errorf("field accessor is missing")
 		}
-		value := accessor(config)
-		if value == nil {
+		defer guardError(operationRead, &err)
+		target := accessor(config)
+		if target == nil {
 			return nil, fmt.Errorf("field accessor returned nil")
 		}
-		return codec.Clone(*value), nil
+		return codec.Clone(*target), nil
 	}
-	result.write = func(config *C, value any) error {
+	result.write = func(config *C, value any) (err error) {
 		if accessor == nil {
 			return fmt.Errorf("field accessor is missing")
 		}
@@ -132,6 +136,7 @@ func Field[C any, T any](id string, accessor func(*C) *T, codec Codec[T], option
 		if !ok {
 			return fmt.Errorf("field value has type %T, want %s", value, reflect.TypeFor[T]())
 		}
+		defer guardError(operationWrite, &err)
 		target := accessor(config)
 		if target == nil {
 			return fmt.Errorf("field accessor returned nil")

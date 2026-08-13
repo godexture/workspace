@@ -83,11 +83,12 @@ func (c Codec[T]) Valid() bool {
 }
 
 // Decode parses one surface value.
-func (c Codec[T]) Decode(value string) (T, error) {
+func (c Codec[T]) Decode(value string) (decoded T, err error) {
 	if c.decode == nil {
 		var zero T
 		return zero, fmt.Errorf("config codec %s has no decoder", c.description.Type)
 	}
+	defer guardError(operationDecode, &err)
 	return c.decode(value)
 }
 
@@ -95,20 +96,23 @@ func (c Codec[T]) Decode(value string) (T, error) {
 // representation and is not used for fingerprints.
 func (c Codec[T]) Encode(value T) string {
 	if c.encode == nil {
-		return "<invalid>"
+		return invalidText
 	}
-	return c.encode(value)
+	return guardValue(invalidText, func() string { return c.encode(value) })
 }
 
 // Canonical returns the deterministic field encoding used for fingerprints.
-func (c Codec[T]) Canonical(value T) ([]byte, error) {
+func (c Codec[T]) Canonical(value T) (canonical []byte, err error) {
 	if c.canonical == nil {
 		return nil, fmt.Errorf("config codec %s has no canonical encoder", c.description.Type)
 	}
+	defer guardError(operationCanonical, &err)
 	return c.canonical(value)
 }
 
-// Clone returns a defensive copy of a field value.
+// Clone returns a defensive copy of a field value. A panic in a declared clone
+// is caught by the field boundary that asked for the snapshot, which is the
+// only place that knows which field to blame.
 func (c Codec[T]) Clone(value T) T {
 	if c.clone == nil {
 		return value
@@ -120,14 +124,14 @@ func (c Codec[T]) normalizeValue(value T) (T, []diagnostic.Item) {
 	if c.normalize == nil {
 		return value, nil
 	}
-	return c.normalize(value)
+	return guardNormalize(operationNormalize, diagnostic.Path{}, value, func() (T, []diagnostic.Item) { return c.normalize(value) })
 }
 
 func (c Codec[T]) validateValue(value T) []diagnostic.Item {
 	if c.validate == nil {
 		return nil
 	}
-	return c.validate(value)
+	return guardItems(operationValidate, diagnostic.Path{}, func() []diagnostic.Item { return c.validate(value) })
 }
 
 func (c Codec[T]) descriptionValue() Description {
