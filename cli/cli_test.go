@@ -48,7 +48,7 @@ func TestRunConvertsWaveToRequestedFileFormat(t *testing.T) {
 			if extension == "wav" && (!bytes.HasPrefix(encoded, []byte("RIFF")) || !bytes.Contains(encoded, payload)) {
 				t.Fatalf("WAVE output = %x", encoded)
 			}
-			if !strings.Contains(stdout.String(), "origin=automatic reason=format.output") || !strings.Contains(stdout.String(), "state=committed") {
+			if !strings.Contains(stdout.String(), "(automatic): chosen for the requested output format") || !strings.Contains(stdout.String(), "state=committed") {
 				t.Fatalf("Plan/result output = %s", stdout.String())
 			}
 			if !strings.Contains(stderr.String(), "progress sequence=") {

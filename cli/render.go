@@ -109,6 +109,23 @@ func (r *eventRenderer) render(event host.Event) error {
 	return nil
 }
 
+// reasons translate the planner's machine-readable codes. The Plan keeps the
+// code; only this projection is for people, and an unmapped code prints as
+// itself rather than disappearing.
+var reasons = map[string]string{
+	"format.probe":          "detected from the file content",
+	"format.fallback":       "chosen from the explicit format, without content evidence",
+	"format.output":         "chosen for the requested output format",
+	"graph.schema-mismatch": "inserted to connect two incompatible ports",
+}
+
+func explain(reason string) string {
+	if text, ok := reasons[reason]; ok {
+		return text
+	}
+	return reason
+}
+
 func renderPlan(destination io.Writer, selected plan.Plan) error {
 	if _, err := fmt.Fprintf(destination, "plan %s\n", selected.Fingerprint()); err != nil {
 		return err
@@ -118,11 +135,11 @@ func renderPlan(destination io.Writer, selected plan.Plan) error {
 		if node.Origin == plan.Automatic {
 			origin = "automatic"
 		}
-		if _, err := fmt.Fprintf(destination, "node %s component=%s origin=%s", node.ID, node.Component, origin); err != nil {
+		if _, err := fmt.Fprintf(destination, "node %s %s (%s)", node.ID, displayName(node.DisplayName, node.Component), origin); err != nil {
 			return err
 		}
 		if node.Reason != "" {
-			if _, err := fmt.Fprintf(destination, " reason=%s", node.Reason); err != nil {
+			if _, err := fmt.Fprintf(destination, ": %s", explain(node.Reason)); err != nil {
 				return err
 			}
 		}
@@ -144,7 +161,7 @@ func renderPlan(destination io.Writer, selected plan.Plan) error {
 		if boundary.Direction == plan.OutputBoundary {
 			direction = "output"
 		}
-		if _, err := fmt.Fprintf(destination, "boundary %s[%d] node=%s component=%s", direction, boundary.Choice, boundary.Node, boundary.Component); err != nil {
+		if _, err := fmt.Fprintf(destination, "boundary %s[%d] %s %s", direction, boundary.Choice, boundary.Node, boundary.Reference); err != nil {
 			return err
 		}
 		if boundary.Scheme != "" {
@@ -235,4 +252,14 @@ func renderItems(destination io.Writer, items []diagnostic.Item) error {
 
 func errorsJoin(values []error) error {
 	return errors.Join(values...)
+}
+
+// displayName prefers the name the component publishes. The marker identity is
+// a Go type path, which identifies a component precisely and tells a person
+// nothing, so it stays in diagnostics rather than the Plan preview.
+func displayName(name, identity string) string {
+	if name != "" {
+		return name
+	}
+	return identity
 }

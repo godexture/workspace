@@ -91,7 +91,7 @@ func automaticNodeID(edge job.Edge, index int, result candidateResult, used map[
 	base := edge.From().String() + "->" + edge.To().String() + "\x00" + strconv.Itoa(index) + "\x00" + result.bridge.component.Identity().String() + "\x00" + result.config.Fingerprint.String()
 	for nonce := 0; ; nonce++ {
 		digest := sha256.Sum256([]byte(base + "\x00" + strconv.Itoa(nonce)))
-		id := job.NodeID("auto-" + hex.EncodeToString(digest[:]))
+		id := job.NodeID("auto-" + hex.EncodeToString(digest[:8]))
 		if _, exists := used[id]; !exists {
 			return id
 		}
