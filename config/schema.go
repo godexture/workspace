@@ -31,6 +31,7 @@ const (
 	codeInvalidAlias       = "config.invalid-alias"
 	codeSecretRedacted     = "config.secret-redacted"
 	codeCallbackPanic      = "config.callback-panic"
+	codeSecretInvalid      = "config.secret-invalid"
 )
 
 type presetSpec[C any] struct {
@@ -276,32 +277,12 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 		return Resolved[C]{Value: value, Provenance: cloneProvenance(provenance), Diagnostics: cloneItems(items)}, diagnosticError(items)
 	}
 
-	for _, field := range s.fields {
-		current, err := field.read(&value)
-		if err != nil {
-			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "field could not be read", nil))
-			continue
-		}
-		before, beforeErr := field.canonical(current)
-		normalized, normalizationItems := field.normalize(current)
-		for _, item := range normalizationItems {
-			items = append(items, prefixItem(item, field.id))
-		}
-		if err := field.write(&value, normalized); err != nil {
-			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "normalized field could not be stored", nil))
-			continue
-		}
-		after, afterErr := field.canonical(normalized)
-		if beforeErr == nil && afterErr == nil && !bytes.Equal(before, after) {
-			provenance.sources[field.id] = SourceNormalized
-		}
-		for _, item := range field.validate(normalized) {
-			items = append(items, prefixItem(item, field.id))
-		}
+	value, normalized, normalizationItems := s.normalizeFields(value)
+	items = append(items, normalizationItems...)
+	for _, field := range normalized {
+		provenance.sources[field] = SourceNormalized
 	}
-	for _, item := range s.validateSchema(value) {
-		items = append(items, item)
-	}
+	items = append(items, s.validateValue(value)...)
 
 	canonical, canonicalItems := s.canonicalValue(value)
 	items = append(items, canonicalItems...)
@@ -317,6 +298,36 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 	}
 	resolved.Fingerprint = hashCanonical(canonical)
 	return resolved, nil
+}
+
+// normalizeFields runs field normalization in canonical field order and
+// reports the fields whose canonical encoding it changed. Nested reuses it so
+// a schema composed into another schema normalizes the same way it would on
+// its own.
+func (s Schema[C]) normalizeFields(value C) (C, []string, []diagnostic.Item) {
+	var normalized []string
+	var items []diagnostic.Item
+	for _, field := range s.fields {
+		current, err := field.read(&value)
+		if err != nil {
+			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "field could not be read", nil))
+			continue
+		}
+		before, beforeErr := field.canonical(current)
+		result, fieldItems := field.normalize(current)
+		for _, item := range fieldItems {
+			items = append(items, prefixItem(item, field.id))
+		}
+		if err := field.write(&value, result); err != nil {
+			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "normalized field could not be stored", nil))
+			continue
+		}
+		after, afterErr := field.canonical(result)
+		if beforeErr == nil && afterErr == nil && !bytes.Equal(before, after) {
+			normalized = append(normalized, field.id)
+		}
+	}
+	return value, normalized, items
 }
 
 func (s Schema[C]) validateValue(value C) []diagnostic.Item {

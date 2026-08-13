@@ -371,12 +371,32 @@ func UnionCodec[T any](choices ...UnionChoice[T]) Codec[Union[T]] {
 			}
 			return value
 		},
+		Normalize: func(value Union[T]) (Union[T], []diagnostic.Item) {
+			choice, ok := byID[value.Variant]
+			if !ok {
+				// Validate reports the unregistered variant; normalization has
+				// no codec to delegate to.
+				return value, nil
+			}
+			normalized, items := choice.Codec.normalizeValue(value.Value)
+			value.Value = normalized
+			result := make([]diagnostic.Item, 0, len(items))
+			for _, item := range items {
+				result = append(result, prefixItem(item, "value"))
+			}
+			return value, result
+		},
 		Validate: func(value Union[T]) []diagnostic.Item {
 			choice, ok := byID[value.Variant]
 			if !ok {
-				return []diagnostic.Item{diagnostic.NewItem("config.union-variant", diagnostic.ErrorSeverity, diagnostic.Path{}, "union variant is not registered", nil)}
+				return []diagnostic.Item{diagnostic.NewItem("config.union-variant", diagnostic.ErrorSeverity, diagnostic.Path{Fields: []string{"variant"}}, "union variant is not registered", nil)}
 			}
-			return choice.Codec.validateValue(value.Value)
+			items := choice.Codec.validateValue(value.Value)
+			result := make([]diagnostic.Item, 0, len(items))
+			for _, item := range items {
+				result = append(result, prefixItem(item, "value"))
+			}
+			return result
 		},
 		Description: Description{Type: "union", Choices: descriptions},
 	})

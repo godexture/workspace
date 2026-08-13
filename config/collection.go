@@ -217,6 +217,10 @@ func Nested[T any](schema Schema[T]) Codec[T] {
 			cloned, _ := schema.snapshot(value)
 			return cloned
 		},
+		Normalize: func(value T) (T, []diagnostic.Item) {
+			normalized, _, items := schema.normalizeFields(value)
+			return normalized, items
+		},
 		Validate: func(value T) []diagnostic.Item {
 			return schema.validateValue(value)
 		},

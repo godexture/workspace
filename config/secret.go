@@ -71,19 +71,37 @@ func SecretCodec[T any](inner Codec[T]) Codec[SecretValue[T]] {
 			return NewSecret(inner.Clone(value.Reveal()))
 		},
 		Normalize: func(value SecretValue[T]) (SecretValue[T], []diagnostic.Item) {
-			normalized, _ := inner.normalizeValue(value.Reveal())
-			return NewSecret(normalized), nil
+			normalized, items := inner.normalizeValue(value.Reveal())
+			return NewSecret(normalized), redactItems(items)
 		},
 		Validate: func(value SecretValue[T]) []diagnostic.Item {
-			if len(inner.validateValue(value.Reveal())) != 0 {
-				return []diagnostic.Item{diagnostic.NewItem("config.secret-invalid", diagnostic.ErrorSeverity, diagnostic.Path{}, "secret value is invalid", nil)}
-			}
-			return nil
+			return redactItems(inner.validateValue(value.Reveal()))
 		},
 		Description: Description{Type: "secret<" + inner.description.Type + ">", Secret: true},
 	})
 	if !inner.Valid() {
 		result = result.addConstruction(diagnostic.NewItem("config.invalid-secret-codec", diagnostic.ErrorSeverity, diagnostic.Path{}, "secret inner codec must be valid", nil))
+	}
+	return result
+}
+
+// redactItems carries an inner diagnostic out of a secret without carrying
+// what the inner codec was looking at. Severity and the stable code survive so
+// an error stays an error and a warning stays a warning; the message, the
+// detail map, and the value-derived field path do not, because a map key or a
+// slice element description inside a secret is itself secret.
+func redactItems(items []diagnostic.Item) []diagnostic.Item {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]diagnostic.Item, 0, len(items))
+	for _, item := range items {
+		code := item.Code
+		if code == "" {
+			code = codeSecretInvalid
+		}
+		path := diagnostic.Path{Component: item.Path.Component, Descriptor: item.Path.Descriptor}
+		result = append(result, diagnostic.NewItem(code, item.Severity, path, "secret value reported a redacted "+item.Severity.String(), nil))
 	}
 	return result
 }
