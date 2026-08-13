@@ -122,7 +122,7 @@ island 内は direct typed call とし、edge ごとの interface dispatch を c
 
 ## ownership
 
-ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` または `Consume` だけが解放する。
+ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` だけが解放する。`Detach` で値を取り出した cell も同様に空になる。
 
 規則は一つである。
 
