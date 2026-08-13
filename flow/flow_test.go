@@ -231,6 +231,31 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 			t.Fatalf("release count after overwriting the target = %d, want 1", drops.Load())
 		}
 	})
+
+	// The source cell is already empty when the target releases what it held,
+	// so a panic there strands the converted payload unless the hand-off keeps
+	// the obligation until the target actually holds it.
+	t.Run("a panicking target release loses nothing", func(t *testing.T) {
+		var panicking atomic.Int32
+		panickingType := schema.Define[panicDropID](schema.Traits[int]{
+			Drop: func(int) {
+				panicking.Add(1)
+				panic("declared drop panicked")
+			},
+		})
+		target := NewItem(6, panickingType)
+		source := NewItem(7, panickingType)
+		recovered := func() (value any) {
+			defer func() { value = recover() }()
+			return Transfer(&source, &target, panickingType, func(value int) (int, error) { return value, nil })
+		}()
+		if recovered == nil {
+			t.Fatal("the declared drop panic did not propagate")
+		}
+		if panicking.Load() != 2 {
+			t.Fatalf("release count = %d, want the target payload and the converted one", panicking.Load())
+		}
+	})
 }
 
 // Detach is the only way a payload leaves a cell, and it leaves nothing behind

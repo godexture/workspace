@@ -59,8 +59,12 @@ func NewItemWithTraits[T any](value T, fork func(T) T, drop func(T)) Item[T] {
 	return Item[T]{value: value, fork: fork, drop: drop, valid: true}
 }
 
-// Set takes ownership of value, releasing anything the cell still held. A
-// stage that emits many items keeps one cell and reuses it through Set, which
+// Set takes ownership of value, releasing anything the cell still held. It
+// either stores value or releases it, on every path including a panic from the
+// declared Drop it is replacing, so a caller hands a payload to Set and is done
+// with it.
+//
+// A stage that emits many items keeps one cell and reuses it through Set, which
 // costs no allocation because the cell never escapes per item. Building a
 // fresh cell per item is equally correct and allocates once.
 func (i *Item[T]) Set(value T, typ schema.Type[T]) {
@@ -227,9 +231,9 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	value, drop := source.value, source.drop
 	source.clear()
 	// The source cell is empty from here, so its owner cannot release the
-	// value any more. Every path out -- returned error, a panic in build, a
-	// panic while target releases what it held -- has to release exactly one
-	// of the two payloads, and which one depends on how far the hand-off got.
+	// value any more. Until build returns, this is the only obligation left;
+	// once it returns, the payload lives in result and Set takes over, because
+	// Set either stores what it is given or releases it.
 	built := false
 	defer func() {
 		if !built && drop != nil {
@@ -240,15 +244,7 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	if err != nil {
 		return err
 	}
-	// build carried the payload into result, so the obligation moved with it.
 	built = true
-	stored := false
-	defer func() {
-		if !stored {
-			typ.Drop(result)
-		}
-	}()
 	target.Set(result, typ)
-	stored = true
 	return nil
 }

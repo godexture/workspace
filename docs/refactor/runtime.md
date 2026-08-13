@@ -143,7 +143,7 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 `flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
 
-宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork`/`Adopt` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。
+宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork`/`Adopt` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。したがって `Set` の不変条件は「渡された payload を保持するか解放するかのどちらかを必ず行う」であり、caller は Set へ渡した後の payload を二重に守らない。
 
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 
