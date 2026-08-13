@@ -222,7 +222,12 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 		entry := patch.fields[fieldID]
 		var decoded any
 		if entry.isText {
-			value, err := field.decode(entry.text)
+			text, ok := entry.value().(string)
+			if !ok {
+				items = append(items, diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input has the wrong type", inputDetail(field)))
+				continue
+			}
+			value, err := field.decode(text)
 			if err != nil {
 				path := diagnostic.FieldPath(fieldID)
 				path.Fields = append(path.Fields, decodePath(err)...)
@@ -236,7 +241,7 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			}
 			decoded = value
 		} else {
-			decoded = entry.value
+			decoded = entry.value()
 		}
 		if err := field.write(&value, decoded); err != nil {
 			items = append(items, diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input has the wrong type", inputDetail(field)))

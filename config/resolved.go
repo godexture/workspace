@@ -107,6 +107,11 @@ func (r Resolved[C]) String() string {
 	return "resolved config " + r.Fingerprint.String()
 }
 
+// Format prevents every fmt verb, including %#v, from traversing Value.
+func (r Resolved[C]) Format(state fmt.State, verb rune) {
+	writeSafeFormat(state, verb, r.String())
+}
+
 func hashCanonical(canonical []byte) Fingerprint {
 	hash := sha256.New()
 	hash.Write([]byte("godec/config/fingerprint/v1\x00"))

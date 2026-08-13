@@ -1,6 +1,11 @@
 package config
 
-import "github.com/godexture/godec/diagnostic"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/godexture/godec/diagnostic"
+)
 
 // Description is the read-only surface description of a field codec.
 type Description struct {
@@ -90,6 +95,16 @@ type ResolvedView struct {
 	Diagnostics []diagnostic.Item
 	Fingerprint Fingerprint
 	summary     Summary
+}
+
+// String reports only schema and fingerprint identity metadata.
+func (v ResolvedView) String() string {
+	return "resolved config schema=" + strconv.Quote(v.Schema) + " fingerprint=" + v.Fingerprint.String()
+}
+
+// Format prevents every fmt verb, including %#v, from traversing Value.
+func (v ResolvedView) Format(state fmt.State, verb rune) {
+	writeSafeFormat(state, verb, v.String())
 }
 
 // Summary returns an inert redacted projection for Plans and surfaces.

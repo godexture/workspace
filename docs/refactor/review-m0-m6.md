@@ -72,6 +72,10 @@ coverage は合否条件にはしていないが、未検査 contract の探索�
 
 ### R-01 [P1] secret が標準 formatting から漏れる
 
+**状態: 解決済み（2026-08-13）**
+
+`SecretValue`、`Patch`、`Resolved`、`ResolvedView` に全 verb を安全に処理する formatter を追加した。formatter method が呼ばれない named type や unexported outer field でも raw value を反射表示できない opaque storage とし、struct/pointer/slice/map/interface、typed/type-erased resolved value、主要な verb/flag/width/precision の回帰 test を追加した。`Patch` の表示は schema 解決前であるため preset、field ID、source のみを残し、typed/text value は一律非表示にした。secret contract を検査する test failure 自身も raw value を出力しない。
+
 **根拠**
 
 - [`SecretValue.String`](../../config/secret.go)（24 行目）は通常の `%v`/`%s` だけを redaction する。`fmt.Formatter` または `%#v` 向けの保護が無い。
