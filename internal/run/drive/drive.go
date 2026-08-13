@@ -606,15 +606,21 @@ func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
 }
 
 type bufferDelivery[T any] struct {
-	queue *queue.Queue[flow.Owned[T]]
+	queue  *queue.Queue[T]
+	traits schema.Traits[T]
 }
 
-// Emit detaches ownership into the queue. A rejected push never stores the
-// value, so the cell takes it back and the producer stays responsible.
+// Emit hands the value to the queue, which owns it until Pop succeeds. A
+// rejected push never stores it, so the cell takes it back and the producer
+// stays responsible. Traits belong to the edge, not to each value, so the
+// queue stores values alone and no copyable ownership token exists.
 func (b *bufferDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
-	owned := item.Consume()
-	if err := b.queue.Push(ctx, owned); err != nil {
-		item.Adopt(owned)
+	value, ok := item.Detach()
+	if !ok {
+		return ErrInvalidItem
+	}
+	if err := b.queue.Push(ctx, value); err != nil {
+		item.SetWithTraits(value, b.traits.Fork, b.traits.Drop)
 		return err
 	}
 	return nil
@@ -631,7 +637,7 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 		if err != nil {
 			return Link{}, Task{}, err
 		}
-		edge, err := queue.New(limit, ownedTraits(traits))
+		edge, err := queue.New(limit, queueTraits(traits))
 		if err != nil {
 			return Link{}, Task{}, err
 		}
@@ -644,14 +650,14 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 				var item flow.Item[T]
 				defer item.Drop()
 				for {
-					owned, err := edge.Pop(ctx)
+					value, err := edge.Pop(ctx)
 					if errors.Is(err, io.EOF) {
 						return target.close(ctx)
 					}
 					if err != nil {
 						return err
 					}
-					item.Adopt(owned)
+					item.SetWithTraits(value, traits.Fork, traits.Drop)
 					emitErr := target.Emit(ctx, &item)
 					edge.Complete()
 					if emitErr != nil {
@@ -660,21 +666,14 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 				}
 			},
 		}
-		return linkOf[T](&bufferDelivery[T]{queue: edge}), task, nil
+		return linkOf[T](&bufferDelivery[T]{queue: edge, traits: traits}), task, nil
 	}
 }
 
-// ownedTraits projects schema traits onto detached ownership so a queue can
-// size, time, and release what it holds without knowing about cells.
-func ownedTraits[T any](traits schema.Traits[T]) queue.Traits[flow.Owned[T]] {
-	result := queue.Traits[flow.Owned[T]]{Drop: func(value flow.Owned[T]) { value.Release() }}
-	if traits.Size != nil {
-		result.Size = func(value flow.Owned[T]) int { return traits.Size(value.Value()) }
-	}
-	if traits.Time != nil {
-		result.Time = func(value flow.Owned[T]) (int64, bool) { return traits.Time(value.Value()) }
-	}
-	return result
+// queueTraits hands the schema traits straight to the queue, which owns every
+// value it holds and releases the remainder when drained.
+func queueTraits[T any](traits schema.Traits[T]) queue.Traits[T] {
+	return queue.Traits[T]{Drop: traits.Drop, Size: traits.Size, Time: traits.Time}
 }
 
 type observedDelivery[T any] struct {
@@ -734,11 +733,11 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 	if count < 2 {
 		return nil, Task{}, ErrBinding
 	}
-	edges := make([]*queue.Queue[flow.Owned[I]], count)
+	edges := make([]*queue.Queue[I], count)
 	links := make([]Link, count)
-	queueTraits := ownedTraits(traits)
+	stored := queueTraits(traits)
 	for index := range edges {
-		edge, err := queue.New(limit, queueTraits)
+		edge, err := queue.New(limit, stored)
 		if err != nil {
 			for previous := 0; previous < index; previous++ {
 				edges[previous].Close()
@@ -746,9 +745,9 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 			return nil, Task{}, err
 		}
 		edges[index] = edge
-		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
+		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, traits: traits})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, traits: traits, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 	}
@@ -764,7 +763,8 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 
 type zipState[I, O any] struct {
 	joiner    flow.Joiner[I, O]
-	edges     []*queue.Queue[flow.Owned[I]]
+	edges     []*queue.Queue[I]
+	traits    schema.Traits[I]
 	items     []flow.Item[I]
 	batch     []*flow.Item[I]
 	read      int
@@ -800,14 +800,14 @@ func (s *zipState[I, O]) run(ctx context.Context) error {
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
-			owned, err := edge.Pop(ctx)
+			value, err := edge.Pop(ctx)
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			if err != nil {
 				return err
 			}
-			s.items[index].Adopt(owned)
+			s.items[index].SetWithTraits(value, s.traits.Fork, s.traits.Drop)
 			s.read++
 		}
 		if !s.withinWatermark() {

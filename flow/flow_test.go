@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -142,19 +143,118 @@ func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 	}
 }
 
-// Detaching ownership for a queue and taking it back must not allocate, so a
+// Detaching a value for a queue and taking it back must not allocate, so a
 // bounded edge costs no more than a direct call.
 func TestOwnershipTransferHasNoAllocation(t *testing.T) {
+	traits := linearValueSchema.Traits()
 	allocations := testing.AllocsPerRun(1000, func() {
 		item := NewItem(1, linearValueSchema)
-		stored := item.Consume()
-		if !stored.Valid() || item.Valid() {
-			t.Fatal("consume did not move ownership out of the cell")
+		stored, ok := item.Detach()
+		if !ok || item.Valid() {
+			t.Fatal("detach did not move the value out of the cell")
 		}
-		item.Adopt(stored)
+		item.SetWithTraits(stored, traits.Fork, traits.Drop)
 		item.Drop()
 	})
 	if allocations != 0 {
 		t.Fatalf("linear ownership transfer allocations = %v, want 0", allocations)
 	}
 }
+
+// Transfer empties the source before running a conversion it does not control,
+// so every way out of that conversion must release the value exactly once.
+func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
+	var drops atomic.Int32
+	typ := countingSchema(&drops)
+
+	t.Run("success hands the value to build", func(t *testing.T) {
+		drops.Store(0)
+		source := NewItem(1, typ)
+		defer source.Drop()
+		var target Item[int]
+		if err := Transfer(&source, &target, typ, func(value int) (int, error) { return value, nil }); err != nil {
+			t.Fatal(err)
+		}
+		if drops.Load() != 0 {
+			t.Fatalf("release count after a successful transfer = %d, want 0", drops.Load())
+		}
+		target.Drop()
+		if drops.Load() != 1 {
+			t.Fatalf("release count after dropping the target = %d, want 1", drops.Load())
+		}
+	})
+
+	t.Run("returned error releases once", func(t *testing.T) {
+		drops.Store(0)
+		source := NewItem(2, typ)
+		defer source.Drop()
+		var target Item[int]
+		defer target.Drop()
+		if err := Transfer(&source, &target, typ, func(int) (int, error) { return 0, errTransferTest }); !errors.Is(err, errTransferTest) {
+			t.Fatalf("transfer error = %v", err)
+		}
+		if drops.Load() != 1 || source.Valid() || target.Valid() {
+			t.Fatalf("release count after a failed build = %d, want 1", drops.Load())
+		}
+	})
+
+	t.Run("panic releases once and propagates", func(t *testing.T) {
+		drops.Store(0)
+		recovered := func() (value any) {
+			defer func() { value = recover() }()
+			source := NewItem(3, typ)
+			defer source.Drop()
+			var target Item[int]
+			defer target.Drop()
+			_ = Transfer(&source, &target, typ, func(int) (int, error) { panic("build failed") })
+			return nil
+		}()
+		if recovered != "build failed" {
+			t.Fatalf("recovered = %v, want the original panic value", recovered)
+		}
+		if drops.Load() != 1 {
+			t.Fatalf("release count after a panicking build = %d, want 1", drops.Load())
+		}
+	})
+
+	t.Run("target overwrite releases what it held", func(t *testing.T) {
+		drops.Store(0)
+		target := NewItem(4, typ)
+		defer target.Drop()
+		source := NewItem(5, typ)
+		defer source.Drop()
+		if err := Transfer(&source, &target, typ, func(value int) (int, error) { return value, nil }); err != nil {
+			t.Fatal(err)
+		}
+		if drops.Load() != 1 {
+			t.Fatalf("release count after overwriting the target = %d, want 1", drops.Load())
+		}
+	})
+}
+
+// Detach is the only way a transport takes a value out of a cell, and it
+// leaves nothing behind that could release the value a second time.
+func TestDetachLeavesNoSecondReleaser(t *testing.T) {
+	var drops atomic.Int32
+	typ := countingSchema(&drops)
+	traits := typ.Traits()
+	item := NewItem(1, typ)
+	value, ok := item.Detach()
+	if !ok {
+		t.Fatal("detach reported no value")
+	}
+	item.Drop()
+	item.Drop()
+	if drops.Load() != 0 {
+		t.Fatalf("release count after detaching = %d, want 0", drops.Load())
+	}
+	var adopted Item[int]
+	adopted.SetWithTraits(value, traits.Fork, traits.Drop)
+	adopted.Drop()
+	adopted.Drop()
+	if drops.Load() != 1 {
+		t.Fatalf("release count after the adopting cell dropped = %d, want 1", drops.Load())
+	}
+}
+
+var errTransferTest = errors.New("transfer build failure")

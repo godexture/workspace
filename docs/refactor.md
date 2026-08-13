@@ -88,6 +88,7 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 |---|---|
 | 確定した方針、延期した判断 | [decisions.md](refactor/decisions.md) |
 | 全マイルストーンの状態、直近の成果、次の作業 | [checkpoint.md](refactor/checkpoint.md) |
+| M0〜M6 の実装監査、未解消 finding、再完了条件 | [review-m0-m6.md](refactor/review-m0-m6.md) |
 | 実装エージェントへ渡す milestone ごとの作業手順 | [task/](refactor/task/) |
 | M0 baseline の再現手順・toolchain・所見の要約 | [baseline.md](refactor/baseline.md) |
 | package/module/repository の境界、依存方向 | [architecture.md](refactor/architecture.md) |

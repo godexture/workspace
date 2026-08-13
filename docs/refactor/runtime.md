@@ -134,7 +134,7 @@ ownership は API の慣習でなく contract として固定する。**所有�
 - `Emit`/`Write` に cell を渡すことは、consume する機会を与えることであって、所有権の無条件移転ではない。
 - linear path は所有権を move し、refcount を増やさない。
 - fan-out でのみ `Fork` で二人目の owner を作る。
-- queue 境界は `Consume` で cell から所有権を切り離し、`Adopt` で戻す。
+- queue 境界は `Detach` で値を取り出し、`SetWithTraits` で戻す。trait は edge が持つので、queue は値だけを保持し、所有権 token を作らない。
 - mutable access は exclusive owner のみ。shared item を変更する場合は copy-on-write。
 
 payload を別の item 型へ包み直すだけの段は `flow.Transfer` で move する。source cell を解放せずに空にし、`Detach` で payload を取り出して target を作るため、retain も lease 確保も起きず、どの時点でも owner は一人である。両方を生かす必要がある時だけ `Fork` を使う。`Share` が残ってよいのは schema の `Fork` trait と型自身の `Share` method だけで、hop ごとの retain は production code に存在しない。

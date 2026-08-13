@@ -583,16 +583,20 @@ func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input *flow.Item[T])
 }
 
 type skeletonEmitter[T any] struct {
-	items []flow.Owned[T]
+	items []T
 }
 
 func (e *skeletonEmitter[T]) Emit(_ context.Context, input *flow.Item[T]) error {
-	e.items = append(e.items, input.Consume())
+	value, ok := input.Detach()
+	if !ok {
+		return fmt.Errorf("collector received an unowned item")
+	}
+	e.items = append(e.items, value)
 	return nil
 }
 
 type skeletonItem[T any] struct {
-	input      flow.Owned[T]
+	input      T
 	descriptor stream.Descriptor
 }
 
@@ -903,14 +907,15 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err := source.Read(ctx, &byteCell); err != nil {
 		t.Fatal(err)
 	}
-	byteItem := skeletonItem[[]byte]{input: byteCell.Consume(), descriptor: descriptors.source.outputs["bytes"]}
+	byteValue, _ := byteCell.Detach()
+	byteItem := skeletonItem[[]byte]{input: byteValue, descriptor: descriptors.source.outputs["bytes"]}
 	if _, ok := skeletonSampleRate.Get(byteItem.descriptor.Properties()); ok {
 		t.Fatal("demuxer input unexpectedly had the generated sample-rate property")
 	}
 	if err := descriptors.demuxer.accept("bytes", byteItem.descriptor); err != nil {
 		t.Fatal(err)
 	}
-	if err := processOwned(ctx, byteItem.input, chunkOutput, demuxer.Process); err != nil {
+	if err := processOwned(ctx, byteItem.input, skeletonBytesSchema, chunkOutput, demuxer.Process); err != nil {
 		t.Fatal(err)
 	}
 	rate, ok := skeletonSampleRate.Get(descriptors.decoder.inputs["packets"].Properties())
@@ -923,7 +928,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.parser.accept("chunks", chunk.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := processOwned(ctx, chunk.input, packetOutput, parser.Process); err != nil {
+		if err := processOwned(ctx, chunk.input, skeletonChunkSchema, packetOutput, parser.Process); err != nil {
 			t.Fatal(err)
 		}
 		for _, packetInput := range packetOutput.items {
@@ -932,7 +937,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 			if err := descriptors.decoder.accept("packets", packetValue.descriptor); err != nil {
 				t.Fatal(err)
 			}
-			if err := processOwned(ctx, packetValue.input, frameOutput, decoder.Process); err != nil {
+			if err := processOwned(ctx, packetValue.input, skeletonPacketSchema, frameOutput, decoder.Process); err != nil {
 				t.Fatal(err)
 			}
 			for _, frameInput := range frameOutput.items {
@@ -941,7 +946,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 				if err := descriptors.encoder.accept("frames", frame.descriptor); err != nil {
 					t.Fatal(err)
 				}
-				if err := processOwned(ctx, frame.input, encodedPacketOutput, encoder.Process); err != nil {
+				if err := processOwned(ctx, frame.input, skeletonFrameSchema, encodedPacketOutput, encoder.Process); err != nil {
 					t.Fatal(err)
 				}
 				for _, encodedPacketInput := range encodedPacketOutput.items {
@@ -949,7 +954,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 					if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 						t.Fatal(err)
 					}
-					if err := processOwned(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
+					if err := processOwned(ctx, encodedPacket.input, skeletonPacketSchema, chunkEmitter, muxer.Process); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -965,7 +970,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 		if err := descriptors.muxer.accept("packets", encodedPacket.descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if err := processOwned(ctx, encodedPacket.input, chunkEmitter, muxer.Process); err != nil {
+		if err := processOwned(ctx, encodedPacket.input, skeletonPacketSchema, chunkEmitter, muxer.Process); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1119,9 +1124,8 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 
 // processOwned adopts stored ownership into a cell for one direct Process
 // call, mirroring what a runtime delivery does around a bounded edge.
-func processOwned[I, O any](ctx context.Context, owned flow.Owned[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
-	var cell flow.Item[I]
-	cell.Adopt(owned)
+func processOwned[I, O any](ctx context.Context, value I, typ schema.Type[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
+	cell := flow.NewItem(value, typ)
 	defer cell.Drop()
 	return process(ctx, &cell, output)
 }

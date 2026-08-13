@@ -22,7 +22,8 @@ func (*noCopy) Unlock() {}
 // Item is one owned value in transit.
 //
 // An Item is a cell, not a value: it is always passed as a pointer, and the
-// first Drop or Consume releases it while every later one does nothing. That
+// first Drop or Detach releases or removes it while every later one does
+// nothing. That
 // single rule replaces per-call ownership protocols. A stage creates or
 // receives a cell, defers Drop, and passes the pointer on; whoever consumes it
 // wins, and if nobody does, the deferred Drop releases it. Success and failure
@@ -130,28 +131,35 @@ func (i *Item[T]) Fork(target *Item[T]) bool {
 	return true
 }
 
-// Consume detaches ownership into a storable value. Transports that must hold
-// an item outside a call stack use it; components move cells instead.
-func (i *Item[T]) Consume() Owned[T] {
+// Detach empties the cell and returns the held value without releasing it, so
+// the caller becomes responsible for it. A transport that must hold an item
+// outside a call stack uses it together with SetWithTraits; components move
+// cells instead.
+//
+// It returns no token, because a token that can be copied can be released
+// twice, which is exactly what a cell exists to prevent.
+func (i *Item[T]) Detach() (T, bool) {
 	if i == nil || !i.valid {
-		return Owned[T]{}
+		var zero T
+		return zero, false
 	}
-	result := Owned[T]{value: i.value, fork: i.fork, drop: i.drop, valid: true}
+	value := i.value
 	i.clear()
-	return result
+	return value, true
 }
 
-// Adopt fills the cell from stored ownership, releasing anything it held.
-func (i *Item[T]) Adopt(value Owned[T]) {
+// SetWithTraits takes ownership of value under explicit traits, releasing
+// anything the cell still held. It is the counterpart of Detach for a
+// transport that carries traits separately from the values it stores.
+func (i *Item[T]) SetWithTraits(value T, fork func(T) T, drop func(T)) {
 	if i == nil {
-		value.Release()
+		if drop != nil {
+			drop(value)
+		}
 		return
 	}
 	i.Drop()
-	if !value.valid {
-		return
-	}
-	i.value, i.fork, i.drop, i.valid = value.value, value.fork, value.drop, true
+	i.value, i.fork, i.drop, i.valid = value, fork, drop, true
 }
 
 func (i *Item[T]) clear() {
@@ -174,32 +182,20 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	}
 	value, drop := source.value, source.drop
 	source.clear()
-	result, err := build(value)
-	if err != nil {
-		if drop != nil {
+	// The source cell is empty from here, so its owner cannot release the
+	// value any more. Releasing on every path out of build -- returned error
+	// or panic -- is what keeps that emptying safe.
+	handed := false
+	defer func() {
+		if !handed && drop != nil {
 			drop(value)
 		}
+	}()
+	result, err := build(value)
+	if err != nil {
 		return err
 	}
+	handed = true
 	target.Set(result, typ)
 	return nil
-}
-
-// Owned is ownership detached from a cell so a transport can store it across
-// call stacks. It has no copy protection, so only queue and fan-out
-// implementations hold one; components use Item.
-type Owned[T any] struct {
-	value T
-	fork  func(T) T
-	drop  func(T)
-	valid bool
-}
-
-func (o Owned[T]) Valid() bool { return o.valid }
-func (o Owned[T]) Value() T    { return o.value }
-
-func (o Owned[T]) Release() {
-	if o.valid && o.drop != nil {
-		o.drop(o.value)
-	}
 }
