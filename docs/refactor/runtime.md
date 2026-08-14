@@ -151,7 +151,7 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 `flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
 
-宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。したがって `Set` の不変条件は「渡された payload を保持するか解放するかのどちらかを必ず行う」であり、caller は Set へ渡した後の payload を二重に守らない。
+宣言された `Drop` は第三者 code であり、slot が保持物を解放している最中に panic しうる。その panic は `Drop` の内側で recover し、slot の domain へ報告する（上記「Drop は panic も error も返さない」）。したがって `Set` と `Fork` は「保持物の解放が失敗したら受け取り中の payload を解放してから panic を通す」という分岐を持たない。解放は何も巻き戻さないので、受け取り中の payload は必ず格納される。
 
 第三者 `Drop` を runtime の mutex を保持したまま呼ばない。bounded ring の `Pop` は受け取り先 cell の解放を lock の外で先に行い、`Drain` は ring 全体を lock 下で取り出してから解放する。lock 中に panic すると mutex が解放されず、後片付けをするはずの `Drain` が同じ mutex で止まるため、panic が recovery boundary へ到達しない。
 
@@ -160,7 +160,7 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 `flow.Item` は payload の箱ではなく **ownership slot** である。slot は一度だけ `Bind` で「その slot が payload を所有する traits」と「解放できなかった時の報告先 (failure domain)」を宣言する。所有権は slot 間を移動し、domain を持ち歩かない。payload は常に、いま入っている slot の domain で解放され、報告される。
 
 - 受け手が domain を宣言していなければ、`Move`/`Fork` は送り手の宣言を引き継ぐ。宣言の無い slot が payload を持つ状態を作らないためである。
-- 未 bind の slot への `Set` は何もしない。解放義務の無い payload を作るのは漏れであり、空のままなら runtime の入口が `ErrInvalidItem` で即座に弾く。
+- 未 bind の slot へ所有権を渡すことは programming error であり、panic する。解放も報告もできない payload を静かに失うより、その場で言う方がよい。runtime は bound な slot だけを配り、`Emitter.Own` は take の前に bind するため、contract に従う限り到達しない。
 - component は slot を自分で宣言しない。runtime から渡された `into`/`input` はすでに bound で、出力は `Emitter.Own(&slot, value)` で受け取る。domain 無しで valid な item を作る API は無い。
 - queue の ring slot は edge を drain する task の domain に属する。producer が push した payload はその瞬間から consumer のものなので、所有権移動に伴う rebind は要らない。
 
@@ -168,7 +168,9 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 **宣言された `Drop` の panic は `Item.Drop` の内側で recover し、slot の domain へ報告する。** 解放は戻り道の defer で走り、そこには戻り値も recovery boundary も無く、しかも別の panic が既に巻き戻っていることがある。そこで panic を通すと、**実際に仕事を止めた failure を後片付けの failure が置き換える。**
 
-`Drop` は error も返さない。返せば「domain へ記録し、呼び出し側が戻り値へ join する」二重経路が復活し、適用漏れと二重報告を生む。cleanup failure の出口は domain だけである。
+`Drop` は error も返さない。返せば「domain へ記録し、呼び出し側が戻り値へ join する」二重経路が復活し、適用漏れと二重報告を生む。cleanup failure の出口は domain だけである。domain 自身も第三者 code なので、報告もまた raise しない。
+
+1 item の処理は、consumer に渡す機会を与え、consumer が受け取らなかった payload の解放まで成功して初めて終わる。source、bounded edge、fan-in はいずれもその場で settle し、**解放が失敗したら次の値へ進まない。** 進めば次の payload も同じ壊れた trait で漏れる。
 
 この結果として、`Set`/`Fork` の「保持物の解放が panic したら受け取り中の payload を解放してから panic を通す」という分岐が不要になった。解放は失敗しても巻き戻さないので、受け取り中の payload は必ず格納される。`release.All` も全件試行を保証するだけでよく、error 集約も個別 recover も持たない。単一 slot、queue、fan-out、fan-in が同じ経路になる。
 
@@ -184,6 +186,8 @@ Outcome{
 ```
 
 `Failure` は `Kind`/`Task`/`Node`/`Err`/`Stack` を持つ。`Node` は記録時に snapshot する。task は island の node を渡り歩くので、最後にいた node は他の node で起きた failure を説明しない。primary と cleanup を `errors.Join` した文字列にしないのは、Host の `Result` が同じ二分割を持っており、そこへ写すのに構造が要るからである。phase は Host の層の情報なので、Host が写像する時に stamp する。
+
+`Seal()` が終えるのは journal ではなく **attempt** である。`Run` の後に `Finish`/`Flush` が同じ slot 群を使うため、seal で journal を閉じると後から来た failure を黙って捨てることになる。seal は現在の attempt の結果を取り出し、次の attempt を開始する。`Failure` は `Attempt` と `Seq` を持ち、これが event identity になる。同じ場所で同じ文面の failure が二度起きれば、それは解放されなかった payload が二つあるということなので、消費側は error 文字列ではなく identity で冪等化する。
 
 boundary は normal/error/panic を問わず常に `Seal()` する。読み出し規則は分岐しない。cancel cause だけは単一 error を要求するので `Outcome.Cause()` が与える。primary があればそれ、無ければ最初の cleanup failure であり、cleanup failure が primary を上書きすることはない。
 

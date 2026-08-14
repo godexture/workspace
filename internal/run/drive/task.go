@@ -82,9 +82,13 @@ type sourceState[T any] struct {
 	typ    schema.Type[T]
 	next   delivery[T]
 	item   flow.Item[T]
+	scope  *journal.Scope
 }
 
-func (s *sourceState[T]) bindScope(scope *journal.Scope) { s.item.Bind(s.typ, scope) }
+func (s *sourceState[T]) bindScope(scope *journal.Scope) {
+	s.scope = scope
+	s.item.Bind(s.typ, scope)
+}
 
 func (s *sourceState[T]) run(ctx context.Context) error {
 	defer s.item.Drop()
@@ -107,6 +111,16 @@ func (s *sourceState[T]) run(ctx context.Context) error {
 		}
 		if err := s.next.Emit(ctx, &s.item); err != nil {
 			return err
+		}
+		// The value is finished here, not at the next Read. Releasing what the
+		// chain declined at the top of the loop would let a failed release pass
+		// as a read that had not happened yet, and would leave the slot full at
+		// EOF, which reads as a Reader that returned an item with its EOF.
+		s.item.Drop()
+		if !s.scope.Clean() {
+			// The declined payload could not be released. Reading another value
+			// would leak the next one the same way.
+			return nil
 		}
 	}
 }

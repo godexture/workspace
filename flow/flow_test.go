@@ -339,3 +339,44 @@ func TestTakingOverAFailedReleaseKeepsTheIncomingPayload(t *testing.T) {
 }
 
 var errTransferTest = errors.New("transfer build failure")
+
+// A domain is third-party code as much as a declared Drop is, and reporting to
+// one is the last step of a release. A domain that panics must not take the
+// release path with it, because that path runs where a failure has already
+// stopped the work.
+func TestReportingToAPanickingDomainDoesNotRaise(t *testing.T) {
+	var released atomic.Int32
+	panicking := schema.Define[panicDropID](schema.Traits[int]{
+		Drop: func(int) {
+			released.Add(1)
+			panic("declared drop panicked")
+		},
+	})
+	item := NewItem(1, panicking, panickingDomain{})
+	item.Drop()
+	if released.Load() != 1 {
+		t.Fatalf("release attempts = %d", released.Load())
+	}
+	if item.Valid() {
+		t.Fatal("the slot kept a payload it had released")
+	}
+}
+
+// An unbound slot knows no release and no domain, so taking ownership there
+// would lose the payload with no diagnosis. It is a programming error and says
+// so, rather than returning as though the hand-off had happened.
+func TestOwnershipHandedToAnUnboundSlotIsRefusedLoudly(t *testing.T) {
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		var slot Item[int]
+		slot.Set(7)
+		return nil
+	}()
+	if recovered == nil {
+		t.Fatal("an unbound slot accepted ownership silently")
+	}
+}
+
+type panickingDomain struct{}
+
+func (panickingDomain) Cleanup(error) { panic("the domain panicked") }

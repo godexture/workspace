@@ -30,12 +30,18 @@ func (e *PanicError) StackTrace() []byte { return append([]byte(nil), e.Stack...
 //
 // It uses no atomics. The task is the only writer, and the boundary that seals
 // it runs in that same goroutine, after the task has stopped.
+// A scope spans one lifecycle operation at a time. Run is one, and the Flush
+// that Finish performs afterwards is another: it uses the same slots, in the
+// same chain, after the run's outcome has been taken. Sealing therefore ends an
+// attempt rather than the scope, and what is reported next belongs to the next
+// attempt instead of being dropped for arriving late.
 type Scope struct {
 	task    string
 	node    string
+	attempt uint64
+	next    uint64
 	primary *Failure
 	cleanup []Failure
-	sealed  bool
 }
 
 func NewScope(node string) *Scope { return &Scope{node: node} }
@@ -64,7 +70,7 @@ func (s *Scope) Enter(node string) string {
 // end of the journal: an ownership slot in this domain reports here instead of
 // returning, because releasing happens where no return value is left.
 func (s *Scope) Cleanup(err error) {
-	if s == nil || err == nil || s.sealed {
+	if s == nil || err == nil {
 		return
 	}
 	s.cleanup = append(s.cleanup, s.failure(cleanupKind(err), err, stackOf(err)))
@@ -73,7 +79,7 @@ func (s *Scope) Cleanup(err error) {
 // Fail records the error that stopped the task. The first one wins: later
 // failures are consequences of it, and a task stops once.
 func (s *Scope) Fail(err error) {
-	if s == nil || err == nil || s.sealed || s.primary != nil {
+	if s == nil || err == nil || s.primary != nil {
 		return
 	}
 	failure := s.failure(TaskError, err, stackOf(err))
@@ -84,7 +90,7 @@ func (s *Scope) Fail(err error) {
 // described, never kept: it is chosen by the code that panicked and can be the
 // data it was handling.
 func (s *Scope) Panicked(recovered any, stack []byte) {
-	if s == nil || s.sealed {
+	if s == nil {
 		return
 	}
 	failure := s.failure(TaskPanic, &PanicError{
@@ -103,18 +109,31 @@ func (s *Scope) Clean() bool {
 	return s == nil || (s.primary == nil && len(s.cleanup) == 0)
 }
 
-// Seal closes the journal and returns what the task ended with. Anything
-// reported afterwards belongs to a domain that outlives this task, not here.
+// Seal takes what the current attempt ended with and starts the next one. The
+// journal stays open: a later lifecycle operation on the same slots reports
+// into the attempt it belongs to rather than being discarded for arriving after
+// a result was taken.
 func (s *Scope) Seal() Outcome {
 	if s == nil {
 		return Outcome{}
 	}
-	s.sealed = true
-	return Outcome{Task: s.task, Primary: s.primary, Cleanup: s.cleanup}
+	outcome := Outcome{Task: s.task, Primary: s.primary, Cleanup: s.cleanup}
+	s.attempt++
+	s.primary, s.cleanup = nil, nil
+	return outcome
 }
 
 func (s *Scope) failure(kind FailureKind, err error, stack []byte) Failure {
-	return Failure{Kind: kind, Task: s.task, Node: s.node, Err: err, Stack: append([]byte(nil), stack...)}
+	s.next++
+	return Failure{
+		Kind:    kind,
+		Task:    s.task,
+		Node:    s.node,
+		Attempt: s.attempt,
+		Seq:     s.next,
+		Err:     err,
+		Stack:   append([]byte(nil), stack...),
+	}
 }
 
 // stacked is what a failure that was recovered from a panic carries. flow's

@@ -69,8 +69,12 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 // acceptTaskFailure records one journal entry once. cleanup decides which half
 // of Result it lands in; primary, when offered, collects the first failure that
 // could stop the run.
+// The key is the event's identity, not what it says. Two releases that failed
+// the same way in the same place are two payloads that were not released, and
+// reporting one of them would understate what happened.
 func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
-	key := "failure:" + value.Task + ":" + value.Node + ":" + value.Err.Error()
+	attempt, sequence := value.Identity()
+	key := fmt.Sprintf("failure:%s:%d:%d", value.Task, attempt, sequence)
 	if _, exists := r.reported[key]; exists {
 		return
 	}

@@ -61,8 +61,14 @@ func (c *Collector) Failures() []error {
 // reason it is there: a payload with no domain has nowhere to report a release
 // it could not perform.
 func NewItem[T any](value T, typ schema.Type[T], into Reporter) Item[T] {
-	if !typ.Valid() || into == nil {
-		typ.Drop(value)
+	if into == nil {
+		panic("flow: an item needs the failure domain it belongs to")
+	}
+	if !typ.Valid() {
+		// The schema cannot describe ownership, so no slot can hold this
+		// payload. Releasing it is still attempted, and a release that fails
+		// is reported rather than raised: this runs wherever the caller was.
+		report(into, invokeDrop(typ.Drop, value))
 		return Item[T]{}
 	}
 	traits := typ.Traits()
@@ -132,16 +138,23 @@ func (i *Item[T]) Bind(typ schema.Type[T], reporter Reporter) {
 // anything the slot still held. It either stores value or releases it on every
 // path, so a caller hands a payload to Set and is done with it.
 //
-// An unbound slot declares nothing, so it cannot take ownership of anything:
-// it has no release to perform and nowhere to report one that fails, and
-// storing the payload anyway would lose it silently. Set leaves such a slot
-// empty, which every runtime entry point rejects at once.
+// An unbound slot declares nothing, so it cannot take ownership: it knows no
+// release to perform and no domain to report one that fails to. Handing a
+// payload to one is a programming error and panics, because the alternatives
+// are worse. Storing it would leave a payload nobody can release; returning
+// quietly would lose it with no diagnosis at all, and an emptiness discovered
+// later does not give back the release that was owed. A runtime hands out bound
+// slots and Emitter.Own binds before it takes, so this cannot be reached by
+// following the contract.
 //
 // A stage that emits many payloads keeps one slot and reuses it, which costs no
 // allocation because the slot never escapes per item.
 func (i *Item[T]) Set(value T) {
-	if i == nil || !i.bound {
+	if i == nil {
 		return
+	}
+	if !i.bound {
+		panic("flow: an unbound slot cannot take ownership; fill it through Emitter.Own or a slot the runtime bound")
 	}
 	i.Drop()
 	i.value, i.valid = value, true
@@ -227,11 +240,20 @@ func (i *Item[T]) release(value T) {
 	if i.drop == nil {
 		return
 	}
-	failure := invokeDrop(i.drop, value)
-	if failure == nil || i.reporter == nil {
+	report(i.reporter, invokeDrop(i.drop, value))
+}
+
+// report hands a failure to a domain without letting it raise. A domain is
+// third-party code as much as a declared Drop is, and this is the last step of
+// a release: there is no return value left to carry a failure here, and a panic
+// would replace whatever stopped the work. A domain that cannot even accept a
+// report leaves no other trace.
+func report(into Reporter, failure error) {
+	if into == nil || failure == nil {
 		return
 	}
-	i.reporter.Cleanup(failure)
+	defer func() { _ = recover() }()
+	into.Cleanup(failure)
 }
 
 func invokeDrop[T any](drop func(T), value T) (failure error) {
