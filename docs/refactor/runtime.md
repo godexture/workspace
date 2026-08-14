@@ -151,9 +151,9 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 cleanup failure は握り潰さない。`release.All` の結果は、それを呼んだ task の答えの一部として返る。fan-in は batch ごとの解放失敗をその場で返し、次の batch へ進まない。`Execution.Discard` は全 task を訪ねてから failure を結合し、Host は通常終了でも cleanup 経路でも Result へ載せる。
 
-runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。下流が panic すると `Complete` を呼ぶ文を巻き戻して飛ばすため、edge の drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
+runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 
-fan-in の quiescence は edge の idle 状態ではなく task 自身の結末で決まる。一つの batch が全 input にまたがるためである。input を EOF まで drain した時だけ quiesce したものとし、error や panic で止まった join は保持していた batch を下流へ通していないため、barrier は同じ理由で idle を返さず cancel を待つ。
+fan-in の quiescence は edge の idle 状態ではなく task 自身の結末で決まる。一つの batch が全 input にまたがるためである。input を EOF まで drain し、**かつ戻り道の cleanup がすべて成功した時だけ** quiesce したものとする。EOF に達しても、join が保持していた未 join の batch を解放できなければ task は失敗しており、失敗した task は quiesce していない。error や panic で止まった join も同じで、barrier は idle を返さず cancel を待つ。
 
 したがって `Complete` と `Abandon` の区別は、barrier が `WaitIdle` である edge にだけ意味を持つ。join は正常終了でも未 join の batch を保持したまま終わる（一つの input の EOF が全体の終わりになる）ため、input の `active` は fan-in の quiescence を表せない。fan-in edge の slot は全経路で `Complete` により返し、その呼び出しは capacity の返却だけを意味する。
 

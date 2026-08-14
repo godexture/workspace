@@ -47,19 +47,20 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 }
 
 type zipState[I, O any] struct {
-	joiner    flow.Joiner[I, O]
-	edges     []*queue.Queue[I]
-	traits    schema.Traits[I]
-	items     []flow.Item[I]
-	batch     []*flow.Item[I]
-	read      int
-	next      delivery[O]
-	time      func(I) (int64, bool)
-	watermark int64
-	done      chan struct{}
-	quiesced  bool
-	once      sync.Once
-	err       error
+	joiner     flow.Joiner[I, O]
+	edges      []*queue.Queue[I]
+	traits     schema.Traits[I]
+	items      []flow.Item[I]
+	batch      []*flow.Item[I]
+	read       int
+	next       delivery[O]
+	time       func(I) (int64, bool)
+	watermark  int64
+	done       chan struct{}
+	reachedEOF bool
+	quiesced   bool
+	once       sync.Once
+	err        error
 }
 
 func (s *zipState[I, O]) close() {
@@ -81,6 +82,12 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 	defer func() {
 		s.close()
 		err = errors.Join(err, s.discard())
+		// Reaching EOF is not enough. The batch this join was still holding is
+		// released on the way out, and so is anything left in the inputs; a
+		// release that fails there is a failure of this task, and a task that
+		// failed did not quiesce. The write precedes the close of done, so the
+		// barrier reads it with that hand-off.
+		s.quiesced = s.reachedEOF && err == nil
 		close(s.done)
 	}()
 	defer func() { err = errors.Join(err, s.release()) }()
@@ -89,10 +96,10 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		for index, edge := range s.edges {
 			err := edge.Pop(ctx, &s.items[index])
 			if errors.Is(err, io.EOF) {
-				// Draining an input to EOF is the only way this join reaches
-				// quiescence. The write precedes the deferred close of done, so
-				// the barrier reads it with that hand-off.
-				s.quiesced = true
+				// An input reaching EOF ends the stream for all of them. It is
+				// the only end this join can quiesce from, but the cleanup on
+				// the way out still has to succeed.
+				s.reachedEOF = true
 				return nil
 			}
 			if err != nil {
@@ -157,12 +164,12 @@ func (s *zipState[I, O]) release() error {
 // quiescence is the task's own outcome rather than the idle state of its
 // edges, because one batch spans every input.
 //
-// A join that stopped without draining its inputs never reached that outcome:
-// the batch it held did not finish downstream. Reporting a barrier anyway
-// would let Host run Finalize and Flush over a data path that has already
-// died, and would move the failure's phase from run to whatever boundary
-// noticed the cancellation next. Only a failing task ends this way, and its
-// failure cancels this context, so the wait ends with that failure.
+// A join that stopped without draining its inputs, or that could not release
+// what it still held on the way out, never reached that outcome. Reporting a
+// barrier anyway would let Host run Finalize and Flush over a data path that
+// has already died, and would move the failure's phase from run to whatever
+// boundary noticed the cancellation next. Only a failing task ends this way,
+// and its failure cancels this context, so the wait ends with that failure.
 func (s *zipState[I, O]) barrier(ctx context.Context) error {
 	s.close()
 	select {

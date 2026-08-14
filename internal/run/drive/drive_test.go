@@ -355,56 +355,103 @@ type panickingWriter struct{ operatorBase }
 
 func (panickingWriter) Write(context.Context, *flow.Item[owned]) error { panic("writer panicked") }
 
-// A consumer that panics unwinds past the Complete that follows Emit. The edge
-// must stop counting a value nobody is processing, and must still not report
-// itself quiescent: the value never finished downstream, and a barrier that
-// said otherwise would let the caller run Finalize over a dead data path. The
-// failure that stopped the consumer is what ends the wait.
-func TestAnAbandonedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
-	owners := &ownership{}
-	typ := ownedSchema[driveOutputID](owners)
-	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	sinkLink, err := NewSink("in", typ).OpenSink(&panickingWriter{operatorBase: operatorBase{sinkShape}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
-	if err != nil {
-		t.Fatal(err)
-	}
-	producer, err := deliveryOf[owned](buffered)
-	if err != nil {
-		t.Fatal(err)
-	}
-	item := flow.NewItem(owned{value: 1}, typ)
-	defer item.Drop()
-	if err := producer.Emit(context.Background(), &item); err != nil {
-		t.Fatal(err)
-	}
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		defer func() { _ = recover() }()
-		_ = bufferTask.Run(context.Background())
-	}()
-	<-stopped
+// decliningWriter leaves the cell full, which the ownership rule allows: Emit
+// offers a value, it does not hand it over.
+type decliningWriter struct{ operatorBase }
+
+func (decliningWriter) Write(context.Context, *flow.Item[owned]) error { return nil }
+
+// assertSettledButNotQuiescent fixes what an edge owes after its drain task
+// stopped over a value it never finished. The count is settled, because nothing
+// is being processed. Quiescence is not reported, because that value did not
+// reach the sink and a barrier claiming otherwise would let the caller run
+// Finalize over a dead data path. The failure that stopped the task is what
+// ends the wait.
+func assertSettledButNotQuiescent(t *testing.T, producer delivery[owned], task Task) {
+	t.Helper()
 	if snapshot := producer.(*bufferDelivery[owned]).queue.Snapshot(); snapshot.Active != 0 || snapshot.Items != 0 {
-		t.Fatalf("edge after the consumer panicked = %#v", snapshot)
+		t.Fatalf("edge after an unfinished value = %#v", snapshot)
 	}
 	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer giveUp()
-	if err := bufferTask.Barrier(waiting); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("barrier over an abandoned value = %v", err)
+	if err := task.Barrier(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("barrier over an unfinished value = %v", err)
 	}
-	failed := errors.New("the consumer panicked")
+	failed := errors.New("the consumer stopped")
 	cancelled, stop := context.WithCancelCause(context.Background())
 	stop(failed)
 	defer stop(nil)
-	if err := bufferTask.Barrier(cancelled); !errors.Is(err, failed) {
+	if err := task.Barrier(cancelled); !errors.Is(err, failed) {
 		t.Fatalf("barrier cause = %v, want the failure that stopped the consumer", err)
 	}
-	if owners.drops.Load() != 1 {
-		t.Fatalf("buffer drops after a consumer panic = %d", owners.drops.Load())
+}
+
+// A value is finished only once the consumer has had its chance at it and
+// whatever the consumer declined has been released. Every way of falling short
+// of that leaves the same obligation, so an error is not a lighter case than a
+// panic.
+func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		dropPanics bool
+		writer     func(flow.Shape) flow.Operator
+	}{
+		{
+			name: "the consumer reports a failure",
+			writer: func(shape flow.Shape) flow.Operator {
+				return &recordingWriter{operatorBase: operatorBase{shape}, failure: errors.New("sink failure")}
+			},
+		},
+		{
+			name:   "the consumer panics",
+			writer: func(shape flow.Shape) flow.Operator { return &panickingWriter{operatorBase{shape}} },
+		},
+		{
+			name:       "the declined payload cannot be released",
+			dropPanics: true,
+			writer:     func(shape flow.Shape) flow.Operator { return &decliningWriter{operatorBase{shape}} },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var released atomic.Int32
+			typ := schema.Define[driveOutputID](schema.Traits[owned]{
+				Drop: func(owned) {
+					released.Add(1)
+					if test.dropPanics {
+						panic("declared drop panicked")
+					}
+				},
+				Size: func(owned) int { return 1 },
+			})
+			sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+			sinkLink, err := NewSink("in", typ).OpenSink(test.writer(sinkShape))
+			if err != nil {
+				t.Fatal(err)
+			}
+			buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			producer, err := deliveryOf[owned](buffered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := flow.NewItem(owned{value: 1}, typ)
+			if err := producer.Emit(context.Background(), &item); err != nil {
+				t.Fatal(err)
+			}
+			stopped := make(chan struct{})
+			go func() {
+				defer close(stopped)
+				defer func() { _ = recover() }()
+				_ = bufferTask.Run(context.Background())
+			}()
+			<-stopped
+			assertSettledButNotQuiescent(t, producer, bufferTask)
+			if released.Load() != 1 {
+				t.Fatalf("releases of the unfinished value = %d", released.Load())
+			}
+		})
 	}
 }
 
@@ -744,6 +791,60 @@ func TestAPanickingJoinDoesNotReportABarrier(t *testing.T) {
 	}
 	if owners.drops.Load() != 2 {
 		t.Fatalf("join drops after a panic = %d", owners.drops.Load())
+	}
+}
+
+// Reaching EOF is where a join can quiesce, not proof that it did. One input
+// ending leaves the batch already popped from the others unjoined, and
+// releasing it is the last thing the task does. A release that fails there is
+// the task's failure, so the barrier must not answer for the run that reported
+// it.
+func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
+	in := schema.Define[zipReleaseID](schema.Traits[owned]{
+		Drop: func(owned) { panic("declared drop panicked") },
+		Size: func(owned) int { return 1 },
+	})
+	out := ownedSchema[driveOutputID](&ownership{})
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	sinkLink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the first input carries a value, so the join pops it, finds the
+	// second at EOF, and ends holding a batch it never joined.
+	first, err := deliveryOf[owned](inputs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(owned{value: 1}, in)
+	if err := first.Emit(context.Background(), &item); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range inputs {
+		edge, err := deliveryOf[owned](input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := edge.close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := task.Run(context.Background()); err == nil {
+		t.Fatal("the join reported success after it could not release its batch")
+	}
+	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer giveUp()
+	if err := task.Barrier(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("barrier over a join that failed its cleanup = %v", err)
 	}
 }
 
