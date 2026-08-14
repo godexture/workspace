@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/godexture/godec/internal/journal"
 )
@@ -17,6 +18,10 @@ var (
 	ErrClosed      = errors.New("task group no longer accepts work")
 	ErrInvalidTask = errors.New("task name and function are required")
 )
+
+// nextTaskID identifies journals across every group in the process. A name is
+// chosen for people and nothing keeps two tasks from sharing one.
+var nextTaskID atomic.Uint64
 
 // Report is a stable snapshot. Running is populated when the wait context
 // expires; the group never claims those tasks have stopped.
@@ -89,7 +94,6 @@ func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context
 	if scope == nil {
 		scope = journal.NewScope("")
 	}
-	scope.Attach(name)
 	g.mu.Lock()
 	if !g.accepting || g.ctx.Err() != nil {
 		g.mu.Unlock()
@@ -100,6 +104,10 @@ func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context
 	g.active++
 	g.running[id] = name
 	g.mu.Unlock()
+	// The journal's identity is process-wide, not group-local: a job runs more
+	// than one group, and a consumer that collects from all of them must not
+	// have two tasks claim the same events.
+	scope.Attach(nextTaskID.Add(1), name)
 
 	go g.run(id, name, scope, work)
 	return nil

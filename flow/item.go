@@ -138,9 +138,10 @@ func (i *Item[T]) Bind(typ schema.Type[T], reporter Reporter) {
 // anything the slot still held. It either stores value or releases it on every
 // path, so a caller hands a payload to Set and is done with it.
 //
-// An unbound slot declares nothing, so it cannot take ownership: it knows no
-// release to perform and no domain to report one that fails to. Handing a
-// payload to one is a programming error and panics, because the alternatives
+// A slot that is absent or unbound declares nothing, so it cannot take
+// ownership: it knows no release to perform and no domain to report one that
+// fails to. Handing a payload to one is a programming error and panics, because
+// the alternatives
 // are worse. Storing it would leave a payload nobody can release; returning
 // quietly would lose it with no diagnosis at all, and an emptiness discovered
 // later does not give back the release that was owed. A runtime hands out bound
@@ -151,7 +152,7 @@ func (i *Item[T]) Bind(typ schema.Type[T], reporter Reporter) {
 // allocation because the slot never escapes per item.
 func (i *Item[T]) Set(value T) {
 	if i == nil {
-		return
+		panic("flow: ownership was handed to a slot that does not exist")
 	}
 	if !i.bound {
 		panic("flow: an unbound slot cannot take ownership; fill it through Emitter.Own or a slot the runtime bound")

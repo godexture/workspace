@@ -33,22 +33,26 @@ func (k FailureKind) Cleanup() bool { return k == CleanupError || k == CleanupPa
 // Failure is one thing that went wrong, with where it went wrong. Node is
 // snapshotted when the failure is recorded, because a task moves through the
 // nodes of its island and the last one it was in does not describe the others.
-// Attempt and Seq identify the event: which lifecycle operation on this task
-// recorded it, and where in that operation. Two failures that read the same are
-// still two things that happened, so a consumer that must not report one twice
-// keys on this rather than on what the error says.
-type Failure struct {
-	Kind    FailureKind
-	Task    string
-	Node    string
+// EventID is what makes two failures different things rather than two readings
+// of one. Task is the number the group assigned, not the name: names are chosen
+// for people and nothing keeps two tasks from sharing one, so a consumer that
+// keyed on the name would fold two independent journals together.
+type EventID struct {
+	Task    uint64
 	Attempt uint64
 	Seq     uint64
-	Err     error
-	Stack   []byte
 }
 
-// Identity is the stable key of this event within its task.
-func (f Failure) Identity() (uint64, uint64) { return f.Attempt, f.Seq }
+// Task and Node say where the failure happened, for a reader. ID says which
+// failure it is, for a consumer that must not report one twice.
+type Failure struct {
+	Kind  FailureKind
+	ID    EventID
+	Task  string
+	Node  string
+	Err   error
+	Stack []byte
+}
 
 func (f Failure) Error() string {
 	if f.Node == "" {

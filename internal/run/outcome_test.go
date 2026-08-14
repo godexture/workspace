@@ -142,7 +142,7 @@ func TestSealEndsAnAttemptRatherThanTheJournal(t *testing.T) {
 	if len(second.Cleanup) != 1 {
 		t.Fatalf("a failure reported after the seal was discarded: %#v", second.Cleanup)
 	}
-	if first.Cleanup[0].Attempt == second.Cleanup[0].Attempt {
+	if first.Cleanup[0].ID.Attempt == second.Cleanup[0].ID.Attempt {
 		t.Fatal("both attempts share an identity, so a consumer cannot tell them apart")
 	}
 }
@@ -158,10 +158,9 @@ func TestIndependentFailuresKeepSeparateIdentities(t *testing.T) {
 	if len(outcome.Cleanup) != 2 {
 		t.Fatalf("cleanup = %#v, want both events", outcome.Cleanup)
 	}
-	firstAttempt, firstSeq := outcome.Cleanup[0].Identity()
-	secondAttempt, secondSeq := outcome.Cleanup[1].Identity()
-	if firstAttempt != secondAttempt || firstSeq == secondSeq {
-		t.Fatalf("identities = (%d,%d) and (%d,%d), want one attempt and two events", firstAttempt, firstSeq, secondAttempt, secondSeq)
+	first, second := outcome.Cleanup[0].ID, outcome.Cleanup[1].ID
+	if first.Attempt != second.Attempt || first.Seq == second.Seq {
+		t.Fatalf("identities = %+v and %+v, want one attempt and two events", first, second)
 	}
 }
 
@@ -173,4 +172,30 @@ type decliningSink struct {
 func (s decliningSink) Write(context.Context, *flow.Item[int]) error {
 	s.writes.Add(1)
 	return nil
+}
+
+// A task name is chosen for people and nothing keeps two tasks from sharing
+// one. Two journals must still keep their events apart, or a consumer that
+// reports each event once reports one of two independent failures.
+func TestTwoJournalsWithOneNameKeepSeparateIdentities(t *testing.T) {
+	same := errors.New("the same release failure")
+	group := task.New(context.Background())
+	for range 2 {
+		scope := journal.NewScope("node")
+		if err := group.StartScoped("worker", scope, func(context.Context) error {
+			scope.Cleanup(same)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := group.Wait(context.Background())
+	if len(report.Outcomes) != 2 {
+		t.Fatalf("outcomes = %d, want one per task", len(report.Outcomes))
+	}
+	first := report.Outcomes[0].Cleanup[0].ID
+	second := report.Outcomes[1].Cleanup[0].ID
+	if first.Task == second.Task {
+		t.Fatalf("both journals identify as task %d, so their events collide", first.Task)
+	}
 }

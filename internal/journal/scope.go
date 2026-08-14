@@ -36,6 +36,7 @@ func (e *PanicError) StackTrace() []byte { return append([]byte(nil), e.Stack...
 // attempt rather than the scope, and what is reported next belongs to the next
 // attempt instead of being dropped for arriving late.
 type Scope struct {
+	id      uint64
 	task    string
 	node    string
 	attempt uint64
@@ -126,13 +127,12 @@ func (s *Scope) Seal() Outcome {
 func (s *Scope) failure(kind FailureKind, err error, stack []byte) Failure {
 	s.next++
 	return Failure{
-		Kind:    kind,
-		Task:    s.task,
-		Node:    s.node,
-		Attempt: s.attempt,
-		Seq:     s.next,
-		Err:     err,
-		Stack:   append([]byte(nil), stack...),
+		Kind:  kind,
+		ID:    EventID{Task: s.id, Attempt: s.attempt, Seq: s.next},
+		Task:  s.task,
+		Node:  s.node,
+		Err:   err,
+		Stack: append([]byte(nil), stack...),
 	}
 }
 
@@ -155,10 +155,12 @@ func stackOf(err error) []byte {
 	return nil
 }
 
-// Attach names the task this journal belongs to. The boundary that starts the
-// task does it, because that is where the name is decided.
-func (s *Scope) Attach(task string) {
+// Attach gives the journal the identity and the name of the task it belongs to.
+// The boundary that starts the task does it, because that is where both are
+// decided. The identity is the group's, so two tasks that share a name still
+// keep their events apart.
+func (s *Scope) Attach(id uint64, task string) {
 	if s != nil {
-		s.task = task
+		s.id, s.task = id, task
 	}
 }

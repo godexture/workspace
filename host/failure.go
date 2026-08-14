@@ -73,8 +73,8 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 // the same way in the same place are two payloads that were not released, and
 // reporting one of them would understate what happened.
 func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
-	attempt, sequence := value.Identity()
-	key := fmt.Sprintf("failure:%s:%d:%d", value.Task, attempt, sequence)
+	identity := value.ID
+	key := fmt.Sprintf("failure:%d:%d:%d", identity.Task, identity.Attempt, identity.Seq)
 	if _, exists := r.reported[key]; exists {
 		return
 	}

@@ -380,3 +380,17 @@ func TestOwnershipHandedToAnUnboundSlotIsRefusedLoudly(t *testing.T) {
 type panickingDomain struct{}
 
 func (panickingDomain) Cleanup(error) { panic("the domain panicked") }
+
+// A slot that is not there is as unbound as one that was never declared, and
+// the payload is lost either way. Saying so is the only difference available.
+func TestOwnershipHandedToAnAbsentSlotIsRefusedLoudly(t *testing.T) {
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		var slot *Item[int]
+		slot.Set(7)
+		return nil
+	}()
+	if recovered == nil {
+		t.Fatal("an absent slot accepted ownership silently")
+	}
+}
