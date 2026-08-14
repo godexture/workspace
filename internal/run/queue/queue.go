@@ -177,6 +177,12 @@ func (q *Queue[T]) Pop(ctx context.Context, into *flow.Item[T]) error {
 // Complete acknowledges that the consumer has finished processing one value
 // returned by Pop. It lets the runtime establish a quiescent barrier without
 // closing the queue or placing control sentinels in the media stream.
+//
+// Abandon is the same bookkeeping for a value the consumer never finished. The
+// pair only says something to an edge whose barrier is WaitIdle: one lets that
+// barrier report quiescence and the other stops it. An edge that establishes
+// quiescence some other way returns its slots with Complete, because there the
+// call is only capacity.
 func (q *Queue[T]) Complete() {
 	if q == nil {
 		return

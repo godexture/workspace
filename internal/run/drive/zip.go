@@ -138,6 +138,12 @@ func (s *zipState[I, O]) withinWatermark() bool {
 // Returning the slots is queue bookkeeping and happens first, so a declared
 // Drop that panics cannot leave an edge permanently short of capacity, and
 // every remaining payload is released before the failure is reported.
+//
+// The slots go back with Complete on every path, including the ones a bounded
+// edge would Abandon. A join ends holding an unjoined batch even when it ends
+// well, because one input reaching EOF ends the stream for all of them, so an
+// input's active count can never express a fan-in's quiescence. That is what
+// quiesced is for, and this call is only capacity.
 func (s *zipState[I, O]) release() error {
 	read := s.read
 	s.read = 0

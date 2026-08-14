@@ -155,6 +155,8 @@ runtime が queue から取り出した item は、その処理が終わるま�
 
 fan-in の quiescence は edge の idle 状態ではなく task 自身の結末で決まる。一つの batch が全 input にまたがるためである。input を EOF まで drain した時だけ quiesce したものとし、error や panic で止まった join は保持していた batch を下流へ通していないため、barrier は同じ理由で idle を返さず cancel を待つ。
 
+したがって `Complete` と `Abandon` の区別は、barrier が `WaitIdle` である edge にだけ意味を持つ。join は正常終了でも未 join の batch を保持したまま終わる（一つの input の EOF が全体の終わりになる）ため、input の `active` は fan-in の quiescence を表せない。fan-in edge の slot は全経路で `Complete` により返し、その呼び出しは capacity の返却だけを意味する。
+
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 
 fan-out が一つなら refcount atomic を通らない設計にする。複数 consumer の時も、一 item につき必要最小限の retained handle だけを作る。
