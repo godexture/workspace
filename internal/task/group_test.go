@@ -77,9 +77,17 @@ func TestPanicErrorNeverCarriesTheRecoveredValue(t *testing.T) {
 	}
 }
 
+type testScope struct {
+	node    string
+	cleanup error
+}
+
+func (s testScope) Node() string   { return s.node }
+func (s testScope) Cleanup() error { return s.cleanup }
+
 func TestScopedPanicRetainsLocation(t *testing.T) {
 	group := New(context.Background())
-	if err := group.StartScoped("island", func() string { return "node" }, func(context.Context) error {
+	if err := group.StartScoped("island", testScope{node: "node"}, func(context.Context) error {
 		panic("boom")
 	}); err != nil {
 		t.Fatal(err)

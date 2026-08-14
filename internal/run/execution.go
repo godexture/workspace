@@ -150,6 +150,7 @@ func (t Template) outputLink(index int, targets []drive.Link, execution *Executi
 				return drive.Link{}, err
 			}
 			link = buffered
+			bufferTask.BindScope(scope)
 			execution.edges = append(execution.edges, namedTask{name: "buffer/" + edgeKey(edge.value), task: bufferTask, scope: scope})
 		}
 		links[outputIndex] = link
@@ -171,7 +172,7 @@ func (e *Execution) Start(group *task.Group) error {
 	e.started = true
 	e.mu.Unlock()
 	for _, value := range e.edges {
-		if err := group.StartScoped(value.name, value.scope.Node, value.task.Run); err != nil {
+		if err := group.StartScoped(value.name, value.scope, value.task.Run); err != nil {
 			e.Close()
 			group.Cancel(err)
 			return err
@@ -184,7 +185,7 @@ func (e *Execution) Start(group *task.Group) error {
 			current.done <- err
 			return err
 		}
-		if err := group.StartScoped(current.name, current.scope.Node, work); err != nil {
+		if err := group.StartScoped(current.name, current.scope, work); err != nil {
 			e.Close()
 			group.Cancel(err)
 			return err

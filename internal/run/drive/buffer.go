@@ -41,57 +41,71 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 		if err != nil {
 			return Link{}, Task{}, err
 		}
+		state := &bufferState[T]{queue: edge, target: target}
 		task := Task{
-			close: edge.Close,
-			discard: func() error {
-				_, err := edge.Drain()
-				return err
-			},
+			close:   edge.Close,
+			discard: state.discard,
 			barrier: edge.WaitIdle,
-			run: func(ctx context.Context) (err error) {
-				// holding records the one popped value the loop still owes the
-				// edge, so the returning path settles it once for the task
-				// rather than a defer per item. Every exit that reaches it left
-				// a value unfinished, so it is abandoned rather than completed
-				// and the edge does not report a quiescence it never reached.
-				//
-				// The loop also leaves whatever it had not emitted in the ring,
-				// so draining it is part of returning, and a payload that cannot
-				// be released is part of the answer.
-				holding := false
-				defer func() {
-					if holding {
-						edge.Abandon()
-					}
-					_, drainErr := edge.Drain()
-					err = errors.Join(err, drainErr)
-				}()
-				var item flow.Item[T]
-				defer item.Drop()
-				for {
-					err := edge.Pop(ctx, &item)
-					if errors.Is(err, io.EOF) {
-						return target.close(ctx)
-					}
-					if err != nil {
-						return err
-					}
-					// The value is finished once the consumer has had its
-					// chance at it and whatever the consumer declined has been
-					// released. A failure at either point -- an error, a panic,
-					// or a declared Drop that panics -- leaves the loop still
-					// holding it, so the exit abandons it.
-					holding = true
-					if err := target.Emit(ctx, &item); err != nil {
-						return err
-					}
-					item.Drop()
-					edge.Complete()
-					holding = false
-				}
-			},
+			bind:    state.bindScope,
+			run:     state.run,
 		}
 		return linkOf[T](&bufferDelivery[T]{queue: edge}), task, nil
+	}
+}
+
+type bufferState[T any] struct {
+	queue  *queue.Queue[T]
+	target delivery[T]
+	scope  *Scope
+}
+
+func (b *bufferState[T]) bindScope(scope *Scope) { b.scope = scope }
+
+func (b *bufferState[T]) discard() error {
+	_, err := b.queue.Drain()
+	return err
+}
+
+func (b *bufferState[T]) run(ctx context.Context) (err error) {
+	// holding records the one popped value the loop still owes the edge, so the
+	// returning path settles it once for the task rather than a defer per item.
+	// Every exit that reaches it left a value unfinished, so it is abandoned
+	// rather than completed and the edge does not report a quiescence it never
+	// reached.
+	//
+	// The loop also leaves whatever it had not emitted in the ring, so draining
+	// it is part of returning, and a payload that cannot be released is part of
+	// the answer. This drain runs during panic unwinding too, where there is no
+	// return left to carry it, which is why the scope keeps a copy.
+	holding := false
+	defer func() {
+		if holding {
+			b.queue.Abandon()
+		}
+		_, drainErr := b.queue.Drain()
+		err = errors.Join(err, b.scope.fail(drainErr))
+	}()
+	var item flow.Item[T]
+	defer item.Drop()
+	for {
+		err := b.queue.Pop(ctx, &item)
+		if errors.Is(err, io.EOF) {
+			return b.target.close(ctx)
+		}
+		if err != nil {
+			return err
+		}
+		// The value is finished once the consumer has had its chance at it and
+		// whatever the consumer declined has been released. A failure at either
+		// point -- an error, a panic, or a declared Drop that panics -- leaves
+		// the loop still holding it, so the exit abandons it.
+		holding = true
+		if err := b.target.Emit(ctx, &item); err != nil {
+			return err
+		}
+		item.Drop()
+		b.queue.Complete()
+		holding = false
 	}
 }
 

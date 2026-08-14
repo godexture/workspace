@@ -151,6 +151,10 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 cleanup failure は握り潰さない。`release.All` の結果は、それを呼んだ task の答えの一部として返る。fan-in は batch ごとの解放失敗をその場で返し、次の batch へ進まない。`Execution.Discard` は全 task を訪ねてから failure を結合し、Host は通常終了でも cleanup 経路でも Result へ載せる。
 
+task の結末は一箇所で組み立てる。ただし panic は task が返そうとしていた値を捨てるため、戻り道の defer で走った cleanup の failure は、その値に join した瞬間に消える。そこで task の `Scope` が「戻り値では境界へ届かないもの」を運ぶ。`Scope` は node identity と cleanup failure を持ち、一つの task とその task が駆動する delivery 連鎖が共有する。書き手はその task だけ、読み手は同じ goroutine の panic recovery だけなので atomic を使わない。
+
+記録は無条件、読み出しは条件付きとする。cleanup を行う側は failure を `Scope` へ記録したうえで、通常どおり戻り値へも join する。境界は panic を recover した時だけ `Scope` を読む。正常に return した task は自分で持ち出しているので、両方を無条件に読むと同じ failure が二重に出る。`internal/task` が要求するのはこの `Scope` interface だけであり、plugin task には scope が無いので従来どおり panic だけが報告される。
+
 runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 
 fan-in の quiescence は edge の idle 状態ではなく task 自身の結末で決まる。一つの batch が全 input にまたがるためである。input を EOF まで drain し、**かつ戻り道の cleanup がすべて成功した時だけ** quiesce したものとする。EOF に達しても、join が保持していた未 join の batch を解放できなければ task は失敗しており、失敗した task は quiesce していない。error や panic で止まった join も同じで、barrier は idle を返さず cancel を待つ。

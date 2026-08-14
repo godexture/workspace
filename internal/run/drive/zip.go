@@ -41,6 +41,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		discard: state.discard,
 		barrier: state.barrier,
 		finish:  state.finish,
+		bind:    state.bindScope,
 		run:     state.run,
 	}
 	return links, task, nil
@@ -57,11 +58,14 @@ type zipState[I, O any] struct {
 	time       func(I) (int64, bool)
 	watermark  int64
 	done       chan struct{}
+	scope      *Scope
 	reachedEOF bool
 	quiesced   bool
 	once       sync.Once
 	err        error
 }
+
+func (s *zipState[I, O]) bindScope(scope *Scope) { s.scope = scope }
 
 func (s *zipState[I, O]) close() {
 	for _, edge := range s.edges {
@@ -81,7 +85,7 @@ func (s *zipState[I, O]) discard() error {
 func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 	defer func() {
 		s.close()
-		err = errors.Join(err, s.discard())
+		err = errors.Join(err, s.scope.fail(s.discard()))
 		// Reaching EOF is not enough. The batch this join was still holding is
 		// released on the way out, and so is anything left in the inputs; a
 		// release that fails there is a failure of this task, and a task that
@@ -90,7 +94,7 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		s.quiesced = s.reachedEOF && err == nil
 		close(s.done)
 	}()
-	defer func() { err = errors.Join(err, s.release()) }()
+	defer func() { err = errors.Join(err, s.scope.fail(s.release())) }()
 	for {
 		s.read = 0
 		for index, edge := range s.edges {

@@ -34,6 +34,18 @@ func (e *PanicError) Error() string {
 	return fmt.Sprintf("task %q panicked: %s", e.Name, e.Summary)
 }
 
+// Scope is the task-local context an execution island gives one of its tasks.
+// Both methods are read in the panicking goroutine after recovery, so they need
+// no synchronization and no item-loop defer.
+type Scope interface {
+	// Node identifies the last direct-call node the task was inside.
+	Node() string
+	// Cleanup returns the failures the task found while releasing. A panic
+	// discards the value the task was returning, and the cleanup that runs
+	// during the unwind has nowhere else to put them.
+	Cleanup() error
+}
+
 // Failure associates an error with the task that returned or panicked.
 type Failure struct {
 	Name string
@@ -106,10 +118,10 @@ func (g *Group) Start(name string, work func(context.Context) error) error {
 	return g.StartScoped(name, nil, work)
 }
 
-// StartScoped is the runtime-only form used by an execution island. location
-// is read in the panicking goroutine after recovery, so it can identify the
-// last direct-call node without synchronization or an item-loop defer.
-func (g *Group) StartScoped(name string, location func() string, work func(context.Context) error) error {
+// StartScoped is the runtime-only form used by an execution island. The scope
+// is what the task cannot tell the group by returning: where it was, and what
+// it could not release on the way out.
+func (g *Group) StartScoped(name string, scope Scope, work func(context.Context) error) error {
 	if g == nil || strings.TrimSpace(name) == "" || work == nil {
 		return ErrInvalidTask
 	}
@@ -124,23 +136,30 @@ func (g *Group) StartScoped(name string, location func() string, work func(conte
 	g.running[id] = name
 	g.mu.Unlock()
 
-	go g.run(id, name, location, work)
+	go g.run(id, name, scope, work)
 	return nil
 }
 
-func (g *Group) run(id uint64, name string, location func() string, work func(context.Context) error) {
+func (g *Group) run(id uint64, name string, scope Scope, work func(context.Context) error) {
 	var failure error
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			where := ""
-			if location != nil {
-				where = location()
+			if scope != nil {
+				where = scope.Node()
 			}
 			failure = &PanicError{
 				Name:     name,
 				Location: where,
 				Summary:  diagnostic.Recovered(recovered),
 				Stack:    append([]byte(nil), debug.Stack()...),
+			}
+			// The unwind threw away the value this task was returning, and the
+			// cleanup that ran during it had joined its failures into exactly
+			// that value. They are read here because this is where the return
+			// went missing; a task that returns reports them itself.
+			if scope != nil {
+				failure = errors.Join(failure, scope.Cleanup())
 			}
 		}
 		g.finish(id, name, failure)

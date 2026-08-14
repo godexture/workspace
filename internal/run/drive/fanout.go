@@ -15,6 +15,7 @@ import (
 type fanoutDelivery[T any] struct {
 	outputs  []delivery[T]
 	branches []flow.Item[T]
+	scope    *Scope
 	once     sync.Once
 	closeErr error
 }
@@ -54,8 +55,10 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) (err error) {
 	// Every branch a consumer did not take has to be released, including when
 	// one of those releases fails: a fan-out holds several owners of one item,
-	// and stopping at the first broken Drop would strand the rest.
-	defer func() { err = errors.Join(err, release.All(f.branches)) }()
+	// and stopping at the first broken Drop would strand the rest. A consumer
+	// that panics unwinds through this defer and takes the return value with
+	// it, so the scope keeps a copy for the task boundary.
+	defer func() { err = errors.Join(err, f.scope.fail(release.All(f.branches))) }()
 	for index := range f.branches {
 		if !item.Fork(&f.branches[index]) {
 			return ErrInvalidItem
@@ -83,6 +86,7 @@ func (f *fanoutDelivery[T]) close(ctx context.Context) error {
 }
 
 func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
+	f.scope = scope
 	for _, output := range f.outputs {
 		if value, ok := output.(scopeBinder); ok {
 			value.bindScope(scope)

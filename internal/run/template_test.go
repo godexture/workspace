@@ -393,6 +393,84 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 	}
 }
 
+type panickingWriter struct{ templateOperator }
+
+func (panickingWriter) Write(context.Context, *flow.Item[int]) error { panic("writer panicked") }
+
+// A panic discards the value its task was returning, and the cleanup that ran
+// during the unwind had just joined its failures into exactly that value. The
+// scope carries them to the boundary instead, so a release that failed beside a
+// panic is still reported -- once, because a task that returns normally carries
+// them out itself.
+func TestCleanupFailuresSurviveThePanicBesideThem(t *testing.T) {
+	type cleanupSchemaID struct{}
+	for _, test := range []struct {
+		name     string
+		writer   func(flow.Shape) flow.Operator
+		panicked bool
+	}{
+		{
+			name:     "the consumer panics",
+			writer:   func(shape flow.Shape) flow.Operator { return panickingWriter{templateOperator{shape: shape}} },
+			panicked: true,
+		},
+		{
+			name: "the consumer reports a failure",
+			writer: func(shape flow.Shape) flow.Operator {
+				return &failingWriter{templateOperator: templateOperator{shape: shape}}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// Only the values left in the ring fail to release, so the drain is
+			// the one thing that fails besides the consumer.
+			typ := schema.Define[cleanupSchemaID](schema.Traits[int]{
+				Drop: func(value int) {
+					if value == 0 {
+						panic("declared drop panicked")
+					}
+				},
+			})
+			sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+			sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+			sinkLink, err := drive.NewSink("in", typ).OpenSink(test.writer(sinkShape))
+			if err != nil {
+				t.Fatal(err)
+			}
+			buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 4}, sinkLink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1, 0, 0}}
+			sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sourceTask.Run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			scope := drive.NewScope("edge")
+			bufferTask.BindScope(scope)
+			group := task.New(context.Background())
+			if err := group.StartScoped("buffer", scope, bufferTask.Run); err != nil {
+				t.Fatal(err)
+			}
+			report := group.Wait(context.Background())
+			if len(report.Failures) != 1 {
+				t.Fatalf("report = %#v", report)
+			}
+			failure := report.Failures[0].Err
+			var panicErr *task.PanicError
+			if errors.As(failure, &panicErr) != test.panicked {
+				t.Fatalf("panic reported = %v, want %v", !test.panicked, test.panicked)
+			}
+			if got := strings.Count(failure.Error(), "flow item release panicked"); got != 2 {
+				t.Fatalf("reported release failures = %d, want one per value left in the ring", got)
+			}
+		})
+	}
+}
+
 // Discard is the last cleanup an execution performs, so a payload it cannot
 // release is part of the answer. It visits every task and reports the failures
 // together rather than returning as though the queues were empty.
