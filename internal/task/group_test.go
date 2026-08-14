@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/godexture/godec/internal/journal"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestFailureCancelsPeersAndIsReported(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := group.Wait(context.Background())
-	if !report.Complete() || len(report.Failures) != 1 || report.Failures[0].Name != "failure" || !errors.Is(report.Failures[0].Err, want) {
+	if !report.Complete() || len(report.Outcomes) != 1 || report.Outcomes[0].Task != "failure" || !errors.Is(report.Outcomes[0].Primary.Err, want) {
 		t.Fatalf("report = %#v", report)
 	}
 	select {
@@ -43,11 +44,11 @@ func TestPanicIsRecoveredAtTaskBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := group.Wait(context.Background())
-	if len(report.Failures) != 1 || !report.Failures[0].Panicked() {
+	if len(report.Outcomes) != 1 || !(report.Outcomes[0].Primary != nil && report.Outcomes[0].Primary.Kind == journal.TaskPanic) {
 		t.Fatalf("panic report = %#v", report)
 	}
-	var panicErr *PanicError
-	if !errors.As(report.Failures[0].Err, &panicErr) || !strings.Contains(string(panicErr.Stack), "TestPanicIsRecoveredAtTaskBoundary") {
+	var panicErr *journal.PanicError
+	if !errors.As(report.Outcomes[0].Primary.Err, &panicErr) || !strings.Contains(string(panicErr.Stack), "TestPanicIsRecoveredAtTaskBoundary") {
 		t.Fatalf("panic error = %#v", panicErr)
 	}
 }
@@ -64,8 +65,8 @@ func TestPanicErrorNeverCarriesTheRecoveredValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := group.Wait(context.Background())
-	var panicErr *PanicError
-	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) {
+	var panicErr *journal.PanicError
+	if len(report.Outcomes) != 1 || !errors.As(report.Outcomes[0].Primary.Err, &panicErr) {
 		t.Fatalf("panic report = %#v", report)
 	}
 	// The rendering itself is never printed: a report that leaks the value
@@ -77,24 +78,16 @@ func TestPanicErrorNeverCarriesTheRecoveredValue(t *testing.T) {
 	}
 }
 
-type testScope struct {
-	node    string
-	cleanup error
-}
-
-func (s testScope) Node() string   { return s.node }
-func (s testScope) Cleanup() error { return s.cleanup }
-
 func TestScopedPanicRetainsLocation(t *testing.T) {
 	group := New(context.Background())
-	if err := group.StartScoped("island", testScope{node: "node"}, func(context.Context) error {
+	if err := group.StartScoped("island", journal.NewScope("node"), func(context.Context) error {
 		panic("boom")
 	}); err != nil {
 		t.Fatal(err)
 	}
 	report := group.Wait(context.Background())
-	var panicErr *PanicError
-	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) || panicErr.Location != "node" {
+	var panicErr *journal.PanicError
+	if len(report.Outcomes) != 1 || !errors.As(report.Outcomes[0].Primary.Err, &panicErr) || panicErr.Location != "node" {
 		t.Fatalf("scoped panic = %#v", report)
 	}
 }
@@ -135,7 +128,7 @@ func TestLinkedFailureCancelsOwningContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := group.Wait(context.Background())
-	if len(report.Failures) != 1 || !errors.Is(context.Cause(ctx), want) {
+	if len(report.Outcomes) != 1 || !errors.Is(context.Cause(ctx), want) {
 		t.Fatalf("report = %#v, cause = %v", report, context.Cause(ctx))
 	}
 }

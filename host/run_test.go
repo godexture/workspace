@@ -114,7 +114,7 @@ func (s *lifecycleSource) Read(ctx context.Context, into *flow.Item[int]) error 
 	value := s.index + 1
 	s.index++
 	s.state.add("read/source")
-	*into = flow.NewItem(value, lifecycleType)
+	into.Set(value)
 	return nil
 }
 
@@ -123,7 +123,7 @@ type lifecycleProcessor struct{ *lifecycleBase }
 func (p *lifecycleProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
 	p.state.add("process/processor")
 	p.state.panicIf("process/processor")
-	item := flow.NewItem(input.Value()*2, lifecycleType)
+	item := flow.NewItem(input.Value()*2, lifecycleType, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err

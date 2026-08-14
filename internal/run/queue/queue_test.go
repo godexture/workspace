@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/schema"
 )
 
 type item struct {
@@ -18,17 +19,29 @@ type item struct {
 	time  int64
 }
 
-func itemTraits() Traits[item] {
-	return Traits[item]{
+type queueItemID struct{}
+type queueIntID struct{}
+
+// itemType declares the edge payload. The queue takes a schema type because a
+// ring slot is an ownership slot: it needs the traits its payloads are owned
+// under, not only the measurements a limit uses.
+func itemType(traits schema.Traits[item]) schema.Type[item] {
+	return schema.Define[queueItemID](traits)
+}
+
+func itemTraits() schema.Type[item] {
+	return itemType(schema.Traits[item]{
 		Size: func(value item) int { return value.size },
 		Time: func(value item) (int64, bool) { return value.time, true },
-	}
+	})
 }
 
 // The queue stores cells, so a test hands it one and counts releases through
 // the cell rather than through an edge-wide trait.
-func pushValue[T any](ctx context.Context, queue *Queue[T], value T, drop func(T)) error {
-	cell := flow.NewItemWithTraits(value, nil, drop)
+func pushValue[T any](ctx context.Context, queue *Queue[T], typ schema.Type[T], value T) error {
+	var cell flow.Item[T]
+	cell.Bind(typ, &testDomain)
+	cell.Set(value)
 	err := queue.Push(ctx, &cell)
 	if err != nil {
 		cell.Drop()
@@ -54,7 +67,7 @@ func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	for _, value := range []item{{value: 1, size: 3, time: 20}, {value: 2, size: 4, time: 10}} {
-		if err := pushValue(ctx, queue, value, nil); err != nil {
+		if err := pushValue(ctx, queue, itemTraits(), value); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -64,7 +77,7 @@ func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
 	}
 
 	pushed := make(chan error, 1)
-	go func() { pushed <- pushValue(ctx, queue, item{value: 3, size: 1, time: 15}, nil) }()
+	go func() { pushed <- pushValue(ctx, queue, itemTraits(), item{value: 3, size: 1, time: 15}) }()
 	select {
 	case err := <-pushed:
 		t.Fatalf("bounded push completed early: %v", err)
@@ -83,7 +96,7 @@ func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
 }
 
 func TestQueueWaitsRespectCancellationAndClose(t *testing.T) {
-	queue, err := New[item](Limit{Items: 1}, Traits[item]{})
+	queue, err := New(Limit{Items: 1}, itemType(schema.Traits[item]{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +110,11 @@ func TestQueueWaitsRespectCancellationAndClose(t *testing.T) {
 	if err := <-wake; !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled pop error = %v", err)
 	}
-	if err := pushValue(context.Background(), queue, item{value: 1}, nil); err != nil {
+	if err := pushValue(context.Background(), queue, itemTraits(), item{value: 1}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel = context.WithCancel(context.Background())
-	go func() { wake <- pushValue(ctx, queue, item{value: 2}, nil) }()
+	go func() { wake <- pushValue(ctx, queue, itemTraits(), item{value: 2}) }()
 	cancel()
 	if err := <-wake; !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled push error = %v", err)
@@ -109,13 +122,13 @@ func TestQueueWaitsRespectCancellationAndClose(t *testing.T) {
 
 	queue.Close()
 	queue.Close()
-	if err := pushValue(context.Background(), queue, item{}, nil); !errors.Is(err, ErrClosed) {
+	if err := pushValue(context.Background(), queue, itemTraits(), item{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("push after close error = %v", err)
 	}
 	closedCause := errors.New("shutdown")
 	closedContext, cancelClosed := context.WithCancelCause(context.Background())
 	cancelClosed(closedCause)
-	if err := pushValue(closedContext, queue, item{}, nil); !errors.Is(err, closedCause) {
+	if err := pushValue(closedContext, queue, itemTraits(), item{}); !errors.Is(err, closedCause) {
 		t.Fatalf("canceled push after close error = %v", err)
 	}
 	value, err := popValue(context.Background(), queue)
@@ -129,42 +142,42 @@ func TestQueueWaitsRespectCancellationAndClose(t *testing.T) {
 
 func TestQueueDrainDropsEachOwnerOnce(t *testing.T) {
 	var drops atomic.Int32
-	count := func(item) { drops.Add(1) }
-	queue, err := New(Limit{Items: 8}, itemTraits())
+	counting := itemType(schema.Traits[item]{Drop: func(item) { drops.Add(1) }})
+	queue, err := New(Limit{Items: 8}, counting)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for index := 0; index < 5; index++ {
-		if err := pushValue(context.Background(), queue, item{value: index}, count); err != nil {
+		if err := pushValue(context.Background(), queue, counting, item{value: index}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	queue.Close()
-	got, err := queue.Drain()
-	if got != 5 || err != nil || drops.Load() != 5 {
-		t.Fatalf("drain = %d, error %v, drops = %d", got, err, drops.Load())
+	var domain flow.Collector
+	if got := queue.Drain(&domain); got != 5 || len(domain.Failures()) != 0 || drops.Load() != 5 {
+		t.Fatalf("drain = %d, failures %v, drops = %d", got, domain.Failures(), drops.Load())
 	}
-	if again, err := queue.Drain(); again != 0 || err != nil || drops.Load() != 5 {
+	if again := queue.Drain(&domain); again != 0 || drops.Load() != 5 {
 		t.Fatal("repeated drain released an owner twice")
 	}
 }
 
 func TestQueueRejectsUnavailableOrInvalidLimitTraits(t *testing.T) {
-	if _, err := New[item](Limit{}, Traits[item]{}); !errors.Is(err, ErrInvalidLimit) {
+	if _, err := New(Limit{}, itemType(schema.Traits[item]{})); !errors.Is(err, ErrInvalidLimit) {
 		t.Fatalf("invalid limit error = %v", err)
 	}
-	if _, err := New[item](Limit{Items: 1, Bytes: 1}, Traits[item]{}); !errors.Is(err, ErrSizeTrait) {
+	if _, err := New(Limit{Items: 1, Bytes: 1}, itemType(schema.Traits[item]{})); !errors.Is(err, ErrSizeTrait) {
 		t.Fatalf("missing size trait error = %v", err)
 	}
-	if _, err := New[item](Limit{Items: 1, Time: 1}, Traits[item]{}); !errors.Is(err, ErrTimeTrait) {
+	if _, err := New(Limit{Items: 1, Time: 1}, itemType(schema.Traits[item]{})); !errors.Is(err, ErrTimeTrait) {
 		t.Fatalf("missing time trait error = %v", err)
 	}
-	queue, _ := New(Limit{Items: 1, Bytes: 1}, Traits[item]{Size: func(item) int { return -1 }})
-	if err := pushValue(context.Background(), queue, item{}, nil); !errors.Is(err, ErrInvalidSize) {
+	queue, _ := New(Limit{Items: 1, Bytes: 1}, itemType(schema.Traits[item]{Size: func(item) int { return -1 }}))
+	if err := pushValue(context.Background(), queue, itemTraits(), item{}); !errors.Is(err, ErrInvalidSize) {
 		t.Fatalf("invalid size error = %v", err)
 	}
-	queue, _ = New(Limit{Items: 1, Time: 1}, Traits[item]{Time: func(item) (int64, bool) { return 0, false }})
-	if err := pushValue(context.Background(), queue, item{}, nil); !errors.Is(err, ErrUnknownTime) {
+	queue, _ = New(Limit{Items: 1, Time: 1}, itemType(schema.Traits[item]{Time: func(item) (int64, bool) { return 0, false }}))
+	if err := pushValue(context.Background(), queue, itemTraits(), item{}); !errors.Is(err, ErrUnknownTime) {
 		t.Fatalf("unknown time error = %v", err)
 	}
 }
@@ -172,7 +185,7 @@ func TestQueueRejectsUnavailableOrInvalidLimitTraits(t *testing.T) {
 func TestQueueConcurrentProducersDoNotLoseOrDuplicateItems(t *testing.T) {
 	const producers = 4
 	const perProducer = 200
-	queue, err := New[item](Limit{Items: 17}, Traits[item]{})
+	queue, err := New(Limit{Items: 17}, itemType(schema.Traits[item]{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +197,7 @@ func TestQueueConcurrentProducersDoNotLoseOrDuplicateItems(t *testing.T) {
 		go func(producer int) {
 			defer producersDone.Done()
 			for index := 0; index < perProducer; index++ {
-				if err := pushValue(ctx, queue, item{value: producer*perProducer + index}, nil); err != nil {
+				if err := pushValue(ctx, queue, itemTraits(), item{value: producer*perProducer + index}); err != nil {
 					t.Errorf("push: %v", err)
 					return
 				}
@@ -217,11 +230,11 @@ func TestQueueConcurrentProducersDoNotLoseOrDuplicateItems(t *testing.T) {
 }
 
 func TestWaitIdleIncludesDownstreamProcessing(t *testing.T) {
-	queue, err := New[item](Limit{Items: 1}, Traits[item]{})
+	queue, err := New(Limit{Items: 1}, itemType(schema.Traits[item]{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pushValue(context.Background(), queue, item{value: 1}, nil); err != nil {
+	if err := pushValue(context.Background(), queue, itemTraits(), item{value: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := popValue(context.Background(), queue); err != nil {
@@ -239,13 +252,14 @@ func TestWaitIdleIncludesDownstreamProcessing(t *testing.T) {
 }
 
 func TestQueueTransferAllocatesZero(t *testing.T) {
-	queue, err := New[int](Limit{Items: 1}, Traits[int]{})
+	typ := schema.Define[queueIntID](schema.Traits[int]{})
+	queue, err := New(Limit{Items: 1}, typ)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
 	allocations := testing.AllocsPerRun(1000, func() {
-		if err := pushValue(ctx, queue, 1, nil); err != nil {
+		if err := pushValue(ctx, queue, typ, 1); err != nil {
 			panic(err)
 		}
 		if _, err := popValue(ctx, queue); err != nil {
@@ -263,60 +277,61 @@ func TestQueueTransferAllocatesZero(t *testing.T) {
 // Drain that would otherwise clean up waits on that same mutex, so the panic
 // would never reach a recovery boundary.
 func TestQueueNeverHoldsItsLockAcrossADeclaredDrop(t *testing.T) {
-	queue, err := New[item](Limit{Items: 4}, Traits[item]{})
+	queue, err := New(Limit{Items: 4}, itemType(schema.Traits[item]{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pushValue(context.Background(), queue, item{value: 1}, nil); err != nil {
+	if err := pushValue(context.Background(), queue, itemTraits(), item{value: 1}); err != nil {
 		t.Fatal(err)
 	}
-	into := flow.NewItemWithTraits(item{value: 2}, nil, func(item) { panic("declared drop panicked") })
-	recovered := func() (value any) {
-		defer func() { value = recover() }()
-		return queue.Pop(context.Background(), &into)
-	}()
-	if recovered == nil {
-		t.Fatal("the declared drop panic did not propagate")
+	var domain flow.Collector
+	var into flow.Item[item]
+	into.Bind(itemType(schema.Traits[item]{Drop: func(item) { panic("declared drop panicked") }}), &domain)
+	into.Set(item{value: 2})
+	if err := queue.Pop(context.Background(), &into); err != nil {
+		t.Fatalf("pop over a failing release = %v", err)
+	}
+	if len(domain.Failures()) != 1 {
+		t.Fatalf("failures reported to the slot's domain = %d, want the release Pop performed", len(domain.Failures()))
 	}
 	if !queue.mu.TryLock() {
-		t.Fatal("the queue kept its lock after a declared drop panicked")
+		t.Fatal("the queue kept its lock across a declared drop")
 	}
 	queue.mu.Unlock()
-	if _, err := queue.Drain(); err != nil {
-		t.Fatalf("drain after the panic failed: %v", err)
-	}
+	queue.Drain(&domain)
 }
 
 // Drain releases owners, so one that cannot be released must not strand the
-// ones behind it. Every owner is released and the failures are reported
-// together rather than as a panic, because Drain runs where no recovery
-// boundary is left.
-func TestQueueDrainReleasesEveryOwnerDespiteAPanickingDrop(t *testing.T) {
-	queue, err := New[item](Limit{Items: 4}, Traits[item]{})
-	if err != nil {
-		t.Fatal(err)
-	}
+// ones behind it. Every owner is released and the failures reach the domain
+// that is doing the draining, because Drain runs where no recovery boundary is
+// left.
+func TestQueueDrainReleasesEveryOwnerDespiteAFailingDrop(t *testing.T) {
 	var released atomic.Int32
-	for index := 0; index < 3; index++ {
-		value := item{value: index}
-		drop := func(item) {
+	failing := itemType(schema.Traits[item]{
+		Drop: func(value item) {
 			released.Add(1)
 			if value.value == 0 {
 				panic("declared drop panicked")
 			}
-		}
-		if err := pushValue(context.Background(), queue, value, drop); err != nil {
+		},
+	})
+	queue, err := New(Limit{Items: 4}, failing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 3; index++ {
+		if err := pushValue(context.Background(), queue, failing, item{value: index}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	dropped, err := queue.Drain()
-	if dropped != 3 {
+	var domain flow.Collector
+	if dropped := queue.Drain(&domain); dropped != 3 {
 		t.Fatalf("drain = %d, want 3", dropped)
-	}
-	if err == nil {
-		t.Fatal("a panicking release was not reported")
 	}
 	if released.Load() != 3 {
 		t.Fatalf("released owners = %d, want every owner released", released.Load())
+	}
+	if got := len(domain.Failures()); got != 1 {
+		t.Fatalf("failures reported to the draining domain = %d, want the one release that could not finish", got)
 	}
 }

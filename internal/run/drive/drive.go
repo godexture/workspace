@@ -84,11 +84,11 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			if policy != flow.ZipFanIn {
 				return nil, Task{}, ErrUnsupported
 			}
-			return zipJoiner(joiner, inputs, limit, inputTraits, target)
+			return zipJoiner(joiner, inputs, limit, in, target)
 		},
-		fanout:  fanoutFactory(traits),
-		buffer:  bufferFactory(traits),
-		observe: observeFactory(traits),
+		fanout:  fanoutFactory(out),
+		buffer:  bufferFactory(out),
+		observe: observeFactory(out),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Joiner[I, O]); !ok {
 				return fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -113,11 +113,11 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 			if err != nil {
 				return Task{}, err
 			}
-			return sourceTask(reader, target), nil
+			return sourceTask(reader, typ, target), nil
 		},
-		fanout:  fanoutFactory(traits),
-		buffer:  bufferFactory(traits),
-		observe: observeFactory(traits),
+		fanout:  fanoutFactory(typ),
+		buffer:  bufferFactory(typ),
+		observe: observeFactory(typ),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Reader[T]); !ok {
 				return fmt.Errorf("%w: want flow.Reader[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
@@ -145,11 +145,11 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 			if err != nil {
 				return Link{}, err
 			}
-			return linkOf[I](&processorDelivery[I, O]{processor: processor, next: target, node: node}), nil
+			return linkOf[I](&processorDelivery[I, O]{processor: processor, next: target, typ: in, node: node}), nil
 		},
-		fanout:  fanoutFactory(traits),
-		buffer:  bufferFactory(traits),
-		observe: observeFactory(traits),
+		fanout:  fanoutFactory(out),
+		buffer:  bufferFactory(out),
+		observe: observeFactory(out),
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Processor[I, O]); !ok {
 				return fmt.Errorf("%w: want flow.Processor[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -170,7 +170,7 @@ func NewSink[T any](input string, typ schema.Type[T]) Binding {
 			if !ok {
 				return Link{}, fmt.Errorf("%w: want flow.Writer[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
 			}
-			return linkOf[T](&writerDelivery[T]{writer: writer, node: node}), nil
+			return linkOf[T](&writerDelivery[T]{writer: writer, typ: typ, node: node}), nil
 		},
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Writer[T]); !ok {

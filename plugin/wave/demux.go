@@ -8,7 +8,6 @@ import (
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/buffer"
-	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/timing"
 )
@@ -145,7 +144,7 @@ func (d *demuxer) emitCopy(ctx context.Context, value []byte, output flow.Emitte
 
 func (d *demuxer) emit(ctx context.Context, payload buffer.Handle, output flow.Emitter[packet.Chunk]) error {
 	frames := payload.Bytes().Len() / d.blockAlign
-	d.out.Set(packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload), mediaformat.Chunks())
+	output.Own(&d.out, packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload))
 	defer d.out.Drop()
 	if err := output.Emit(ctx, &d.out); err != nil {
 		return err

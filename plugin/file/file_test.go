@@ -157,6 +157,8 @@ func TestSourceFillsBlocksAcrossShortReadsAndReallocatesOnlyTail(t *testing.T) {
 	reader := opened.(*sourceOperator)
 
 	var first, second flow.Item[buffer.Handle]
+	first.Bind(access.Bytes(), &testDomain)
+	second.Bind(access.Bytes(), &testDomain)
 	defer first.Drop()
 	defer second.Drop()
 	if err := reader.Read(context.Background(), &first); err != nil {
@@ -179,6 +181,7 @@ func TestSourceFillsBlocksAcrossShortReadsAndReallocatesOnlyTail(t *testing.T) {
 	first.Drop()
 	second.Drop()
 	var tail flow.Item[buffer.Handle]
+	tail.Bind(access.Bytes(), &testDomain)
 	if err := reader.Read(context.Background(), &tail); err != io.EOF {
 		tail.Drop()
 		t.Fatalf("final read error = %v", err)
@@ -222,7 +225,7 @@ func TestSinkReplacesOnlyAtCommitAndReturnsPayloadGrant(t *testing.T) {
 		handle.Release()
 		t.Fatal(err)
 	}
-	writeItem := flow.NewItem(write, access.Writes())
+	writeItem := flow.NewItem(write, access.Writes(), &testDomain)
 	if err := operator.Write(context.Background(), &writeItem); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +329,7 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 		appendPayload.Release()
 		t.Fatal(err)
 	}
-	appendItem := flow.NewItem(appendWrite, access.Writes())
+	appendItem := flow.NewItem(appendWrite, access.Writes(), &testDomain)
 	if err := operator.Write(context.Background(), &appendItem); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +343,7 @@ func TestSinkDispatchesPartialAppendAndAbsolutePatchThroughRandomView(t *testing
 		patchPayload.Release()
 		t.Fatal(err)
 	}
-	patchItem := flow.NewItem(patchWrite, access.Writes())
+	patchItem := flow.NewItem(patchWrite, access.Writes(), &testDomain)
 	if err := operator.Write(context.Background(), &patchItem); err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +384,7 @@ func TestSinkReusesBoundedScratchWithoutPayloadSizedAllocation(t *testing.T) {
 		if writeErr != nil {
 			panic(writeErr)
 		}
-		return flow.NewItem(write, access.Writes())
+		return flow.NewItem(write, access.Writes(), &testDomain)
 	}
 	baseline := testing.AllocsPerRun(100, func() {
 		item := makeItem()
@@ -425,7 +428,7 @@ func TestSinkRejectsOverflowWithoutWritingAndReleasesPayload(t *testing.T) {
 		payload.Release()
 		t.Fatal(err)
 	}
-	input := flow.NewItem(write, access.Writes())
+	input := flow.NewItem(write, access.Writes(), &testDomain)
 	defer input.Drop()
 	if err := opened.(*sinkOperator).Write(context.Background(), &input); err == nil {
 		t.Fatal("overflowing patch was accepted")
@@ -649,7 +652,7 @@ func writeBytes(t *testing.T, operator *sinkOperator, value []byte) {
 		handle.Release()
 		t.Fatal(err)
 	}
-	writeItem := flow.NewItem(write, access.Writes())
+	writeItem := flow.NewItem(write, access.Writes(), &testDomain)
 	if err := operator.Write(context.Background(), &writeItem); err != nil {
 		handle.Release()
 		t.Fatal(err)

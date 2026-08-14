@@ -135,7 +135,7 @@ func (o *replaySourceOperator) Read(ctx context.Context, into *flow.Item[buffer.
 		payload = exact
 	}
 	o.done = eof
-	*into = flow.NewItem(payload, access.Bytes())
+	into.Set(payload)
 	return nil
 }
 

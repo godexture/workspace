@@ -99,7 +99,7 @@ func (s *fixtureSource) Read(ctx context.Context, into *flow.Item[buffer.Handle]
 	if err != nil {
 		return err
 	}
-	*into = flow.NewItem(handle, access.Bytes())
+	into.Set(handle)
 	return nil
 }
 
@@ -127,7 +127,7 @@ func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Fr
 	}
 	o.state.events = append(o.state.events, "frame")
 	o.state.mu.Unlock()
-	forwarded := flow.NewItem(frame.Share(), sample.S16())
+	forwarded := flow.NewItem(frame.Share(), sample.S16(), &testDomain)
 	if err := output.Emit(ctx, &forwarded); err != nil {
 		forwarded.Drop()
 		return err

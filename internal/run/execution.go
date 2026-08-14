@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/task"
@@ -20,7 +21,7 @@ var (
 type namedTask struct {
 	name  string
 	task  drive.Task
-	scope *drive.Scope
+	scope *journal.Scope
 	done  chan error
 }
 
@@ -90,7 +91,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			sort.Slice(incoming, func(left, right int) bool {
 				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
 			})
-			scope := drive.NewScope(value.id.String())
+			scope := journal.NewScope(value.id.String())
 			output.BindScope(scope)
 			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output)
 			if err != nil {
@@ -109,7 +110,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			if err != nil {
 				return fail(err)
 			}
-			scope := drive.NewScope(value.id.String())
+			scope := journal.NewScope(value.id.String())
 			output.BindScope(scope)
 			sourceTask, err := value.binding.OpenSource(operator, output)
 			if err != nil {
@@ -143,7 +144,7 @@ func (t Template) outputLink(index int, targets []drive.Link, execution *Executi
 		}
 		link = observed
 		if edge.reason != 0 && t.nodes[edge.to].kind != drive.Joiner {
-			scope := drive.NewScope("")
+			scope := journal.NewScope("")
 			link.BindScope(scope)
 			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link)
 			if err != nil {
@@ -257,25 +258,21 @@ func (e *Execution) Finish(ctx context.Context) error {
 	return e.finishErr
 }
 
-// Discard releases every owner still queued after data tasks have joined and
-// reports the releases that failed. Close must be called first on failure so
-// producers can no longer publish.
+// Discard releases every owner still queued after data tasks have joined.
+// Close must be called first on failure so producers can no longer publish.
 //
-// Every task is visited even after one of them reports, for the same reason a
-// group of cells is: stopping at the first broken release would strand the
-// owners behind it.
-func (e *Execution) Discard() error {
+// The tasks have joined and sealed their journals by now, so what is released
+// here belongs to the caller's cleanup domain and is reported there.
+func (e *Execution) Discard(into flow.Reporter) {
 	if e == nil {
-		return nil
+		return
 	}
-	problems := make([]error, 0, len(e.sources)+len(e.edges))
 	for index := len(e.sources) - 1; index >= 0; index-- {
-		problems = append(problems, e.sources[index].task.Discard())
+		e.sources[index].task.Discard(into)
 	}
 	for index := len(e.edges) - 1; index >= 0; index-- {
-		problems = append(problems, e.edges[index].task.Discard())
+		e.edges[index].task.Discard(into)
 	}
-	return errors.Join(problems...)
 }
 
 func (e *Execution) Close() {

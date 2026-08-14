@@ -7,9 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/godexture/godec/flow"
 	mediaformat "github.com/godexture/godec/media/format"
-	"github.com/godexture/godec/media/schema"
 )
 
 // owners detects releases of an input fixture item that its releaser did not
@@ -117,21 +115,4 @@ func runRejected[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O],
 	if len(result.Cleanup) != 0 {
 		t.Errorf("testkit rejection cleanup failures = %v", result.Cleanup)
 	}
-}
-
-// ownedItem hands one fixture value to the runtime with accounted traits. The
-// component under test observes the same schema behaviour; only the counting
-// wrapper differs.
-func ownedItem[T any](value T, typ schema.Type[T], counter *owners) flow.Item[T] {
-	counter.hand()
-	return flow.NewItemWithTraits(value,
-		func(value T) T {
-			counter.hand()
-			return typ.Fork(value)
-		},
-		func(value T) {
-			counter.release()
-			typ.Drop(value)
-		},
-	)
 }

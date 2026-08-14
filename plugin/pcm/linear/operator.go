@@ -8,8 +8,6 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
-	"github.com/godexture/godec/media/codec"
-	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/timing"
@@ -78,7 +76,7 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 			return err
 		}
 		samples := int64((end - offset) / frameBytes)
-		o.out.Set(packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload), format.Chunks())
+		output.Own(&o.out, packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload))
 		err = output.Emit(ctx, &o.out)
 		o.out.Drop()
 		if err != nil {
@@ -107,7 +105,7 @@ func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Ch
 	if frameBytes == 0 || input.Value().Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
-	transferErr := flow.Transfer(input, &o.out, codec.Packets(), func(chunk packet.Chunk) (packet.Packet, error) {
+	transferErr := flow.Transfer(input, &o.out, output, func(chunk packet.Chunk) (packet.Packet, error) {
 		duration := timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len() / frameBytes)))
 		sequence, pts, sideData := chunk.Sequence(), chunk.PTS(), chunk.SideData()
 		return packet.NewPacket(sequence, pts, timing.UnknownDTS(), duration, chunk.Detach()).WithSideData(sideData), nil
@@ -175,7 +173,7 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 		return err
 	}
 	frame = frame.WithSideData(value.SideData())
-	o.out.Set(frame, sample.S16())
+	output.Own(&o.out, frame)
 	defer o.out.Drop()
 	return output.Emit(ctx, &o.out)
 }
@@ -223,7 +221,7 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 		timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))),
 		payload,
 	).WithSideData(frame.SideData())
-	o.out.Set(packetValue, codec.Packets())
+	output.Own(&o.out, packetValue)
 	defer o.out.Drop()
 	if err := output.Emit(ctx, &o.out); err != nil {
 		return err
@@ -244,7 +242,7 @@ func (o *writerOperator) Process(ctx context.Context, input *flow.Item[packet.Pa
 	if !input.Value().Valid() {
 		return errors.New("raw PCM writer received an invalid packet payload")
 	}
-	transferErr := flow.Transfer(input, &o.out, access.Writes(), func(value packet.Packet) (access.Write, error) {
+	transferErr := flow.Transfer(input, &o.out, output, func(value packet.Packet) (access.Write, error) {
 		return access.Append(value.Detach())
 	})
 	defer o.out.Drop()

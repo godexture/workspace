@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/task"
 )
 
@@ -41,7 +42,7 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 		value.Stack = append([]byte(nil), existing.Stack...)
 		return value
 	}
-	var panicError *task.PanicError
+	var panicError *journal.PanicError
 	if errors.As(err, &panicError) {
 		if node == "" {
 			node = panicError.Location
@@ -65,6 +66,41 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 	return failure
 }
 
+// acceptTaskFailure records one journal entry once. cleanup decides which half
+// of Result it lands in; primary, when offered, collects the first failure that
+// could stop the run.
+func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
+	key := "failure:" + value.Task + ":" + value.Node + ":" + value.Err.Error()
+	if _, exists := r.reported[key]; exists {
+		return
+	}
+	r.reported[key] = struct{}{}
+	failure := failureOf(RunPhase, value.Node, value.Task, value.Err)
+	if len(value.Stack) != 0 {
+		failure.Stack = append([]byte(nil), value.Stack...)
+	}
+	switch {
+	case cleanup || value.Kind.Cleanup():
+		r.addCleanup(failure)
+	case primary != nil && *primary == nil:
+		*primary = &failure
+	default:
+		r.addSecondary(failure)
+	}
+}
+
+// cleanupDomain is the failure domain for releases performed after the data
+// tasks have joined and sealed their journals. They belong to the run's
+// cleanup, which is where Result already keeps what could not be released.
+type cleanupDomain struct {
+	runner *runner
+	task   string
+}
+
+func (d cleanupDomain) Cleanup(err error) {
+	d.runner.addCleanup(failureOf(ClosePhase, "", d.task, err))
+}
+
 func resultError(result Result) error {
 	values := make([]error, 0, 1+len(result.Cleanup))
 	if result.Primary != nil {
@@ -76,25 +112,21 @@ func resultError(result Result) error {
 	return errors.Join(values...)
 }
 
+// acceptTaskReport maps what each task ended with onto the two halves Result
+// already has. A task's primary competes to be the run's primary; the releases
+// it could not perform are the run's cleanup, whichever way the task ended.
 func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
-	failures := append([]task.Failure(nil), report.Failures...)
-	sort.SliceStable(failures, func(left, right int) bool { return failures[left].Name < failures[right].Name })
+	outcomes := append([]journal.Outcome(nil), report.Outcomes...)
+	sort.SliceStable(outcomes, func(left, right int) bool { return outcomes[left].Task < outcomes[right].Task })
 	var primary *Failure
-	for _, value := range failures {
-		key := "failure:" + value.Name + ":" + value.Err.Error()
-		if _, exists := r.reported[key]; exists {
+	for _, outcome := range outcomes {
+		for _, value := range outcome.Cleanup {
+			r.acceptTaskFailure(value, true, nil)
+		}
+		if outcome.Primary == nil {
 			continue
 		}
-		r.reported[key] = struct{}{}
-		failure := failureOf(RunPhase, "", value.Name, value.Err)
-		if cleanup {
-			r.addCleanup(failure)
-		} else if primary == nil {
-			copy := failure
-			primary = &copy
-		} else {
-			r.addSecondary(failure)
-		}
+		r.acceptTaskFailure(*outcome.Primary, cleanup, &primary)
 	}
 	for _, name := range report.Running {
 		key := "running:" + name

@@ -27,7 +27,8 @@ func (r *runner) cleanup() {
 	r.acceptTaskReport(r.data.Wait(cleanupContext), true)
 	if r.execution != nil {
 		if failure := invoke(cleanupContext, ClosePhase, "", "runtime/discard", func(context.Context) error {
-			return r.execution.Discard()
+			r.execution.Discard(cleanupDomain{runner: r, task: "runtime/discard"})
+			return nil
 		}); failure != nil {
 			r.addCleanup(*failure)
 		}

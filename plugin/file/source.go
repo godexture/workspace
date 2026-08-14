@@ -93,7 +93,7 @@ func (o *sourceOperator) Read(ctx context.Context, into *flow.Item[buffer.Handle
 		payload = exact
 	}
 	o.done = eof
-	*into = flow.NewItem(payload, access.Bytes())
+	into.Set(payload)
 	return nil
 }
 

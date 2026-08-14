@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/release"
 	"github.com/godexture/godec/media/schema"
 )
@@ -15,12 +16,17 @@ import (
 type fanoutDelivery[T any] struct {
 	outputs  []delivery[T]
 	branches []flow.Item[T]
-	scope    *Scope
+	typ      schema.Type[T]
 	once     sync.Once
 	closeErr error
 }
 
-func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
+// Own binds the caller's slot to the first output, which is the edge the
+// payload the caller is about to fill would reach without the fork.
+func (f *fanoutDelivery[T]) Own(into *flow.Item[T], value T) { f.outputs[0].Own(into, value) }
+
+func fanoutFactory[T any](typ schema.Type[T]) func([]Link) (Link, error) {
+	traits := typ.Traits()
 	return func(links []Link) (Link, error) {
 		if len(links) == 0 {
 			return Link{}, ErrLink
@@ -45,6 +51,7 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 		return linkOf[T](&fanoutDelivery[T]{
 			outputs:  outputs,
 			branches: make([]flow.Item[T], len(outputs)-1),
+			typ:      typ,
 		}), nil
 	}
 }
@@ -53,12 +60,11 @@ func fanoutFactory[T any](traits schema.Traits[T]) func([]Link) (Link, error) {
 // one. Branch cells are reused across items, and the deferred release covers
 // every failure and panic path without per-branch bookkeeping.
 func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) (err error) {
-	// Every branch a consumer did not take has to be released, including when
-	// one of those releases fails: a fan-out holds several owners of one item,
-	// and stopping at the first broken Drop would strand the rest. A consumer
-	// that panics unwinds through this defer and takes the return value with
-	// it, so the scope keeps a copy for the task boundary.
-	defer func() { err = errors.Join(err, f.scope.fail(release.All(f.branches))) }()
+	// Every branch a consumer did not take has to be released. A fan-out holds
+	// several owners of one payload, so stopping at the first broken Drop would
+	// strand the rest; each branch slot reports its own failure to the task's
+	// journal and none of them can interrupt the others.
+	defer release.All(f.branches)
 	for index := range f.branches {
 		if !item.Fork(&f.branches[index]) {
 			return ErrInvalidItem
@@ -85,8 +91,12 @@ func (f *fanoutDelivery[T]) close(ctx context.Context) error {
 	return f.closeErr
 }
 
-func (f *fanoutDelivery[T]) bindScope(scope *Scope) {
-	f.scope = scope
+// bindScope binds the branch slots to the task that drives this fan-out: they
+// are its slots, and a branch nobody took is released by it.
+func (f *fanoutDelivery[T]) bindScope(scope *journal.Scope) {
+	for index := range f.branches {
+		f.branches[index].Bind(f.typ, scope)
+	}
 	for _, output := range f.outputs {
 		if value, ok := output.(scopeBinder); ok {
 			value.bindScope(scope)

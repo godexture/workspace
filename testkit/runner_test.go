@@ -195,7 +195,7 @@ func (o runnerOperator) Process(ctx context.Context, input *flow.Item[int], outp
 	if input.Value() < 0 {
 		return diagnostic.NewError(diagnostic.NewItem("runner.negative", diagnostic.ErrorSeverity, diagnostic.Path{}, "negative fixture", nil))
 	}
-	value := flow.NewItem(input.Value()*o.factor, runnerType)
+	value := flow.NewItem(input.Value()*o.factor, runnerType, &testDomain)
 	if err := output.Emit(ctx, &value); err != nil {
 		return err
 	}

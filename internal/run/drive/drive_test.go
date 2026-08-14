@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
@@ -58,7 +59,7 @@ func (r *sliceReader) Read(_ context.Context, into *flow.Item[owned]) error {
 	if r.index == len(r.values) {
 		return io.EOF
 	}
-	*into = flow.NewItem(r.values[r.index], r.typ)
+	into.Set(r.values[r.index])
 	r.index++
 	return nil
 }
@@ -72,7 +73,7 @@ type mapProcessor struct {
 
 func (p *mapProcessor) Process(ctx context.Context, input *flow.Item[owned], output flow.Emitter[owned]) error {
 	defer input.Drop()
-	item := flow.NewItem(owned{value: input.Value().value + 10}, p.output)
+	item := flow.NewItem(owned{value: input.Value().value + 10}, p.output, &testDomain)
 	defer item.Drop()
 	return output.Emit(ctx, &item)
 }
@@ -181,7 +182,7 @@ func TestFanoutRetainsRollbackOwnerAcrossPartialFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := flow.NewItem(owned{value: 9}, typ)
+	input := flow.NewItem(owned{value: 9}, typ, &testDomain)
 	if err := target.Emit(context.Background(), &input); !errors.Is(err, want) {
 		t.Fatalf("fan-out error = %v", err)
 	}
@@ -205,7 +206,7 @@ func TestOneOutputFanoutIsLinearMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	target, _ := deliveryOf[owned](linear)
-	item := flow.NewItem(owned{value: 4}, typ)
+	item := flow.NewItem(owned{value: 4}, typ, &testDomain)
 	defer item.Drop()
 	if err := target.Emit(context.Background(), &item); err != nil {
 		t.Fatal(err)
@@ -300,7 +301,7 @@ func TestAudioFanoutCopiesOnlyModifyingBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item := flow.NewItem(frame, typ)
+	item := flow.NewItem(frame, typ, &testDomain)
 	defer item.Drop()
 	if err := target.Emit(context.Background(), &item); err != nil {
 		t.Fatal(err)
@@ -436,7 +437,10 @@ func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			item := flow.NewItem(owned{value: 1}, typ)
+			scope := journal.NewScope("edge")
+			bufferTask.BindScope(scope)
+			buffered.BindScope(journal.NewScope("producer"))
+			item := flow.NewItem(owned{value: 1}, typ, &testDomain)
 			if err := producer.Emit(context.Background(), &item); err != nil {
 				t.Fatal(err)
 			}
@@ -451,6 +455,10 @@ func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
 			if released.Load() != 1 {
 				t.Fatalf("releases of the unfinished value = %d", released.Load())
 			}
+			outcome := scope.Seal()
+			if test.dropPanics != (len(outcome.Cleanup) == 1) {
+				t.Fatalf("cleanup reported to the edge = %#v", outcome.Cleanup)
+			}
 		})
 	}
 }
@@ -462,7 +470,7 @@ type intOperator struct {
 
 func (p *intOperator) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
 	defer input.Drop()
-	p.out = flow.NewItemWithTraits(input.Value()+1, nil, nil)
+	output.Own(&p.out, input.Value()+1)
 	defer p.out.Drop()
 	return output.Emit(ctx, &p.out)
 }
@@ -502,7 +510,7 @@ func TestLinearProcessorHopAllocatesZero(t *testing.T) {
 	var cell flow.Item[int]
 	defer cell.Drop()
 	allocations := testing.AllocsPerRun(1000, func() {
-		cell.Set(1, in)
+		target.Own(&cell, 1)
 		if err := target.Emit(context.Background(), &cell); err != nil {
 			panic(err)
 		}
@@ -538,7 +546,7 @@ type intReader struct {
 }
 
 func (r *intReader) Read(_ context.Context, into *flow.Item[int]) error {
-	*into = flow.NewItem(1, r.typ)
+	into.Set(1)
 	return nil
 }
 
@@ -554,7 +562,7 @@ func (j *sumJoiner) Process(ctx context.Context, batch flow.Batch[owned], output
 	if !leftOK || !rightOK {
 		return errors.New("invalid zip batch")
 	}
-	item := flow.NewItem(owned{value: left.value + right.value}, j.output)
+	item := flow.NewItem(owned{value: left.value + right.value}, j.output, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
@@ -593,15 +601,17 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	}
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
+	scope := journal.NewScope("join")
+	task.BindScope(scope)
 	result := make(chan error, 1)
 	go func() { result <- task.Run(context.Background()) }()
 	for _, pair := range [][2]int{{1, 10}, {2, 20}} {
-		leftItem := flow.NewItem(owned{value: pair[0]}, in)
+		leftItem := flow.NewItem(owned{value: pair[0]}, in, &testDomain)
 		if err := left.Emit(context.Background(), &leftItem); err != nil {
 			t.Fatal(err)
 		}
 		leftItem.Drop()
-		rightItem := flow.NewItem(owned{value: pair[1]}, in)
+		rightItem := flow.NewItem(owned{value: pair[1]}, in, &testDomain)
 		if err := right.Emit(context.Background(), &rightItem); err != nil {
 			t.Fatal(err)
 		}
@@ -662,6 +672,8 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope := journal.NewScope("join")
+	task.BindScope(scope)
 	result := make(chan error, 1)
 	go func() { result <- task.Run(context.Background()) }()
 	for _, input := range inputs {
@@ -669,7 +681,7 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item := flow.NewItem(owned{value: 1}, in)
+		item := flow.NewItem(owned{value: 1}, in, &testDomain)
 		if err := edge.Emit(context.Background(), &item); err != nil {
 			t.Fatal(err)
 		}
@@ -679,12 +691,20 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err = <-result
-	if err == nil {
-		t.Fatal("the join reported success after a failed batch release")
+	if err := <-result; err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(err.Error(), "declared drop panicked") {
-		t.Error("the release report exposes the recovered panic value")
+	outcome := scope.Seal()
+	if len(outcome.Cleanup) == 0 {
+		t.Fatal("the join finished without reporting the batch it could not release")
+	}
+	for _, failure := range outcome.Cleanup {
+		if failure.Kind != journal.CleanupPanic {
+			t.Errorf("release failure kind = %v, want a cleanup panic", failure.Kind)
+		}
+		if strings.Contains(failure.Err.Error(), "declared drop panicked") {
+			t.Error("the release report exposes the recovered panic value")
+		}
 	}
 }
 
@@ -711,12 +731,12 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	go func() { result <- task.Run(context.Background()) }()
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
-	leftItem := flow.NewItem(owned{value: 1}, in)
+	leftItem := flow.NewItem(owned{value: 1}, in, &testDomain)
 	defer leftItem.Drop()
 	if err := left.Emit(context.Background(), &leftItem); err != nil {
 		t.Fatal(err)
 	}
-	rightItem := flow.NewItem(owned{value: 10}, in)
+	rightItem := flow.NewItem(owned{value: 10}, in, &testDomain)
 	defer rightItem.Drop()
 	if err := right.Emit(context.Background(), &rightItem); err != nil {
 		t.Fatal(err)
@@ -724,7 +744,7 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	if err := <-result; !errors.Is(err, ErrWatermark) {
 		t.Fatalf("watermark error = %v", err)
 	}
-	task.Discard()
+	task.Discard(&testDomain)
 	if inputOwners.drops.Load() != 2 {
 		t.Fatalf("watermark input drops = %d", inputOwners.drops.Load())
 	}
@@ -771,7 +791,7 @@ func TestAPanickingJoinDoesNotReportABarrier(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item := flow.NewItem(owned{value: 1}, in)
+		item := flow.NewItem(owned{value: 1}, in, &testDomain)
 		if err := edge.Emit(context.Background(), &item); err != nil {
 			t.Fatal(err)
 		}
@@ -819,13 +839,15 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope := journal.NewScope("join")
+	task.BindScope(scope)
 	// Only the first input carries a value, so the join pops it, finds the
 	// second at EOF, and ends holding a batch it never joined.
 	first, err := deliveryOf[owned](inputs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	item := flow.NewItem(owned{value: 1}, in)
+	item := flow.NewItem(owned{value: 1}, in, &testDomain)
 	if err := first.Emit(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
@@ -838,8 +860,11 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := task.Run(context.Background()); err == nil {
-		t.Fatal("the join reported success after it could not release its batch")
+	if err := task.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(scope.Seal().Cleanup) == 0 {
+		t.Fatal("the join finished without reporting the batch it could not release")
 	}
 	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer giveUp()

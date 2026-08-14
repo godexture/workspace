@@ -20,6 +20,11 @@ type writeCollector struct {
 	failAt int
 }
 
+func (*writeCollector) Own(into *flow.Item[access.Write], value access.Write) {
+	into.Bind(access.Writes(), &testDomain)
+	into.Set(value)
+}
+
 func (c *writeCollector) Emit(_ context.Context, input *flow.Item[access.Write]) error {
 	if c.failAt >= 0 && len(c.items) == c.failAt {
 		return errors.New("injected write emission failure")
@@ -55,7 +60,7 @@ func TestMuxEmitsHeaderPayloadAndFinalPatchesWithOwnedStorage(t *testing.T) {
 	value := packet.NewPacket(0, timing.SomePTS(timing.NewPTS(0)), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(2)), handle)
 	operator := newMuxer(muxPlan{shape: muxerShape(), header: header}, muxBuffers)
 	collector := &writeCollector{failAt: -1}
-	packetItem := flow.NewItem(value, codec.Packets())
+	packetItem := flow.NewItem(value, codec.Packets(), &testDomain)
 	if err := operator.Process(context.Background(), &packetItem, collector); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +96,7 @@ func TestMuxEmissionFailureReleasesEveryPayloadItAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	value := packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle)
-	input := flow.NewItem(value, codec.Packets())
+	input := flow.NewItem(value, codec.Packets(), &testDomain)
 	collector := &writeCollector{failAt: 1}
 	operator := newMuxer(muxPlan{shape: muxerShape(), header: header}, muxBuffers)
 	if err := operator.Process(context.Background(), &input, collector); err == nil {

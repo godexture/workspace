@@ -9,10 +9,16 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 )
 
 type chunkCollector struct{ items []*flow.Item[packet.Chunk] }
+
+func (*chunkCollector) Own(into *flow.Item[packet.Chunk], value packet.Chunk) {
+	into.Bind(format.Chunks(), &testDomain)
+	into.Set(value)
+}
 
 func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk]) error {
 	if !input.Valid() {
@@ -49,7 +55,7 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item := flow.NewItem(handle, access.Bytes())
+		item := flow.NewItem(handle, access.Bytes(), &testDomain)
 		if err := operator.Process(context.Background(), &item, collector); err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +100,7 @@ func TestDemuxFlushRejectsTruncatedData(t *testing.T) {
 	}
 	operator := newDemuxer(demuxPlan{shape: demuxerShape(), header: inspected}, allocator)
 	collector := &chunkCollector{}
-	truncatedItem := flow.NewItem(handle, access.Bytes())
+	truncatedItem := flow.NewItem(handle, access.Bytes(), &testDomain)
 	if err := operator.Process(context.Background(), &truncatedItem, collector); err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func (o *spoolOperator) Process(ctx context.Context, input *flow.Item[buffer.Han
 	defer input.Drop()
 	var item flow.Item[access.Write]
 	defer item.Drop()
-	if err := flow.Transfer(input, &item, access.Writes(), access.Append); err != nil {
+	if err := flow.Transfer(input, &item, output, access.Append); err != nil {
 		return err
 	}
 	return output.Emit(ctx, &item)
@@ -72,7 +72,7 @@ func (o *spoolOperator) Flush(ctx context.Context, output flow.Emitter[access.Wr
 		payload.Release()
 		return err
 	}
-	item := flow.NewItem(write, access.Writes())
+	item := flow.NewItem(write, access.Writes(), &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err

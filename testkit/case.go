@@ -56,11 +56,33 @@ func (f Fixture[T]) clone() Fixture[T] {
 }
 
 // emit hands the next unread value to the runtime under ownership accounting.
-func (f *Fixture[T]) emit(index int) flow.Item[T] {
+// The slot keeps the failure domain the runtime bound it to and takes the
+// counting traits, so the component under test sees the declared behaviour and
+// only the accounting differs.
+func (f *Fixture[T]) emit(index int, into *flow.Item[T]) {
 	value := f.values[index]
 	var zero T
 	f.values[index] = zero
-	return ownedItem(value, f.typ, f.owners)
+	f.owners.hand()
+	into.Bind(f.counted(), nil)
+	into.Set(value)
+}
+
+func (f *Fixture[T]) counted() schema.Type[T] {
+	typ, counter := f.typ, f.owners
+	traits := typ.Traits()
+	return typ.WithTraits(schema.Traits[T]{
+		Fork: func(value T) T {
+			counter.hand()
+			return typ.Fork(value)
+		},
+		Drop: func(value T) {
+			counter.release()
+			typ.Drop(value)
+		},
+		Size: traits.Size,
+		Time: traits.Time,
+	})
 }
 
 func (f *Fixture[T]) close() error {

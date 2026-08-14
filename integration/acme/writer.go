@@ -116,7 +116,7 @@ func (o *writerOperator) Process(ctx context.Context, input *flow.Item[Value], o
 	if err != nil {
 		return err
 	}
-	o.out.Set(write, access.Writes())
+	output.Own(&o.out, write)
 	defer o.out.Drop()
 	if err := output.Emit(ctx, &o.out); err != nil {
 		return err

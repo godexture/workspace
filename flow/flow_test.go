@@ -13,6 +13,7 @@ type flowUnitID struct{}
 type flowUnit struct{ Value int }
 type flowValueID struct{}
 type panicDropID struct{}
+type thirdPartyDropID struct{}
 
 var linearValueSchema = schema.Define[flowValueID, int](schema.Traits[int]{})
 
@@ -83,7 +84,7 @@ func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing
 	typ := countingSchema(&drops)
 
 	moved := func() {
-		item := NewItem(1, typ)
+		item := NewItem(1, typ, &testDomain)
 		defer item.Drop()
 		var downstream Item[int]
 		downstream.Move(&item)
@@ -95,7 +96,7 @@ func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing
 	}
 
 	abandoned := func() {
-		item := NewItem(2, typ)
+		item := NewItem(2, typ, &testDomain)
 		defer item.Drop()
 	}
 	abandoned()
@@ -103,7 +104,7 @@ func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing
 		t.Fatalf("release count after an unconsumed cell = %d, want 2", drops.Load())
 	}
 
-	repeated := NewItem(3, typ)
+	repeated := NewItem(3, typ, &testDomain)
 	repeated.Drop()
 	repeated.Drop()
 	if drops.Load() != 3 {
@@ -114,7 +115,7 @@ func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing
 func TestForkIsTheOnlyRetainAndEachOwnerReleasesOnce(t *testing.T) {
 	var drops atomic.Int32
 	typ := countingSchema(&drops)
-	original := NewItem(42, typ)
+	original := NewItem(42, typ, &testDomain)
 	var branch Item[int]
 	if !original.Fork(&branch) || !original.Valid() || !branch.Valid() {
 		t.Fatal("fork did not produce two independent owners")
@@ -131,7 +132,11 @@ func TestForkIsTheOnlyRetainAndEachOwnerReleasesOnce(t *testing.T) {
 
 func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 	var drops atomic.Int32
-	item := NewItemWithTraits(8, func(value int) int { return value + 1 }, func(int) { drops.Add(1) })
+	thirdParty := schema.Define[thirdPartyDropID](schema.Traits[int]{
+		Fork: func(value int) int { return value + 1 },
+		Drop: func(int) { drops.Add(1) },
+	})
+	item := NewItem(8, thirdParty, &testDomain)
 	var branch Item[int]
 	item.Fork(&branch)
 	if branch.Value() != 9 {
@@ -148,7 +153,7 @@ func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 // cells, so it must not allocate: an edge costs no more than a direct call.
 func TestOwnershipTransferHasNoAllocation(t *testing.T) {
 	allocations := testing.AllocsPerRun(1000, func() {
-		item := NewItem(1, linearValueSchema)
+		item := NewItem(1, linearValueSchema, &testDomain)
 		var stored Item[int]
 		stored.Move(&item)
 		if item.Valid() || !stored.Valid() {
@@ -170,10 +175,10 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 
 	t.Run("success hands the value to build", func(t *testing.T) {
 		drops.Store(0)
-		source := NewItem(1, typ)
+		source := NewItem(1, typ, &testDomain)
 		defer source.Drop()
 		var target Item[int]
-		if err := Transfer(&source, &target, typ, func(value int) (int, error) { return value, nil }); err != nil {
+		if err := Transfer(&source, &target, edge[int]{typ}, func(value int) (int, error) { return value, nil }); err != nil {
 			t.Fatal(err)
 		}
 		if drops.Load() != 0 {
@@ -187,11 +192,11 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 
 	t.Run("returned error releases once", func(t *testing.T) {
 		drops.Store(0)
-		source := NewItem(2, typ)
+		source := NewItem(2, typ, &testDomain)
 		defer source.Drop()
 		var target Item[int]
 		defer target.Drop()
-		if err := Transfer(&source, &target, typ, func(int) (int, error) { return 0, errTransferTest }); !errors.Is(err, errTransferTest) {
+		if err := Transfer(&source, &target, edge[int]{typ}, func(int) (int, error) { return 0, errTransferTest }); !errors.Is(err, errTransferTest) {
 			t.Fatalf("transfer error = %v", err)
 		}
 		if drops.Load() != 1 || source.Valid() || target.Valid() {
@@ -203,11 +208,11 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 		drops.Store(0)
 		recovered := func() (value any) {
 			defer func() { value = recover() }()
-			source := NewItem(3, typ)
+			source := NewItem(3, typ, &testDomain)
 			defer source.Drop()
 			var target Item[int]
 			defer target.Drop()
-			_ = Transfer(&source, &target, typ, func(int) (int, error) { panic("build failed") })
+			_ = Transfer(&source, &target, edge[int]{typ}, func(int) (int, error) { panic("build failed") })
 			return nil
 		}()
 		if recovered != "build failed" {
@@ -220,11 +225,11 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 
 	t.Run("target overwrite releases what it held", func(t *testing.T) {
 		drops.Store(0)
-		target := NewItem(4, typ)
+		target := NewItem(4, typ, &testDomain)
 		defer target.Drop()
-		source := NewItem(5, typ)
+		source := NewItem(5, typ, &testDomain)
 		defer source.Drop()
-		if err := Transfer(&source, &target, typ, func(value int) (int, error) { return value, nil }); err != nil {
+		if err := Transfer(&source, &target, edge[int]{typ}, func(value int) (int, error) { return value, nil }); err != nil {
 			t.Fatal(err)
 		}
 		if drops.Load() != 1 {
@@ -232,10 +237,10 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 		}
 	})
 
-	// The source cell is already empty when the target releases what it held,
-	// so a panic there strands the converted payload unless the hand-off keeps
-	// the obligation until the target actually holds it.
-	t.Run("a panicking target release loses nothing", func(t *testing.T) {
+	// The source slot is already empty when the target releases what it held, so
+	// a failure there must not take the converted payload with it: the target
+	// ends up holding it, and the failure goes to the domain.
+	t.Run("a failed target release loses nothing", func(t *testing.T) {
 		var panicking atomic.Int32
 		panickingType := schema.Define[panicDropID](schema.Traits[int]{
 			Drop: func(int) {
@@ -243,18 +248,22 @@ func TestTransferReleasesExactlyOnceOnEveryPath(t *testing.T) {
 				panic("declared drop panicked")
 			},
 		})
-		target := NewItem(6, panickingType)
-		source := NewItem(7, panickingType)
-		recovered := func() (value any) {
-			defer func() { value = recover() }()
-			return Transfer(&source, &target, panickingType, func(value int) (int, error) { return value, nil })
-		}()
-		if recovered == nil {
-			t.Fatal("the declared drop panic did not propagate")
+		var domain Collector
+		target := NewItem(6, panickingType, &domain)
+		source := NewItem(7, panickingType, &domain)
+		if err := Transfer(&source, &target, edge[int]{panickingType}, func(value int) (int, error) { return value, nil }); err != nil {
+			t.Fatal(err)
 		}
-		if panicking.Load() != 2 {
-			t.Fatalf("release count = %d, want the target payload and the converted one", panicking.Load())
+		if !target.Valid() || target.Value() != 7 {
+			t.Fatal("the converted payload was lost by the release it replaced")
 		}
+		if panicking.Load() != 1 {
+			t.Fatalf("release count = %d, want the payload the target held", panicking.Load())
+		}
+		if got := len(domain.Failures()); got != 1 {
+			t.Fatalf("failures reported to the domain = %d, want the release that could not finish", got)
+		}
+		target.Drop()
 	})
 }
 
@@ -268,7 +277,7 @@ func TestCellsMoveIntoAContainerWithoutASecondOwner(t *testing.T) {
 
 	var collected []*Item[int]
 	for value := 1; value <= 3; value++ {
-		emitted := NewItem(value, typ)
+		emitted := NewItem(value, typ, &testDomain)
 		stored := new(Item[int])
 		stored.Move(&emitted)
 		if emitted.Valid() || !stored.Valid() {
@@ -288,10 +297,11 @@ func TestCellsMoveIntoAContainerWithoutASecondOwner(t *testing.T) {
 	}
 }
 
-// A declared Drop is third-party code. When the cell that is about to take a
-// payload panics while releasing what it held, the incoming payload has no
-// owner yet, so it must not be stranded by the unwind.
-func TestTakingOverAPanickingReleaseDoesNotStrandTheIncomingPayload(t *testing.T) {
+// A declared Drop is third-party code, and a slot that takes a payload releases
+// what it held first. That release decides nothing any more: it cannot raise,
+// so the incoming payload is stored either way, and the failure goes to the
+// domain the slot belongs to instead of unwinding through the caller.
+func TestTakingOverAFailedReleaseKeepsTheIncomingPayload(t *testing.T) {
 	var drops atomic.Int32
 	panicking := schema.Define[panicDropID](schema.Traits[int]{
 		Drop: func(int) {
@@ -300,30 +310,30 @@ func TestTakingOverAPanickingReleaseDoesNotStrandTheIncomingPayload(t *testing.T
 		},
 	})
 
-	assertStranded := func(t *testing.T, hand func(target *Item[int])) {
+	assertKept := func(t *testing.T, hand func(target *Item[int])) {
 		t.Helper()
 		drops.Store(0)
-		target := NewItem(1, panicking)
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("the declared drop panic did not propagate")
-				}
-			}()
-			hand(&target)
-		}()
-		if drops.Load() != 2 {
-			t.Errorf("release count = %d, want the held and the incoming payload", drops.Load())
+		var domain Collector
+		target := NewItem(1, panicking, &domain)
+		hand(&target)
+		if !target.Valid() || target.Value() != 2 {
+			t.Error("the incoming payload was lost by the release it replaced")
 		}
+		if got := len(domain.Failures()); got != 1 {
+			t.Errorf("failures reported to the domain = %d, want the release that could not finish", got)
+		}
+		target.Drop()
 	}
 
 	t.Run("Set", func(t *testing.T) {
-		assertStranded(t, func(target *Item[int]) { target.Set(2, panicking) })
+		assertKept(t, func(target *Item[int]) { target.Set(2) })
 	})
 	t.Run("Fork", func(t *testing.T) {
-		assertStranded(t, func(target *Item[int]) {
-			source := NewItem(2, panicking)
-			source.Fork(target)
+		assertKept(t, func(target *Item[int]) {
+			var source Collector
+			value := NewItem(2, panicking, &source)
+			value.Fork(target)
+			value.Drop()
 		})
 	})
 }

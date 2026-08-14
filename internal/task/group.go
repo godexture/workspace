@@ -5,13 +5,12 @@ package task
 import (
 	"context"
 	"errors"
-	"fmt"
 	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/journal"
 )
 
 var (
@@ -19,48 +18,10 @@ var (
 	ErrInvalidTask = errors.New("task name and function are required")
 )
 
-// PanicError preserves where a task panicked and the stack it panicked from.
-// It does not keep the recovered value: a panic value is chosen by the code
-// that panicked and can be the data it was handling, so retaining it would put
-// that data into anything that renders this error, including %#v.
-type PanicError struct {
-	Name     string
-	Location string
-	Summary  string
-	Stack    []byte
-}
-
-func (e *PanicError) Error() string {
-	return fmt.Sprintf("task %q panicked: %s", e.Name, e.Summary)
-}
-
-// Scope is the task-local context an execution island gives one of its tasks.
-// Both methods are read in the panicking goroutine after recovery, so they need
-// no synchronization and no item-loop defer.
-type Scope interface {
-	// Node identifies the last direct-call node the task was inside.
-	Node() string
-	// Cleanup returns the failures the task found while releasing. A panic
-	// discards the value the task was returning, and the cleanup that runs
-	// during the unwind has nowhere else to put them.
-	Cleanup() error
-}
-
-// Failure associates an error with the task that returned or panicked.
-type Failure struct {
-	Name string
-	Err  error
-}
-
-func (f Failure) Panicked() bool {
-	var value *PanicError
-	return errors.As(f.Err, &value)
-}
-
 // Report is a stable snapshot. Running is populated when the wait context
 // expires; the group never claims those tasks have stopped.
 type Report struct {
-	Failures []Failure
+	Outcomes []journal.Outcome
 	Running  []string
 	WaitErr  error
 }
@@ -78,7 +39,7 @@ type Group struct {
 	next      uint64
 	active    int
 	running   map[uint64]string
-	failures  []Failure
+	outcomes  []journal.Outcome
 	done      chan struct{}
 	doneOnce  sync.Once
 }
@@ -115,16 +76,20 @@ func (g *Group) Context() context.Context {
 // plugin.TaskStarter without exposing cancellation or join ownership to a
 // component.
 func (g *Group) Start(name string, work func(context.Context) error) error {
-	return g.StartScoped(name, nil, work)
+	return g.StartScoped(name, journal.NewScope(""), work)
 }
 
-// StartScoped is the runtime-only form used by an execution island. The scope
-// is what the task cannot tell the group by returning: where it was, and what
-// it could not release on the way out.
-func (g *Group) StartScoped(name string, scope Scope, work func(context.Context) error) error {
+// StartScoped is the runtime-only form used by an execution island, which needs
+// the scope itself so it can hand the same failure domain to every ownership
+// slot the task owns.
+func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context.Context) error) error {
 	if g == nil || strings.TrimSpace(name) == "" || work == nil {
 		return ErrInvalidTask
 	}
+	if scope == nil {
+		scope = journal.NewScope("")
+	}
+	scope.Attach(name)
 	g.mu.Lock()
 	if !g.accepting || g.ctx.Err() != nil {
 		g.mu.Unlock()
@@ -140,48 +105,42 @@ func (g *Group) StartScoped(name string, scope Scope, work func(context.Context)
 	return nil
 }
 
-func (g *Group) run(id uint64, name string, scope Scope, work func(context.Context) error) {
-	var failure error
+// run assembles the task's result in one place. Returning and panicking are two
+// ways of reaching the same journal, so nothing the task recorded depends on
+// which of them happened.
+func (g *Group) run(id uint64, name string, scope *journal.Scope, work func(context.Context) error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			where := ""
-			if scope != nil {
-				where = scope.Node()
-			}
-			failure = &PanicError{
-				Name:     name,
-				Location: where,
-				Summary:  diagnostic.Recovered(recovered),
-				Stack:    append([]byte(nil), debug.Stack()...),
-			}
-			// The unwind threw away the value this task was returning, and the
-			// cleanup that ran during it had joined its failures into exactly
-			// that value. They are read here because this is where the return
-			// went missing; a task that returns reports them itself.
-			if scope != nil {
-				failure = errors.Join(failure, scope.Cleanup())
-			}
+			scope.Panicked(recovered, debug.Stack())
 		}
-		g.finish(id, name, failure)
+		g.finish(id, scope.Seal())
 	}()
-	failure = work(g.ctx)
+	if err := work(g.ctx); err != nil {
+		scope.Fail(err)
+	}
 }
 
-func (g *Group) finish(id uint64, name string, failure error) {
+func (g *Group) finish(id uint64, outcome journal.Outcome) {
+	// A task cancelled by a peer's failure is not a second failure. Only the
+	// primary can be that echo; a release that failed during the cancellation
+	// still happened and is still reported.
+	if outcome.Primary != nil && cancellationEcho(*outcome.Primary, g.ctx) {
+		outcome.Primary = nil
+	}
+	cause := outcome.Cause()
 	g.mu.Lock()
 	delete(g.running, id)
 	g.active--
-	report := failure != nil && !cancellationEcho(failure, g.ctx)
-	if report {
-		g.failures = append(g.failures, Failure{Name: name, Err: failure})
+	if outcome.Failed() {
+		g.outcomes = append(g.outcomes, outcome)
 	}
 	done := !g.accepting && g.active == 0
 	g.mu.Unlock()
-	if failure != nil {
-		g.cancel(failure)
-	}
-	if report && g.fail != nil {
-		g.fail(failure)
+	if cause != nil {
+		g.cancel(cause)
+		if g.fail != nil {
+			g.fail(cause)
+		}
 	}
 	if done {
 		g.closeDone()
@@ -243,7 +202,7 @@ func (g *Group) report(waitErr error) Report {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	result := Report{
-		Failures: append([]Failure(nil), g.failures...),
+		Outcomes: append([]journal.Outcome(nil), g.outcomes...),
 		Running:  make([]string, 0, len(g.running)),
 		WaitErr:  waitErr,
 	}

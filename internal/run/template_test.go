@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/run/queue"
@@ -43,7 +44,7 @@ func (r *templateReader) Read(_ context.Context, into *flow.Item[int]) error {
 	if !typ.Valid() {
 		typ = templateInput
 	}
-	*into = flow.NewItem(r.values[r.index], typ)
+	into.Set(r.values[r.index])
 	r.index++
 	return nil
 }
@@ -79,7 +80,7 @@ type templateProcessor struct {
 }
 
 func (p *templateProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
-	item := flow.NewItem(input.Value()+p.add, p.out)
+	item := flow.NewItem(input.Value()+p.add, p.out, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
@@ -127,7 +128,7 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	group := task.New(ctx)
 	var finishErr error
 	if err := execution.Start(group); err != nil {
-		return task.Report{Failures: []task.Failure{{Name: "runtime/start", Err: err}}}
+		return task.Report{Outcomes: []journal.Outcome{{Task: "runtime/start", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/start", Err: err}}}}
 	}
 	if err := execution.WaitSources(ctx, group); err != nil {
 		execution.Close()
@@ -139,11 +140,13 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 		group.Cancel(finishErr)
 	}
 	report := group.Wait(context.Background())
-	if err := execution.Discard(); err != nil {
-		report.Failures = append(report.Failures, task.Failure{Name: "runtime/discard", Err: err})
+	var discarded flow.Collector
+	execution.Discard(&discarded)
+	for _, failure := range discarded.Failures() {
+		report.Outcomes = append(report.Outcomes, journal.Outcome{Task: "runtime/discard", Cleanup: []journal.Failure{{Kind: journal.CleanupPanic, Task: "runtime/discard", Err: failure}}})
 	}
 	if finishErr != nil {
-		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: finishErr})
+		report.Outcomes = append(report.Outcomes, journal.Outcome{Task: "runtime/finish", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/finish", Err: finishErr}})
 	}
 	return report
 }
@@ -303,7 +306,7 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 		t.Fatalf("task counts = sources %d edges %d", sources, edgeTasks)
 	}
 	report := runTestExecution(context.Background(), execution)
-	if !report.Complete() || len(report.Failures) != 0 {
+	if !report.Complete() || len(report.Outcomes) != 0 {
 		t.Fatalf("run report = %#v", report)
 	}
 	if got := writer.Values(); len(got) != 3 || got[0] != 111 || got[1] != 112 || got[2] != 113 {
@@ -342,8 +345,8 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := runTestExecution(context.Background(), execution)
-	var panicErr *task.PanicError
-	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) || panicErr.Location != "panic" {
+	var panicErr *journal.PanicError
+	if len(report.Outcomes) != 1 || !errors.As(report.Outcomes[0].Primary.Err, &panicErr) || panicErr.Location != "panic" {
 		t.Fatalf("panic report = %#v", report)
 	}
 	if drops.Load() != 1 {
@@ -383,7 +386,7 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		report := runTestExecution(context.Background(), execution)
-		if len(report.Failures) == 0 {
+		if len(report.Outcomes) == 0 {
 			t.Fatalf("run %d unexpectedly succeeded", run)
 		}
 		emitted := int64(reader.index)
@@ -449,23 +452,28 @@ func TestCleanupFailuresSurviveThePanicBesideThem(t *testing.T) {
 			if err := sourceTask.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			scope := drive.NewScope("edge")
+			scope := journal.NewScope("edge")
 			bufferTask.BindScope(scope)
 			group := task.New(context.Background())
 			if err := group.StartScoped("buffer", scope, bufferTask.Run); err != nil {
 				t.Fatal(err)
 			}
 			report := group.Wait(context.Background())
-			if len(report.Failures) != 1 {
+			if len(report.Outcomes) != 1 {
 				t.Fatalf("report = %#v", report)
 			}
-			failure := report.Failures[0].Err
-			var panicErr *task.PanicError
-			if errors.As(failure, &panicErr) != test.panicked {
-				t.Fatalf("panic reported = %v, want %v", !test.panicked, test.panicked)
+			outcome := report.Outcomes[0]
+			var panicErr *journal.PanicError
+			if outcome.Primary == nil || errors.As(outcome.Primary.Err, &panicErr) != test.panicked {
+				t.Fatalf("primary = %v, want a panic = %v", outcome.Primary, test.panicked)
 			}
-			if got := strings.Count(failure.Error(), "flow item release panicked"); got != 2 {
-				t.Fatalf("reported release failures = %d, want one per value left in the ring", got)
+			if len(outcome.Cleanup) != 2 {
+				t.Fatalf("reported release failures = %d, want one per value left in the ring", len(outcome.Cleanup))
+			}
+			for _, failure := range outcome.Cleanup {
+				if failure.Kind != journal.CleanupPanic || failure.Node != "edge" {
+					t.Errorf("release failure = %#v, want a cleanup panic attributed to the edge", failure)
+				}
 			}
 		})
 	}
@@ -499,12 +507,16 @@ func TestDiscardReportsTheReleasesItCouldNotPerform(t *testing.T) {
 		t.Fatal(err)
 	}
 	execution := &Execution{edges: []namedTask{{name: "buffer", task: bufferTask}}}
-	err = execution.Discard()
-	if err == nil {
-		t.Fatal("Discard reported success after a release failed")
+	var cleanup flow.Collector
+	execution.Discard(&cleanup)
+	failures := cleanup.Failures()
+	if len(failures) != 2 {
+		t.Fatalf("failures reported to the cleanup domain = %d, want one per queued owner", len(failures))
 	}
-	if strings.Contains(err.Error(), "declared drop panicked") {
-		t.Error("the discard report exposes the recovered panic value")
+	for _, failure := range failures {
+		if strings.Contains(failure.Error(), "declared drop panicked") {
+			t.Error("the discard report exposes the recovered panic value")
+		}
 	}
 }
 
@@ -547,7 +559,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Failures) != 0 {
+		if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Outcomes) != 0 {
 			t.Fatalf("mode %v report = %#v", mode, report)
 		}
 		events := collector.Snapshot()
@@ -570,7 +582,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Failures) != 0 {
+	if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Outcomes) != 0 {
 		t.Fatalf("Detailed report = %#v", report)
 	}
 	events := collector.Snapshot()

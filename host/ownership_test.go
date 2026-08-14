@@ -47,7 +47,7 @@ func (r *failureDropReader) Read(_ context.Context, into *flow.Item[int]) error 
 	}
 	r.remaining--
 	r.emitted.Add(1)
-	*into = flow.NewItem(r.remaining, r.typ)
+	into.Set(r.remaining)
 	return nil
 }
 

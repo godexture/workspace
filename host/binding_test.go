@@ -58,7 +58,7 @@ func (boundaryTransformOperator) Process(ctx context.Context, input *flow.Item[b
 	defer input.Drop()
 	var item flow.Item[access.Write]
 	defer item.Drop()
-	if err := flow.Transfer(input, &item, access.Writes(), access.Append); err != nil {
+	if err := flow.Transfer(input, &item, output, access.Append); err != nil {
 		return err
 	}
 	return output.Emit(ctx, &item)

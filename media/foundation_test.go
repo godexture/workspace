@@ -94,7 +94,7 @@ func (o *skeletonSourceOperator) Read(_ context.Context, into *flow.Item[[]byte]
 		return io.EOF
 	}
 	o.emitted = true
-	*into = flow.NewItem(append([]byte(nil), o.data...), skeletonBytesSchema)
+	into.Set(append([]byte(nil), o.data...))
 	return nil
 }
 
@@ -123,7 +123,7 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input *flow.Item[
 			return err
 		}
 		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence)*48)), payload)
-		item := flow.NewItem(chunk, skeletonChunkSchema)
+		item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
 			return err
@@ -149,7 +149,7 @@ func (o *skeletonParserOperator) Process(ctx context.Context, input *flow.Item[p
 	chunk := input.Value()
 	payload := chunk.Payload().Share()
 	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len()/2))), payload)
-	item := flow.NewItem(value, skeletonPacketSchema)
+	item := flow.NewItem(value, skeletonPacketSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
@@ -178,7 +178,7 @@ func (o *skeletonCodecOperator) Process(ctx context.Context, input *flow.Item[pa
 		payload.Release()
 		return err
 	}
-	item := flow.NewItem(frame, skeletonFrameSchema)
+	item := flow.NewItem(frame, skeletonFrameSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
@@ -218,7 +218,7 @@ func (o *skeletonEncoderOperator) Process(ctx context.Context, input *flow.Item[
 	payload := frame.Planes().Share()
 	value := packet.NewPacket(uint64(pts.Value()), pts, timing.UnknownDTS(), duration, payload)
 	if o.hasPending {
-		item := flow.NewItem(o.pending, skeletonPacketSchema)
+		item := flow.NewItem(o.pending, skeletonPacketSchema, &testDomain)
 		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
 			value.Release()
@@ -237,7 +237,7 @@ func (o *skeletonEncoderOperator) Flush(ctx context.Context, output flow.Emitter
 	if !o.hasPending {
 		return nil
 	}
-	item := flow.NewItem(o.pending, skeletonPacketSchema)
+	item := flow.NewItem(o.pending, skeletonPacketSchema, &testDomain)
 	o.hasPending = false
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
@@ -431,7 +431,7 @@ func (o *skeletonMuxerOperator) Process(ctx context.Context, input *flow.Item[pa
 	value := input.Value()
 	payload := value.Payload().Share()
 	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
-	item := flow.NewItem(chunk, skeletonChunkSchema)
+	item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err
@@ -567,7 +567,7 @@ func (w *skeletonChunkWriter) Write(ctx context.Context, input *flow.Item[packet
 		return fmt.Errorf("chunk writer input was not owned")
 	}
 	bytes := input.Value().Bytes().AppendTo(nil)
-	byteInput := flow.NewItem(bytes, skeletonBytesSchema)
+	byteInput := flow.NewItem(bytes, skeletonBytesSchema, &testDomain)
 	defer byteInput.Drop()
 	if err := w.sink.Write(ctx, &byteInput); err != nil {
 		return err
@@ -576,7 +576,15 @@ func (w *skeletonChunkWriter) Write(ctx context.Context, input *flow.Item[packet
 	return nil
 }
 
-type skeletonWriterEmitter[T any] struct{ sink flow.Writer[T] }
+type skeletonWriterEmitter[T any] struct {
+	sink flow.Writer[T]
+	typ  schema.Type[T]
+}
+
+func (e skeletonWriterEmitter[T]) Own(into *flow.Item[T], value T) {
+	into.Bind(e.typ, &testDomain)
+	into.Set(value)
+}
 
 func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input *flow.Item[T]) error {
 	return e.sink.Write(ctx, input)
@@ -584,6 +592,12 @@ func (e skeletonWriterEmitter[T]) Emit(ctx context.Context, input *flow.Item[T])
 
 type skeletonEmitter[T any] struct {
 	items []*flow.Item[T]
+	typ   schema.Type[T]
+}
+
+func (e *skeletonEmitter[T]) Own(into *flow.Item[T], value T) {
+	into.Bind(e.typ, &testDomain)
+	into.Set(value)
 }
 
 func (e *skeletonEmitter[T]) Emit(_ context.Context, input *flow.Item[T]) error {
@@ -899,12 +913,13 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	var byteSink flow.Writer[[]byte] = byteWriter
 	chunkWriter := &skeletonChunkWriter{sink: byteSink}
 	var chunkSink flow.Writer[packet.Chunk] = chunkWriter
-	var chunkEmitter flow.Emitter[packet.Chunk] = skeletonWriterEmitter[packet.Chunk]{sink: chunkSink}
-	chunkOutput := &skeletonEmitter[packet.Chunk]{}
-	packetOutput := &skeletonEmitter[packet.Packet]{}
-	frameOutput := &skeletonEmitter[audio.Frame[int16]]{}
-	encodedPacketOutput := &skeletonEmitter[packet.Packet]{}
+	var chunkEmitter flow.Emitter[packet.Chunk] = skeletonWriterEmitter[packet.Chunk]{sink: chunkSink, typ: skeletonChunkSchema}
+	chunkOutput := &skeletonEmitter[packet.Chunk]{typ: skeletonChunkSchema}
+	packetOutput := &skeletonEmitter[packet.Packet]{typ: skeletonPacketSchema}
+	frameOutput := &skeletonEmitter[audio.Frame[int16]]{typ: skeletonFrameSchema}
+	encodedPacketOutput := &skeletonEmitter[packet.Packet]{typ: skeletonPacketSchema}
 	var byteCell flow.Item[[]byte]
+	byteCell.Bind(skeletonBytesSchema, &testDomain)
 	if err := source.Read(ctx, &byteCell); err != nil {
 		t.Fatal(err)
 	}
@@ -1125,7 +1140,7 @@ func TestThirdPartyNonAudioSchemasConnectWithoutCoreChanges(t *testing.T) {
 // processOwned adopts stored ownership into a cell for one direct Process
 // call, mirroring what a runtime delivery does around a bounded edge.
 func processOwned[I, O any](ctx context.Context, value I, typ schema.Type[I], output flow.Emitter[O], process func(context.Context, *flow.Item[I], flow.Emitter[O]) error) error {
-	cell := flow.NewItem(value, typ)
+	cell := flow.NewItem(value, typ, &testDomain)
 	defer cell.Drop()
 	return process(ctx, &cell, output)
 }

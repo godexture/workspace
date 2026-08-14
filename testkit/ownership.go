@@ -179,7 +179,7 @@ func (o *ownershipSource) Read(ctx context.Context, into *flow.Item[int]) error 
 		return io.EOF
 	}
 	o.read = true
-	*into = flow.NewItem(7, ownershipType)
+	into.Set(7)
 	return nil
 }
 func (o *ownershipSource) Close() error {

@@ -11,10 +11,10 @@ import (
 
 type panicDropID struct{}
 
-// A group of owners is released together. One release that panics must not
-// strand the owners behind it, and cleanup runs where no recovery boundary is
-// left, so the failures are reported rather than raised.
-func TestAllReleasesEveryCellAndReportsTheFailures(t *testing.T) {
+// A group of owners is released together. One release that fails must not
+// strand the owners behind it, and each slot answers for its own failure, so
+// the group needs no report of its own.
+func TestAllReleasesEverySlotAndLeavesTheReportingToThem(t *testing.T) {
 	var released atomic.Int32
 	panicking := schema.Define[panicDropID](schema.Traits[int]{
 		Drop: func(value int) {
@@ -24,30 +24,37 @@ func TestAllReleasesEveryCellAndReportsTheFailures(t *testing.T) {
 			}
 		},
 	})
-	cells := make([]flow.Item[int], 4)
-	for index := range cells {
-		cells[index].Set(index, panicking)
+	var domain flow.Collector
+	slots := make([]flow.Item[int], 4)
+	for index := range slots {
+		slots[index].Bind(panicking, &domain)
+		slots[index].Set(index)
 	}
 
-	err := All(cells)
-	if err == nil {
-		t.Fatal("a panicking release was not reported")
-	}
+	All(slots)
 	if released.Load() != 4 {
-		t.Fatalf("released cells = %d, want every cell released", released.Load())
+		t.Fatalf("released slots = %d, want every slot released", released.Load())
 	}
-	if strings.Contains(err.Error(), "declared drop panicked") {
-		t.Error("the release report exposes the recovered panic value")
+	failures := domain.Failures()
+	if len(failures) != 2 {
+		t.Fatalf("failures reported to the domain = %d, want one per release that could not finish", len(failures))
 	}
-	for index := range cells {
-		if cells[index].Valid() {
-			t.Fatalf("cell %d still holds a payload", index)
+	for _, failure := range failures {
+		if strings.Contains(failure.Error(), "declared drop panicked") {
+			t.Error("the release report exposes the recovered panic value")
 		}
 	}
-	if err := All(cells); err != nil {
-		t.Fatalf("releasing empty cells reported %v", err)
+	for index := range slots {
+		if slots[index].Valid() {
+			t.Fatalf("slot %d still holds a payload", index)
+		}
 	}
+
+	All(slots)
 	if released.Load() != 4 {
-		t.Fatal("an already released cell was released again")
+		t.Fatal("an already released slot was released again")
+	}
+	if len(domain.Failures()) != 2 {
+		t.Fatal("releasing empty slots reported a failure")
 	}
 }

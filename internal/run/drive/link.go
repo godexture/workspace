@@ -4,66 +4,20 @@ package drive
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 )
 
 type closer interface {
 	close(context.Context) error
 }
 
-type scopeBinder interface{ bindScope(*Scope) }
-
-// Scope carries what a task cannot tell its boundary by returning: where it
-// was, and what it could not release on the way out. One task and the delivery
-// chain it drives share one Scope. It intentionally uses no atomics because
-// that task is the only writer and panic recovery reads it in the same
-// goroutine.
-//
-// It carries no item cleanup: every cell is released by the deferred Drop of
-// the task that owns it, which also runs while a panic unwinds. What it carries
-// is the failures of those releases.
-type Scope struct {
-	node     string
-	failures []error
-}
-
-func NewScope(node string) *Scope { return &Scope{node: node} }
-func (s *Scope) Node() string {
-	if s == nil {
-		return ""
-	}
-	return s.node
-}
-
-// fail records a failure found while releasing and hands it back unchanged, so
-// the call site reports it the ordinary way too. Recording is unconditional
-// and reading is not: a task that returns carries the failure out itself, and
-// only a panic that discarded that return makes the boundary read this.
-func (s *Scope) fail(err error) error {
-	if s != nil && err != nil {
-		s.failures = append(s.failures, err)
-	}
-	return err
-}
-
-// Cleanup reports what releasing could not do, for the boundary that recovered
-// the panic which lost the task's return value.
-func (s *Scope) Cleanup() error {
-	if s == nil {
-		return nil
-	}
-	return errors.Join(s.failures...)
-}
-
-func (s *Scope) set(node string) {
-	if s != nil {
-		s.node = node
-	}
-}
+// A delivery chain is bound to the journal of the task that drives it, which is
+// also the failure domain of every ownership slot that task owns.
+type scopeBinder interface{ bindScope(*journal.Scope) }
 
 type delivery[T any] interface {
 	flow.Emitter[T]
@@ -86,7 +40,7 @@ func (l Link) Close(ctx context.Context) error {
 	return l.value.(closer).close(ctx)
 }
 
-func (l Link) BindScope(scope *Scope) {
+func (l Link) BindScope(scope *journal.Scope) {
 	if !l.Valid() {
 		return
 	}

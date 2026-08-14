@@ -43,7 +43,7 @@ func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
 	if err := starter.Start("next", func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if report := group.Wait(context.Background()); !report.Complete() || len(report.Failures) != 0 {
+	if report := group.Wait(context.Background()); !report.Complete() || len(report.Outcomes) != 0 {
 		t.Fatalf("repaid report = %#v", report)
 	}
 }

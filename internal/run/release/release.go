@@ -5,36 +5,15 @@
 // it with defer, so grouping belongs here rather than on the public contract.
 package release
 
-import (
-	"errors"
+import "github.com/godexture/godec/flow"
 
-	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/flow"
-)
-
-// All releases every cell in order and keeps going when one of them panics.
+// All releases every slot in the group.
 //
-// A declared Drop is third-party code. Releasing a group of owners one panic
-// at a time would strand every owner after the first failure, which is exactly
-// what cleanup exists to prevent, so each release is isolated and the failures
-// are reported together afterwards. It never panics: cleanup runs on paths
-// that have no recovery boundary left.
-func All[T any](cells []flow.Item[T]) error {
-	var problems []error
-	for index := range cells {
-		if err := one(&cells[index]); err != nil {
-			problems = append(problems, err)
-		}
+// It guarantees only that each one is tried. A slot that cannot release reports
+// to its own failure domain, so one broken Drop neither raises nor strands the
+// owners behind it, and this needs no error of its own.
+func All[T any](slots []flow.Item[T]) {
+	for index := range slots {
+		slots[index].Drop()
 	}
-	return errors.Join(problems...)
-}
-
-func one[T any](cell *flow.Item[T]) (err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = errors.New("flow item release panicked: " + diagnostic.Recovered(recovered))
-		}
-	}()
-	cell.Drop()
-	return nil
 }

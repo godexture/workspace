@@ -205,8 +205,14 @@ type Writer[T any] interface {
 	Write(context.Context, *Item[T]) error
 }
 
-// Emitter follows the same rule as Writer.
+// Emitter follows the same rule as Writer, and is where a component obtains
+// the slots it fills.
 type Emitter[T any] interface {
+	// Own binds the caller's slot to this edge and takes ownership of value
+	// under the edge's declared type. It is the only way a component comes to
+	// own a payload, so no payload is ever owned outside a failure domain, and
+	// a slot reused across calls is bound once.
+	Own(*Item[T], T)
 	Emit(context.Context, *Item[T]) error
 }
 

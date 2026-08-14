@@ -197,7 +197,7 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 	if err != nil {
 		return err
 	}
-	o.out.Set(packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload), codec.Packets())
+	output.Own(&o.out, packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload))
 	defer o.out.Drop()
 	if err := output.Emit(ctx, &o.out); err != nil {
 		return err

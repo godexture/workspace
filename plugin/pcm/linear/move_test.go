@@ -15,6 +15,11 @@ import (
 
 type packetSink struct{ items int }
 
+func (*packetSink) Own(into *flow.Item[packet.Packet], value packet.Packet) {
+	into.Bind(codec.Packets(), &testDomain)
+	into.Set(value)
+}
+
 func (s *packetSink) Emit(_ context.Context, item *flow.Item[packet.Packet]) error {
 	s.items++
 	item.Drop()
@@ -22,6 +27,11 @@ func (s *packetSink) Emit(_ context.Context, item *flow.Item[packet.Packet]) err
 }
 
 type writeSink struct{ items int }
+
+func (*writeSink) Own(into *flow.Item[access.Write], value access.Write) {
+	into.Bind(access.Writes(), &testDomain)
+	into.Set(value)
+}
 
 func (s *writeSink) Emit(_ context.Context, item *flow.Item[access.Write]) error {
 	s.items++
@@ -43,12 +53,13 @@ func TestPayloadRewrappingHopsAllocateNothing(t *testing.T) {
 		operator := &parserOperator{operatorBase: operatorBase{buffers: allocator}, configuration: configuration}
 		sink := &packetSink{}
 		var cell flow.Item[packet.Chunk]
+		cell.Bind(format.Chunks(), &testDomain)
 		fill := func() {
 			payload, allocErr := allocator.FromBytes(make([]byte, 16), 1)
 			if allocErr != nil {
 				panic(allocErr)
 			}
-			cell.Set(packet.NewChunk(0, timing.SomePTS(timing.NewPTS(0)), payload), format.Chunks())
+			cell.Set(packet.NewChunk(0, timing.SomePTS(timing.NewPTS(0)), payload))
 		}
 		assertHopIsFree(t, allocator, fill, func() { cell.Drop() }, func() error {
 			return operator.Process(context.Background(), &cell, sink)
@@ -63,12 +74,13 @@ func TestPayloadRewrappingHopsAllocateNothing(t *testing.T) {
 		operator := &writerOperator{operatorBase: operatorBase{buffers: allocator}}
 		sink := &writeSink{}
 		var cell flow.Item[packet.Packet]
+		cell.Bind(codec.Packets(), &testDomain)
 		fill := func() {
 			payload, allocErr := allocator.FromBytes(make([]byte, 16), 1)
 			if allocErr != nil {
 				panic(allocErr)
 			}
-			cell.Set(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload), codec.Packets())
+			cell.Set(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload))
 		}
 		assertHopIsFree(t, allocator, fill, func() { cell.Drop() }, func() error {
 			return operator.Process(context.Background(), &cell, sink)

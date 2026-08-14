@@ -128,7 +128,15 @@ ownership は API の慣習でなく contract として固定する。**所有�
 
 > **自分が作った item と受け取った item は `defer ... Drop()` する。**
 
-誰かが consume すれば deferred な `Drop` は何もせず、誰も consume しなければ作った側が解放する。したがって「成功時／失敗時に誰が所有するか」を段階ごとに決める必要がない。panic 巻き戻し中も deferred `Drop` が走るため、runtime 側に item 用の panic cleanup を持たない。
+誰かが consume すれば deferred な `Drop` は何もせず、誰も consume しなければ受け取った側が解放する。したがって「成功時／失敗時に誰が所有するか」を段階ごとに決める必要がない。panic 巻き戻し中も deferred `Drop` が走るため、runtime 側に item 用の panic cleanup を持たない。component が書くのはこの一行だけであり、cleanup error の join も recover も journal も見えない。
+
+```go
+defer input.Drop()
+
+output.Own(&o.out, build(input.Value()))
+defer o.out.Drop()
+return output.Emit(ctx, &o.out)
+```
 
 - Reader は呼び出し元の cell を満たす。EOF では cell を空のまま返す。
 - `Emit`/`Write` に cell を渡すことは、consume する機会を与えることであって、所有権の無条件移転ではない。
@@ -147,13 +155,39 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 第三者 `Drop` を runtime の mutex を保持したまま呼ばない。bounded ring の `Pop` は受け取り先 cell の解放を lock の外で先に行い、`Drain` は ring 全体を lock 下で取り出してから解放する。lock 中に panic すると mutex が解放されず、後片付けをするはずの `Drain` が同じ mutex で止まるため、panic が recovery boundary へ到達しない。
 
-複数 owner の後片付けは runtime 内部の `release.All` を使い、一件が panic しても残りを解放してから failure をまとめて返す。fan-out の branch、fan-in の batch、queue の drain がこれに当たる。cell を同時に複数持つのは runtime だけであり、第三者は一度に一つの cell を `defer ... Drop()` するため、この helper は public contract に出さない。cleanup は recovery boundary を失った経路で走るため、panic ではなく error で伝える。
+### slot と failure domain
 
-cleanup failure は握り潰さない。`release.All` の結果は、それを呼んだ task の答えの一部として返る。fan-in は batch ごとの解放失敗をその場で返し、次の batch へ進まない。`Execution.Discard` は全 task を訪ねてから failure を結合し、Host は通常終了でも cleanup 経路でも Result へ載せる。
+`flow.Item` は payload の箱ではなく **ownership slot** である。slot は一度だけ `Bind` で「その slot が payload を所有する traits」と「解放できなかった時の報告先 (failure domain)」を宣言する。所有権は slot 間を移動し、domain を持ち歩かない。payload は常に、いま入っている slot の domain で解放され、報告される。
 
-task の結末は一箇所で組み立てる。ただし panic は task が返そうとしていた値を捨てるため、戻り道の defer で走った cleanup の failure は、その値に join した瞬間に消える。そこで task の `Scope` が「戻り値では境界へ届かないもの」を運ぶ。`Scope` は node identity と cleanup failure を持ち、一つの task とその task が駆動する delivery 連鎖が共有する。書き手はその task だけ、読み手は同じ goroutine の panic recovery だけなので atomic を使わない。
+- 受け手が domain を宣言していなければ、`Move`/`Fork` は送り手の宣言を引き継ぐ。宣言の無い slot が payload を持つ状態を作らないためである。
+- 未 bind の slot への `Set` は何もしない。解放義務の無い payload を作るのは漏れであり、空のままなら runtime の入口が `ErrInvalidItem` で即座に弾く。
+- component は slot を自分で宣言しない。runtime から渡された `into`/`input` はすでに bound で、出力は `Emitter.Own(&slot, value)` で受け取る。domain 無しで valid な item を作る API は無い。
+- queue の ring slot は edge を drain する task の domain に属する。producer が push した payload はその瞬間から consumer のものなので、所有権移動に伴う rebind は要らない。
 
-記録は無条件、読み出しは条件付きとする。cleanup を行う側は failure を `Scope` へ記録したうえで、通常どおり戻り値へも join する。境界は panic を recover した時だけ `Scope` を読む。正常に return した task は自分で持ち出しているので、両方を無条件に読むと同じ failure が二重に出る。`internal/task` が要求するのはこの `Scope` interface だけであり、plugin task には scope が無いので従来どおり panic だけが報告される。
+### Drop は panic も error も返さない
+
+**宣言された `Drop` の panic は `Item.Drop` の内側で recover し、slot の domain へ報告する。** 解放は戻り道の defer で走り、そこには戻り値も recovery boundary も無く、しかも別の panic が既に巻き戻っていることがある。そこで panic を通すと、**実際に仕事を止めた failure を後片付けの failure が置き換える。**
+
+`Drop` は error も返さない。返せば「domain へ記録し、呼び出し側が戻り値へ join する」二重経路が復活し、適用漏れと二重報告を生む。cleanup failure の出口は domain だけである。
+
+この結果として、`Set`/`Fork` の「保持物の解放が panic したら受け取り中の payload を解放してから panic を通す」という分岐が不要になった。解放は失敗しても巻き戻さないので、受け取り中の payload は必ず格納される。`release.All` も全件試行を保証するだけでよく、error 集約も個別 recover も持たない。単一 slot、queue、fan-out、fan-in が同じ経路になる。
+
+### task の結末は Outcome に一元化する
+
+`journal.Scope` は一つの task の journal であり、その task が所有する全 slot の failure domain でもある。task の結末はここだけで組み立てる。**戻り値は journal へ至る一つの経路にすぎず、panic がそれを捨てても記録は残る。**
+
+```go
+Outcome{
+    Primary *Failure   // 仕事を止めたもの: error か panic
+    Cleanup []Failure  // 解放できなかったもの
+}
+```
+
+`Failure` は `Kind`/`Task`/`Node`/`Err`/`Stack` を持つ。`Node` は記録時に snapshot する。task は island の node を渡り歩くので、最後にいた node は他の node で起きた failure を説明しない。primary と cleanup を `errors.Join` した文字列にしないのは、Host の `Result` が同じ二分割を持っており、そこへ写すのに構造が要るからである。phase は Host の層の情報なので、Host が写像する時に stamp する。
+
+boundary は normal/error/panic を問わず常に `Seal()` する。読み出し規則は分岐しない。cancel cause だけは単一 error を要求するので `Outcome.Cause()` が与える。primary があればそれ、無ければ最初の cleanup failure であり、cleanup failure が primary を上書きすることはない。
+
+task の外で走る cleanup — `Queue.Drain`、`Execution.Discard` — は domain を引数で受け取る。task の journal は既に seal されており、そこへ書くのは確定済みの結末を書き換えることになる。Host はその domain を `Result.Cleanup` へ繋ぐ。
 
 runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 

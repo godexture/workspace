@@ -62,7 +62,7 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 	data := input.Value().Bytes()
 	for index := 0; index < data.Len(); index++ {
 		value := data.At(index)
-		o.out.Set(Value{Number: value + 1}, Values())
+		output.Own(&o.out, Value{Number: value + 1})
 		err := output.Emit(ctx, &o.out)
 		o.out.Drop()
 		if err != nil {

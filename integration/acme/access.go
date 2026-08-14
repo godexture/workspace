@@ -231,7 +231,7 @@ func (o *sourceOperator) Read(ctx context.Context, into *flow.Item[buffer.Handle
 		}
 	}
 	o.done = true
-	*into = flow.NewItem(payload, access.Bytes())
+	into.Set(payload)
 	return nil
 }
 

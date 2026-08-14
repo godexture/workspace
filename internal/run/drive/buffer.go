@@ -8,16 +8,27 @@ import (
 	"io"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/media/schema"
 )
 
+// bufferDelivery is the producer's end of the edge. Its scope is the producer's
+// task, because that is who fills the slots it hands out; the ring's own slots
+// belong to the drain task and are bound separately.
 type bufferDelivery[T any] struct {
 	queue *queue.Queue[T]
+	typ   schema.Type[T]
+	scope *journal.Scope
 }
 
-// Emit moves the cell into the queue, which owns it until Pop succeeds. A
-// rejected push never empties the cell, so the producer stays responsible and
+func (b *bufferDelivery[T]) Own(into *flow.Item[T], value T) {
+	into.Bind(b.typ, b.scope)
+	into.Set(value)
+}
+
+// Emit moves the payload into the queue, which owns it until Pop succeeds. A
+// rejected push never empties the slot, so the producer stays responsible and
 // the payload is never in two places.
 func (b *bufferDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) error {
 	if item == nil || !item.Valid() {
@@ -31,17 +42,23 @@ func (b *bufferDelivery[T]) close(context.Context) error {
 	return nil
 }
 
-func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link, Task, error) {
+// bindScope stops here. The scope below this edge belongs to the drain task,
+// not to the producer, and the two must not be confused: a release the drain
+// task cannot perform is its failure, not the producer's.
+func (b *bufferDelivery[T]) bindScope(scope *journal.Scope) { b.scope = scope }
+
+func bufferFactory[T any](typ schema.Type[T]) func(queue.Limit, Link) (Link, Task, error) {
 	return func(limit queue.Limit, next Link) (Link, Task, error) {
 		target, err := deliveryOf[T](next)
 		if err != nil {
 			return Link{}, Task{}, err
 		}
-		edge, err := queue.New(limit, queueTraits(traits))
+		edge, err := queue.New(limit, typ)
 		if err != nil {
 			return Link{}, Task{}, err
 		}
-		state := &bufferState[T]{queue: edge, target: target}
+		state := &bufferState[T]{queue: edge, target: target, typ: typ}
+		state.bindScope(journal.NewScope(""))
 		task := Task{
 			close:   edge.Close,
 			discard: state.discard,
@@ -49,46 +66,49 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			bind:    state.bindScope,
 			run:     state.run,
 		}
-		return linkOf[T](&bufferDelivery[T]{queue: edge}), task, nil
+		return linkOf[T](&bufferDelivery[T]{queue: edge, typ: typ}), task, nil
 	}
 }
 
 type bufferState[T any] struct {
 	queue  *queue.Queue[T]
 	target delivery[T]
-	scope  *Scope
+	typ    schema.Type[T]
+	item   flow.Item[T]
+	scope  *journal.Scope
 }
 
-func (b *bufferState[T]) bindScope(scope *Scope) { b.scope = scope }
-
-func (b *bufferState[T]) discard() error {
-	_, err := b.queue.Drain()
-	return err
+// bindScope claims the edge for the drain task: the ring's slots and the one
+// slot the loop carries are all released by this task, so they all report here.
+func (b *bufferState[T]) bindScope(scope *journal.Scope) {
+	b.scope = scope
+	b.item.Bind(b.typ, scope)
+	b.queue.Bind(scope)
 }
 
-func (b *bufferState[T]) run(ctx context.Context) (err error) {
+// discard runs after the task has joined, so what it releases belongs to
+// whoever is cleaning up rather than to the task that stopped.
+func (b *bufferState[T]) discard(into flow.Reporter) { b.queue.Drain(into) }
+
+func (b *bufferState[T]) run(ctx context.Context) error {
 	// holding records the one popped value the loop still owes the edge, so the
 	// returning path settles it once for the task rather than a defer per item.
 	// Every exit that reaches it left a value unfinished, so it is abandoned
 	// rather than completed and the edge does not report a quiescence it never
 	// reached.
-	//
-	// The loop also leaves whatever it had not emitted in the ring, so draining
-	// it is part of returning, and a payload that cannot be released is part of
-	// the answer. This drain runs during panic unwinding too, where there is no
-	// return left to carry it, which is why the scope keeps a copy.
 	holding := false
 	defer func() {
 		if holding {
 			b.queue.Abandon()
 		}
-		_, drainErr := b.queue.Drain()
-		err = errors.Join(err, b.scope.fail(drainErr))
+		// The loop leaves whatever it had not emitted in the ring, so draining
+		// it is part of returning. This is still the task's own cleanup, and
+		// the ring's slots report to the task's journal.
+		b.queue.Drain(b.scope)
 	}()
-	var item flow.Item[T]
-	defer item.Drop()
+	defer b.item.Drop()
 	for {
-		err := b.queue.Pop(ctx, &item)
+		err := b.queue.Pop(ctx, &b.item)
 		if errors.Is(err, io.EOF) {
 			return b.target.close(ctx)
 		}
@@ -97,20 +117,20 @@ func (b *bufferState[T]) run(ctx context.Context) (err error) {
 		}
 		// The value is finished once the consumer has had its chance at it and
 		// whatever the consumer declined has been released. A failure at either
-		// point -- an error, a panic, or a declared Drop that panics -- leaves
+		// point -- an error, a panic, or a declared Drop that fails -- leaves
 		// the loop still holding it, so the exit abandons it.
 		holding = true
-		if err := b.target.Emit(ctx, &item); err != nil {
+		if err := b.target.Emit(ctx, &b.item); err != nil {
 			return err
 		}
-		item.Drop()
+		b.item.Drop()
+		if !b.scope.Clean() {
+			// The payload the consumer declined could not be released. Going
+			// back for another value would leak the next one the same way, and
+			// this one was never finished, so the exit abandons it.
+			return nil
+		}
 		b.queue.Complete()
 		holding = false
 	}
-}
-
-// queueTraits hands the edge-local measurements to the queue. Releasing stays
-// with the cells the queue stores.
-func queueTraits[T any](traits schema.Traits[T]) queue.Traits[T] {
-	return queue.Traits[T]{Size: traits.Size, Time: traits.Time}
 }

@@ -9,20 +9,21 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/internal/run/release"
 	"github.com/godexture/godec/media/schema"
 )
 
-func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, traits schema.Traits[I], next delivery[O]) ([]Link, Task, error) {
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, typ schema.Type[I], next delivery[O]) ([]Link, Task, error) {
 	if count < 2 {
 		return nil, Task{}, ErrBinding
 	}
+	traits := typ.Traits()
 	edges := make([]*queue.Queue[I], count)
 	links := make([]Link, count)
-	stored := queueTraits(traits)
 	for index := range edges {
-		edge, err := queue.New(limit, stored)
+		edge, err := queue.New(limit, typ)
 		if err != nil {
 			for previous := 0; previous < index; previous++ {
 				edges[previous].Close()
@@ -30,12 +31,13 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 			return nil, Task{}, err
 		}
 		edges[index] = edge
-		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge})
+		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, traits: traits, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 	}
+	state.bindScope(journal.NewScope(""))
 	task := Task{
 		close:   state.close,
 		discard: state.discard,
@@ -50,7 +52,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 type zipState[I, O any] struct {
 	joiner     flow.Joiner[I, O]
 	edges      []*queue.Queue[I]
-	traits     schema.Traits[I]
+	typ        schema.Type[I]
 	items      []flow.Item[I]
 	batch      []*flow.Item[I]
 	read       int
@@ -58,14 +60,24 @@ type zipState[I, O any] struct {
 	time       func(I) (int64, bool)
 	watermark  int64
 	done       chan struct{}
-	scope      *Scope
+	scope      *journal.Scope
 	reachedEOF bool
 	quiesced   bool
 	once       sync.Once
 	err        error
 }
 
-func (s *zipState[I, O]) bindScope(scope *Scope) { s.scope = scope }
+// bindScope claims every input for the join: the batch slots and each ring
+// belong to this task, so a release none of them can perform is its failure.
+func (s *zipState[I, O]) bindScope(scope *journal.Scope) {
+	s.scope = scope
+	for index := range s.items {
+		s.items[index].Bind(s.typ, scope)
+	}
+	for _, edge := range s.edges {
+		edge.Bind(scope)
+	}
+}
 
 func (s *zipState[I, O]) close() {
 	for _, edge := range s.edges {
@@ -73,28 +85,25 @@ func (s *zipState[I, O]) close() {
 	}
 }
 
-func (s *zipState[I, O]) discard() error {
-	problems := make([]error, 0, len(s.edges))
+func (s *zipState[I, O]) discard(into flow.Reporter) {
 	for _, edge := range s.edges {
-		_, err := edge.Drain()
-		problems = append(problems, err)
+		edge.Drain(into)
 	}
-	return errors.Join(problems...)
 }
 
 func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 	defer func() {
 		s.close()
-		err = errors.Join(err, s.scope.fail(s.discard()))
+		s.discard(s.scope)
 		// Reaching EOF is not enough. The batch this join was still holding is
 		// released on the way out, and so is anything left in the inputs; a
-		// release that fails there is a failure of this task, and a task that
-		// failed did not quiesce. The write precedes the close of done, so the
-		// barrier reads it with that hand-off.
-		s.quiesced = s.reachedEOF && err == nil
+		// release that fails there is recorded in this task's journal, and a
+		// task with anything in its journal did not quiesce. The write precedes
+		// the close of done, so the barrier reads it with that hand-off.
+		s.quiesced = s.reachedEOF && err == nil && s.scope.Clean()
 		close(s.done)
 	}()
-	defer func() { err = errors.Join(err, s.scope.fail(s.release())) }()
+	defer s.release()
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
@@ -117,8 +126,11 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
 			return err
 		}
-		if err := s.release(); err != nil {
-			return err
+		s.release()
+		if !s.scope.Clean() {
+			// The batch could not be released. Joining another one would leave
+			// that behind and keep going over a broken release trait.
+			return nil
 		}
 	}
 }
@@ -155,13 +167,13 @@ func (s *zipState[I, O]) withinWatermark() bool {
 // well, because one input reaching EOF ends the stream for all of them, so an
 // input's active count can never express a fan-in's quiescence. That is what
 // quiesced is for, and this call is only capacity.
-func (s *zipState[I, O]) release() error {
+func (s *zipState[I, O]) release() {
 	read := s.read
 	s.read = 0
 	for index := 0; index < read; index++ {
 		s.edges[index].Complete()
 	}
-	return release.All(s.items[:read])
+	release.All(s.items[:read])
 }
 
 // barrier closes the inputs and waits for the join to finish them. A fan-in's

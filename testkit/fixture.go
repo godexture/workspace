@@ -165,7 +165,7 @@ func (r *fixtureReader[T]) Read(ctx context.Context, into *flow.Item[T]) error {
 		r.state.eof.Add(1)
 		return io.EOF
 	}
-	*into = r.input.emit(r.index)
+	r.input.emit(r.index, into)
 	r.index++
 	return nil
 }

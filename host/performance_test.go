@@ -49,14 +49,14 @@ func (r *performanceReader) Read(_ context.Context, into *flow.Item[int]) error 
 	}
 	value := performanceItems - r.remaining
 	r.remaining--
-	*into = flow.NewItem(value, performanceSchema)
+	into.Set(value)
 	return nil
 }
 
 type performanceProcessor struct{ performanceOperator }
 
 func (*performanceProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
-	item := flow.NewItem(input.Value()+1, performanceSchema)
+	item := flow.NewItem(input.Value()+1, performanceSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
 		return err

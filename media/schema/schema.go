@@ -68,6 +68,14 @@ func identityWithProblem[IDMarker any]() (ID, error) {
 	return ID{canonical: canonical}, nil
 }
 
+// WithTraits returns the same schema identity carrying different traits. A test
+// harness accounts for forks and releases with it without changing the identity
+// the component under test is compiled against.
+func (t Type[T]) WithTraits(traits Traits[T]) Type[T] {
+	t.traits = traits
+	return t
+}
+
 func (t Type[T]) Valid() bool            { return t.descriptor.Valid() }
 func (t Type[T]) Identity() ID           { return t.descriptor.identity }
 func (t Type[T]) Traits() Traits[T]      { return t.traits }

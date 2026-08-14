@@ -10,6 +10,7 @@ import (
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/release"
+	"github.com/godexture/godec/media/schema"
 )
 
 var (
@@ -33,15 +34,6 @@ type Limit struct {
 
 func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Time >= 0 }
 
-// Traits are the edge-local measurements a limit needs. Releasing is not one
-// of them: the ring stores cells, so every queued payload carries its own
-// release obligation and the queue never handles a bare value it could hand
-// out twice.
-type Traits[T any] struct {
-	Size func(T) int
-	Time func(T) (int64, bool)
-}
-
 type entry[T any] struct {
 	cell flow.Item[T]
 	size int64
@@ -57,7 +49,9 @@ type Queue[T any] struct {
 	notFull   chan struct{}
 	idle      chan struct{}
 	limit     Limit
-	traits    Traits[T]
+	typ       schema.Type[T]
+	size      func(T) int
+	time      func(T) (int64, bool)
 	values    []entry[T]
 	head      int
 	count     int
@@ -69,10 +63,11 @@ type Queue[T any] struct {
 	abandoned bool
 }
 
-func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
+func New[T any](limit Limit, typ schema.Type[T]) (*Queue[T], error) {
 	if !limit.Valid() {
 		return nil, ErrInvalidLimit
 	}
+	traits := typ.Traits()
 	if limit.Bytes != 0 && traits.Size == nil {
 		return nil, ErrSizeTrait
 	}
@@ -84,9 +79,28 @@ func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
 		notFull:  make(chan struct{}, 1),
 		idle:     make(chan struct{}, 1),
 		limit:    limit,
-		traits:   traits,
+		typ:      typ,
+		size:     traits.Size,
+		time:     traits.Time,
 		values:   make([]entry[T], limit.Items),
 	}, nil
+}
+
+// Bind puts the ring's slots in the failure domain of the task that drains this
+// edge. A payload pushed into the ring stops being the producer's, so a release
+// it cannot perform is answered for by the consumer that owns it now.
+//
+// The slots are all empty until the first push, which is what makes this the
+// only rebinding the ring ever needs.
+func (q *Queue[T]) Bind(reporter flow.Reporter) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	for index := range q.values {
+		q.values[index].cell.Bind(q.typ, reporter)
+	}
+	q.mu.Unlock()
 }
 
 // Push moves the cell's payload into the ring. The cell is emptied only when
@@ -262,20 +276,22 @@ func (q *Queue[T]) Close() {
 	q.mu.Unlock()
 }
 
-// Drain releases all queued owners and returns their count.
+// Drain releases all queued owners into the domain that is doing the draining
+// and returns their count. That domain is the edge's task while it runs, and
+// the caller's cleanup once it has joined, which is why it is named here rather
+// than taken from the ring.
 //
-// It takes the whole ring out under the lock and releases the cells after
-// letting it go, so a declared Drop never runs while the mutex is held and one
-// that panics cannot strand the owners behind it. Drain is cleanup and runs
-// where no recovery boundary is left, so it reports rather than panics. It is
+// It takes the whole ring out under the lock and releases the slots after
+// letting it go, so a declared Drop never runs while the mutex is held. It is
 // safe to call repeatedly; callers normally close or cancel producers first.
-func (q *Queue[T]) Drain() (int, error) {
+func (q *Queue[T]) Drain(into flow.Reporter) int {
 	if q == nil {
-		return 0, nil
+		return 0
 	}
 	q.mu.Lock()
 	queued := make([]flow.Item[T], q.count)
 	for index := range queued {
+		queued[index].Bind(q.typ, into)
 		q.pop(&queued[index])
 	}
 	if !q.closed {
@@ -285,7 +301,8 @@ func (q *Queue[T]) Drain() (int, error) {
 		q.notify(q.idle)
 	}
 	q.mu.Unlock()
-	return len(queued), release.All(queued)
+	release.All(queued)
+	return len(queued)
 }
 
 type Snapshot struct {
@@ -309,7 +326,7 @@ func (q *Queue[T]) Snapshot() Snapshot {
 
 func (q *Queue[T]) measure(value T) (size, valueTime int64, err error) {
 	if q.limit.Bytes != 0 {
-		measured := q.traits.Size(value)
+		measured := q.size(value)
 		if measured < 0 {
 			return 0, 0, ErrInvalidSize
 		}
@@ -319,7 +336,7 @@ func (q *Queue[T]) measure(value T) (size, valueTime int64, err error) {
 		}
 	}
 	if q.limit.Time != 0 {
-		measured, ok := q.traits.Time(value)
+		measured, ok := q.time(value)
 		if !ok {
 			return 0, 0, ErrUnknownTime
 		}
