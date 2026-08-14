@@ -569,6 +569,11 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
+	quiesce, giveUp := context.WithTimeout(context.Background(), time.Second)
+	defer giveUp()
+	if err := task.Barrier(quiesce); err != nil {
+		t.Fatalf("barrier after a drained join = %v", err)
+	}
 	if err := task.Finish(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -675,6 +680,70 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	task.Discard()
 	if inputOwners.drops.Load() != 2 {
 		t.Fatalf("watermark input drops = %d", inputOwners.drops.Load())
+	}
+}
+
+type panickingJoiner struct{ operatorBase }
+
+func (*panickingJoiner) Process(context.Context, flow.Batch[owned], flow.Emitter[owned]) error {
+	panic("joiner panicked")
+}
+
+func (*panickingJoiner) Flush(context.Context, flow.Emitter[owned]) error { return nil }
+
+// A joiner that panics unwinds through the deferred close of the task's done
+// channel. The barrier must not read that as a finished join: the batch never
+// reached the sink, and claiming quiescence would let the caller run Finalize
+// over a dead data path and report the panic at whichever boundary noticed the
+// cancellation next.
+func TestAPanickingJoinDoesNotReportABarrier(t *testing.T) {
+	owners := &ownership{}
+	in := ownedSchema[driveInputID](owners)
+	out := ownedSchema[driveOutputID](&ownership{})
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	sinkLink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(&panickingJoiner{operatorBase{joinShape}}, 2, queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		defer func() { _ = recover() }()
+		_ = task.Run(context.Background())
+	}()
+	for _, input := range inputs {
+		edge, err := deliveryOf[owned](input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item := flow.NewItem(owned{value: 1}, in)
+		if err := edge.Emit(context.Background(), &item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-stopped
+	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer giveUp()
+	if err := task.Barrier(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("barrier over a panicking join = %v", err)
+	}
+	failed := errors.New("the join panicked")
+	cancelled, stop := context.WithCancelCause(context.Background())
+	stop(failed)
+	defer stop(nil)
+	if err := task.Barrier(cancelled); !errors.Is(err, failed) {
+		t.Fatalf("barrier cause = %v, want the failure that stopped the join", err)
+	}
+	if owners.drops.Load() != 2 {
+		t.Fatalf("join drops after a panic = %d", owners.drops.Load())
 	}
 }
 

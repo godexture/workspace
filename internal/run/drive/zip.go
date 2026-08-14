@@ -57,6 +57,7 @@ type zipState[I, O any] struct {
 	time      func(I) (int64, bool)
 	watermark int64
 	done      chan struct{}
+	quiesced  bool
 	once      sync.Once
 	err       error
 }
@@ -88,6 +89,10 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		for index, edge := range s.edges {
 			err := edge.Pop(ctx, &s.items[index])
 			if errors.Is(err, io.EOF) {
+				// Draining an input to EOF is the only way this join reaches
+				// quiescence. The write precedes the deferred close of done, so
+				// the barrier reads it with that hand-off.
+				s.quiesced = true
 				return nil
 			}
 			if err != nil {
@@ -142,14 +147,28 @@ func (s *zipState[I, O]) release() error {
 	return release.All(s.items[:read])
 }
 
+// barrier closes the inputs and waits for the join to finish them. A fan-in's
+// quiescence is the task's own outcome rather than the idle state of its
+// edges, because one batch spans every input.
+//
+// A join that stopped without draining its inputs never reached that outcome:
+// the batch it held did not finish downstream. Reporting a barrier anyway
+// would let Host run Finalize and Flush over a data path that has already
+// died, and would move the failure's phase from run to whatever boundary
+// noticed the cancellation next. Only a failing task ends this way, and its
+// failure cancels this context, so the wait ends with that failure.
 func (s *zipState[I, O]) barrier(ctx context.Context) error {
 	s.close()
 	select {
 	case <-s.done:
-		return nil
+		if s.quiesced {
+			return nil
+		}
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
+	<-ctx.Done()
+	return context.Cause(ctx)
 }
 
 func (s *zipState[I, O]) finish(ctx context.Context) error {
