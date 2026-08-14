@@ -10,6 +10,7 @@ import (
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/queue"
+	"github.com/godexture/godec/internal/run/release"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -100,7 +101,9 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
 			return err
 		}
-		s.release()
+		if err := s.release(); err != nil {
+			return err
+		}
 	}
 }
 
@@ -136,7 +139,7 @@ func (s *zipState[I, O]) release() error {
 	for index := 0; index < read; index++ {
 		s.edges[index].Complete()
 	}
-	return flow.DropAll(s.items[:read])
+	return release.All(s.items[:read])
 }
 
 func (s *zipState[I, O]) barrier(ctx context.Context) error {

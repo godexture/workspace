@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/run/release"
 )
 
 var (
@@ -51,20 +52,21 @@ type entry[T any] struct {
 // owns every successfully pushed cell until Pop succeeds. Drain releases all
 // remaining owners through the cells themselves.
 type Queue[T any] struct {
-	mu       sync.Mutex
-	notEmpty chan struct{}
-	notFull  chan struct{}
-	idle     chan struct{}
-	limit    Limit
-	traits   Traits[T]
-	values   []entry[T]
-	head     int
-	count    int
-	active   int
-	bytes    int64
-	minTime  int64
-	maxTime  int64
-	closed   bool
+	mu        sync.Mutex
+	notEmpty  chan struct{}
+	notFull   chan struct{}
+	idle      chan struct{}
+	limit     Limit
+	traits    Traits[T]
+	values    []entry[T]
+	head      int
+	count     int
+	active    int
+	bytes     int64
+	minTime   int64
+	maxTime   int64
+	closed    bool
+	abandoned bool
 }
 
 func New[T any](limit Limit, traits Traits[T]) (*Queue[T], error) {
@@ -189,6 +191,28 @@ func (q *Queue[T]) Complete() {
 	q.mu.Unlock()
 }
 
+// Abandon settles one value Pop returned whose consumer stopped before
+// completing it. The active count becomes accurate again, because nothing is
+// being processed any more.
+//
+// The edge cannot become quiescent afterwards: that value never finished
+// downstream, and a barrier reporting idle would claim work that did not
+// happen, which is what lets a caller move on to Finalize and Flush over a
+// data path that has already died. Only a failing consumer abandons a value,
+// and its failure cancels the barrier's context, so the wait ends with that
+// failure rather than with this bookkeeping.
+func (q *Queue[T]) Abandon() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	if q.active > 0 {
+		q.active--
+		q.abandoned = true
+	}
+	q.mu.Unlock()
+}
+
 // WaitIdle waits until every value pushed before the call has both left the
 // ring and completed downstream processing. Producers must already be
 // quiescent when this barrier is used.
@@ -201,7 +225,7 @@ func (q *Queue[T]) WaitIdle(ctx context.Context) error {
 	}
 	for {
 		q.mu.Lock()
-		if q.count == 0 && q.active == 0 {
+		if q.count == 0 && q.active == 0 && !q.abandoned {
 			q.notify(q.idle)
 			q.mu.Unlock()
 			return nil
@@ -255,7 +279,7 @@ func (q *Queue[T]) Drain() (int, error) {
 		q.notify(q.idle)
 	}
 	q.mu.Unlock()
-	return len(queued), flow.DropAll(queued)
+	return len(queued), release.All(queued)
 }
 
 type Snapshot struct {

@@ -2,6 +2,7 @@ package diagnostic_test
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,15 +13,28 @@ type secretString string
 
 func (s secretString) Error() string { return string(s) }
 
+// runtime.Error is an ordinary exported interface, so satisfying it proves
+// nothing about where the value came from. A caller can implement it and put
+// anything in the message.
+type impostorRuntimeError string
+
+func (e impostorRuntimeError) Error() string { return string(e) }
+func (impostorRuntimeError) RuntimeError()   {}
+
+var _ runtime.Error = impostorRuntimeError("")
+
 // A panic value belongs to the code that panicked, so it can be the credential
 // that code was handling. Rendering it puts the credential in every diagnostic,
 // Result, and log line that quotes the recovered value.
 func TestRecoveredNeverRendersACallerChosenValue(t *testing.T) {
 	const secret = "r01-panic-secret"
+	impostor := impostorRuntimeError(secret)
 	for _, value := range []any{
 		secret,
 		errors.New(secret),
 		secretString(secret),
+		impostor,
+		&impostor,
 		[]string{secret},
 		map[string]string{"token": secret},
 		struct{ Token string }{Token: secret},

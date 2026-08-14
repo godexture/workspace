@@ -256,18 +256,25 @@ func (e *Execution) Finish(ctx context.Context) error {
 	return e.finishErr
 }
 
-// Discard releases every owner still queued after data tasks have joined.
-// Close must be called first on failure so producers can no longer publish.
-func (e *Execution) Discard() {
+// Discard releases every owner still queued after data tasks have joined and
+// reports the releases that failed. Close must be called first on failure so
+// producers can no longer publish.
+//
+// Every task is visited even after one of them reports, for the same reason a
+// group of cells is: stopping at the first broken release would strand the
+// owners behind it.
+func (e *Execution) Discard() error {
 	if e == nil {
-		return
+		return nil
 	}
+	problems := make([]error, 0, len(e.sources)+len(e.edges))
 	for index := len(e.sources) - 1; index >= 0; index-- {
-		e.sources[index].task.Discard()
+		problems = append(problems, e.sources[index].task.Discard())
 	}
 	for index := len(e.edges) - 1; index >= 0; index-- {
-		e.edges[index].task.Discard()
+		problems = append(problems, e.edges[index].task.Discard())
 	}
+	return errors.Join(problems...)
 }
 
 func (e *Execution) Close() {

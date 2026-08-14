@@ -3,7 +3,6 @@ package flow
 import (
 	"errors"
 
-	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -186,33 +185,5 @@ func Transfer[I, O any](source *Item[I], target *Item[O], typ schema.Type[O], bu
 	}
 	built = true
 	target.Set(result, typ)
-	return nil
-}
-
-// DropAll releases every cell in order and keeps going when one of them
-// panics.
-//
-// A declared Drop is third-party code. Releasing a group of owners one panic
-// at a time would strand every owner after the first failure, which is exactly
-// what cleanup exists to prevent, so each release is isolated and the failures
-// are reported together afterwards. It never panics: cleanup runs on paths
-// that have no recovery boundary left.
-func DropAll[T any](cells []Item[T]) error {
-	var problems []error
-	for index := range cells {
-		if err := dropOne(&cells[index]); err != nil {
-			problems = append(problems, err)
-		}
-	}
-	return errors.Join(problems...)
-}
-
-func dropOne[T any](cell *Item[T]) (err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = errors.New("flow item release panicked: " + diagnostic.Recovered(recovered))
-		}
-	}()
-	cell.Drop()
 	return nil
 }

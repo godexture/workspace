@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/queue"
@@ -349,6 +351,63 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	}
 }
 
+type panickingWriter struct{ operatorBase }
+
+func (panickingWriter) Write(context.Context, *flow.Item[owned]) error { panic("writer panicked") }
+
+// A consumer that panics unwinds past the Complete that follows Emit. The edge
+// must stop counting a value nobody is processing, and must still not report
+// itself quiescent: the value never finished downstream, and a barrier that
+// said otherwise would let the caller run Finalize over a dead data path. The
+// failure that stopped the consumer is what ends the wait.
+func TestAnAbandonedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
+	owners := &ownership{}
+	typ := ownedSchema[driveOutputID](owners)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	sinkLink, err := NewSink("in", typ).OpenSink(&panickingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producer, err := deliveryOf[owned](buffered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(owned{value: 1}, typ)
+	defer item.Drop()
+	if err := producer.Emit(context.Background(), &item); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		defer func() { _ = recover() }()
+		_ = bufferTask.Run(context.Background())
+	}()
+	<-stopped
+	if snapshot := producer.(*bufferDelivery[owned]).queue.Snapshot(); snapshot.Active != 0 || snapshot.Items != 0 {
+		t.Fatalf("edge after the consumer panicked = %#v", snapshot)
+	}
+	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer giveUp()
+	if err := bufferTask.Barrier(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("barrier over an abandoned value = %v", err)
+	}
+	failed := errors.New("the consumer panicked")
+	cancelled, stop := context.WithCancelCause(context.Background())
+	stop(failed)
+	defer stop(nil)
+	if err := bufferTask.Barrier(cancelled); !errors.Is(err, failed) {
+		t.Fatalf("barrier cause = %v, want the failure that stopped the consumer", err)
+	}
+	if owners.drops.Load() != 1 {
+		t.Fatalf("buffer drops after a consumer panic = %d", owners.drops.Load())
+	}
+}
+
 type intOperator struct {
 	operatorBase
 	out flow.Item[int]
@@ -521,6 +580,59 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	}
 	if joiner.flush.Load() != 1 {
 		t.Fatalf("zip flushes = %d", joiner.flush.Load())
+	}
+}
+
+type zipReleaseID struct{}
+
+// The batch is released after every ordinary Process, and a declared Drop is
+// third-party code. A release that fails there is the task's answer: reporting
+// only the one on the way out would let a broken release pass as a joined
+// stream.
+func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
+	in := schema.Define[zipReleaseID](schema.Traits[owned]{
+		Drop: func(owned) { panic("declared drop panicked") },
+		Size: func(owned) int { return 1 },
+		Time: func(value owned) (int64, bool) { return int64(value.value), true },
+	})
+	out := ownedSchema[driveOutputID](&ownership{})
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	sinkLink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- task.Run(context.Background()) }()
+	for _, input := range inputs {
+		edge, err := deliveryOf[owned](input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item := flow.NewItem(owned{value: 1}, in)
+		if err := edge.Emit(context.Background(), &item); err != nil {
+			t.Fatal(err)
+		}
+		// Closing lets the join reach EOF, so a discarded release shows up as a
+		// task that joined successfully rather than as a hang.
+		if err := edge.close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = <-result
+	if err == nil {
+		t.Fatal("the join reported success after a failed batch release")
+	}
+	if strings.Contains(err.Error(), "declared drop panicked") {
+		t.Error("the release report exposes the recovered panic value")
 	}
 }
 

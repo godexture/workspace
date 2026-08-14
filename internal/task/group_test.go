@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,31 @@ func TestPanicIsRecoveredAtTaskBoundary(t *testing.T) {
 	var panicErr *PanicError
 	if !errors.As(report.Failures[0].Err, &panicErr) || !strings.Contains(string(panicErr.Stack), "TestPanicIsRecoveredAtTaskBoundary") {
 		t.Fatalf("panic error = %#v", panicErr)
+	}
+}
+
+// A panic value is chosen by the code that panicked, so it can be the data
+// that code was handling. PanicError keeps the stack and a summary instead, and
+// this fixes that no rendering of the failure -- %#v over the whole struct
+// included -- can bring the value back.
+func TestPanicErrorNeverCarriesTheRecoveredValue(t *testing.T) {
+	const secret = "task-panic-secret"
+	type credential struct{ Token string }
+	group := New(context.Background())
+	if err := group.Start("panic", func(context.Context) error { panic(credential{Token: secret}) }); err != nil {
+		t.Fatal(err)
+	}
+	report := group.Wait(context.Background())
+	var panicErr *PanicError
+	if len(report.Failures) != 1 || !errors.As(report.Failures[0].Err, &panicErr) {
+		t.Fatalf("panic report = %#v", report)
+	}
+	// The rendering itself is never printed: a report that leaks the value
+	// would leak it again through the failure message.
+	for verb, rendered := range map[string]string{"Error": panicErr.Error(), "%v": fmt.Sprint(panicErr), "%#v": fmt.Sprintf("%#v", *panicErr)} {
+		if strings.Contains(rendered, secret) {
+			t.Errorf("%s of the panic failure exposes the recovered value", verb)
+		}
 	}
 }
 

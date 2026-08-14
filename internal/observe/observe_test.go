@@ -3,6 +3,8 @@ package observe
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,11 +115,19 @@ func TestDeliveryOverflowNeverBlocksAndReportsSequenceGap(t *testing.T) {
 	}
 }
 
+// The panic case uses a value carrying a secret because the recovered value
+// belongs to the sink and can be whatever it was holding. Keeping it in the
+// reported error would publish it through any rendering of that error, %#v
+// included.
+const sinkPanicSecret = "observe-panic-secret"
+
+type sinkCredential struct{ Token string }
+
 func TestDeliveryFailureAndPanicAreReported(t *testing.T) {
 	want := errors.New("renderer failed")
 	for name, sink := range map[string]Sink{
 		"error": func(context.Context, Event) error { return want },
-		"panic": func(context.Context, Event) error { panic("renderer panic") },
+		"panic": func(context.Context, Event) error { panic(sinkCredential{Token: sinkPanicSecret}) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			failed := make(chan error, 1)
@@ -131,6 +141,11 @@ func TestDeliveryFailureAndPanicAreReported(t *testing.T) {
 				var panicErr *SinkPanicError
 				if !errors.As(got, &panicErr) || len(panicErr.Stack) == 0 {
 					t.Fatalf("sink panic = %#v", got)
+				}
+				for verb, rendered := range map[string]string{"Error": got.Error(), "%v": fmt.Sprint(got), "%#v": fmt.Sprintf("%#v", *panicErr)} {
+					if strings.Contains(rendered, sinkPanicSecret) {
+						t.Errorf("%s of the sink failure exposes the recovered value", verb)
+					}
 				}
 			}
 			if err := collector.Close(t.Context()); !errors.Is(err, got) {

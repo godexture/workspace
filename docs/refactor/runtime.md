@@ -143,11 +143,15 @@ payload を別の item 型へ包み直すだけの段は `flow.Transfer` で mov
 
 `flow.Item` は `noCopy` を持つため、別変数への代入、container への追加、range copy、channel 送信といった所有権の複製を `go vet` が検出する。規則が文書ではなく tooling で強制される。
 
-宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork`/`Adopt` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。したがって `Set` の不変条件は「渡された payload を保持するか解放するかのどちらかを必ず行う」であり、caller は Set へ渡した後の payload を二重に守らない。
+宣言された `Drop` は第三者 code であり、cell が保持物を解放している最中に panic しうる。その時点で受け取ろうとしていた payload はまだ owner を持たないため、`Set`/`Fork` は unwind の途中でその payload を解放してから panic を通す。捕まえずに素通しすると、panic 一つで payload が一つ消える。したがって `Set` の不変条件は「渡された payload を保持するか解放するかのどちらかを必ず行う」であり、caller は Set へ渡した後の payload を二重に守らない。
 
 第三者 `Drop` を runtime の mutex を保持したまま呼ばない。bounded ring の `Pop` は受け取り先 cell の解放を lock の外で先に行い、`Drain` は ring 全体を lock 下で取り出してから解放する。lock 中に panic すると mutex が解放されず、後片付けをするはずの `Drain` が同じ mutex で止まるため、panic が recovery boundary へ到達しない。
 
-複数 owner の後片付けは `flow.DropAll` を使い、一件が panic しても残りを解放してから failure をまとめて返す。fan-out の branch、fan-in の batch、queue の drain がこれに当たる。cleanup は recovery boundary を失った経路で走るため、panic ではなく error で伝える。
+複数 owner の後片付けは runtime 内部の `release.All` を使い、一件が panic しても残りを解放してから failure をまとめて返す。fan-out の branch、fan-in の batch、queue の drain がこれに当たる。cell を同時に複数持つのは runtime だけであり、第三者は一度に一つの cell を `defer ... Drop()` するため、この helper は public contract に出さない。cleanup は recovery boundary を失った経路で走るため、panic ではなく error で伝える。
+
+cleanup failure は握り潰さない。`release.All` の結果は、それを呼んだ task の答えの一部として返る。fan-in は batch ごとの解放失敗をその場で返し、次の batch へ進まない。`Execution.Discard` は全 task を訪ねてから failure を結合し、Host は通常終了でも cleanup 経路でも Result へ載せる。
+
+runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。下流が panic すると `Complete` を呼ぶ文を巻き戻して飛ばすため、edge の drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 
 多数の item を emit する段は cell を一つ保持して `Set` で再利用する。cell が item ごとに escape しないため hop あたりの heap allocation が 0 になる。item ごとに新しい cell を作る書き方も正しいが、その場合は 1 allocation を伴う。
 

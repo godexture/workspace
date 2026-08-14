@@ -49,10 +49,22 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 			},
 			barrier: edge.WaitIdle,
 			run: func(ctx context.Context) (err error) {
-				// The loop leaves whatever it had not emitted in the ring, so
-				// draining it is part of returning, and a payload that cannot
+				// holding records the one popped value the loop still owes the
+				// edge. A downstream panic unwinds past the Complete that
+				// follows Emit, leaving the edge counting a value nobody is
+				// processing, so the returning path settles it once for the
+				// task rather than a defer per item. It is abandoned rather
+				// than completed, because the consumer that panicked never
+				// finished it.
+				//
+				// The loop also leaves whatever it had not emitted in the ring,
+				// so draining it is part of returning, and a payload that cannot
 				// be released is part of the answer.
+				holding := false
 				defer func() {
+					if holding {
+						edge.Abandon()
+					}
 					_, drainErr := edge.Drain()
 					err = errors.Join(err, drainErr)
 				}()
@@ -66,8 +78,10 @@ func bufferFactory[T any](traits schema.Traits[T]) func(queue.Limit, Link) (Link
 					if err != nil {
 						return err
 					}
+					holding = true
 					emitErr := target.Emit(ctx, &item)
 					edge.Complete()
+					holding = false
 					if emitErr != nil {
 						return emitErr
 					}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/drive"
+	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/internal/task"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
@@ -137,7 +139,9 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 		group.Cancel(finishErr)
 	}
 	report := group.Wait(context.Background())
-	execution.Discard()
+	if err := execution.Discard(); err != nil {
+		report.Failures = append(report.Failures, task.Failure{Name: "runtime/discard", Err: err})
+	}
 	if finishErr != nil {
 		report.Failures = append(report.Failures, task.Failure{Name: "runtime/finish", Err: finishErr})
 	}
@@ -386,6 +390,43 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 		if got := dropped.Load(); got != emitted {
 			t.Fatalf("run %d dropped = %d, want %d emitted items", run, got, emitted)
 		}
+	}
+}
+
+// Discard is the last cleanup an execution performs, so a payload it cannot
+// release is part of the answer. It visits every task and reports the failures
+// together rather than returning as though the queues were empty.
+func TestDiscardReportsTheReleasesItCouldNotPerform(t *testing.T) {
+	type discardSchemaID struct{}
+	typ := schema.Define[discardSchemaID](schema.Traits[int]{Drop: func(int) { panic("declared drop panicked") }})
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	sinkLink, err := drive.NewSink("in", typ).OpenSink(&templateWriter{templateOperator: templateOperator{shape: sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The source fills the edge while its drain task is not running, which is
+	// the state Discard exists for: owners queued behind a consumer that has
+	// already left.
+	reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1, 2}}
+	sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceTask.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	execution := &Execution{edges: []namedTask{{name: "buffer", task: bufferTask}}}
+	err = execution.Discard()
+	if err == nil {
+		t.Fatal("Discard reported success after a release failed")
+	}
+	if strings.Contains(err.Error(), "declared drop panicked") {
+		t.Error("the discard report exposes the recovered panic value")
 	}
 }
 

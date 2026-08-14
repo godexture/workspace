@@ -34,7 +34,15 @@ func (r *runner) runData() *Failure {
 		return failure
 	}
 	report := r.data.Wait(r.ctx)
-	execution.Discard()
+	// A release that fails here has not stopped useful work -- the data path is
+	// already complete -- so it is a cleanup failure, and it is recorded before
+	// the task report decides whether the run has a primary failure at all.
+	discarded := invoke(r.ctx, ClosePhase, "", "runtime/discard", func(context.Context) error {
+		return execution.Discard()
+	})
+	if discarded != nil {
+		r.addCleanup(*discarded)
+	}
 	if failure := r.acceptTaskReport(report, false); failure != nil {
 		return failure
 	}

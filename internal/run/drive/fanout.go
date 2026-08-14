@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/run/release"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -54,7 +55,7 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) (err e
 	// Every branch a consumer did not take has to be released, including when
 	// one of those releases fails: a fan-out holds several owners of one item,
 	// and stopping at the first broken Drop would strand the rest.
-	defer func() { err = errors.Join(err, flow.DropAll(f.branches)) }()
+	defer func() { err = errors.Join(err, release.All(f.branches)) }()
 	for index := range f.branches {
 		if !item.Fork(&f.branches[index]) {
 			return ErrInvalidItem
