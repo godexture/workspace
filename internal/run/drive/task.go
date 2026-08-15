@@ -73,7 +73,7 @@ func (t Task) BindScope(scope *journal.Scope) {
 // deferred Drop, so no stage needs a failure-path ownership rule.
 func sourceTask[T any](reader flow.Reader[T], typ schema.Type[T], next delivery[T]) Task {
 	state := &sourceState[T]{reader: reader, typ: typ, next: next}
-	state.bindScope(journal.NewScope(""))
+	state.bindScope(journal.New(journal.Run, ""))
 	return Task{finish: next.close, bind: state.bindScope, run: state.run}
 }
 

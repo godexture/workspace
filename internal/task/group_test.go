@@ -80,7 +80,7 @@ func TestPanicErrorNeverCarriesTheRecoveredValue(t *testing.T) {
 
 func TestScopedPanicRetainsLocation(t *testing.T) {
 	group := New(context.Background())
-	if err := group.StartScoped("island", journal.NewScope("node"), func(context.Context) error {
+	if err := group.StartScoped("island", journal.New(journal.Run, "node"), func(context.Context) error {
 		panic("boom")
 	}); err != nil {
 		t.Fatal(err)

@@ -37,7 +37,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 	}
-	state.bindScope(journal.NewScope(""))
+	state.bindScope(journal.New(journal.Run, ""))
 	task := Task{
 		close:   state.close,
 		discard: state.discard,

@@ -130,16 +130,22 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	if err := execution.Start(group); err != nil {
 		return task.Report{Outcomes: []journal.Outcome{{Task: "runtime/start", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/start", Err: err}}}}
 	}
+	var finished []journal.Outcome
 	if err := execution.WaitSources(ctx, group); err != nil {
 		execution.Close()
 		group.Cancel(err)
 	} else if err := execution.Quiesce(group.Context()); err != nil {
 		execution.Close()
 		group.Cancel(err)
-	} else if finishErr = execution.Finish(ctx); finishErr != nil {
+	} else if finished, finishErr = execution.Finish(ctx); finishErr != nil {
 		group.Cancel(finishErr)
 	}
 	report := group.Wait(context.Background())
+	for _, outcome := range finished {
+		if outcome.Failed() {
+			report.Outcomes = append(report.Outcomes, outcome)
+		}
+	}
 	var discarded flow.Collector
 	execution.Discard(&discarded)
 	for _, failure := range discarded.Failures() {
@@ -452,7 +458,7 @@ func TestCleanupFailuresSurviveThePanicBesideThem(t *testing.T) {
 			if err := sourceTask.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			scope := journal.NewScope("edge")
+			scope := journal.New(journal.Run, "edge")
 			bufferTask.BindScope(scope)
 			group := task.New(context.Background())
 			if err := group.StartScoped("buffer", scope, bufferTask.Run); err != nil {

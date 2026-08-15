@@ -81,7 +81,7 @@ func (g *Group) Context() context.Context {
 // plugin.TaskStarter without exposing cancellation or join ownership to a
 // component.
 func (g *Group) Start(name string, work func(context.Context) error) error {
-	return g.StartScoped(name, journal.NewScope(""), work)
+	return g.StartScoped(name, journal.New(journal.Run, ""), work)
 }
 
 // StartScoped is the runtime-only form used by an execution island, which needs
@@ -92,7 +92,7 @@ func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context
 		return ErrInvalidTask
 	}
 	if scope == nil {
-		scope = journal.NewScope("")
+		scope = journal.New(journal.Run, "")
 	}
 	g.mu.Lock()
 	if !g.accepting || g.ctx.Err() != nil {

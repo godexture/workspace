@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/task"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -45,7 +46,7 @@ func TestAFailedReleaseDoesNotReplaceTheFailureThatStoppedTheTask(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.NewScope("sink")
+	scope := journal.New(journal.Run, "sink")
 	sourceTask.BindScope(scope)
 	sinkLink.BindScope(scope)
 	group := task.New(context.Background())
@@ -79,6 +80,71 @@ func TestAFailedReleaseDoesNotReplaceTheFailureThatStoppedTheTask(t *testing.T) 
 	}
 }
 
+type failingFlushProcessor struct{ templateOperator }
+
+var errOutcomeFlush = errors.New("processor flush failed")
+
+func (p *failingFlushProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	item := flow.NewItem(input.Value(), templateOutput, &testDomain)
+	if err := output.Emit(ctx, &item); err != nil {
+		item.Drop()
+		return err
+	}
+	input.Drop()
+	return nil
+}
+
+func (*failingFlushProcessor) Flush(context.Context, flow.Emitter[int]) error { return errOutcomeFlush }
+
+// A bounded edge's downstream close -- and whatever Flush it triggers -- runs
+// inside that edge's own drain-task goroutine when the ring reaches EOF, not
+// inside a journal Host opens from Execution.Finish. Its failure therefore
+// surfaces through the ordinary join, attributed to the Run operation the
+// drain task was already performing, rather than to a separate Flush
+// operation Host collected from another goroutine. Execution.Finish must not
+// touch this edge's journal itself: the drain task may still be running when
+// Finish is called, and touching it from Host's goroutine would race with
+// whatever the drain task is doing to that same journal.
+func TestABoundedEdgesOwnFlushFailureSurfacesUnderItsOwnRunOperation(t *testing.T) {
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
+	processorShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, []flow.Port{flow.Out("out", templateOutput)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateOutput)}, nil)
+	nodes := []Node{
+		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
+		{ID: "proc", Shape: processorShape, Execution: drive.NewProcessor("in", templateInput, "out", templateOutput)},
+		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateOutput)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("proc", "in")),
+		job.Connect(job.At("proc", "out"), job.At("sink", "in")),
+	}
+	template, err := Compile(nodes, edges, templateQueue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := template.Build([]flow.Operator{
+		&templateReader{templateOperator: templateOperator{shape: sourceShape}, values: []int{1}},
+		&failingFlushProcessor{templateOperator{shape: processorShape}},
+		&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := runTestExecution(context.Background(), execution)
+	var found *journal.Outcome
+	for index := range report.Outcomes {
+		if errors.Is(report.Outcomes[index].Cause(), errOutcomeFlush) {
+			found = &report.Outcomes[index]
+		}
+	}
+	if found == nil {
+		t.Fatalf("outcomes = %#v, want one carrying the processor's flush failure", report.Outcomes)
+	}
+	if found.Operation != journal.Run {
+		t.Fatalf("operation = %v, want Run: the drain task's own goroutine performed this close, not a Host-driven Flush", found.Operation)
+	}
+}
+
 // A source that hands each value straight to the next stage finishes the value
 // where it emitted it. Releasing at the next Read instead would let a failed
 // release pass as a read that had not happened, keep the stream running over a
@@ -105,7 +171,7 @@ func TestADirectSourceStopsWhenADeclinedValueCannotBeReleased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.NewScope("sink")
+	scope := journal.New(journal.Run, "sink")
 	sourceTask.BindScope(scope)
 	sinkLink.BindScope(scope)
 	if err := sourceTask.Run(context.Background()); err != nil {
@@ -126,41 +192,58 @@ func TestADirectSourceStopsWhenADeclinedValueCannotBeReleased(t *testing.T) {
 	}
 }
 
-// Sealing takes an attempt's result, not the journal. A later lifecycle
-// operation runs over the same slots, and what it cannot release belongs to
-// that operation rather than being discarded for arriving after a result was
-// taken.
-func TestSealEndsAnAttemptRatherThanTheJournal(t *testing.T) {
-	scope := journal.NewScope("node")
+// Seal is terminal: a later lifecycle operation over the same slots opens its
+// own journal rather than continuing this one. But a write that reaches a
+// sealed journal anyway is a contract violation this package cannot prevent,
+// and it must not compound that by losing the evidence too.
+func TestSealIsTerminalButDoesNotDiscardALateWrite(t *testing.T) {
+	scope := journal.New(journal.Run, "node")
 	scope.Cleanup(errors.New("during the run"))
 	first := scope.Seal()
 	if len(first.Cleanup) != 1 {
-		t.Fatalf("first attempt = %#v", first.Cleanup)
+		t.Fatalf("first outcome = %#v", first.Cleanup)
 	}
-	scope.Cleanup(errors.New("during the flush"))
-	second := scope.Seal()
-	if len(second.Cleanup) != 1 {
-		t.Fatalf("a failure reported after the seal was discarded: %#v", second.Cleanup)
+	if !scope.Sealed() {
+		t.Fatal("Sealed() did not report the journal as ended")
 	}
-	if first.Cleanup[0].ID.Attempt == second.Cleanup[0].ID.Attempt {
-		t.Fatal("both attempts share an identity, so a consumer cannot tell them apart")
+	scope.Cleanup(errors.New("reported after Seal"))
+	late := scope.Seal()
+	if len(late.Cleanup) != 1 {
+		t.Fatalf("a write that reached a sealed journal was discarded: %#v", late.Cleanup)
 	}
 }
 
-// Two releases that failed the same way in the same place are two payloads that
-// were not released. An identity keeps them apart where their text cannot.
+// Two releases that failed the same way in the same place are two payloads
+// that were not released. An identity keeps them apart where their text
+// cannot, and stays apart across the Run and the Flush that follows it over
+// the same slots, because both start counting from one.
 func TestIndependentFailuresKeepSeparateIdentities(t *testing.T) {
-	scope := journal.NewScope("node")
+	run := journal.New(journal.Run, "node")
 	same := errors.New("the same release failure")
-	scope.Cleanup(same)
-	scope.Cleanup(same)
-	outcome := scope.Seal()
-	if len(outcome.Cleanup) != 2 {
-		t.Fatalf("cleanup = %#v, want both events", outcome.Cleanup)
+	run.Cleanup(same)
+	run.Cleanup(same)
+	runOutcome := run.Seal()
+	if len(runOutcome.Cleanup) != 2 {
+		t.Fatalf("cleanup = %#v, want both events", runOutcome.Cleanup)
 	}
-	first, second := outcome.Cleanup[0].ID, outcome.Cleanup[1].ID
-	if first.Attempt != second.Attempt || first.Seq == second.Seq {
-		t.Fatalf("identities = %+v and %+v, want one attempt and two events", first, second)
+	first, second := runOutcome.Cleanup[0].ID, runOutcome.Cleanup[1].ID
+	if first.Operation != second.Operation || first.Seq == second.Seq {
+		t.Fatalf("identities = %+v and %+v, want one operation and two events", first, second)
+	}
+
+	flush := journal.New(journal.Flush, "node")
+	flush.Attach(run.Identity(), run.Name())
+	flush.Cleanup(same)
+	flushOutcome := flush.Seal()
+	third := flushOutcome.Cleanup[0].ID
+	if third.Task != first.Task {
+		t.Fatalf("flush identity = %+v, want the same task as the run it followed", third)
+	}
+	if third.Operation == first.Operation {
+		t.Fatal("the run and the flush over the same slots share an operation identity")
+	}
+	if third == first || third == second {
+		t.Fatalf("the flush's first event collides with a run event: %+v", third)
 	}
 }
 
@@ -181,7 +264,7 @@ func TestTwoJournalsWithOneNameKeepSeparateIdentities(t *testing.T) {
 	same := errors.New("the same release failure")
 	group := task.New(context.Background())
 	for range 2 {
-		scope := journal.NewScope("node")
+		scope := journal.New(journal.Run, "node")
 		if err := group.StartScoped("worker", scope, func(context.Context) error {
 			scope.Cleanup(same)
 			return nil

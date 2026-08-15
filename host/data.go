@@ -29,7 +29,11 @@ func (r *runner) runData() *Failure {
 		return failure
 	}
 	if failure := r.invoke(FlushPhase, "", "runtime/finish", func(context.Context) error {
-		return execution.Finish(r.ctx)
+		// Flushing is its own lifecycle operation with its own journals, and
+		// what it could not release is collected whether or not it also failed.
+		outcomes, err := execution.Finish(r.ctx)
+		r.acceptOutcomes(outcomes)
+		return err
 	}); failure != nil {
 		return failure
 	}

@@ -187,11 +187,17 @@ Outcome{
 
 `Failure` は `Kind`/`Task`/`Node`/`Err`/`Stack` を持つ。`Node` は記録時に snapshot する。task は island の node を渡り歩くので、最後にいた node は他の node で起きた failure を説明しない。primary と cleanup を `errors.Join` した文字列にしないのは、Host の `Result` が同じ二分割を持っており、そこへ写すのに構造が要るからである。phase は Host の層の情報なので、Host が写像する時に stamp する。
 
-`Seal()` が終えるのは journal ではなく **attempt** である。`Run` の後に `Finish`/`Flush` が同じ slot 群を使うため、seal で journal を閉じると後から来た failure を黙って捨てることになる。seal は現在の attempt の結果を取り出し、次の attempt を開始する。`Failure` は `Attempt` と `Seq` を持ち、これが event identity になる。同じ場所で同じ文面の failure が二度起きれば、それは解放されなかった payload が二つあるということなので、消費側は error 文字列ではなく identity で冪等化する。
+`Scope` は task の journal であると同時に、**ちょうど一つの lifecycle operation** を覆う。`Run` と、その後 `Finish` が同じ slot 群の上で行う `Flush` は別々の operation であり、それぞれを行う goroutine が own journal を `journal.New(operation, node)` で開き、その唯一の writer になり、`Seal()` する。`Seal()` は **terminal** である。次の operation は同じ journal を再利用せず、自分の journal を新しく開く。これにより、二つの operation が同じ journal に同時に書き込む状況が構造的に存在しない。
+
+`Seal()` が terminal であっても、それを **強制はしない**。sealed 後に書き込まれた failure も `Cleanup`/`Fail` は黙って捨てず、記録した上で次の `Seal()` が返す（`Sealed()` で違反を検出できる）。package が保証できない contract を、証拠を失うことで守った顔をしない。
+
+`Failure` の event identity は `EventID{Task, Operation, Seq}` である。`Task` は group が割り当てる番号で、表示用の名前ではない。`Operation` を identity に含めるのは、同じ task の `Run` journal と、その後の `Flush` journal が両方とも `Seq` を 1 から数え始めるためで、`Operation` が無ければ両者の最初の failure が衝突する。同じ場所で同じ文面の failure が二度起きれば、それは解放されなかった payload が二つあるということなので、消費側は error 文字列ではなく identity で冪等化する。
 
 boundary は normal/error/panic を問わず常に `Seal()` する。読み出し規則は分岐しない。cancel cause だけは単一 error を要求するので `Outcome.Cause()` が与える。primary があればそれ、無ければ最初の cleanup failure であり、cleanup failure が primary を上書きすることはない。
 
 task の外で走る cleanup — `Queue.Drain`、`Execution.Discard` — は domain を引数で受け取る。task の journal は既に seal されており、そこへ書くのは確定済みの結末を書き換えることになる。Host はその domain を `Result.Cleanup` へ繋ぐ。
+
+**Host が新しい journal を開いてよいのは、その journal が属していた goroutine が確実に戻ったと言える時だけ**である。source の `Finish` と join の `Finish` はこれを満たす: source は `WaitSources` が、join は barrier 自身が `<-s.done` を待つことで、呼び出し前に goroutine の終了を確認している。bounded edge の barrier (`Queue.WaitIdle`) はこれを満たさない —— ring が空であることしか約束せず、goroutine が戻ったことは約束しない。これは欠陥ではなく設計である: Finalize が生成する遅延 Flush 出力を、Quiesce の後も同じ queue で受け取れるように、drain task はわざと生き続ける。したがって bounded edge の下流 close は、Host が `Finish` から新しい journal を開いて行うものではなく、drain task 自身が EOF を見た時に**自分の Run journal の続きとして**行う。`Execution.Finish` は `namedTask.chain` が有効な entry（source と join）にだけ Host 主導の Flush journal を開き、bounded edge の namedTask（`chain` を持たない）はこの経路に触れない。触れれば、まだ生きているかもしれない drain task の journal を別 goroutine から読み書きすることになる。
 
 runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 

@@ -2,7 +2,6 @@ package host
 
 import (
 	"context"
-	"errors"
 )
 
 func (r *runner) cleanup() {
@@ -100,10 +99,11 @@ func (r *runner) setPrimary(failure Failure) {
 	r.addSecondary(failure)
 }
 
+// addCleanup keeps every cleanup failure. Two failures that share an error
+// chain are still two things that happened, and suppressing one because it
+// resembles the primary drops evidence rather than noise. A cancellation echo
+// is removed where it is produced, by the boundary that knows it is one.
 func (r *runner) addCleanup(failure Failure) {
-	if r.result.Primary != nil && (errors.Is(r.result.Primary.Err, failure.Err) || errors.Is(failure.Err, r.result.Primary.Err)) {
-		return
-	}
 	r.result.Cleanup = append(r.result.Cleanup, failure)
 	r.diag.failure("host.cleanup."+string(failure.Phase), failure)
 }

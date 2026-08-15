@@ -69,17 +69,28 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 // acceptTaskFailure records one journal entry once. cleanup decides which half
 // of Result it lands in; primary, when offered, collects the first failure that
 // could stop the run.
+//
 // The key is the event's identity, not what it says. Two releases that failed
 // the same way in the same place are two payloads that were not released, and
 // reporting one of them would understate what happened.
-func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
+func (r *runner) acceptTaskFailure(value journal.Failure, phase Phase, cleanup bool, primary **Failure) {
+	// A task's own failure can be what already stopped the run: Quiesce or
+	// WaitSources discovers it through the run's shared cancellation before
+	// Host ever reaches this task's journal, and the journal is walked again
+	// during cleanup. That second walk is the same event, recognized at the
+	// boundary that produced it -- the run's own cancellation cause -- rather
+	// than by comparing this failure's text against every other one. A release
+	// failure is never this echo: it is not what stopped anything.
+	if !value.Kind.Cleanup() && r.result.Primary != nil && errors.Is(value.Err, r.result.Primary.Err) {
+		return
+	}
 	identity := value.ID
-	key := fmt.Sprintf("failure:%d:%d:%d", identity.Task, identity.Attempt, identity.Seq)
+	key := fmt.Sprintf("failure:%d:%d:%d", identity.Task, identity.Operation, identity.Seq)
 	if _, exists := r.reported[key]; exists {
 		return
 	}
 	r.reported[key] = struct{}{}
-	failure := failureOf(RunPhase, value.Node, value.Task, value.Err)
+	failure := failureOf(phase, value.Node, value.Task, value.Err)
 	if len(value.Stack) != 0 {
 		failure.Stack = append([]byte(nil), value.Stack...)
 	}
@@ -125,12 +136,12 @@ func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
 	var primary *Failure
 	for _, outcome := range outcomes {
 		for _, value := range outcome.Cleanup {
-			r.acceptTaskFailure(value, true, nil)
+			r.acceptTaskFailure(value, phaseOf(outcome.Operation), true, nil)
 		}
 		if outcome.Primary == nil {
 			continue
 		}
-		r.acceptTaskFailure(*outcome.Primary, cleanup, &primary)
+		r.acceptTaskFailure(*outcome.Primary, phaseOf(outcome.Operation), cleanup, &primary)
 	}
 	for _, name := range report.Running {
 		key := "running:" + name
@@ -164,4 +175,30 @@ func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
 		}
 	}
 	return primary
+}
+
+// acceptOutcomes records what a set of lifecycle operations could not release.
+// Each operation says which phase it belongs to, so the same plugin failure is
+// reported under the same phase whatever the topology around it looks like.
+func (r *runner) acceptOutcomes(outcomes []journal.Outcome) {
+	for _, outcome := range outcomes {
+		for _, value := range outcome.Cleanup {
+			r.acceptTaskFailure(value, phaseOf(outcome.Operation), true, nil)
+		}
+		if outcome.Primary != nil {
+			r.acceptTaskFailure(*outcome.Primary, phaseOf(outcome.Operation), true, nil)
+		}
+	}
+}
+
+// phaseOf places a lifecycle operation in the vocabulary Result reports in.
+func phaseOf(operation journal.Operation) Phase {
+	switch operation {
+	case journal.Flush:
+		return FlushPhase
+	case journal.Discard:
+		return ClosePhase
+	default:
+		return RunPhase
+	}
 }

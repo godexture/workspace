@@ -37,10 +37,16 @@ func (k FailureKind) Cleanup() bool { return k == CleanupError || k == CleanupPa
 // of one. Task is the number the group assigned, not the name: names are chosen
 // for people and nothing keeps two tasks from sharing one, so a consumer that
 // keyed on the name would fold two independent journals together.
+//
+// Operation is part of the identity for the same reason: a task's Run journal
+// and the Flush journal performed afterward over the same slots both start
+// counting from Seq 1, and both inherit the task's identity so a reader can
+// tell they belong together. Without Operation here, their first failures
+// would collide.
 type EventID struct {
-	Task    uint64
-	Attempt uint64
-	Seq     uint64
+	Task      uint64
+	Operation Operation
+	Seq       uint64
 }
 
 // Task and Node say where the failure happened, for a reader. ID says which
@@ -68,9 +74,10 @@ func (f Failure) Unwrap() error { return f.Err }
 // because a release that failed while the task was already stopping never
 // explains why it stopped.
 type Outcome struct {
-	Task    string
-	Primary *Failure
-	Cleanup []Failure
+	Operation Operation
+	Task      string
+	Primary   *Failure
+	Cleanup   []Failure
 }
 
 func (o Outcome) Failed() bool { return o.Primary != nil || len(o.Cleanup) != 0 }
@@ -90,4 +97,28 @@ func (o Outcome) Cause() error {
 		return o.Cleanup[0].Err
 	}
 	return nil
+}
+
+// Operation is the lifecycle step a journal covers. A task runs, then something
+// flushes what it buffered, then whatever is left is discarded, and each is a
+// separate attempt with its own single writer: the goroutine performing it.
+type Operation uint8
+
+const (
+	Run Operation = iota + 1
+	Flush
+	Discard
+)
+
+func (o Operation) String() string {
+	switch o {
+	case Run:
+		return "run"
+	case Flush:
+		return "flush"
+	case Discard:
+		return "discard"
+	default:
+		return "unknown"
+	}
 }

@@ -21,6 +21,7 @@ var (
 type namedTask struct {
 	name  string
 	task  drive.Task
+	chain drive.Link
 	scope *journal.Scope
 	done  chan error
 }
@@ -36,6 +37,7 @@ type Execution struct {
 	closeOnce  sync.Once
 	finishOnce sync.Once
 	finishErr  error
+	finished   []journal.Outcome
 	observer   *observe.Collector
 }
 
@@ -91,7 +93,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			sort.Slice(incoming, func(left, right int) bool {
 				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
 			})
-			scope := journal.NewScope(value.id.String())
+			scope := journal.New(journal.Run, value.id.String())
 			output.BindScope(scope)
 			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output)
 			if err != nil {
@@ -104,19 +106,19 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 				edgeTargets[edgeIndex] = inputs[inputIndex]
 			}
 			joinTask.BindScope(scope)
-			result.edges = append(result.edges, namedTask{name: "join/" + value.id.String(), task: joinTask, scope: scope})
+			result.edges = append(result.edges, namedTask{name: "join/" + value.id.String(), task: joinTask, chain: output, scope: scope})
 		case drive.Source:
 			output, err := t.outputLink(index, edgeTargets, result)
 			if err != nil {
 				return fail(err)
 			}
-			scope := journal.NewScope(value.id.String())
+			scope := journal.New(journal.Run, value.id.String())
 			output.BindScope(scope)
 			sourceTask, err := value.binding.OpenSource(operator, output)
 			if err != nil {
 				return fail(err)
 			}
-			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, scope: scope, done: make(chan error, 1)})
+			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, chain: output, scope: scope, done: make(chan error, 1)})
 		default:
 			return fail(ErrTopology)
 		}
@@ -144,7 +146,7 @@ func (t Template) outputLink(index int, targets []drive.Link, execution *Executi
 		}
 		link = observed
 		if edge.reason != 0 && t.nodes[edge.to].kind != drive.Joiner {
-			scope := journal.NewScope("")
+			scope := journal.New(journal.Run, "")
 			link.BindScope(scope)
 			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link)
 			if err != nil {
@@ -237,25 +239,50 @@ func (e *Execution) Quiesce(ctx context.Context) error {
 
 // Finish closes every source edge after successful Finalize. Downstream edge
 // tasks then invoke Processor Flush and close in dependency order.
-func (e *Execution) Finish(ctx context.Context) error {
+//
+// Flushing is its own lifecycle operation, performed by this goroutine, so a
+// task whose Finish is a real Host-driven hand-off gets its own journal here
+// rather than writing into the run it already sealed. That is only safe for a
+// chain no other goroutine can still be touching: a source qualifies, because
+// WaitSources already confirmed its own goroutine returned, and a join
+// qualifies, because its barrier waits on that same signal before Quiesce can
+// succeed. A bounded edge's barrier promises only that its ring is idle, not
+// that its goroutine has returned or stopped touching its scope -- it stays
+// alive on purpose, to accept the delayed output Finalize's Flush may still
+// push through the same queue -- so Host never opens a journal over it here.
+// Its eventual downstream close is that goroutine's own act on its own Run
+// journal, collected through the ordinary join once it does return.
+func (e *Execution) Finish(ctx context.Context) ([]journal.Outcome, error) {
 	if e == nil {
-		return ErrStarted
+		return nil, ErrStarted
 	}
 	e.finishOnce.Do(func() {
 		var failures []error
 		for _, source := range e.sources {
-			if err := source.task.Finish(ctx); err != nil {
-				failures = append(failures, err)
-			}
+			e.finished = append(e.finished, source.flush(ctx, &failures))
 		}
 		for index := len(e.edges) - 1; index >= 0; index-- {
-			if err := e.edges[index].task.Finish(ctx); err != nil {
-				failures = append(failures, err)
+			if edge := e.edges[index]; edge.chain.Valid() {
+				e.finished = append(e.finished, edge.flush(ctx, &failures))
 			}
 		}
 		e.finishErr = errors.Join(failures...)
 	})
-	return e.finishErr
+	return e.finished, e.finishErr
+}
+
+// flush runs one task's Finish under a fresh journal for the chain it drives.
+// The failure it returns stays the caller's answer; what the flush could not
+// release is the journal's. Only a namedTask whose chain is set -- a source or
+// a join -- reaches here; see Finish for why a bounded edge must not.
+func (n namedTask) flush(ctx context.Context, failures *[]error) journal.Outcome {
+	flush := journal.New(journal.Flush, n.scope.Node())
+	flush.Attach(n.scope.Identity(), n.name)
+	n.chain.BindScope(flush)
+	if err := n.task.Finish(ctx); err != nil {
+		*failures = append(*failures, err)
+	}
+	return flush.Seal()
 }
 
 // Discard releases every owner still queued after data tasks have joined.

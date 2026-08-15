@@ -437,9 +437,9 @@ func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scope := journal.NewScope("edge")
+			scope := journal.New(journal.Run, "edge")
 			bufferTask.BindScope(scope)
-			buffered.BindScope(journal.NewScope("producer"))
+			buffered.BindScope(journal.New(journal.Run, "producer"))
 			item := flow.NewItem(owned{value: 1}, typ, &testDomain)
 			if err := producer.Emit(context.Background(), &item); err != nil {
 				t.Fatal(err)
@@ -601,7 +601,7 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	}
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
-	scope := journal.NewScope("join")
+	scope := journal.New(journal.Run, "join")
 	task.BindScope(scope)
 	result := make(chan error, 1)
 	go func() { result <- task.Run(context.Background()) }()
@@ -672,7 +672,7 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.NewScope("join")
+	scope := journal.New(journal.Run, "join")
 	task.BindScope(scope)
 	result := make(chan error, 1)
 	go func() { result <- task.Run(context.Background()) }()
@@ -839,7 +839,7 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.NewScope("join")
+	scope := journal.New(journal.Run, "join")
 	task.BindScope(scope)
 	// Only the first input carries a value, so the join pops it, finds the
 	// second at EOF, and ends holding a batch it never joined.

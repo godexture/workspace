@@ -58,7 +58,7 @@ func bufferFactory[T any](typ schema.Type[T]) func(queue.Limit, Link) (Link, Tas
 			return Link{}, Task{}, err
 		}
 		state := &bufferState[T]{queue: edge, target: target, typ: typ}
-		state.bindScope(journal.NewScope(""))
+		state.bindScope(journal.New(journal.Run, ""))
 		task := Task{
 			close:   edge.Close,
 			discard: state.discard,
@@ -110,6 +110,12 @@ func (b *bufferState[T]) run(ctx context.Context) error {
 	for {
 		err := b.queue.Pop(ctx, &b.item)
 		if errors.Is(err, io.EOF) {
+			// Closing what this edge feeds is still this goroutine's own act,
+			// on the same journal as the rest of its run: no other goroutine
+			// can perform it without racing this one, and none needs to. The
+			// barrier only promises the ring is empty, never that this call
+			// already happened, so nothing outside this task may depend on it
+			// having run before the task itself has joined.
 			return b.target.close(ctx)
 		}
 		if err != nil {
