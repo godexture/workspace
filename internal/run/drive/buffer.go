@@ -110,12 +110,24 @@ func (b *bufferState[T]) run(ctx context.Context) error {
 	for {
 		err := b.queue.Pop(ctx, &b.item)
 		if errors.Is(err, io.EOF) {
-			// Closing what this edge feeds is still this goroutine's own act,
-			// on the same journal as the rest of its run: no other goroutine
-			// can perform it without racing this one, and none needs to. The
-			// barrier only promises the ring is empty, never that this call
-			// already happened, so nothing outside this task may depend on it
-			// having run before the task itself has joined.
+			// Closing what this edge feeds is still this goroutine's own act:
+			// no other goroutine can perform it without racing this one, and
+			// none needs to. The barrier only promises the ring is empty,
+			// never that this call already happened, so nothing outside this
+			// task may depend on it having run before the task itself has
+			// joined.
+			//
+			// It is still a genuine Flush, though, the same lifecycle step a
+			// direct chain reaches through Host's own Execution.Finish. Rather
+			// than open a second journal for it -- which would recreate the
+			// cross-goroutine read this design avoids, since nothing lets
+			// Host know this goroutine has reached it -- this journal
+			// relabels itself for the rest of its life. Task and Seq keep
+			// every event's identity regardless, and the ring is provably
+			// empty on this path (Pop only returns EOF once count reaches
+			// zero, and Close makes that permanent), so nothing this task
+			// still owns crosses the relabeling into the wrong operation.
+			b.scope.EnterOperation(journal.Flush)
 			return b.target.close(ctx)
 		}
 		if err != nil {

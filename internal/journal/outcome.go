@@ -73,11 +73,15 @@ func (f Failure) Unwrap() error { return f.Err }
 // releases it could not perform. They stay separate all the way to the caller,
 // because a release that failed while the task was already stopping never
 // explains why it stopped.
+//
+// It carries no Operation of its own: the goroutine that owns a Scope can
+// relabel it mid-lifetime (EnterOperation), so two failures in the same
+// Outcome can belong to different operations. Each Failure's own ID says
+// which.
 type Outcome struct {
-	Operation Operation
-	Task      string
-	Primary   *Failure
-	Cleanup   []Failure
+	Task    string
+	Primary *Failure
+	Cleanup []Failure
 }
 
 func (o Outcome) Failed() bool { return o.Primary != nil || len(o.Cleanup) != 0 }

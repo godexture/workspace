@@ -72,6 +72,27 @@ func (s *Scope) Enter(node string) string {
 	return previous
 }
 
+// EnterOperation relabels the failures this scope is about to record and
+// returns the label it replaced.
+//
+// A journal's writer is one goroutine, but that goroutine can pass through
+// more than one lifecycle operation itself: a bounded edge's drain task
+// performs its own downstream close, a genuine Flush, once its ring reaches
+// EOF, in the same call that is about to return to whatever recorded its
+// Run failures. Opening a second Scope for that instant would just recreate
+// the cross-goroutine read this package exists to avoid, since Host cannot
+// tell this goroutine has reached it without watching state this package does
+// not expose. Relabeling costs nothing else: identity still comes from Task
+// and Seq, which never restart, so relabeling cannot manufacture a collision.
+func (s *Scope) EnterOperation(operation Operation) Operation {
+	if s == nil {
+		return 0
+	}
+	previous := s.operation
+	s.operation = operation
+	return previous
+}
+
 // Cleanup records a release the task could not perform. It is the flow.Reporter
 // end of the journal: an ownership slot in this domain reports here instead of
 // returning, because releasing happens where no return value is left.
@@ -122,7 +143,7 @@ func (s *Scope) Seal() Outcome {
 	if s == nil {
 		return Outcome{}
 	}
-	outcome := Outcome{Operation: s.operation, Task: s.task, Primary: s.primary, Cleanup: s.cleanup}
+	outcome := Outcome{Task: s.task, Primary: s.primary, Cleanup: s.cleanup}
 	s.sealed, s.primary, s.cleanup = true, nil, nil
 	return outcome
 }

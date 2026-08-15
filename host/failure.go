@@ -73,7 +73,8 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 // The key is the event's identity, not what it says. Two releases that failed
 // the same way in the same place are two payloads that were not released, and
 // reporting one of them would understate what happened.
-func (r *runner) acceptTaskFailure(value journal.Failure, phase Phase, cleanup bool, primary **Failure) {
+func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
+	phase := phaseOf(value.ID.Operation)
 	// A task's own failure can be what already stopped the run: Quiesce or
 	// WaitSources discovers it through the run's shared cancellation before
 	// Host ever reaches this task's journal, and the journal is walked again
@@ -136,12 +137,12 @@ func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
 	var primary *Failure
 	for _, outcome := range outcomes {
 		for _, value := range outcome.Cleanup {
-			r.acceptTaskFailure(value, phaseOf(outcome.Operation), true, nil)
+			r.acceptTaskFailure(value, true, nil)
 		}
 		if outcome.Primary == nil {
 			continue
 		}
-		r.acceptTaskFailure(*outcome.Primary, phaseOf(outcome.Operation), cleanup, &primary)
+		r.acceptTaskFailure(*outcome.Primary, cleanup, &primary)
 	}
 	for _, name := range report.Running {
 		key := "running:" + name
@@ -178,15 +179,16 @@ func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
 }
 
 // acceptOutcomes records what a set of lifecycle operations could not release.
-// Each operation says which phase it belongs to, so the same plugin failure is
-// reported under the same phase whatever the topology around it looks like.
+// Each failure names its own operation, so the same plugin failure lands under
+// the same phase whether it reached Host through a direct chain's Finish or
+// through a bounded edge's own goroutine relabeling itself mid-run.
 func (r *runner) acceptOutcomes(outcomes []journal.Outcome) {
 	for _, outcome := range outcomes {
 		for _, value := range outcome.Cleanup {
-			r.acceptTaskFailure(value, phaseOf(outcome.Operation), true, nil)
+			r.acceptTaskFailure(value, true, nil)
 		}
 		if outcome.Primary != nil {
-			r.acceptTaskFailure(*outcome.Primary, phaseOf(outcome.Operation), true, nil)
+			r.acceptTaskFailure(*outcome.Primary, true, nil)
 		}
 	}
 }

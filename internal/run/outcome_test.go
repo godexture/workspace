@@ -98,14 +98,14 @@ func (*failingFlushProcessor) Flush(context.Context, flow.Emitter[int]) error { 
 
 // A bounded edge's downstream close -- and whatever Flush it triggers -- runs
 // inside that edge's own drain-task goroutine when the ring reaches EOF, not
-// inside a journal Host opens from Execution.Finish. Its failure therefore
-// surfaces through the ordinary join, attributed to the Run operation the
-// drain task was already performing, rather than to a separate Flush
-// operation Host collected from another goroutine. Execution.Finish must not
-// touch this edge's journal itself: the drain task may still be running when
-// Finish is called, and touching it from Host's goroutine would race with
-// whatever the drain task is doing to that same journal.
-func TestABoundedEdgesOwnFlushFailureSurfacesUnderItsOwnRunOperation(t *testing.T) {
+// inside a journal Host opens from Execution.Finish: the drain task may still
+// be running when Finish is called, and touching its journal from Host's
+// goroutine would race with whatever the drain task is doing to that same
+// journal. It is still a genuine Flush, though, so the drain task relabels its
+// own journal for this call rather than leaving the failure misattributed to
+// Run, and every event still carries the identity its Task and Seq give it
+// regardless of the label.
+func TestABoundedEdgesOwnFlushFailureSurfacesUnderTheFlushOperation(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, []flow.Port{flow.Out("out", templateOutput)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateOutput)}, nil)
@@ -131,17 +131,65 @@ func TestABoundedEdgesOwnFlushFailureSurfacesUnderItsOwnRunOperation(t *testing.
 		t.Fatal(err)
 	}
 	report := runTestExecution(context.Background(), execution)
-	var found *journal.Outcome
-	for index := range report.Outcomes {
-		if errors.Is(report.Outcomes[index].Cause(), errOutcomeFlush) {
-			found = &report.Outcomes[index]
+	var found *journal.Failure
+	for outcomeIndex := range report.Outcomes {
+		outcome := &report.Outcomes[outcomeIndex]
+		if outcome.Primary != nil && errors.Is(outcome.Primary.Err, errOutcomeFlush) {
+			found = outcome.Primary
+		}
+		for cleanupIndex := range outcome.Cleanup {
+			if errors.Is(outcome.Cleanup[cleanupIndex].Err, errOutcomeFlush) {
+				found = &outcome.Cleanup[cleanupIndex]
+			}
 		}
 	}
 	if found == nil {
 		t.Fatalf("outcomes = %#v, want one carrying the processor's flush failure", report.Outcomes)
 	}
-	if found.Operation != journal.Run {
-		t.Fatalf("operation = %v, want Run: the drain task's own goroutine performed this close, not a Host-driven Flush", found.Operation)
+	if found.ID.Operation != journal.Flush {
+		t.Fatalf("operation = %v, want Flush: the drain task relabels its own journal for the downstream close it performs on EOF", found.ID.Operation)
+	}
+}
+
+// A direct chain's own Flush failure -- the error Task.Finish itself returns
+// -- reaches Host through Execution.finishErr, wrapped directly under
+// FlushPhase; it never passes through a journal Outcome at all. A bounded
+// edge's Flush failure does, now labeled journal.Flush by the edge's own
+// goroutine rather than left as journal.Run, so Host's phaseOf maps it to the
+// same FlushPhase through the other path. namedTask.flush's own journal only
+// ever carries what the Flush's slots could not release -- a declined item's
+// failed Drop, say -- which is genuinely a Cleanup-kind event, not the
+// Finish error itself; this pins that shape so the two paths are not
+// mistaken for mirrors of each other.
+func TestADirectChainsFlushJournalOnlyCarriesReleaseFailuresNotTheFinishError(t *testing.T) {
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
+	processorShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, []flow.Port{flow.Out("out", templateOutput)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateOutput)}, nil)
+	sinkLink, err := drive.NewSink("in", templateOutput).OpenSink(&templateWriter{templateOperator: templateOperator{shape: sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorLink, err := drive.NewProcessor("in", templateInput, "out", templateOutput).
+		Prepend(&failingFlushProcessor{templateOperator{shape: processorShape}}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: templateInput, values: []int{1}}
+	sourceTask, err := drive.NewSource("out", templateInput).OpenSource(reader, processorLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceTask.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: journal.New(journal.Run, "")}
+	var failures []error
+	outcome := named.flush(context.Background(), &failures)
+	if len(failures) != 1 || !errors.Is(failures[0], errOutcomeFlush) {
+		t.Fatalf("failures = %v, want the processor's flush error surfaced to the caller directly", failures)
+	}
+	if outcome.Failed() {
+		t.Fatalf("journal outcome = %#v, want none: nothing here failed to release", outcome)
 	}
 }
 
