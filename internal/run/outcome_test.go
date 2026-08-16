@@ -146,22 +146,18 @@ func TestABoundedEdgesOwnFlushFailureSurfacesUnderTheFlushOperation(t *testing.T
 	if found == nil {
 		t.Fatalf("outcomes = %#v, want one carrying the processor's flush failure", report.Outcomes)
 	}
-	if found.ID.Operation != journal.Flush {
-		t.Fatalf("operation = %v, want Flush: the drain task relabels its own journal for the downstream close it performs on EOF", found.ID.Operation)
+	if found.Operation != journal.Flush {
+		t.Fatalf("operation = %v, want Flush: the drain task relabels its own journal for the downstream close it performs on EOF", found.Operation)
 	}
 }
 
-// A direct chain's own Flush failure -- the error Task.Finish itself returns
-// -- reaches Host through Execution.finishErr, wrapped directly under
-// FlushPhase; it never passes through a journal Outcome at all. A bounded
-// edge's Flush failure does, now labeled journal.Flush by the edge's own
-// goroutine rather than left as journal.Run, so Host's phaseOf maps it to the
-// same FlushPhase through the other path. namedTask.flush's own journal only
-// ever carries what the Flush's slots could not release -- a declined item's
-// failed Drop, say -- which is genuinely a Cleanup-kind event, not the
-// Finish error itself; this pins that shape so the two paths are not
-// mistaken for mirrors of each other.
-func TestADirectChainsFlushJournalOnlyCarriesReleaseFailuresNotTheFinishError(t *testing.T) {
+// namedTask.flush is the one place a direct chain's Finish error becomes
+// visible to Host, and it must become the Outcome's own Primary rather than a
+// second, parallel error return: a caller reading only Outcome would
+// otherwise never see it. A bounded edge's Flush failure reaches Host the
+// same way, through its own journal's Primary, so both paths converge on one
+// shape instead of Host needing to know which kind of edge it is looking at.
+func TestADirectChainsFlushErrorBecomesTheJournalsOwnPrimary(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, []flow.Port{flow.Out("out", templateOutput)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateOutput)}, nil)
@@ -183,14 +179,75 @@ func TestADirectChainsFlushJournalOnlyCarriesReleaseFailuresNotTheFinishError(t 
 		t.Fatal(err)
 	}
 	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: journal.New(journal.Run, "")}
-	var failures []error
-	outcome := named.flush(context.Background(), &failures)
-	if len(failures) != 1 || !errors.Is(failures[0], errOutcomeFlush) {
-		t.Fatalf("failures = %v, want the processor's flush error surfaced to the caller directly", failures)
+	outcome := named.flush(context.Background())
+	if outcome.Primary == nil || !errors.Is(outcome.Primary.Err, errOutcomeFlush) {
+		t.Fatalf("primary = %v, want the processor's flush error", outcome.Primary)
 	}
-	if outcome.Failed() {
-		t.Fatalf("journal outcome = %#v, want none: nothing here failed to release", outcome)
+	if outcome.Primary.Operation != journal.Flush {
+		t.Fatalf("operation = %v, want Flush", outcome.Primary.Operation)
 	}
+}
+
+// A panic during a direct chain's Finish is the review's own reproduction:
+// namedTask.flush opens a fresh journal, and nothing but this call ever seals
+// it. Before Capture, a panic here skipped Seal entirely -- Execution.Finish
+// and Host's own recovery unwound straight past it -- so whatever the panic's
+// own unwind recorded (a declined item's Drop failing, say) never reached
+// anyone. It must survive exactly the way a task's own Run panic already
+// does.
+func TestADirectChainsFlushPanicStillSealsWhatItRecorded(t *testing.T) {
+	type declinedID struct{}
+	typ := schema.Define[declinedID](schema.Traits[int]{
+		Drop: func(int) { panic(releasePanic{Token: outcomeSecret}) },
+	})
+	processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	sinkLink, err := drive.NewSink("in", typ).OpenSink(&decliningSink{templateOperator: templateOperator{shape: sinkShape}, writes: new(atomic.Int32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorLink, err := drive.NewProcessor("in", typ, "out", typ).
+		Prepend(&panickingFlushProcessor{templateOperator{shape: processorShape}}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1}}
+	sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, processorLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceTask.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: journal.New(journal.Run, "")}
+	outcome := named.flush(context.Background())
+	if outcome.Primary == nil || outcome.Primary.Kind != journal.TaskPanic {
+		t.Fatalf("primary = %#v, want the processor's flush panic", outcome.Primary)
+	}
+	if len(outcome.Cleanup) != 1 || outcome.Cleanup[0].Kind != journal.CleanupPanic {
+		t.Fatalf("cleanup = %#v, want the declined item's Drop panic recorded during the unwind", outcome.Cleanup)
+	}
+}
+
+type panickingFlushProcessor struct{ templateOperator }
+
+func (p *panickingFlushProcessor) Process(ctx context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	var item flow.Item[int]
+	output.Own(&item, input.Value())
+	input.Drop()
+	if err := output.Emit(ctx, &item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (*panickingFlushProcessor) Flush(_ context.Context, output flow.Emitter[int]) error {
+	var item flow.Item[int]
+	output.Own(&item, 1)
+	defer item.Drop()
+	panic(consumerPanic{Token: outcomeSecret})
 }
 
 // A source that hands each value straight to the next stage finishes the value
@@ -264,7 +321,9 @@ func TestSealIsTerminalButDoesNotDiscardALateWrite(t *testing.T) {
 // Two releases that failed the same way in the same place are two payloads
 // that were not released. An identity keeps them apart where their text
 // cannot, and stays apart across the Run and the Flush that follows it over
-// the same slots, because both start counting from one.
+// the same slots: both start counting Seq from one, and only a distinct
+// Attempt -- assigned fresh to every Scope, regardless of what Operation it
+// carries -- keeps their first events from colliding.
 func TestIndependentFailuresKeepSeparateIdentities(t *testing.T) {
 	run := journal.New(journal.Run, "node")
 	same := errors.New("the same release failure")
@@ -275,8 +334,8 @@ func TestIndependentFailuresKeepSeparateIdentities(t *testing.T) {
 		t.Fatalf("cleanup = %#v, want both events", runOutcome.Cleanup)
 	}
 	first, second := runOutcome.Cleanup[0].ID, runOutcome.Cleanup[1].ID
-	if first.Operation != second.Operation || first.Seq == second.Seq {
-		t.Fatalf("identities = %+v and %+v, want one operation and two events", first, second)
+	if first.Attempt != second.Attempt || first.Seq == second.Seq {
+		t.Fatalf("identities = %+v and %+v, want one attempt and two events", first, second)
 	}
 
 	flush := journal.New(journal.Flush, "node")
@@ -287,11 +346,14 @@ func TestIndependentFailuresKeepSeparateIdentities(t *testing.T) {
 	if third.Task != first.Task {
 		t.Fatalf("flush identity = %+v, want the same task as the run it followed", third)
 	}
-	if third.Operation == first.Operation {
-		t.Fatal("the run and the flush over the same slots share an operation identity")
+	if third.Attempt == first.Attempt {
+		t.Fatal("the run and the flush over the same slots share an attempt identity")
 	}
 	if third == first || third == second {
 		t.Fatalf("the flush's first event collides with a run event: %+v", third)
+	}
+	if flushOutcome.Cleanup[0].Operation != journal.Flush || runOutcome.Cleanup[0].Operation != journal.Run {
+		t.Fatalf("operations = %v and %v, want each scope's own", runOutcome.Cleanup[0].Operation, flushOutcome.Cleanup[0].Operation)
 	}
 }
 

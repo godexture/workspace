@@ -74,19 +74,25 @@ func failureOf(phase Phase, node, taskName string, err error) Failure {
 // the same way in the same place are two payloads that were not released, and
 // reporting one of them would understate what happened.
 func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary **Failure) {
-	phase := phaseOf(value.ID.Operation)
+	phase := phaseOf(value.Operation)
 	// A task's own failure can be what already stopped the run: Quiesce or
 	// WaitSources discovers it through the run's shared cancellation before
 	// Host ever reaches this task's journal, and the journal is walked again
-	// during cleanup. That second walk is the same event, recognized at the
-	// boundary that produced it -- the run's own cancellation cause -- rather
-	// than by comparing this failure's text against every other one. A release
-	// failure is never this echo: it is not what stopped anything.
-	if !value.Kind.Cleanup() && r.result.Primary != nil && errors.Is(value.Err, r.result.Primary.Err) {
-		return
+	// during cleanup. That second walk is the same event, recognized by the
+	// identity the cancellation cause itself carries -- comparing EventID, not
+	// comparing what the error says, which two unrelated failures could say
+	// identically by coincidence. A release failure is never this echo: it is
+	// not what stopped anything, and Result.Primary is checked first because
+	// the first sighting of an event -- before anything has been committed as
+	// Primary -- must still be free to become it.
+	if !value.Kind.Cleanup() && r.result.Primary != nil {
+		var cause *journal.Cause
+		if errors.As(context.Cause(r.ctx), &cause) && cause.Event == value.ID {
+			return
+		}
 	}
 	identity := value.ID
-	key := fmt.Sprintf("failure:%d:%d:%d", identity.Task, identity.Operation, identity.Seq)
+	key := fmt.Sprintf("failure:%d:%d:%d", identity.Task, identity.Attempt, identity.Seq)
 	if _, exists := r.reported[key]; exists {
 		return
 	}
@@ -178,19 +184,26 @@ func (r *runner) acceptTaskReport(report task.Report, cleanup bool) *Failure {
 	return primary
 }
 
-// acceptOutcomes records what a set of lifecycle operations could not release.
-// Each failure names its own operation, so the same plugin failure lands under
-// the same phase whether it reached Host through a direct chain's Finish or
-// through a bounded edge's own goroutine relabeling itself mid-run.
-func (r *runner) acceptOutcomes(outcomes []journal.Outcome) {
+// acceptOutcomes records what a set of lifecycle operations ended with. Each
+// failure names its own operation, so the same plugin failure lands under the
+// same phase whether it reached Host through a direct chain's Finish or
+// through a bounded edge's own goroutine relabeling itself mid-run. An
+// operation's own Primary competes for the run's primary the same way a
+// task's Run outcome does, rather than becoming cleanup noise for having
+// arrived through Finish instead of through the join; what it could not
+// release is always cleanup.
+func (r *runner) acceptOutcomes(outcomes []journal.Outcome) *Failure {
+	var primary *Failure
 	for _, outcome := range outcomes {
 		for _, value := range outcome.Cleanup {
 			r.acceptTaskFailure(value, true, nil)
 		}
-		if outcome.Primary != nil {
-			r.acceptTaskFailure(*outcome.Primary, true, nil)
+		if outcome.Primary == nil {
+			continue
 		}
+		r.acceptTaskFailure(*outcome.Primary, false, &primary)
 	}
+	return primary
 }
 
 // phaseOf places a lifecycle operation in the vocabulary Result reports in.

@@ -28,13 +28,16 @@ func (r *runner) runData() *Failure {
 	if failure := r.finalize(); failure != nil {
 		return failure
 	}
-	if failure := r.invoke(FlushPhase, "", "runtime/finish", func(context.Context) error {
-		// Flushing is its own lifecycle operation with its own journals, and
-		// what it could not release is collected whether or not it also failed.
-		outcomes, err := execution.Finish(r.ctx)
-		r.acceptOutcomes(outcomes)
-		return err
-	}); failure != nil {
+	// A release that fails here has not stopped useful work: the previous
+	// phases already succeeded. A Flush error or panic has, though, and both
+	// travel the same way -- through the Outcome each performed hand-off
+	// returns -- so there is one path to read, not the failure's own return
+	// racing a separately recovered panic.
+	if err := context.Cause(r.ctx); err != nil {
+		failure := failureOf(FlushPhase, "", "runtime/finish", err)
+		return &failure
+	}
+	if failure := r.acceptOutcomes(execution.Finish(r.ctx)); failure != nil {
 		return failure
 	}
 	report := r.data.Wait(r.ctx)

@@ -5,7 +5,6 @@ package task
 import (
 	"context"
 	"errors"
-	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -113,19 +112,11 @@ func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context
 	return nil
 }
 
-// run assembles the task's result in one place. Returning and panicking are two
-// ways of reaching the same journal, so nothing the task recorded depends on
-// which of them happened.
+// run assembles the task's result in one place through the same boundary a
+// Host-driven Finish hand-off uses, so a panic here and a panic there lose
+// nothing differently.
 func (g *Group) run(id uint64, name string, scope *journal.Scope, work func(context.Context) error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			scope.Panicked(recovered, debug.Stack())
-		}
-		g.finish(id, scope.Seal())
-	}()
-	if err := work(g.ctx); err != nil {
-		scope.Fail(err)
-	}
+	g.finish(id, journal.Capture(scope, func() error { return work(g.ctx) }))
 }
 
 func (g *Group) finish(id uint64, outcome journal.Outcome) {

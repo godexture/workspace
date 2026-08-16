@@ -126,7 +126,6 @@ var (
 
 func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	group := task.New(ctx)
-	var finishErr error
 	if err := execution.Start(group); err != nil {
 		return task.Report{Outcomes: []journal.Outcome{{Task: "runtime/start", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/start", Err: err}}}}
 	}
@@ -137,8 +136,14 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	} else if err := execution.Quiesce(group.Context()); err != nil {
 		execution.Close()
 		group.Cancel(err)
-	} else if finished, finishErr = execution.Finish(ctx); finishErr != nil {
-		group.Cancel(finishErr)
+	} else {
+		finished = execution.Finish(ctx)
+		for _, outcome := range finished {
+			if outcome.Primary != nil {
+				group.Cancel(outcome.Primary.Err)
+				break
+			}
+		}
 	}
 	report := group.Wait(context.Background())
 	for _, outcome := range finished {
@@ -150,9 +155,6 @@ func runTestExecution(ctx context.Context, execution *Execution) task.Report {
 	execution.Discard(&discarded)
 	for _, failure := range discarded.Failures() {
 		report.Outcomes = append(report.Outcomes, journal.Outcome{Task: "runtime/discard", Cleanup: []journal.Failure{{Kind: journal.CleanupPanic, Task: "runtime/discard", Err: failure}}})
-	}
-	if finishErr != nil {
-		report.Outcomes = append(report.Outcomes, journal.Outcome{Task: "runtime/finish", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/finish", Err: finishErr}})
 	}
 	return report
 }

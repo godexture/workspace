@@ -36,7 +36,6 @@ type Execution struct {
 	started    bool
 	closeOnce  sync.Once
 	finishOnce sync.Once
-	finishErr  error
 	finished   []journal.Outcome
 	observer   *observe.Collector
 }
@@ -250,39 +249,41 @@ func (e *Execution) Quiesce(ctx context.Context) error {
 // that its goroutine has returned or stopped touching its scope -- it stays
 // alive on purpose, to accept the delayed output Finalize's Flush may still
 // push through the same queue -- so Host never opens a journal over it here.
-// Its eventual downstream close is that goroutine's own act on its own Run
+// Its eventual downstream close is that goroutine's own act on its own
 // journal, collected through the ordinary join once it does return.
-func (e *Execution) Finish(ctx context.Context) ([]journal.Outcome, error) {
+//
+// What Finish itself returns is what it ended with, in the same shape as any
+// other lifecycle operation: an Outcome per source or join, each carrying its
+// own Primary if the hand-off failed. Nothing here is a second, parallel error
+// path -- the caller reads every failure the same way, through Outcome.
+func (e *Execution) Finish(ctx context.Context) []journal.Outcome {
 	if e == nil {
-		return nil, ErrStarted
+		return nil
 	}
 	e.finishOnce.Do(func() {
-		var failures []error
 		for _, source := range e.sources {
-			e.finished = append(e.finished, source.flush(ctx, &failures))
+			e.finished = append(e.finished, source.flush(ctx))
 		}
 		for index := len(e.edges) - 1; index >= 0; index-- {
 			if edge := e.edges[index]; edge.chain.Valid() {
-				e.finished = append(e.finished, edge.flush(ctx, &failures))
+				e.finished = append(e.finished, edge.flush(ctx))
 			}
 		}
-		e.finishErr = errors.Join(failures...)
 	})
-	return e.finished, e.finishErr
+	return e.finished
 }
 
-// flush runs one task's Finish under a fresh journal for the chain it drives.
-// The failure it returns stays the caller's answer; what the flush could not
-// release is the journal's. Only a namedTask whose chain is set -- a source or
-// a join -- reaches here; see Finish for why a bounded edge must not.
-func (n namedTask) flush(ctx context.Context, failures *[]error) journal.Outcome {
+// flush runs one task's Finish under a fresh journal for the chain it drives,
+// through the same panic-safe boundary a task's own goroutine uses, so a panic
+// during this Host-driven hand-off cannot discard the journal's evidence any
+// more than a task's own panic can discard its. Only a namedTask whose chain
+// is set -- a source or a join -- reaches here; see Finish for why a bounded
+// edge must not.
+func (n namedTask) flush(ctx context.Context) journal.Outcome {
 	flush := journal.New(journal.Flush, n.scope.Node())
 	flush.Attach(n.scope.Identity(), n.name)
 	n.chain.BindScope(flush)
-	if err := n.task.Finish(ctx); err != nil {
-		*failures = append(*failures, err)
-	}
-	return flush.Seal()
+	return journal.Capture(flush, func() error { return n.task.Finish(ctx) })
 }
 
 // Discard releases every owner still queued after data tasks have joined.

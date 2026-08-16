@@ -30,34 +30,38 @@ func (k FailureKind) String() string {
 
 func (k FailureKind) Cleanup() bool { return k == CleanupError || k == CleanupPanic }
 
-// Failure is one thing that went wrong, with where it went wrong. Node is
-// snapshotted when the failure is recorded, because a task moves through the
-// nodes of its island and the last one it was in does not describe the others.
 // EventID is what makes two failures different things rather than two readings
-// of one. Task is the number the group assigned, not the name: names are chosen
-// for people and nothing keeps two tasks from sharing one, so a consumer that
-// keyed on the name would fold two independent journals together.
+// of one. Task is the number the group assigned, not the name: names are
+// chosen for people and nothing keeps two tasks from sharing one, so a
+// consumer that keyed on the name would fold two independent journals
+// together.
 //
-// Operation is part of the identity for the same reason: a task's Run journal
-// and the Flush journal performed afterward over the same slots both start
-// counting from Seq 1, and both inherit the task's identity so a reader can
-// tell they belong together. Without Operation here, their first failures
-// would collide.
+// Attempt tells apart two Scope objects opened for the same Task -- a task's
+// Run journal and the Flush journal namedTask.flush opens afterward both start
+// counting Seq from one, so without Attempt their first failures would
+// collide. It carries no meaning beyond that: it says nothing about which
+// lifecycle operation a failure belongs to, so relabeling a journal in place
+// (Scope.EnterOperation) never has to touch it, and a Scope that is never
+// reopened can relabel as many times as it likes without risking a collision.
 type EventID struct {
-	Task      uint64
-	Operation Operation
-	Seq       uint64
+	Task    uint64
+	Attempt uint64
+	Seq     uint64
 }
 
 // Task and Node say where the failure happened, for a reader. ID says which
-// failure it is, for a consumer that must not report one twice.
+// failure it is, for a consumer that must not report one twice. Operation says
+// which lifecycle step it belongs to, for a consumer mapping it to its own
+// vocabulary (Host's Phase); it is metadata about the failure, not part of
+// what makes the failure unique.
 type Failure struct {
-	Kind  FailureKind
-	ID    EventID
-	Task  string
-	Node  string
-	Err   error
-	Stack []byte
+	Kind      FailureKind
+	ID        EventID
+	Operation Operation
+	Task      string
+	Node      string
+	Err       error
+	Stack     []byte
 }
 
 func (f Failure) Error() string {
@@ -76,8 +80,8 @@ func (f Failure) Unwrap() error { return f.Err }
 //
 // It carries no Operation of its own: the goroutine that owns a Scope can
 // relabel it mid-lifetime (EnterOperation), so two failures in the same
-// Outcome can belong to different operations. Each Failure's own ID says
-// which.
+// Outcome can belong to different operations. Each Failure's own Operation
+// says which.
 type Outcome struct {
 	Task    string
 	Primary *Failure
@@ -86,26 +90,36 @@ type Outcome struct {
 
 func (o Outcome) Failed() bool { return o.Primary != nil || len(o.Cleanup) != 0 }
 
-// The primary is what
-// stopped the task; a release failure becomes the cause only when nothing else
-// stopped it, and never replaces one that did.
-// Cause is the single error a cancellation tree can carry.
-// It is the error itself rather than the Failure around it: a cause travels
-// through contexts that peers match against, and the attribution this journal
-// adds is not part of what they are matching.
+// Cause is the single error a cancellation tree can carry, tagged with the
+// event that produced it. A peer that only observes the cancellation and
+// propagates context.Cause verbatim carries this exact value onward, so a
+// later consumer can recognize a second sighting of the one event that
+// stopped the run by identity -- comparing Event -- rather than guessing from
+// what the error says, which two unrelated failures could say identically by
+// coincidence.
+type Cause struct {
+	Event EventID
+	Err   error
+}
+
+func (c *Cause) Error() string { return c.Err.Error() }
+func (c *Cause) Unwrap() error { return c.Err }
+
+// Cause returns this outcome's Cause: the primary is what stopped the task; a
+// release failure becomes the cause only when nothing else stopped it, and
+// never replaces one that did.
 func (o Outcome) Cause() error {
 	if o.Primary != nil {
-		return o.Primary.Err
+		return &Cause{Event: o.Primary.ID, Err: o.Primary.Err}
 	}
 	if len(o.Cleanup) != 0 {
-		return o.Cleanup[0].Err
+		return &Cause{Event: o.Cleanup[0].ID, Err: o.Cleanup[0].Err}
 	}
 	return nil
 }
 
-// Operation is the lifecycle step a journal covers. A task runs, then something
-// flushes what it buffered, then whatever is left is discarded, and each is a
-// separate attempt with its own single writer: the goroutine performing it.
+// Operation is the lifecycle step a failure belongs to. A task runs, then
+// something flushes what it buffered, then whatever is left is discarded.
 type Operation uint8
 
 const (

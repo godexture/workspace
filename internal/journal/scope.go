@@ -2,9 +2,17 @@ package journal
 
 import (
 	"fmt"
+	"runtime/debug"
+	"sync/atomic"
 
 	"github.com/godexture/godec/diagnostic"
 )
+
+// nextAttempt gives every Scope object a process-wide unique Attempt, so two
+// Scopes opened for the same Task -- a task's Run journal and the Flush
+// journal namedTask.flush opens over the same slots afterward -- never share
+// one, regardless of what Operation either was opened with or relabeled to.
+var nextAttempt atomic.Uint64
 
 // PanicError preserves where a task panicked and the stack it panicked from.
 // It does not keep the recovered value: a panic value is chosen by the code
@@ -37,6 +45,7 @@ func (e *PanicError) StackTrace() []byte { return append([]byte(nil), e.Stack...
 type Scope struct {
 	operation Operation
 	id        uint64
+	attempt   uint64
 	task      string
 	node      string
 	next      uint64
@@ -49,7 +58,7 @@ type Scope struct {
 // that operation is its only writer, so a later operation over the same slots
 // opens its own rather than sharing this one.
 func New(operation Operation, node string) *Scope {
-	return &Scope{operation: operation, node: node}
+	return &Scope{operation: operation, node: node, attempt: nextAttempt.Add(1)}
 }
 
 // Node names the last direct-call node the task entered.
@@ -82,8 +91,9 @@ func (s *Scope) Enter(node string) string {
 // Run failures. Opening a second Scope for that instant would just recreate
 // the cross-goroutine read this package exists to avoid, since Host cannot
 // tell this goroutine has reached it without watching state this package does
-// not expose. Relabeling costs nothing else: identity still comes from Task
-// and Seq, which never restart, so relabeling cannot manufacture a collision.
+// not expose. Relabeling costs nothing else: identity comes from Task,
+// Attempt, and Seq, none of which EnterOperation touches, so relabeling
+// cannot manufacture a collision.
 func (s *Scope) EnterOperation(operation Operation) Operation {
 	if s == nil {
 		return 0
@@ -154,15 +164,38 @@ func (s *Scope) Seal() Outcome {
 // must not lose evidence of.
 func (s *Scope) Sealed() bool { return s != nil && s.sealed }
 
+// Capture runs work under scope and returns what scope ended with, recovering
+// any panic and sealing exactly once regardless of how work ends.
+//
+// This is the one journal boundary every performer of a lifecycle operation
+// uses, whether that performer is a task's own goroutine returning from its
+// loop or Host reaching across to drive a source's or a join's Finish
+// directly. A Scope opened for a Host-driven hand-off is otherwise unattended
+// -- nothing else ever recovers a panic from work and seals what it recorded
+// -- so without a shared boundary, a panic during that one hand-off would
+// discard its journal's evidence exactly the way a task's own panic used to
+// discard the return value carrying it.
+func Capture(scope *Scope, work func() error) (outcome Outcome) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			scope.Panicked(recovered, debug.Stack())
+		}
+		outcome = scope.Seal()
+	}()
+	scope.Fail(work())
+	return
+}
+
 func (s *Scope) failure(kind FailureKind, err error, stack []byte) Failure {
 	s.next++
 	return Failure{
-		Kind:  kind,
-		ID:    EventID{Task: s.id, Operation: s.operation, Seq: s.next},
-		Task:  s.task,
-		Node:  s.node,
-		Err:   err,
-		Stack: append([]byte(nil), stack...),
+		Kind:      kind,
+		ID:        EventID{Task: s.id, Attempt: s.attempt, Seq: s.next},
+		Operation: s.operation,
+		Task:      s.task,
+		Node:      s.node,
+		Err:       err,
+		Stack:     append([]byte(nil), stack...),
 	}
 }
 
