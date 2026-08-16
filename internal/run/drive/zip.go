@@ -45,6 +45,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		finish:  state.finish,
 		bind:    state.bindScope,
 		run:     state.run,
+		notify:  state.sealed,
 	}
 	return links, task, nil
 }
@@ -98,10 +99,11 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 		// Reaching EOF is not enough. The batch this join was still holding is
 		// released on the way out, and so is anything left in the inputs; a
 		// release that fails there is recorded in this task's journal, and a
-		// task with anything in its journal did not quiesce. The write precedes
-		// the close of done, so the barrier reads it with that hand-off.
+		// task with anything in its journal did not quiesce. sealed, not this
+		// defer, closes done: Run returning is not the same moment as this
+		// task's journal being sealed, and the barrier must not read this scope
+		// until it is.
 		s.quiesced = s.reachedEOF && err == nil && s.scope.Clean()
-		close(s.done)
 	}()
 	defer s.release()
 	for {
@@ -175,6 +177,12 @@ func (s *zipState[I, O]) release() {
 	}
 	release.All(s.items[:read])
 }
+
+// sealed is task.Group's post-Capture notify hook: it runs after this task's
+// journal is sealed, so closing done here -- rather than in run's own defer,
+// before Capture has sealed anything -- is what lets barrier's waiter safely
+// touch the same Scope afterward.
+func (s *zipState[I, O]) sealed(journal.Outcome) { close(s.done) }
 
 // barrier closes the inputs and waits for the join to finish them. A fan-in's
 // quiescence is the task's own outcome rather than the idle state of its

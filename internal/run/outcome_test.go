@@ -80,6 +80,60 @@ func TestAFailedReleaseDoesNotReplaceTheFailureThatStoppedTheTask(t *testing.T) 
 	}
 }
 
+// execution.go's Source case binds the downstream chain's scope but must
+// also bind the source task itself: the value Read fills is the source's own
+// slot, released by its own deferred Drop, not by anything downstream of
+// Emit. Without that second bind -- present for the Joiner case, missing for
+// Source -- a release that fails there reports to a scope nothing seals or
+// collects.
+func TestASourceTasksOwnItemSlotIsBoundSoADeclinedReleaseIsReported(t *testing.T) {
+	type oversizedID struct{}
+	typ := schema.Define[oversizedID](schema.Traits[int]{
+		Size: func(int) int { return 1000 },
+		Drop: func(int) { panic(releasePanic{Token: outcomeSecret}) },
+	})
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	template, err := Compile(
+		[]Node{
+			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
+			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
+		},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+		job.QueuePolicy{Items: 4, Bytes: 1},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := template.Build([]flow.Operator{
+		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1}},
+		&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The queue's byte limit rejects the push before anything is ring-full or
+	// cancelled: the source's own item stays valid, and its deferred Drop --
+	// which this schema declares to panic -- is what must be reported.
+	report := runTestExecution(context.Background(), execution)
+	var found *journal.Failure
+	for outcomeIndex := range report.Outcomes {
+		outcome := &report.Outcomes[outcomeIndex]
+		for cleanupIndex := range outcome.Cleanup {
+			var releaseErr *flow.ReleaseError
+			if errors.As(outcome.Cleanup[cleanupIndex].Err, &releaseErr) && strings.Contains(releaseErr.Summary, "releasePanic") {
+				found = &outcome.Cleanup[cleanupIndex]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatalf("outcomes = %#v, want one carrying the source's own declined item release", report.Outcomes)
+	}
+	if found.Kind != journal.CleanupPanic {
+		t.Fatalf("cleanup kind = %v, want CleanupPanic", found.Kind)
+	}
+}
+
 type failingFlushProcessor struct{ templateOperator }
 
 var errOutcomeFlush = errors.New("processor flush failed")
@@ -175,10 +229,18 @@ func TestADirectChainsFlushErrorBecomesTheJournalsOwnPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// execution.go binds both the chain and the source task to the same scope
+	// before Run, not after -- namedTask.flush now relabels and reuses that
+	// same scope instead of opening a second one.
+	scope := journal.New(journal.Run, "")
+	sourceTask.BindScope(scope)
+	processorLink.BindScope(scope)
 	if err := sourceTask.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: journal.New(journal.Run, "")}
+	scope.Seal()
+
+	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: scope}
 	outcome := named.flush(context.Background())
 	if outcome.Primary == nil || !errors.Is(outcome.Primary.Err, errOutcomeFlush) {
 		t.Fatalf("primary = %v, want the processor's flush error", outcome.Primary)
@@ -189,12 +251,12 @@ func TestADirectChainsFlushErrorBecomesTheJournalsOwnPrimary(t *testing.T) {
 }
 
 // A panic during a direct chain's Finish is the review's own reproduction:
-// namedTask.flush opens a fresh journal, and nothing but this call ever seals
-// it. Before Capture, a panic here skipped Seal entirely -- Execution.Finish
-// and Host's own recovery unwound straight past it -- so whatever the panic's
-// own unwind recorded (a declined item's Drop failing, say) never reached
-// anyone. It must survive exactly the way a task's own Run panic already
-// does.
+// namedTask.flush relabels and reseals the journal Run used, and nothing but
+// this call seals it a second time. Before Capture, a panic here skipped
+// Seal entirely -- Execution.Finish and Host's own recovery unwound straight
+// past it -- so whatever the panic's own unwind recorded (a declined item's
+// Drop failing, say) never reached anyone. It must survive exactly the way a
+// task's own Run panic already does.
 func TestADirectChainsFlushPanicStillSealsWhatItRecorded(t *testing.T) {
 	type declinedID struct{}
 	typ := schema.Define[declinedID](schema.Traits[int]{
@@ -217,16 +279,85 @@ func TestADirectChainsFlushPanicStillSealsWhatItRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope := journal.New(journal.Run, "")
+	sourceTask.BindScope(scope)
+	processorLink.BindScope(scope)
 	if err := sourceTask.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: journal.New(journal.Run, "")}
+	scope.Seal()
+
+	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: scope}
 	outcome := named.flush(context.Background())
 	if outcome.Primary == nil || outcome.Primary.Kind != journal.TaskPanic {
 		t.Fatalf("primary = %#v, want the processor's flush panic", outcome.Primary)
 	}
 	if len(outcome.Cleanup) != 1 || outcome.Cleanup[0].Kind != journal.CleanupPanic {
 		t.Fatalf("cleanup = %#v, want the declined item's Drop panic recorded during the unwind", outcome.Cleanup)
+	}
+}
+
+type retainingProcessor struct {
+	templateOperator
+	retained flow.Item[int]
+}
+
+func (p *retainingProcessor) Process(_ context.Context, input *flow.Item[int], output flow.Emitter[int]) error {
+	output.Own(&p.retained, input.Value())
+	input.Drop()
+	return nil
+}
+
+func (p *retainingProcessor) Flush(context.Context, flow.Emitter[int]) error {
+	p.retained.Drop()
+	return nil
+}
+
+// A collector or transport that keeps a cell across calls -- runtime.md's own
+// documented ownership pattern -- binds that cell once, the first time it is
+// filled, during Run. namedTask.flush must not lose the release Flush
+// performs on it just because the cell was bound before the Run/Flush
+// boundary rather than after: the cell's reporter is whatever it was bound to
+// then, and nothing rebinds a slot that already holds a payload.
+func TestARetainedCellsReleaseSurvivesTheRunFlushBoundary(t *testing.T) {
+	type retainedID struct{}
+	typ := schema.Define[retainedID](schema.Traits[int]{
+		Drop: func(int) { panic(releasePanic{Token: outcomeSecret}) },
+	})
+	processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	sinkLink, err := drive.NewSink("in", typ).OpenSink(&templateWriter{templateOperator: templateOperator{shape: sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorLink, err := drive.NewProcessor("in", typ, "out", typ).
+		Prepend(&retainingProcessor{templateOperator: templateOperator{shape: processorShape}}, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1}}
+	sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, processorLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := journal.New(journal.Run, "source")
+	sourceTask.BindScope(scope)
+	processorLink.BindScope(scope)
+	if err := sourceTask.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Run's own Capture would seal this scope the moment the source's
+	// goroutine returns, well before Host ever calls Finish.
+	scope.Seal()
+
+	named := namedTask{name: "source", task: sourceTask, chain: processorLink, scope: scope}
+	outcome := named.flush(context.Background())
+	if outcome.Primary != nil {
+		t.Fatalf("primary = %#v, want none: nothing but the retained cell's release failed", outcome.Primary)
+	}
+	if len(outcome.Cleanup) != 1 || outcome.Cleanup[0].Kind != journal.CleanupPanic {
+		t.Fatalf("cleanup = %#v, want the retained cell's declined release reported to the Outcome Flush seals", outcome.Cleanup)
 	}
 }
 

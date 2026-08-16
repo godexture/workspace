@@ -79,15 +79,22 @@ func (r *runner) acceptTaskFailure(value journal.Failure, cleanup bool, primary 
 	// WaitSources discovers it through the run's shared cancellation before
 	// Host ever reaches this task's journal, and the journal is walked again
 	// during cleanup. That second walk is the same event, recognized by the
-	// identity the cancellation cause itself carries -- comparing EventID, not
-	// comparing what the error says, which two unrelated failures could say
-	// identically by coincidence. A release failure is never this echo: it is
-	// not what stopped anything, and Result.Primary is checked first because
-	// the first sighting of an event -- before anything has been committed as
-	// Primary -- must still be free to become it.
+	// identity Result.Primary's own error chain carries -- comparing EventID
+	// against what Primary itself came from, not against context.Cause(ctx)
+	// as a stand-in for it. The two agree whenever Primary really is that
+	// generic catch, but nothing keeps them in sync when Primary is something
+	// else entirely -- a direct chain's own Flush failure, say, discovered
+	// through Execution.Finish rather than through cancellation -- and
+	// context.Cause(ctx) could still equal a later failure's EventID by being
+	// the run's actual, unrelated cancellation cause. Reading the identity off
+	// Primary itself only ever matches when Primary truly is that event. A
+	// release failure is never this echo: it is not what stopped anything, and
+	// Result.Primary is checked first because the first sighting of an event
+	// -- before anything has been committed as Primary -- must still be free
+	// to become it.
 	if !value.Kind.Cleanup() && r.result.Primary != nil {
 		var cause *journal.Cause
-		if errors.As(context.Cause(r.ctx), &cause) && cause.Event == value.ID {
+		if errors.As(r.result.Primary, &cause) && cause.Event == value.ID {
 			return
 		}
 	}

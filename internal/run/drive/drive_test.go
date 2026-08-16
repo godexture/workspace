@@ -604,7 +604,15 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	scope := journal.New(journal.Run, "join")
 	task.BindScope(scope)
 	result := make(chan error, 1)
-	go func() { result <- task.Run(context.Background()) }()
+	// task.Group normally calls Notify's hook after Capture seals the scope;
+	// this test drives the task directly, so it must call it the same way.
+	go func() {
+		err := task.Run(context.Background())
+		if notify := task.Notify(); notify != nil {
+			notify(journal.Outcome{})
+		}
+		result <- err
+	}()
 	for _, pair := range [][2]int{{1, 10}, {2, 20}} {
 		leftItem := flow.NewItem(owned{value: pair[0]}, in, &testDomain)
 		if err := left.Emit(context.Background(), &leftItem); err != nil {

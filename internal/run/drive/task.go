@@ -19,9 +19,17 @@ type Task struct {
 	close   func()
 	discard func(flow.Reporter)
 	bind    func(*journal.Scope)
+	notify  func(journal.Outcome)
 }
 
 func (t Task) Valid() bool { return t.run != nil }
+
+// Notify returns the hook, if any, that must run after this task's own Run
+// has sealed its journal and before another goroutine may safely touch the
+// same Scope -- see task.Group.StartScopedNotified. A task with nothing that
+// waits on its own completion signal (a bounded edge, whose barrier is the
+// queue's own WaitIdle) returns nil.
+func (t Task) Notify() func(journal.Outcome) { return t.notify }
 
 func (t Task) Run(ctx context.Context) error {
 	if t.run == nil {

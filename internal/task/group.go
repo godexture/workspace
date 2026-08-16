@@ -87,6 +87,22 @@ func (g *Group) Start(name string, work func(context.Context) error) error {
 // the scope itself so it can hand the same failure domain to every ownership
 // slot the task owns.
 func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context.Context) error) error {
+	return g.StartScopedNotified(name, scope, work, nil)
+}
+
+// StartScopedNotified is StartScoped with one addition: notify, when non-nil,
+// runs in this task's own goroutine right after its journal is sealed, before
+// the task is reported as finished.
+//
+// A task finishing its own work is not the same moment as its journal being
+// sealed: Capture calls Seal only after work returns, so a signal a task
+// sends from inside its own work -- a channel it fills to unblock a waiter,
+// say -- races anything that waiter goes on to do with the same Scope. notify
+// is the one signal guaranteed to run after Seal, so it is the only safe way
+// to tell another goroutine this task's journal will not be touched again by
+// this one -- something Execution relies on before it reuses that same Scope
+// for the Flush hand-off a source or a join's Finish performs.
+func (g *Group) StartScopedNotified(name string, scope *journal.Scope, work func(context.Context) error, notify func(journal.Outcome)) error {
 	if g == nil || strings.TrimSpace(name) == "" || work == nil {
 		return ErrInvalidTask
 	}
@@ -108,15 +124,19 @@ func (g *Group) StartScoped(name string, scope *journal.Scope, work func(context
 	// have two tasks claim the same events.
 	scope.Attach(nextTaskID.Add(1), name)
 
-	go g.run(id, name, scope, work)
+	go g.run(id, name, scope, work, notify)
 	return nil
 }
 
 // run assembles the task's result in one place through the same boundary a
 // Host-driven Finish hand-off uses, so a panic here and a panic there lose
 // nothing differently.
-func (g *Group) run(id uint64, name string, scope *journal.Scope, work func(context.Context) error) {
-	g.finish(id, journal.Capture(scope, func() error { return work(g.ctx) }))
+func (g *Group) run(id uint64, name string, scope *journal.Scope, work func(context.Context) error, notify func(journal.Outcome)) {
+	outcome := journal.Capture(scope, func() error { return work(g.ctx) })
+	if notify != nil {
+		notify(outcome)
+	}
+	g.finish(id, outcome)
 }
 
 func (g *Group) finish(id uint64, outcome journal.Outcome) {

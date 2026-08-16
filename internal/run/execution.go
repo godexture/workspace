@@ -117,6 +117,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			if err != nil {
 				return fail(err)
 			}
+			sourceTask.BindScope(scope)
 			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, chain: output, scope: scope, done: make(chan error, 1)})
 		default:
 			return fail(ErrTopology)
@@ -174,7 +175,7 @@ func (e *Execution) Start(group *task.Group) error {
 	e.started = true
 	e.mu.Unlock()
 	for _, value := range e.edges {
-		if err := group.StartScoped(value.name, value.scope, value.task.Run); err != nil {
+		if err := group.StartScopedNotified(value.name, value.scope, value.task.Run, value.task.Notify()); err != nil {
 			e.Close()
 			group.Cancel(err)
 			return err
@@ -182,12 +183,18 @@ func (e *Execution) Start(group *task.Group) error {
 	}
 	for _, value := range e.sources {
 		current := value
-		work := func(ctx context.Context) error {
-			err := current.task.Run(ctx)
+		// current.done must not be filled from inside work: work runs under
+		// Capture, which seals current.scope only after work returns, so a
+		// signal sent from in here would race namedTask.flush touching that
+		// same scope once WaitSources wakes up. notify runs after the seal.
+		notify := func(outcome journal.Outcome) {
+			var err error
+			if outcome.Primary != nil {
+				err = outcome.Primary.Err
+			}
 			current.done <- err
-			return err
 		}
-		if err := group.StartScoped(current.name, current.scope, work); err != nil {
+		if err := group.StartScopedNotified(current.name, current.scope, current.task.Run, notify); err != nil {
 			e.Close()
 			group.Cancel(err)
 			return err
@@ -239,18 +246,27 @@ func (e *Execution) Quiesce(ctx context.Context) error {
 // Finish closes every source edge after successful Finalize. Downstream edge
 // tasks then invoke Processor Flush and close in dependency order.
 //
-// Flushing is its own lifecycle operation, performed by this goroutine, so a
-// task whose Finish is a real Host-driven hand-off gets its own journal here
-// rather than writing into the run it already sealed. That is only safe for a
-// chain no other goroutine can still be touching: a source qualifies, because
-// WaitSources already confirmed its own goroutine returned, and a join
-// qualifies, because its barrier waits on that same signal before Quiesce can
-// succeed. A bounded edge's barrier promises only that its ring is idle, not
-// that its goroutine has returned or stopped touching its scope -- it stays
-// alive on purpose, to accept the delayed output Finalize's Flush may still
-// push through the same queue -- so Host never opens a journal over it here.
-// Its eventual downstream close is that goroutine's own act on its own
-// journal, collected through the ordinary join once it does return.
+// Flushing is its own lifecycle operation, so it relabels the same journal
+// Run used rather than opening a second one over the same slots -- exactly
+// what a bounded edge's own goroutine already does through EnterOperation
+// when it reaches EOF, extended here to a hand-off across goroutines. That
+// extension is only safe for a chain no other goroutine can still be
+// touching: a source qualifies, because WaitSources already confirmed its
+// own goroutine returned, and a join qualifies, because its barrier waits on
+// that same signal before Quiesce can succeed. Reusing the journal, not just
+// reusing the goroutine's proof of exclusivity, is what a second Scope could
+// not give: an ownership slot bound during Run -- a collector or transport
+// retaining a cell across calls, which runtime.md's own ownership contract
+// permits -- keeps the reporter it was bound to when it was filled, and
+// nothing rebinds a slot that already holds a payload. Opening a new Scope
+// for Flush would leave such a cell reporting to the one Run already sealed,
+// where nothing would ever read it again. A bounded edge's barrier promises
+// only that its ring is idle, not that its goroutine has returned or stopped
+// touching its scope -- it stays alive on purpose, to accept the delayed
+// output Finalize's Flush may still push through the same queue -- so Host
+// never touches its journal here. Its eventual downstream close is that
+// goroutine's own act on its own journal, collected through the ordinary
+// join once it does return.
 //
 // What Finish itself returns is what it ended with, in the same shape as any
 // other lifecycle operation: an Outcome per source or join, each carrying its
@@ -273,17 +289,18 @@ func (e *Execution) Finish(ctx context.Context) []journal.Outcome {
 	return e.finished
 }
 
-// flush runs one task's Finish under a fresh journal for the chain it drives,
-// through the same panic-safe boundary a task's own goroutine uses, so a panic
-// during this Host-driven hand-off cannot discard the journal's evidence any
-// more than a task's own panic can discard its. Only a namedTask whose chain
-// is set -- a source or a join -- reaches here; see Finish for why a bounded
-// edge must not.
+// flush runs one task's Finish under the same journal Run used, relabeled to
+// Flush, through the same panic-safe boundary a task's own goroutine uses, so
+// a panic during this Host-driven hand-off cannot discard the journal's
+// evidence any more than a task's own panic can discard its. Reusing the
+// journal rather than opening a new one is what keeps an ownership slot
+// bound during Run -- including one a collector or transport still retains
+// when Run ends -- reporting somewhere a later Seal reads; see Finish for why
+// this hand-off is only safe for a source or a join, never a bounded edge.
+// Only a namedTask whose chain is set reaches here.
 func (n namedTask) flush(ctx context.Context) journal.Outcome {
-	flush := journal.New(journal.Flush, n.scope.Node())
-	flush.Attach(n.scope.Identity(), n.name)
-	n.chain.BindScope(flush)
-	return journal.Capture(flush, func() error { return n.task.Finish(ctx) })
+	n.scope.EnterOperation(journal.Flush)
+	return journal.Capture(n.scope, func() error { return n.task.Finish(ctx) })
 }
 
 // Discard releases every owner still queued after data tasks have joined.
