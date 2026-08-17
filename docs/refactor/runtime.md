@@ -430,10 +430,12 @@ dimension は無視して item limit を必ず残す。
 physical queue は `Items`、利用可能なら `Bytes` と stream-local tick の `Span` だけを強制する。一方 Plan は
 logical edge ごとに一つの `Buffer` だけを表示し、その `Limit.Span` と `FanIn.Tolerance` は user-facing な
 wall-clock duration のまま保持する。descriptor ごとの private queue、tick limit、入力順は Plan に複製しない。
-Zip alignment は別の `job.AlignmentPolicy.Zip` から private tick へ変換する。有効な `Span` または Zip tolerance
-を持つ fan-in は接続 edge の time base が一致する場合だけ compile する。
+Zip alignment は別の `job.AlignmentPolicy.Zip` から private tick へ変換する。各 descriptor の `Span` はその
+connection の time base へ個別に変換するため、physical queue は mixed-base input を許容する。非 zero の Zip
+tolerance は input time base が共通である場合だけ compile し、zero の tolerance にはその制約を課さない。
 Zip は各 input から一 item ずつ待ち、batch の timestamp spread が tolerance を超えれば `ErrTolerance` で
 fail-closed にする。physical queue は tolerance を強制せず、Zip は queue span を alignment として解釈しない。
+MergeFanIn は Zip tolerance を無視し、tolerance 0 の有限 offline input として扱う。
 
 > **歴史的注記:** M5 完了時点では旧 `QueuePolicy.Window` を physical timestamp span と Zip tolerance の両方へ
 > 暫定利用し、`ErrWatermark` で失敗させていた。この契約は M7-1 で上記の `Span` / `Alignment.Zip` へ置き換え済みで、
@@ -505,6 +507,23 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 - windowed aggregation
 
 Host は physical buffering を `Limit`、policy 固有の semantic constraint を別 field として Plan に含める。現行 Zip の constraint は `Tolerance` であり、queue `Span` とは共有しない。「deterministic」は単に毎回同じ順序という意味ではなく、media semantics を保つ ordering rule が明示されていることを意味する。late/drop/conceal は realtime consumer が入る M9 まで policy に追加しない。
+
+### MergeFanIn の実行契約
+
+M7 の ordered merge は新しい public `Merger` ではなく、既存 `flow.Joiner` を runtime が `MergeFanIn` policy
+として駆動する。merge input は valid timeline と runtime-only `Order` trait を持つ timed descriptor に限り、
+untimed input、missing/backward order、time base を比較できない・overflow する timestamp は fail-closed にする。
+
+runtime は EOF でない全 input の queue head が揃うまで待ち、各 input の base で order key を exact に比較する。
+base が異なる input も比較でき、同じ key は input ordinal の昇順、同一 input 内は queue FIFO で安定して解決する。
+選択した一つの head だけを、input ordinal を持つ selected `flow.Batch` として Joiner に渡す。これは一要素
+batch の専用表現であり、通常の merge loop に一要素 slice や per-item allocation を追加しない。input が EOF
+になった後も残る head を drain し、全 input が EOF になって初めて正常 finish と Flush を行う。
+
+通常の item ownership と同じく、選択した head は Joiner が consume しなければ runtime が release し、保持中の
+head と queue 内 item は cancel、failure、panic、Drop failure の cleanup で全件解放する。barrier は queue の
+idle だけで成功にせず、fan-in task 自身が EOF drain と cleanup を完了した場合だけ quiesce する。正常 EOF の
+み Joiner の Flush を許し、cancel/failure は Flush を開始しない。
 
 ## execution policy
 
