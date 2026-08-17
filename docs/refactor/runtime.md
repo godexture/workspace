@@ -369,7 +369,7 @@ process
 
 - plugin catalog、CPU feature、implementation policy は Host construction 時に snapshot 化する。
 - source/sink transaction、queue、temporary storage、memory budget は Job が所有する。
-- parser、codec、filter のstream stateとscratchはcomponent instanceまたはgranted worker slotが所有する。
+- parser、codec、filter のstream stateとscratchはcomponent instanceまたはgranted worker slotが所有する。offline preset の aggregate scratch 既定値は 64 MiB、`Realtime` は disabled (0) で、実際に claim した node-local journal だけを作成する。spool は明示 `AllowSpool` 時だけ利用し、`ScratchMaxBytes` は明示指定で上書きできる。
 - packet/frame payloadは一時的なleaseとしてowner間をmoveする。
 
 package-level mutable stateを暗黙のownerにしない。global registry/factory、WASM job map、書換可能なCPU feature、process-wide runtime pool、mutable default/config/descriptorは削除する。testがglobal function/feature flagを書き換える方式も使わず、Host snapshot、constructor dependency、明示variantを注入する。

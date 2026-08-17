@@ -208,6 +208,9 @@ unfragmented transform mux が sample table/offset を蓄積する場合は、Ho
 で、0 は disabled とする。claim/reservation は Plan と execution fingerprint へ投影し、正の claim を持つ node だけへ
 Open-to-Close の borrowed `plugin.Scratch` を渡す。Host は operator Close 後、Access session Close 前に journal を破棄する。
 table journal は output boundary spool や output transaction state と quota を共有し得ても別 lifecycle/state である。
+offline の `Fast`/`Stable`/`Portable` preset は 64 MiB、`Realtime` は disabled (0) を既定値とする。実際に
+claim した node-local journal のみを作成し、spool は `AllowSpool` を明示した場合だけ利用する。利用者は
+`ScratchMaxBytes` を明示して上書きできる。
 
 ### C25. metadata loss API は実 encoding consumer まで延期する
 
