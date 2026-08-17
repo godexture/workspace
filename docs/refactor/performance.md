@@ -173,6 +173,19 @@ track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table �
 loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
 を要求する。
 
+M7 の constant-RAM/resource gate は、同じ topology、descriptor、queue、processing page、semantic metadata cap で
+1,000 samples と 1,000,000 samples を比較する。Inspect、Compile、Open の peak live heap と retained object 数は
+duration、sample 数、opaque raw payload 長に比例して増加させない。Inspection は shared immutable な format-owned
+source range/summary だけを保持し、source Opening/I/O handle、raw payload bytes、O(samples) 配列を保持しない。
+Host は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、range は fixed-size page で読む。
+WAVE unknown chunk/trailer も同じ range gate を通し、semantic metadata は inline value の明示 cap 内に制限する。
+
+unfragmented transform mux が sample table/offset を蓄積する場合、増加分は Host-owned disk table journal の bytes として
+計上し、明示した aggregate quota を越える前に deterministic に失敗させる。これは output boundary の sequential sink を
+変換する spool ではない。1k/1M の処理時間が入力数に比例することは gate failure ではないが、heap の sample-count
+growth、opaque bytes の全量保持、journal quota 無視、または steady-state allocation/item の同一条件で概ね
+2 倍を超える回帰は failure とし、paired AB/BA と profile で確認する。boundary spool を table journal の代用にしない。
+
 ## 現行実装の監査結果
 
 現在の最適化は性質が異なるものを同じ build/runtime dispatch で扱っている。

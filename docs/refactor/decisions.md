@@ -44,7 +44,10 @@ core は Key/Document/Origin/RawBlock contract のみを持ち、共通 vocabula
 
 ### C10. metadata の表現不能項目は warning
 
-既定は best effort + structured warning/loss report とし、黙って捨てない。変換不能で job を失敗させる strict mode は opt-in。
+semantic metadata の既定は best effort + structured warning/loss report とし、黙って捨てない。変換不能で job を
+失敗させる strict mode は opt-in。ただし、format の default same-format path が preservation 対象として宣言した
+container structure、opaque range、sample-entry state は semantic metadata の best effort には含めない。これらを
+安全に保持できない場合は、placeholder や黙った drop ではなく Planning error とする。
 
 ### C11. 万能 `Frame` を廃止する
 
@@ -180,9 +183,25 @@ M7 の明示 mapping は input index、canonical stream ID、output indexを持�
 
 ### C24. MP4 の I/O slice と exact boundary を明示する
 
-M7 の MP4 vertical slice は unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。sequential/fragmented mode と spool alternative は stdin/stdout、remote、streaming consumer が現れる M9 まで追加しない。選択 capability と mode は既存 Plan boundary に残す。
+M7 の MP4 vertical slice は unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。pure
+sequential/fragmented mode と output boundary spool alternative は stdin/stdout、remote、streaming consumer が現れる
+M9 まで追加しない。Seek、RandomRead/RandomWrite、Inspect/mux の bounded re-scan と、明示 quota 付き bounded disk
+scratch は M7 の内部実装で許可する。選択 capability と mode は既存 Plan boundary に残す。
 
-unchanged same-format remux だけが、Host が単一 input の同一 format inspection を同一 format mux の `CompileContext` へ immutable handoff することで raw box/sample-entry/metadata carrier を再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、cross-track physical interleave、再生成する既知 box の全体順、offset、global DTS interleave は含まない。physical interleave の変更は semantic loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
+Inspection は shared immutable であり、clone callback を持たない。Inspection に format-owned source range descriptor と
+bounded summary だけを置き、source Opening/I/O handle、raw payload bytes、sample 数に比例する配列は保持しない。Host
+は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、Compile と Inspection は I/O を
+行わない。unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
+から再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。
+MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、
+track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、cross-track physical interleave、
+再生成する既知 box の全体順、offset、global DTS interleave は含まない。physical interleave の変更は semantic loss と
+扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
+を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
+
+unfragmented transform mux が sample table/offset を蓄積する場合は、Host-owned disk table journal を明示した aggregate
+quota の内側で使い、固定 page 以外の in-memory growth を許さない。この内部 journal は output boundary の sequential
+sink を変換する spool とは別物であり、後者は M9 の consumer とともに追加する。
 
 ### C25. metadata loss API は実 encoding consumer まで延期する
 
@@ -190,7 +209,8 @@ MP4 `ilst` vocabulary mapping、generic loss DTO、Plan/Result の predicted/act
 
 ### C26. finite seek を延期し、queue span と Zip alignment を分離する
 
-finite graph seek、preroll/reset、Result projection は MP4 と移行後の MP3/FLAC/decoder path が揃う M8 で確定する。M7 の MP4 sample index は remux にだけ使い、seek placeholder API を作らない。
+finite graph seek、preroll/reset、Result projection は MP4 と移行後の MP3/FLAC/decoder path が揃う M8 で確定する。
+M7 の MP4 sample index は remux の random read/re-scan にだけ使い、public seek placeholder API を作らない。
 
 M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。同一 graph に Zip と `SerialFanIn` が共存しても、非ゼロの `job.AlignmentPolicy.Zip` は Zip edge だけへ投影し、Serial edge の tolerance は 0 のままとする。`SerialFanIn` は Zip alignment を使わず、cross-input availability や cross-track timestamp order を待たず、input ordinal を保持して callback を一 item ずつ同期直列化する。Serial 実行へ非ゼロ tolerance を直接適用するのは runtime/internal error である。別 container が時刻順を必要とする場合は、実 consumer と現実的な backpressure 設計が現れた時に別 ordered policy として追加する。late/drop/conceal は M9 の realtime consumer まで追加しない。
 

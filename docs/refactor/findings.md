@@ -15,7 +15,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 |---|---|---|---|
 | F1 | `core` が `sdk` と公式 plugin に依存し、`sdk` も `core` と公式 plugin に依存する。調査時点で11 moduleが同じ requirement graph の強連結成分に入っており、独立 versioning できない。 | [architecture](architecture.md)、[inventory](inventory.md)。**完了（M5 cut）** | M1/M5 |
 | F2 | `core/registry`、`resolver`、`routing` が decoder/demuxer/filter 等を固定列挙するため、新しい component role の追加に core の型と switch の変更が必要になる。 | [plugins](plugins.md)、[media](media.md)。**完了（M5 cut）** | M2/M3 |
-| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | foundation/cut は **完了（M5）**。static `Many` port、ordered repeated descriptors、typed Router、`SerialFanIn` の最初の production consumer と残る完了条件は [M7-0 contract](m7-0.md) の M7-C01〜M7-C11 で追跡する | M3/M7 |
+| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | foundation/cut は **完了（M5）**。static `Many` port、ordered repeated descriptors、typed Router、`SerialFanIn` の最初の production consumer と残る完了条件は [M7-0 contract](m7-0.md) の M7-C01〜M7-C12 で追跡する | M3/M7 |
 | F4 | `InputSet` と routing が `io.ReadSeeker`/`io.Writer` を live spec に保持し、Job、storage、session、device、mapping、policy の責務が混在している。 | [surfaces](surfaces.md)、[access](access.md)。**完了（M5 cut）** | M3/M4 |
 | F5 | `MediaAttributes` は audio を直接持ち、video は未実装である。stream kind/property を増やすたび core model の変更が必要になる。 | [media](media.md)。**完了（M5 cut）** | M3 |
 | F6 | 汎用 `Frame` は実質的に audio 型を隠し、`PacketKindStreamEnd` は data と lifecycle を混在させる。time/side data も不足し、audio filter ごとに byte↔float 変換を繰り返す。 | [media](media.md)、[audio](audio.md)、[runtime](runtime.md)。**完了（M5 cut）** | M3/M8 |
@@ -77,6 +77,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F52 | `sdk/bits` の独自 `production` tag が assertion semantics を変える一方、release/CIで同値性と使用条件が固定されていない。 | [performance](performance.md)、[quality](quality.md) | M8 |
 | F53 | global registry、mutable CPU feature、shallow-copy default、process-wide pool/WASM job map が Host/Job の owner、resource budget、test isolation を迂回する。 | [runtime](runtime.md)、[config](config.md)。**Host/Job owner と旧 global surface、`sdk/dsp` の exported mutable feature は完了（M5 review）**。process snapshot を新 item loop から参照せず、Plan/Program に direct variant を固定する責務は M8 | M2/M5/M8 |
 | F54 | node payload grant が下流 queue slot だけを数え、各 operator が処理中に保持する item を数えないため、zero-copy 段が producer の storage を保持したまま grant を使い切り、grant を超える入力の変換が途中で停止する。 | [runtime](runtime.md)。**完了（M6 review）**: `inFlightMultiplier` が reachable node 数と queue slot 数の和を返す。回帰は `standard` の grant 超過変換 test が固定する | M6 |
+| F55 | Format の Inspection や mux の sample-table preservation が opaque payload、sample 数に比例する配列、source handle を in-memory state へ保持すると、長時間/大容量 input の RAM が duration と raw payload length に比例し、Inspection の共有境界も壊れる。 | [M7-0 contract](m7-0.md)、[decisions C24](decisions.md)。M7 は shared immutable な format-owned source range/summary、Open 時の Host source Opening handoff、WAVE unknown chunk/trailer の range preservation、semantic metadata cap、quota 付き Host-owned disk table journal を採用し、constant-RAM gate を 1k/1M samples で固定する | M7 |
 
 ## 監査結果の利用規則
 
