@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -36,6 +37,20 @@ func (r memoryRandom) ReadAt(ctx context.Context, destination []byte, offset int
 		return count, io.EOF
 	}
 	return count, nil
+}
+
+type trackedRandom struct {
+	data      memoryRandom
+	maxRead   int
+	readCount int
+}
+
+func (r *trackedRandom) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
+	r.readCount++
+	if len(destination) > r.maxRead {
+		r.maxRead = len(destination)
+	}
+	return r.data.ReadAt(ctx, destination, offset)
 }
 
 type testChunk struct {
@@ -210,16 +225,64 @@ func pcmFormat(channels uint16, rate uint32, bits uint16) []byte {
 	return value
 }
 
-// A declared chunk size is content the source controls, so preserving it must
-// not size an allocation beyond the retained inspection-memory budget.
-func TestInspectRefusesToPreserveChunksBeyondTheMemoryBudget(t *testing.T) {
+// Opaque chunk bytes are source ranges, so their size does not consume the
+// retained inspection-memory budget.
+func TestInspectPreservesChunksBeyondTheMemoryBudgetAsARange(t *testing.T) {
 	payload := make([]byte, 4096)
 	value := testWAVE([]byte{1, 0, 2, 0}, 1, 48_000, testChunk{id: "BULK", payload: payload})
 	if _, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 1<<20); err != nil {
 		t.Fatalf("generous budget rejected a preserved chunk: %v", err)
 	}
-	_, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 512)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("narrow budget error = %v, want %v", err, ErrUnsupported)
+	inspected, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 512)
+	if err != nil {
+		t.Fatalf("narrow budget rejected an opaque range: %v", err)
+	}
+	if inspected.ranges.beforeFormat.length != uint64(len(payload)+8) {
+		t.Fatalf("preserved range length = %d, want %d", inspected.ranges.beforeFormat.length, len(payload)+8)
+	}
+	if len(inspected.metadata.Blocks()) != 0 {
+		t.Fatalf("opaque chunk became metadata blocks: %#v", inspected.metadata.Blocks())
+	}
+}
+
+func TestInspectOpaqueRangesDoNotReadTheirPayload(t *testing.T) {
+	for _, payloadSize := range []int{1 << 10, 1 << 20} {
+		t.Run(fmt.Sprintf("%d-bytes", payloadSize), func(t *testing.T) {
+			payload := bytes.Repeat([]byte{0x5a}, payloadSize)
+			value := testWAVE([]byte{1, 0}, 1, 48_000, testChunk{id: "BULK", payload: payload})
+			reader := &trackedRandom{data: memoryRandom(value)}
+			inspected, err := inspectHeaderWithSize(t.Context(), reader, uint64(len(value)), true, metadata.Resolver{}, 512)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspected.ranges.beforeFormat.length != uint64(payloadSize+8) {
+				t.Fatalf("range length = %d, want %d", inspected.ranges.beforeFormat.length, payloadSize+8)
+			}
+			if reader.maxRead > 40 {
+				t.Fatalf("opaque %d-byte chunk caused a %d-byte Inspect read", payloadSize, reader.maxRead)
+			}
+			if len(inspected.metadata.Blocks()) != 0 {
+				t.Fatalf("opaque chunk became metadata blocks: %#v", inspected.metadata.Blocks())
+			}
+		})
+	}
+}
+
+func TestInspectPreservesNonInfoListAsAnOpaqueRange(t *testing.T) {
+	list := waveTestChunk(t, tagLIST, append([]byte("adtl"), []byte{1, 2, 3}...), 0xa4)
+	value := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		list,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, waveSemanticCap)
+	if err != nil {
+		t.Fatalf("non-INFO LIST rejected: %v", err)
+	}
+	if got := sourceRangeBytes(t, value, inspected.ranges.beforeData); !bytes.Equal(got, list) {
+		t.Fatalf("non-INFO LIST range = %x, want %x", got, list)
+	}
+	if inspected.metadata.Len() != 0 || len(inspected.metadata.Blocks()) != 0 {
+		t.Fatalf("non-INFO LIST became semantic metadata: %#v", inspected.metadata)
 	}
 }

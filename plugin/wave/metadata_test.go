@@ -45,15 +45,25 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 		t.Fatalf("WAVE title = %q/%v", title, ok)
 	}
 	blocks := inspected.metadata.Blocks()
-	if len(blocks) != 4 {
-		t.Fatalf("WAVE raw blocks = %#v", blocks)
+	if len(blocks) != 0 {
+		t.Fatalf("WAVE inspection retained opaque blocks = %#v", blocks)
 	}
-	assertWaveChunkBlock(t, blocks[0], chunkBeforeFormat, chunkRaw, beforeFormat)
-	assertWaveChunkBlock(t, blocks[1], chunkBeforeData, chunkInfo, infoChunk)
-	if !bytes.Equal(blocks[2].Payload().AppendTo(nil), unknownField) {
-		t.Fatalf("unknown INFO field = %x, want %x", blocks[2].Payload().AppendTo(nil), unknownField)
+	if got := sourceRangeBytes(t, value, inspected.ranges.beforeFormat); !bytes.Equal(got, beforeFormat) {
+		t.Fatalf("before-format range = %x, want %x", got, beforeFormat)
 	}
-	assertWaveChunkBlock(t, blocks[3], chunkAfterData, chunkRaw, afterData)
+	if got := sourceRangeBytes(t, value, inspected.ranges.beforeData); !bytes.Equal(got, infoChunk) {
+		t.Fatalf("before-data range = %x, want %x", got, infoChunk)
+	}
+	if got := sourceRangeBytes(t, value, inspected.ranges.afterData); !bytes.Equal(got, afterData) {
+		t.Fatalf("after-data range = %x, want %x", got, afterData)
+	}
+	infoRange := sourceRangeBytes(t, value, inspected.ranges.info)
+	if !bytes.Equal(infoRange, infoChunk) {
+		t.Fatalf("LIST/INFO range = %x, want %x", infoRange, infoChunk)
+	}
+	if !bytes.Contains(infoRange, unknownField) {
+		t.Fatalf("unknown INFO field was not in the source range: %x", infoRange)
+	}
 
 	provider := metadata.NewBuilder(metadata.StreamScope)
 	metadata.Add(provider, tag.Comment(), "provider", metadata.Origin{})
@@ -119,15 +129,15 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, err := marshalMuxChunks(t.Context(), resolver, inspected.metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	header, err := newMuxHeaderWithChunks(inspected.description, chunks)
+	header, err := newRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileContext, err = mediaformat.WithInspection(compileContext, mediaformat.NewInspection(WAVE(), inspected))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +155,10 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := int(compiled.Resources().Memory); got != header.payloadBytes() {
-		t.Fatalf("mux payload grant = %d, want %d", got, header.payloadBytes())
+	if got := int(compiled.Resources().Memory); got != max(header.payloadBytes(), wavePageSize) {
+		t.Fatalf("mux payload grant = %d, want %d", got, max(header.payloadBytes(), wavePageSize))
 	}
-	encoded := materializeMuxHeader(t, header, data)
+	encoded := materializeRangeMuxHeader(t, header, original, data)
 	roundTrip, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(encoded), resolver)
 	if err != nil {
 		t.Fatal(err)
@@ -156,15 +166,14 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if !bytes.Equal(encoded[roundTrip.dataOffset:int64(roundTrip.dataOffset)+int64(roundTrip.dataSize)], data) {
 		t.Fatalf("round-trip PCM payload = %x", encoded[roundTrip.dataOffset:int64(roundTrip.dataOffset)+int64(roundTrip.dataSize)])
 	}
-	got := restoredWaveChunks(roundTrip.metadata)
-	want := [][]byte{beforeFormat, infoChunk, afterData}
-	if len(got) != len(want) {
-		t.Fatalf("round-trip WAVE chunks = %x", got)
+	if got := sourceRangeBytes(t, encoded, roundTrip.ranges.beforeFormat); !bytes.Equal(got, beforeFormat) {
+		t.Fatalf("round-trip before-format range = %x, want %x", got, beforeFormat)
 	}
-	for index := range want {
-		if !bytes.Equal(got[index], want[index]) {
-			t.Fatalf("round-trip WAVE chunk %d = %x, want %x", index, got[index], want[index])
-		}
+	if got := sourceRangeBytes(t, encoded, roundTrip.ranges.beforeData); !bytes.Equal(got, infoChunk) {
+		t.Fatalf("round-trip before-data range = %x, want %x", got, infoChunk)
+	}
+	if got := sourceRangeBytes(t, encoded, roundTrip.ranges.afterData); !bytes.Equal(got, afterData) {
+		t.Fatalf("round-trip after-data range = %x, want %x", got, afterData)
 	}
 }
 
@@ -216,18 +225,7 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 		cancel()
 	}()
 
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian}
-	properties, err := description.Properties()
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(document)
-	component := muxerComponent()
-	resolved, err := component.Resolve(config.NewPatch())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	_, err = marshalMuxChunks(compileContext.Context(), resolver, document)
 	if err == nil || !hidden || !canceled {
 		t.Fatalf("metadata Marshal cancellation = %v, value hidden %v, canceled %v", err, hidden, canceled)
 	}
@@ -248,6 +246,38 @@ func restoredWaveChunks(document metadata.Document) [][]byte {
 		result = append(result, payload)
 	}
 	return result
+}
+
+func materializeRangeMuxHeader(t testing.TB, header muxHeader, source, data []byte) []byte {
+	t.Helper()
+	if !header.rangeMode {
+		t.Fatalf("range materializer received a legacy header")
+	}
+	value := make([]byte, 0, len(header.prefix)+8+ds64PayloadSize+len(header.format)+len(header.dataTag)+len(data))
+	value = append(value, header.prefix...)
+	if header.ranges.reservation.valid() {
+		value = append(value, sourceRangeBytes(t, source, header.ranges.reservation)...)
+	} else {
+		value = append(value, reserveChunkOf(muxChunks{})...)
+	}
+	value = append(value, sourceRangeBytes(t, source, header.ranges.beforeFormat)...)
+	value = append(value, header.format...)
+	value = append(value, sourceRangeBytes(t, source, header.ranges.beforeData)...)
+	value = append(value, header.dataTag...)
+	value = append(value, data...)
+	if len(data)&1 != 0 {
+		value = append(value, 0)
+	}
+	value = append(value, sourceRangeBytes(t, source, header.ranges.afterData)...)
+	value = append(value, sourceRangeBytes(t, source, header.ranges.trailer)...)
+	finalized, err := header.finalize(uint64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, patch := range finalized.patches {
+		copy(value[patch.offset:], patch.payload)
+	}
+	return value
 }
 
 func assertWaveChunkBlock(t testing.TB, block metadata.RawBlock, anchor chunkAnchor, kind chunkKind, payload []byte) {
@@ -278,6 +308,14 @@ func waveTestChunk(t testing.TB, identity string, payload []byte, padding byte) 
 		value[len(value)-1] = padding
 	}
 	return value
+}
+
+func sourceRangeBytes(t testing.TB, source []byte, value sourceRange) []byte {
+	t.Helper()
+	if value.length > uint64(len(source)) || value.offset > uint64(len(source))-value.length {
+		t.Fatalf("source range %#v is outside %d-byte fixture", value, len(source))
+	}
+	return append([]byte(nil), source[value.offset:value.offset+value.length]...)
 }
 
 func waveTestRIFF(t testing.TB, chunks ...[]byte) []byte {
@@ -335,13 +373,8 @@ func TestInspectAnchorsTheDs64ReservationSlot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blocks := inspected.metadata.Blocks()
-			if len(blocks) != 1 {
-				t.Fatalf("preserved blocks = %d, want 1", len(blocks))
-			}
-			parsed, ok := parseChunkBlockID(blocks[0].ID())
-			if !ok || parsed.anchor != test.anchor {
-				t.Fatalf("preserved anchor = %#v/%v, want %v", parsed, ok, test.anchor)
+			if got := inspected.ranges.rangeFor(test.anchor); !got.valid() {
+				t.Fatalf("preserved anchor range = %#v, want %v", got, test.anchor)
 			}
 		})
 	}
@@ -364,18 +397,14 @@ func TestMuxRestoresANonZeroReservationSlot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pass %d inspect failed: %v", pass, err)
 		}
-		chunks, err := marshalMuxChunks(t.Context(), resolver, inspected.metadata)
-		if err != nil {
-			t.Fatalf("pass %d marshal failed: %v", pass, err)
+		if got := sourceRangeBytes(t, encoded, inspected.ranges.reservation); !bytes.Equal(got, reservation) {
+			t.Fatalf("pass %d reservation range = %x, want %x", pass, got, reservation)
 		}
-		if !bytes.Equal(chunks.reservation, reservation) {
-			t.Fatalf("pass %d reservation = %x, want %x", pass, chunks.reservation, reservation)
-		}
-		header, err := newMuxHeaderWithChunks(inspected.description, chunks)
+		header, err := newRangeMuxHeader(inspected.description, inspected)
 		if err != nil {
 			t.Fatalf("pass %d header failed: %v", pass, err)
 		}
-		encoded = materializeMuxHeader(t, header, data)
+		encoded = materializeRangeMuxHeader(t, header, encoded, data)
 		if !bytes.Equal(encoded, original) {
 			t.Fatalf("pass %d round trip = %x, want %x", pass, encoded, original)
 		}
@@ -425,22 +454,14 @@ func TestInspectPreservesBytesPastTheRIFFChunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trailing bytes rejected the stream: %v", err)
 	}
-	blocks := inspected.metadata.Blocks()
-	if len(blocks) != 1 {
-		t.Fatalf("preserved blocks = %d, want the trailing region only", len(blocks))
+	if blocks := inspected.metadata.Blocks(); len(blocks) != 0 {
+		t.Fatalf("inspection retained trailing Blob blocks = %d", len(blocks))
 	}
-	if got := blocks[0].Payload().AppendTo(nil); !bytes.Equal(got, trailer) {
-		t.Fatalf("preserved trailer = %q, want %q", got, trailer)
+	if got := sourceRangeBytes(t, source, inspected.ranges.trailer); !bytes.Equal(got, trailer) {
+		t.Fatalf("preserved trailer range = %q, want %q", got, trailer)
 	}
 
-	chunks, err := marshalMuxChunks(t.Context(), infoTestResolver(t), inspected.metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(chunks.trailer, trailer) {
-		t.Fatalf("mux trailer = %q, want %q", chunks.trailer, trailer)
-	}
-	header, err := newMuxHeaderWithChunks(inspected.description, chunks)
+	header, err := newRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}

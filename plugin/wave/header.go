@@ -39,10 +39,13 @@ type header struct {
 	description sample.Description
 	dataOffset  int64
 	dataSize    uint64
+	rootEnd     uint64
+	sourceSize  uint64
 	blockAlign  int
 	rf64        bool
 	codecTag    format.Tag
 	metadata    metadata.Document
+	ranges      sourceRanges
 }
 
 func (h header) valid() bool {
