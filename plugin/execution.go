@@ -21,6 +21,12 @@ func WithProcessor[I, O any](input string, in schema.Type[I], output string, out
 	return withExecution(drive.NewProcessor(input, in, output, out))
 }
 
+// WithRouter binds a one-input, many-output component to flow.Router[I,O].
+// Route ordinals are assigned by the compiled output descriptor order.
+func WithRouter[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) ComponentOption {
+	return withExecution(drive.NewRouter(input, in, output, out))
+}
+
 // WithJoiner binds a homogeneous many-input component. Zip is executable in
 // M5; other declared policies remain explicit planning facts until a real
 // component defines their semantics.

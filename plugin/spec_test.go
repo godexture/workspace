@@ -37,6 +37,14 @@ func (specProcessorOperator) Process(context.Context, *flow.Item[specUnit], flow
 
 func (specProcessorOperator) Flush(context.Context, flow.Emitter[specUnit]) error { return nil }
 
+type specRouterOperator struct{ specOperator }
+
+func (specRouterOperator) Process(context.Context, *flow.Item[specUnit], flow.RoutedEmitter[specUnit]) error {
+	return nil
+}
+
+func (specRouterOperator) Flush(context.Context, flow.RoutedEmitter[specUnit]) error { return nil }
+
 type specFinalizerOperator struct{ specOperator }
 
 func (specFinalizerOperator) Finalize(context.Context) error { return nil }
@@ -189,6 +197,56 @@ func TestExecutionBindingRejectsDuplicateAndShapeMismatch(t *testing.T) {
 	)
 	if !hasItem(mismatch.Diagnostics(), "plugin.execution-ports") {
 		t.Fatalf("execution shape diagnostics = %v", mismatch.Diagnostics())
+	}
+}
+
+func TestRouterExecutionBindingRequiresManyOutputAndTypedRouter(t *testing.T) {
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ, flow.Many())})
+	spec := Spec[pluginConfig, flow.Shape, int]{
+		Ports: shape,
+		Compile: func(_ CompileContext, _ pluginConfig, inputs flow.Descriptors[int]) (Compiled[flow.Shape, int], error) {
+			input, ok := inputs.One("in")
+			if !ok {
+				return Compiled[flow.Shape, int]{Requirements: []Requirement[int]{Require("in", ConditionNeed[int]("fixture.input"))}}, nil
+			}
+			return Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", input))}, nil
+		},
+		Open: func(_ OpenContext, value flow.Shape) (flow.Operator, error) {
+			return specRouterOperator{specOperator{shape: value}}, nil
+		},
+	}
+	component := NewComponent[specUnitID](
+		Descriptor{DisplayName: "typed router"},
+		pluginSchema(1),
+		WithSpec(spec),
+		WithRouter("in", typ, "out", typ),
+	)
+	if diagnostics := component.Diagnostics(); len(diagnostics) != 0 {
+		t.Fatalf("router diagnostics = %v", diagnostics)
+	}
+	resolved, err := component.Resolve(componentPatch(t, component, "level", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = operator.Close()
+
+	mismatch := NewComponent[specOtherID](
+		Descriptor{DisplayName: "router shape mismatch"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithRouter("in", typ, "out", typ),
+	)
+	if !hasItem(mismatch.Diagnostics(), "plugin.execution-ports") {
+		t.Fatalf("router mismatch diagnostics = %v", mismatch.Diagnostics())
 	}
 }
 

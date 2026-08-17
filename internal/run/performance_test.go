@@ -46,6 +46,24 @@ func (w *perfCounter) Write(_ context.Context, input *flow.Item[int]) error {
 	return nil
 }
 
+type perfRouter struct {
+	templateOperator
+	out flow.Item[int]
+}
+
+func (r *perfRouter) Process(ctx context.Context, input *flow.Item[int], outputs flow.RoutedEmitter[int]) error {
+	defer input.Drop()
+	route, ok := outputs.Route(0)
+	if !ok {
+		panic("router route 0 is unavailable")
+	}
+	route.Own(&r.out, input.Value()+1)
+	defer r.out.Drop()
+	return route.Emit(ctx, &r.out)
+}
+
+func (*perfRouter) Flush(context.Context, flow.RoutedEmitter[int]) error { return nil }
+
 // perfChain builds source -> first -> second -> sink. The first-to-second hop
 // carries no queue, so it is the fused direct call the hot-path contract is
 // about.
@@ -78,6 +96,40 @@ func perfChain(t testing.TB, values []int) (*journal.Ledger, *Execution, *perfCo
 		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: perfType, values: values},
 		&perfPass{templateOperator: templateOperator{shape: passShape}},
 		&perfPass{templateOperator: templateOperator{shape: passShape}},
+		sink,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger, execution, sink
+}
+
+func perfRouterChain(t testing.TB, values []int) (*journal.Ledger, *Execution, *perfCounter) {
+	t.Helper()
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", perfType)})
+	routerShape := flow.NewShape([]flow.Port{flow.In("in", perfType)}, []flow.Port{flow.Out("out", perfType, flow.Many())})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", perfType)}, nil)
+	template, err := compileFixture(
+		[]Node{
+			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", perfType)},
+			{ID: "router", Shape: routerShape, Execution: drive.NewRouter("in", perfType, "out", perfType)},
+			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", perfType)},
+		},
+		[]job.Edge{
+			job.Connect(job.At("source", "out"), job.At("router", "in")),
+			job.Connect(job.At("router", "out"), job.At("sink", "in")),
+		},
+		job.QueuePolicy{Items: 8},
+		job.AlignmentPolicy{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &perfCounter{templateOperator: templateOperator{shape: sinkShape}}
+	ledger := journal.NewLedger()
+	execution, err := template.Build(ledger, []flow.Operator{
+		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: perfType, values: values},
+		&perfRouter{templateOperator: templateOperator{shape: routerShape}},
 		sink,
 	})
 	if err != nil {
@@ -123,6 +175,18 @@ func TestAnItemCostsNoAllocationPerHop(t *testing.T) {
 		t.Fatalf("allocations = %v over %d items (%v per item), want the per-item share to round to zero", allocations, items, perItem)
 	}
 	t.Logf("%v allocations for %d items across three hops and two queues", allocations, items)
+}
+
+func TestRouterDoesNotAllocatePerItem(t *testing.T) {
+	const items = 2048
+	values := make([]int, items)
+	allocations := testing.AllocsPerRun(5, func() {
+		ledger, execution, _ := perfRouterChain(t, values)
+		(&island{ledger: ledger, execution: execution}).run(context.Background())
+	})
+	if perItem := allocations / items; perItem >= 1 {
+		t.Fatalf("allocations = %v over %d items (%v per item), want the per-item share to round to zero", allocations, items, perItem)
+	}
 }
 
 // A queue ring holds Items contiguously. What one costs is the payload plus

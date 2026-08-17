@@ -152,6 +152,10 @@ func (t Template) validateEdges() error {
 			if len(t.incoming[index]) != 1 || len(t.outgoing[index]) == 0 {
 				return ErrTopology
 			}
+		case drive.Router:
+			if len(t.incoming[index]) != 1 || len(t.outgoing[index]) == 0 {
+				return ErrTopology
+			}
 		case drive.Joiner:
 			if len(t.incoming[index]) < 2 || len(t.outgoing[index]) == 0 {
 				return ErrTopology
@@ -172,7 +176,7 @@ func (t Template) validateEdges() error {
 			if t.edges[t.connections[connectionIndex].logical].value.From().ID() != value.binding.Output() {
 				return ErrTopology
 			}
-			if t.connections[connectionIndex].route != 0 {
+			if value.kind != drive.Router && t.connections[connectionIndex].route != 0 {
 				return ErrTopology
 			}
 		}

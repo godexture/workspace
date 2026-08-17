@@ -31,6 +31,7 @@ type Kind uint8
 const (
 	Source Kind = iota + 1
 	Processor
+	Router
 	Joiner
 	Sink
 )
@@ -56,6 +57,7 @@ type Binding struct {
 	fanIn       flow.FanInPolicy
 	openSink    func(flow.Operator, string) (Link, error)
 	prepend     func(flow.Operator, Link, string) (Link, error)
+	openRouter  func(flow.Operator, []Link, string) (Link, error)
 	openSource  func(flow.Operator, Link, *journal.Domain) (Task, error)
 	fanout      func([]Link, string) (Link, error)
 	buffer      func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
@@ -161,6 +163,45 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 	}
 }
 
+func NewRouter[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) Binding {
+	traits := out.Traits()
+	inputTraits := in.Traits()
+	return Binding{
+		kind:        Router,
+		input:       port{id: input, schema: in.Descriptor()},
+		output:      port{id: output, schema: out.Descriptor()},
+		inputStats:  measuresOf(inputTraits),
+		outputStats: measuresOf(traits),
+		openRouter: func(operator flow.Operator, routes []Link, node string) (Link, error) {
+			router, ok := operator.(flow.Router[I, O])
+			if !ok {
+				return Link{}, fmt.Errorf("%w: want flow.Router[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			if len(routes) == 0 {
+				return Link{}, ErrBinding
+			}
+			outputs := make([]delivery[O], len(routes))
+			for index, route := range routes {
+				target, err := deliveryOf[O](route)
+				if err != nil {
+					return Link{}, err
+				}
+				outputs[index] = target
+			}
+			return linkOf[I](&routerDelivery[I, O]{router: router, routes: outputs, typ: in, node: node}), nil
+		},
+		fanout:  fanoutFactory(out),
+		buffer:  bufferFactory(out),
+		observe: observeFactory(out),
+		validate: func(operator flow.Operator) error {
+			if _, ok := operator.(flow.Router[I, O]); !ok {
+				return fmt.Errorf("%w: want flow.Router[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			return nil
+		},
+	}
+}
+
 func NewSink[T any](input string, typ schema.Type[T]) Binding {
 	traits := typ.Traits()
 	return Binding{
@@ -192,6 +233,8 @@ func (b Binding) Valid() bool {
 		return validPort(b.output) && b.openSource != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Processor:
 		return validPort(b.input) && validPort(b.output) && b.prepend != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
+	case Router:
+		return validPort(b.input) && validPort(b.output) && b.openRouter != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Joiner:
 		return validPort(b.input) && validPort(b.output) && b.openJoiner != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Sink:
@@ -221,6 +264,10 @@ func (b Binding) Validate(shape flow.Shape) error {
 		}
 	case Processor:
 		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
+			return ErrBinding
+		}
+	case Router:
+		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
 			return ErrBinding
 		}
 	case Joiner:
@@ -265,6 +312,17 @@ func (b Binding) PrependAt(operator flow.Operator, next Link, node string) (Link
 		return Link{}, ErrUnsupported
 	}
 	return b.prepend(operator, next, node)
+}
+
+func (b Binding) OpenRouterAt(operator flow.Operator, routes []Link, node string) (Link, error) {
+	if b.openRouter == nil {
+		return Link{}, ErrUnsupported
+	}
+	return b.openRouter(operator, routes, node)
+}
+
+func (b Binding) OpenRouter(operator flow.Operator, routes []Link) (Link, error) {
+	return b.OpenRouterAt(operator, routes, "")
 }
 
 // OpenSource, OpenJoiner and Buffer take the failure domain their task will

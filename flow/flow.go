@@ -247,6 +247,21 @@ type Processor[I, O any] interface {
 	Flush(context.Context, Emitter[O]) error
 }
 
+// RoutedEmitter selects one statically declared output route. An unavailable
+// ordinal is refused before an Item can be bound to it. A reusable Item binds
+// to one route's reporter, so a Router keeps one reusable Item per route.
+type RoutedEmitter[T any] interface {
+	Route(ordinal int) (Emitter[T], bool)
+}
+
+// Router transforms one item and selects exactly one output route for every
+// emitted item. Routing itself never duplicates ownership; multiple logical
+// downstreams on one selected route are handled by the runtime's fan-out.
+type Router[I, O any] interface {
+	Process(context.Context, *Item[I], RoutedEmitter[O]) error
+	Flush(context.Context, RoutedEmitter[O]) error
+}
+
 // Joiner transforms deterministic groups from a homogeneous many-input port.
 type Joiner[I, O any] interface {
 	Process(context.Context, Batch[I], Emitter[O]) error

@@ -88,6 +88,16 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 				return fail(err)
 			}
 			edgeTargets[t.incoming[index][0]] = input
+		case drive.Router:
+			routes, err := t.routeLinks(ledger, index, edgeTargets, result)
+			if err != nil {
+				return fail(err)
+			}
+			input, err := value.binding.OpenRouterAt(operator, routes, node)
+			if err != nil {
+				return fail(err)
+			}
+			edgeTargets[t.incoming[index][0]] = input
 		case drive.Joiner:
 			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
@@ -135,35 +145,6 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 		}
 	}
 	return result, nil
-}
-
-func (t Template) outputLink(ledger *journal.Ledger, index int, targets []drive.Link, execution *Execution) (drive.Link, error) {
-	node := t.nodes[index].id.String()
-	links := make([]drive.Link, len(t.outgoing[index]))
-	for outputIndex, connectionIndex := range t.outgoing[index] {
-		connection := t.connections[connectionIndex]
-		link := targets[connectionIndex]
-		if !link.Valid() {
-			return drive.Link{}, ErrTopology
-		}
-		key := connectionKey(t.edges[connection.logical].value, connection.route, connection.input)
-		local := execution.observer.Local("", key)
-		observed, err := t.nodes[index].binding.Observe(link, local)
-		if err != nil {
-			return drive.Link{}, err
-		}
-		link = observed
-		if connection.reason != 0 && t.nodes[connection.to].kind != drive.Joiner {
-			buffered, bufferTask, err := t.nodes[index].binding.Buffer(connection.limit, link, ledger.Domain("buffer/"+key, key))
-			if err != nil {
-				return drive.Link{}, err
-			}
-			link = buffered
-			execution.edges = append(execution.edges, namedTask{task: bufferTask})
-		}
-		links[outputIndex] = link
-	}
-	return t.nodes[index].binding.Fanout(links, node)
 }
 
 // Start registers edge tasks before sources so bounded consumers are ready
