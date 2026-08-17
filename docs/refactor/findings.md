@@ -15,7 +15,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 |---|---|---|---|
 | F1 | `core` が `sdk` と公式 plugin に依存し、`sdk` も `core` と公式 plugin に依存する。調査時点で11 moduleが同じ requirement graph の強連結成分に入っており、独立 versioning できない。 | [architecture](architecture.md)、[inventory](inventory.md)。**完了（M5 cut）** | M1/M5 |
 | F2 | `core/registry`、`resolver`、`routing` が decoder/demuxer/filter 等を固定列挙するため、新しい component role の追加に core の型と switch の変更が必要になる。 | [plugins](plugins.md)、[media](media.md)。**完了（M5 cut）** | M2/M3 |
-| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | [media](media.md)、[surfaces](surfaces.md)。**完了（M5 cut）** | M3/M7 |
+| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | foundation/cut は **完了（M5）**。multi-stream execution の最初の production consumer と残る完了条件は [M7-0 contract](m7-0.md) の M7-C01〜M7-C11 で追跡する | M3/M7 |
 | F4 | `InputSet` と routing が `io.ReadSeeker`/`io.Writer` を live spec に保持し、Job、storage、session、device、mapping、policy の責務が混在している。 | [surfaces](surfaces.md)、[access](access.md)。**完了（M5 cut）** | M3/M4 |
 | F5 | `MediaAttributes` は audio を直接持ち、video は未実装である。stream kind/property を増やすたび core model の変更が必要になる。 | [media](media.md)。**完了（M5 cut）** | M3 |
 | F6 | 汎用 `Frame` は実質的に audio 型を隠し、`PacketKindStreamEnd` は data と lifecycle を混在させる。time/side data も不足し、audio filter ごとに byte↔float 変換を繰り返す。 | [media](media.md)、[audio](audio.md)、[runtime](runtime.md)。**完了（M5 cut）** | M3/M8 |

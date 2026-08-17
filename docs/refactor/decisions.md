@@ -166,6 +166,34 @@ media 領域を `media/` 配下へ置き、それ以外は root に置く。単�
 
 この配置により `config.Schema`（設定 schema）と `media/schema`（data unit schema）、`media/audio`（frame 型）と `plugin/audio`（processor 実装）が path で区別される。M2 が作った root の 4 package は移動しない。
 
+### C22. multi-stream identity は compiled edge に属する
+
+stream identity は inspected `stream.Descriptor` と compiled edge が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
+
+dynamic port は Inspect 後に得た immutable prepared fact からのみ Shape する。`ShapeContext` と `CompileContext` は同一の typed prepared value を読む。実行 topology は typed `Router` と typed `Merger` で増やし、item ごとの reflection、port string lookup、`any` を使う multiplexing/route map を導入しない。
+
+### C23. mapping は Inspect 後に解決し、保存を既定にする
+
+Job の selector は input choice、canonical stream ID、open schema ID、format-specific typed language/disposition property を表す。closed media role enum や任意 function/predicate は入れない。selector は Inspect 後に canonical ID へ決定的に解決し、明示されない zero/many match は diagnostic とする。
+
+入力一つ・出力一つで mapping を省略した場合は eligible track を Inspect order のまま全て map する。複数 input または複数 output で mapping を省略した場合は ambiguity とする。無指定の既定は copy/remux を優先し、codec Binding のない track は raw copy に残す。変換を要求した unbound codec と、target に表せない明示 selected track だけを Compile error にする。
+
+### C24. MP4 の I/O alternative と exact boundary を明示する
+
+moov-first MP4 input は sequential read を許容するが、moov-after-mdat/index/seek は RandomRead を要する。sequential sink は fragmented MP4、non-fragmented output は RandomWrite を選ぶ。spool は explicit policy と quota/storage がある finite job の capability alternative であり、preset が暗黙に有効化しない。mode、capability、spool effect は Plan に残す。
+
+unchanged same-format remux だけが narrow immutable provenance により raw box/sample entry/metadata carrier を再利用できる。MP4 lossless exact は selected sample payload、PTS/DTS/duration、track/mapping order、preservable `ilst`、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、再生成する既知 box の全体順、offset、interleave、fragment boundary は含まない。保持不能な raw data は必ず loss report に残す。
+
+### C25. metadata loss は Plan と Result で分離する
+
+M7 の最初の metadata encoding consumer は MP4 `ilst` である。RIFF INFO と `ilst` の間では declared `metadata.Mapping` だけを使う。Plan は予測 loss、Result は actual loss を持つ。strict metadata policy は予測可能な loss を Planning で、runtime にしか判明しない loss を output commit 前に失敗にする。RF64 `JUNK` reservation loss もこの report の consumer とする。
+
+### C26. finite MP4 seek と queue span を分離する
+
+seek は finite MP4 graph operation とする。PCM は target sample へ exact、raw video/subtitle/data は直前 sync sample へ seek し、output timestamp は seek point から zero に rebase する。requested と actual start の差、reset、replay を Plan/Result に記録する。
+
+`QueuePolicy.Window` が兼ねていた physical queue span と media alignment semantics は分ける。M7 の DTS merge は finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
+
 ## Deferred without blocking the first implementation
 
 ### D1. dynamic install の方式
