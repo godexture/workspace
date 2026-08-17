@@ -35,5 +35,5 @@ func ExampleNew() {
 	fmt.Println(inputReference, outputReference)
 	// Output:
 	// true
-	// file:///input.raw file:///output.raw
+	// file:<redacted> file:<redacted>
 }

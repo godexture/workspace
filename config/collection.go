@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,6 +11,11 @@ import (
 
 	"github.com/godexture/godec/diagnostic"
 )
+
+// errMapCanonicalCollision reports a map whose key codec mapped two distinct
+// keys to the same canonical bytes. Such a map cannot have a truthful,
+// deterministic fingerprint.
+var errMapCanonicalCollision = errors.New("config map canonical key collision")
 
 // Slice returns an ordered slice codec. Element order is part of the
 // canonical representation.
@@ -97,7 +103,9 @@ func Slice[T any](inner Codec[T]) Codec[[]T] {
 }
 
 // Map returns a map codec whose canonical entries are sorted by canonical key
-// bytes. It is accepted only when both key and value codecs are canonical.
+// bytes. A duplicate canonical key is rejected because it would make the
+// fingerprint depend on map iteration. It is accepted only when both key and
+// value codecs are canonical.
 func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[K]V] {
 	result := NewCodec(CodecSpec[map[K]V]{
 		Type: "map<" + keyCodec.description.Type + "," + valueCodec.description.Type + ">",
@@ -127,27 +135,34 @@ func Map[K comparable, V any](keyCodec Codec[K], valueCodec Codec[V]) Codec[map[
 			if value == nil {
 				return "null"
 			}
-			entries := sortedMapEntries(value, keyCodec)
+			entries := collectMapEntries(value, keyCodec, valueCodec.Encode)
 			parts := make([]string, 0, len(entries))
 			for _, entry := range entries {
-				key, _ := json.Marshal(keyCodec.Encode(entry.key))
-				parts = append(parts, string(key)+":"+surfaceJSON(valueCodec.Encode(entry.value)))
+				key, _ := json.Marshal(entry.keyEncoded)
+				parts = append(parts, string(key)+":"+surfaceJSON(entry.valueEncoded))
 			}
 			return "{" + strings.Join(parts, ",") + "}"
 		},
 		Canonical: func(value map[K]V) ([]byte, error) {
-			entries := sortedMapEntries(value, keyCodec)
+			entries := collectMapEntries(value, keyCodec, nil)
 			parts := make([][]byte, 0, len(entries)*2)
+			var previous []byte
+			previousEntry := -1
 			for _, entry := range entries {
-				key, err := keyCodec.Canonical(entry.key)
-				if err != nil {
-					return nil, err
+				if entry.canonicalErr != nil {
+					return nil, fmt.Errorf("map key cannot be canonicalized: %w", entry.canonicalErr)
 				}
+				if previousEntry >= 0 && bytes.Equal(previous, entry.canonical) {
+					return nil, fmt.Errorf("%w: two distinct keys share canonical encoding", errMapCanonicalCollision)
+				}
+				key := entry.canonical
 				item, err := valueCodec.Canonical(entry.value)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("map value cannot be canonicalized: %w", err)
 				}
 				parts = append(parts, key, item)
+				previous = key
+				previousEntry++
 			}
 			return canonicalSequence("map", parts...), nil
 		},
@@ -235,19 +250,46 @@ func Nested[T any](schema Schema[T]) Codec[T] {
 }
 
 type mapEntry[K comparable, V any] struct {
-	key   K
-	value V
+	key          K
+	value        V
+	canonical    []byte
+	canonicalErr error
+	keyEncoded   string
+	valueEncoded string
 }
 
-func sortedMapEntries[K comparable, V any](value map[K]V, codec Codec[K]) []mapEntry[K, V] {
+func collectMapEntries[K comparable, V any](value map[K]V, codec Codec[K], valueEncode func(V) string) []mapEntry[K, V] {
 	entries := make([]mapEntry[K, V], 0, len(value))
 	for key, item := range value {
-		entries = append(entries, mapEntry[K, V]{key: key, value: item})
+		canonical, err := codec.Canonical(key)
+		entry := mapEntry[K, V]{
+			key:          key,
+			value:        item,
+			canonical:    append([]byte(nil), canonical...),
+			canonicalErr: err,
+		}
+		if valueEncode != nil {
+			entry.keyEncoded = codec.Encode(key)
+			entry.valueEncoded = valueEncode(item)
+		}
+		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(left, right int) bool {
-		leftCanonical, _ := codec.Canonical(entries[left].key)
-		rightCanonical, _ := codec.Canonical(entries[right].key)
-		return bytes.Compare(leftCanonical, rightCanonical) < 0
+		leftEntry, rightEntry := entries[left], entries[right]
+		if leftEntry.canonicalErr == nil && rightEntry.canonicalErr == nil {
+			if order := bytes.Compare(leftEntry.canonical, rightEntry.canonical); order != 0 {
+				return order < 0
+			}
+		} else if leftEntry.canonicalErr == nil || rightEntry.canonicalErr == nil {
+			return leftEntry.canonicalErr == nil
+		}
+		if leftEntry.keyEncoded != rightEntry.keyEncoded {
+			return leftEntry.keyEncoded < rightEntry.keyEncoded
+		}
+		if leftEntry.valueEncoded != rightEntry.valueEncoded {
+			return leftEntry.valueEncoded < rightEntry.valueEncoded
+		}
+		return false
 	})
 	return entries
 }

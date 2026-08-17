@@ -151,8 +151,8 @@ func ExampleNewSnapshot() {
 	// true false
 }
 
-// A reference keeps its resolver-facing form while redacting credentials and
-// parameters from every ordinary string representation.
+// A reference keeps its resolver-facing form while redacting the complete
+// target from every ordinary string representation.
 func ExampleParse() {
 	reference, err := access.Parse("https://user:secret@example.com/audio.wav?token=secret#part")
 	if err != nil {
@@ -164,7 +164,7 @@ func ExampleParse() {
 	fmt.Println(reference.Canonical() != reference.Display())
 	// Output:
 	// https
-	// https://example.com/audio.wav?redacted#redacted
+	// https:<redacted>
 	// true
 }
 
