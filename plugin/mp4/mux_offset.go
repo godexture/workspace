@@ -1,0 +1,162 @@
+package mp4
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+	"math"
+
+	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/buffer"
+)
+
+func (m *muxer) appendChunkOffset(ctx context.Context) error {
+	if m.scratch == nil || m.scratchWritten > m.need-8 {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	var record [8]byte
+	binary.BigEndian.PutUint64(record[:], m.outputOffset)
+	offset, err := m.scratch.Append(ctx, record[:])
+	if err != nil {
+		return err
+	}
+	if offset != m.scratchWritten {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is not append-only", ErrMalformed)
+	}
+	m.scratchWritten += 8
+	return nil
+}
+
+func (m *muxer) preflightOffsets(ctx context.Context) error {
+	if m.scratchWritten != m.need {
+		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
+	}
+	if m.need == 0 {
+		return nil
+	}
+	if m.scratch == nil {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	var position int64
+	for _, track := range m.movie.tracks {
+		for remaining := uint64(track.chunkCount); remaining != 0; {
+			count := min(remaining, uint64(muxJournalPageBytes/8))
+			bytes := int(count * 8)
+			if err := m.withScratchPage(bytes, func(values []byte) error {
+				if err := m.scratch.ReadAt(ctx, values, position); err != nil {
+					return err
+				}
+				if !track.tables.largeOffsets {
+					for index := 0; index < len(values); index += 8 {
+						if binary.BigEndian.Uint64(values[index:index+8]) > math.MaxUint32 {
+							return fmt.Errorf("%w: remuxed stco offset exceeds uint32", ErrUnsupported)
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			position += int64(bytes)
+			remaining -= count
+		}
+	}
+	if position != m.need {
+		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
+	}
+	return nil
+}
+
+func (m *muxer) patchOffsets(ctx context.Context, output flow.Emitter[access.Write]) error {
+	if m.need == 0 {
+		return nil
+	}
+	var position int64
+	for _, track := range m.movie.tracks {
+		entrySize := 4
+		if track.tables.largeOffsets {
+			entrySize = 8
+		}
+		patchOffset, ok := checkedBoxAdd(track.tables.offsets.payloadOffset, 8)
+		if !ok || patchOffset > math.MaxInt64 {
+			return fmt.Errorf("%w: MP4 chunk-offset table lies outside runtime offsets", ErrMalformed)
+		}
+		for remaining := uint64(track.chunkCount); remaining != 0; {
+			count := min(remaining, uint64(muxJournalPageBytes/8))
+			journalBytes := int(count * 8)
+			patchBytes := int(count) * entrySize
+			nextPatch, ok := checkedBoxAdd(patchOffset, uint64(patchBytes))
+			if !ok || nextPatch > math.MaxInt64 {
+				return fmt.Errorf("%w: MP4 chunk-offset patch range overflows", ErrMalformed)
+			}
+			if err := m.emitOffsetPatch(ctx, position, int64(patchOffset), count, entrySize, output); err != nil {
+				return err
+			}
+			patchOffset = nextPatch
+			position += int64(journalBytes)
+			remaining -= count
+		}
+	}
+	if position != m.need {
+		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
+	}
+	return nil
+}
+
+func (m *muxer) withScratchPage(size int, use func([]byte) error) error {
+	lease, err := m.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: size}}})
+	if err != nil {
+		return err
+	}
+	defer lease.Discard()
+	return lease.Fill(func(storage buffer.Mutable) error {
+		return use(storage.Bytes())
+	})
+}
+
+func (m *muxer) emitOffsetPatch(ctx context.Context, journalOffset, patchOffset int64, count uint64, entrySize int, output flow.Emitter[access.Write]) error {
+	journalBytes := int(count * 8)
+	patchBytes := int(count) * entrySize
+	lease, err := m.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: journalBytes}}})
+	if err != nil {
+		return err
+	}
+	defer lease.Discard()
+	if err := lease.Fill(func(storage buffer.Mutable) error {
+		values := storage.Bytes()
+		if err := m.scratch.ReadAt(ctx, values, journalOffset); err != nil {
+			return err
+		}
+		for index := 0; index < int(count); index++ {
+			value := binary.BigEndian.Uint64(values[index*8 : index*8+8])
+			if entrySize == 4 {
+				if value > math.MaxUint32 {
+					return fmt.Errorf("%w: remuxed stco offset exceeds uint32", ErrUnsupported)
+				}
+				binary.BigEndian.PutUint32(values[index*4:index*4+4], uint32(value))
+			} else {
+				binary.BigEndian.PutUint64(values[index*8:index*8+8], value)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	handle, err := lease.Commit()
+	if err != nil {
+		return err
+	}
+	payload, err := handle.Range(0, patchBytes)
+	handle.Release()
+	if err != nil {
+		return err
+	}
+	write, err := access.Patch(patchOffset, payload)
+	if err != nil {
+		return err
+	}
+	output.Own(&m.out, write)
+	defer m.out.Drop()
+	return output.Emit(ctx, &m.out)
+}

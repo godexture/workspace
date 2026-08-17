@@ -9,11 +9,15 @@ import (
 type (
 	pluginID  struct{}
 	demuxerID struct{}
+	muxerID   struct{}
 	formatID  struct{}
 )
 
 // DemuxerIdentity identifies the ISO BMFF packet reader.
 func DemuxerIdentity() plugin.Identity { return plugin.IdentityOf[demuxerID]() }
+
+// MuxerIdentity identifies the ISO BMFF same-format remuxer.
+func MuxerIdentity() plugin.Identity { return plugin.IdentityOf[muxerID]() }
 
 // MP4 identifies ISO Base Media File Format streams carried as MP4 files.
 func MP4() format.Format {
@@ -41,7 +45,7 @@ func Plugin() plugin.Definition {
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
-	}, demuxerComponent())
+	}, demuxerComponent(), muxerComponent())
 	return definition.WithDeclarations(codec.Declarations()...)
 }
 
