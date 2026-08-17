@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
@@ -86,6 +87,81 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 	}
 	if first.ExecutionSignature() == third.ExecutionSignature() {
 		t.Fatal("private reference identity did not affect execution signature")
+	}
+}
+
+func TestPlanBoundaryUsesActualDirectionalDataAnchor(t *testing.T) {
+	description := testDescription(t)
+	description.Nodes[0].Outputs = append(description.Nodes[0].Outputs,
+		PortDescriptor{Port: "out", Descriptor: description.Nodes[0].Outputs[0].Descriptor},
+		PortDescriptor{Port: "alternate", Descriptor: description.Nodes[0].Outputs[0].Descriptor},
+	)
+	description.Boundaries = []Boundary{{
+		Direction:            InputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "source",
+		Port:                 "out",
+		Component:            "fixture.provider",
+		Scheme:               "memory",
+		Reference:            "memory:redacted",
+		ReferenceFingerprint: "anchor-reference",
+		Available:            []access.Capability{access.SequentialRead},
+		Effective:            []access.Capability{access.SequentialRead},
+		Selected:             []access.Capability{access.SequentialRead},
+	}}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Boundaries()[0].Component == description.Nodes[0].Component {
+		t.Fatal("fixture did not distinguish provider and data-anchor identities")
+	}
+
+	changed := description
+	changed.Boundaries = append([]Boundary(nil), description.Boundaries...)
+	changed.Boundaries[0].Port = "alternate"
+	second, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == second.ExecutionSignature() {
+		t.Fatal("boundary data anchor did not affect execution identity")
+	}
+
+	for name, boundary := range map[string]Boundary{
+		"input names an input": {
+			Direction:            InputBoundary,
+			Kind:                 ProviderBoundary,
+			Choice:               0,
+			Node:                 "sink",
+			Port:                 "in",
+			Component:            "fixture.provider",
+			Scheme:               "memory",
+			Reference:            "memory:redacted",
+			ReferenceFingerprint: "anchor-reference",
+			Available:            []access.Capability{access.SequentialRead},
+			Effective:            []access.Capability{access.SequentialRead},
+			Selected:             []access.Capability{access.SequentialRead},
+		},
+		"output names an output": {
+			Direction: OutputBoundary,
+			Kind:      EndpointBoundary,
+			Choice:    0,
+			Node:      "source",
+			Port:      "out",
+			Component: "fixture.endpoint",
+			Topology:  endpoint.FiniteStatic,
+			Mode:      endpoint.Offline,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := description
+			invalid.Boundaries = []Boundary{boundary}
+			if _, err := New(invalid); err == nil {
+				t.Fatal("boundary with wrong data-port direction was accepted")
+			}
+		})
 	}
 }
 

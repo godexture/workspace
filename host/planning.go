@@ -85,7 +85,7 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	selected.sources, err = h.formatSourceBindings(selected.program, selection.inspected)
+	selected.sources, err = h.formatSourceBindings(selected.program, selected.entries, selection.inspected)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}

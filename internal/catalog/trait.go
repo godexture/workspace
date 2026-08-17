@@ -136,11 +136,16 @@ func validateFormatReadTrait(component plugin.Component, shape flow.Shape, trait
 	if !trait.Valid() {
 		items = append(items, traitItem("catalog.format-trait", component.Identity(), "Format read trait is invalid", map[string]string{"direction": "read", "format": trait.Format().Identity().String()}))
 	}
-	if len(shape.Inputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One {
-		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format read trait requires exactly one input port", map[string]string{"direction": "read"}))
-	} else if !canonicalBytes(shape.Inputs[0]) {
-		items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format read trait input must use access.Bytes", map[string]string{"direction": "read", "port": shape.Inputs[0].ID()}))
+	if len(shape.Inputs) == 1 && shape.Inputs[0].Multiplicity() == flow.One {
+		if !canonicalBytes(shape.Inputs[0]) {
+			items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format read trait input must use access.Bytes", map[string]string{"direction": "read", "port": shape.Inputs[0].ID()}))
+		}
+		return items
 	}
+	if len(shape.Inputs) == 0 && len(shape.Outputs) == 1 && shape.Outputs[0].Multiplicity() == flow.ManyMultiplicity {
+		return items
+	}
+	items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format read trait requires one access.Bytes input or one routed output", map[string]string{"direction": "read"}))
 	return items
 }
 

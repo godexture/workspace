@@ -123,6 +123,11 @@ func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.
 		return job.Job{}, job.Node{}, nil, err
 	}
 	shape := component.Ports()
+	if len(shape.Inputs) == 0 {
+		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.format-direct-automatic", boundary, component.Identity(), "automatic Format selection cannot insert a direct reader", map[string]string{
+			"milestone": "M7-3",
+		})
+	}
 	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 {
 		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-shape", boundary, component.Identity(), "automatically selected Format must expose one input and one output in M6", map[string]string{
 			"inputs": strconv.Itoa(len(shape.Inputs)), "outputs": strconv.Itoa(len(shape.Outputs)),

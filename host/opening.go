@@ -144,6 +144,9 @@ func (r *runner) opening(node string) (any, error) {
 		return nil, nil
 	}
 	projection := entry.Projection()
+	if entry.Anchor().Valid() {
+		return nil, nil
+	}
 	switch projection.Kind {
 	case plan.ProviderBoundary:
 		session, ok := r.prepared.bySession[node]

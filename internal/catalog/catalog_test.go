@@ -343,6 +343,55 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 	}
 }
 
+func TestFormatReadTraitAllowsDirectRoutedShapeOnly(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	formatValue, err := mediaformat.Define[catalogFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements := access.NewRequirements(access.AllOf(access.SequentialRead))
+	tests := map[string]struct {
+		shape flow.Shape
+		valid bool
+	}{
+		"carrier": {
+			shape: flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("packets", typ)}),
+			valid: true,
+		},
+		"direct routed": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many())}),
+			valid: true,
+		},
+		"hybrid outputs": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many()), flow.Out("side", typ)}),
+		},
+		"zero outputs": {
+			shape: flow.NewShape(nil, nil),
+		},
+		"one output": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ)}),
+		},
+		"multiple routed outputs": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many()), flow.Out("side", typ, flow.Many())}),
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			component := catalogTraitComponent[catalogFirstID]("read", test.shape, mediaformat.Read(formatValue, requirements))
+			_, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, component)))
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !hasCatalogDiagnostic(err, "catalog.format-shape") {
+				t.Fatalf("direct read shape diagnostic = %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildRejectsEndpointTraitOnNondirectionalComponent(t *testing.T) {
 	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
 	trait, _ := endpoint.NewTrait(endpoint.LiveStatic, endpoint.Realtime)

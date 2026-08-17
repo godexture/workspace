@@ -40,7 +40,7 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 		if projection.Direction != plan.InputBoundary || projection.Kind == plan.EndpointBoundary {
 			continue
 		}
-		adjacent, err := bind.AdjacentBoundaryNode(projection, requested.Edges())
+		adjacent, err := bind.FormatNode(entry, requested.Edges())
 		if err != nil {
 			return graph.CompileContexts{}, nil, used, err
 		}
@@ -71,11 +71,15 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 				map[string]string{"milestone": "M9"},
 			)
 		}
-		opening, openingOK := openings[projection.Node]
+		boundary := projection.Node
+		if anchor := entry.Anchor(); anchor.Valid() {
+			boundary = anchor.String()
+		}
+		opening, openingOK := openings[boundary]
 		if !openingOK || !opening.Valid() || opening.Direction() != access.SourceDirection {
 			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires a selected Access source opening", nil)
 		}
-		session, sessionOK := sessionOf(sessions, projection.Node)
+		session, sessionOK := sessionOf(sessions, boundary)
 		if !sessionOK {
 			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires an acquired Access source session", nil)
 		}
@@ -99,7 +103,7 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-result", projection, component.Identity(), "Format returned an invalid or duplicate inspection", map[string]string{"cause": err.Error()})
 		}
 		contexts[adjacent] = compileContext
-		inspected = append(inspected, inspectedFormat{source: adjacent, boundary: projection.Node, value: inspection})
+		inspected = append(inspected, inspectedFormat{source: adjacent, boundary: boundary, value: inspection})
 	}
 	if err := h.handoffInspections(requested, contexts, inspected); err != nil {
 		return graph.CompileContexts{}, nil, used, err

@@ -3,7 +3,6 @@ package bind
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"sort"
 	"strconv"
 
 	"github.com/godexture/godec/access"
@@ -25,9 +24,10 @@ func (r Result) Boundaries() bound.State { return bound.New(r.boundaries.Entries
 func (r Result) Valid() bool             { return r.request.Valid() && r.boundaries.Valid() }
 
 type selected struct {
-	node  job.Node
-	port  string
-	entry bound.Entry
+	node    job.Node
+	port    string
+	entry   bound.Entry
+	carrier bool
 }
 
 func Normalize(registry Registry, request job.Job) (Result, error) {
@@ -36,9 +36,6 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	}
 	inputs := request.Inputs()
 	outputs := request.Outputs()
-	if len(inputs) == 0 && len(outputs) == 0 {
-		return Result{request: request, boundaries: bound.State{}}, nil
-	}
 	if len(inputs) > 1 || len(outputs) > 1 {
 		return Result{}, diagnostic.NewError(bindItem("bind.mapping-required", plugin.Identity{}, "multiple Job boundaries require explicit stream mapping", map[string]string{
 			"inputs": strconv.Itoa(len(inputs)), "outputs": strconv.Itoa(len(outputs)),
@@ -49,6 +46,21 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	nodes := graph.Nodes()
 	edges := graph.Edges()
 	mappings := graph.Mappings()
+	var openInputs []openInput
+	var openOutputs []job.Port
+	if hasGraph {
+		var err error
+		openInputs, openOutputs, err = registry.openPorts(nodes, edges)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(inputs) != len(openInputs) {
+			return Result{}, boundaryCountError(plan.InputBoundary, len(inputs), len(openInputs))
+		}
+		if len(outputs) != len(openOutputs) {
+			return Result{}, boundaryCountError(plan.OutputBoundary, len(outputs), len(openOutputs))
+		}
+	}
 	used := make(map[job.NodeID]struct{}, len(nodes)+len(inputs)+len(outputs))
 	for _, node := range nodes {
 		used[node.ID()] = struct{}{}
@@ -57,14 +69,16 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	var inputSelections, outputSelections []selected
 	var entries []bound.Entry
 	for index, input := range inputs {
-		selection, err := registry.bindInput(input, index, used)
+		selection, err := registry.bindInput(input, index, used, openInputFor(hasGraph, openInputs, index))
 		if err != nil {
 			return Result{}, err
 		}
-		used[selection.node.ID()] = struct{}{}
+		if selection.carrier {
+			used[selection.node.ID()] = struct{}{}
+			nodes = append(nodes, selection.node)
+		}
 		inputSelections = append(inputSelections, selection)
 		entries = append(entries, selection.entry)
-		nodes = append(nodes, selection.node)
 	}
 	for index, output := range outputs {
 		selection, err := registry.bindOutput(output, index, used)
@@ -86,19 +100,10 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 			job.At(outputSelections[0].node.ID(), outputSelections[0].port),
 		))
 	} else {
-		originalNodes := graph.Nodes()
-		openInputs, openOutputs, err := registry.openPorts(originalNodes, edges)
-		if err != nil {
-			return Result{}, err
-		}
-		if len(inputSelections) != len(openInputs) {
-			return Result{}, boundaryCountError(plan.InputBoundary, len(inputSelections), len(openInputs))
-		}
-		if len(outputSelections) != len(openOutputs) {
-			return Result{}, boundaryCountError(plan.OutputBoundary, len(outputSelections), len(openOutputs))
-		}
 		for index, selection := range inputSelections {
-			edges = append(edges, job.Connect(job.At(selection.node.ID(), selection.port), openInputs[index]))
+			if selection.carrier {
+				edges = append(edges, job.Connect(job.At(selection.node.ID(), selection.port), openInputs[index].port))
+			}
 		}
 		for index, selection := range outputSelections {
 			edges = append(edges, job.Connect(openOutputs[index], job.At(selection.node.ID(), selection.port)))
@@ -128,7 +133,18 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	return Result{request: normalized, boundaries: state}, nil
 }
 
-func (r Registry) bindInput(input job.Input, index int, used map[job.NodeID]struct{}) (selected, error) {
+func (r Registry) bindInput(input job.Input, index int, used map[job.NodeID]struct{}, target openInput) (selected, error) {
+	if target.direct {
+		if input.Kind() != job.ReferenceInput {
+			return selected{}, directAnchorInputUnsupported(input.Kind(), target.port)
+		}
+		reference, _ := input.Reference()
+		provider, ok := r.sources[reference.Scheme()]
+		if !ok {
+			return selected{}, missingProvider(reference.Scheme(), plan.InputBoundary)
+		}
+		return r.anchoredSourceSelection(provider, reference, index, target.port)
+	}
 	switch input.Kind() {
 	case job.ReferenceInput:
 		reference, _ := input.Reference()
@@ -192,9 +208,10 @@ func (r Registry) directSelection(direct job.Direct, index int, direction plan.B
 		Ownership: direct.Ownership(),
 	}
 	return selected{
-		node:  job.NewNode(id, adaptor.Component(), adaptor.Config()),
-		port:  port,
-		entry: bound.Direct(projection, direct.Opening(), direct.Close),
+		node:    job.NewNode(id, adaptor.Component(), adaptor.Config()),
+		port:    port,
+		entry:   bound.Direct(projection, direct.Opening(), direct.Close),
+		carrier: true,
 	}, nil
 }
 
@@ -219,7 +236,27 @@ func (r Registry) sourceSelection(provider sourceBinding, reference access.Refer
 		Available:            provider.trait.Capabilities().Values(),
 		Effective:            provider.trait.Capabilities().Values(),
 	}
-	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Source(projection, reference, provider.trait)}, nil
+	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Source(projection, reference, provider.trait), carrier: true}, nil
+}
+
+func (r Registry) anchoredSourceSelection(provider sourceBinding, reference access.Reference, index int, anchor job.Port) (selected, error) {
+	if !anchor.Valid() {
+		return selected{}, diagnostic.NewError(bindItem("bind.format-direct-anchor", provider.component, "direct Format reader anchor is invalid", nil))
+	}
+	projection := plan.Boundary{
+		Direction:            plan.InputBoundary,
+		Kind:                 plan.ProviderBoundary,
+		Choice:               index,
+		Node:                 anchor.Node().String(),
+		Port:                 anchor.ID(),
+		Component:            provider.component.String(),
+		Scheme:               reference.Scheme(),
+		Reference:            reference.Display(),
+		ReferenceFingerprint: reference.Fingerprint().String(),
+		Available:            provider.trait.Capabilities().Values(),
+		Effective:            provider.trait.Capabilities().Values(),
+	}
+	return selected{port: anchor.ID(), entry: bound.AnchoredSource(projection, reference, provider.trait, anchor.Node())}, nil
 }
 
 func (r Registry) sinkSelection(provider sinkBinding, reference access.Reference, index int, used map[job.NodeID]struct{}) (selected, error) {
@@ -243,7 +280,7 @@ func (r Registry) sinkSelection(provider sinkBinding, reference access.Reference
 		Available:            provider.trait.Capabilities().Values(),
 		Effective:            provider.trait.Capabilities().Values(),
 	}
-	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Sink(projection, reference, provider.trait)}, nil
+	return selected{node: job.NewNode(id, provider.component, patch), port: port, entry: bound.Sink(projection, reference, provider.trait), carrier: true}, nil
 }
 
 func (r Registry) endpointSelection(request job.EndpointRequest, index int, direction plan.BoundaryDirection, used map[job.NodeID]struct{}) (selected, error) {
@@ -267,7 +304,7 @@ func (r Registry) endpointSelection(request job.EndpointRequest, index int, dire
 		Topology:  trait.Topology(),
 		Mode:      trait.Mode(),
 	}
-	return selected{node: job.NewNode(id, request.Component(), request.Config()), port: port, entry: bound.Endpoint(projection, trait)}, nil
+	return selected{node: job.NewNode(id, request.Component(), request.Config()), port: port, entry: bound.Endpoint(projection, trait), carrier: true}, nil
 }
 
 func boundaryPort(component plugin.Component, patch config.Patch, direction plan.BoundaryDirection) (string, error) {
@@ -281,46 +318,6 @@ func boundaryPort(component plugin.Component, patch config.Patch, direction plan
 		return "", diagnostic.NewError(bindItem("bind.endpoint-shape", component.Identity(), "boundary component must have exactly one directional port", map[string]string{"direction": strconv.Itoa(int(direction))}))
 	}
 	return port.ID(), nil
-}
-
-func (r Registry) openPorts(nodes []job.Node, edges []job.Edge) ([]job.Port, []job.Port, error) {
-	incoming := make(map[string]struct{}, len(edges))
-	outgoing := make(map[string]struct{}, len(edges))
-	for _, edge := range edges {
-		incoming[edge.To().String()] = struct{}{}
-		outgoing[edge.From().String()] = struct{}{}
-	}
-	var inputs, outputs []job.Port
-	for _, node := range nodes {
-		component, ok := r.index.Lookup(node.Component())
-		if !ok {
-			continue
-		}
-		_, err := component.Resolve(node.Config())
-		if err != nil {
-			return nil, nil, err
-		}
-		shape := component.Ports()
-		for _, port := range shape.Inputs {
-			value := job.At(node.ID(), port.ID())
-			if port.Required() {
-				if _, connected := incoming[value.String()]; !connected {
-					inputs = append(inputs, value)
-				}
-			}
-		}
-		for _, port := range shape.Outputs {
-			value := job.At(node.ID(), port.ID())
-			if port.Required() {
-				if _, connected := outgoing[value.String()]; !connected {
-					outputs = append(outputs, value)
-				}
-			}
-		}
-	}
-	sort.Slice(inputs, func(left, right int) bool { return inputs[left].String() < inputs[right].String() })
-	sort.Slice(outputs, func(left, right int) bool { return outputs[left].String() < outputs[right].String() })
-	return inputs, outputs, nil
 }
 
 func boundaryNodeID(direction plan.BoundaryDirection, index int, identity plugin.Identity, used map[job.NodeID]struct{}) job.NodeID {
@@ -339,6 +336,22 @@ func boundaryNodeID(direction plan.BoundaryDirection, index int, identity plugin
 			return candidate
 		}
 	}
+}
+
+func openInputFor(hasGraph bool, values []openInput, index int) openInput {
+	if !hasGraph || index < 0 || index >= len(values) {
+		return openInput{}
+	}
+	return values[index]
+}
+
+func directAnchorInputUnsupported(kind job.InputKind, anchor job.Port) error {
+	return diagnostic.NewError(bindItem("bind.format-direct-input", plugin.Identity{}, "a direct Format reader accepts only ReferenceInput in M7", map[string]string{
+		"kind":      strconv.Itoa(int(kind)),
+		"node":      anchor.Node().String(),
+		"port":      anchor.ID(),
+		"milestone": "M7",
+	}))
 }
 
 func missingProvider(scheme string, direction plan.BoundaryDirection) error {

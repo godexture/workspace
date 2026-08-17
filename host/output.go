@@ -109,7 +109,7 @@ func (h *Host) defaultOutputFormat(request job.Job, entries []bound.Entry) (medi
 		if projection.Direction != plan.InputBoundary || entry.Pending() {
 			continue
 		}
-		adjacent, err := bind.AdjacentBoundaryNode(projection, requested.Edges())
+		adjacent, err := bind.FormatNode(entry, requested.Edges())
 		if err != nil {
 			return mediaformat.Format{}, err
 		}

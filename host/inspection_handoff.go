@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -85,11 +86,20 @@ func (h *Host) handoffInspections(requested job.Graph, contexts map[job.NodeID]p
 	return nil
 }
 
-func (h *Host) formatSourceBindings(selected program.Program, inspected []inspectedFormat) (formatSources, error) {
-	if len(inspected) == 0 {
-		return formatSources{}, nil
+func (h *Host) formatSourceBindings(selected program.Program, entries []bound.Entry, inspected []inspectedFormat) (formatSources, error) {
+	sources := make(formatSources, len(entries)+len(inspected))
+	for _, entry := range entries {
+		anchor := entry.Anchor()
+		if !anchor.Valid() {
+			continue
+		}
+		if _, present := selected.Lookup(anchor); present {
+			sources[anchor] = anchor.String()
+		}
 	}
-	sources := make(formatSources, len(inspected))
+	if len(inspected) == 0 {
+		return sources, nil
+	}
 	inspectedByNode := indexInspections(inspected)
 	for _, value := range inspected {
 		if _, ok := selected.Lookup(value.source); ok && value.boundary != "" {

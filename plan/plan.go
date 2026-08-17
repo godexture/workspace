@@ -88,6 +88,7 @@ func validate(description Description) error {
 		return errors.New("plan has no nodes")
 	}
 	seen := make(map[string]struct{}, len(description.Nodes))
+	ports := make(map[string]struct{}, len(description.Nodes))
 	for _, node := range description.Nodes {
 		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || !node.Finalization.Valid() || uint64(node.Scratch) > math.MaxInt64 || node.Origin == Automatic && node.Reason == "" {
 			return errors.New("plan contains an invalid node")
@@ -96,6 +97,12 @@ func validate(description Description) error {
 			return errors.New("plan contains duplicate node IDs")
 		}
 		seen[node.ID] = struct{}{}
+		for _, descriptor := range node.Inputs {
+			ports["input:"+node.ID+":"+descriptor.Port] = struct{}{}
+		}
+		for _, descriptor := range node.Outputs {
+			ports["output:"+node.ID+":"+descriptor.Port] = struct{}{}
+		}
 		for _, descriptor := range append(append([]PortDescriptor(nil), node.Inputs...), node.Outputs...) {
 			if !descriptor.Valid() {
 				return errors.New("plan contains an invalid descriptor projection")
@@ -130,6 +137,13 @@ func validate(description Description) error {
 		seenBoundaries[key] = struct{}{}
 		if _, ok := seen[boundary.Node]; !ok {
 			return errors.New("plan boundary node is absent")
+		}
+		direction := "output:"
+		if boundary.Direction == OutputBoundary {
+			direction = "input:"
+		}
+		if _, ok := ports[direction+boundary.Node+":"+boundary.Port]; !ok {
+			return errors.New("plan boundary port is absent or has the wrong direction")
 		}
 	}
 	if err := validateScratch(description); err != nil {
