@@ -138,7 +138,7 @@ func (t Template) connectionLimit(from, to int, descriptor stream.Descriptor, po
 }
 
 func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (time.Duration, int64, error) {
-	if policy.Zip == 0 || !t.nodes[index].binding.InputMeasures().Time {
+	if t.nodes[index].binding.FanIn() != flow.ZipFanIn || policy.Zip == 0 || !t.nodes[index].binding.InputMeasures().Time {
 		return 0, 0, nil
 	}
 	incoming := t.incoming[index]
@@ -168,14 +168,29 @@ func (t Template) validateFanInLimits() error {
 		if len(incoming) == 0 {
 			return ErrTopology
 		}
+		if value.binding.FanIn() == flow.MergeFanIn {
+			if !value.binding.InputMeasures().Time || !value.binding.InputOrder() {
+				return errors.Join(ErrTopology, errors.New("merge fan-in input requires timeline and order traits"))
+			}
+			for _, connectionIndex := range incoming {
+				connection := t.connections[connectionIndex]
+				if !connection.descriptor.HasTimeline() || !connection.descriptor.TimeBase().Valid() {
+					return errors.Join(ErrTopology, errors.New("merge fan-in input requires a valid timeline"))
+				}
+			}
+			continue
+		}
+		if value.toleranceTicks == 0 {
+			continue
+		}
 		first := t.connections[incoming[0]]
+		if !first.descriptor.TimeBase().Valid() {
+			return errors.Join(ErrTopology, errors.New("zip tolerance requires valid input time bases"))
+		}
 		for _, connectionIndex := range incoming[1:] {
 			connection := t.connections[connectionIndex]
-			if connection.limit != first.limit {
-				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical physical queue limits"))
-			}
-			if (first.limit.Span != 0 || value.toleranceTicks != 0) && connection.descriptor.TimeBase() != first.descriptor.TimeBase() {
-				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical time bases for queue spans or zip tolerance"))
+			if connection.descriptor.TimeBase() != first.descriptor.TimeBase() {
+				return errors.Join(ErrTopology, errors.New("zip tolerance requires identical input time bases"))
 			}
 		}
 	}

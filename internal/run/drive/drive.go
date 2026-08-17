@@ -15,15 +15,18 @@ import (
 )
 
 var (
-	ErrBinding      = errors.New("component has no compatible typed execution binding")
-	ErrOperator     = errors.New("opened operator does not implement its typed execution contract")
-	ErrLink         = errors.New("runtime link payload type does not match")
-	ErrInvalidItem  = errors.New("reader returned an invalid owned item")
-	ErrReadWithItem = errors.New("reader returned an owned item together with an error")
-	ErrUnsupported  = errors.New("execution binding does not support this operation")
-	ErrForkTrait    = errors.New("owned fan-out requires a fork trait")
-	ErrTolerance    = errors.New("fan-in batch exceeds its timestamp tolerance")
-	ErrDomain       = errors.New("execution task requires the failure domain it and its slots report to")
+	ErrBinding       = errors.New("component has no compatible typed execution binding")
+	ErrOperator      = errors.New("opened operator does not implement its typed execution contract")
+	ErrLink          = errors.New("runtime link payload type does not match")
+	ErrInvalidItem   = errors.New("reader returned an invalid owned item")
+	ErrReadWithItem  = errors.New("reader returned an owned item together with an error")
+	ErrUnsupported   = errors.New("execution binding does not support this operation")
+	ErrForkTrait     = errors.New("owned fan-out requires a fork trait")
+	ErrTolerance     = errors.New("fan-in batch exceeds its timestamp tolerance")
+	ErrOrderMissing  = errors.New("merge input has no order timestamp")
+	ErrOrderBackward = errors.New("merge input order moved backwards")
+	ErrOrderCompare  = errors.New("merge input timestamps cannot be compared")
+	ErrDomain        = errors.New("execution task requires the failure domain it and its slots report to")
 )
 
 type Kind uint8
@@ -54,6 +57,7 @@ type Binding struct {
 	output      port
 	inputStats  Measures
 	outputStats Measures
+	inputOrder  bool
 	fanIn       flow.FanInPolicy
 	openSink    func(flow.Operator, string) (Link, error)
 	prepend     func(flow.Operator, Link, string) (Link, error)
@@ -62,44 +66,8 @@ type Binding struct {
 	fanout      func([]Link, string) (Link, error)
 	buffer      func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
 	observe     func(Link, *observe.Local) (Link, error)
-	openJoiner  func(flow.Operator, int, queue.Limit, int64, Link, *journal.Domain) ([]Link, Task, error)
+	openJoiner  func(flow.Operator, []JoinInput, int64, Link, *journal.Domain) ([]Link, Task, error)
 	validate    func(flow.Operator) error
-}
-
-func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) Binding {
-	traits := out.Traits()
-	inputTraits := in.Traits()
-	return Binding{
-		kind:        Joiner,
-		input:       port{id: input, schema: in.Descriptor()},
-		output:      port{id: output, schema: out.Descriptor()},
-		inputStats:  measuresOf(inputTraits),
-		outputStats: measuresOf(traits),
-		fanIn:       policy,
-		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
-			joiner, ok := operator.(flow.Joiner[I, O])
-			if !ok {
-				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
-			}
-			target, err := deliveryOf[O](next)
-			if err != nil {
-				return nil, Task{}, err
-			}
-			if policy != flow.ZipFanIn {
-				return nil, Task{}, ErrUnsupported
-			}
-			return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
-		},
-		fanout:  fanoutFactory(out),
-		buffer:  bufferFactory(out),
-		observe: observeFactory(out),
-		validate: func(operator flow.Operator) error {
-			if _, ok := operator.(flow.Joiner[I, O]); !ok {
-				return fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
-			}
-			return nil
-		},
-	}
 }
 
 func NewSource[T any](output string, typ schema.Type[T]) Binding {
@@ -339,20 +307,6 @@ func (b Binding) OpenSource(operator flow.Operator, next Link, owner *journal.Do
 	}
 	next.bind(owner)
 	return b.openSource(operator, next, owner)
-}
-
-func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
-	if b.openJoiner == nil {
-		return nil, Task{}, ErrUnsupported
-	}
-	if tolerance < 0 || tolerance > 0 && !b.inputStats.Time {
-		return nil, Task{}, ErrBinding
-	}
-	if owner == nil {
-		return nil, Task{}, ErrDomain
-	}
-	next.bind(owner)
-	return b.openJoiner(operator, inputs, limit, tolerance, next, owner)
 }
 
 // Fanout groups this node's outputs. The branch slots it retains belong to

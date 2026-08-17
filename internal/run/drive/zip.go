@@ -15,16 +15,26 @@ import (
 	"github.com/godexture/godec/media/schema"
 )
 
-func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, tolerance int64, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
-	if count < 2 || tolerance < 0 {
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], inputs []JoinInput, tolerance int64, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
+	if len(inputs) < 2 || tolerance < 0 {
 		return nil, Task{}, ErrBinding
 	}
 	traits := typ.Traits()
+	if tolerance > 0 {
+		if traits.Time == nil || !inputs[0].Base.Valid() {
+			return nil, Task{}, ErrBinding
+		}
+		for index := 1; index < len(inputs); index++ {
+			if inputs[index].Base != inputs[0].Base {
+				return nil, Task{}, ErrBinding
+			}
+		}
+	}
 	site := owner.At(owner.Home())
-	edges := make([]*queue.Queue[I], count)
-	links := make([]Link, count)
+	edges := make([]*queue.Queue[I], len(inputs))
+	links := make([]Link, len(inputs))
 	for index := range edges {
-		edge, err := queue.New(limit, typ, site.Reporter())
+		edge, err := queue.New(inputs[index].Limit, typ, site.Reporter())
 		if err != nil {
 			for previous := 0; previous < index; previous++ {
 				edges[previous].Abort()
@@ -34,7 +44,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ, node: owner.Home()})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], len(inputs)), batch: make([]*flow.Item[I], len(inputs)), next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 		state.items[index].Bind(typ, site.Reporter())

@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 )
@@ -63,6 +64,24 @@ func (j *templateRouterJoiner) Process(ctx context.Context, batch flow.Batch[int
 }
 
 func (*templateRouterJoiner) Flush(context.Context, flow.Emitter[int]) error { return nil }
+
+type templateMergeJoiner struct {
+	templateOperator
+	out flow.Item[int]
+}
+
+func (j *templateMergeJoiner) Process(ctx context.Context, batch flow.Batch[int], output flow.Emitter[int]) error {
+	value, ok := batch.Value(0)
+	if input, selected := batch.InputOrdinal(); !ok || !selected || input < 0 || batch.Len() != 1 {
+		return errors.New("invalid routed merge batch")
+	}
+	defer batch.At(0).Drop()
+	output.Own(&j.out, value)
+	defer j.out.Drop()
+	return output.Emit(ctx, &j.out)
+}
+
+func (*templateMergeJoiner) Flush(context.Context, flow.Emitter[int]) error { return nil }
 
 type templateFlushRouter struct {
 	templateOperator
@@ -143,6 +162,65 @@ func TestRouterBuildsAndDrivesEveryPrivateManyOutputConnection(t *testing.T) {
 	}
 	if router.flushes.Load() != 1 {
 		t.Fatalf("router flushes = %d", router.flushes.Load())
+	}
+}
+
+func TestRouterMergeDrivesOneLogicalManyEdgeAcrossMixedBases(t *testing.T) {
+	type routerMergeID struct{}
+	typ := schema.Define[routerMergeID](schema.Traits[int]{
+		Time:  func(value int) (int64, bool) { return int64(value), true },
+		Order: func(value int) (int64, bool) { return int64(value), true },
+	})
+	sourceDescriptor := stream.MustDescriptor("source", typ.Descriptor(), timing.MustBase(1, 1_000), property.New())
+	firstDescriptor := stream.MustDescriptor("first", typ.Descriptor(), timing.MustBase(1, 1_000), property.New())
+	secondDescriptor := stream.MustDescriptor("second", typ.Descriptor(), timing.MustBase(1, 48_000), property.New())
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
+	routerShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ, flow.Many())})
+	mergeShape := flow.NewShape(
+		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.MergeFanIn))},
+		[]flow.Port{flow.Out("out", typ)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("router", "in")),
+		job.Connect(job.At("router", "out"), job.At("merge", "in")),
+		job.Connect(job.At("merge", "out"), job.At("sink", "in")),
+	}
+	template, err := compileFixture(
+		[]Node{
+			{ID: "source", Shape: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", sourceDescriptor)), Execution: drive.NewSource("out", typ)},
+			{ID: "router", Shape: routerShape, Outputs: flow.NewDescriptors(flow.Describe("out", firstDescriptor), flow.Describe("out", secondDescriptor)), Execution: drive.NewRouter("in", typ, "out", typ)},
+			{ID: "merge", Shape: mergeShape, Execution: drive.NewJoiner("in", typ, flow.MergeFanIn, "out", typ)},
+			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
+		},
+		edges,
+		templateQueue,
+		job.AlignmentPolicy{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := 0
+	for _, connection := range template.connections {
+		if connection.from == 1 && connection.to == 2 {
+			connections++
+		}
+	}
+	if connections != 2 {
+		t.Fatalf("router merge physical inputs = %d, want 2", connections)
+	}
+	writer := &templateWriter{templateOperator: templateOperator{shape: sinkShape}}
+	result := runIsland(t, context.Background(), template,
+		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{0, 1}},
+		&templateRouter{templateOperator: templateOperator{shape: routerShape}},
+		&templateMergeJoiner{templateOperator: templateOperator{shape: mergeShape}},
+		writer,
+	)
+	if !result.succeeded() {
+		t.Fatalf("run = %#v, ledger = %#v", result.report, result.events())
+	}
+	if got := writer.Values(); len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Fatalf("sink values = %v", got)
 	}
 }
 

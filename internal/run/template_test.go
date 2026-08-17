@@ -379,6 +379,89 @@ func TestCompileSelectsTraitAwareQueueLimitsAndFanInTolerance(t *testing.T) {
 	}
 }
 
+func TestCompileZipPermitsMixedBasesForQueueSpansButNotTolerance(t *testing.T) {
+	type mixedZipID struct{}
+	typ := schema.Define[mixedZipID](schema.Traits[int]{Time: func(value int) (int64, bool) { return int64(value), true }})
+	first := stream.MustDescriptor("first", typ.Descriptor(), timing.MustBase(1, 1_000), property.New())
+	second := stream.MustDescriptor("second", typ.Descriptor(), timing.MustBase(1, 48_000), property.New())
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", typ)},
+	)
+	nodes := []Node{
+		{ID: "first", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Outputs: flow.NewDescriptors(flow.Describe("out", first)), Execution: drive.NewSource("out", typ)},
+		{ID: "second", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Outputs: flow.NewDescriptors(flow.Describe("out", second)), Execution: drive.NewSource("out", typ)},
+		{ID: "join", Shape: joinShape, Execution: drive.NewJoiner("in", typ, flow.ZipFanIn, "out", typ)},
+		{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("first", "out"), job.At("join", "in")),
+		job.Connect(job.At("second", "out"), job.At("join", "in")),
+		job.Connect(job.At("join", "out"), job.At("sink", "in")),
+	}
+	if _, err := compileFixture(nodes, edges, job.QueuePolicy{Items: 2, Span: time.Millisecond}, job.AlignmentPolicy{}); err != nil {
+		t.Fatalf("mixed base Zip queue spans = %v", err)
+	}
+	if _, err := compileFixture(nodes, edges, job.QueuePolicy{Items: 2}, job.AlignmentPolicy{Zip: time.Millisecond}); !errors.Is(err, ErrTopology) {
+		t.Fatalf("mixed base Zip tolerance = %v", err)
+	}
+}
+
+func TestCompileMergeRequiresTimelineAndOrder(t *testing.T) {
+	type untimedMergeID struct{}
+	type unorderedMergeID struct{}
+	untimed := schema.Define[untimedMergeID](schema.Traits[int]{Order: func(value int) (int64, bool) { return int64(value), true }})
+	unordered := schema.Define[unorderedMergeID](schema.Traits[int]{Time: func(value int) (int64, bool) { return int64(value), true }})
+	for name, typ := range map[string]schema.Type[int]{"untimed": untimed, "unordered": unordered} {
+		t.Run(name, func(t *testing.T) {
+			mergeShape := flow.NewShape(
+				[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.MergeFanIn))},
+				[]flow.Port{flow.Out("out", typ)},
+			)
+			nodes := []Node{
+				{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+				{ID: "merge", Shape: mergeShape, Execution: drive.NewJoiner("in", typ, flow.MergeFanIn, "out", typ)},
+				{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+			}
+			edges := []job.Edge{
+				job.Connect(job.At("source", "out"), job.At("merge", "in")),
+				job.Connect(job.At("merge", "out"), job.At("sink", "in")),
+			}
+			if _, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{}); !errors.Is(err, ErrTopology) {
+				t.Fatalf("merge without required traits = %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileMergeAllowsOneInputAndProjectsZeroTolerance(t *testing.T) {
+	type orderedMergeID struct{}
+	typ := schema.Define[orderedMergeID](schema.Traits[int]{
+		Time:  func(value int) (int64, bool) { return int64(value), true },
+		Order: func(value int) (int64, bool) { return int64(value), true },
+	})
+	mergeShape := flow.NewShape(
+		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.MergeFanIn))},
+		[]flow.Port{flow.Out("out", typ)},
+	)
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+		{ID: "merge", Shape: mergeShape, Execution: drive.NewJoiner("in", typ, flow.MergeFanIn, "out", typ)},
+		{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("merge", "in")),
+		job.Connect(job.At("merge", "out"), job.At("sink", "in")),
+	}
+	template, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{Zip: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fanIns := template.Projection().FanIns; len(fanIns) != 1 || fanIns[0].Policy != flow.MergeFanIn || fanIns[0].Tolerance != 0 {
+		t.Fatalf("merge plan fan-in = %#v", fanIns)
+	}
+}
+
 func TestCompileRejectsNodesOutsideTopologicalOrder(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)

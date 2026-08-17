@@ -107,7 +107,12 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			sort.Slice(incoming, func(left, right int) bool {
 				return t.connections[incoming[left]].input < t.connections[incoming[right]].input
 			})
-			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.connections[incoming[0]].limit, value.toleranceTicks, output, ledger.Domain("join/"+node, node))
+			joinInputs := make([]drive.JoinInput, len(incoming))
+			for inputIndex, edgeIndex := range incoming {
+				connection := t.connections[edgeIndex]
+				joinInputs[inputIndex] = drive.JoinInput{Limit: connection.limit, Base: connection.descriptor.TimeBase()}
+			}
+			inputs, joinTask, err := value.binding.OpenJoiner(operator, joinInputs, value.toleranceTicks, output, ledger.Domain("join/"+node, node))
 			if err != nil {
 				return fail(err)
 			}
