@@ -228,6 +228,7 @@ func testDescription(t *testing.T) Description {
 			{ID: "sink", Origin: Requested, Component: "fixture.sink", DisplayName: "Sink", Variant: "fixture.sink#default", Version: "1", Config: resolved.Summary(), Inputs: []PortDescriptor{{Port: "in", Descriptor: descriptor}}, Contract: contract},
 		},
 		Edges:    []Edge{{FromNode: "source", FromPort: "out", ToNode: "sink", ToPort: "in", Origin: Requested}},
+		Scratch:  Scratch{Limit: policy.Resources.ScratchMaxBytes},
 		Warnings: []string{"display warning"},
 	}
 }

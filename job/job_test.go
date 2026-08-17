@@ -262,7 +262,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := request.Policy()
-	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) || policy.Resources.ScratchMaxBytes != 0 {
+	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) || policy.Resources.ScratchMaxBytes != defaultScratchMaxBytes {
 		t.Fatalf("default policy = %#v", policy)
 	}
 	if request.Budget() != DefaultBudget() {
@@ -277,8 +277,17 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal("portable policy did not expand")
 	}
 	realtime, ok := PolicyFor(Realtime)
-	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}) || realtime.Alignment != (AlignmentPolicy{Zip: 250 * time.Millisecond}) {
+	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}) || realtime.Alignment != (AlignmentPolicy{Zip: 250 * time.Millisecond}) || realtime.Resources.ScratchMaxBytes != 0 {
 		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
+	}
+	for _, preset := range []Preset{Fast, Stable, Portable} {
+		policy, ok := PolicyFor(preset)
+		if !ok || !policy.Valid() || policy.Resources.ScratchMaxBytes != defaultScratchMaxBytes {
+			t.Fatalf("offline preset %s = %#v, ok=%v", preset, policy, ok)
+		}
+	}
+	if !realtime.Valid() {
+		t.Fatalf("realtime policy is invalid: %#v", realtime)
 	}
 	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192, InspectMemory: 16384}
 	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
@@ -311,6 +320,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	}
 	invalidSpool = portable
 	invalidSpool.Resources.AllowSpool = true
+	invalidSpool.Resources.ScratchMaxBytes = 512
 	invalidSpool.Resources.SpoolMaxBytes = 1024
 	invalidSpool.Resources.SpoolStorage = access.MemorySpool
 	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {

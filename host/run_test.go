@@ -554,6 +554,12 @@ func TestScratchRejectionPrecedesOutputAcquireAndOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	policy := request.Policy()
+	policy.Resources.ScratchMaxBytes = 0
+	request, err = job.New([]job.Input{input}, []job.Output{output}, graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := instance.Prepare(t.Context(), request); err == nil {
 		t.Fatal("scratch claim with a disabled aggregate limit was prepared")
 	}

@@ -19,6 +19,8 @@ const (
 	Realtime
 )
 
+const defaultScratchMaxBytes resource.Bytes = 64 << 20
+
 func (p Preset) Valid() bool { return p >= Fast && p <= Realtime }
 
 func (p Preset) String() string {
@@ -231,7 +233,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
 		Alignment:      AlignmentPolicy{},
-		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}},
+		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}, ScratchMaxBytes: defaultScratchMaxBytes},
 	}
 	switch preset {
 	case Fast:
@@ -244,6 +246,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		policy.Goal = LatencyGoal
 		policy.Alignment = AlignmentPolicy{Zip: 250 * time.Millisecond}
 		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}
+		policy.Resources.ScratchMaxBytes = 0
 	default:
 		return Policy{}, false
 	}
