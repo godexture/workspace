@@ -183,7 +183,9 @@ M7 の明示 mapping は input index、canonical stream ID、output indexを持�
 
 ### C24. MP4 の I/O slice と exact boundary を明示する
 
-M7 の MP4 vertical slice は unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。pure
+M7 の MP4 vertical slice は単一 `mdat` の unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。複数
+`mdat` は一つ目だけを使う等の silent fallback をせず unsupported とし、将来は bounded disk index/scratch consumer とともに
+拡張する。pure
 sequential/fragmented mode と output boundary spool alternative は stdin/stdout、remote、streaming consumer が現れる
 M9 まで追加しない。Seek、RandomRead/RandomWrite、Inspect/mux の bounded re-scan と、明示 quota 付き bounded disk
 scratch は M7 の内部実装で許可する。選択 capability と mode は既存 Plan boundary に残す。
@@ -191,7 +193,9 @@ scratch は M7 の内部実装で許可する。選択 capability と mode は�
 Inspection は shared immutable であり、clone callback を持たない。Inspection に format-owned source range descriptor と
 bounded summary だけを置き、source Opening/I/O handle、raw payload bytes、sample 数に比例する配列は保持しない。Host
 は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、Compile と Inspection は I/O を
-行わない。unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
+行わない。`InspectBytes` は Inspect 中の全 `ReadAt` を underlying source の前で要求 byte 数だけ課金し、MP4 table scan は
+固定 page を使う。Open の lazy cursor は Inspect の wrapper/残予算を継承せず、元の borrowed source を読む。
+unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
 から再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。
 MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、
 track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、cross-track physical interleave、
@@ -199,9 +203,11 @@ track/mapping order、raw anchor の byte 列と anchor 内の相対順であり
 扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
 を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
 
-unfragmented transform mux が sample table/offset を蓄積する場合は、Host-owned disk table journal を明示した aggregate
-quota の内側で使い、固定 page 以外の in-memory growth を許さない。この内部 journal は output boundary の sequential
-sink を変換する spool とは別物であり、後者は M9 の consumer とともに追加する。
+unfragmented transform mux が sample table/offset を蓄積する場合は、Host-owned disk table journal を使う。
+`job.ResourcePolicy.ScratchMaxBytes` は固定 `Compiled.Scratch` node claim と selected output spool maxima の aggregate ceiling
+で、0 は disabled とする。claim/reservation は Plan と execution fingerprint へ投影し、正の claim を持つ node だけへ
+Open-to-Close の borrowed `plugin.Scratch` を渡す。Host は operator Close 後、Access session Close 前に journal を破棄する。
+table journal は output boundary spool や output transaction state と quota を共有し得ても別 lifecycle/state である。
 
 ### C25. metadata loss API は実 encoding consumer まで延期する
 
