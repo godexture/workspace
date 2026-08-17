@@ -12,6 +12,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
+	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/standard"
@@ -27,8 +28,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 10 {
-		t.Fatalf("catalog components = %d, want 10", first.Catalog().Len())
+	if first.Catalog().Len() != 12 {
+		t.Fatalf("catalog components = %d, want 12", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -41,6 +42,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		linear.DecoderIdentity(),
 		linear.EncoderIdentity(),
 		linear.WriterIdentity(),
+		mp4.DemuxerIdentity(),
+		mp4.MuxerIdentity(),
 		wave.DemuxerIdentity(),
 		wave.MuxerIdentity(),
 		wave.InfoEncodingIdentity(),
