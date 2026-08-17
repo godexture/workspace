@@ -287,7 +287,7 @@ func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limi
 	if b.openJoiner == nil {
 		return nil, Task{}, ErrUnsupported
 	}
-	if tolerance < 0 {
+	if tolerance < 0 || tolerance > 0 && !b.inputStats.Time {
 		return nil, Task{}, ErrBinding
 	}
 	if owner == nil {

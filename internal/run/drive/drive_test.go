@@ -855,6 +855,44 @@ func TestZipJoinerEnforcesTimestampTolerance(t *testing.T) {
 	}
 }
 
+func TestZipJoinerRejectsToleranceWithoutTimeTrait(t *testing.T) {
+	type untimedInputID struct{}
+	inputOwners := &ownership{}
+	in := schema.Define[untimedInputID](schema.Traits[owned]{
+		Drop: func(owned) { inputOwners.drops.Add(1) },
+		Size: func(owned) int { return 1 },
+	})
+	out := ownedSchema[driveOutputID](&ownership{})
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sinkLink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := NewJoiner("in", in, flow.ZipFanIn, "out", out)
+	if err := binding.Validate(joinShape); err != nil {
+		t.Fatalf("untimed join shape = %v", err)
+	}
+	_, owner := testOwner("join")
+	if _, _, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 1, sinkLink, owner); !errors.Is(err, ErrBinding) {
+		t.Fatalf("untimed tolerance error = %v", err)
+	}
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 0, sinkLink, owner)
+	if err != nil {
+		t.Fatalf("zero tolerance with untimed schema = %v", err)
+	}
+	task.Discard()
+	for _, input := range inputs {
+		if err := input.Close(context.Background()); err != nil {
+			t.Fatalf("close untimed input = %v", err)
+		}
+	}
+}
+
 type panickingJoiner struct{ operatorBase }
 
 func (*panickingJoiner) Process(context.Context, flow.Batch[owned], flow.Emitter[owned]) error {
