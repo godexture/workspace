@@ -1114,7 +1114,7 @@ func TestMetadataBindingUsesHostConflictAndTargetChecks(t *testing.T) {
 }
 
 func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
-	shape := flow.NewShape([]flow.Port{flow.In("metadata-events", skeletonMetadataEventSchema, flow.Many(), flow.WithFanIn(flow.MergeFanIn))}, nil)
+	shape := flow.NewShape([]flow.Port{flow.In("metadata-events", skeletonMetadataEventSchema, flow.Many(), flow.WithFanIn(flow.SerialFanIn))}, nil)
 	if err := shape.Validate(); err != nil {
 		t.Fatal(err)
 	}

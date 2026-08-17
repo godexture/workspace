@@ -117,7 +117,11 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			for inputIndex, edgeIndex := range incoming {
 				edgeTargets[edgeIndex] = inputs[inputIndex]
 			}
-			result.edges = append(result.edges, namedTask{task: joinTask, chain: output})
+			if joinTask.Valid() {
+				result.edges = append(result.edges, namedTask{task: joinTask, chain: output})
+			} else if value.binding.FanIn() != flow.SerialFanIn {
+				return fail(ErrTopology)
+			}
 		case drive.Source:
 			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {

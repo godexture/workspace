@@ -1,6 +1,7 @@
 package run
 
 import (
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/drive"
 )
@@ -65,7 +66,8 @@ func (t Template) outputLinks(ledger *journal.Ledger, index int, targets []drive
 			return nil, err
 		}
 		link = observed
-		if connection.reason != 0 && t.nodes[connection.to].kind != drive.Joiner {
+		zipInput := t.nodes[connection.to].kind == drive.Joiner && t.nodes[connection.to].binding.FanIn() == flow.ZipFanIn
+		if connection.reason != 0 && !zipInput {
 			buffered, bufferTask, err := t.nodes[index].binding.Buffer(connection.limit, link, ledger.Domain("buffer/"+key, key))
 			if err != nil {
 				return nil, err

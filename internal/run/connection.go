@@ -138,6 +138,9 @@ func (t Template) connectionLimit(from, to int, descriptor stream.Descriptor, po
 }
 
 func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (time.Duration, int64, error) {
+	if t.nodes[index].binding.FanIn() != flow.ZipFanIn {
+		return 0, 0, nil
+	}
 	if policy.Zip == 0 || !t.nodes[index].binding.InputMeasures().Time {
 		return 0, 0, nil
 	}
@@ -161,7 +164,7 @@ func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (tim
 
 func (t Template) validateFanInLimits() error {
 	for index, value := range t.nodes {
-		if value.kind != drive.Joiner {
+		if value.kind != drive.Joiner || value.binding.FanIn() != flow.ZipFanIn {
 			continue
 		}
 		incoming := t.incoming[index]
@@ -197,7 +200,8 @@ func (t *Template) placeBuffers() {
 		if t.logicalFanOut(connection.logical) {
 			connection.reason |= plan.FanOutBuffer
 		}
-		if to.kind == drive.Joiner || t.logicalFanIn(connection.logical) {
+		serialInput := to.kind == drive.Joiner && to.binding.FanIn() == flow.SerialFanIn
+		if !serialInput && (to.kind == drive.Joiner || t.logicalFanIn(connection.logical)) {
 			connection.reason |= plan.FanInBuffer
 		}
 		if from.kind == drive.Joiner {

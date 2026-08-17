@@ -24,16 +24,16 @@ const (
 	ManyMultiplicity
 )
 
-// FanInPolicy defines the semantic ordering of a many-input port. A policy is
-// mandatory for many input ports and meaningless on outputs or one-input
-// ports.
+// FanInPolicy defines the combination and delivery semantics of a many-input
+// port. A policy is mandatory for many input ports and meaningless on outputs
+// or one-input ports.
 type FanInPolicy uint8
 
 const (
 	ZipFanIn FanInPolicy = iota + 1
 	LatestFanIn
 	PrimaryFanIn
-	MergeFanIn
+	SerialFanIn
 	WindowFanIn
 )
 
@@ -215,21 +215,49 @@ type Emitter[T any] interface {
 	Emit(context.Context, *Item[T]) error
 }
 
-// Batch is one deterministic fan-in group. Each cell follows the ordinary
-// ownership rule, so a Joiner may consume some, all, or none of them.
-type Batch[T any] struct{ items []*Item[T] }
+// Batch is one fan-in delivery. Each cell follows the ordinary ownership rule,
+// so a Joiner may consume some, all, or none of them.
+//
+// Zip batches carry an ordered slice. A selected batch represents one item
+// from a particular input without allocating that one-element slice.
+type Batch[T any] struct {
+	items    []*Item[T]
+	selected *Item[T]
+	input    int
+	hasInput bool
+}
 
 func NewBatch[T any](items []*Item[T]) Batch[T] { return Batch[T]{items: items} }
 
-func (b Batch[T]) Len() int { return len(b.items) }
+// NewSelectedBatch creates a one-item batch that retains its input ordinal.
+func NewSelectedBatch[T any](input int, item *Item[T]) Batch[T] {
+	return Batch[T]{selected: item, input: input, hasInput: true}
+}
+
+func (b Batch[T]) Len() int {
+	if b.hasInput {
+		return 1
+	}
+	return len(b.items)
+}
 
 // At returns the cell at index, or nil when the index is out of range.
 func (b Batch[T]) At(index int) *Item[T] {
+	if b.hasInput {
+		if index == 0 {
+			return b.selected
+		}
+		return nil
+	}
 	if index < 0 || index >= len(b.items) {
 		return nil
 	}
 	return b.items[index]
 }
+
+// Input reports the originating input for a selected batch. Zip batches do
+// not select one input and return false.
+func (b Batch[T]) Input() (int, bool) { return b.input, b.hasInput }
 
 func (b Batch[T]) Value(index int) (T, bool) {
 	item := b.At(index)
@@ -262,7 +290,7 @@ type Router[I, O any] interface {
 	Flush(context.Context, RoutedEmitter[O]) error
 }
 
-// Joiner transforms deterministic groups from a homogeneous many-input port.
+// Joiner transforms deliveries from a homogeneous many-input port.
 type Joiner[I, O any] interface {
 	Process(context.Context, Batch[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error

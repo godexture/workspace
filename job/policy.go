@@ -129,8 +129,8 @@ func (p QueuePolicy) validItems() bool { return p.Items > 0 }
 func (p QueuePolicy) validBytes() bool { return uint64(p.Bytes) <= math.MaxInt64 }
 func (p QueuePolicy) validSpan() bool  { return p.Span >= 0 }
 
-// AlignmentPolicy selects semantic timestamp tolerances for fan-in policies.
-// A zero value disables zip alignment tolerance.
+// AlignmentPolicy selects timestamp tolerance for Zip fan-in. A zero value
+// disables Zip alignment tolerance; other fan-in policies ignore it.
 type AlignmentPolicy struct {
 	Zip time.Duration
 }

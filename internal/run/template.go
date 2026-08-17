@@ -77,7 +77,7 @@ func Compile(values []Node, logicalEdges []job.Edge, queuePolicy job.QueuePolicy
 		if err := token.Validate(value.Shape); err != nil {
 			return Template{}, errors.Join(ErrTopology, err)
 		}
-		if token.Kind() == drive.Joiner && token.FanIn() != flow.ZipFanIn {
+		if token.Kind() == drive.Joiner && token.FanIn() != flow.ZipFanIn && token.FanIn() != flow.SerialFanIn {
 			return Template{}, ErrUnsupportedFan
 		}
 		result.nodes[index] = node{
@@ -157,7 +157,11 @@ func (t Template) validateEdges() error {
 				return ErrTopology
 			}
 		case drive.Joiner:
-			if len(t.incoming[index]) < 2 || len(t.outgoing[index]) == 0 {
+			minimumInputs := 2
+			if value.binding.FanIn() == flow.SerialFanIn {
+				minimumInputs = 1
+			}
+			if len(t.incoming[index]) < minimumInputs || len(t.outgoing[index]) == 0 {
 				return ErrTopology
 			}
 		case drive.Sink:

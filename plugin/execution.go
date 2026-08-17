@@ -27,9 +27,10 @@ func WithRouter[I, O any](input string, in schema.Type[I], output string, out sc
 	return withExecution(drive.NewRouter(input, in, output, out))
 }
 
-// WithJoiner binds a homogeneous many-input component. Zip is executable in
-// M5; other declared policies remain explicit planning facts until a real
-// component defines their semantics.
+// WithJoiner binds a homogeneous many-input component. Batch cells follow the
+// normal ownership rule: a Joiner consumes any cells it takes and the runtime
+// releases the rest. Zip and Serial policies are executable; other declared
+// policies remain unsupported until a component defines their semantics.
 func WithJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) ComponentOption {
 	return withExecution(drive.NewJoiner(input, in, policy, output, out))
 }

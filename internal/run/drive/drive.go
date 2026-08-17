@@ -85,10 +85,14 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			if err != nil {
 				return nil, Task{}, err
 			}
-			if policy != flow.ZipFanIn {
+			switch policy {
+			case flow.ZipFanIn:
+				return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
+			case flow.SerialFanIn:
+				return serialFanIn(joiner, inputs, tolerance, in, target, owner)
+			default:
 				return nil, Task{}, ErrUnsupported
 			}
-			return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
 		},
 		fanout:  fanoutFactory(out),
 		buffer:  bufferFactory(out),
