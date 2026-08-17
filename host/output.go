@@ -17,6 +17,12 @@ import (
 func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, error) {
 	result := selected
 	result.entries = append([]bound.Entry(nil), selected.entries...)
+	requested, ok := result.request.Graph()
+	if !ok {
+		return inputSelection{}, errors.New("normalized Job has no graph for output Format selection")
+	}
+	inspectedByNode := indexInspections(result.inspected)
+	upstream := reverseNodeAdjacency(requested.Edges())
 	outputs := result.request.Outputs()
 	var terminals []solve.TerminalSelection
 	for entryIndex, entry := range result.entries {
@@ -58,6 +64,22 @@ func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, err
 				"prepare.metadata-resolver", diagnostic.ErrorSeverity, diagnostic.Path{Component: match.Component().Identity().String()}, "output Format metadata bindings could not be resolved",
 				map[string]string{"boundary": projection.Node, "cause": err.Error()},
 			))
+		}
+		values := upstreamInspections(job.NodeID(projection.Node), match.Format(), upstream, inspectedByNode)
+		switch len(values) {
+		case 0:
+		case 1:
+			prepared, err = mediaformat.WithInspection(prepared, values[0].value)
+			if err != nil {
+				return inputSelection{}, inspectHandoffDiagnostic(match.Component().Identity(), map[string]string{
+					"format":    match.Format().Identity().String(),
+					"source":    values[0].source.String(),
+					"writeNode": projection.Node,
+					"cause":     err.Error(),
+				}, "writable Format CompileContext already contains a different inspection")
+			}
+		default:
+			return inputSelection{}, ambiguousInspection(writeFormatNode{id: job.NodeID(projection.Node), component: match.Component(), format: match.Format()}, values)
 		}
 		result.entries[entryIndex] = resolved
 		terminals = append(terminals, solve.TerminalSelection{

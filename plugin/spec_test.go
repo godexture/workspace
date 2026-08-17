@@ -636,6 +636,19 @@ func TestOpenEnforcesDeclaredFinalizerCapability(t *testing.T) {
 type leakyConfigID struct{}
 type leakyComponentID struct{}
 
+func TestOpenContextKeepsSourceSeparateFromBoundary(t *testing.T) {
+	ctx := NewOpenContext(context.Background(), OpenServices{Boundary: "boundary", Source: 42})
+	if boundary, ok := Boundary[string](ctx); !ok || boundary != "boundary" {
+		t.Fatalf("boundary = %q/%v", boundary, ok)
+	}
+	if source, ok := Source[int](ctx); !ok || source != 42 {
+		t.Fatalf("source = %d/%v", source, ok)
+	}
+	if _, ok := Source[string](ctx); ok {
+		t.Fatal("source accepted the wrong type")
+	}
+}
+
 type leakyConfig struct{ Token config.SecretValue[string] }
 
 // A plugin panics with whatever value it chooses, and a plugin that panics

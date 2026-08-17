@@ -22,6 +22,7 @@ type inputSelection struct {
 	entries      []bound.Entry
 	sessions     []acquiredSession
 	stores       []*probeStore
+	inspected    []inspectedFormat
 	preselection solve.Preselection
 }
 

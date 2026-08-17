@@ -66,6 +66,9 @@ type OpenServices struct {
 	// Boundary is the one node-local Access/Endpoint binding selected by the
 	// planner. It is not a general service bag.
 	Boundary any
+	// Source is the optional read-only source view associated with prepared
+	// Format state. It is borrowed for this component's Open-to-Close lifetime.
+	Source any
 }
 
 // NewOpenContext snapshots the narrow services granted to one component
@@ -82,6 +85,7 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 		diagnostics: services.Diagnostics,
 		owner:       services.Owner,
 		boundary:    services.Boundary,
+		source:      services.Source,
 	}
 }
 
@@ -92,6 +96,7 @@ type OpenContext struct {
 	diagnostics diagnostic.Sink
 	owner       flow.Owner
 	boundary    any
+	source      any
 }
 
 func (c OpenContext) Context() context.Context {
@@ -134,6 +139,14 @@ func (c OpenContext) Owner() flow.Owner { return c.owner }
 // items never cross this erased boundary.
 func Boundary[T any](c OpenContext) (T, bool) {
 	value, ok := c.boundary.(T)
+	return value, ok
+}
+
+// Source recovers the optional typed read-only source view associated with
+// prepared component state. The Host owns its lifetime; an operator must not
+// use it after Close.
+func Source[T any](c OpenContext) (T, bool) {
+	value, ok := c.source.(T)
 	return value, ok
 }
 

@@ -1,23 +1,28 @@
 package host
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/plugin"
 )
 
 type inspectedFormat struct {
-	source job.NodeID
-	value  mediaformat.Inspection
+	source   job.NodeID
+	boundary string
+	value    mediaformat.Inspection
 }
 
+type formatSources map[job.NodeID]string
+
 type writeFormatNode struct {
-	node      job.Node
+	id        job.NodeID
 	component plugin.Component
 	format    mediaformat.Format
 }
@@ -36,61 +41,111 @@ func (h *Host) handoffInspections(requested job.Graph, contexts map[job.NodeID]p
 		if !ok || !trait.Valid() {
 			continue
 		}
-		writers = append(writers, writeFormatNode{node: node, component: component, format: trait.Format()})
+		writers = append(writers, writeFormatNode{id: node.ID(), component: component, format: trait.Format()})
 	}
 	if len(writers) == 0 {
 		return nil
 	}
 	sort.Slice(writers, func(left, right int) bool {
-		return writers[left].node.ID().String() < writers[right].node.ID().String()
+		return writers[left].id.String() < writers[right].id.String()
 	})
 
-	inspectedByNode := make(map[job.NodeID]inspectedFormat, len(inspected))
-	for _, value := range inspected {
-		inspectedByNode[value.source] = value
-	}
+	inspectedByNode := indexInspections(inspected)
 	upstream := reverseNodeAdjacency(requested.Edges())
 	candidates := make(map[job.NodeID][]inspectedFormat, len(writers))
 	for _, writer := range writers {
-		values := upstreamInspections(writer.node.ID(), writer.format, upstream, inspectedByNode)
-		candidates[writer.node.ID()] = values
+		values := upstreamInspections(writer.id, writer.format, upstream, inspectedByNode)
+		candidates[writer.id] = values
 		if len(values) < 2 {
 			continue
 		}
-		sources := make([]string, len(values))
-		for index, value := range values {
-			sources[index] = value.source.String()
-		}
-		sort.Strings(sources)
-		return inspectHandoffDiagnostic(writer.component.Identity(), map[string]string{
-			"format":      writer.format.Identity().String(),
-			"sources":     strings.Join(sources, ","),
-			"writeNode":   writer.node.ID().String(),
-			"sourceCount": strconv.Itoa(len(values)),
-		}, "multiple inspected inputs cannot be handed off to one writable Format")
+		return ambiguousInspection(writer, values)
 	}
 
 	for _, writer := range writers {
-		values := candidates[writer.node.ID()]
+		values := candidates[writer.id]
 		if len(values) != 1 {
 			continue
 		}
-		if writer.node.ID() == values[0].source {
+		if writer.id == values[0].source {
 			continue
 		}
-		context := contexts[writer.node.ID()]
+		context := contexts[writer.id]
 		prepared, err := mediaformat.WithInspection(context, values[0].value)
 		if err != nil {
 			return inspectHandoffDiagnostic(writer.component.Identity(), map[string]string{
 				"format":    writer.format.Identity().String(),
 				"source":    values[0].source.String(),
-				"writeNode": writer.node.ID().String(),
+				"writeNode": writer.id.String(),
 				"cause":     err.Error(),
 			}, "writable Format CompileContext already contains a different inspection")
 		}
-		contexts[writer.node.ID()] = prepared
+		contexts[writer.id] = prepared
 	}
 	return nil
+}
+
+func (h *Host) formatSourceBindings(selected program.Program, inspected []inspectedFormat) (formatSources, error) {
+	if len(inspected) == 0 {
+		return formatSources{}, nil
+	}
+	sources := make(formatSources, len(inspected))
+	inspectedByNode := indexInspections(inspected)
+	for _, value := range inspected {
+		if _, ok := selected.Lookup(value.source); ok && value.boundary != "" {
+			sources[value.source] = value.boundary
+		}
+	}
+
+	var writers []writeFormatNode
+	for _, node := range selected.Nodes() {
+		component, ok := h.index.Lookup(node.Component())
+		if !ok {
+			return nil, errors.New("selected Format component disappeared from the Host catalog")
+		}
+		trait, ok := mediaformat.WriteOf(component)
+		if !ok || !trait.Valid() {
+			continue
+		}
+		writers = append(writers, writeFormatNode{id: node.ID(), component: component, format: trait.Format()})
+	}
+	sort.Slice(writers, func(left, right int) bool { return writers[left].id.String() < writers[right].id.String() })
+	upstream := reverseNodeAdjacency(selected.Edges())
+	for _, writer := range writers {
+		values := upstreamInspections(writer.id, writer.format, upstream, inspectedByNode)
+		switch len(values) {
+		case 0:
+		case 1:
+			if values[0].boundary != "" {
+				sources[writer.id] = values[0].boundary
+			}
+		default:
+			return nil, ambiguousInspection(writer, values)
+		}
+	}
+	return sources, nil
+}
+
+func indexInspections(values []inspectedFormat) map[job.NodeID]inspectedFormat {
+	result := make(map[job.NodeID]inspectedFormat, len(values))
+	for _, value := range values {
+		result[value.source] = value
+	}
+	return result
+}
+
+func ambiguousInspection(writer writeFormatNode, values []inspectedFormat) error {
+	sources := make([]string, len(values))
+	for index, value := range values {
+		sources[index] = value.source.String()
+	}
+	sort.Strings(sources)
+	return inspectHandoffDiagnostic(writer.component.Identity(), map[string]string{
+		"format":      writer.format.Identity().String(),
+		"sources":     strings.Join(sources, ","),
+		"writeNode":   writer.id.String(),
+		"sourceCount": strconv.Itoa(len(values)),
+	}, "multiple inspected inputs cannot be handed off to one writable Format")
 }
 
 func reverseNodeAdjacency(edges []job.Edge) map[job.NodeID][]job.NodeID {

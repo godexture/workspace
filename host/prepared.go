@@ -40,6 +40,7 @@ type Prepared struct {
 	sessions       []acquiredSession
 	probeStores    []*probeStore
 	bySession      map[string]acquiredSession
+	sources        formatSources
 	direct         []bound.Entry
 	cleanupTimeout time.Duration
 
@@ -89,11 +90,15 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		manager:        manager,
 		byNode:         make(map[job.NodeID]*memory.Lease),
 		bySession:      make(map[string]acquiredSession),
+		sources:        make(formatSources, len(planning.sources)),
 		sessions:       append([]acquiredSession(nil), planning.sessions...),
 		probeStores:    append([]*probeStore(nil), planning.stores...),
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
 		done:           make(chan struct{}),
+	}
+	for node, source := range planning.sources {
+		prepared.sources[node] = source
 	}
 	for _, entry := range entries {
 		if entry.Projection().Kind == plan.DirectBoundary {

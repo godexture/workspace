@@ -34,7 +34,7 @@ func TestHandoffInspectionsSkipsDifferentFormatWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	contexts := map[job.NodeID]plugin.CompileContext{"writer": {}}
-	inspected := []inspectedFormat{{source: "source", value: mediaformat.NewInspection(boundaryFormat(), 44)}}
+	inspected := []inspectedFormat{{source: "source", boundary: "input", value: mediaformat.NewInspection(boundaryFormat(), 44)}}
 	if err := host.handoffInspections(requested, contexts, inspected); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,8 @@ func TestHandoffInspectionsDiagnosesMultipleSourcesDeterministically(t *testing.
 	contexts := map[job.NodeID]plugin.CompileContext{"writer": {}}
 	inspection := mediaformat.NewInspection(boundaryFormat(), 44)
 	inspected := []inspectedFormat{
-		{source: "z-source", value: inspection},
-		{source: "a-source", value: inspection},
+		{source: "z-source", boundary: "z-input", value: inspection},
+		{source: "a-source", boundary: "a-input", value: inspection},
 	}
 	err = host.handoffInspections(requested, contexts, inspected)
 	if err == nil {
@@ -105,8 +105,8 @@ func TestHandoffInspectionsKeepsIndependentFormatBranchesSeparate(t *testing.T) 
 	}
 	contexts := map[job.NodeID]plugin.CompileContext{"writer-a": {}, "writer-b": {}}
 	inspected := []inspectedFormat{
-		{source: "source-a", value: mediaformat.NewInspection(boundaryFormat(), 11)},
-		{source: "source-b", value: mediaformat.NewInspection(boundaryFormat(), 22)},
+		{source: "source-a", boundary: "input-a", value: mediaformat.NewInspection(boundaryFormat(), 11)},
+		{source: "source-b", boundary: "input-b", value: mediaformat.NewInspection(boundaryFormat(), 22)},
 	}
 	if err := host.handoffInspections(requested, contexts, inspected); err != nil {
 		t.Fatal(err)

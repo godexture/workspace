@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/task"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -79,6 +80,10 @@ func (r *runner) openNode(index int) *Failure {
 	if err != nil {
 		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
 	}
+	source, err := r.sourceOpening(node.ID())
+	if err != nil {
+		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
+	}
 	lease := r.prepared.byNode[node.ID()]
 	// The component's own failure domain is created here and lives for the
 	// whole run, so a payload it retains past a call still reports somewhere
@@ -91,6 +96,7 @@ func (r *runner) openNode(index int) *Failure {
 		Diagnostics: r.diag.sink(node.ID().String()),
 		Owner:       owner.At(node.ID().String()).Reporter(),
 		Boundary:    boundary,
+		Source:      source,
 	}
 	r.emitLifecycle(node.ID().String(), OpenPhase, "start")
 	operator, err := r.prepared.program.Open(plugin.NewOpenContext(r.ctx, services), node.ID())
@@ -113,6 +119,18 @@ func (r *runner) openNode(index int) *Failure {
 		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", fmt.Errorf("output declares %s but operator does not implement access.Transaction", output.class))
 	}
 	return nil
+}
+
+func (r *runner) sourceOpening(node job.NodeID) (any, error) {
+	source, ok := r.prepared.sources[node]
+	if !ok {
+		return nil, nil
+	}
+	session, ok := r.prepared.bySession[source]
+	if !ok || !session.opening.Valid() || session.opening.Direction() != access.SourceDirection {
+		return nil, errors.New("prepared Format source opening is missing")
+	}
+	return session.opening, nil
 }
 
 func (r *runner) opening(node string) (any, error) {
