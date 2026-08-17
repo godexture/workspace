@@ -2,6 +2,11 @@
   "$comment": "Machine-readable companion to baseline.md. Commands reproduce the full M0 baseline; they are not all required for routine development. Every command is argv + env rather than a shell string.",
   "baselineCommit": "4429711a88481e6643ea2427a8192938737b1e9e",
   "repository": "github.com/godexture/godec",
+  "executionRoot": {
+    "source": "A separate detached Git worktree at baselineCommit; never the current HEAD worktree or _legacy.",
+    "setupArgv": ["git", "worktree", "add", "--detach", "<temporary-worktree>", "4429711a88481e6643ea2427a8192938737b1e9e"],
+    "commandsRunFrom": "<temporary-worktree>"
+  },
   "performancePolicy": {
     "routineGate": false,
     "reviewTriggerRatio": 2.0,

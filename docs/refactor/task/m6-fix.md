@@ -204,15 +204,17 @@ node auto-... component=...linear.parserID origin=automatic reason=graph.schema-
 ## 10. 既定の copy/remux が graph 形状の副産物で pin されていない
 
 実測した WAVE→WAVE の plan は `source → wave demux → linear parser → wave mux → sink` で、decoder/encoder を
-開かない。[C4](../decisions.md) と [capability.md](../capability.md#挙動変更の記録) の B1 が目指す挙動だが、
-これは policy ではなく「muxer が `codec.Packets()` を受けるので solver が最短経路を選んだ」結果である。
+開かない。これは packet/chunk を保持する M6 の format 固有 direct path であり、muxer が `codec.Packets()` を
+受けることで実 consumer になる。format 間・multi-stream・mapping/loss report を含む一般の copy/remux policy は
+[C4](../decisions.md) と [capability.md](../capability.md#挙動変更の記録) の B1 に従い M7 が担当する。
 `integration/`・`cli/`・`standard/`・`host/` に、この plan 形状を検査する test は無い。cost model や
 component が変われば黙って decode を始め、M7 の B1 が「追加」ではなく「復元」になる。
 
 - `integration` に、無指定の WAVE→WAVE 変換の `Plan` が decoder/encoder component を含まないことを
   検査する test を足す。node identity で検査し、node 数のような脆い条件にしない。
-- B1 は M7 担当のまま変えない。この test は「M6 時点で偶然成立している性質を、M7 が policy として
-  引き取るまで壊さない」ための固定である。その意図を test の doc comment に一行で残す。
+- B1 の M6 scope はこの単一 WAVE→WAVE direct path、M7 scope は一般の copy/remux policy である。この test は
+  format 固有 path を固定し、M7 がそれを format 横断の既定、mapping、loss report と取り違えずに一般化できるようにする。
+  その意図を test の doc comment に一行で残す。
 
 ## 11. `standard` から policy と budget を渡せない
 

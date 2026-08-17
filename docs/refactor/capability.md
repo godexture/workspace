@@ -91,7 +91,7 @@ M5 cut 後はいったん surface 実装を置かず、旧 CLI/WASM/demo source 
 
 | ID | 変更 | 理由 | 担当 |
 |---|---|---|---|
-| B1 | 無指定出力で decoder/encoder を開かず、可能なら copy/remux を選ぶ | [C4](decisions.md)。入力の情報を保持する既定へ変える | M7 |
+| B1 | 無指定出力で decoder/encoder を開かず、可能なら copy/remux を選ぶ | [C4](decisions.md)。入力の情報を保持する既定へ変える。M6 の単一 WAVE → WAVE は packet/chunk を保持する format 固有の direct path を先行 consumer とし、M7 が format 間・multi-stream・mapping/loss report を含む一般の既定 policy として完成させる | M6（WAVE direct path）/ M7（一般 policy） |
 | B2 | metadata の表現不能項目を黙って捨てず warning/loss report にする | [C10](decisions.md) | M7 |
 | B3 | 数値誤差を許容する variant を policy で選択可能にする | [C7](decisions.md)、[C15](decisions.md) | M5/M8 |
 | B4 | FLAC encoder の `Apodizations []Apodization`（関数値）を kind と parameter を持つ data 表現へ変える | 関数値は canonical 表現を持てず、`Tukey(0.5)` と `Tukey(0.9)` を区別できない。異なる bitstream を生むのに Plan と fingerprint に残らず、[performance.md](performance.md#artifactstable) の `ArtifactStable` を満たせない。現状 CLI/WASM からも設定できないため、data 化して初めて surface へ出せる | M8 |

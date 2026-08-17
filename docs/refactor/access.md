@@ -101,7 +101,7 @@ surface DTO では明示的な tagged union にする。
 }
 ```
 
-raw credential、signed URL、local secret path を public `Plan` や diagnostic の node label にそのまま入れない。Reference は private canonical target と policy に従う redacted display を分ける。
+raw credential、signed URL、local secret path を public `Plan` や diagnostic の node label にそのまま入れない。Reference は private canonical target と public display を分け、`Display`/`String` は scheme と固定の `<redacted>` marker (`scheme:<redacted>`) だけを返す。opaque 値、authority、path、userinfo、query、fragment は target の種類に関わらず表示しない。resolver だけが `Canonical` を使い、公開 Plan は必要なら別の fingerprint で target を区別する。
 
 library が既に reader/writer を所有している場合、Provider lookup を経ず直接 Source/Sink adaptor を渡せる。これにより custom storage のためだけに plugin を作る負担を増やさない。
 
@@ -162,6 +162,16 @@ result, err := prepared.Run(ctx)
 `Host.Run(ctx, request)` は Prepare + Run の convenience API とする。`Host.Plan` は Prepare して Plan を返した後 resource を閉じる read-only convenience とできるが、その Plan を将来そのまま実行できるとは約束しない。後で実行する場合は source を再取得して snapshot/capability を再検証する。
 
 CLI の dry-run は input の bounded probe/inspect を行ってよいが、output transaction は開始しない。network access や input spooling が必要なら Plan 前の effect として明示し、budget/policy で拒否できるようにする。
+
+## resource と callback の cleanup 境界
+
+直接渡された `access.Resource` は `Own`/`Borrow` を値として表す。`Own` は内部の共有 state と `sync.Once` を持つため、Resource 値をコピーしても実 handle の `Close` は一度だけ実行される。`Close` callback が panic した場合も、Host は一度だけ呼び出し、raw panic value を保持せず、stable な `access.ErrResourceClosePanic` と stack を private marker として返す。同じ marker だけが Ledger で `CleanupPanic` へ昇格し、任意の第三者 `StackTrace` を panic の証拠とは見なさない。同じ resource の二回目以降の `Close` は最初の結果を再利用する。`Borrow` は Host が close しない。
+
+Provider/session の第三者 callback は Host が phase/node を付けた recovery boundary で呼ぶ。`Acquire`、`Capabilities`、`Snapshot`、sequential/random `Read`/`ReadAt`、sink の `Equivalent`、`Flush`/`Sync`/`PrepareCommit`/`Commit`/`Abort`/`Close` の panic は stable な structured failure へ投影し、raw panic value を表示せず、既に取得した session・lease・output を cleanup してから次の child を試行する。`Snapshot` は `NoSnapshot` を明示できる値型であり、panic と invalid identity は同じ「snapshot failure」へ混同しない。`Equivalent` が panic した場合は conflict diagnostic 一件と redacted `PanicError` を結合し、output node、`access/equivalence` task、stack を保ったまま、入力 session を開いたり commit したりしない。通常の callback error には panic provenance を付けない。
+
+local file の filesystem error は provider 境界で redacted にする。`plugin/file` は `os.PathError`/`os.LinkError` の path を private cause に閉じた `ioBoundaryError` へ変換し、`Error`/`Format`/`errors.As` から path を出さない一方、`errors.Is` の OS sentinel identity は保つ。`access.Reference` の `Canonical` は resolver だけが使い、`Display`/`String` は scheme と固定の `<redacted>` marker だけを返す。file の `equivalent` は filesystem comparison の前に `context.Cause` を確認し、cancel を OS error と取り違えずに返す。通常の stat/rename/remove failure も同じ redaction と cancellation identity を維持する。
+
+複合 cleanup は first-error で短絡しない。direct input/output、spool storage と underlying transaction、probe replay の unread child と underlying session をそれぞれ一度だけ試行し、全 child の error/panic を結合して返す。spool storage は `Flush`/`Abort`/`Close` の callback 前に detach するため、panic 後に結果不明の Close を retry せず、underlying child の試行は続く。cleanup state は idempotent で、二回目の `Prepared.Close`/session `Close` は最初の結果を返し、child の callback を再度呼ばない。これは accidental な provider bug を隣接 component の解放や sibling branch の cleanup 欠落へ拡大しないための境界である。
 
 ## source capability
 
@@ -385,9 +395,11 @@ random range、reopen、retry が同じ content を指す保証を Access が提
 
 strong snapshot がない source はその事実を Plan に記録する。probe/inspect 後に content identity が変わった場合、黙って別 content を実行せず、再 Prepare または failure にする。
 
-M6 の実装は次のとおりである。`StableSize` を広告する session は `access.Snapshotter` を実装し、現在の content identity を報告する。判断は session ではなく Host が持ち、acquire 時の identity を記録して run 開始前と output commit 前に照合し、変化していれば `access/snapshot` failure にする。
+M6 の実装は次のとおりである。`StableSize` は capability list の宣言だけでは成立しない。実際に acquire した source session が `access.Sizer` の selected view と `access.Snapshotter` の両方を持ち、`Snapshot` が valid な `WeakSnapshot` または `StrongSnapshot`（`NoSnapshot`/空 identity は不可）を返すことを Host が確認する。この検査は明示 Format だけでなく、最初に Random/Sequential view を取得する automatic Probe にも適用される。Host は acquire 時の identity を記録して run 開始前と output commit 前に照合し、欠落・invalid・nature/identity の弱化や変化を `access/snapshot` failure にする。
 
 local file の identity は size と mtime であり、`WeakSnapshot` として報告する。truncate、grow、mtime が動く overwrite は検出できるが、同一 timestamp tick 内の同 size 書き換えは区別できない。強い identity は content を読み直すしかないため、nature を偽らずに weak と宣言する。session は開いた path ではなく開いた file を提供するので、path 差し替えは content の変化ではなく、acquire した bytes をそのまま実行する。`StableSize` は session が渡す byte 列への約束でもあるため、read は acquire 時 size で clamp し、後から追記された byte を返さない。
+
+Probe の EOF も capability evidence を越えて推測しない。positioned read が範囲外で `(0, io.EOF)` を返しても、selected `StableSize` view が無ければ source end は未知のままにする。`StableSize` がある場合だけ `access.Sizer.Size` の値を exact end として採用する。sequential Probe が消費した prefix は `host.replaySession` へ移し、replay は source の `Capabilities`、`Size`、`Snapshot` を underlying session へ同期的に委譲する。prefix handle と underlying session は一度ずつ閉じ、replay で capability、size、identity の field が欠けたり別値になったりしない。
 
 retry は idempotent な operation と既知 offset に限定する。途中から別 objectへ接続したり、sequential byte を重複/欠落させたりしない。live Endpoint の reconnect は byte retry ではなく discontinuity/event policy として扱う。
 
@@ -561,7 +573,7 @@ M6 は Access contract が最初の実 I/O consumer を得る milestone であ�
 - **Probe の実行 contract を持つ。** Probe は複数の immutable な view を受け、terminal result か追加 range 要求を返す反復 protocol とする。Host が range cache と全候補共通の budget を所有し、同一要求を重複排除する。逐次 source への要求は単調な prefix 拡張に限り、実際に読み進めた全 byte を budget に算入する。重複要求、空要求、budget 超過、進捗しない反復は構造化 diagnostic にする。
 - **probe の上限は planning budget に置く。** byte 上限と反復回数上限を `job.Budget` が持つ。probe は planning 段階の作業であり、`Budget` は既に compile 数と探索回数と duration を持ち、[planner](planner.md#m4-完了条件) が budget exhaustion を unsupported と区別して最も近い unmet Need と制限値を diagnostic に含めると定めている。`ResourcePolicy` は runtime grant の場所なので使わない。byte 上限だけでは、1 byte ずつ要求する実装が budget 内で無限に往復できるため、反復回数上限を同時に持つ。
 - 選択された Format の Inspect が stream、time base、metadata carrier を読み、その結果が `Compile` の入力 descriptor になる。probe/inspect と実行が同じ session と snapshot を使う。
-- **Prepare の段階順が [planner pipeline](runtime.md#planner-pipeline) と一致する。** Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、各 component の `Compile` は pure のままである。`Host.Plan` の dry-run が output を作成も truncate もしない。**M5/M6-1 の実装は acquire を Compile より後に置いており、この順序に反している。** container header からしか得られない事実で descriptor を確定するには Inspect が Compile より前に走る必要があり、M6-2a がこの再構成を担当する。`Host.Plan` の read-only 経路と resource 予約の順序も同時に見直す。
+- **Prepare の段階順が [planner pipeline](runtime.md#planner-pipeline) と一致する。** Bind → Acquire → Probe → Inspect → Shape → Compile → Solve → Validate → Optimize → Describe → Build の順を明示し、各 component の `Compile` は pure のままである。`Host.Plan` の dry-run が output を作成も truncate もしない。M5/M6-1 時点では acquire が Compile より後でこの順序に反していたが、M6-2a で再構成済みである。`host/inspection_test.go` は Inspect の結果を Compile が受けること、入力 session の acquire/close が一度ずつであることを固定する。container header からしか得られない事実で descriptor を確定するには Inspect が Compile より前に走る必要がある。`Host.Plan` の read-only 経路と resource 予約の順序も同時に見直した。
 - **spool は capability を変換する Host-owned adapter である。** 逐次書きのみの sink を実効的な位置指定書きへ変換する。`SequentialWrite` そのものを「patch 可能な代替」として扱わない。sink boundary を spool 付きへ差し替える形は変えず、graph node は増やさない。`plan.Boundary` には**元の capability、適応後の capability、`SpoolSpec` を分けて**記録し、「何が足りず、何で埋め、何を代償にしたか」が Plan から読めるようにする。runtime に第二の実行モードを持ち込まない。
 - **spool の storage は Host が所有し、上限を予約ではなく quota で表す。** `job.ResourcePolicy` に spool 専用の上限（最大 bytes と storage 種別）を持たせ、Host が Job 単位で spool を所有する。`resource.Request`/`Grant` の予約次元へは戻さない。spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。上限検査は spool-local counter で行い、中央 manager を item ごとに呼ばない。cancel、rollback、Job 終了で必ず削除する。
 - spool を Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。M6 の唯一の consumer が sink boundary の decorator であり、公開すると consumer を持たない plugin API を凍結することになる。第二の consumer が現れた milestone で共通 service へ昇格させるかを決める。

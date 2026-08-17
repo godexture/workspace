@@ -14,26 +14,20 @@ monorepo は code と contract を atomic に変更するための境界であ�
 
 ## 現状の監査結果
 
-調査時点では次の容量がある。
+現行の data gitlink は次の2件だけである。revision は superproject の gitlink、URL は `.gitmodules` を正本とする。files/bytes は 2026-08-17 に submodule を取得済みの worktree で測定した値であり、submodule 未取得の clone では directory が無くても revision と URL の記録は有効である。
 
-| directory | files | bytes |
-|---|---:|---:|
-| `core/test/assets` | 1 | 37,015,596 |
-| `example/assets` | 7 | 48,788,521 |
-| `example/web/assets` | 7 | 48,788,521 |
-| `plugin/flac/test/testdata` | 95 | 310,101,031 |
-| `plugin/mp3/test/testdata` | 13 | 11,216,042 |
-| `plugin/pcm/test/testdata` | 10 | 302,907,103 |
+| directory | gitlink revision | measured files / bytes | license / source metadata |
+|---|---|---:|---|
+| `example/assets` | `2634c6151e755b692e4ac70e73fabfb32920bf30` | 8 / 48,788,563 | `LICENSE`; `https://github.com/godexture/assets.git` |
+| `testdata/flac/conformance` | `aa7b0c6cf32994c106ae517a08134c28a96ff5b2` | 94 / 310,052,120 | `LICENSE.txt`、`README.txt`; `https://github.com/ietf-wg-cellar/flac-test-files.git` |
 
-`core/test/assets/sample_lpcm.wav`、`example/assets/lpcm.wav`、`example/web/assets/lpcm.wav` は SHA-256 が同一である。example の MP3、ADPCM、license も二つの directory に同一内容が複製されている。
+これらは product source の分割ではなく、code と独立して更新・配布される任意取得 dependency である。通常 test の必須入力にも production dependency にもしない。M10 でも一律削除せず、通常 test からの分離、固定 revision、license、未取得時の挙動を整備する。
 
-PCM の五つの `.snapshot` は各約53 MiBで、decoded sample を `0.000000` のような十進文字列一行ずつに展開している。binary source より snapshot が大きく、float formatting、改行、巨大 diff、review不能な generated text に storage/CI cost を払っている。
+### M1 前 / M5 cut 前の履歴監査
 
-FLAC conformance corpus は専用 Git submoduleで、license/source information がある一方、最大約87 MiBの単体 fileを含む。これは codec conformance には価値があるが、foundation/product module の download や通常 unit test に含める理由にはならない。
+M1 前の調査では `core/test/assets`、`example/assets`、`example/web/assets`、`plugin/flac/test/testdata`、`plugin/mp3/test/testdata`、`plugin/pcm/test/testdata` の六経路を容量比較した。`core/test/assets/sample_lpcm.wav`、`example/assets/lpcm.wav`、`example/web/assets/lpcm.wav` は SHA-256 が同一で、example の MP3、ADPCM、license も二つの directory に重複していた。M5 cut で web wiring と `example/web/assets` gitlink は削除し、canonical asset は `example/assets` へ統合した。Go code を持たない旧 `plugin/flac` tree の corpus は `testdata/flac/conformance` へ移した。
 
-M1 後は data/asset gitlink として `example/assets`、`example/web/assets`、`plugin/flac/test/testdata/conformance` の3件を意図的に残した。M5 で web wiring を削除した際、前二者が同じ repository の同じ commit を指す重複であることを再評価し、`example/assets` へ統合した。M5 review では Go code を持たない `plugin/flac` tree から corpus を `testdata/flac/conformance` へ移した。現在の2件は product source の分割ではなく、codeと独立して更新・配布される任意取得dependencyである。M10でも一律削除せず、通常testからの分離、固定revision、license、未取得時の挙動を整備する。
-
-PCM corpus には同じ水準の README/license/origin file が見当たらない。生成物であっても source media と期待値の由来、生成 tool/version、再配布条件を明示する必要がある。
+同じ調査では PCM の五つの `.snapshot` が各約53 MiBで、decoded sample を `0.000000` のような十進文字列一行ずつに展開していた。binary source より snapshot が大きく、float formatting、改行、巨大 diff、review不能な generated text に storage/CI cost を払っていた。旧 PCM corpus には同じ水準の README/license/origin file が見当たらず、生成物でも source media と期待値の由来、生成 tool/version、再配布条件を明示すべきという判断を残す。
 
 ## test tier
 

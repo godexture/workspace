@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**
+> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**。M6 の再完了と最終 verification は 2026-08-17 に記録済み。次は M7 着手前監査である。
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -21,7 +21,7 @@
 | M3 | 完了 | metadata/side/event、Access/Endpoint foundation contract と第三者拡張点を完成した。 |
 | M4 | 完了 | typed Compile/Suggest、bounded solver、public Plan/private Program、binding、実 linear PCM を完成した。 |
 | M5 | 完了 | typed runtime、ownership/COW、bounded queue、cancel、Finalize、transactional lifecycle を完成し、旧 contract を切断した。 |
-| M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI を一つの Host 経路で完成した。 |
+| M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI の実経路と R-17 の final contract を repository-wide verification まで確認した（2026-08-17）。 |
 | M7 | 未着手 | 着手前監査と sub-unit 分割を先に行う。 |
 | M8 | 未着手 | 完了時に `_legacy/` を削除する。 |
 | M9 | 未着手 | stdin/stdout、WASM、demo、device/session Endpoint を扱う。 |
@@ -30,7 +30,6 @@
 
 ## 現在の注記
 
-- [M6 review 修正](task/m6-fix.md) の 12 単位を実装・文書・回帰 test へ反映し、Access capability の宣言と実 view、file transaction、WAVE truncation、Plan provenance、standard surface を一致させた。
-- M6 後の review で `flow` の所有権 contract を作り直した。所有権を pointer で渡す cell (`flow.Item`) が表し、規則は「作った item と受け取った item は `defer ... Drop()` する」の一つになった。`Input`/`Owned`/`Shared` の 3 型と Processor/Joiner で異なる 2 つの規則、runtime 側の item panic cleanup、`Scope` の cleaner が消えた。所有権を表す cell は `Item` だけで、`noCopy` により複製を `go vet` が検出する。bounded queue は cell を保持するため、生の値と drop trait を持ち回す経路が無い。call stack の外へ payload を置く側は cell を heap に置いて pointer で保持するため、生の値と drop trait を持つ複製可能な token は public にも internal にも存在しない。第三者 `Drop` は runtime mutex の外で呼び、複数 owner の後片付けは一件が panic しても全件を解放してから報告する。その報告は捨てない。fan-in は batch ごとの解放失敗をその場で返し、`Execution.Discard` は全 task の failure を結合し、Host は通常終了でも cleanup 経路でも Result へ載せる。`Item` は payload の箱ではなく、ある failure domain に属する ownership slot である。`Drop` は panic も error も外へ出さず、解放できなかったことを slot の domain へ報告する。処理中の item の解放失敗が、仕事を止めた panic を置き換えないためである。task の結末は `journal.Outcome{Primary, Cleanup}` として構造で持ち、boundary は normal/error/panic を問わず常に journal を seal する。task の外で走る cleanup は domain を引数で受け取り、Host が `Result.Cleanup` へ繋ぐ。edge の drain task は取り出し中の item を task 単位の flag で持ち、consumer の error・panic・declined payload の解放 panic のいずれでも戻り道で `Abandon` する。count は正しくなるが edge は quiescent にならないため、barrier は idle を騙らず、失敗した task の cancel で終わる。fan-in も同じで、input を EOF まで drain し戻り道の cleanup も成功した join だけが barrier を成立させる。複数 cell をまとめて解放する helper は runtime だけが使うため `internal/run/release` にある。詳細は [runtime](runtime.md#ownership) を正本とする。
-- [M0〜M6 実装監査](review-m0-m6.md) の R-01〜R-12 を実装・文書・回帰 test へ反映し、再監査で再 open した R-01、R-02、R-06、R-07、R-10、R-11 も閉じた。config は secret formatting、codec 合成の normalization、第三者 callback の panic boundary を閉じ、typed patch entry を schema key に束ねて `Resolved`/`ResolvedView` を phase ごとの snapshot にした。media は immutable read view、buffer layout の checked arithmetic、WAVE 予約 slot `JUNK` の byte 保持を得た。local file は content identity を報告し、Host が phase 間で照合する。public testkit は bounded Suggest を第三者と同じ入口で検査し、coverage owner は実在 milestone に限る。`cli.Run` は独立な failure をすべて返す。
-- 次の作業は M7 着手前監査である。MP4 (ISO BMFF)、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` の責務を、各単位が端から端まで green の実 consumer を持つ sub-unit へ分割してから実装する。**loss report と metadata raw preservation は実 consumer として MP4 の metadata encoding (`ilst`/`udta`) を要するため、分割時にその単位を落とさない。** この監査と分割自体は M6 review 修正のスコープに含めない。
+- M0〜M6 は完了。M6 の再完了判定、根拠、将来の残件は [M0〜M6 実装監査](review-m0-m6.md#m6-再完了条件) に集約し、領域ごとの現行 contract は [runtime](runtime.md)、[access](access.md)、[config](config.md)、[quality](quality.md) を正本とする。
+- 現在の foundation は `flow.Item` の単一 ownership slot、Ledger/Domain/Span の failure evidence、Access snapshot/callback boundary、bounded/loss-aware result である。`Fail` が Ledger への唯一の failure ingress で、`Close` は bounded wait と cleanup の完了を担う。cancel normalization は trusted な `context.Cause` の pure single chain だけを採用し、CLI の `ExitCanceled` は caller context state のみを authority とする。旧 review の経緯は [review-m0-m6](review-m0-m6.md) の superseded 注記から辿る。
+- 次は M7 着手前監査と sub-unit 分割。MP4、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` を、実 consumer と完了条件が一つずつ対応する単位へ分ける。

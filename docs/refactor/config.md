@@ -175,7 +175,7 @@ CLI は同じ schema から repeatable flag、indexed path、JSON file のいず
 
 第三者の custom type は `config.Codec[T]` を schema field に関連付けられるようにする。codec は decode、human-readable encode、canonical encode、type description を提供する。`encoding.TextMarshaler`/`TextUnmarshaler` 用 adaptor は提供できるが、それだけを唯一の拡張方法にはしない。
 
-unordered map は canonical key codec と順序規則を宣言できる場合だけ受け入れる。NaN/Inf、同値な複数表記、負の zero、単位の別表記等は codec が canonical form を決める。canonical form を作れない field は Plan fingerprint を不安定にするため schema 登録を失敗させる。
+unordered map は canonical key codec と順序規則を宣言できる場合だけ受け入れる。NaN/Inf、同値な複数表記、負の zero、単位の別表記等は codec が canonical form を決める。map 内で異なる key が同じ canonical bytes を返す場合は、順序を推測せず canonicalization を error にする（custom key canonical は map 内で injective でなければならない）。canonical form を作れない field は Plan fingerprint を不安定にするため schema 登録を失敗させる。
 
 関数値と closure は config ではない。`[]func(...)` のような field は canonical 表現を持てないため登録に失敗する。これは制限ではなく検出であり、実装の選択肢が config 型へ漏れていることを示す。設定として表したいのは「どの関数を、どの parameter で使うか」であって関数そのものではないので、data として宣言し、実際の関数への解決は plugin 内部の lookup として `Compile` で行う。
 
