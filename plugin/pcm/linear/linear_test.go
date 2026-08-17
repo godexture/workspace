@@ -99,7 +99,7 @@ func (s *fixtureSource) Read(ctx context.Context, into *flow.Item[buffer.Handle]
 	if err != nil {
 		return err
 	}
-	*into = flow.NewItem(handle, access.Bytes())
+	into.Set(handle)
 	return nil
 }
 
@@ -120,14 +120,14 @@ func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Fr
 			o.state.mu.Unlock()
 			return err
 		}
-		o.state.planes[index] = append(o.state.planes[index], plane...)
+		o.state.planes[index] = plane.AppendTo(o.state.planes[index])
 	}
 	if pts, ok := frame.PTS().Get(); ok {
 		o.state.timestamps = append(o.state.timestamps, pts)
 	}
 	o.state.events = append(o.state.events, "frame")
 	o.state.mu.Unlock()
-	forwarded := flow.NewItem(frame.Share(), sample.S16())
+	forwarded := flow.NewItem(frame.Share(), sample.S16(), &testDomain)
 	if err := output.Emit(ctx, &forwarded); err != nil {
 		forwarded.Drop()
 		return err
@@ -153,7 +153,7 @@ type fixtureSink struct {
 
 func (s *fixtureSink) Write(_ context.Context, input *flow.Item[access.Write]) error {
 	s.state.mu.Lock()
-	s.state.output = append(s.state.output, input.Value().Bytes()...)
+	s.state.output = input.Value().Bytes().AppendTo(s.state.output)
 	s.state.events = append(s.state.events, "write")
 	s.state.mu.Unlock()
 	input.Drop()

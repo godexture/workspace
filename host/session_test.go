@@ -10,20 +10,27 @@ import (
 	"time"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/bind"
+	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
 
 type sessionCounters struct {
-	acquired atomic.Int32
-	closed   atomic.Int32
-	fail     error
-	closeErr error
-	actual   access.Capabilities
-	noViews  bool
-	wait     bool
+	acquired    atomic.Int32
+	closed      atomic.Int32
+	fail        error
+	closeErr    error
+	actual      access.Capabilities
+	noViews     bool
+	noSize      bool
+	noSnapshot  bool
+	snapshotErr bool
+	wait        bool
 }
 
 type trackedAccessSession struct {
@@ -32,6 +39,21 @@ type trackedAccessSession struct {
 }
 
 type capabilityOnlyAccessSession struct {
+	capabilities access.Capabilities
+	counters     *sessionCounters
+}
+
+type noSnapshotAccessSession struct {
+	capabilities access.Capabilities
+	counters     *sessionCounters
+}
+
+type noStableSizeAccessSession struct {
+	capabilities access.Capabilities
+	counters     *sessionCounters
+}
+
+type snapshotErrorAccessSession struct {
 	capabilities access.Capabilities
 	counters     *sessionCounters
 }
@@ -46,6 +68,12 @@ func (s trackedAccessSession) Capabilities() access.Capabilities { return s.capa
 func (s trackedAccessSession) Close() error {
 	s.counters.closed.Add(1)
 	return s.counters.closeErr
+}
+func (s trackedAccessSession) Snapshot(context.Context) (access.Snapshot, error) {
+	if s.counters.snapshotErr {
+		return access.Snapshot{}, access.ErrNoSnapshot
+	}
+	return access.NewSnapshot("host/test/empty", access.StrongSnapshot)
 }
 func (trackedAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
 func (trackedAccessSession) ReadAt(context.Context, []byte, int64) (int, error) {
@@ -77,8 +105,52 @@ func (c *sessionCounters) acquire(capabilities access.Capabilities) access.Acqui
 		if c.noViews {
 			return capabilityOnlyAccessSession{capabilities: actual, counters: c}, nil
 		}
+		if c.noSnapshot {
+			return noSnapshotAccessSession{capabilities: actual, counters: c}, nil
+		}
+		if c.snapshotErr {
+			return snapshotErrorAccessSession{capabilities: actual, counters: c}, nil
+		}
+		if c.noSize {
+			return noStableSizeAccessSession{capabilities: actual, counters: c}, nil
+		}
 		return trackedAccessSession{capabilities: actual, counters: c}, nil
 	}
+}
+
+func (s noSnapshotAccessSession) Capabilities() access.Capabilities { return s.capabilities }
+func (s noSnapshotAccessSession) Close() error {
+	s.counters.closed.Add(1)
+	return s.counters.closeErr
+}
+func (noSnapshotAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
+func (noSnapshotAccessSession) ReadAt(context.Context, []byte, int64) (int, error) {
+	return 0, io.EOF
+}
+func (noSnapshotAccessSession) Size(context.Context) (int64, error) { return 0, nil }
+
+func (s noStableSizeAccessSession) Capabilities() access.Capabilities { return s.capabilities }
+func (s noStableSizeAccessSession) Close() error {
+	s.counters.closed.Add(1)
+	return s.counters.closeErr
+}
+func (noStableSizeAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
+func (noStableSizeAccessSession) ReadAt(context.Context, []byte, int64) (int, error) {
+	return 0, io.EOF
+}
+
+func (s snapshotErrorAccessSession) Capabilities() access.Capabilities { return s.capabilities }
+func (s snapshotErrorAccessSession) Close() error {
+	s.counters.closed.Add(1)
+	return s.counters.closeErr
+}
+func (snapshotErrorAccessSession) Read(context.Context, []byte) (int, error) { return 0, io.EOF }
+func (snapshotErrorAccessSession) ReadAt(context.Context, []byte, int64) (int, error) {
+	return 0, io.EOF
+}
+func (snapshotErrorAccessSession) Size(context.Context) (int64, error) { return 0, nil }
+func (snapshotErrorAccessSession) Snapshot(context.Context) (access.Snapshot, error) {
+	return access.Snapshot{}, access.ErrNoSnapshot
 }
 
 func TestPlanningDurationStartsBeforeInputAcquire(t *testing.T) {
@@ -252,6 +324,7 @@ func TestPrepareRejectsMissingStableSizeViewBeforeSinkAcquire(t *testing.T) {
 		sinkCapabilities,
 		access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
 	)
+	sourceState.noSize = true
 
 	_, err := instance.Prepare(context.Background(), request)
 	items := diagnostic.ItemsOf(err)
@@ -260,6 +333,115 @@ func TestPrepareRejectsMissingStableSizeViewBeforeSinkAcquire(t *testing.T) {
 	}
 	if sourceState.closed.Load() != 1 || sinkState.acquired.Load() != 0 {
 		t.Fatalf("sessions = source closed %d, sink acquired %d", sourceState.closed.Load(), sinkState.acquired.Load())
+	}
+}
+
+func TestPrepareRejectsStableSizeSourceWithoutSnapshotIdentity(t *testing.T) {
+	for name, configure := range map[string]func(*sessionCounters){
+		"missing-snapshotter": func(state *sessionCounters) { state.noSnapshot = true },
+		"no-snapshot-result":  func(state *sessionCounters) { state.snapshotErr = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			sourceCapabilities := mustCapabilities(t, access.RandomRead, access.StableSize)
+			sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+			sourceState, sinkState, instance, request := providerSessionFixtureWith(
+				t,
+				sourceCapabilities,
+				sinkCapabilities,
+				access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
+			)
+			configure(sourceState)
+			_, err := instance.Prepare(context.Background(), request)
+			items := diagnostic.ItemsOf(err)
+			if len(items) != 1 || items[0].Code != "prepare.access-snapshot" || items[0].Detail["required"] != string(access.StableSize) || items[0].Detail["error"] != access.ErrNoSnapshot.Error() {
+				t.Fatalf("stable snapshot diagnostic = %#v, error %v", items, err)
+			}
+			if sourceState.closed.Load() != 1 || sinkState.acquired.Load() != 0 {
+				t.Fatalf("sessions = source closed %d, sink acquired %d", sourceState.closed.Load(), sinkState.acquired.Load())
+			}
+		})
+	}
+}
+
+func TestPrepareRequiresSnapshotterFromActualCapabilitiesForAutomaticSelection(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.RandomRead, access.StableSize)
+	sourceState := &sessionCounters{noSnapshot: true}
+	reference, err := access.Parse("memory:data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := plan.Boundary{
+		Direction:            plan.InputBoundary,
+		Kind:                 plan.ProviderBoundary,
+		Choice:               0,
+		Node:                 "source",
+		Port:                 "out",
+		Component:            "source",
+		Scheme:               reference.Scheme(),
+		Reference:            reference.Display(),
+		ReferenceFingerprint: reference.Fingerprint().String(),
+		Available:            sourceCapabilities.Values(),
+		Effective:            sourceCapabilities.Values(),
+		// Automatic Probe starts with a read-only view. StableSize is
+		// selected only after the Format requirements are finalized.
+		Selected: []access.Capability{access.RandomRead},
+	}
+	sourceComponent, _, _, _ := boundaryComponentsWithRequirements(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, sourceState.acquire(sourceCapabilities))},
+		nil,
+		access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
+	)
+	sourceTrait, ok := access.SourceOf(sourceComponent)
+	if !ok {
+		t.Fatal("automatic source fixture has no source trait")
+	}
+	entry := bound.AutomaticSource(projection, reference, sourceTrait)
+	sessions, acquireErr := acquireSessions(context.Background(), []bound.Entry{entry}, plan.InputBoundary)
+	if len(sessions) != 1 {
+		t.Fatalf("acquired sessions = %d, want one session retained for cleanup", len(sessions))
+	}
+	items := diagnostic.ItemsOf(acquireErr)
+	if len(items) != 1 || items[0].Code != "prepare.access-snapshot" || items[0].Detail["required"] != string(access.StableSize) || items[0].Detail["error"] != access.ErrNoSnapshot.Error() {
+		t.Fatalf("automatic stable snapshot diagnostic = %#v, error %v", items, acquireErr)
+	}
+	if failures := closeSessions(context.Background(), sessions); len(failures) != 0 {
+		t.Fatalf("source cleanup failures = %#v", failures)
+	}
+
+	_, transform, _, _ := boundaryComponentsWithRequirements(
+		nil,
+		nil,
+		nil,
+		access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
+	)
+	resolved, selection, finalizeErr := bind.FinalizeInput(
+		entry,
+		job.NewNode("format", transform.Identity(), config.NewPatch()),
+		transform,
+		sourceCapabilities,
+	)
+	if finalizeErr != nil {
+		t.Fatal(finalizeErr)
+	}
+	if got := selection.Capabilities(); len(got) != 2 || got[0] != access.RandomRead || got[1] != access.StableSize || len(resolved.Projection().Selected) != 2 || resolved.Projection().Selected[0] != access.RandomRead || resolved.Projection().Selected[1] != access.StableSize {
+		t.Fatalf("automatic final selection = %v / %v, want stable-size", got, resolved.Projection().Selected)
+	}
+	if sourceState.closed.Load() != 1 {
+		t.Fatalf("source cleanup = %d, want one close", sourceState.closed.Load())
+	}
+}
+
+func TestVerifySnapshotsSkipsExplicitNoSnapshot(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.RandomRead)
+	sourceState := &sessionCounters{}
+	session := trackedAccessSession{capabilities: sourceCapabilities, counters: sourceState}
+	noSnapshot, err := access.NewSnapshot("", access.NoSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure := verifySnapshots(context.Background(), RunPhase, []acquiredSession{{node: "source", value: session, snapshot: noSnapshot}}); failure != nil {
+		t.Fatalf("NoSnapshot was treated as a changed identity: %v", failure)
 	}
 }
 

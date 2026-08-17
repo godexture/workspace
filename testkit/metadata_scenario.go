@@ -68,7 +68,7 @@ func newMetadataScenario(subject MetadataSubject, test MetadataCase) (*scenarioC
 		resolver: resolver,
 		input:    test.Input,
 		want:     test.Want,
-		config:   resolved.Fingerprint.String(),
+		config:   resolved.Fingerprint().String(),
 	}
 	anchorFinish := base.finish
 	base.selected = anchor.identity
@@ -132,7 +132,7 @@ func (e metadataEvaluator) verify(outcome metadataOutcome) error {
 func safeMetadataParse(call func() (metadata.Document, error)) (document metadata.Document, err error, panicErr error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			panicErr = fmt.Errorf("Metadata Parse panicked: %v\n%s", recovered, debug.Stack())
+			panicErr = fmt.Errorf("Metadata Parse panicked: %s\n%s", diagnostic.Recovered(recovered), debug.Stack())
 			document = metadata.Document{}
 			err = nil
 		}
@@ -144,7 +144,7 @@ func safeMetadataParse(call func() (metadata.Document, error)) (document metadat
 func safeMetadataMarshal(call func() (metadata.Blob, error)) (payload metadata.Blob, err error, panicErr error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			panicErr = fmt.Errorf("Metadata Marshal panicked: %v\n%s", recovered, debug.Stack())
+			panicErr = fmt.Errorf("Metadata Marshal panicked: %s\n%s", diagnostic.Recovered(recovered), debug.Stack())
 			payload = metadata.Blob{}
 			err = nil
 		}

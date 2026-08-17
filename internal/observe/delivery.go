@@ -2,17 +2,23 @@ package observe
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"runtime/debug"
+
+	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/cancel"
 )
 
+// SinkPanicError keeps the stack a sink panicked from, not the value it
+// panicked with: that value belongs to the sink and can be anything it was
+// holding.
 type SinkPanicError struct {
-	Value any
-	Stack []byte
+	Summary string
+	Stack   []byte
 }
 
-func (e *SinkPanicError) Error() string { return fmt.Sprintf("observation sink panicked: %v", e.Value) }
+func (e *SinkPanicError) Error() string {
+	return "observation sink panicked: " + e.Summary
+}
 func (e *SinkPanicError) StackTrace() []byte {
 	return append([]byte(nil), e.Stack...)
 }
@@ -75,12 +81,12 @@ func (c *Collector) dropPending() {
 func invokeSink(ctx context.Context, sink Sink, event Event) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = &SinkPanicError{Value: recovered, Stack: append([]byte(nil), debug.Stack()...)}
+			err = &SinkPanicError{Summary: diagnostic.Recovered(recovered), Stack: append([]byte(nil), debug.Stack()...)}
 		}
 	}()
 	return sink(ctx, event.clone())
 }
 
 func cancellationEcho(err error, ctx context.Context) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Cause(ctx))
+	return cancel.Normalize(ctx, err) != nil
 }

@@ -31,7 +31,7 @@ func ExampleNewPacket() {
 	_, dtsKnown := value.DTS().Get()
 
 	fmt.Println(value.Sequence(), pts, ptsKnown, dtsKnown)
-	fmt.Printf("%x\n", value.Bytes())
+	fmt.Printf("%x\n", value.Bytes().AppendTo(nil))
 	// Output:
 	// 3 0 true false
 	// aabb

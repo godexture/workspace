@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/endpoint"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/task"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
@@ -56,19 +57,19 @@ func (r *runner) open() *Failure {
 		}
 	}
 
+	r.ledger.EnterStage(journal.Open)
 	for _, index := range order {
 		if err := context.Cause(r.ctx); err != nil {
-			failure := failureOf(OpenPhase, r.nodes[index].ID().String(), "", err)
-			return &failure
+			return r.record(journal.WorkError, journal.Open, r.nodes[index].ID().String(), "", err)
 		}
 		if failure := r.openNode(index); failure != nil {
 			return failure
 		}
 	}
 	if err := context.Cause(r.ctx); err != nil {
-		failure := failureOf(OpenPhase, "", "", err)
-		return &failure
+		return r.record(journal.WorkError, journal.Open, "", "", err)
 	}
+	r.ledger.EnterStage(journal.Run)
 	return nil
 }
 
@@ -76,21 +77,25 @@ func (r *runner) openNode(index int) *Failure {
 	node := r.nodes[index]
 	boundary, err := r.opening(node.ID().String())
 	if err != nil {
-		failure := failureOf(OpenPhase, node.ID().String(), "", err)
-		return &failure
+		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
 	}
 	lease := r.prepared.byNode[node.ID()]
+	// The component's own failure domain is created here and lives for the
+	// whole run, so a payload it retains past a call still reports somewhere
+	// the run collects from -- during Flush, during Close, or after both.
+	owner := r.ledger.Domain("node/"+node.ID().String(), node.ID().String())
+	r.owners[index] = owner
 	services := plugin.OpenServices{
 		Buffers:     lease.Buffers(),
 		Tasks:       task.NewStarter(r.plugins, lease.Grant().Workers),
 		Diagnostics: r.diag.sink(node.ID().String()),
+		Owner:       owner.At(node.ID().String()).Reporter(),
 		Boundary:    boundary,
 	}
 	r.emitLifecycle(node.ID().String(), OpenPhase, "start")
 	operator, err := r.prepared.program.Open(plugin.NewOpenContext(r.ctx, services), node.ID())
 	if err != nil {
-		failure := failureOf(OpenPhase, node.ID().String(), "", err)
-		return &failure
+		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
 	}
 	r.operators[index] = operator
 	r.opened = append(r.opened, index)
@@ -105,8 +110,7 @@ func (r *runner) openNode(index int) *Failure {
 	output.flusher, _ = operator.(access.Flusher)
 	output.syncer, _ = operator.(access.Syncer)
 	if output.class != 0 && output.class != access.LiveNoCommit && output.transaction == nil {
-		failure := failureOf(OpenPhase, node.ID().String(), "", fmt.Errorf("output declares %s but operator does not implement access.Transaction", output.class))
-		return &failure
+		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", fmt.Errorf("output declares %s but operator does not implement access.Transaction", output.class))
 	}
 	return nil
 }

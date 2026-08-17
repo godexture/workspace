@@ -22,13 +22,13 @@ type Node struct {
 }
 
 func NewNode(id NodeID, component plugin.Identity, patch config.Patch) Node {
-	return Node{id: NodeID(strings.TrimSpace(string(id))), component: component, config: patch}
+	return Node{id: NodeID(strings.TrimSpace(string(id))), component: component, config: patch.Clone()}
 }
 
 func (n Node) Valid() bool                { return n.id.Valid() && !n.component.IsZero() }
 func (n Node) ID() NodeID                 { return n.id }
 func (n Node) Component() plugin.Identity { return n.component }
-func (n Node) Config() config.Patch       { return n.config }
+func (n Node) Config() config.Patch       { return n.config.Clone() }
 
 // Port identifies one port on one requested node.
 type Port struct {

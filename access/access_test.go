@@ -24,6 +24,13 @@ func (h accessHandle) Close() error {
 	return nil
 }
 
+type panicAccessHandle struct{ closed *atomic.Int32 }
+
+func (h panicAccessHandle) Close() error {
+	h.closed.Add(1)
+	panic("resource-close-secret")
+}
+
 func TestOwnershipModesAreExplicit(t *testing.T) {
 	closed := &atomic.Int32{}
 	owned := Own(accessHandle{closed: closed})
@@ -57,6 +64,25 @@ func TestCopiedOwnedResourceClosesOnce(t *testing.T) {
 	}
 	if closed.Load() != 1 {
 		t.Fatalf("copied resource close count = %d, want 1", closed.Load())
+	}
+}
+
+func TestOwnedResourceClosePanicIsStableAndExactlyOnce(t *testing.T) {
+	closed := &atomic.Int32{}
+	first := Own(panicAccessHandle{closed: closed})
+	second := first
+	for index, resource := range []*Resource[panicAccessHandle]{&first, &second} {
+		err := resource.Close()
+		if !errors.Is(err, ErrResourceClosePanic) || strings.Contains(err.Error(), "resource-close-secret") {
+			t.Fatalf("close %d error = %v, want stable redacted panic error", index, err)
+		}
+		stack, ok := err.(interface{ StackTrace() []byte })
+		if !ok || len(stack.StackTrace()) == 0 {
+			t.Fatalf("close %d error has no panic stack", index)
+		}
+	}
+	if got := closed.Load(); got != 1 {
+		t.Fatalf("panic closer calls = %d, want exactly one", got)
 	}
 }
 

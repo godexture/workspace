@@ -85,7 +85,11 @@ func ExampleWithReader() {
 // private plan can only be consumed later by the component that created it.
 func ExampleCompile() {
 	component := Codec().Components()[0]
-	resolved, err := component.Resolve(config.NewPatch().Set("level", 7))
+	level, ok := component.Schema().Key("level")
+	if !ok {
+		panic("example codec has no level field")
+	}
+	resolved, err := component.Resolve(config.NewPatch().Set(level, 7))
 	if err != nil {
 		panic(err)
 	}
@@ -140,6 +144,39 @@ func ExampleOpenContext_Tasks() {
 	defer operator.Close()
 	fmt.Println("workers", compiled.Resources().Workers, "task", <-starter.completed)
 	// Output: workers 1 task prefetch
+}
+
+// A component that keeps a payload past the call it arrived in declares the
+// slot holding it, by binding that slot to the Owner Host granted it. The
+// Owner lives as long as the component does, so releasing during Flush or
+// Close still reports somewhere the run collects from, and a release that
+// fails is never lost for having happened after the call that produced it.
+//
+// An unbound slot refuses ownership instead of inheriting the sender's domain,
+// which is what keeps the retained payload's lifetime a declaration rather than
+// an accident of whichever caller handed it over.
+func ExampleOpenContext_Owner() {
+	units := mediaSchema.Define[exampleUnitID, exampleUnit](mediaSchema.Traits[exampleUnit]{
+		Drop: func(exampleUnit) { fmt.Println("released") },
+	})
+	var domain flow.Collector
+	owner := plugin.NewOpenContext(context.Background(), plugin.OpenServices{Owner: &domain}).Owner()
+
+	var held flow.Item[exampleUnit]
+	held.Bind(units, owner)
+
+	// The payload arrives in a slot the runtime owns; the component moves it
+	// into its own and answers for it from then on.
+	incoming := flow.NewItem(exampleUnit(7), units, &domain)
+	fmt.Println("kept", held.Move(&incoming), "handed over", !incoming.Valid())
+
+	// Later, during Flush or Close.
+	held.Drop()
+	fmt.Println("release failures", len(domain.Failures()))
+	// Output:
+	// kept true handed over true
+	// released
+	// release failures 0
 }
 
 // Public vocabularies can opt into host-time validation. The key itself stays

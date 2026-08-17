@@ -198,3 +198,12 @@ func solvePlatform() plan.Platform {
 func structural(detail string) plugin.Effect {
 	return plugin.Effect{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: detail}
 }
+
+func solveKey(t *testing.T, field string) config.Key {
+	t.Helper()
+	key, ok := solveConfigSchema().Key(field)
+	if !ok {
+		t.Fatalf("solve fixture schema has no %s field", field)
+	}
+	return key
+}

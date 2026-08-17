@@ -5,20 +5,29 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/internal/journal"
 )
 
 type spoolSinkFixture struct {
-	data      []byte
-	limit     int
-	writeErr  error
-	commitErr error
-	events    []string
+	data       []byte
+	limit      int
+	writeErr   error
+	commitErr  error
+	closeErr   error
+	panicCaps  bool
+	panicAbort bool
+	panicClose bool
+	events     []string
 }
 
-func (*spoolSinkFixture) Capabilities() access.Capabilities {
+func (s *spoolSinkFixture) Capabilities() access.Capabilities {
+	if s.panicCaps {
+		panic("spool-capabilities-secret")
+	}
 	value, _ := access.NewCapabilities(access.SequentialWrite)
 	return value
 }
@@ -54,18 +63,25 @@ func (s *spoolSinkFixture) Commit(context.Context) error {
 }
 func (s *spoolSinkFixture) Abort(context.Context) error {
 	s.events = append(s.events, "abort")
+	if s.panicAbort {
+		panic("spool-abort-secret")
+	}
 	return nil
 }
 func (s *spoolSinkFixture) Close() error {
 	s.events = append(s.events, "close")
-	return nil
+	if s.panicClose {
+		panic("spool-close-secret")
+	}
+	return s.closeErr
 }
 
 type spoolStorageFixture struct {
-	data     []byte
-	writeErr error
-	writes   int
-	closed   int
+	data       []byte
+	writeErr   error
+	writes     int
+	closed     int
+	panicClose bool
 }
 
 func (s *spoolStorageFixture) WriteAt(source []byte, offset int64) (int, error) {
@@ -88,7 +104,91 @@ func (s *spoolStorageFixture) CopyTo(ctx context.Context, destination access.App
 func (s *spoolStorageFixture) Close() error {
 	s.closed++
 	s.data = nil
+	if s.panicClose {
+		panic("spool-storage-close-secret")
+	}
 	return nil
+}
+
+func TestSpoolCleanupAttemptsEveryChildAfterPanic(t *testing.T) {
+	underlying := &spoolSinkFixture{panicAbort: true, panicClose: true}
+	storage := &spoolStorageFixture{panicClose: true}
+	session := openedSpoolWithStorage(t, 16, underlying, storage)
+	err := session.Abort(t.Context())
+	if err == nil || strings.Contains(err.Error(), "spool-abort-secret") || strings.Contains(err.Error(), "spool-storage-close-secret") {
+		t.Fatalf("Abort error = %v, want redacted aggregate", err)
+	}
+	if storage.closed != 1 || !slices.Contains(underlying.events, "abort") {
+		t.Fatalf("Abort cleanup = storage %d events %v", storage.closed, underlying.events)
+	}
+	closeErr := session.Close()
+	if closeErr == nil || strings.Contains(closeErr.Error(), "spool-close-secret") || strings.Contains(closeErr.Error(), "spool-storage-close-secret") {
+		t.Fatalf("Close error = %v, want redacted aggregate", closeErr)
+	}
+	if !slices.Contains(underlying.events, "close") || storage.closed != 1 {
+		t.Fatalf("Close did not attempt both children: storage %d events %v", storage.closed, underlying.events)
+	}
+	if second := session.Close(); second == nil {
+		t.Fatal("second Close lost the first cleanup error")
+	}
+}
+
+func TestSpoolStorageClosesOnceAfterSuccessfulFlush(t *testing.T) {
+	underlying := &spoolSinkFixture{}
+	storage := &spoolStorageFixture{}
+	session := openedSpoolWithStorage(t, 16, underlying, storage)
+	if _, err := session.Write(t.Context(), []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if storage.closed != 1 {
+		t.Fatalf("storage closes = %d, want exactly one across Flush and Close", storage.closed)
+	}
+}
+
+func TestSpoolCloseMixedFailuresKeepOccurrenceProvenance(t *testing.T) {
+	ordinary := errors.New("underlying close failed")
+	underlying := &spoolSinkFixture{closeErr: ordinary}
+	storage := &spoolStorageFixture{panicClose: true}
+	session := openedSpoolWithStorage(t, 16, underlying, storage)
+	err := session.Close()
+	if err == nil {
+		t.Fatal("mixed spool close succeeded")
+	}
+	ledger := journal.NewLedger()
+	runner := &runner{ctx: context.Background(), ledger: ledger, diag: &diagnosticLog{}}
+	runner.adopt(journal.CleanupError, failureOf(ClosePhase, "output", "access/session", err))
+	events := ledger.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want one per close child", events)
+	}
+	if events[0].Kind != journal.CleanupPanic || events[0].Operation != journal.Close || events[0].Node != "output" || events[0].Task != "spool/storage-close" || len(events[0].Stack) == 0 {
+		t.Fatalf("storage panic = %#v", events[0])
+	}
+	if events[1].Kind != journal.CleanupError || events[1].Operation != journal.Close || events[1].Node != "output" || events[1].Task != "access/session" || !errors.Is(events[1].Err, ordinary) {
+		t.Fatalf("ordinary session close = %#v", events[1])
+	}
+}
+
+func TestSpoolConstructorUsesVerifiedOpeningCapabilities(t *testing.T) {
+	underlying := &spoolSinkFixture{panicCaps: true}
+	storage := &spoolStorageFixture{}
+	spec, err := access.NewSpoolSpec(16, 0, access.MemorySpool, 0, true, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSpoolSessionWithStorage(spec, underlying, sequentialOpening(t, underlying), storage)
+	if err != nil {
+		t.Fatalf("constructor error = %v", err)
+	}
+	if err := session.Close(); err != nil || storage.closed != 1 {
+		t.Fatalf("constructor cleanup = %v, storage closes %d", err, storage.closed)
+	}
 }
 
 func TestSpoolCopiesPositionedBytesOnceBeforeCommit(t *testing.T) {

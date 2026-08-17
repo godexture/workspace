@@ -133,7 +133,21 @@ hot-path 12 条の証拠は次を正本とする。benchmark は総合的な回�
 | 8: resource accounting を中央 item loop に置かない | `internal/memory.TestReservationsAreCoarseAndRepaidOnce`、edge-local queue snapshot test、task-local `internal/observe.Local` test。Host manager は Open 前の coarse reservation だけを扱う |
 | 9: item loop に panic-recovery `defer` なし | `internal/run.TestTaskTopPanicIdentifiesNodeAndDropsActiveItem` と Host lifecycle panic matrix。recovery は `internal/task.Group` の task top に一度だけ置く |
 | 11: audio converter は region 境界だけ | `internal/solve.TestCompatibleAudioFilterRegionUsesOnlyBoundaryConverters` が filter N=1/4/16 の全てで converter 2 個を検査する |
-| 12: exclusive in-place / shared branch COW | `media/audio.TestExclusiveFrameEditReusesBackingWithoutAllocation` と `internal/run/drive.TestAudioFanoutCopiesOnlyModifyingBranch`。exclusive は同一 address・0 allocation、2-way fan-out は変更 branch だけ 1 copy |
+| 12: exclusive in-place / shared branch COW | `media/audio.TestExclusiveFrameEditReusesBackingWithoutAllocation` と `internal/run/drive.TestAudioFanoutCopiesOnlyModifyingBranch`。exclusive は同一 address・0 allocation、2-way fan-out は変更 branch だけ 1 copy。immutable sample read の代表値は `plugin/pcm/linear.BenchmarkPCMReadViews` |
+
+R-03 の immutable read view 導入時は、4096 sample の 16-bit decode/encode 相当を direct slice reference と同一 process で paired 測定した。
+
+```bash
+go test ./plugin/pcm/linear -run '^$' -bench '^BenchmarkPCMReadViews$' -benchmem -benchtime=200ms -count=5
+```
+
+2026-08-13、上記 M5 測定と同じ machine/toolchain で 5 run の median `immutable-view/direct-slice` ratio は decode `1.54`、encode `1.77`、両経路 `0 B/op` / `0 allocs/op` だった。
+
+`direct-slice` は同じ変換を最短の slice loop で書いた理論下限であって、R-03 以前の実装ではない。旧実装は sample ごとに `binary.ByteOrder` interface を間接呼び出ししており、同一 machine の paired 測定では 4096 sample mono で decode `8.9 µs` / encode `7.1 µs`、stereo で decode `18.8 µs` / encode `16.6 µs` だった。現行は同 case で decode `5.5 µs` / encode `3.9 µs`、stereo で decode `13.6 µs` / encode `9.7 µs` である。R-03 は hot path を遅くしていない。この 2 つの ratio は下限からの距離であり、regression の判定基準ではない。
+
+`At` を element ごとに呼ぶ初期移行は明白な回帰になったため、`buffer.Bytes.Blocks` で計上済み scratch へ `CopyTo` してから処理する実装へ置換した。`Blocks` の block は長さが呼出しごとに変わるため、hot loop 側で block を frame 境界へ trim し destination を window すると、element loop の bounds check が消えて inline 実装と同じ時間に戻る。scratch は operator の field に置く。stack local の配列を `Blocks` の closure へ渡すと escape して呼出しごとに block size の heap allocation になる（4096 B/op を実測）。
+
+file sink も payload 全体を `AppendTo(nil)` せず、計上済み 64 KiB scratch を再利用して immutable view を drain する。copy 自体は payload size に比例する 1 pass が増えるが、これは syscall に対して無視できる。比例しないのは allocation であり、それを test で 0 に固定する。absolute timing は将来 machine との比較に使わない。
 
 paired harness は旧 contract の最後の consumer であり、結果を確定した M5 cut 時点の一回限りの比較記録である。`_legacy/` は移植参照 algorithm だけに限定するため、旧 package の削除後に build できない harness source は current tree に残さない。継続 gate は `Execution` の test-only shortcut ではなく、resource reservation、Open、Finalize、output transaction、cleanup を含む production の `Prepared.Run` 経路を測る。
 

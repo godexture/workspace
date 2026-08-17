@@ -212,15 +212,15 @@ func TestPlanFingerprintExcludesDisplayAndIncludesExecutionState(t *testing.T) {
 
 func TestPlanFingerprintExcludesConfigProvenance(t *testing.T) {
 	configuration := planConfiguration()
-	explicit, err := configuration.View().Resolve(config.NewPatch().Set("mode", "copy"))
+	explicit, err := configuration.View().Resolve(config.NewPatch().Set(planKey(t, "mode"), "copy"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	planned, err := configuration.View().Resolve(config.NewPatch().Set("mode", "copy").Planned())
+	planned, err := configuration.View().Resolve(config.NewPatch().Set(planKey(t, "mode"), "copy").Planned())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicit.Fingerprint != planned.Fingerprint || explicit.Summary().Fields()[0].Source == planned.Summary().Fields()[0].Source {
+	if explicit.Fingerprint() != planned.Fingerprint() || explicit.Summary().Fields()[0].Source == planned.Summary().Fields()[0].Source {
 		t.Fatalf("config provenance fixture = explicit %#v, planned %#v", explicit.Summary().Fields(), planned.Summary().Fields())
 	}
 	firstDescription := testDescription(t)
@@ -280,4 +280,13 @@ func TestPlanRuntimeProjectionIsCanonicalImmutableAndExecutable(t *testing.T) {
 	if planned.ExecutionSignature() == other.ExecutionSignature() {
 		t.Fatal("runtime buffer change did not affect execution signature")
 	}
+}
+
+func planKey(t *testing.T, field string) config.Key {
+	t.Helper()
+	key, ok := planConfiguration().Key(field)
+	if !ok {
+		t.Fatalf("plan fixture schema has no %s field", field)
+	}
+	return key
 }

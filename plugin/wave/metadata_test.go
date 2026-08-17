@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -239,7 +240,9 @@ func restoredWaveChunks(document metadata.Document) [][]byte {
 			continue
 		}
 		payload := block.Payload().AppendTo(nil)
-		if bytes.Equal(payload, muxReserveChunk()) {
+		// Only the writer's own empty reservation is dropped. An input-derived
+		// reservation carries content and stays in the comparison.
+		if bytes.Equal(payload, reserveChunkOf(muxChunks{})) {
 			continue
 		}
 		result = append(result, payload)
@@ -293,35 +296,38 @@ func waveTestRIFF(t testing.TB, chunks ...[]byte) []byte {
 	return value
 }
 
-// The ds64 reservation slot is structural: whichever writer produced it, this
-// muxer recreates it, so preserving it would make it accumulate. A JUNK chunk
-// anywhere else, or at another size, is ordinary content.
-func TestInspectTreatsOnlyTheDs64ReservationSlotAsStructural(t *testing.T) {
-	reservation := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize), 0)
+// Every JUNK chunk is input-derived content. The one in the ds64 reservation
+// slot is recorded under its own anchor so the writer can put it back in the
+// same slot instead of appending a second copy after its own reservation.
+func TestInspectAnchorsTheDs64ReservationSlot(t *testing.T) {
 	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
-	sameSizeElsewhere := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize), 0)
-	otherSizeInSlot := waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize+2), 0)
 	dataChunk := waveTestChunk(t, tagDATA, []byte{7, 8}, 0)
+	reservationPayload := bytes.Repeat([]byte{0x5a}, ds64PayloadSize)
 
 	for _, test := range []struct {
-		name  string
-		value []byte
-		want  int
+		name   string
+		value  []byte
+		anchor chunkAnchor
 	}{
 		{
-			name:  "reservation-slot-is-dropped",
-			value: waveTestRIFF(t, reservation, formatChunk, dataChunk),
-			want:  0,
+			name:   "reservation-slot",
+			value:  waveTestRIFF(t, waveTestChunk(t, tagJUNK, reservationPayload, 0), formatChunk, dataChunk),
+			anchor: chunkReservation,
 		},
 		{
-			name:  "same-size-after-format-is-preserved",
-			value: waveTestRIFF(t, formatChunk, sameSizeElsewhere, dataChunk),
-			want:  1,
+			name:   "same-size-after-format",
+			value:  waveTestRIFF(t, formatChunk, waveTestChunk(t, tagJUNK, reservationPayload, 0), dataChunk),
+			anchor: chunkBeforeData,
 		},
 		{
-			name:  "other-size-in-slot-is-preserved",
-			value: waveTestRIFF(t, otherSizeInSlot, formatChunk, dataChunk),
-			want:  1,
+			name:   "other-size-in-slot",
+			value:  waveTestRIFF(t, waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize+2), 0), formatChunk, dataChunk),
+			anchor: chunkBeforeFormat,
+		},
+		{
+			name:   "odd-size-in-slot",
+			value:  waveTestRIFF(t, waveTestChunk(t, tagJUNK, make([]byte, ds64PayloadSize+1), 0xc4), formatChunk, dataChunk),
+			anchor: chunkBeforeFormat,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -329,11 +335,80 @@ func TestInspectTreatsOnlyTheDs64ReservationSlotAsStructural(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := len(inspected.metadata.Blocks()); got != test.want {
-				t.Fatalf("preserved blocks = %d, want %d", got, test.want)
+			blocks := inspected.metadata.Blocks()
+			if len(blocks) != 1 {
+				t.Fatalf("preserved blocks = %d, want 1", len(blocks))
+			}
+			parsed, ok := parseChunkBlockID(blocks[0].ID())
+			if !ok || parsed.anchor != test.anchor {
+				t.Fatalf("preserved anchor = %#v/%v, want %v", parsed, ok, test.anchor)
 			}
 		})
 	}
+}
+
+// A non-zero reservation slot is legal RIFF and is content the source owns.
+// Writing RIFF back must reproduce it byte for byte, and doing it again must
+// not change or duplicate anything.
+func TestMuxRestoresANonZeroReservationSlot(t *testing.T) {
+	reservationPayload := bytes.Repeat([]byte{0x5a}, ds64PayloadSize)
+	reservation := waveTestChunk(t, tagJUNK, reservationPayload, 0)
+	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
+	data := []byte{7, 8}
+	original := waveTestRIFF(t, reservation, formatChunk, waveTestChunk(t, tagDATA, data, 0))
+	resolver := infoTestResolver(t)
+
+	encoded := original
+	for pass := 0; pass < 2; pass++ {
+		inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(encoded), resolver)
+		if err != nil {
+			t.Fatalf("pass %d inspect failed: %v", pass, err)
+		}
+		chunks, err := marshalMuxChunks(t.Context(), resolver, inspected.metadata)
+		if err != nil {
+			t.Fatalf("pass %d marshal failed: %v", pass, err)
+		}
+		if !bytes.Equal(chunks.reservation, reservation) {
+			t.Fatalf("pass %d reservation = %x, want %x", pass, chunks.reservation, reservation)
+		}
+		header, err := newMuxHeaderWithChunks(inspected.description, chunks)
+		if err != nil {
+			t.Fatalf("pass %d header failed: %v", pass, err)
+		}
+		encoded = materializeMuxHeader(t, header, data)
+		if !bytes.Equal(encoded, original) {
+			t.Fatalf("pass %d round trip = %x, want %x", pass, encoded, original)
+		}
+	}
+}
+
+// Promoting to RF64 puts ds64 in the reservation slot. The header layout is
+// fixed before the data size is known, so the preserved bytes have nowhere
+// else to go and the loss is part of the contract rather than a surprise.
+func TestRF64PromotionReplacesThePreservedReservation(t *testing.T) {
+	reservationPayload := bytes.Repeat([]byte{0x5a}, ds64PayloadSize)
+	chunks := muxChunks{reservation: waveTestChunk(t, tagJUNK, reservationPayload, 0)}
+	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	header, err := newMuxHeaderWithChunks(description, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(header.initial[reserveOffset:reserveOffset+8+ds64PayloadSize], chunks.reservation) {
+		t.Fatalf("reserved slot = %x, want the preserved chunk", header.initial[reserveOffset:reserveOffset+8+ds64PayloadSize])
+	}
+	finalized, err := header.finalize(uint64(math.MaxUint32) + 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finalized.rf64 {
+		t.Fatal("an oversized data chunk did not promote to RF64")
+	}
+	for _, patch := range finalized.patches {
+		if patch.offset == int64(reserveOffset) && string(patch.payload[0:4]) == tagDS64 {
+			return
+		}
+	}
+	t.Fatalf("RF64 finalization did not overwrite the reservation slot: %#v", finalized.patches)
 }
 
 // Appended tags and encoder padding past the RIFF chunk are common. The spec

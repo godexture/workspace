@@ -11,7 +11,9 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
+	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -146,4 +148,88 @@ func linearPatch(description sample.Description, chunkSamples int) config.Patch 
 		SetText("layout", string(description.Layout)).
 		SetText("endian", string(description.Endian)).
 		SetText("chunkSamples", strconv.Itoa(chunkSamples))
+}
+
+// Every linear component declares Suggest with a limit of one. The planner
+// only ever asks it to reconcile an inspected input with an optional target,
+// so the contract worth pinning is that it answers from the input, follows an
+// explicit endian request, and refuses a format it cannot carry.
+func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
+	t.Helper()
+	input := sample.Description{
+		Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
+		Layout: sample.Stereo, Endian: sample.BigEndian,
+	}
+
+	suggestions := []testkit.Suggestion{
+		{
+			Name:  "follows-the-inspected-input",
+			Input: linearDescriptor(t, input),
+			Need:  plugin.ConditionNeed[stream.Descriptor]("linear.config"),
+			Want: []testkit.Candidate{{
+				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "big",
+			}},
+		},
+		{
+			Name:  "adopts-the-requested-endian",
+			Input: linearDescriptor(t, input),
+			Need: plugin.DescriptorNeed(
+				"linear.config",
+				linearDescriptor(t, sample.Description{
+					Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
+					Layout: sample.Stereo, Endian: sample.LittleEndian,
+				}),
+			),
+			Want: []testkit.Candidate{{
+				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "little",
+			}},
+		},
+		{
+			Name:  "offers-nothing-without-sample-properties",
+			Input: stream.MustDescriptor("opaque", codec.Packets().Identity(), timing.MustBase(1, 48_000), property.New()),
+			Need:  plugin.ConditionNeed[stream.Descriptor]("linear.config"),
+		},
+	}
+
+	for _, subject := range []struct {
+		identity plugin.Identity
+		run      func(*testing.T, plugin.Set, plugin.Identity, *testkit.Coverage, []testkit.Suggestion)
+	}{
+		{identity: linear.ReaderIdentity(), run: suggestBytesToChunks},
+		{identity: linear.ParserIdentity(), run: suggestChunksToPackets},
+		{identity: linear.DecoderIdentity(), run: suggestPacketsToFrames},
+		{identity: linear.EncoderIdentity(), run: suggestFramesToPackets},
+		{identity: linear.WriterIdentity(), run: suggestPacketsToWrites},
+	} {
+		subject.run(t, set, subject.identity, coverage, suggestions)
+	}
+}
+
+func suggestBytesToChunks(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "bytes", access.Bytes(), "chunks", mediaformat.Chunks()), coverage), suggestions...)
+}
+
+func suggestChunksToPackets(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "chunks", mediaformat.Chunks(), "packets", codec.Packets()), coverage), suggestions...)
+}
+
+func suggestPacketsToFrames(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "packets", codec.Packets(), "frames", sample.S16()), coverage), suggestions...)
+}
+
+func suggestFramesToPackets(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "frames", sample.S16(), "packets", codec.Packets()), coverage), suggestions...)
+}
+
+func suggestPacketsToWrites(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "packets", codec.Packets(), "writes", access.Writes()), coverage), suggestions...)
+}
+
+func linearDescriptor(t *testing.T, description sample.Description) stream.Descriptor {
+	t.Helper()
+	properties, err := description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stream.MustDescriptor("linear", codec.Packets().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
 }

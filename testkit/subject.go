@@ -43,3 +43,12 @@ func (s Subject[I, O]) Identity() plugin.Identity { return s.identity }
 func (s Subject[I, O]) valid() bool {
 	return !s.set.Empty() && !s.identity.IsZero() && s.input.id != "" && s.output.id != "" && s.input.schema.Valid() && s.output.schema.Valid()
 }
+
+func componentOf(set plugin.Set, identity plugin.Identity) (plugin.Component, bool) {
+	for _, component := range set.Components() {
+		if component.Identity() == identity {
+			return component, true
+		}
+	}
+	return plugin.Component{}, false
+}

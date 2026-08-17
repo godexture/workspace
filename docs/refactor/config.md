@@ -74,6 +74,8 @@ Patch {
 
 `Patch` は surface 間の公開 Go struct を兼ねる wire DTO ではない。各 surface が versioned DTO/flag を受け取り、schema の field codec を使って `Patch` に投影する。unknown field は error にする。
 
+`Patch` の entry は二種類ある。surface の text は schema を必要とせず、target field の codec が解決時に decode と clone を行う。typed 値は `Schema.Key`／`SchemaView.Key` が返す `config.Key` を通してのみ入れられる。key は field の宣言 clone を運ぶため、`Patch` は caller の slice/map/pointer を共有せず snapshot を保持できる。[C17](decisions.md#c17-config-snapshot-は-codec-clone-だけで構成する) が任意の Go 値を推測して複製することを禁じている以上、field 名だけを受け取る typed setter は immutable な request を作れない。他 schema の key、型不一致、無効な key は `Patch` が diagnostic として保持し、解決時に他の diagnostic と一緒に報告する。
+
 ### Resolved
 
 解決結果は概念上、次を持つ。
@@ -85,6 +87,8 @@ Patch {
 - `Provenance`: field ごとの `default`、`preset`、`explicit`、`normalized`
 - `Diagnostics`: deprecated alias ではなく、丸めや正規化等の説明
 - `Fingerprint`: planner memoization と Plan 再現性のための canonical identity
+
+これらは exported field ではなく accessor である。`Value` は呼ばれるたびに schema codec で fresh snapshot を返すため、Shape が受け取った slice/map を書き換えても、同じ fingerprint の後続 Compile は元の値を見る。phase ごとの snapshot は type-erased な `ResolvedView` でも同じである。
 
 `Resolved` の内部に surface 固有 flag object や生の string map を保持しない。secret は Plan、log、diagnostic では必ず redaction する。
 
@@ -171,7 +175,7 @@ CLI は同じ schema から repeatable flag、indexed path、JSON file のいず
 
 第三者の custom type は `config.Codec[T]` を schema field に関連付けられるようにする。codec は decode、human-readable encode、canonical encode、type description を提供する。`encoding.TextMarshaler`/`TextUnmarshaler` 用 adaptor は提供できるが、それだけを唯一の拡張方法にはしない。
 
-unordered map は canonical key codec と順序規則を宣言できる場合だけ受け入れる。NaN/Inf、同値な複数表記、負の zero、単位の別表記等は codec が canonical form を決める。canonical form を作れない field は Plan fingerprint を不安定にするため schema 登録を失敗させる。
+unordered map は canonical key codec と順序規則を宣言できる場合だけ受け入れる。NaN/Inf、同値な複数表記、負の zero、単位の別表記等は codec が canonical form を決める。map 内で異なる key が同じ canonical bytes を返す場合は、順序を推測せず canonicalization を error にする（custom key canonical は map 内で injective でなければならない）。canonical form を作れない field は Plan fingerprint を不安定にするため schema 登録を失敗させる。
 
 関数値と closure は config ではない。`[]func(...)` のような field は canonical 表現を持てないため登録に失敗する。これは制限ではなく検出であり、実装の選択肢が config 型へ漏れていることを示す。設定として表したいのは「どの関数を、どの parameter で使うか」であって関数そのものではないので、data として宣言し、実際の関数への解決は plugin 内部の lookup として `Compile` で行う。
 

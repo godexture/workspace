@@ -2,42 +2,52 @@ package host
 
 import (
 	"context"
-	"errors"
+
+	"github.com/godexture/godec/internal/journal"
 )
 
 func (r *runner) cleanup() {
-	cause := context.Canceled
-	if r.result.Primary != nil {
-		cause = r.result.Primary
+	cause := r.ledger.Stopped()
+	if cause == nil {
+		cause = context.Canceled
 	}
-	r.cancel(cause)
+	r.stop(cause)
 	cleanupContext, cancel := context.WithTimeout(context.Background(), r.prepared.cleanupTimeout)
 	defer cancel()
 
 	if r.execution != nil {
-		if failure := invoke(cleanupContext, ClosePhase, "", "runtime", func(context.Context) error {
-			r.execution.Close()
+		r.cleanupInvoke(cleanupContext, ClosePhase, "", "runtime", func(context.Context) error {
+			r.execution.Abort()
 			return nil
-		}); failure != nil {
-			r.addCleanup(*failure)
-		}
+		})
 	}
 	r.data.Cancel(cause)
 	r.plugins.Cancel(cause)
 	r.acceptTaskReport(r.data.Wait(cleanupContext), true)
+	if r.phaseCancel != nil {
+		// A Flush failure keeps the phase alive until every prepared drain has
+		// had its attempt. Once the bounded wait is over, stop any non-
+		// cooperative task before the remaining cleanup phases continue.
+		r.phaseCancel(cause)
+	}
 	if r.execution != nil {
-		if failure := invoke(cleanupContext, ClosePhase, "", "runtime/discard", func(context.Context) error {
+		// Each edge discards in its own domain, under its own Discard span, so
+		// a payload released here is still attributed to the task that owned
+		// it and a declared Drop that panics past every other owner is
+		// recovered there rather than here.
+		r.ledger.EnterStage(journal.Discard)
+		r.cleanupInvoke(cleanupContext, DiscardPhase, "", "runtime/discard", func(context.Context) error {
 			r.execution.Discard()
 			return nil
-		}); failure != nil {
-			r.addCleanup(*failure)
-		}
+		})
 	}
+	r.ledger.EnterStage(journal.Close)
 	r.acceptTaskReport(r.plugins.Wait(cleanupContext), true)
 	r.abortOutputs(cleanupContext)
 	r.closeOperators(cleanupContext)
+	r.ledger.EnterStage(journal.Resource)
 	for _, failure := range r.prepared.releaseResources(cleanupContext) {
-		r.addCleanup(failure)
+		r.adopt(journal.CleanupError, failure)
 	}
 }
 
@@ -59,10 +69,8 @@ func (r *runner) abortOutputs(ctx context.Context) {
 		if output.commitAttempted {
 			outcome.RollbackAttempted = true
 		}
-		failure := invoke(ctx, AbortPhase, outcome.Node, "", output.transaction.Abort)
-		if failure != nil {
+		if r.cleanupInvoke(ctx, AbortPhase, outcome.Node, "", output.transaction.Abort) != nil {
 			outcome.State = OutputUnknown
-			r.addCleanup(*failure)
 			continue
 		}
 		if output.commitAttempted {
@@ -80,34 +88,8 @@ func (r *runner) closeOperators(ctx context.Context) {
 		nodeIndex := r.opened[index]
 		node := r.nodes[nodeIndex]
 		operator := r.operators[nodeIndex]
-		failure := invoke(ctx, ClosePhase, node.ID().String(), "", func(context.Context) error {
+		r.cleanupInvoke(ctx, ClosePhase, node.ID().String(), "", func(context.Context) error {
 			return operator.Close()
 		})
-		if failure != nil {
-			r.addCleanup(*failure)
-		}
 	}
-}
-
-func (r *runner) setPrimary(failure Failure) {
-	failure = r.observationFailure(failure)
-	if r.result.Primary == nil {
-		value := failure
-		r.result.Primary = &value
-		r.diag.failure("host."+string(failure.Phase), failure)
-		return
-	}
-	r.addSecondary(failure)
-}
-
-func (r *runner) addCleanup(failure Failure) {
-	if r.result.Primary != nil && (errors.Is(r.result.Primary.Err, failure.Err) || errors.Is(failure.Err, r.result.Primary.Err)) {
-		return
-	}
-	r.result.Cleanup = append(r.result.Cleanup, failure)
-	r.diag.failure("host.cleanup."+string(failure.Phase), failure)
-}
-
-func (r *runner) addSecondary(failure Failure) {
-	r.diag.failure("host.secondary."+string(failure.Phase), failure)
 }

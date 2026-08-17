@@ -24,9 +24,17 @@ type observationOptions struct {
 }
 
 type runOptions struct {
-	observation    observationOptions
-	observationSet bool
-	invalid        []string
+	observation     observationOptions
+	observationSet  bool
+	verifyOwnership bool
+	invalid         []string
+}
+
+// VerifyOwnership audits flow.Item slot transitions for this Run. After every
+// task, queue, operator, and resource has completed cleanup, any live slot or
+// over-release is reported as a structured cleanup failure in the Result.
+func VerifyOwnership() RunOption {
+	return func(options *runOptions) { options.verifyOwnership = true }
 }
 
 // Observe enables one per-Run event hub. At least one bounded history or live

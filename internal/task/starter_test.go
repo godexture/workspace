@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/plugin"
 )
 
 func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
-	group := New(context.Background())
+	group, ledger := newGroup(context.Background())
 	starter := NewStarter(group, 1)
 	release := make(chan struct{})
 	started := make(chan struct{})
@@ -43,13 +44,13 @@ func TestStarterEnforcesAndRepaysWorkerGrant(t *testing.T) {
 	if err := starter.Start("next", func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if report := group.Wait(context.Background()); !report.Complete() || len(report.Failures) != 0 {
-		t.Fatalf("repaid report = %#v", report)
+	if report := group.Wait(context.Background()); !report.Complete() || ledger.Failed() {
+		t.Fatalf("repaid report = %#v, ledger = %#v", report, ledger.Events())
 	}
 }
 
 func TestStarterWithoutWorkerGrantRejectsWork(t *testing.T) {
-	if err := NewStarter(New(context.Background()), 0).Start("work", func(context.Context) error { return nil }); !errors.Is(err, plugin.ErrWorkerLimit) {
+	if err := NewStarter(New(context.Background(), journal.NewLedger()), 0).Start("work", func(context.Context) error { return nil }); !errors.Is(err, plugin.ErrWorkerLimit) {
 		t.Fatalf("zero worker grant error = %v", err)
 	}
 }

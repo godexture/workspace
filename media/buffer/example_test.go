@@ -23,15 +23,23 @@ func ExampleAllocator_Allocate() {
 	if err != nil {
 		panic(err)
 	}
-	bytes, _ := handle.MutableBytes()
+	edit, err := handle.Edit(nil)
+	if err != nil {
+		panic(err)
+	}
+	bytes, _ := edit.MutableBytes()
 	copy(bytes, []byte{1, 2, 3, 4})
+	handle = edit.Handle()
+	if err := edit.Commit(); err != nil {
+		panic(err)
+	}
 	shared := handle.Share()
 	handle.Release()
 	defer shared.Release()
 
 	first, _ := shared.Plane(0)
 	fmt.Println(shared.Valid(), shared.Layout().Alignment)
-	fmt.Println(first)
+	fmt.Println(first.AppendTo(nil))
 	// Output:
 	// true 16
 	// [1 2 3 4]

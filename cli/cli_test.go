@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,9 +35,9 @@ func TestRunConvertsWaveToRequestedFileFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 			var stdout, stderr bytes.Buffer
-			code := Run(t.Context(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, &stderr))
-			if code != ExitSuccess {
-				t.Fatalf("exit = %d, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			result := Run(t.Context(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, &stderr))
+			if result.Code != ExitSuccess {
+				t.Fatalf("exit = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 			}
 			encoded, err := os.ReadFile(outputPath)
 			if err != nil {
@@ -80,9 +81,9 @@ func TestRunPreviewDoesNotCreateOrReplaceOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run(t.Context(), instance, []string{"--plan", inputPath, outputPath}, WithStreams(&stdout, &stderr))
-	if code != ExitSuccess || !strings.HasPrefix(stdout.String(), "plan ") || stderr.Len() != 0 {
-		t.Fatalf("preview = %d, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	result := Run(t.Context(), instance, []string{"--plan", inputPath, outputPath}, WithStreams(&stdout, &stderr))
+	if result.Code != ExitSuccess || !strings.HasPrefix(stdout.String(), "plan ") || stderr.Len() != 0 {
+		t.Fatalf("preview = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
 	got, err := os.ReadFile(outputPath)
 	if err != nil || !bytes.Equal(got, original) {
@@ -100,7 +101,7 @@ func TestRunAcceptsExplicitRawPropertiesWithoutCLIDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run(t.Context(), instance, []string{
+	result := Run(t.Context(), instance, []string{
 		"--input-format", "raw",
 		"--raw-rate", "48000",
 		"--raw-valid-bits", "16",
@@ -108,8 +109,8 @@ func TestRunAcceptsExplicitRawPropertiesWithoutCLIDefaults(t *testing.T) {
 		"--raw-endian", "little",
 		inputPath, outputPath,
 	}, WithStreams(&stdout, &stderr))
-	if code != ExitSuccess {
-		t.Fatalf("raw exit = %d, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	if result.Code != ExitSuccess {
+		t.Fatalf("raw exit = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
 	encoded, err := os.ReadFile(outputPath)
 	if err != nil || !bytes.HasPrefix(encoded, []byte("RIFF")) || !bytes.Contains(encoded, payload) {
@@ -144,7 +145,7 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 	}{
 		{name: "usage", ctx: t.Context(), args: []string{wavePath}, want: ExitUsage, text: "usage error"},
 		{name: "planning", ctx: t.Context(), args: []string{rawPath, filepath.Join(directory, "planning.wav")}, want: ExitPlanning, text: "prepare.format-config-required"},
-		{name: "input inspection", ctx: t.Context(), args: []string{filepath.Join(directory, "missing.wav"), existingOutput}, want: ExitPlanning, text: "missing.wav"},
+		{name: "input inspection", ctx: t.Context(), args: []string{filepath.Join(directory, "missing.wav"), existingOutput}, want: ExitPlanning, text: "not-found"},
 		{name: "same file", ctx: t.Context(), args: []string{wavePath, wavePath}, want: ExitPlanning, text: "prepare.boundary-conflict"},
 	}
 	canceled, cancel := context.WithCancel(t.Context())
@@ -159,20 +160,42 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := Run(test.ctx, instance, test.args, WithStreams(&stdout, &stderr))
-			if code != test.want || !strings.Contains(strings.ToLower(stderr.String()), strings.ToLower(test.text)) {
-				t.Fatalf("exit = %d, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			result := Run(test.ctx, instance, test.args, WithStreams(&stdout, &stderr))
+			if result.Code != test.want || !strings.Contains(strings.ToLower(stderr.String()), strings.ToLower(test.text)) {
+				t.Fatalf("exit = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 			}
 		})
 	}
 
 	t.Run("renderer", func(t *testing.T) {
 		outputPath := filepath.Join(directory, "renderer.wav")
-		code := Run(t.Context(), instance, []string{wavePath, outputPath}, WithStreams(io.Discard, failingWriter{}))
-		if code != ExitRuntime {
-			t.Fatalf("renderer exit = %d", code)
+		result := Run(t.Context(), instance, []string{wavePath, outputPath}, WithStreams(io.Discard, failingWriter{}))
+		if result.Code != ExitRuntime {
+			t.Fatalf("renderer exit = %v", result)
 		}
 	})
+}
+
+func TestRunRedactsMissingSecretPath(t *testing.T) {
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "credentials", "missing-secret.wav")
+	output := filepath.Join(t.TempDir(), "output.wav")
+	var stdout, stderr bytes.Buffer
+	result := Run(t.Context(), instance, []string{secret, output}, WithStreams(&stdout, &stderr))
+	if result.Code != ExitPlanning {
+		t.Fatalf("missing source exit = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+	for name, value := range map[string]string{"result": fmt.Sprint(result.Err), "stdout": stdout.String(), "stderr": stderr.String()} {
+		if strings.Contains(value, secret) || strings.Contains(value, filepath.Base(secret)) {
+			t.Fatalf("%s leaked missing source path %q: %s", name, secret, value)
+		}
+	}
+	if !strings.Contains(stderr.String(), "not-found") {
+		t.Fatalf("missing source lost safe class: %s", stderr.String())
+	}
 }
 
 func TestRunDoesNotBackpressureConversionOnBlockedRenderer(t *testing.T) {
@@ -186,20 +209,20 @@ func TestRunDoesNotBackpressureConversionOnBlockedRenderer(t *testing.T) {
 	}
 	blocked := newBlockingWriter()
 	var stdout bytes.Buffer
-	finished := make(chan ExitCode, 1)
+	finished := make(chan Result, 1)
 	go func() {
 		finished <- Run(t.Context(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, blocked))
 	}()
 	<-blocked.started
 	waitForFile(t, outputPath)
 	select {
-	case code := <-finished:
-		t.Fatalf("CLI returned before joining renderer: %d", code)
+	case value := <-finished:
+		t.Fatalf("CLI returned before joining renderer: %v", value)
 	default:
 	}
 	close(blocked.release)
-	if code := <-finished; code != ExitSuccess {
-		t.Fatalf("drop exit = %d, stdout=%s stderr=%s", code, stdout.String(), blocked.String())
+	if value := <-finished; value.Code != ExitSuccess {
+		t.Fatalf("drop exit = %v, stdout=%s stderr=%s", value, stdout.String(), blocked.String())
 	}
 	if strings.Contains(blocked.String(), "warning observation-loss") {
 		t.Fatalf("bounded delivery reported information loss: %s", blocked.String())
@@ -220,17 +243,17 @@ func TestRunStopsRenderingAfterObservationCleanupTimeout(t *testing.T) {
 	}
 	blocked := newBlockingWriter()
 	var stdout bytes.Buffer
-	finished := make(chan ExitCode, 1)
+	finished := make(chan Result, 1)
 	go func() {
 		finished <- Run(t.Context(), instance, []string{inputPath, outputPath}, WithStreams(&stdout, blocked))
 	}()
 	<-blocked.started
 	waitForFile(t, outputPath)
 	select {
-	case code := <-finished:
-		if code != ExitCanceled {
+	case value := <-finished:
+		if value.Code != ExitRuntime {
 			close(blocked.release)
-			t.Fatalf("cleanup timeout exit = %d, want %d", code, ExitCanceled)
+			t.Fatalf("cleanup timeout exit = %v, want %d", value, ExitRuntime)
 		}
 	case <-time.After(time.Second):
 		close(blocked.release)
@@ -304,8 +327,8 @@ func TestEventRendererWarnsWhenHistoryCannotRecoverDeliveryGap(t *testing.T) {
 
 func TestHelpUsesInjectedOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run(t.Context(), nil, []string{"--help"}, WithStreams(&stdout, &stderr)); code != ExitSuccess || !strings.HasPrefix(stdout.String(), "usage: godec") || stderr.Len() != 0 {
-		t.Fatalf("help = %d, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	if result := Run(t.Context(), nil, []string{"--help"}, WithStreams(&stdout, &stderr)); result.Code != ExitSuccess || !strings.HasPrefix(stdout.String(), "usage: godec") || stderr.Len() != 0 {
+		t.Fatalf("help = stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
 }
 

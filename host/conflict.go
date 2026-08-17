@@ -2,9 +2,13 @@ package host
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/cancel"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/plan"
 )
 
@@ -39,7 +43,14 @@ func (h *Host) validateBoundaries(ctx context.Context, entries []bound.Entry) er
 			}
 			same, err := sameTarget(ctx, output, other)
 			if err != nil {
-				return boundaryConflictError("prepare.boundary-identity", target, peer, "Access Provider could not compare two boundary references", err.Error())
+				if normalized := cancel.Normalize(ctx, err); normalized != nil {
+					return normalized
+				}
+				failure := boundaryConflictError("prepare.boundary-identity", target, peer, "Access Provider could not compare two boundary references", safeCallbackCause(err))
+				if _, recovered := err.(*journal.PanicError); recovered {
+					return errors.Join(failure, err)
+				}
+				return failure
 			}
 			if same {
 				return boundaryConflictError("prepare.boundary-conflict", target, peer, conflictMessage(peer.Direction), "")
@@ -57,7 +68,20 @@ func sameTarget(ctx context.Context, output, other bound.Entry) (bool, error) {
 	if output.Projection().Scheme != other.Projection().Scheme {
 		return false, nil
 	}
-	return output.SinkTrait().Equivalent(ctx, target, peer)
+	var same bool
+	err := protectedCall(output.Projection().Node, "access/equivalence", func() error {
+		var err error
+		same, err = output.SinkTrait().Equivalent(ctx, target, peer)
+		return err
+	})
+	return same, err
+}
+
+func safeCallbackCause(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 func conflictMessage(direction plan.BoundaryDirection) string {

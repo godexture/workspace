@@ -57,7 +57,7 @@ func directionNameForOwnership(ownership access.Ownership) string {
 }
 
 func newOwnershipScenario(ownership access.Ownership) (*scenarioCore, error) {
-	state := &lifecycleState{}
+	state := &lifecycleState{active: newActiveRun()}
 	var received atomic.Int32
 	sourceHandle := &ownershipHandle{}
 	sinkHandle := &ownershipHandle{}
@@ -99,9 +99,10 @@ func newOwnershipScenario(ownership access.Ownership) (*scenarioCore, error) {
 		wantClose = 1
 	}
 	return &scenarioCore{
-		host:  instance,
-		job:   request,
-		state: state,
+		host:   instance,
+		job:    request,
+		state:  state,
+		active: state.active,
 		finish: func() error {
 			if received.Load() != 7 {
 				return fmt.Errorf("direct sink received %d, want 7", received.Load())
@@ -154,7 +155,14 @@ func ownershipDefinition(state *lifecycleState, sourceHandle, sinkHandle *owners
 					return nil, errors.New("testkit direct sink opening is invalid")
 				}
 				state.sinkOpen.Add(1)
-				return &ownershipSink{shape: plan.shape.Clone(), state: state, received: received}, nil
+				sink := &ownershipSink{shape: plan.shape.Clone(), state: state, received: received}
+				// The sink keeps the payload past the call it arrived in and
+				// releases it at Close, which is the persistent-ownership
+				// contract every component with delayed state depends on. It
+				// declares the slot rather than inheriting the sender's domain,
+				// so a release that fails here still reaches the run.
+				sink.held.Bind(ownershipType, ctx.Owner())
+				return sink, nil
 			},
 		}),
 		plugin.WithWriter("in", ownershipType),
@@ -171,7 +179,9 @@ type ownershipSource struct {
 
 func (o *ownershipSource) Ports() flow.Shape { return o.shape.Clone() }
 func (o *ownershipSource) Read(ctx context.Context, into *flow.Item[int]) error {
+	o.state.active.mark()
 	if err := ctx.Err(); err != nil {
+		o.state.cancelObserved.Store(true)
 		return err
 	}
 	if o.read {
@@ -179,7 +189,7 @@ func (o *ownershipSource) Read(ctx context.Context, into *flow.Item[int]) error 
 		return io.EOF
 	}
 	o.read = true
-	*into = flow.NewItem(7, ownershipType)
+	into.Set(7)
 	return nil
 }
 func (o *ownershipSource) Close() error {
@@ -194,19 +204,30 @@ type ownershipSink struct {
 	shape    flow.Shape
 	state    *lifecycleState
 	received *atomic.Int32
+	held     flow.Item[int]
 	closed   bool
 }
 
 func (o *ownershipSink) Ports() flow.Shape { return o.shape.Clone() }
-func (o *ownershipSink) Write(_ context.Context, input *flow.Item[int]) error {
-	defer input.Drop()
+func (o *ownershipSink) Write(ctx context.Context, input *flow.Item[int]) error {
+	if err := o.state.blockActive(ctx); err != nil {
+		input.Drop()
+		return err
+	}
 	if !input.Valid() {
 		return errors.New("testkit direct sink received an invalid item")
 	}
 	o.received.Store(int32(input.Value()))
+	if !o.held.Move(input) {
+		return errors.New("testkit direct sink could not take ownership of the item it accepted")
+	}
 	return nil
 }
+
 func (o *ownershipSink) Close() error {
+	// The retained payload is released here, one lifecycle step after the call
+	// that delivered it.
+	o.held.Drop()
 	if !o.closed {
 		o.closed = true
 		o.state.sinkClose.Add(1)

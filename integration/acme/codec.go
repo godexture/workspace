@@ -59,8 +59,10 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 		return errors.New("ACME decoder received invalid packet")
 	}
 	defer input.Drop()
-	for _, value := range input.Value().Bytes() {
-		o.out.Set(Value{Number: value + 1}, Values())
+	data := input.Value().Bytes()
+	for index := 0; index < data.Len(); index++ {
+		value := data.At(index)
+		output.Own(&o.out, Value{Number: value + 1})
 		err := output.Emit(ctx, &o.out)
 		o.out.Drop()
 		if err != nil {

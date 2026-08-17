@@ -3,6 +3,8 @@ package observe
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,11 +115,19 @@ func TestDeliveryOverflowNeverBlocksAndReportsSequenceGap(t *testing.T) {
 	}
 }
 
+// The panic case uses a value carrying a secret because the recovered value
+// belongs to the sink and can be whatever it was holding. Keeping it in the
+// reported error would publish it through any rendering of that error, %#v
+// included.
+const sinkPanicSecret = "observe-panic-secret"
+
+type sinkCredential struct{ Token string }
+
 func TestDeliveryFailureAndPanicAreReported(t *testing.T) {
 	want := errors.New("renderer failed")
 	for name, sink := range map[string]Sink{
 		"error": func(context.Context, Event) error { return want },
-		"panic": func(context.Context, Event) error { panic("renderer panic") },
+		"panic": func(context.Context, Event) error { panic(sinkCredential{Token: sinkPanicSecret}) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			failed := make(chan error, 1)
@@ -132,10 +142,100 @@ func TestDeliveryFailureAndPanicAreReported(t *testing.T) {
 				if !errors.As(got, &panicErr) || len(panicErr.Stack) == 0 {
 					t.Fatalf("sink panic = %#v", got)
 				}
+				for verb, rendered := range map[string]string{"Error": got.Error(), "%v": fmt.Sprint(got), "%#v": fmt.Sprintf("%#v", *panicErr)} {
+					if strings.Contains(rendered, sinkPanicSecret) {
+						t.Errorf("%s of the sink failure exposes the recovered value", verb)
+					}
+				}
 			}
 			if err := collector.Close(t.Context()); !errors.Is(err, got) {
 				t.Fatalf("Close = %v, want %v", err, got)
 			}
 		})
+	}
+}
+
+func TestCloseTimeoutCommitsFailureBeforeLateSinkError(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	late := errors.New("late sink failure")
+	failed := make(chan error, 2)
+	collector := New(Basic, Config{
+		DeliveryLimit: 2,
+		Sink: func(context.Context, Event) error {
+			close(started)
+			<-release
+			return late
+		},
+		Fail: func(err error) { failed <- err },
+	}, nil)
+	collector.Emit(Event{Kind: Lifecycle})
+	<-started
+	collector.Emit(Event{Kind: Lifecycle})
+	collector.Emit(Event{Kind: Lifecycle})
+	collector.Emit(Event{Kind: Lifecycle})
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	timeoutErr := collector.Close(ctx)
+	if !errors.Is(timeoutErr, context.DeadlineExceeded) {
+		t.Fatalf("Close timeout = %v, want deadline exceeded", timeoutErr)
+	}
+	if summary := collector.Summary(); summary.DeliveryDropped != 3 {
+		t.Fatalf("timeout delivery summary = %#v, want all queued and overflow events dropped", summary)
+	}
+
+	close(release)
+	if err := collector.Close(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("late Close = %v, want the terminal timeout", err)
+	}
+	select {
+	case got := <-failed:
+		if !errors.Is(got, context.DeadlineExceeded) {
+			t.Fatalf("failure callback = %v, want terminal timeout", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal failure callback was not called")
+	}
+	select {
+	case got := <-failed:
+		t.Fatalf("late sink failure replaced terminal failure: %v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := collector.Err(); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, late) {
+		t.Fatalf("collector Err after late sink return = %v", err)
+	}
+}
+
+func TestJoinedCancellationAndSinkFailureRemainDistinct(t *testing.T) {
+	parent, cancel := context.WithCancelCause(t.Context())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	independent := errors.New("independent sink failure")
+	failed := make(chan error, 1)
+	collector := New(Basic, Config{
+		Context:       parent,
+		DeliveryLimit: 1,
+		Sink: func(ctx context.Context, _ Event) error {
+			close(started)
+			<-release
+			return errors.Join(context.Cause(ctx), independent)
+		},
+		Fail: func(err error) { failed <- err },
+	}, nil)
+	collector.Emit(Event{Kind: Lifecycle})
+	<-started
+	cancel(context.Canceled)
+	close(release)
+	if err := collector.Close(t.Context()); !errors.Is(err, independent) {
+		t.Fatalf("Close = %v, want independent sink failure", err)
+	}
+	select {
+	case got := <-failed:
+		if !errors.Is(got, independent) {
+			t.Fatalf("failure callback = %v, want independent sink failure", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("joined sink failure was not reported")
 	}
 }

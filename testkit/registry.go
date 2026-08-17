@@ -15,6 +15,7 @@ import (
 type Coverage struct {
 	mu        sync.Mutex
 	executed  map[plugin.Identity]int
+	suggested map[plugin.Identity]int
 	uncovered map[string]string
 }
 
@@ -22,6 +23,7 @@ type Coverage struct {
 func NewCoverage() *Coverage {
 	return &Coverage{
 		executed:  make(map[plugin.Identity]int),
+		suggested: make(map[plugin.Identity]int),
 		uncovered: make(map[string]string),
 	}
 }
@@ -33,9 +35,23 @@ type UncoveredContract struct {
 	Milestone string
 }
 
+// roadmapMilestoneList is the immutable roadmap source used by the coverage
+// gate. Keeping it private prevents callers from widening or replacing the
+// allow-list at runtime.
+const roadmapMilestoneList = "M0,M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,M11"
+
+func knownMilestone(value string) bool {
+	for _, milestone := range strings.Split(roadmapMilestoneList, ",") {
+		if milestone == value {
+			return true
+		}
+	}
+	return false
+}
+
 // AssignUncovered records one intentionally uncovered contract and the
-// milestone responsible for closing it. Empty and repeated identities are
-// rejected so absence cannot silently masquerade as an assignment.
+// milestone responsible for closing it. Empty, repeated, and off-roadmap
+// assignments are rejected so absence cannot silently masquerade as one.
 func (c *Coverage) AssignUncovered(identity, milestone string) error {
 	identity = strings.TrimSpace(identity)
 	milestone = strings.TrimSpace(milestone)
@@ -47,6 +63,9 @@ func (c *Coverage) AssignUncovered(identity, milestone string) error {
 	}
 	if milestone == "" {
 		return fmt.Errorf("testkit typed coverage: uncovered contract %s has no responsible milestone", identity)
+	}
+	if !knownMilestone(milestone) {
+		return fmt.Errorf("testkit typed coverage: uncovered contract %s names %q, which is not one of %s", identity, milestone, roadmapMilestoneList)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -77,31 +96,6 @@ func (c *Coverage) Uncovered() []UncoveredContract {
 	return result
 }
 
-// VerifyComplete is the final-state gate used when every public conformance
-// contract must have a helper and an executed case. Milestone-local tests may
-// inspect Uncovered instead while their assigned gaps intentionally remain.
-func (c *Coverage) VerifyComplete(t testing.TB) {
-	t.Helper()
-	if err := c.completionError(); err != nil {
-		t.Error(err)
-	}
-}
-
-func (c *Coverage) completionError() error {
-	if c == nil {
-		return fmt.Errorf("testkit typed coverage: registry is nil")
-	}
-	gaps := c.Uncovered()
-	if len(gaps) == 0 {
-		return nil
-	}
-	values := make([]string, len(gaps))
-	for index, gap := range gaps {
-		values[index] = gap.Identity + " (" + gap.Milestone + ")"
-	}
-	return fmt.Errorf("testkit typed coverage: uncovered contracts remain: %s", strings.Join(values, ", "))
-}
-
 // Track returns an otherwise identical Subject whose completed cases are
 // recorded in coverage.
 func Track[I, O any](subject Subject[I, O], coverage *Coverage) Subject[I, O] {
@@ -121,8 +115,21 @@ func (c *Coverage) record(identity plugin.Identity) {
 	c.executed[identity]++
 }
 
+func (c *Coverage) recordSuggest(identity plugin.Identity) {
+	if c == nil || identity.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.suggested == nil {
+		c.suggested = make(map[plugin.Identity]int)
+	}
+	c.suggested[identity]++
+}
+
 // VerifyExecutable fails unless every executable component in set ran at
-// least one typed case, and every recorded identity belongs to set.
+// least one typed case, every component that declares Suggest ran at least one
+// Suggest scenario, and every recorded identity belongs to set.
 func (c *Coverage) VerifyExecutable(t testing.TB, set plugin.Set) {
 	t.Helper()
 	for _, problem := range c.executableProblems(set) {
@@ -139,30 +146,51 @@ func (c *Coverage) executableProblems(set plugin.Set) []error {
 	for identity, count := range c.executed {
 		executed[identity] = count
 	}
+	suggested := make(map[plugin.Identity]int, len(c.suggested))
+	for identity, count := range c.suggested {
+		suggested[identity] = count
+	}
 	c.mu.Unlock()
 
 	known := make(map[plugin.Identity]bool)
 	var problems []error
 	for _, component := range set.Components() {
-		known[component.Identity()] = component.View().Executable
-		if component.View().Executable && executed[component.Identity()] == 0 {
+		view := component.View()
+		known[component.Identity()] = view.Executable
+		if view.Executable && executed[component.Identity()] == 0 {
 			problems = append(problems, fmt.Errorf("testkit typed coverage: executable component %s has no executed typed case", component.Identity()))
 		}
+		// Suggest is a declared planner-facing contract with its own bounds. A
+		// component that offers it and is never asked passes the executable
+		// gate while nothing has checked that contract at all.
+		if view.HasSuggest && suggested[component.Identity()] == 0 {
+			problems = append(problems, fmt.Errorf("testkit typed coverage: component %s declares Suggest but has no Suggest scenario", component.Identity()))
+		}
 	}
+	// Coverage claims that every recorded identity belongs to the Set it is
+	// verified against. Recording a Suggest scenario for a component outside
+	// that Set would otherwise count toward a population it is not part of.
+	problems = append(problems, foreignIdentities(executed, known, "executed")...)
+	problems = append(problems, foreignIdentities(suggested, known, "suggested")...)
+	for identity, count := range executed {
+		if count < 1 {
+			problems = append(problems, fmt.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count)))
+		}
+	}
+	return problems
+}
+
+func foreignIdentities(recorded map[plugin.Identity]int, known map[plugin.Identity]bool, kind string) []error {
 	var unknown []string
-	for identity := range executed {
+	for identity := range recorded {
 		if _, ok := known[identity]; !ok {
 			unknown = append(unknown, identity.String())
 		}
 	}
 	sort.Strings(unknown)
+	problems := make([]error, 0, len(unknown))
 	for _, identity := range unknown {
-		problems = append(problems, fmt.Errorf("testkit typed coverage: executed identity %s is absent from the covered Set", identity))
-	}
-	for identity, count := range executed {
-		if count < 1 {
-			problems = append(problems, fmt.Errorf("testkit typed coverage: invalid execution count for %s: %s", identity, fmt.Sprint(count)))
-		}
+		problems = append(problems, fmt.Errorf("testkit typed coverage: %s identity %s is absent from the covered Set", kind, identity))
 	}
 	return problems
 }

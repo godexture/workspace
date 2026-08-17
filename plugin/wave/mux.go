@@ -39,7 +39,7 @@ func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], ou
 		return errors.New("WAVE muxer received an invalid packet")
 	}
 	payload := input.Value().Payload()
-	size := len(payload.Bytes())
+	size := payload.Bytes().Len()
 	if uint64(size)%m.header.blockAlign != 0 {
 		return ErrPartialBlock
 	}
@@ -53,7 +53,7 @@ func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], ou
 	if err := m.emitHeader(ctx, output); err != nil {
 		return err
 	}
-	if err := flow.Transfer(input, &m.out, access.Writes(), func(value packet.Packet) (access.Write, error) {
+	if err := flow.Transfer(input, &m.out, output, func(value packet.Packet) (access.Write, error) {
 		return access.Append(value.Detach())
 	}); err != nil {
 		return err
@@ -158,7 +158,7 @@ func (m *muxer) emit(ctx context.Context, payload []byte, build func(buffer.Hand
 	if err != nil {
 		return err
 	}
-	m.out.Set(write, access.Writes())
+	output.Own(&m.out, write)
 	defer m.out.Drop()
 	return output.Emit(ctx, &m.out)
 }

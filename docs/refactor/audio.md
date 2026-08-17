@@ -101,13 +101,24 @@ func (p *Gain) Process(
     out flow.Emitter[audio.Frame[float32]],
 ) error {
     defer in.Drop()
-    frame := in.Value().Edit()
-    for plane := range frame.Planes() {
-        gain.Apply(frame.Plane(plane), p.factor)
+    edit, err := in.Value().Edit(p.buffers)
+    if err != nil {
+        return err
     }
-    p.out.Set(frame, sample.F32())
+    defer edit.Discard()
+    for plane := range edit.Frame().Planes().Layout().Planes {
+        samples, err := edit.PlaneSamples(plane)
+        if err != nil {
+            return err
+        }
+        gain.Apply(samples, p.factor)
+    }
+    p.out.Set(edit.Frame(), sample.F32())
     defer p.out.Drop()
-    return out.Emit(ctx, &p.out)
+    if err := out.Emit(ctx, &p.out); err != nil {
+        return err
+    }
+    return edit.Commit()
 }
 ```
 
@@ -118,6 +129,8 @@ func (p *Gain) Process(
 - fan-out 後の shared buffer を変更する branch だけ copy-on-write する。
 - no-op は ownership をそのまま move する。
 - sample count/layout を変える processor は必要な output buffer を allocator から得る。
+
+読み取り側の `Frame.PlaneSamples` は backing を公開・保持しない immutable `audio.Samples[S]` を返す。利用できる操作は `Len`、`At`、`CopyTo`、`AppendTo` であり、`[]S` は返さない。`At` は呼出しごとに frame の lifetime を検査するため単発の参照専用であり、sample 数に比例する読み取りは `CopyTo` か、byte plane を `buffer.Bytes.Blocks` で drain する経路を使う。`Len` は検査せず記録済みの sample 数を返す。view は originating frame の lease に結び付き、その owner の解放後は読めない。別 lifetime が必要なら先に frame を `Share` し、その owner から view を得る。mutable `[]S` は transactional な `audio.Editor` の `PlaneSamples` だけから取得する。したがって read-only processor は通常 API から sibling branch の backing を変更できず、変更する branch は必ず `Edit` の exclusive reuse または copy-on-write を通る。
 
 plugin author は refcount 値、`Retain`、`Release` を操作しない。Host/schema の ownership implementation が exclusive/shared を管理する。
 
@@ -132,6 +145,8 @@ frame ごとに各 plane を別 allocation せず、可能なら一つの aligne
 - optional device memory handle
 
 を buffer contract が扱う。`Frame[S]` は backing buffer の ownership handle を持つが、plugin に allocator/pool implementation を公開しない。
+
+byte payload の読み取りも同じ規則で、`buffer.Handle` / `buffer.View` の `Bytes` と `Plane` は immutable `buffer.Bytes` を返す。`buffer.Bytes` は raw slice header ではなく originating lease と範囲だけを保持し、`Len` / `At`、zero-copy `Slice`、`CopyTo` / `AppendTo`、backing を公開しない `Reader`、比較の各操作時に lifetime を確認する。owner 解放後は view と reader から読めず、別 owner の `Share` から得た view だけがその owner の lifetime 中有効である。初期化は `WriteLease` の `Mutable`、既存 payload の変更は `buffer.Edit` の `MutableBytes` / `MutablePlane` に限定し、owned handle から直接 mutable slice を得る API は持たない。
 
 大きさが同じ出力を作る processor は host-provided reusable buffer を使える。前 frame の buffer を常に pool へ戻して直後に同サイズを取り直す pattern を避ける。
 

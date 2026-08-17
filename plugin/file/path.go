@@ -48,7 +48,10 @@ func Reference(path string) (access.Reference, error) {
 // differ can still name the same object through a link or a case-insensitive
 // volume, which only the filesystem can resolve; a target that does not exist
 // yet is compared by normalized path.
-func equivalent(_ context.Context, target, other access.Reference) (bool, error) {
+func equivalent(ctx context.Context, target, other access.Reference) (bool, error) {
+	if err := contextFailure(ctx); err != nil {
+		return false, err
+	}
 	left, err := pathOf(target)
 	if err != nil {
 		return false, err
@@ -60,13 +63,19 @@ func equivalent(_ context.Context, target, other access.Reference) (bool, error)
 	leftInfo, leftErr := os.Stat(left)
 	rightInfo, rightErr := os.Stat(right)
 	if errors.Is(leftErr, os.ErrNotExist) || errors.Is(rightErr, os.ErrNotExist) {
+		if leftErr != nil && !errors.Is(leftErr, os.ErrNotExist) {
+			return false, redactIO("stat", leftErr)
+		}
+		if rightErr != nil && !errors.Is(rightErr, os.ErrNotExist) {
+			return false, redactIO("stat", rightErr)
+		}
 		return equalPath(left, right), nil
 	}
 	if leftErr != nil {
-		return false, leftErr
+		return false, redactIO("stat", leftErr)
 	}
 	if rightErr != nil {
-		return false, rightErr
+		return false, redactIO("stat", rightErr)
 	}
 	return os.SameFile(leftInfo, rightInfo), nil
 }

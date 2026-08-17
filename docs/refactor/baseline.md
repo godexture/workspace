@@ -42,6 +42,13 @@ go test ./plugin/audio -run '^$' -bench '^BenchmarkGainChainPipeline$/^4stage$/^
 
 正確な argv/env は [baseline.manifest.json](baseline.manifest.json) の `commands` を正本とする（shell string ではなく構造化済みなので、記録した OS 以外でも shell 構文の違いを気にせず実行できる）。以下は human-readable な要約。
 
+baseline の source は固定した commit にだけ存在する。現在の HEAD worktree や `_legacy/` から command を実行せず、既存 worktree を checkout/reset しない。別の一時 directory に detached worktree を作り、その root で以下の command を実行する。対応する machine-readable argv は manifest の `executionRoot.setupArgv` である。
+
+```bash
+git worktree add --detach <temporary-worktree> 4429711a88481e6643ea2427a8192938737b1e9e
+cd <temporary-worktree>
+```
+
 個別 build の正しさ（必須2種 + 任意診断1種）:
 
 ```bash

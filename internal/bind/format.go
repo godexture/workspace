@@ -53,9 +53,9 @@ func (r Registry) validatePinnedFormats(inputs []job.Input, outputs []job.Output
 		if err != nil {
 			return err
 		}
-		if selected.Fingerprint != pinned.Fingerprint {
+		if selected.Fingerprint() != pinned.Fingerprint() {
 			return diagnostic.NewError(formatSelectorItem("bind.format-config-conflict", projection, component.Identity(), "Format selector config conflicts with the pinned component config", selector, map[string]string{
-				"selectedConfig": selected.Fingerprint.String(), "pinnedConfig": pinned.Fingerprint.String(),
+				"selectedConfig": selected.Fingerprint().String(), "pinnedConfig": pinned.Fingerprint().String(),
 			}))
 		}
 	}

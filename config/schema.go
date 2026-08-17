@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"fmt"
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
@@ -31,6 +30,8 @@ const (
 	codeUnregisteredField  = "config.unregistered-field"
 	codeInvalidAlias       = "config.invalid-alias"
 	codeSecretRedacted     = "config.secret-redacted"
+	codeCallbackPanic      = "config.callback-panic"
+	codeSecretInvalid      = "config.secret-invalid"
 )
 
 type presetSpec[C any] struct {
@@ -162,6 +163,17 @@ func (s Schema[C]) Default() C {
 	return value
 }
 
+// Key returns the patch key for a registered field. It is the only way to put
+// a typed value into a Patch, because the key carries the field's declared
+// clone and the patch has no other way to snapshot a reference value.
+func (s Schema[C]) Key(id string) (Key, bool) {
+	field, ok := s.field(id)
+	if !ok || field.snapshot == nil {
+		return Key{}, false
+	}
+	return field.key(s.identity), true
+}
+
 // Canonical returns a deterministic encoding sorted by field identity. It is
 // independent of registration order and map iteration order.
 func (s Schema[C]) Canonical(value C) ([]byte, error) {
@@ -180,13 +192,13 @@ func (s Schema[C]) Canonical(value C) ([]byte, error) {
 func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 	value, factoryItems := s.defaultValue()
 	if len(factoryItems) != 0 {
-		return Resolved[C]{Diagnostics: factoryItems}, diagnosticError(factoryItems)
+		return s.resolved(value, Provenance{}, factoryItems, Fingerprint{}), diagnosticError(factoryItems)
 	}
 	provenance := Provenance{sources: make(map[string]Source, len(s.fields))}
 	for _, field := range s.fields {
 		provenance.sources[field.id] = SourceDefault
 	}
-	var items []diagnostic.Item
+	items := cloneItems(patch.problems)
 	if patch.preset != "" {
 		preset, ok := s.preset(patch.preset)
 		if !ok {
@@ -220,9 +232,23 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			continue
 		}
 		entry := patch.fields[fieldID]
+		if entry.schema != "" && entry.schema != s.identity {
+			items = append(items, diagnostic.NewItem(codeUnknownField, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "patch key belongs to another schema", map[string]string{"schema": entry.schema}))
+			continue
+		}
+		stored, storedErr := entry.value()
+		if storedErr != nil {
+			items = append(items, diagnostic.NewItem(codeInvalidInput, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input could not be snapshotted", inputDetail(field)))
+			continue
+		}
 		var decoded any
 		if entry.isText {
-			value, err := field.decode(entry.text)
+			text, ok := stored.(string)
+			if !ok {
+				items = append(items, diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input has the wrong type", inputDetail(field)))
+				continue
+			}
+			value, err := field.decode(text)
 			if err != nil {
 				path := diagnostic.FieldPath(fieldID)
 				path.Fields = append(path.Fields, decodePath(err)...)
@@ -236,7 +262,7 @@ func (s Schema[C]) Resolve(patch Patch) (Resolved[C], error) {
 			}
 			decoded = value
 		} else {
-			decoded = entry.value
+			decoded = stored
 		}
 		if err := field.write(&value, decoded); err != nil {
 			items = append(items, diagnostic.NewItem(codeTypeMismatch, diagnostic.ErrorSeverity, diagnostic.FieldPath(fieldID), "field input has the wrong type", inputDetail(field)))
@@ -268,9 +294,50 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 		items = append(items, s.schemaProblems()...)
 		value, snapshotItems := s.snapshot(value)
 		items = append(items, snapshotItems...)
-		return Resolved[C]{Value: value, Provenance: cloneProvenance(provenance), Diagnostics: cloneItems(items)}, diagnosticError(items)
+		return s.resolved(value, provenance, items, Fingerprint{}), diagnosticError(items)
 	}
 
+	value, normalized, normalizationItems := s.normalizeFields(value)
+	items = append(items, normalizationItems...)
+	for _, field := range normalized {
+		provenance.sources[field] = SourceNormalized
+	}
+	items = append(items, s.validateValue(value)...)
+
+	canonical, canonicalItems := s.canonicalValue(value)
+	items = append(items, canonicalItems...)
+	value, snapshotItems := s.snapshot(value)
+	items = append(items, snapshotItems...)
+	if hasError(items) {
+		return s.resolved(value, provenance, items, Fingerprint{}), diagnosticError(items)
+	}
+	return s.resolved(value, provenance, items, hashCanonical(canonical)), nil
+}
+
+func (s Schema[C]) resolved(value C, provenance Provenance, items []diagnostic.Item, fingerprint Fingerprint) Resolved[C] {
+	return Resolved[C]{
+		value: value,
+		clone: func(value C) (C, error) {
+			snapshot, items := s.snapshot(value)
+			if err := diagnosticError(items); err != nil {
+				var zero C
+				return zero, err
+			}
+			return snapshot, nil
+		},
+		provenance:  cloneProvenance(provenance),
+		diagnostics: cloneItems(items),
+		fingerprint: fingerprint,
+	}
+}
+
+// normalizeFields runs field normalization in canonical field order and
+// reports the fields whose canonical encoding it changed. Nested reuses it so
+// a schema composed into another schema normalizes the same way it would on
+// its own.
+func (s Schema[C]) normalizeFields(value C) (C, []string, []diagnostic.Item) {
+	var normalized []string
+	var items []diagnostic.Item
 	for _, field := range s.fields {
 		current, err := field.read(&value)
 		if err != nil {
@@ -278,40 +345,20 @@ func (s Schema[C]) finish(value C, provenance Provenance, items []diagnostic.Ite
 			continue
 		}
 		before, beforeErr := field.canonical(current)
-		normalized, normalizationItems := field.normalize(current)
-		for _, item := range normalizationItems {
+		result, fieldItems := field.normalize(current)
+		for _, item := range fieldItems {
 			items = append(items, prefixItem(item, field.id))
 		}
-		if err := field.write(&value, normalized); err != nil {
+		if err := field.write(&value, result); err != nil {
 			items = append(items, diagnostic.NewItem(codeValidation, diagnostic.ErrorSeverity, diagnostic.FieldPath(field.id), "normalized field could not be stored", nil))
 			continue
 		}
-		after, afterErr := field.canonical(normalized)
+		after, afterErr := field.canonical(result)
 		if beforeErr == nil && afterErr == nil && !bytes.Equal(before, after) {
-			provenance.sources[field.id] = SourceNormalized
-		}
-		for _, item := range field.validate(normalized) {
-			items = append(items, prefixItem(item, field.id))
+			normalized = append(normalized, field.id)
 		}
 	}
-	for _, item := range s.validateSchema(value) {
-		items = append(items, item)
-	}
-
-	canonical, canonicalItems := s.canonicalValue(value)
-	items = append(items, canonicalItems...)
-	value, snapshotItems := s.snapshot(value)
-	items = append(items, snapshotItems...)
-	resolved := Resolved[C]{
-		Value:       value,
-		Provenance:  cloneProvenance(provenance),
-		Diagnostics: cloneItems(items),
-	}
-	if hasError(items) {
-		return resolved, diagnosticError(items)
-	}
-	resolved.Fingerprint = hashCanonical(canonical)
-	return resolved, nil
+	return value, normalized, items
 }
 
 func (s Schema[C]) validateValue(value C) []diagnostic.Item {
@@ -336,13 +383,10 @@ func (s Schema[C]) validateSchema(value C) []diagnostic.Item {
 	if s.validate == nil {
 		return nil
 	}
-	var items []diagnostic.Item
-	validated, snapshotItems := s.snapshot(value)
-	items = append(items, snapshotItems...)
-	for _, item := range s.validate(validated) {
-		items = append(items, item)
-	}
-	return items
+	validated, items := s.snapshot(value)
+	return append(items, guardItems(operationSchema, diagnostic.Path{}, func() []diagnostic.Item {
+		return s.validate(validated)
+	})...)
 }
 
 func (s Schema[C]) canonicalValue(value C) ([]byte, []diagnostic.Item) {
@@ -377,21 +421,16 @@ func (s Schema[C]) defaultValue() (C, []diagnostic.Item) {
 		var zero C
 		return zero, []diagnostic.Item{diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory is required", nil)}
 	}
-	var value C
-	panicked := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				panicked = true
-				value = *new(C)
-			}
-		}()
-		value = s.defaults()
-	}()
-	if panicked {
-		return value, []diagnostic.Item{diagnostic.NewItem(codeDefaultFactory, diagnostic.ErrorSeverity, diagnostic.Path{}, "schema default factory panicked", nil)}
+	value, err := callDefaults(s.defaults)
+	if err != nil {
+		return value, []diagnostic.Item{panicItem(operationDefault, diagnostic.Path{})}
 	}
 	return s.snapshot(value)
+}
+
+func callDefaults[C any](defaults func() C) (value C, err error) {
+	defer guardError(operationDefault, &err)
+	return defaults(), nil
 }
 
 func (s Schema[C]) snapshot(value C) (C, []diagnostic.Item) {
@@ -427,11 +466,7 @@ func (s Schema[C]) schemaProblems() []diagnostic.Item {
 }
 
 func callPreset[C any](apply func(*C), value *C) (err error) {
-	defer func() {
-		if recover() != nil {
-			err = fmt.Errorf("preset panicked")
-		}
-	}()
+	defer guardError(operationPreset, &err)
 	apply(value)
 	return nil
 }

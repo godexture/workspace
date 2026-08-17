@@ -8,7 +8,6 @@ import (
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/buffer"
-	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/timing"
 )
@@ -47,11 +46,11 @@ func (d *demuxer) Process(ctx context.Context, input *flow.Item[buffer.Handle], 
 	}
 	defer input.Drop()
 	data := input.Value().Bytes()
-	if d.absolute < 0 || int64(len(data)) > math.MaxInt64-d.absolute {
+	if d.absolute < 0 || int64(data.Len()) > math.MaxInt64-d.absolute {
 		return fmt.Errorf("%w: input offset overflows", ErrMalformed)
 	}
 	itemStart := d.absolute
-	itemEnd := itemStart + int64(len(data))
+	itemEnd := itemStart + int64(data.Len())
 	d.absolute = itemEnd
 	dataEnd := d.dataOffset + int64(d.dataSize)
 	start := itemStart
@@ -66,29 +65,33 @@ func (d *demuxer) Process(ctx context.Context, input *flow.Item[buffer.Handle], 
 		return nil
 	}
 	localStart := int(start - itemStart)
-	segment := data[localStart:int(end-itemStart)]
-	d.consumed += uint64(len(segment))
+	segment, err := data.Slice(localStart, int(end-start))
+	if err != nil {
+		return fmt.Errorf("%w: invalid data range", ErrMalformed)
+	}
+	d.consumed += uint64(segment.Len())
 	if d.consumed > d.dataSize {
 		return fmt.Errorf("%w: data range exceeded its declared size", ErrMalformed)
 	}
 
 	if d.carryLength != 0 {
 		needed := d.blockAlign - d.carryLength
-		if len(segment) < needed {
-			copy(d.carry[d.carryLength:], segment)
-			d.carryLength += len(segment)
+		if segment.Len() < needed {
+			segment.CopyTo(d.carry[d.carryLength:])
+			d.carryLength += segment.Len()
 			return nil
 		}
-		copy(d.carry[d.carryLength:], segment[:needed])
+		part, _ := segment.Slice(0, needed)
+		part.CopyTo(d.carry[d.carryLength:])
 		if err := d.emitCopy(ctx, d.carry[:d.blockAlign], output); err != nil {
 			return err
 		}
 		d.carryLength = 0
 		localStart += needed
-		segment = segment[needed:]
+		segment, _ = segment.From(needed)
 	}
 
-	aligned := len(segment) - len(segment)%d.blockAlign
+	aligned := segment.Len() - segment.Len()%d.blockAlign
 	if aligned != 0 {
 		payload, err := input.Value().Range(localStart, aligned)
 		if err != nil {
@@ -98,11 +101,11 @@ func (d *demuxer) Process(ctx context.Context, input *flow.Item[buffer.Handle], 
 			return err
 		}
 		localStart += aligned
-		segment = segment[aligned:]
+		segment, _ = segment.From(aligned)
 	}
-	if len(segment) != 0 {
-		copy(d.carry[:], segment)
-		d.carryLength = len(segment)
+	if segment.Len() != 0 {
+		segment.CopyTo(d.carry[:])
+		d.carryLength = segment.Len()
 	}
 	if d.consumed == d.dataSize && d.carryLength != 0 {
 		return ErrPartialBlock
@@ -140,8 +143,8 @@ func (d *demuxer) emitCopy(ctx context.Context, value []byte, output flow.Emitte
 }
 
 func (d *demuxer) emit(ctx context.Context, payload buffer.Handle, output flow.Emitter[packet.Chunk]) error {
-	frames := len(payload.Bytes()) / d.blockAlign
-	d.out.Set(packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload), mediaformat.Chunks())
+	frames := payload.Bytes().Len() / d.blockAlign
+	output.Own(&d.out, packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload))
 	defer d.out.Drop()
 	if err := output.Emit(ctx, &d.out); err != nil {
 		return err

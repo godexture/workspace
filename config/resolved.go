@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -91,20 +92,51 @@ func (f Fingerprint) Bytes() []byte {
 	return result
 }
 
-// Resolved is the immutable control-plane result of schema resolution. The
-// Value is a defensive snapshot; callers must treat it as read-only after
-// resolution.
+// Resolved is the immutable control-plane result of schema resolution. Every
+// accessor hands back a fresh snapshot, so one consumer cannot change what a
+// later consumer sees behind an unchanged fingerprint.
 type Resolved[C any] struct {
-	Value       C
-	Provenance  Provenance
-	Diagnostics []diagnostic.Item
-	Fingerprint Fingerprint
+	value       C
+	clone       func(C) (C, error)
+	provenance  Provenance
+	diagnostics []diagnostic.Item
+	fingerprint Fingerprint
 }
+
+// Value returns an independent snapshot of the resolved configuration.
+//
+// It returns an error when a declared clone fails, because the alternative is
+// worse than no value: a snapshot is built by copying the struct and replacing
+// every field with its clone, so a field whose clone failed still points at
+// the retained value. Handing that back would let the caller edit what the
+// next caller sees, which is the aliasing the snapshot exists to prevent.
+func (r Resolved[C]) Value() (C, error) {
+	if r.clone == nil {
+		var zero C
+		return zero, errors.New("resolved config has no schema snapshot")
+	}
+	return r.clone(r.value)
+}
+
+// Provenance reports which stage supplied each registered field.
+func (r Resolved[C]) Provenance() Provenance { return cloneProvenance(r.provenance) }
+
+// Diagnostics returns the resolution diagnostics.
+func (r Resolved[C]) Diagnostics() []diagnostic.Item { return cloneItems(r.diagnostics) }
+
+// Fingerprint identifies the canonical resolved value. It is zero when
+// resolution failed.
+func (r Resolved[C]) Fingerprint() Fingerprint { return r.fingerprint }
 
 // String intentionally reports only identity metadata and never renders the
 // value, which keeps SecretValue fields out of logs by default.
 func (r Resolved[C]) String() string {
-	return "resolved config " + r.Fingerprint.String()
+	return "resolved config " + r.fingerprint.String()
+}
+
+// Format prevents every fmt verb, including %#v, from traversing Value.
+func (r Resolved[C]) Format(state fmt.State, verb rune) {
+	writeSafeFormat(state, verb, r.String())
 }
 
 func hashCanonical(canonical []byte) Fingerprint {

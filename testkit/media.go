@@ -181,7 +181,7 @@ func WantBytes(parts ...[]byte) Expectation[buffer.Handle] {
 		if !value.Valid() {
 			return nil, errors.New("invalid byte handle")
 		}
-		return append([]byte(nil), value.Bytes()...), nil
+		return value.Bytes().AppendTo(nil), nil
 	})
 }
 
@@ -332,22 +332,28 @@ func allocateFrame(allocator *buffer.Allocator, value Frame) (audio.Frame[int16]
 		}
 		planes[index].Size = len(values) * 2
 	}
-	handle, err := allocator.Allocate(buffer.Spec{Alignment: 16, Planes: planes})
+	lease, err := allocator.Overwrite(buffer.Spec{Alignment: 16, Planes: planes})
 	if err != nil {
 		return audio.Frame[int16]{}, err
 	}
-	mutable, err := handle.MutableBytes()
-	if err != nil {
-		handle.Release()
-		return audio.Frame[int16]{}, err
-	}
-	layout := handle.Layout()
-	for planeIndex, values := range value.Planes {
-		planeLayout := layout.Planes[planeIndex]
-		plane := mutable[planeLayout.Offset : planeLayout.Offset+planeLayout.Size]
-		for index, sampleValue := range values {
-			binary.NativeEndian.PutUint16(plane[index*2:], uint16(sampleValue))
+	defer lease.Discard()
+	if err := lease.Fill(func(storage buffer.Mutable) error {
+		for planeIndex, values := range value.Planes {
+			plane, planeErr := storage.Plane(planeIndex)
+			if planeErr != nil {
+				return planeErr
+			}
+			for index, sampleValue := range values {
+				binary.NativeEndian.PutUint16(plane[index*2:], uint16(sampleValue))
+			}
 		}
+		return nil
+	}); err != nil {
+		return audio.Frame[int16]{}, err
+	}
+	handle, err := lease.Commit()
+	if err != nil {
+		return audio.Frame[int16]{}, err
 	}
 	frame, err := audio.NewFrame[int16](value.PTS, samples, handle)
 	if err != nil {
@@ -361,7 +367,7 @@ func snapshotChunk(value packet.Chunk) (Chunk, error) {
 	if !value.Valid() {
 		return Chunk{}, errors.New("invalid chunk")
 	}
-	return Chunk{Sequence: value.Sequence(), PTS: value.PTS(), Bytes: append([]byte(nil), value.Bytes()...)}, nil
+	return Chunk{Sequence: value.Sequence(), PTS: value.PTS(), Bytes: value.Bytes().AppendTo(nil)}, nil
 }
 
 func snapshotPacket(value packet.Packet) (Packet, error) {
@@ -370,7 +376,7 @@ func snapshotPacket(value packet.Packet) (Packet, error) {
 	}
 	return Packet{
 		Sequence: value.Sequence(), PTS: value.PTS(), DTS: value.DTS(), Duration: value.Duration(),
-		Bytes: append([]byte(nil), value.Bytes()...),
+		Bytes: value.Bytes().AppendTo(nil),
 	}, nil
 }
 
@@ -385,7 +391,7 @@ func snapshotFrame(value audio.Frame[int16]) (Frame, error) {
 		if err != nil {
 			return Frame{}, err
 		}
-		result.Planes[index] = append([]int16(nil), values...)
+		result.Planes[index] = values.AppendTo(nil)
 	}
 	return result, nil
 }
@@ -394,7 +400,7 @@ func snapshotWrite(value access.Write) (Write, error) {
 	if !value.Valid() {
 		return Write{}, errors.New("invalid positioned write")
 	}
-	return Write{Operation: value.Operation(), Offset: value.Offset(), Bytes: append([]byte(nil), value.Bytes()...)}, nil
+	return Write{Operation: value.Operation(), Offset: value.Offset(), Bytes: value.Bytes().AppendTo(nil)}, nil
 }
 
 type byteStreamRecorder struct {
@@ -411,7 +417,7 @@ func (r *byteStreamRecorder) accept(value buffer.Handle) {
 		r.err = errors.Join(r.err, errors.New("invalid byte handle"))
 		return
 	}
-	r.got = append(r.got, value.Bytes()...)
+	r.got = value.Bytes().AppendTo(r.got)
 }
 
 func (r *byteStreamRecorder) finish() error {
@@ -443,9 +449,9 @@ func (r *writeImageRecorder) accept(value access.Write) {
 	payload := value.Bytes()
 	switch value.Operation() {
 	case access.AppendOperation:
-		r.got = append(r.got, payload...)
+		r.got = payload.AppendTo(r.got)
 	case access.PatchOperation:
-		end := value.Offset() + int64(len(payload))
+		end := value.Offset() + int64(payload.Len())
 		if value.Offset() < 0 || end < value.Offset() || end > int64(^uint(0)>>1) {
 			r.err = errors.Join(r.err, errors.New("positioned write range is invalid"))
 			return
@@ -453,7 +459,7 @@ func (r *writeImageRecorder) accept(value access.Write) {
 		if end > int64(len(r.got)) {
 			r.got = append(r.got, make([]byte, int(end)-len(r.got))...)
 		}
-		copy(r.got[int(value.Offset()):int(end)], payload)
+		payload.CopyTo(r.got[int(value.Offset()):int(end)])
 	default:
 		r.err = errors.Join(r.err, errors.New("unknown positioned write operation"))
 	}

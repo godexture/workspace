@@ -37,6 +37,45 @@ func TestRescaleNearestTies(t *testing.T) {
 	}
 }
 
+func TestRescaleNearestEvenUsesExactHalfForOddDenominators(t *testing.T) {
+	cases := []struct {
+		name  string
+		value int64
+		from  Base
+		to    Base
+		want  int64
+	}{
+		{name: "one third below half", value: 1, from: MustBase(1, 3), to: MustBase(1, 1), want: 0},
+		{name: "two thirds above half", value: 2, from: MustBase(1, 3), to: MustBase(1, 1), want: 1},
+		{name: "negative one third below half", value: -1, from: MustBase(1, 3), to: MustBase(1, 1), want: 0},
+		{name: "negative two thirds above half", value: -2, from: MustBase(1, 3), to: MustBase(1, 1), want: -1},
+		{name: "two fifths below half", value: 2, from: MustBase(1, 5), to: MustBase(1, 1), want: 0},
+		{name: "three fifths above half", value: 3, from: MustBase(1, 5), to: MustBase(1, 1), want: 1},
+		{name: "44100 to 1000", value: 22073, from: MustBase(1, 44100), to: MustBase(1, 1000), want: 501},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := testCase.from.Rescale(testCase.value, testCase.to, RoundNearestEven)
+			if err != nil || got != testCase.want {
+				t.Fatalf("rescale(%d, %s -> %s) = %d, %v; want %d", testCase.value, testCase.from, testCase.to, got, err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestCompareDoubleHandlesWideUint128Values(t *testing.T) {
+	denominator := uint128{hi: math.MaxUint64, lo: math.MaxUint64}
+	if got := compareDouble(uint128{hi: math.MaxUint64 >> 1, lo: math.MaxUint64}, denominator); got >= 0 {
+		t.Fatalf("compareDouble below maximum denominator = %d, want negative", got)
+	}
+	if got := compareDouble(uint128{hi: math.MaxUint64 >> 1, lo: math.MaxUint64 - 1}, denominator); got >= 0 {
+		t.Fatalf("compareDouble below maximum denominator (carry) = %d, want negative", got)
+	}
+	if got := compareDouble(uint128{hi: uint64(1) << 63}, denominator); got <= 0 {
+		t.Fatalf("compareDouble overflowed double = %d, want positive", got)
+	}
+}
+
 func TestRescaleOverflowAndNegativeLimits(t *testing.T) {
 	if _, err := MustBase(1, 1).Rescale(math.MaxInt64, MustBase(1, 2), RoundAwayFromZero); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("positive overflow = %v", err)

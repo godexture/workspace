@@ -8,6 +8,7 @@ import (
 )
 
 type flowExampleUnitID struct{}
+type exampleForkID struct{}
 
 // A shape declares typed ports without exposing queues or scheduling.
 func ExampleNewShape() {
@@ -26,20 +27,26 @@ func ExampleNewShape() {
 	// false 2
 }
 
-// Share retains a value without consuming the borrowed input; Take transfers
-// its existing ownership instead.
+// Fork is the only way to obtain a second owner of one payload. The branch
+// declares the domain it will be released in first: a slot that declares
+// nothing cannot take ownership, so no payload ends up somewhere with no
+// release and nowhere to report one that fails.
 func ExampleItem_Fork() {
 	retains := 0
 	releases := 0
-	item := flow.NewItemWithTraits(7, func(value int) int {
-		retains++
-		return value
-	}, func(int) {
-		releases++
+	var domain flow.Collector
+	typ := schema.Define[exampleForkID](schema.Traits[int]{
+		Fork: func(value int) int {
+			retains++
+			return value
+		},
+		Drop: func(int) { releases++ },
 	})
+	item := flow.NewItem(7, typ, &domain)
 	defer item.Drop()
 
 	var branch flow.Item[int]
+	branch.Bind(typ, &domain)
 	item.Fork(&branch)
 	branch.Drop()
 	fmt.Println(retains, releases)

@@ -113,12 +113,13 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		anchor := chunkAnchorAt(formatFound, dataFound)
 		preserve := true
 
-		// A JUNK chunk of exactly ds64 size in the reservation slot is
-		// structural: RF64 writers put it there so the header length never
-		// changes, and this writer recreates it. Elsewhere, or at another
-		// size, JUNK is ordinary content and is preserved.
+		// A JUNK chunk of exactly ds64 size in the reservation slot is where an
+		// RF64 writer keeps room for a later ds64, and this writer recreates
+		// that slot. Its payload is still input-derived content and is legal
+		// non-zero, so it is preserved and written back into the same slot
+		// instead of being regenerated as zeros.
 		if id == tagJUNK && offset == reserveOffset && declaredSize == ds64PayloadSize {
-			preserve = false
+			anchor = chunkReservation
 		}
 
 		switch id {

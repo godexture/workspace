@@ -20,6 +20,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	testkit.Plugin(t, wave.Plugin())
 	runFileCases(t, set, coverage)
 	runLinearCases(t, set, coverage)
+	runLinearSuggestions(t, set, coverage)
 	runWAVECases(t, set, coverage)
 	runRIFFInfoCases(t, set, coverage)
 
@@ -29,7 +30,6 @@ func TestOfficialPluginConformance(t *testing.T) {
 		identity  string
 		milestone string
 	}{
-		{identity: "access.snapshot-retry", milestone: "remote-provider"},
 		{identity: "access.direct-inspect", milestone: "M9"},
 		{identity: "metadata.mapping-loss", milestone: "M7"},
 		{identity: "endpoint.conformance", milestone: "M9"},
@@ -40,7 +40,6 @@ func TestOfficialPluginConformance(t *testing.T) {
 	}
 	wantGaps := []testkit.UncoveredContract{
 		{Identity: "access.direct-inspect", Milestone: "M9"},
-		{Identity: "access.snapshot-retry", Milestone: "remote-provider"},
 		{Identity: "endpoint.conformance", Milestone: "M9"},
 		{Identity: "metadata.mapping-loss", Milestone: "M7"},
 	}

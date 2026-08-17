@@ -27,9 +27,12 @@ type ReferenceFingerprint [32]byte
 func (f ReferenceFingerprint) IsZero() bool   { return f == ReferenceFingerprint{} }
 func (f ReferenceFingerprint) String() string { return hex.EncodeToString(f[:]) }
 
-// Parse creates a reference from a scheme-qualified locator. Userinfo,
-// query, and fragment values remain available to the resolver through
-// Canonical, but never appear in Display or String.
+const redactedReferenceTarget = "<redacted>"
+
+// Parse creates a reference from a scheme-qualified locator. Canonical keeps
+// the complete resolver target, while Display keeps only the scheme and a
+// fixed marker. This deliberately omits opaque values, authority, path,
+// userinfo, query, and fragment from every public representation.
 func Parse(value string) (Reference, error) {
 	raw := strings.TrimSpace(value)
 	if raw == "" {
@@ -44,17 +47,9 @@ func Parse(value string) (Reference, error) {
 		return Reference{}, ErrInvalidReference
 	}
 
-	display := *parsed
-	display.User = nil
-	if display.RawQuery != "" {
-		display.RawQuery = "redacted"
-	}
-	if display.Fragment != "" {
-		display.Fragment = "redacted"
-	}
 	return Reference{
 		canonical: parsed.String(),
-		display:   display.String(),
+		display:   parsed.Scheme + ":" + redactedReferenceTarget,
 		scheme:    parsed.Scheme,
 	}, nil
 }
@@ -72,11 +67,13 @@ func NewReference(scheme, target string) (Reference, error) {
 func (r Reference) Valid() bool    { return r.canonical != "" && r.scheme != "" }
 func (r Reference) Scheme() string { return r.scheme }
 
-// Canonical returns the resolver-facing locator. Callers building logs,
-// diagnostics, or user-visible plans should use Display instead.
+// Canonical returns the resolver-facing locator. It may contain credentials,
+// signed parameters, and local path material; callers must not place it in
+// logs, diagnostics, or user-visible plans.
 func (r Reference) Canonical() string { return r.canonical }
 
-// Display returns the policy-redacted locator.
+// Display returns a deterministic, secret-free public label containing only
+// the provider scheme and a fixed target marker.
 func (r Reference) Display() string { return r.display }
 
 func (r Reference) String() string { return r.Display() }

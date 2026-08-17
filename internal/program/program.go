@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/bound"
 	"github.com/godexture/godec/internal/graph"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run"
 	"github.com/godexture/godec/job"
@@ -83,15 +84,15 @@ func (p Program) Open(ctx plugin.OpenContext, id job.NodeID) (flow.Operator, err
 	return p.graph.Open(ctx, id)
 }
 
-func (p Program) Build(operators []flow.Operator) (*run.Execution, error) {
-	return p.BuildObserved(operators, nil)
+func (p Program) Build(ledger *journal.Ledger, operators []flow.Operator) (*run.Execution, error) {
+	return p.BuildObserved(ledger, operators, nil)
 }
 
-func (p Program) BuildObserved(operators []flow.Operator, observer *observe.Collector) (*run.Execution, error) {
+func (p Program) BuildObserved(ledger *journal.Ledger, operators []flow.Operator, observer *observe.Collector) (*run.Execution, error) {
 	if !p.Executable() {
 		return nil, errors.New("program has no complete typed execution binding")
 	}
-	return p.runtime.BuildObserved(operators, observer)
+	return p.runtime.BuildObserved(ledger, operators, observer)
 }
 
 func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, error) {

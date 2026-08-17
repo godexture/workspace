@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/errorx"
 	internalplanning "github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/buffer"
@@ -40,10 +41,12 @@ type probeCandidate struct {
 
 type probeStore struct {
 	allocator  *buffer.Allocator
+	node       string
 	handles    []buffer.Handle
 	views      []access.ProbeView
 	random     access.Random
 	sequential access.Sequential
+	sizer      access.Sizer
 	offset     int64
 	end        int64
 	endKnown   bool
@@ -60,10 +63,11 @@ func newProbeStore(opening access.Opening, budget job.Budget) (*probeStore, erro
 	}
 	random, _ := access.RandomOf(opening)
 	sequential, _ := access.SequentialOf(opening)
+	sizer, _ := access.StableSizeOf(opening)
 	if random == nil && sequential == nil {
 		return nil, errors.New("probe store received no readable source view")
 	}
-	return &probeStore{allocator: allocator, random: random, sequential: sequential}, nil
+	return &probeStore{allocator: allocator, random: random, sequential: sequential, sizer: sizer}, nil
 }
 
 func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session acquiredSession, hint job.FormatSelector, budget job.Budget) (formatChoice, *probeStore, plan.Usage, error) {
@@ -84,6 +88,7 @@ func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session a
 	if err != nil {
 		return formatChoice{}, nil, plan.Usage{}, probeDiagnostic("prepare.probe-opening", boundary, plugin.Identity{}, "automatic Format Probe cannot use the acquired source opening", map[string]string{"cause": err.Error()})
 	}
+	store.node = boundary.Node
 	usage := plan.Usage{}
 	fail := func(err error) (formatChoice, *probeStore, plan.Usage, error) {
 		closeErr := store.Close()
@@ -146,7 +151,7 @@ func (h *Host) probeInput(ctx context.Context, boundary plan.Boundary, session a
 			if internalplanning.DurationExhausted(ctx) {
 				return fail(probeBudgetDiagnosticWithRange(boundary, "duration", usage, budget, candidates, unmet))
 			}
-			if errors.Is(extendErr, buffer.ErrLimit) {
+			if errorx.Is(extendErr, buffer.ErrLimit) {
 				return fail(probeBudgetDiagnosticWithRange(boundary, "bytes", usage, budget, candidates, unmet))
 			}
 			return fail(probeDiagnostic("prepare.probe-read", boundary, plugin.Identity{}, "Format Probe could not read a requested source range", map[string]string{
@@ -341,6 +346,12 @@ func (s *probeStore) readRange(ctx context.Context, request access.RangeRequest,
 	if err != nil {
 		return false, err
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			lease.Discard()
+		}
+	}()
 	count := 0
 	reachedEnd := false
 	err = lease.Fill(func(destination buffer.Mutable) error {
@@ -350,18 +361,30 @@ func (s *probeStore) readRange(ctx context.Context, request access.RangeRequest,
 				return cause
 			}
 			var n int
-			var readErr error
+			var failure *Failure
 			if positioned {
-				n, readErr = s.random.ReadAt(ctx, bytes[count:], request.Offset()+int64(count))
+				n, failure = callAccess(ctx, PreparePhase, s.node, "access/random-read", func(callContext context.Context) (int, error) {
+					return s.random.ReadAt(callContext, bytes[count:], request.Offset()+int64(count))
+				})
 			} else {
-				n, readErr = s.sequential.Read(ctx, bytes[count:])
+				n, failure = callAccess(ctx, PreparePhase, s.node, "access/sequential-read", func(callContext context.Context) (int, error) {
+					return s.sequential.Read(callContext, bytes[count:])
+				})
+			}
+			var readErr error
+			if failure != nil {
+				if errorx.Is(failure, io.EOF) {
+					readErr = io.EOF
+				} else {
+					return failure
+				}
 			}
 			if n < 0 || n > len(bytes)-count {
 				return errors.New("probe source returned an invalid read count")
 			}
 			count += n
 			if readErr != nil {
-				if errors.Is(readErr, io.EOF) {
+				if errorx.Is(readErr, io.EOF) {
 					reachedEnd = true
 					return nil
 				}
@@ -374,13 +397,13 @@ func (s *probeStore) readRange(ctx context.Context, request access.RangeRequest,
 		return nil
 	})
 	if err != nil {
-		lease.Discard()
 		return false, err
 	}
 	handle, err := lease.Commit()
 	if err != nil {
 		return false, err
 	}
+	committed = true
 	if count == 0 {
 		handle.Release()
 	} else {
@@ -408,6 +431,22 @@ func (s *probeStore) readRange(ctx context.Context, request access.RangeRequest,
 	}
 	progress := count != 0
 	if reachedEnd {
+		if positioned && count == 0 {
+			// A random read at an offset beyond EOF returns (0, io.EOF), but
+			// that result does not identify where EOF is. Only a selected
+			// StableSize view may turn this probe result into an exact end.
+			if s.sizer == nil {
+				return progress, nil
+			}
+			size, failure := callAccess(ctx, PreparePhase, s.node, "access/stable-size", s.sizer.Size)
+			if failure != nil {
+				return false, failure
+			}
+			if size < 0 {
+				return false, errors.New("probe source returned a negative stable size")
+			}
+			end = size
+		}
 		if !s.endKnown || end < s.end {
 			s.end = end
 			s.endKnown = true

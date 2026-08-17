@@ -9,6 +9,8 @@ package diagnostic
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -259,4 +261,35 @@ func cloneDetail(detail map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+// Recovered describes a recovered panic value without rendering it.
+//
+// A panic value is chosen by the code that panicked, so it can be the very
+// data that code was handling: a plugin that panics with its credential turns
+// every diagnostic, Result, and CLI line that quotes the value into a leak.
+// Runtime errors are different -- Go generates them and they carry no caller
+// data -- so those are rendered in full.
+//
+// The stack trace, which callers keep separately, is what actually locates the
+// panic; the value adds little to that and can cost a great deal.
+func Recovered(value any) string {
+	if value == nil {
+		return "panic with no value"
+	}
+	if err, ok := value.(runtime.Error); ok && fromRuntime(reflect.TypeOf(value)) {
+		return err.Error()
+	}
+	return "panic value of type " + reflect.TypeOf(value).String()
+}
+
+// fromRuntime reports whether a type was declared by the runtime package.
+// runtime.Error is an ordinary exported interface, so satisfying it says
+// nothing about where the value came from: a caller can implement it and carry
+// anything in the message.
+func fromRuntime(typ reflect.Type) bool {
+	for typ != nil && typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ != nil && typ.PkgPath() == "runtime"
 }

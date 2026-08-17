@@ -37,7 +37,7 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	if !packet.Valid() || packet.PTS().Value() != 0 || packet.DTS().Value() != -1 || packet.Duration().Value() != 2 {
 		t.Fatalf("packet timing = %#v", packet)
 	}
-	if packet.Bytes()[1] != 2 {
+	if packet.Bytes().At(1) != 2 {
 		t.Fatal("packet payload was not retained")
 	}
 	if got, err := packet.PTS().Value().Rescale(base, base, timing.RoundTowardZero); err != nil || got != 0 {
@@ -53,7 +53,7 @@ func TestPacketShareRetainsPayload(t *testing.T) {
 	packet := NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload)
 	clone := packet.Share()
 	packet.Release()
-	if !clone.Valid() || clone.Bytes()[0] != 9 {
+	if !clone.Valid() || clone.Bytes().At(0) != 9 {
 		t.Fatal("clone did not retain payload")
 	}
 	clone.Release()

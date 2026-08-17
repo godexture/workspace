@@ -14,7 +14,12 @@ type rawChunkSlot struct{}
 type chunkAnchor uint8
 
 const (
-	chunkBeforeFormat chunkAnchor = iota + 1
+	// chunkReservation is the ds64-sized slot immediately after the WAVE tag.
+	// A writer keeps it free so promoting RIFF to RF64 does not move any other
+	// chunk. Its bytes are still input-derived content, so they are written
+	// back into the same slot rather than appended somewhere else.
+	chunkReservation chunkAnchor = iota + 1
+	chunkBeforeFormat
 	chunkBeforeData
 	chunkAfterData
 	// chunkAfterRIFF is the region past the RIFF chunk. It is not a chunk at
@@ -73,6 +78,8 @@ func chunkAnchorAt(formatFound, dataFound bool) chunkAnchor {
 
 func (a chunkAnchor) token() string {
 	switch a {
+	case chunkReservation:
+		return "reservation"
 	case chunkBeforeFormat:
 		return "before-format"
 	case chunkBeforeData:
@@ -88,6 +95,8 @@ func (a chunkAnchor) token() string {
 
 func parseChunkAnchor(value string) (chunkAnchor, bool) {
 	switch value {
+	case "reservation":
+		return chunkReservation, true
 	case "before-format":
 		return chunkBeforeFormat, true
 	case "before-data":

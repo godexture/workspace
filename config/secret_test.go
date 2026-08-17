@@ -14,11 +14,11 @@ func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secret resolve failed: %v", err)
 	}
-	if strings.Contains(fmt.Sprint(resolved.Value), "super-secret") || strings.Contains(resolved.String(), "super-secret") {
-		t.Fatalf("secret leaked through public representation: value=%q resolved=%q", fmt.Sprint(resolved.Value), resolved.String())
+	if strings.Contains(fmt.Sprint(mustValue(t, resolved)), "super-secret") || strings.Contains(resolved.String(), "super-secret") {
+		t.Fatal("secret leaked through public representation")
 	}
-	if got := resolved.Value.Secret.Reveal(); got != "super-secret" {
-		t.Fatalf("secret reveal = %q, want original value", got)
+	if got := mustValue(t, resolved).Secret.Reveal(); got != "super-secret" {
+		t.Fatal("secret reveal did not return the original value")
 	}
 
 	invalid := Struct[secretMarker](func() struct{ Secret SecretValue[int] } {
@@ -26,7 +26,7 @@ func TestSecretDoesNotLeakThroughPublicRepresentations(t *testing.T) {
 	}).AddField(Field("secret", func(value *struct{ Secret SecretValue[int] }) *SecretValue[int] { return &value.Secret }, SecretCodec(Int().Range(1, 10)))).Build()
 	_, err = invalid.Resolve(NewPatch())
 	if err == nil || strings.Contains(err.Error(), "super-secret") || strings.Contains(err.Error(), "0") {
-		t.Fatalf("secret validation error leaked a raw value: %v", err)
+		t.Fatal("secret validation error leaked a raw value")
 	}
 }
 
@@ -46,14 +46,14 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 
 	encoded := codec.Encode(secretConfig{Endpoint: "s3://bucket", Token: NewSecret("live-secret")})
 	if strings.Contains(encoded, redactionMarker) || strings.Contains(encoded, "live-secret") {
-		t.Fatalf("secret appeared in wire encoding: %q", encoded)
+		t.Fatal("secret appeared in wire encoding")
 	}
 	decoded, err := codec.Decode(encoded)
 	if err != nil {
-		t.Fatalf("secret wire decode failed: %v; encoded=%q", err, encoded)
+		t.Fatal("secret wire decode failed")
 	}
 	if decoded.Endpoint != "s3://bucket" || decoded.Token.Reveal() != "default-secret" {
-		t.Fatalf("secret wire decode = %#v, want endpoint and default secret", decoded)
+		t.Fatal("secret wire decode did not restore the endpoint and default secret")
 	}
 
 	_, err = codec.Decode(`{"endpoint":"s3://bucket","token":"<redacted>"}`)
@@ -61,7 +61,7 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 		t.Fatal("redaction marker was accepted by nested decode")
 	}
 	if strings.Contains(err.Error(), redactionMarker) || strings.Contains(err.Error(), "live-secret") {
-		t.Fatalf("nested decode error exposed secret data: %q", err)
+		t.Fatal("nested decode error exposed secret data")
 	}
 
 	_, err = schema.Resolve(NewPatch().SetText("token", redactionMarker))
@@ -74,20 +74,20 @@ func TestSecretSurfaceOmitsSecretAndRejectsMarker(t *testing.T) {
 		if item.Code == codeSecretRedacted {
 			found = true
 			if item.Message == "field input could not be decoded" || !strings.Contains(item.Message, "redaction marker") {
-				t.Fatalf("secret redaction message is not marker-specific: %#v", item)
+				t.Fatal("secret redaction message is not marker-specific")
 			}
 		}
 		if strings.Contains(item.Message, redactionMarker) || strings.Contains(item.Message, "live-secret") {
-			t.Fatalf("diagnostic message exposed secret data: %#v", item)
+			t.Fatal("diagnostic message exposed secret data")
 		}
 		for _, detail := range item.Detail {
 			if strings.Contains(detail, redactionMarker) || strings.Contains(detail, "live-secret") {
-				t.Fatalf("diagnostic detail exposed secret data: %#v", item)
+				t.Fatal("diagnostic detail exposed secret data")
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("secret redaction diagnostic missing: %v", items)
+		t.Fatal("secret redaction diagnostic missing")
 	}
 }
 
@@ -112,11 +112,11 @@ func TestResolvedSummaryOmitsSecret(t *testing.T) {
 	summary := resolved.Summary()
 	rendered := fmt.Sprintf("%#v", summary)
 	if strings.Contains(rendered, "live-secret") || strings.Contains(rendered, "default-secret") {
-		t.Fatalf("secret leaked through summary: %s", rendered)
+		t.Fatal("secret leaked through summary")
 	}
 	fields := summary.Fields()
 	if len(fields) != 2 || fields[0].Value != "s3://bucket" || fields[1].ID != "token" || !fields[1].Redacted || fields[1].Value != "" {
-		t.Fatalf("summary fields = %#v", fields)
+		t.Fatal("summary fields did not contain the expected redacted projection")
 	}
 
 	patch, err := view.Patch(resolved)
@@ -127,8 +127,8 @@ func TestResolvedSummaryOmitsSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roundTrip.Fingerprint != resolved.Fingerprint || roundTrip.Value.(secretConfig).Token.Reveal() != "live-secret" {
-		t.Fatalf("secret round trip failed: %#v", roundTrip)
+	if roundTrip.Fingerprint() != resolved.Fingerprint() || mustViewValue(t, roundTrip).(secretConfig).Token.Reveal() != "live-secret" {
+		t.Fatal("secret round trip failed")
 	}
 }
 

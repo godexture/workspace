@@ -76,7 +76,7 @@ small hermetic fixture、cross-plugin fixture、full conformance corpus、benchm
 - checked timestamp rescale、overflow、rounding
 - graph schema/multiplicity/cycle/reachability/finalizer validation
 - planner の canonical ordering、budget、same-input Plan fingerprint
-- ownership move、fan-out、write failure、drop、cancel drain
+- ownership move、fan-out sibling isolation、immutable read view、write failure、drop、cancel drain
 - allocator の zeroed/overwrite lease と Job 終了時の解放
 - transactional Open、reverse rollback、Finalize/Commit outcome
 - primary failure と cleanup failure の集約
@@ -110,7 +110,11 @@ typed case 層は `Component`、`Format`、`Codec`、`Metadata Encoding`、`Acce
 - `Compile` purity/repeatability と bounded `Suggest`
 - selected component だけを `Open` する lifecycle
 - cancel、EOF、Flush、Finalize、Close
+- active cancellation: callback が実際に Run へ入り context cancel を観測してから停止し、idle/未実行の shortcut を通らないこと
 - ownership leak、double drop、declared schema と実 item
+- `host.VerifyOwnership()` を opt-in した success、expected failure、rejected emit、active cancellation の全 Run 経路で live/overrelease が 0 に戻ること
+- observer の `Fail` を唯一の Ledger ingress とし、`Close` は bounded wait と queue drain だけを行うこと。cancel normalization は trusted な pure single chain の Cause に限り、CLI `ExitCanceled` は caller context state だけを authority とすること
+- read-only/shared media が raw mutable slice を公開せず、変更 branch だけが editor 経由で COW すること
 - variant accuracy/repeatability/platform declaration
 - panic/error boundary
 - empty、truncated、oversized input
@@ -126,6 +130,12 @@ typed case 層は `Component`、`Format`、`Codec`、`Metadata Encoding`、`Acce
 | Endpoint | clock、overflow/underrun、cancel/join、reconnect/topology event |
 
 plugin author が scheduler、queue、manual `Release`、surface DTO を再実装しなくても contract を検証できることを testkit の usability gate にする。二層にした以上、この gate は typed case 層で測る。**author が供給してよいのは config、入力 fixture、期待値だけ**とし、Host 構築、Job 組み立て、queue、ownership harness、Plan の検査は testkit が持つ。author 側の記述量が fixture と期待値を超える場合は helper を足すか、足さない理由を記録する。
+
+共通 runner は、各 typed case を success、期待された planning/run failure、rejected emit、active cancellation の scenario として実行する。active cancellation は callback が最初の実行で gate に到達し、context が canceled になったことを観測してから解放されるため、未実行の `cancel()` だけでは通過しない。各 Run には `VerifyOwnership()` を opt-in で渡し、persistent slot、queue/fan-out move、declined payload、Close 後の live slot を同じ result contract で検査する。
+
+`testkit.Coverage.VerifyExecutable` が executable component ごとの実行済み typed case、`HasSuggest` component ごとの Suggest scenario、Set 外 identity の混入を検査する。planning-only failure は executable coverage に数えず、success・期待 failure・rejected emit・active cancellation は実際の `Prepared.Run` を `host.VerifyOwnership()` 付きで通る。これにより、登録されただけの component や未実行の shortcut が M6 の実行可能 coverage を満たしたことにはならない。
+
+testkit が観測するのは Host が管理する `flow.Item` transition と登録済み task の lifecycle である。plugin が raw payload に schema callback を直接呼ぶ、`unsafe` で Item を複製する、Host に登録していない goroutine を残す、または callback を永久 block させる場合は、testkit が補償する対象ではなく plugin bug（in-process contract 外）として扱う。偶発的な panic/error、invalid capability、double release は引き続き標準 scenario で failure として投影する。
 
 ## integration
 
@@ -232,14 +242,16 @@ M6 は public testkit と `integration` module が最小形で成立する miles
 - **公式 plugin が第三者と同じ入口で検証される。** 公式 WAVE/PCM/file plugin が構造層と typed case 層の両方を通る。公式 plugin だけが使う内部 test helper を別に持たない。fixture を production の `plugin.Definition` に持たせず、型消去された test hook も公開しない。
 - **構造層だけの通過を conformance と誤認させない。** 構造層は definition から決まる整合性しか見ないため、その範囲を godoc と失敗 message に明示する。あわせて `integration` が、**実行可能な公式 component すべてに typed case が存在すること**を検査する。公式 family に対しては覆い漏れを機械的に検出できるようにし、構造層の通過が「一応 test した」で止まらないようにする。
 - 共通 contract の最小形が実装される。identity/descriptor/config schema、`Compile` の purity と repeatability、bounded `Suggest`、selected component だけの `Open`、cancel/EOF/Flush/Finalize/Close、ownership leak と double drop、宣言 schema と実 item の一致、panic/error boundary、empty/truncated/oversized input を含む。
-- 専門 testkit のうち Format、Codec/Parser、Access Provider を M6 に含める。ただし**実装と consumer を持つ contract だけを対象にする**。Access Provider は capability 選択、`Own`/`Borrow`、commit/abort までとし、**snapshot と retry は含めない**。`access.Session` は capability と close だけを共通 contract とし、stable size は選択時だけ narrow view で渡す。`Snapshot` は Host にも Plan にも到達しない値型であり、再取得・並行 range・blocked I/O cancellation は [scope](scope.md#m6-の-contract-分類) が実 Provider の milestone へ割り当てている。ここで実装すると consumer の無い機構を作ることになる。Metadata Encoding は RIFF INFO が扱う範囲（parse/marshal、重複と順序、未知 raw）に限り、Mapping と loss は M7、Endpoint は M9 に残す。
+- 専門 testkit のうち Format、Codec/Parser、Access Provider を M6 に含める。ただし**実装と consumer を持つ contract だけを対象にする**。Access Provider は capability 選択、`Own`/`Borrow`、commit/abort に加え、`StableSize` を伴う `Snapshotter` の存在と有効な unchanged identity を Host 経由で検査する。local file の Prepare と Run の間の mutation は Host/integration が phase 間照合で拒否する。retry/reopen、並行 range、blocked I/O cancellation は実 operation を持つ後続 Provider milestone まで導入しない。Metadata Encoding は RIFF INFO が扱う範囲（parse/marshal、重複と順序、未知 raw）に限り、Mapping と loss は M7、Endpoint は M9 に残す。`StableSize` の検査は自動 Probe、WeakSnapshot、範囲外 probe の EOF と replay の capability/size/identity 同期も含め、宣言だけを成功としない。
 - **未 cover の専門 contract を coverage registry へ担当付きで記録する。** 「helper が無いから検査されていない」状態を、「担当 milestone 付きで未 cover」と読める形にする。M10 の testkit 完成時に取りこぼしを機械的に判定できるようにするためであり、この一覧が [quality](#public-plugin-testkit) の表と最終状態の差分になる。
 - `integration` module が dependency graph の最上位にあり、foundation と公式 plugin が test のために互いを import しない。end-to-end 変換、拡張性 gate、identity 検査はここに置く。
-- **正しさを旧実装ではなく仕様で確認する。** [capability](capability.md) の WAVE、PCM、RIFF INFO の各行が指定する conformance 相当 vector と lossless roundtrip exact を実行し、確認済みであることを同表へ記録する。M0 baseline は差異の診断にだけ使う。
+- **正しさを旧実装ではなく仕様で確認する。** [capability](capability.md) の WAVE、PCM、RIFF INFO の各行が指定する conformance 相当 vector と lossless roundtrip exact を実行し、確認済みであることを同表へ記録する。RIFF INFO は edit-aware raw preservation、unknown child の変更/削除/追加、duplicate の origin/value + document-order matching と deterministic limit（完全同一 duplicate の per-occurrence byte identity は約束しない）を含む。M0 baseline は差異の診断にだけ使う。
 - testkit の usability gate を満たす。plugin author が scheduler、queue、手動 `Release`、surface DTO を再実装せずに contract を検証できる。満たせない箇所は helper を追加するか、追加しない理由を記録する。
 - 上記の test が `go run ./tools/cmd/test-runner --simd` の対象に含まれ、milestone の完了確認で green になる。
 
-M6 では次を未完了事項として残す。root CI matrix、外部 corpus の取得 tier と provenance、hermetic build、SBOM/NOTICE、release plan は M10。browser lifecycle gate は M9 が surface を戻した時点で追加する。
+2026-08-17 の M6 final verification では、root/integration の build、通常 test、race、vet、SIMD test runner、generator（status unchanged）、tools の `GOWORK=off` build、non-`_legacy` gofmt、docs-check、`git diff --check` を実行し、すべて green だった。代表 benchmark は Item 0 alloc、fused 43 alloc、Host 約 65,722 alloc で従来同等であり、明白な 2 倍回帰は確認されなかった。root/integration の active cancellation、panic/error、ownership audit と independent Terra review にも新たな現実的 P1/P2 はない。
+
+M6 の完了範囲外として、root CI matrix、外部 corpus の取得 tier と provenance、hermetic build、SBOM/NOTICE、release plan は M10、browser lifecycle gate は M9 の surface 復帰時に扱う。これらは将来 milestone の完了条件である。
 
 ## 文書全体の完了条件
 

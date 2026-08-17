@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/internal/task"
@@ -15,14 +16,16 @@ import (
 var (
 	ErrOperatorCount = errors.New("runtime operator count does not match Program")
 	ErrStarted       = errors.New("runtime execution has already started")
+	ErrUnboundChain  = errors.New("runtime delivery chain has no failure domain")
 )
 
 type namedTask struct {
-	name  string
 	task  drive.Task
-	scope *drive.Scope
+	chain drive.Link
 	done  chan error
 }
+
+func (n namedTask) domain() *journal.Domain { return n.task.Domain() }
 
 // Execution is a one-shot opened data path. It owns only runtime edge state;
 // Host retains operator/resource lifecycle ownership.
@@ -32,17 +35,20 @@ type Execution struct {
 
 	mu         sync.Mutex
 	started    bool
-	closeOnce  sync.Once
+	abortOnce  sync.Once
 	finishOnce sync.Once
 	finishErr  error
 	observer   *observe.Collector
 }
 
-func (t Template) Build(operators []flow.Operator) (*Execution, error) {
-	return t.BuildObserved(operators, nil)
+func (t Template) Build(ledger *journal.Ledger, operators []flow.Operator) (*Execution, error) {
+	return t.BuildObserved(ledger, operators, nil)
 }
 
-func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Collector) (*Execution, error) {
+func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operator, observer *observe.Collector) (*Execution, error) {
+	if ledger == nil {
+		return nil, ErrUnboundChain
+	}
 	if !t.executable || len(operators) != len(t.nodes) {
 		return nil, ErrOperatorCount
 	}
@@ -57,32 +63,33 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 	result := &Execution{observer: observer}
 	edgeTargets := make([]drive.Link, len(t.edges))
 	fail := func(err error) (*Execution, error) {
-		result.Close()
+		result.Abort()
 		return nil, err
 	}
 
 	for index := len(t.nodes) - 1; index >= 0; index-- {
 		value := t.nodes[index]
 		operator := operators[index]
+		node := value.id.String()
 		switch value.kind {
 		case drive.Sink:
-			link, err := value.binding.OpenSinkAt(operator, value.id.String())
+			link, err := value.binding.OpenSinkAt(operator, node)
 			if err != nil {
 				return fail(err)
 			}
 			edgeTargets[t.incoming[index][0]] = link
 		case drive.Processor:
-			output, err := t.outputLink(index, edgeTargets, result)
+			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
 				return fail(err)
 			}
-			input, err := value.binding.PrependAt(operator, output, value.id.String())
+			input, err := value.binding.PrependAt(operator, output, node)
 			if err != nil {
 				return fail(err)
 			}
 			edgeTargets[t.incoming[index][0]] = input
 		case drive.Joiner:
-			output, err := t.outputLink(index, edgeTargets, result)
+			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
 				return fail(err)
 			}
@@ -90,9 +97,7 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			sort.Slice(incoming, func(left, right int) bool {
 				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
 			})
-			scope := drive.NewScope(value.id.String())
-			output.BindScope(scope)
-			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output)
+			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output, ledger.Domain("join/"+node, node))
 			if err != nil {
 				return fail(err)
 			}
@@ -102,20 +107,17 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 			for inputIndex, edgeIndex := range incoming {
 				edgeTargets[edgeIndex] = inputs[inputIndex]
 			}
-			joinTask.BindScope(scope)
-			result.edges = append(result.edges, namedTask{name: "join/" + value.id.String(), task: joinTask, scope: scope})
+			result.edges = append(result.edges, namedTask{task: joinTask, chain: output})
 		case drive.Source:
-			output, err := t.outputLink(index, edgeTargets, result)
+			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
 				return fail(err)
 			}
-			scope := drive.NewScope(value.id.String())
-			output.BindScope(scope)
-			sourceTask, err := value.binding.OpenSource(operator, output)
+			sourceTask, err := value.binding.OpenSource(operator, output, ledger.Domain("source/"+node, node))
 			if err != nil {
 				return fail(err)
 			}
-			result.sources = append(result.sources, namedTask{name: "source/" + value.id.String(), task: sourceTask, scope: scope, done: make(chan error, 1)})
+			result.sources = append(result.sources, namedTask{task: sourceTask, chain: output, done: make(chan error, 1)})
 		default:
 			return fail(ErrTopology)
 		}
@@ -124,11 +126,19 @@ func (t Template) BuildObserved(operators []flow.Operator, observer *observe.Col
 		if !link.Valid() {
 			return fail(ErrTopology)
 		}
+		// Every chain is bound by the constructor of the task that drives it,
+		// so this can only fail if a new edge kind forgot to have an owner at
+		// all. Finding that here costs one pass at Open; finding it later
+		// means a release failure with nowhere to go.
+		if !link.Bound() {
+			return fail(ErrUnboundChain)
+		}
 	}
 	return result, nil
 }
 
-func (t Template) outputLink(index int, targets []drive.Link, execution *Execution) (drive.Link, error) {
+func (t Template) outputLink(ledger *journal.Ledger, index int, targets []drive.Link, execution *Execution) (drive.Link, error) {
+	node := t.nodes[index].id.String()
 	links := make([]drive.Link, len(t.outgoing[index]))
 	for outputIndex, edgeIndex := range t.outgoing[index] {
 		edge := t.edges[edgeIndex]
@@ -136,25 +146,24 @@ func (t Template) outputLink(index int, targets []drive.Link, execution *Executi
 		if !link.Valid() {
 			return drive.Link{}, ErrTopology
 		}
-		local := execution.observer.Local("", edgeKey(edge.value))
+		key := edgeKey(edge.value)
+		local := execution.observer.Local("", key)
 		observed, err := t.nodes[index].binding.Observe(link, local)
 		if err != nil {
 			return drive.Link{}, err
 		}
 		link = observed
 		if edge.reason != 0 && t.nodes[edge.to].kind != drive.Joiner {
-			scope := drive.NewScope("")
-			link.BindScope(scope)
-			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link)
+			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link, ledger.Domain("buffer/"+key, key))
 			if err != nil {
 				return drive.Link{}, err
 			}
 			link = buffered
-			execution.edges = append(execution.edges, namedTask{name: "buffer/" + edgeKey(edge.value), task: bufferTask, scope: scope})
+			execution.edges = append(execution.edges, namedTask{task: bufferTask})
 		}
 		links[outputIndex] = link
 	}
-	return t.nodes[index].binding.Fanout(links)
+	return t.nodes[index].binding.Fanout(links, node)
 }
 
 // Start registers edge tasks before sources so bounded consumers are ready
@@ -171,22 +180,23 @@ func (e *Execution) Start(group *task.Group) error {
 	e.started = true
 	e.mu.Unlock()
 	for _, value := range e.edges {
-		if err := group.StartScoped(value.name, value.scope.Node, value.task.Run); err != nil {
-			e.Close()
+		if err := group.StartDomain(value.domain(), value.task.Run, value.task.Sealed()); err != nil {
 			group.Cancel(err)
+			e.Abort()
 			return err
 		}
 	}
 	for _, value := range e.sources {
 		current := value
-		work := func(ctx context.Context) error {
-			err := current.task.Run(ctx)
-			current.done <- err
-			return err
-		}
-		if err := group.StartScoped(current.name, current.scope.Node, work); err != nil {
-			e.Close()
+		// current.done must not be filled from inside work: the Run span
+		// records what work returned only after it returns, so a signal sent
+		// from in there would race the Flush span Finish opens on the same
+		// domain once WaitSources wakes up. The sealed hook runs after the
+		// span has ended.
+		sealed := func(cause error) { current.done <- cause }
+		if err := group.StartDomain(current.domain(), current.task.Run, sealed); err != nil {
 			group.Cancel(err)
+			e.Abort()
 			return err
 		}
 	}
@@ -195,6 +205,10 @@ func (e *Execution) Start(group *task.Group) error {
 
 // WaitSources waits for Reader EOF without sealing the shared task group;
 // edge tasks remain live while Host performs Finalize.
+//
+// What it returns on a source failure is that source's cause, which is a
+// reference to the ledger event already recording it. Nothing here produces a
+// second description of the same failure.
 func (e *Execution) WaitSources(ctx context.Context, group *task.Group) error {
 	if e == nil || group == nil {
 		return ErrStarted
@@ -211,7 +225,11 @@ func (e *Execution) WaitSources(ctx context.Context, group *task.Group) error {
 		case <-group.Context().Done():
 			return context.Cause(group.Context())
 		case <-ctx.Done():
-			return ctx.Err()
+			// The cause, never Err: Err flattens whatever stopped the run into
+			// a bare cancellation, and a bare cancellation is a new failure
+			// wherever it is recorded rather than the one that already
+			// happened.
+			return context.Cause(ctx)
 		}
 	}
 	return nil
@@ -235,51 +253,103 @@ func (e *Execution) Quiesce(ctx context.Context) error {
 
 // Finish closes every source edge after successful Finalize. Downstream edge
 // tasks then invoke Processor Flush and close in dependency order.
+//
+// Flushing is its own lifecycle operation, so it gets its own span -- opened
+// on the same stable domain the task ran under, never a second domain. That
+// matters because an ownership slot filled during Run keeps the site it was
+// bound to, and the contract explicitly allows a component to still be holding
+// one: a collector or transport retaining a cell across calls releases it
+// here. A second domain would leave such a cell reporting somewhere this run
+// no longer looks, while the domain it was bound to stays the domain the
+// ledger collects from for the whole run.
+//
+// Reaching across goroutines to open that span is only safe for a chain no
+// other goroutine can still be touching. A source qualifies, because
+// WaitSources already observed the signal its sealed hook sends after its Run
+// span ended; a join qualifies, because its barrier waits on the same signal
+// before Quiesce can succeed. A bounded edge does not: its barrier promises
+// only that its ring is idle, and it stays alive on purpose to accept the
+// delayed output Finalize's Flush may still push through the same queue. Its
+// own downstream close is therefore its own act, in a Flush span it opens on
+// its own domain when it sees EOF.
+//
+// What Finish returns is the cause to stop on, or nil. Every failure it
+// produced is already in the ledger, so this is a signal rather than a second
+// report.
 func (e *Execution) Finish(ctx context.Context) error {
 	if e == nil {
-		return ErrStarted
+		return nil
 	}
 	e.finishOnce.Do(func() {
-		var failures []error
 		for _, source := range e.sources {
-			if err := source.task.Finish(ctx); err != nil {
-				failures = append(failures, err)
-			}
+			e.finishErr = firstCause(e.finishErr, source.flush(ctx))
 		}
 		for index := len(e.edges) - 1; index >= 0; index-- {
-			if err := e.edges[index].task.Finish(ctx); err != nil {
-				failures = append(failures, err)
+			if edge := e.edges[index]; edge.chain.Valid() {
+				e.finishErr = firstCause(e.finishErr, edge.flush(ctx))
 			}
 		}
-		e.finishErr = errors.Join(failures...)
 	})
 	return e.finishErr
 }
 
+func firstCause(existing, next error) error {
+	if existing != nil {
+		return existing
+	}
+	return next
+}
+
+// flush performs one task's Finish as its own Flush span on the task's own
+// domain, through the same boundary a task's goroutine uses for Run, so a
+// panic during this run-driven hand-off cannot discard what it recorded any
+// more than a task's own panic can. Only a namedTask whose chain is set
+// reaches here; see Finish for why.
+func (n namedTask) flush(ctx context.Context) error {
+	return n.domain().Perform(journal.Flush, func(*journal.Span) error {
+		return n.task.Finish(ctx)
+	})
+}
+
 // Discard releases every owner still queued after data tasks have joined.
-// Close must be called first on failure so producers can no longer publish.
+// Abort must be called first on failure so producers can no longer publish.
+//
+// What is released still belongs to the task that owned the edge, so it is
+// released in that task's domain rather than handed to a cleanup domain of the
+// caller's. The Discard span is what places it in the run's lifecycle, and it
+// also recovers a declared Drop that panics past every other owner.
 func (e *Execution) Discard() {
 	if e == nil {
 		return
 	}
 	for index := len(e.sources) - 1; index >= 0; index-- {
-		e.sources[index].task.Discard()
+		e.sources[index].discard()
 	}
 	for index := len(e.edges) - 1; index >= 0; index-- {
-		e.edges[index].task.Discard()
+		e.edges[index].discard()
 	}
 }
 
-func (e *Execution) Close() {
+func (n namedTask) discard() {
+	n.domain().Perform(journal.Discard, func(*journal.Span) error {
+		n.task.Discard()
+		return nil
+	})
+}
+
+// Abort stops runtime edges without declaring ordinary end-of-stream. It is
+// idempotent and must follow cancellation, so a task waking from an aborted
+// queue returns that cancellation cause rather than producing a synthetic EOF.
+func (e *Execution) Abort() {
 	if e == nil {
 		return
 	}
-	e.closeOnce.Do(func() {
+	e.abortOnce.Do(func() {
 		for index := len(e.sources) - 1; index >= 0; index-- {
-			e.sources[index].task.Close()
+			e.sources[index].task.Abort()
 		}
 		for index := len(e.edges) - 1; index >= 0; index-- {
-			e.edges[index].task.Close()
+			e.edges[index].task.Abort()
 		}
 	})
 }

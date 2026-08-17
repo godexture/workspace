@@ -16,8 +16,12 @@ type Choice[T comparable] struct {
 	Value T
 }
 
-// Enum returns a codec whose canonical representation is the choice ID.
-func Enum[T comparable](choices ...Choice[T]) Codec[T] {
+// Enum returns a codec whose canonical representation is the choice ID. The
+// variadic argument is copied because its backing array belongs to the caller;
+// without the copy, a later write there would change what a built schema
+// decodes, encodes, and canonicalizes.
+func Enum[T comparable](values ...Choice[T]) Codec[T] {
+	choices := append([]Choice[T](nil), values...)
 	result := NewCodec(CodecSpec[T]{
 		Type: "enum",
 		Decode: func(value string) (T, error) {
@@ -371,12 +375,32 @@ func UnionCodec[T any](choices ...UnionChoice[T]) Codec[Union[T]] {
 			}
 			return value
 		},
+		Normalize: func(value Union[T]) (Union[T], []diagnostic.Item) {
+			choice, ok := byID[value.Variant]
+			if !ok {
+				// Validate reports the unregistered variant; normalization has
+				// no codec to delegate to.
+				return value, nil
+			}
+			normalized, items := choice.Codec.normalizeValue(value.Value)
+			value.Value = normalized
+			result := make([]diagnostic.Item, 0, len(items))
+			for _, item := range items {
+				result = append(result, prefixItem(item, "value"))
+			}
+			return value, result
+		},
 		Validate: func(value Union[T]) []diagnostic.Item {
 			choice, ok := byID[value.Variant]
 			if !ok {
-				return []diagnostic.Item{diagnostic.NewItem("config.union-variant", diagnostic.ErrorSeverity, diagnostic.Path{}, "union variant is not registered", nil)}
+				return []diagnostic.Item{diagnostic.NewItem("config.union-variant", diagnostic.ErrorSeverity, diagnostic.Path{Fields: []string{"variant"}}, "union variant is not registered", nil)}
 			}
-			return choice.Codec.validateValue(value.Value)
+			items := choice.Codec.validateValue(value.Value)
+			result := make([]diagnostic.Item, 0, len(items))
+			for _, item := range items {
+				result = append(result, prefixItem(item, "value"))
+			}
+			return result
 		},
 		Description: Description{Type: "union", Choices: descriptions},
 	})

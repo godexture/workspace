@@ -77,10 +77,20 @@ func (v ProbeView) Valid() bool {
 	return v.valid && (!v.buffered || v.view.Valid())
 }
 func (v ProbeView) Base() int64 { return v.base }
-func (v ProbeView) Size() int64 { return int64(len(v.bytes())) }
+func (v ProbeView) Size() int64 {
+	if v.buffered {
+		return int64(v.view.Bytes().Len())
+	}
+	return int64(len(v.data))
+}
 
 // Bytes returns a copy of the bounded bytes.
-func (v ProbeView) Bytes() []byte { return append([]byte(nil), v.bytes()...) }
+func (v ProbeView) Bytes() []byte {
+	if v.buffered {
+		return v.view.Bytes().AppendTo(nil)
+	}
+	return append([]byte(nil), v.data...)
+}
 
 // Range returns the source range represented by this view.
 func (v ProbeView) Range() RangeRequest {
@@ -101,26 +111,31 @@ func (v ProbeView) ReadAt(ctx context.Context, destination []byte, offset int64)
 	if !v.Valid() {
 		return 0, ErrInvalidProbeRange
 	}
-	data := v.bytes()
-	if offset < v.base || offset > v.base+int64(len(data)) {
+	size := v.Size()
+	if offset < v.base || offset > v.base+size {
 		return 0, ErrInvalidProbeRange
 	}
 	if len(destination) == 0 {
 		return 0, nil
 	}
-	if offset == v.base+int64(len(data)) {
+	if offset == v.base+size {
 		return 0, io.EOF
 	}
-	n := copy(destination, data[offset-v.base:])
+	available := int(size - (offset - v.base))
+	count := min(len(destination), available)
+	var n int
+	if v.buffered {
+		data := v.view.Bytes()
+		part, err := data.Slice(int(offset-v.base), count)
+		if err != nil {
+			return 0, ErrInvalidProbeRange
+		}
+		n = part.CopyTo(destination)
+	} else {
+		n = copy(destination, v.data[offset-v.base:])
+	}
 	if n != len(destination) {
 		return n, io.EOF
 	}
 	return n, nil
-}
-
-func (v ProbeView) bytes() []byte {
-	if v.buffered {
-		return v.view.Bytes()
-	}
-	return v.data
 }

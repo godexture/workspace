@@ -26,12 +26,12 @@ func NewAdaptor(component plugin.Identity, patch config.Patch) (Adaptor, error) 
 	if component.IsZero() {
 		return Adaptor{}, errors.New("job direct adaptor component identity is required")
 	}
-	return Adaptor{component: component, config: patch}, nil
+	return Adaptor{component: component, config: patch.Clone()}, nil
 }
 
 func (a Adaptor) Valid() bool                { return !a.component.IsZero() }
 func (a Adaptor) Component() plugin.Identity { return a.component }
-func (a Adaptor) Config() config.Patch       { return a.config }
+func (a Adaptor) Config() config.Patch       { return a.config.Clone() }
 
 // Direct is the type-erased Job control-plane binding. Opening remains a
 // typed access.Direct[T] value and is handed only to its selected adaptor.
@@ -69,12 +69,12 @@ func NewEndpoint(component plugin.Identity, patch config.Patch) (EndpointRequest
 	if component.IsZero() {
 		return EndpointRequest{}, errors.New("job endpoint component identity is required")
 	}
-	return EndpointRequest{component: component, config: patch}, nil
+	return EndpointRequest{component: component, config: patch.Clone()}, nil
 }
 
 func (r EndpointRequest) Valid() bool                { return !r.component.IsZero() }
 func (r EndpointRequest) Component() plugin.Identity { return r.component }
-func (r EndpointRequest) Config() config.Patch       { return r.config }
+func (r EndpointRequest) Config() config.Patch       { return r.config.Clone() }
 
 type InputKind uint8
 

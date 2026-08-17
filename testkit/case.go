@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -29,7 +30,6 @@ type Fixture[T any] struct {
 	descriptor stream.Descriptor
 	typ        schema.Type[T]
 	values     []T
-	owners     *owners
 	verify     func() error
 }
 
@@ -39,7 +39,7 @@ func Values[T any](descriptor stream.Descriptor, typ schema.Type[T], values ...T
 	for index, value := range values {
 		owned[index] = typ.Fork(value)
 	}
-	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned, owners: &owners{}}
+	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned}
 }
 
 func (f Fixture[T]) valid() bool {
@@ -47,19 +47,20 @@ func (f Fixture[T]) valid() bool {
 }
 
 func (f Fixture[T]) clone() Fixture[T] {
-	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values)), owners: &owners{}}
+	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values))}
 	for index, value := range f.values {
 		result.values[index] = f.typ.Fork(value)
 	}
 	return result
 }
 
-// emit hands the next unread value to the runtime under ownership accounting.
-func (f *Fixture[T]) emit(index int) flow.Item[T] {
+// emit hands the next unread value to the runtime. The bound slot and Host's
+// ownership audit account for it without substituting schema traits.
+func (f *Fixture[T]) emit(index int, into *flow.Item[T]) {
 	value := f.values[index]
 	var zero T
 	f.values[index] = zero
-	return ownedItem(value, f.typ, f.owners)
+	into.Set(value)
 }
 
 func (f *Fixture[T]) close() error {
@@ -72,7 +73,7 @@ func (f *Fixture[T]) close() error {
 		f.values[index] = zero
 	}
 	f.values = nil
-	problems := []error{f.owners.verify()}
+	var problems []error
 	if f.verify != nil {
 		problems = append(problems, f.verify())
 	}
@@ -180,7 +181,7 @@ func (r *valueRecorder[T, V]) accept(value T) {
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			r.problems = append(r.problems, fmt.Errorf("output snapshot panicked: %v", recovered))
+			r.problems = append(r.problems, fmt.Errorf("output snapshot panicked: %s", diagnostic.Recovered(recovered)))
 		}
 	}()
 	projected, err := r.snapshot(value)

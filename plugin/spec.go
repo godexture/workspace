@@ -61,6 +61,9 @@ type OpenServices struct {
 	// Tasks enforces the Workers grant returned by this component's Compile.
 	Tasks       TaskStarter
 	Diagnostics diagnostic.Sink
+	// Owner is this component's own failure domain, and it lives as long as
+	// the component does.
+	Owner flow.Owner
 	// Boundary is the one node-local Access/Endpoint binding selected by the
 	// planner. It is not a general service bag.
 	Boundary any
@@ -78,6 +81,7 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 		buffers:     services.Buffers,
 		tasks:       services.Tasks,
 		diagnostics: services.Diagnostics,
+		owner:       services.Owner,
 		boundary:    services.Boundary,
 	}
 }
@@ -87,6 +91,7 @@ type OpenContext struct {
 	buffers     *buffer.Allocator
 	tasks       TaskStarter
 	diagnostics diagnostic.Sink
+	owner       flow.Owner
 	boundary    any
 }
 
@@ -104,6 +109,26 @@ func (c OpenContext) Diagnostics() diagnostic.Sink { return c.diagnostics }
 // must declare resource.Request{Workers: N} before Open starts up to N
 // concurrent tasks; otherwise Start returns ErrWorkerLimit.
 func (c OpenContext) Tasks() TaskStarter { return c.tasks }
+
+// Owner returns this component's own failure domain.
+//
+// Slots filled through Emitter.Own already report somewhere that lives as long
+// as the run, so an ordinary component never needs this. A component that
+// keeps a payload past the call it arrived in -- moving an input into a slot
+// of its own and releasing it during Flush or Close -- binds that slot here.
+// That is what makes the slot's lifetime its own declaration rather than an
+// accident of which caller handed the payload over, and it is why an unbound
+// slot refuses ownership instead of inheriting the sender's domain.
+//
+//	// during Open
+//	p.held.Bind(payloadType, ctx.Owner())
+//
+//	// during Process
+//	p.held.Move(input)
+//
+//	// during Flush or Close
+//	p.held.Drop()
+func (c OpenContext) Owner() flow.Owner { return c.owner }
 
 // Boundary recovers the one typed Access/Endpoint binding attached to this
 // node. It is a control-plane assertion performed once during Open; media
@@ -188,9 +213,9 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))
 	} else {
 		implementation.shape = func(ctx ShapeContext, resolved config.ResolvedView) (flow.Shape, error) {
-			value, ok := resolved.Value.(C)
-			if !ok {
-				return flow.Shape{}, errors.New("resolved config has the wrong type for component Shape")
+			value, err := typedConfig[C](resolved)
+			if err != nil {
+				return flow.Shape{}, err
 			}
 			return spec.Shape(ctx, value)
 		}
@@ -199,9 +224,9 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		implementation.problems = append(implementation.problems, specItem("plugin.compile", "component Spec requires Compile"))
 	} else {
 		implementation.compile = func(ctx CompileContext, resolved config.ResolvedView, inputs any) (compiledErased, error) {
-			value, ok := resolved.Value.(C)
-			if !ok {
-				return compiledErased{}, errors.New("resolved config has the wrong type for component Compile")
+			value, err := typedConfig[C](resolved)
+			if err != nil {
+				return compiledErased{}, err
 			}
 			typedInputs, ok := inputs.(flow.Descriptors[D])
 			if !ok {
@@ -266,4 +291,20 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 
 func specItem(code, message string) diagnostic.Item {
 	return diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{}, message, nil)
+}
+
+// typedConfig takes the phase's own snapshot of a resolved config. A failed
+// snapshot is an error rather than a fallback value: the alternative is a
+// config that still aliases what the previous phase saw.
+func typedConfig[C any](resolved config.ResolvedView) (C, error) {
+	var zero C
+	snapshot, err := resolved.Value()
+	if err != nil {
+		return zero, err
+	}
+	value, ok := snapshot.(C)
+	if !ok {
+		return zero, errors.New("resolved config has the wrong type for this component")
+	}
+	return value, nil
 }

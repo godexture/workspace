@@ -3,11 +3,13 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/errorx"
 	"github.com/godexture/godec/plan"
 )
 
@@ -17,6 +19,7 @@ type acquiredSession struct {
 	actual   access.Capabilities
 	selected access.Selection
 	opening  access.Opening
+	snapshot access.Snapshot
 }
 
 func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.BoundaryDirection) (sessions []acquiredSession, err error) {
@@ -36,7 +39,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return sessions, selectionErr
 		}
 		var session access.Session
-		failure := invoke(ctx, PreparePhase, projection.Node, "access/acquire", func(ctx context.Context) error {
+		failure := invokeAccess(ctx, PreparePhase, projection.Node, "access/acquire", func(ctx context.Context) error {
 			var acquireErr error
 			if projection.Direction == plan.InputBoundary {
 				session, acquireErr = entry.SourceTrait().Acquire(ctx, entry.Reference(), selection)
@@ -49,13 +52,13 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			sessions = append(sessions, acquiredSession{node: projection.Node, value: session, selected: selection})
 		}
 		if failure != nil {
-			return sessions, *failure
+			return sessions, failure
 		}
 		if session == nil {
 			return sessions, failureOf(PreparePhase, projection.Node, "access/acquire", errors.New("Access Provider acquired a nil session"))
 		}
 		var actual access.Capabilities
-		failure = invoke(ctx, PreparePhase, projection.Node, "access/capabilities", func(context.Context) error {
+		failure = invokeAccess(ctx, PreparePhase, projection.Node, "access/capabilities", func(context.Context) error {
 			actual = session.Capabilities()
 			if len(actual.Values()) == 0 || !actual.Valid() {
 				return access.ErrInvalidCapabilities
@@ -63,7 +66,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return nil
 		})
 		if failure != nil {
-			return sessions, *failure
+			return sessions, failure
 		}
 		sessions[len(sessions)-1].actual = actual
 		var declared access.Capabilities
@@ -114,8 +117,90 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			sessions[len(sessions)-1].selected = selection
 		}
 		sessions[len(sessions)-1].opening = opening
+		if projection.Direction == plan.InputBoundary {
+			// StableSize is a promise made by the acquired session, not by the
+			// initial probe view. Automatic input selection may start with a
+			// narrow RandomRead/SequentialRead view and add StableSize after
+			// probing, so enforce the identity contract from verified capabilities.
+			requireSnapshot := actual.Contains(access.StableSize)
+			snapshot, snapshotErr := readSnapshotAtMode(ctx, PreparePhase, projection.Node, session, requireSnapshot)
+			if snapshotErr != nil {
+				if callbackFailure, ok := errorx.Find[*Failure](snapshotErr); ok {
+					return sessions, callbackFailure
+				}
+				detail := map[string]string{"error": snapshotErr.Error()}
+				if requireSnapshot {
+					detail["required"] = string(access.StableSize)
+				}
+				return sessions, sessionDiagnostic("prepare.access-snapshot", projection, "Access source session could not report its content identity", detail)
+			}
+			sessions[len(sessions)-1].snapshot = snapshot
+		}
 	}
 	return sessions, nil
+}
+
+func readSnapshot(ctx context.Context, session access.Session) (access.Snapshot, error) {
+	return readSnapshotAt(ctx, PreparePhase, "", session)
+}
+
+func readSnapshotAt(ctx context.Context, phase Phase, node string, session access.Session) (access.Snapshot, error) {
+	return readSnapshotAtMode(ctx, phase, node, session, false)
+}
+
+func readSnapshotAtMode(ctx context.Context, phase Phase, node string, session access.Session, required bool) (access.Snapshot, error) {
+	reporter, ok := access.SnapshotOf(session)
+	if !ok {
+		if required {
+			return access.Snapshot{}, access.ErrNoSnapshot
+		}
+		return access.Snapshot{}, nil
+	}
+	snapshot, failure := callAccess(ctx, phase, node, "access/snapshot", reporter.Snapshot)
+	if failure != nil {
+		if errorx.Is(failure, access.ErrNoSnapshot) {
+			if required {
+				return access.Snapshot{}, access.ErrNoSnapshot
+			}
+			return access.Snapshot{}, nil
+		}
+		return access.Snapshot{}, failure
+	}
+	if !snapshot.Valid() {
+		return access.Snapshot{}, access.ErrInvalidSnapshot
+	}
+	if required && snapshot.Nature() == access.NoSnapshot {
+		return access.Snapshot{}, access.ErrNoSnapshot
+	}
+	return snapshot, nil
+}
+
+// verifySnapshots re-reads the content identity of every source that reports
+// one. Probe, Inspect, and Compile turned the acquired bytes into planning
+// facts, so a source that has changed underneath must end the job instead of
+// executing a Plan that describes different content.
+func verifySnapshots(ctx context.Context, phase Phase, sessions []acquiredSession) *Failure {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for _, session := range sessions {
+		if !session.snapshot.Valid() || session.snapshot.Nature() == access.NoSnapshot {
+			continue
+		}
+		current, err := readSnapshotAt(ctx, phase, session.node, session.value)
+		if err != nil {
+			failure := failureOf(phase, session.node, "access/snapshot", err)
+			return &failure
+		}
+		// A source that identified its content at acquire has to keep doing
+		// so. Losing the identity, or weakening it, leaves nothing to compare
+		// and must not read as agreement.
+		if current.Nature() != session.snapshot.Nature() || current.Identity() != session.snapshot.Identity() {
+			failure := failureOf(phase, session.node, "access/snapshot", fmt.Errorf("source content changed after planning: %s became %s", describeSnapshot(session.snapshot), describeSnapshot(current)))
+			return &failure
+		}
+	}
+	return nil
 }
 
 func capabilitySubset(required, actual access.Capabilities) bool {
@@ -186,11 +271,18 @@ func closeSessions(ctx context.Context, sessions []acquiredSession) (failures []
 	}
 	for index := len(sessions) - 1; index >= 0; index-- {
 		session := sessions[index]
-		if failure := invoke(ctx, ClosePhase, session.node, "access/session", func(context.Context) error {
+		if failure := invokeAccess(ctx, ClosePhase, session.node, "access/session", func(context.Context) error {
 			return session.value.Close()
 		}); failure != nil {
 			failures = append(failures, *failure)
 		}
 	}
 	return failures
+}
+
+func describeSnapshot(snapshot access.Snapshot) string {
+	if !snapshot.Valid() {
+		return "no content identity"
+	}
+	return snapshot.Identity()
 }

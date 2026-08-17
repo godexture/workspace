@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -71,17 +72,27 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 	}
 }
 
+// An encoding panics with a value it chose, which can be the credential it was
+// handling. The boundary reports the failure and the stack; the value itself
+// must not reach the reported text.
 func TestMetadataPanicBoundary(t *testing.T) {
+	const secret = "metadata-panic-secret"
 	_, _, panicErr := safeMetadataParse(func() (metadata.Document, error) {
-		panic("parse panic")
+		panic(errors.New(secret))
 	})
 	if panicErr == nil {
 		t.Fatal("Metadata Parse panic escaped the testkit boundary")
 	}
+	if strings.Contains(panicErr.Error(), secret) {
+		t.Error("the Metadata Parse report exposes the recovered value")
+	}
 	_, _, panicErr = safeMetadataMarshal(func() (metadata.Blob, error) {
-		panic("marshal panic")
+		panic(errors.New(secret))
 	})
 	if panicErr == nil {
 		t.Fatal("Metadata Marshal panic escaped the testkit boundary")
+	}
+	if strings.Contains(panicErr.Error(), secret) {
+		t.Error("the Metadata Marshal report exposes the recovered value")
 	}
 }

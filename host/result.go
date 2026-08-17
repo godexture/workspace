@@ -37,11 +37,31 @@ const (
 	AbortPhase         Phase = "abort"
 	ClosePhase         Phase = "close"
 	JoinPhase          Phase = "join"
+	DiscardPhase       Phase = "discard"
 	ResourcePhase      Phase = "resource"
+	// UnknownPhase is used only when bounded aggregation has intentionally
+	// discarded the operation metadata of its coarse overflow group.
+	UnknownPhase Phase = "unknown"
 )
 
-// Failure retains the original error and its stable execution location.
+// EventID identifies one failure within one Run.
+//
+// It is what makes two failures different things rather than two readings of
+// one. A consumer that must not report a failure twice compares this, never
+// what two errors say: two components failing the same way are two failures,
+// and one failure seen at four boundaries is one. It is zero for a failure
+// produced outside a Run, by Prepare or by Close.
+type EventID struct {
+	Run uint64
+	Seq uint64
+}
+
+func (e EventID) Valid() bool { return e.Run != 0 && e.Seq != 0 }
+
+// Failure retains the original error, its stable execution location, and the
+// identity of the event it was recorded as.
 type Failure struct {
+	ID    EventID
 	Phase Phase
 	Node  string
 	Task  string
@@ -145,11 +165,98 @@ type ObservationSummary struct {
 	DeliveryDropped uint64
 }
 
-// Result separates the failure that stopped useful work from failures found
-// while rolling back or releasing resources.
+// Suppressed reports failures a run counted but did not keep in full.
+//
+// A run's evidence is bounded, so a component that fails to release a hundred
+// thousand payloads produces a hundred thousand counted occurrences and a
+// couple of retained samples rather than a hundred thousand stacks. What is
+// never dropped is that they happened, how many there were, which class they
+// belonged to, and that the rest were omitted. An empty Suppressed means every
+// failure appears in full.
+type Suppressed struct {
+	// Phase is UnknownPhase for the global overflow group, whose budget bound
+	// intentionally discarded operation metadata.
+	Phase Phase
+	Node  string
+	Task  string
+	// Class is the failure class the run grouped by: a diagnostic code, or the
+	// error's Go type. It is never the error's message, which can carry a
+	// payload and can vary until every occurrence is its own class.
+	Class string
+	// Kind separates a release that failed from one that panicked.
+	Kind string
+	// Occurrences is every occurrence of this class, including the ones kept in
+	// full. It saturates rather than wrapping.
+	Occurrences uint64
+	// Retained is how many representative samples the ledger retained. A
+	// stopping provenance record can appear separately in Primary or Cleanup.
+	Retained uint64
+	// First and Last identify the earliest and latest occurrence.
+	First EventID
+	Last  EventID
+	// Truncated reports that detail was dropped by the run's budget rather than
+	// never having existed.
+	Truncated bool
+	// Classes counts how many distinct classes were folded into this entry. It
+	// is 1 normally, and larger when the run saw more classes than it tracks
+	// separately and fell back to a coarser grouping.
+	Classes uint64
+	// ClassesTruncated says Classes is a lower bound rather than an exact total.
+	ClassesTruncated bool
+}
+
+func (s Suppressed) Error() string {
+	if s.ClassesTruncated {
+		return fmt.Sprintf("%s %s: %d occurrences across at least %d classes, %d representative samples (detail truncated)",
+			s.Phase, s.location(), s.Occurrences, s.Classes, s.Retained)
+	}
+	if s.Classes > 1 {
+		return fmt.Sprintf("%s %s: %d occurrences across %d classes, %d representative samples (detail truncated)",
+			s.Phase, s.location(), s.Occurrences, s.Classes, s.Retained)
+	}
+	return fmt.Sprintf("%s %s: %s occurred %d times, %d representative samples",
+		s.Phase, s.location(), s.Class, s.Occurrences, s.Retained)
+}
+
+func (s Suppressed) location() string {
+	if s.Task != "" {
+		return s.Task
+	}
+	if s.Node != "" {
+		return s.Node
+	}
+	return "run"
+}
+
+// Omitted is how many occurrences were counted without a representative
+// sample. Primary/Cleanup may separately contain the one stopping provenance.
+func (s Suppressed) Omitted() uint64 { return s.Occurrences - s.Retained }
+
+// Result separates three different things a run can produce, because
+// collapsing any two of them loses something a caller needs.
+//
+// Primary is the failure that stopped the run: the earliest one that stopped
+// useful work, and so the one every later failure is downstream of.
+//
+// Secondary is every other independent failure of useful work. Two components
+// can fail at the same time without either being the other's consequence.
+// Reporting only one of them, calling the rest cleanup, or leaving them in
+// diagnostics would each describe that run as something it was not. A failure
+// that is merely the same event observed again is not here and is not
+// anywhere: it is not a second failure, and the run recognizes it by identity
+// rather than by what it says.
+//
+// Cleanup is everything that could not be released, closed, rolled back, or
+// discarded. It never explains why the run stopped, because it happened while
+// the run was already stopping.
 type Result struct {
-	Primary     *Failure
-	Cleanup     []Failure
+	Primary   *Failure
+	Secondary []Failure
+	Cleanup   []Failure
+	// Suppressed accounts for repetition the run counted rather than copied. It
+	// is empty unless a failure class occurred more times than the run keeps in
+	// full.
+	Suppressed  []Suppressed
 	Diagnostics []diagnostic.Item
 	Outputs     []OutputOutcome
 	Events      []Event
@@ -157,7 +264,7 @@ type Result struct {
 }
 
 func (r Result) Succeeded() bool {
-	if r.Primary != nil || len(r.Cleanup) != 0 {
+	if r.Primary != nil || len(r.Secondary) != 0 || len(r.Cleanup) != 0 || len(r.Suppressed) != 0 {
 		return false
 	}
 	for _, output := range r.Outputs {

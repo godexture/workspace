@@ -3,11 +3,14 @@ package host
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/journal"
+	"github.com/godexture/godec/internal/observe"
 )
 
 func TestObservationConfigurationIsPerRun(t *testing.T) {
@@ -112,11 +115,170 @@ func TestEventSinkFailureAndPanicCancelRunInObservationPhase(t *testing.T) {
 	}
 }
 
+func TestObservationFailureKeepsItsIdentityAfterAnEarlierPrimary(t *testing.T) {
+	primary := errors.New("data path stopped first")
+	observed := errors.New("observation delivery failed later")
+	independent := errors.New("another observation failure")
+	for name, sink := range map[string]EventSink{
+		"error": EventSinkFunc(func(context.Context, Event) error { return observed }),
+		"join":  EventSinkFunc(func(context.Context, Event) error { return errors.Join(observed, independent) }),
+		"panic": EventSinkFunc(func(context.Context, Event) error { panic("observation delivery panicked later") }),
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &runner{
+				prepared: &Prepared{cleanupTimeout: time.Second},
+				ledger:   journal.NewLedger(),
+				diag:     &diagnosticLog{},
+			}
+			first := runner.record(journal.WorkError, journal.Run, "source", "process", primary)
+			if first == nil {
+				t.Fatal("the primary failure was not recorded")
+			}
+			runner.observe = runner.newObservationCollector(runOptions{
+				observationSet: true,
+				observation: observationOptions{
+					mode:     ObservationBasic,
+					delivery: 1,
+					sink:     sink,
+				},
+			}, context.Background())
+			runner.observe.Emit(structureObservationEvent())
+			runner.finishObservation()
+			runner.collect()
+
+			if runner.result.Primary == nil || !errors.Is(runner.result.Primary, primary) {
+				t.Fatalf("primary = %#v, want the earlier data failure", runner.result.Primary)
+			}
+			wantSecondary := 1
+			if name == "join" {
+				wantSecondary = 2
+			}
+			if len(runner.result.Secondary) != wantSecondary {
+				t.Fatalf("secondary = %#v, want the observation failure exactly once", runner.result.Secondary)
+			}
+			if name == "error" && !errors.Is(runner.result.Secondary[0], observed) {
+				t.Fatalf("secondary = %#v, want the observation error", runner.result.Secondary[0])
+			}
+			if name == "join" && (!errors.Is(runner.result.Secondary[0], observed) || !errors.Is(runner.result.Secondary[1], independent)) {
+				t.Fatalf("secondary = %#v, want both independent observation failures", runner.result.Secondary)
+			}
+			if name == "panic" && len(runner.result.Secondary[0].Stack) == 0 {
+				t.Fatal("observation panic lost its stack")
+			}
+			if got, want := runner.ledger.Occurrences(), uint64(wantSecondary+1); got != want {
+				t.Fatalf("ledger occurrences = %d, want one event for each failure", got)
+			}
+		})
+	}
+}
+
+func TestDelayedObservationFailureCancelsPhaseBeforeFinish(t *testing.T) {
+	jobContext, jobCancel := context.WithCancelCause(context.Background())
+	phaseContext, phaseCancel := context.WithCancelCause(context.Background())
+	want := errors.New("delayed observation failure")
+	runner := &runner{
+		ctx:         jobContext,
+		cancel:      jobCancel,
+		phase:       phaseContext,
+		phaseCancel: phaseCancel,
+		ledger:      journal.NewLedger(),
+		diag:        &diagnosticLog{},
+	}
+	options := runOptions{
+		observationSet: true,
+		observation: observationOptions{
+			mode:     ObservationBasic,
+			delivery: 1,
+			sink: EventSinkFunc(func(context.Context, Event) error {
+				return want
+			}),
+		},
+	}
+	runner.observe = runner.newObservationCollector(options, context.Background())
+	runner.observe.Emit(structureObservationEvent())
+	select {
+	case <-phaseContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("observation failure did not cancel the phase context")
+	}
+	select {
+	case <-jobContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("observation failure did not cancel the job context")
+	}
+	if context.Cause(jobContext) == nil {
+		t.Fatal("observation failure did not cancel the job context")
+	}
+	if context.Cause(phaseContext) == nil {
+		t.Fatal("observation failure did not cancel the phase context")
+	}
+	if context.Cause(phaseContext) == context.Canceled {
+		t.Fatal("observation failure lost its cause")
+	}
+	if err := runner.observe.Close(context.Background()); err != nil && !errors.Is(err, want) {
+		t.Fatalf("observation close = %v", err)
+	}
+}
+
+func TestDelayedObservationFailureAfterQuiesceSkipsFlush(t *testing.T) {
+	want := errors.New("delayed observation failure")
+	state := &lifecycleState{
+		finalizeStarted:  make(chan struct{}),
+		finalizeRelease:  make(chan struct{}),
+		finalizeCanceled: make(chan struct{}),
+	}
+	instance, request := lifecycleFixture(t, state)
+	sink := EventSinkFunc(func(context.Context, Event) error {
+		select {
+		case <-state.finalizeStarted:
+			return want
+		default:
+		}
+		<-state.finalizeStarted
+		return want
+	})
+	runDone := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := instance.Run(context.Background(), request, Observe(ObservationBasic, DeliverEvents(64, sink)))
+		runDone <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-state.finalizeCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("observation failure did not cancel before Finalize was released")
+	}
+	close(state.finalizeRelease)
+	select {
+	case value := <-runDone:
+		if value.err == nil || value.result.Primary == nil || !errors.Is(value.result.Primary, want) {
+			t.Fatalf("observation failure = %#v, %v", value.result, value.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not stop after the delayed observation failure")
+	}
+	entries, _ := state.snapshot()
+	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") {
+		t.Fatalf("delayed observation failure allowed Flush after Quiesce: %v", entries)
+	}
+}
+
+func structureObservationEvent() observe.Event {
+	return observe.Event{Kind: observe.Lifecycle, Phase: string(FinalizePhase), Message: "complete"}
+}
+
 func TestEventSinkJoinUsesCleanupBound(t *testing.T) {
 	state := &lifecycleState{}
 	instance, request := lifecycleFixture(t, state, CleanupTimeout(20*time.Millisecond))
 	started := make(chan struct{})
 	release := make(chan struct{})
+	lateObserved := make(chan struct{})
+	late := errors.New("late renderer failure")
 	sink := EventSinkFunc(func(context.Context, Event) error {
 		select {
 		case <-started:
@@ -124,18 +286,28 @@ func TestEventSinkJoinUsesCleanupBound(t *testing.T) {
 			close(started)
 		}
 		<-release
-		return nil
+		close(lateObserved)
+		return late
 	})
 	begin := time.Now()
 	result, err := instance.Run(t.Context(), request, Observe(ObservationBasic, DeliverEvents(1, sink)))
 	elapsed := time.Since(begin)
 	<-started
-	close(release)
 	if err == nil || result.Primary == nil || result.Primary.Phase != ObservationPhase || !errors.Is(result.Primary, context.DeadlineExceeded) {
 		t.Fatalf("delivery join result = %#v, %v", result, err)
 	}
 	if elapsed > 500*time.Millisecond {
 		t.Fatalf("delivery join exceeded cleanup bound: %s", elapsed)
+	}
+	before := result
+	close(release)
+	<-lateObserved
+	time.Sleep(20 * time.Millisecond)
+	if result.Primary == nil || !errors.Is(result.Primary, context.DeadlineExceeded) || errors.Is(result.Primary, late) {
+		t.Fatalf("late sink failure changed returned primary: %#v", result.Primary)
+	}
+	if !reflect.DeepEqual(result, before) {
+		t.Fatalf("late sink failure changed returned result: before=%#v after=%#v", before, result)
 	}
 }
 

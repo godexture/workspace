@@ -9,17 +9,25 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
 )
 
-type chunkCollector struct{ items []packet.Chunk }
+type chunkCollector struct{ items []*flow.Item[packet.Chunk] }
+
+func (*chunkCollector) Own(into *flow.Item[packet.Chunk], value packet.Chunk) {
+	into.Bind(format.Chunks(), &testDomain)
+	into.Set(value)
+}
 
 func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk]) error {
-	value, ok := input.Detach()
-	if !ok {
+	if !input.Valid() {
 		return errors.New("collector received an unowned chunk")
 	}
-	c.items = append(c.items, value)
+	stored := new(flow.Item[packet.Chunk])
+	stored.Bind(format.Chunks(), &testDomain)
+	stored.Move(input)
+	c.items = append(c.items, stored)
 	return nil
 }
 
@@ -48,7 +56,7 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item := flow.NewItem(handle, access.Bytes())
+		item := flow.NewItem(handle, access.Bytes(), &testDomain)
 		if err := operator.Process(context.Background(), &item, collector); err != nil {
 			t.Fatal(err)
 		}
@@ -64,16 +72,16 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 		if !item.Valid() {
 			t.Fatalf("invalid chunk item = %#v", item)
 		}
-		decoded = append(decoded, item.Bytes()...)
+		decoded = item.Value().Bytes().AppendTo(decoded)
 	}
 	if !bytes.Equal(decoded, payload) {
 		t.Fatalf("demux payload = %v", decoded)
 	}
-	if collector.items[0].Payload().Layout().ReadOnly || !collector.items[1].Payload().Layout().ReadOnly {
-		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Payload().Layout(), collector.items[1].Payload().Layout())
+	if collector.items[0].Value().Payload().Layout().ReadOnly || !collector.items[1].Value().Payload().Layout().ReadOnly {
+		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Value().Payload().Layout(), collector.items[1].Value().Payload().Layout())
 	}
 	for _, item := range collector.items {
-		item.Release()
+		item.Drop()
 	}
 	if sourceBuffers.Used() != 0 || reframeBuffers.Used() != 0 {
 		t.Fatalf("retained payload = source %d, reframe %d", sourceBuffers.Used(), reframeBuffers.Used())
@@ -93,7 +101,7 @@ func TestDemuxFlushRejectsTruncatedData(t *testing.T) {
 	}
 	operator := newDemuxer(demuxPlan{shape: demuxerShape(), header: inspected}, allocator)
 	collector := &chunkCollector{}
-	truncatedItem := flow.NewItem(handle, access.Bytes())
+	truncatedItem := flow.NewItem(handle, access.Bytes(), &testDomain)
 	if err := operator.Process(context.Background(), &truncatedItem, collector); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +109,6 @@ func TestDemuxFlushRejectsTruncatedData(t *testing.T) {
 		t.Fatalf("Flush error = %v", err)
 	}
 	for _, item := range collector.items {
-		item.Release()
+		item.Drop()
 	}
 }

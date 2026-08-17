@@ -79,6 +79,13 @@ func (s *probeTestSession) ReadAt(_ context.Context, destination []byte, offset 
 	return count, nil
 }
 
+func (s *probeTestSession) Size(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return int64(len(s.data)), nil
+}
+
 func (s *probeTestSession) Close() error {
 	s.closed.Add(1)
 	return nil
@@ -114,6 +121,41 @@ func TestProbeStoreDeduplicatesSharedRandomRanges(t *testing.T) {
 	retained, err := finishProbeStores([]*probeStore{store})
 	if err != nil || len(retained) != 0 {
 		t.Fatalf("random cache retained=%d, error=%v", len(retained), err)
+	}
+}
+
+func TestProbeStoreRandomEOFDoesNotInventEndWithoutStableSize(t *testing.T) {
+	_, opening := probeOpening(t, []byte("payload"), access.RandomRead)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request, _ := access.NewRangeRequest(100, 1)
+	progress, unmet, err := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress || unmet != request || store.endKnown {
+		t.Fatalf("random EOF inferred end: progress=%v, unmet=%v, end=%d, known=%v", progress, unmet, store.end, store.endKnown)
+	}
+}
+
+func TestProbeStoreRandomEOFUsesSelectedStableSize(t *testing.T) {
+	data := []byte("payload")
+	_, opening := probeOpeningWithStableSize(t, data)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request, _ := access.NewRangeRequest(100, 1)
+	progress, _, err := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !progress || !store.endKnown || store.end != int64(len(data)) {
+		t.Fatalf("stable EOF did not identify source end: progress=%v, end=%d, known=%v", progress, store.end, store.endKnown)
 	}
 }
 
@@ -294,7 +336,11 @@ func TestFallbackRequiresExplicitHintAndRequiredConfig(t *testing.T) {
 	if _, err := instance.chooseFormat(probeBoundary(), candidates, hint); diagnostic.ItemsOf(err)[0].Code != "prepare.format-config-required" {
 		t.Fatalf("fallback without config = %v", err)
 	}
-	hint = hint.WithConfig(config.NewPatch().Set("rate", 1))
+	rate, hasRate := component.Schema().Key("rate")
+	if !hasRate {
+		t.Fatal("fallback component has no rate field key")
+	}
+	hint = hint.WithConfig(config.NewPatch().Set(rate, 1))
 	choice, err := instance.chooseFormat(probeBoundary(), candidates, hint)
 	if err != nil {
 		t.Fatal(err)
@@ -339,6 +385,24 @@ func probeOpening(t *testing.T, data []byte, capabilities ...access.Capability) 
 	selection, ok := probeSelectionForTest(available)
 	if !ok {
 		t.Fatal("no readable selection")
+	}
+	session := &probeTestSession{data: append([]byte(nil), data...), capabilities: available}
+	opening, err := access.NewOpening(access.SourceDirection, session, selection, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session, opening
+}
+
+func probeOpeningWithStableSize(t *testing.T, data []byte) (*probeTestSession, access.Opening) {
+	t.Helper()
+	available, err := access.NewCapabilities(access.RandomRead, access.StableSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := access.Select(available, access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)))
+	if !ok {
+		t.Fatal("no stable random selection")
 	}
 	session := &probeTestSession{data: append([]byte(nil), data...), capabilities: available}
 	opening, err := access.NewOpening(access.SourceDirection, session, selection, 0)
@@ -437,3 +501,73 @@ func probeBudget(byteLimit resource.Bytes, rounds int) job.Budget {
 var _ access.Session = (*probeTestSession)(nil)
 var _ access.Sequential = (*probeTestSession)(nil)
 var _ access.Random = (*probeTestSession)(nil)
+var _ access.Sizer = (*probeTestSession)(nil)
+
+type snapshotProbeSession struct {
+	*probeTestSession
+	identity string
+}
+
+func (s *snapshotProbeSession) Snapshot(context.Context) (access.Snapshot, error) {
+	return access.NewSnapshot(s.identity, access.WeakSnapshot)
+}
+
+// Replacing a sequential-only session with its replay wrapper must not change
+// what the source says about its content. A wrapper that answered for itself
+// would report no identity, and the run-time check would read that as the
+// source having changed under a job that never touched it.
+func TestReplaySessionKeepsTheContentIdentityOfItsSource(t *testing.T) {
+	session, opening := probeOpening(t, []byte("0123456789abcdef"), access.SequentialRead)
+	snapshotting := &snapshotProbeSession{probeTestSession: session, identity: "fixture/size:16"}
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := access.NewRangeRequest(0, 4)
+	if _, _, extendErr := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes); extendErr != nil {
+		t.Fatal(extendErr)
+	}
+	replayed, err := store.ReplaySession(snapshotting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayed.Close()
+
+	before, err := readSnapshot(t.Context(), snapshotting)
+	if err != nil || !before.Valid() {
+		t.Fatalf("source snapshot = %#v, error %v", before, err)
+	}
+	after, err := readSnapshot(t.Context(), replayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("replayed snapshot = %#v, want the source snapshot %#v", after, before)
+	}
+	if failure := verifySnapshots(t.Context(), RunPhase, []acquiredSession{{node: "source", value: replayed, snapshot: before}}); failure != nil {
+		t.Fatalf("an unchanged source was reported as changed: %v", failure)
+	}
+}
+
+// A session with no content identity is not the same as one that changed, and
+// a wrapper over it must not invent one.
+func TestReplaySessionReportsNoIdentityWhenItsSourceHasNone(t *testing.T) {
+	session, opening := probeOpening(t, []byte("0123456789abcdef"), access.SequentialRead)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := access.NewRangeRequest(0, 4)
+	if _, _, extendErr := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes); extendErr != nil {
+		t.Fatal(extendErr)
+	}
+	replayed, err := store.ReplaySession(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayed.Close()
+	snapshot, err := readSnapshot(t.Context(), replayed)
+	if err != nil || snapshot.Valid() {
+		t.Fatalf("snapshot = %#v, error %v, want no identity and no error", snapshot, err)
+	}
+}

@@ -51,7 +51,7 @@ func TestRequestedNodeConfigRemainsExplicit(t *testing.T) {
 	sink := solveSink(solveSchemaA, false, nil)
 	requested, err := job.NewGraph(
 		[]job.Node{
-			job.NewNode("source", source.Identity(), config.NewPatch().Set("mode", 3)),
+			job.NewNode("source", source.Identity(), config.NewPatch().Set(solveKey(t, "mode"), 3)),
 			job.NewNode("sink", sink.Identity(), config.NewPatch()),
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
@@ -261,7 +261,7 @@ func TestTerminalConstraintCarriesPreparedContextAndFixedConfig(t *testing.T) {
 	}
 	preselection, _ := NewPreselection(nil, nil, nil, plan.Usage{})
 	preselection, err = preselection.WithTerminals(TerminalSelection{
-		Boundary: job.At("sink", "in"), Component: terminal.Identity(), Config: config.NewPatch().Set("mode", 3), Configured: true, Context: prepared, Reason: "format.output",
+		Boundary: job.At("sink", "in"), Component: terminal.Identity(), Config: config.NewPatch().Set(solveKey(t, "mode"), 3), Configured: true, Context: prepared, Reason: "format.output",
 	})
 	if err != nil {
 		t.Fatal(err)

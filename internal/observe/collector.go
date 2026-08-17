@@ -137,6 +137,8 @@ func (c *Collector) Err() error {
 }
 
 // Close stops accepting events and waits for queued delivery until ctx ends.
+// If ctx ends first, its cause becomes the terminal delivery failure and all
+// queued events are accounted as dropped before Close returns.
 func (c *Collector) Close(ctx context.Context) error {
 	if c == nil {
 		return nil
@@ -159,7 +161,22 @@ func (c *Collector) Close(ctx context.Context) error {
 	case <-c.done:
 		return c.Err()
 	case <-ctx.Done():
-		c.cancel(context.Cause(ctx))
-		return ctx.Err()
+		// A callback may ignore its context and return after this method has
+		// returned.  Establish the timeout as the terminal failure before
+		// cancelling the dispatcher, so that a later callback error cannot
+		// mutate the completed run.
+		select {
+		case <-c.done:
+			return c.Err()
+		default:
+		}
+		failure := context.Cause(ctx)
+		if failure == nil {
+			failure = ctx.Err()
+		}
+		c.setFailure(failure)
+		c.cancel(failure)
+		c.dropPending()
+		return c.Err()
 	}
 }

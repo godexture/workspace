@@ -91,13 +91,15 @@ M5 cut 後はいったん surface 実装を置かず、旧 CLI/WASM/demo source 
 
 | ID | 変更 | 理由 | 担当 |
 |---|---|---|---|
-| B1 | 無指定出力で decoder/encoder を開かず、可能なら copy/remux を選ぶ | [C4](decisions.md)。入力の情報を保持する既定へ変える | M7 |
+| B1 | 無指定出力で decoder/encoder を開かず、可能なら copy/remux を選ぶ | [C4](decisions.md)。入力の情報を保持する既定へ変える。M6 の単一 WAVE → WAVE は packet/chunk を保持する format 固有の direct path を先行 consumer とし、M7 が format 間・multi-stream・mapping/loss report を含む一般の既定 policy として完成させる | M6（WAVE direct path）/ M7（一般 policy） |
 | B2 | metadata の表現不能項目を黙って捨てず warning/loss report にする | [C10](decisions.md) | M7 |
 | B3 | 数値誤差を許容する variant を policy で選択可能にする | [C7](decisions.md)、[C15](decisions.md) | M5/M8 |
 | B4 | FLAC encoder の `Apodizations []Apodization`（関数値）を kind と parameter を持つ data 表現へ変える | 関数値は canonical 表現を持てず、`Tukey(0.5)` と `Tukey(0.9)` を区別できない。異なる bitstream を生むのに Plan と fingerprint に残らず、[performance.md](performance.md#artifactstable) の `ArtifactStable` を満たせない。現状 CLI/WASM からも設定できないため、data 化して初めて surface へ出せる | M8 |
 | B5 | file 出力は新規 target を `0666` と process umask で作り、既存 target の permission bit を維持する。一方、既存 target の ACL と file attribute は継承しない | temporary file は同一 directory に通常の file 作成と同じ permission で作り、既存 target があれば rename 前にその permission bit を適用する。rename 後は対応 OS で親 directory を sync する。commit は `os.Rename` とし、Windows でも置換自体は成立させるが、ACL/attribute の継承に必要な `ReplaceFile` と `golang.org/x/sys` は実需要が出るまで採らない | M6 |
 | B6 | 出力が同じ job の他の boundary と同一の対象を指す変換を拒否する | 成功 commit が原本を復元不能に破壊するため、既定にしない。同名の打ち間違いだけで起きる。判定は Host が acquire 前に行い、scheme 非依存の下限は reference fingerprint の一致、精緻化は sink trait の `WithEquivalence` が担う。`plugin/file` は output が既存なら `os.SameFile`、非存在なら正規化 path 比較で答える。in-place 対応は需要が確認された milestone で扱い、その時は (1) Windows が `os.Open` に `FILE_SHARE_DELETE` を付けないため入力 handle が開いている間 `os.Rename` が失敗する問題への対応と、(2) 原本を破壊する以上の明示 opt-in の両方を前提とする。(1) は `syscall.CreateFile` を直接使う形になるが、`os.Open` が持つ長い path の `\\?\` 前置処理が抜けるため、`os.NewFile` で包む前にそこを合わせる必要がある | M6（拒否）／需要確認後（in-place） |
-| B7 | WAVE の payload、入力由来 chunk、RIFF chunk 外の末尾領域は順序・padding・byte 列を exact に復元するが、file 全体の byte 一致は保証しない | [media](media.md#m6-完了条件) のとおり、全出力の先頭に `ds64` と同じ 28 byte payload を持つ `JUNK` chunk（header 込み 36 byte）を予約する。header 長を固定して `RIFF`/`data` size の後追い patch と 4 GiB 超での RF64 化を成立させるためである | M6 |
+| B7 | WAVE の payload、入力由来 chunk、RIFF chunk 外の末尾領域は順序・padding・byte 列を exact に復元するが、file 全体の byte 一致は保証しない | [media](media.md#m6-完了条件) のとおり、全出力の先頭に `ds64` と同じ 28 byte payload を持つ `JUNK` chunk（header 込み 36 byte）を予約する。header 長を固定して `RIFF`/`data` size の後追い patch と 4 GiB 超での RF64 化を成立させるためである。入力が同じ slot に `JUNK` を持っていた場合はその byte 列を再利用するので、RIFF → RIFF ではこの slot も含めて一致する | M6 |
+| B8 | RF64 化する出力では、入力が予約 slot に持っていた `JUNK` の payload だけが失われる | `ds64` は WAVE tag 直後に置く必要があり、header 長は data size が確定する前に固定される。予約 slot 以外へ移すと後続 chunk がすべて動くか、roundtrip ごとに 36 byte 増える。RIFF のまま出力する場合は失われない | M6（記録）／M7（loss report） |
+| B9 | local file source の content identity は size と mtime であり `WeakSnapshot` として広告する。同一 timestamp tick 内の同 size 上書きは検出できない | 強い identity は content の読み直しでしか作れず、probe/inspect のたびに全 byte を digest する代償に見合わない。検出できる範囲（truncate、grow、mtime が動く上書き）は Host が phase 境界で照合して failure にする。詳細は [access](access.md#snapshotretry再現性) | M6 |
 
 ## 更新規則
 

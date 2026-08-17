@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**
+> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**。M6 の再完了と最終 verification は 2026-08-17 に記録済み。次は M7 着手前監査である。
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -21,7 +21,7 @@
 | M3 | 完了 | metadata/side/event、Access/Endpoint foundation contract と第三者拡張点を完成した。 |
 | M4 | 完了 | typed Compile/Suggest、bounded solver、public Plan/private Program、binding、実 linear PCM を完成した。 |
 | M5 | 完了 | typed runtime、ownership/COW、bounded queue、cancel、Finalize、transactional lifecycle を完成し、旧 contract を切断した。 |
-| M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI を一つの Host 経路で完成した。 |
+| M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI の実経路と R-17 の final contract を repository-wide verification まで確認した（2026-08-17）。 |
 | M7 | 未着手 | 着手前監査と sub-unit 分割を先に行う。 |
 | M8 | 未着手 | 完了時に `_legacy/` を削除する。 |
 | M9 | 未着手 | stdin/stdout、WASM、demo、device/session Endpoint を扱う。 |
@@ -30,6 +30,6 @@
 
 ## 現在の注記
 
-- [M6 review 修正](task/m6-fix.md) の 12 単位を実装・文書・回帰 test へ反映し、Access capability の宣言と実 view、file transaction、WAVE truncation、Plan provenance、standard surface を一致させた。
-- M6 後の review で `flow` の所有権 contract を作り直した。所有権を pointer で渡す cell (`flow.Item`) が表し、規則は「作った item と受け取った item は `defer ... Drop()` する」の一つになった。`Input`/`Owned`/`Shared` の 3 型と Processor/Joiner で異なる 2 つの規則、runtime 側の item panic cleanup、`Scope` の cleaner が消えた。所有権を表す値は `Item` だけで、`noCopy` により複製を `go vet` が検出する。queue は値だけを保持し、trait は edge が持つため、複製すれば二重解放できる token は public にも internal にも存在しない。詳細は [runtime](runtime.md#ownership) を正本とする。
-- 次の作業は M7 着手前監査である。MP4 (ISO BMFF)、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` の責務を、各単位が端から端まで green の実 consumer を持つ sub-unit へ分割してから実装する。**loss report と metadata raw preservation は実 consumer として MP4 の metadata encoding (`ilst`/`udta`) を要するため、分割時にその単位を落とさない。** この監査と分割自体は M6 review 修正のスコープに含めない。
+- M0〜M6 は完了。M6 の再完了判定、根拠、将来の残件は [M0〜M6 実装監査](review-m0-m6.md#m6-再完了条件) に集約し、領域ごとの現行 contract は [runtime](runtime.md)、[access](access.md)、[config](config.md)、[quality](quality.md) を正本とする。
+- 現在の foundation は `flow.Item` の単一 ownership slot、Ledger/Domain/Span の failure evidence、Access snapshot/callback boundary、bounded/loss-aware result である。`Fail` が Ledger への唯一の failure ingress で、`Close` は bounded wait と cleanup の完了を担う。cancel normalization は trusted な `context.Cause` の pure single chain だけを採用し、CLI の `ExitCanceled` は caller context state のみを authority とする。旧 review の経緯は [review-m0-m6](review-m0-m6.md) の superseded 注記から辿る。
+- 次は M7 着手前監査と sub-unit 分割。MP4、multi-stream、mapping、stream copy、loss report、seek、`QueuePolicy.Window` を、実 consumer と完了条件が一つずつ対応する単位へ分ける。

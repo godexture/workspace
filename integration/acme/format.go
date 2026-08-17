@@ -185,19 +185,19 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 	defer input.Drop()
 	data := input.Value().Bytes()
 	start := o.absolute
-	o.absolute += int64(len(data))
+	o.absolute += int64(data.Len())
 	local := 0
 	if start < o.offset {
 		local = int(o.offset - start)
-		if local >= len(data) {
+		if local >= data.Len() {
 			return nil
 		}
 	}
-	payload, err := input.Value().Range(local, len(data)-local)
+	payload, err := input.Value().Range(local, data.Len()-local)
 	if err != nil {
 		return err
 	}
-	o.out.Set(packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload), codec.Packets())
+	output.Own(&o.out, packet.NewPacket(o.sequence, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload))
 	defer o.out.Drop()
 	if err := output.Emit(ctx, &o.out); err != nil {
 		return err

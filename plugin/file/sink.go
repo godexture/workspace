@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/buffer"
 )
 
 type sinkOperator struct {
@@ -18,6 +19,13 @@ type sinkOperator struct {
 	flusher     access.Flusher
 	syncer      access.Syncer
 	offset      int64
+	scratch     [blockSize]byte
+}
+
+type appendWriter struct{ appender access.Appender }
+
+func (w appendWriter) WriteAt(ctx context.Context, source []byte, _ int64) (int, error) {
+	return w.appender.Write(ctx, source)
 }
 
 func openSink(shape flow.Shape, opening access.Opening) (flow.Operator, error) {
@@ -54,33 +62,32 @@ func (o *sinkOperator) Write(ctx context.Context, input *flow.Item[access.Write]
 		return errors.New("file sink received an invalid write")
 	}
 	write := input.Value()
+	payload := write.Bytes()
 	switch write.Operation() {
 	case access.AppendOperation:
-		return o.append(ctx, write.Bytes())
+		return o.append(ctx, payload)
 	case access.PatchOperation:
-		return o.patch(ctx, write.Offset(), write.Bytes())
+		return o.patch(ctx, write.Offset(), payload)
 	default:
 		return errors.New("file sink received an unknown write operation")
 	}
 }
 
-func (o *sinkOperator) append(ctx context.Context, payload []byte) error {
-	if _, err := writeExtent(o.offset, len(payload)); err != nil {
+func (o *sinkOperator) append(ctx context.Context, payload buffer.Bytes) error {
+	if _, err := writeExtent(o.offset, payload.Len()); err != nil {
 		return err
 	}
 	if o.appender != nil {
-		return writeAll(ctx, payload, func(ctx context.Context, remaining []byte, _ int64) (int, error) {
-			return o.appender.Write(ctx, remaining)
-		}, &o.offset)
+		return o.writeView(ctx, payload, appendWriter{appender: o.appender}, &o.offset)
 	}
 	if o.patcher == nil {
 		return errors.New("file sink has no append-capable view")
 	}
-	return writeAll(ctx, payload, o.patcher.WriteAt, &o.offset)
+	return o.writeView(ctx, payload, o.patcher, &o.offset)
 }
 
-func (o *sinkOperator) patch(ctx context.Context, offset int64, payload []byte) error {
-	end, err := writeExtent(offset, len(payload))
+func (o *sinkOperator) patch(ctx context.Context, offset int64, payload buffer.Bytes) error {
+	end, err := writeExtent(offset, payload.Len())
 	if err != nil {
 		return err
 	}
@@ -88,7 +95,7 @@ func (o *sinkOperator) patch(ctx context.Context, offset int64, payload []byte) 
 		return errors.New("file sink has no patch view")
 	}
 	position := offset
-	if err := writeAll(ctx, payload, o.patcher.WriteAt, &position); err != nil {
+	if err := o.writeView(ctx, payload, o.patcher, &position); err != nil {
 		return err
 	}
 	if end > o.offset {
@@ -97,10 +104,19 @@ func (o *sinkOperator) patch(ctx context.Context, offset int64, payload []byte) 
 	return nil
 }
 
-func writeAll(ctx context.Context, payload []byte, write func(context.Context, []byte, int64) (int, error), offset *int64) error {
+func (o *sinkOperator) writeView(ctx context.Context, payload buffer.Bytes, writer access.Patcher, offset *int64) error {
+	if payload.Len() == 0 {
+		return nil
+	}
+	return payload.Blocks(o.scratch[:], func(block []byte, _ int) error {
+		return writeAll(ctx, block, writer, offset)
+	})
+}
+
+func writeAll(ctx context.Context, payload []byte, writer access.Patcher, offset *int64) error {
 	remaining := payload
 	for len(remaining) != 0 {
-		count, err := write(ctx, remaining, *offset)
+		count, err := writer.WriteAt(ctx, remaining, *offset)
 		if count < 0 || count > len(remaining) {
 			return errors.New("file sink returned an invalid write count")
 		}

@@ -224,8 +224,16 @@ func setBit(value *uint128, bit int) {
 	value.lo |= uint64(1) << bit
 }
 
-func half(value uint128) uint128 {
-	return uint128{hi: value.hi >> 1, lo: value.lo>>1 | value.hi<<63}
+// compareDouble compares 2*value with other without overflowing uint128.
+// When doubling would exceed the representable range, value is necessarily
+// greater than any uint128 denominator and the comparison is already known.
+func compareDouble(value, other uint128) int {
+	doubledLo, carry := bits.Add64(value.lo, value.lo, 0)
+	doubledHi, overflow := bits.Add64(value.hi, value.hi, carry)
+	if overflow != 0 {
+		return 1
+	}
+	return compare128(uint128{hi: doubledHi, lo: doubledLo}, other)
 }
 
 func gcd(left, right uint64) uint64 {
@@ -312,18 +320,17 @@ func shouldIncrement(quotient, remainder, denominator uint128, negative bool, mo
 	case RoundCeil:
 		return !negative
 	case RoundNearestEven, RoundNearestAway:
-		halfDenominator := half(denominator)
-		comparison := compare128(remainder, halfDenominator)
-		if denominator.lo&1 == 0 {
-			if comparison > 0 {
-				return true
-			}
-			if comparison < 0 {
-				return false
-			}
-			return mode == RoundNearestAway || quotient.lo&1 == 1
+		comparison := compareDouble(remainder, denominator)
+		if comparison > 0 {
+			return true
 		}
-		return comparison >= 0
+		if comparison < 0 {
+			return false
+		}
+		// An exact tie can only occur for an even denominator. For odd
+		// denominators, compareDouble can never return zero because 2*r is
+		// even while the denominator is odd.
+		return mode == RoundNearestAway || quotient.lo&1 == 1
 	default:
 		return false
 	}

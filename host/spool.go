@@ -30,6 +30,7 @@ const (
 	spoolPrepared
 	spoolCommitted
 	spoolAborted
+	spoolClosed
 )
 
 type spoolSession struct {
@@ -55,7 +56,7 @@ func newSpoolSession(spec access.SpoolSpec, underlying access.Session, opening a
 	}
 	result, err := newSpoolSessionWithStorage(spec, underlying, opening, storage)
 	if err != nil {
-		return nil, errors.Join(err, storage.Close())
+		return nil, errors.Join(err, protectedCall("", "spool/storage-close", func() error { return storage.Close() }))
 	}
 	return result, nil
 }
@@ -71,7 +72,7 @@ func newSpoolSessionWithStorage(spec access.SpoolSpec, underlying access.Session
 	if !appenderOK || !flusherOK || !syncerOK || !transactionOK {
 		return nil, errors.New("spool underlying opening is missing sequential transaction services")
 	}
-	values := underlying.Capabilities().Values()
+	values := opening.Selected()
 	foundRandom := false
 	for _, capability := range values {
 		if capability == access.RandomWrite {
@@ -152,13 +153,15 @@ func (s *spoolSession) Flush(ctx context.Context) error {
 	if s.state != spoolWriting || s.storage == nil {
 		return errors.New("spool cannot be flushed in its current state")
 	}
-	if err := s.storage.CopyTo(ctx, s.appender, s.extent); err != nil {
+	if err := protectedCall("", "spool/copy", func() error {
+		return s.storage.CopyTo(ctx, s.appender, s.extent)
+	}); err != nil {
 		return err
 	}
-	if err := s.flusher.Flush(ctx); err != nil {
+	if err := protectedCall("", "access/flush", func() error { return s.flusher.Flush(ctx) }); err != nil {
 		return err
 	}
-	if err := s.storage.Close(); err != nil {
+	if err := s.closeStorage(); err != nil {
 		return err
 	}
 	s.state = spoolCopied
@@ -171,7 +174,7 @@ func (s *spoolSession) Sync(ctx context.Context) error {
 	if s.state != spoolCopied {
 		return errors.New("spool must be copied before sync")
 	}
-	return s.syncer.Sync(ctx)
+	return protectedCall("", "access/sync", func() error { return s.syncer.Sync(ctx) })
 }
 
 func (s *spoolSession) PrepareCommit(ctx context.Context) error {
@@ -180,7 +183,7 @@ func (s *spoolSession) PrepareCommit(ctx context.Context) error {
 	if s.state != spoolCopied {
 		return errors.New("spool must be copied before prepare commit")
 	}
-	if err := s.transaction.PrepareCommit(ctx); err != nil {
+	if err := protectedCall("", "access/prepare-commit", func() error { return s.transaction.PrepareCommit(ctx) }); err != nil {
 		return err
 	}
 	s.state = spoolPrepared
@@ -193,7 +196,7 @@ func (s *spoolSession) Commit(ctx context.Context) error {
 	if s.state != spoolPrepared {
 		return errors.New("spool must be prepared before commit")
 	}
-	if err := s.transaction.Commit(ctx); err != nil {
+	if err := protectedCall("", "access/commit", func() error { return s.transaction.Commit(ctx) }); err != nil {
 		return err
 	}
 	s.state = spoolCommitted
@@ -203,20 +206,50 @@ func (s *spoolSession) Commit(ctx context.Context) error {
 func (s *spoolSession) Abort(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == spoolCommitted || s.state == spoolAborted {
+	if s.state == spoolCommitted || s.state == spoolAborted || s.state == spoolClosed {
 		return nil
 	}
 	s.state = spoolAborted
-	return errors.Join(s.transaction.Abort(ctx), s.storage.Close())
+	var failures []error
+	if err := protectedCall("", "access/abort", func() error { return s.transaction.Abort(ctx) }); err != nil {
+		failures = append(failures, err)
+	}
+	if err := s.closeStorage(); err != nil {
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
 }
 
 func (s *spoolSession) Close() error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.closeErr = errors.Join(s.storage.Close(), s.underlying.Close())
+		var failures []error
+		if err := s.closeStorage(); err != nil {
+			failures = append(failures, err)
+		}
+		if s.underlying != nil {
+			underlying := s.underlying
+			if err := protectedCall("", "access/session", func() error { return underlying.Close() }); err != nil {
+				failures = append(failures, err)
+			}
+			s.underlying = nil
+		}
+		s.state = spoolClosed
+		s.closeErr = errors.Join(failures...)
 	})
 	return s.closeErr
+}
+
+func (s *spoolSession) closeStorage() error {
+	if s.storage == nil {
+		return nil
+	}
+	storage := s.storage
+	// Detach before invoking Close. A panic leaves the external outcome
+	// unknowable, and retrying could close a non-idempotent resource twice.
+	s.storage = nil
+	return protectedCall("", "spool/storage-close", storage.Close)
 }
 
 func newSpoolStorage(spec access.SpoolSpec) (spoolStorage, error) {
