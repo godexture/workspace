@@ -34,7 +34,7 @@ planner は次の段階を明示する。
 3. **Prepare Inputs**: byte source session を acquire し、device/session endpoint capability を read-only inspect する。
 4. **Probe Sources**: bounded shared cached view で format 候補を採点する。
 5. **Inspect Topology**: 選択 format/endpoint が stream、program、metadata carrier を読み取る。
-6. **Shape Graph**: demux/mux/mixer 等の動的 port を確定する。
+6. **Shape Graph**: static `Spec.Ports` と ordered repeated descriptor bindings、必要な private route を確定する。
 7. **Compile Components**: 各 component の semantic output と requirement を得る。
 8. **Solve Gaps**: decoder、encoder、parser、converter、resampler、mapping、spool 等の bridge を挿入する。
 9. **Validate Graph**: 型、multiplicity、接続、cycle、reachability、finalization を検証する。
@@ -425,19 +425,27 @@ type Limit struct {
 独立して `job.Policy.Alignment.Zip` に 250 ms の semantic tolerance を持つ。schema が安価な `Size` trait を
 提供する場合だけ byte limit を、`Time` trait と stream time base がある場合だけ `Span` を有効にする。
 wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない physical
-dimension は無視して item limit を必ず残す。
+dimension は無視して item limit を必ず残す。`SerialFanIn` は time base を要求せず、queue の available item
+を一つずつ callback の受理順に同期直列化する。これは ordering algorithm ではなく、複数 concurrent producer
+間の wall-clock 順や再現性を契約しない。
 
 physical queue は `Items`、利用可能なら `Bytes` と stream-local tick の `Span` だけを強制する。一方 Plan は
 logical edge ごとに一つの `Buffer` だけを表示し、その `Limit.Span` と `FanIn.Tolerance` は user-facing な
-wall-clock duration のまま保持する。descriptor ごとの private queue、tick limit、入力順は Plan に複製しない。
+wall-clock duration のまま保持する。descriptor ごとの private queue、tick limit、private scheduling order は
+Plan に複製しない。logical route ordinal は graph contract として必要な場合だけ Plan に投影する。
 Zip alignment は別の `job.AlignmentPolicy.Zip` から private tick へ変換する。有効な `Span` または Zip tolerance
-を持つ fan-in は接続 edge の time base が一致する場合だけ compile する。
+を持つ Zip fan-in は接続 edge の time base が一致する場合だけ compile する。同一 graph に Zip と
+`SerialFanIn` が共存する場合も、非ゼロの job policy は Zip edge だけへ投影し、Serial edge の tolerance は 0 のままとする。
+`SerialFanIn` はこの条件と無関係で、cross-input availability、DTS、cross-track timestamp order を待たない。Serial 実行へ
+非ゼロ tolerance を直接適用するのは runtime/internal error である。callback の直列化順がそのまま ordering algorithm
+になるわけではなく、複数 concurrent producer の wall-clock 順や再現性は契約しない。
 Zip は各 input から一 item ずつ待ち、batch の timestamp spread が tolerance を超えれば `ErrTolerance` で
 fail-closed にする。physical queue は tolerance を強制せず、Zip は queue span を alignment として解釈しない。
 
 > **歴史的注記:** M5 完了時点では旧 `QueuePolicy.Window` を physical timestamp span と Zip tolerance の両方へ
 > 暫定利用し、`ErrWatermark` で失敗させていた。この契約は M7-1 で上記の `Span` / `Alignment.Zip` へ置き換え済みで、
-> 現行 API、Plan、runtime の説明ではない。late/drop/conceal policy は M9 の realtime consumer まで追加しない。
+> 現行 API、Plan、runtime の説明ではない。M7-1 の `SerialFanIn` は Zip alignment や timestamp order を
+> 適用しない。late/drop/conceal policy は M9 の realtime consumer まで追加しない。
 
 resource manager は Open 時に codec workspace、worker 数、大きな ring 等の粗粒度 grant を与える。M6 で spool consumer を入れる時に temporary storage の quota と cleanup authority を同じ manager へ追加する。packet/frame ごとの acquire/release を中央 manager に送らない。
 
@@ -493,7 +501,13 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 
 ## multi-input と ordering
 
-現在の複数 input から先に届いた値を処理する方式は scheduler timing に結果が左右される。mixer、sidechain、subtitle overlay、A/V sync では欠落、ずれ、早い EOF の原因になる。
+複数 input の意味は component が選ぶ fan-in policy で決める。`SerialFanIn` は callback を同期直列化し、
+input ordinal を保持するだけで、timestamp order や wall-clock order を導出しない。Serial input buffer のない direct な
+single synchronous execution island で単一 Router producer が emit する場合だけ、その call 順が downstream の physical order
+になる。buffer/fan-out/concurrent producer がある場合の cross-track physical interleave、wall-clock 順、再現性は契約しない。
+これらの構成だけを理由に generic `SerialFanIn` を Compile で reject しない。
+mixer、sidechain、subtitle overlay、A/V sync が時刻順や lockstep を必要とする場合は、実 consumer と backpressure
+設計が揃った別 policy を使う。
 
 各 multi-input component は fan-in policy を宣言する。
 
@@ -501,10 +515,10 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 - zip/lockstep
 - latest side input
 - primary-driven
-- unordered merge
+- serial callback fan-in (`SerialFanIn`)
 - windowed aggregation
 
-Host は physical buffering を `Limit`、policy 固有の semantic constraint を別 field として Plan に含める。現行 Zip の constraint は `Tolerance` であり、queue `Span` とは共有しない。「deterministic」は単に毎回同じ順序という意味ではなく、media semantics を保つ ordering rule が明示されていることを意味する。late/drop/conceal は realtime consumer が入る M9 まで policy に追加しない。
+Host は physical buffering を `Limit`、policy 固有の semantic constraint を別 field として Plan に含める。現行 Zip の constraint は `Tolerance` であり、queue `Span` とは共有しない。`SerialFanIn` の callback 順は ordering algorithm ではなく、同期直列化の結果である。M7 MP4 の correctness/exact は track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table を基準とし、physical interleave の変更を semantic loss と扱わない。「deterministic」は単に毎回同じ順序という意味ではなく、media semantics を保つ ordering rule が明示されていることを意味する。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure を要求する。late/drop/conceal は realtime consumer が入る M9 まで policy に追加しない。
 
 ## execution policy
 
@@ -628,7 +642,11 @@ M5 は execution island、ownership、queue、cancel、Finalize、既に bound �
 - Open が transaction として行われ、途中失敗で既に開いた component/Endpoint/resource/output transaction を逆順に閉じ、sink を Abort し、Open 中に作った goroutine を cancel/join する。
 - 成功時に Finalize → Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
 - primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、output rollback、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。M6 の temporary storage も同じ集約へ接続する。
-- multi-input component が fan-in policy を宣言し、goroutine の到着順で入力を選ばない（[F22](findings.md)）。M5 時点では必要な buffering と暫定 watermark を Plan に投影した。現行 Plan では physical `Limit` と semantic `Tolerance` を別々に投影する。
+- **Historical status (superseded by M7):** M5 の multi-input contract は fan-in policy を宣言し、goroutine の
+  到着順だけで timestamp semantics を選ばないことを求めた（[F22](findings.md)）。M5 時点では必要な buffering と
+  暫定 watermark を Plan に投影したが、M7-1 で `SerialFanIn` を callback 同期直列化 + input ordinal として再定義した。
+  現行 Plan では physical `Limit` と Zip の semantic `Tolerance` を別々に投影し、SerialFanIn に timestamp order や
+  concurrent producer の wall-clock order/reproducibility を与えない。
 - panic recovery が execution island または長寿命 task の最上位に一度だけ置かれ、item loop に `defer` が入らない。plugin/component identity、plan node ID、phase、stack、primary/cancel status を記録する。
 - observation off で hot path に metric 用 atomic、clock read、size 計算が現れない。observation の各段階が同じ event model から集約される。
 - `Fast`/`Stable`/`Portable`/`Realtime` が Run の分岐にならず、Host が Compile 前に policy vector へ展開する。item loop が preset、CPU feature、catalog を参照しない。

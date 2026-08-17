@@ -170,11 +170,11 @@ media 領域を `media/` 配下へ置き、それ以外は root に置く。単�
 
 stream identity は ordered repeated `stream.Descriptor` と private compiled connection が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
 
-Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router が ordinal で一つへ dispatch する。ordered merge は新しい public Merger ではなく既存 `flow.Joiner` の `MergeFanIn` execution とする。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
+Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router が ordinal で一つへ dispatch する。`SerialFanIn` は input ordinal を保持して callback を同期直列化する汎用 fan-in policy とし、ordering algorithm とはしない。Serial input buffer のない direct な single synchronous execution island で単一 Router producer が emit する場合だけ call 順を physical order として扱う。buffer/fan-out/concurrent producer の cross-track physical interleave、wall-clock 順、再現性は契約せず、これらを理由に generic `SerialFanIn` を Compile で reject しない。public time-ordered merger や cross-track timestamp policy は作らない。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
 
 ### C23. mapping は Inspect 後に解決し、保存を既定にする
 
-M7 の明示 mapping は input index、canonical stream ID、output indexを持つ exact `job.MapStream` に限定する。rich selector、language/disposition query、任意 function/predicate は surface consumer が現れる M9 まで追加しない。
+M7 の明示 mapping は input index、canonical stream ID、output indexを持つ exact `job.MapStream` に限定する。M7-2 の MP4 graph は明示された 1 input/1 output に閉じ、standard が Many terminal と mapping を自動解決する no-map path は M7-3 で追加する。rich selector、language/disposition query、任意 function/predicate は surface consumer が現れる M9 まで追加しない。
 
 入力一つ・出力一つで mapping を省略した場合は eligible track を Inspect order のまま全て map する。無指定の既定は copy/remux を優先し、codec Binding のない track は raw copy に残す。変換を要求した unbound codec、存在しない stream、target に表せない明示 selected track は Planning error とする。
 
@@ -182,17 +182,21 @@ M7 の明示 mapping は input index、canonical stream ID、output indexを持�
 
 M7 の MP4 vertical slice は unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。sequential/fragmented mode と spool alternative は stdin/stdout、remote、streaming consumer が現れる M9 まで追加しない。選択 capability と mode は既存 Plan boundary に残す。
 
-unchanged same-format remux だけが narrow immutable provenance により raw box/sample entry/metadata carrier を再利用できる。MP4 lossless exact は selected sample payload、PTS/DTS/duration、track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、再生成する既知 box の全体順、offset、interleave は含まない。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
+unchanged same-format remux だけが、Host が単一 input の同一 format inspection を同一 format mux の `CompileContext` へ immutable handoff することで raw box/sample-entry/metadata carrier を再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、cross-track physical interleave、再生成する既知 box の全体順、offset、global DTS interleave は含まない。physical interleave の変更は semantic loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
 
 ### C25. metadata loss API は実 encoding consumer まで延期する
 
-MP4 `ilst` vocabulary mapping、generic loss DTO、Plan/Result の predicted/actual loss 分離、strict metadata policy は M8 の metadata encoding consumer と同時に確定する。M7 は unchanged raw metadata carrier を narrow provenance で保持し、default path で保持不能なら失敗する。placeholder DTO や空の strict policy は追加しない。
+MP4 `ilst` vocabulary mapping、generic loss DTO、Plan/Result の predicted/actual loss 分離、strict metadata policy は M8 の metadata encoding consumer と同時に確定する。M7 は Host の same-format inspection handoff で unchanged raw metadata carrier を保持し、default path で保持不能なら失敗する。placeholder DTO や空の strict policy は追加しない。
 
 ### C26. finite seek を延期し、queue span と Zip alignment を分離する
 
 finite graph seek、preroll/reset、Result projection は MP4 と移行後の MP3/FLAC/decoder path が揃う M8 で確定する。M7 の MP4 sample index は remux にだけ使い、seek placeholder API を作らない。
 
-M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。M7 の DTS merge は Zip alignment を使わず、finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
+M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。同一 graph に Zip と `SerialFanIn` が共存しても、非ゼロの `job.AlignmentPolicy.Zip` は Zip edge だけへ投影し、Serial edge の tolerance は 0 のままとする。`SerialFanIn` は Zip alignment を使わず、cross-input availability や cross-track timestamp order を待たず、input ordinal を保持して callback を一 item ずつ同期直列化する。Serial 実行へ非ゼロ tolerance を直接適用するのは runtime/internal error である。別 container が時刻順を必要とする場合は、実 consumer と現実的な backpressure 設計が現れた時に別 ordered policy として追加する。late/drop/conceal は M9 の realtime consumer まで追加しない。
+
+### Superseded M7 ordering proposals
+
+以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、Serial input buffer のない direct な single synchronous execution island にある単一 Router producer の emit call 順を physical mdat 書きへ利用する。buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。
 
 ## Deferred without blocking the first implementation
 
