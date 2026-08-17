@@ -168,6 +168,11 @@ func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer func() {
+				if closeErr := prepared.Close(); closeErr != nil {
+					t.Error(closeErr)
+				}
+			}()
 			if state.acquired.Load() != 1 || state.read.Load() != 12 || state.closed.Load() != 0 {
 				t.Fatalf("after Prepare: acquired=%d, read=%d, closed=%d", state.acquired.Load(), state.read.Load(), state.closed.Load())
 			}
