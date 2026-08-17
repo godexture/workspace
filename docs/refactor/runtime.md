@@ -121,6 +121,18 @@ demux -> parse -> decode -> convert -> gain -> encode -> mux
 
 island 内は direct typed call とし、edge ごとの interface dispatch を compile 時に可能な限り消す。必要に応じて specialized SPSC/MPSC queue を内部実装として選ぶが、plugin contract に channel を露出しない。
 
+### typed flow routing
+
+public な `flow.Router[I, O]` は `flow.RoutedEmitter[O]` から ordinal を選び、各 emitted item を一つの
+route へ渡す。`Process`/`Flush` は複数 item を複数 route へ emit できる。Router は同じ item を fork せず、
+選択された route の downstream fan-out だけが runtime の `Fork` を使う。
+`flow.Item` の binding は slot に固定されるため、第三者 plugin が output item を再利用する場合も route ごとに
+一つを保持し、異なる route で同じ slot を使い回さない。
+
+runtime は compiled descriptor order から route ordinal と typed delivery を Open 時に解決し、
+`RoutedEmitter.Route` はその固定 table を参照する。item loop で port/stream lookup、reflection、`any`
+transport、mandatory allocation を行わない。
+
 ## ownership
 
 ownership は API の慣習でなく contract として固定する。**所有権は値ではなく cell (`flow.Item`) が表す。** cell は常に pointer で渡し、最初の `Drop` だけが解放する。payload が cell の外へ生の値として出る経路は無い。

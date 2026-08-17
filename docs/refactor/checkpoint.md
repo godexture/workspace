@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**。M6 の再完了と最終 verification は 2026-08-17 に記録済み。M7-0 を static multi-stream vertical slice へ是正し、次は M7-1 である。
+> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**。M6 の再完了と最終 verification は 2026-08-17 に記録済み。M7-0 を static multi-stream vertical slice へ是正し、M7-1 は private logical→physical connections と typed Router を実装済みで進行中。次は selected `Batch`/`Joiner + MergeFanIn` である。
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -22,7 +22,7 @@
 | M4 | 完了 | typed Compile/Suggest、bounded solver、public Plan/private Program、binding、実 linear PCM を完成した。 |
 | M5 | 完了 | typed runtime、ownership/COW、bounded queue、cancel、Finalize、transactional lifecycle を完成し、旧 contract を切断した。 |
 | M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI の実経路と R-17 の final contract を repository-wide verification まで確認した（2026-08-17）。 |
-| M7 | 進行中 | [M7-0 contract](m7-0.md) を static `Many` topology、ordered repeated descriptors、Router、`Joiner + MergeFanIn`、unfragmented RandomRead+StableSize/RandomWrite MP4 vertical slice へ是正した。次は M7-1 の static multi-stream execution。 |
+| M7 | 進行中 | [M7-0 contract](m7-0.md) を static `Many` topology、ordered repeated descriptors、Router、`Joiner + MergeFanIn`、unfragmented RandomRead+StableSize/RandomWrite MP4 vertical slice へ是正した。M7-1 の private logical→physical connections と typed Router は実装済みだが、M7-1 全体は未完了で、次は selected `Batch`/`Joiner + MergeFanIn` execution。 |
 | M8 | 未着手 | 公式 family 移行とともに `ilst`/generic loss/strictness、finite seek を実 consumer から確定し、`_legacy/` を削除する。 |
 | M9 | 未着手 | stdin/stdout、WASM、demo、rich selector、fragmented/sequential MP4、spool、device/session Endpoint を扱う。 |
 | M10 | 未着手 | milestone と並行できる品質・配布基盤を扱う。 |
