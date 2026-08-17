@@ -11,7 +11,7 @@ import (
 var (
 	ErrInvalidBase     = errors.New("time base must have positive numerator and denominator")
 	ErrInvalidRounding = errors.New("invalid rounding mode")
-	ErrOverflow        = errors.New("timestamp rescale overflow")
+	ErrOverflow        = errors.New("timestamp arithmetic overflow")
 )
 
 // Base describes the duration of one stream tick as Numerator/Denominator
@@ -265,10 +265,7 @@ func rescale(value int64, from, to Base, mode Rounding) (int64, error) {
 	}
 
 	negative := value < 0
-	magnitude := uint64(value)
-	if negative {
-		magnitude = uint64(-(value + 1)) + 1
-	}
+	magnitude := timestampMagnitude(value)
 	numerator := []uint64{magnitude, uint64(from.Numerator), uint64(to.Denominator)}
 	denominator := []uint64{uint64(from.Denominator), uint64(to.Numerator)}
 	reduceFactors(numerator, denominator)
