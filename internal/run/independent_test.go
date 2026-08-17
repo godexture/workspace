@@ -45,7 +45,7 @@ func TestTwoStagesThatFailToFlushAreTwoEvents(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	passShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "first", Shape: passShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -116,7 +116,7 @@ func TestTwoFanOutBranchesThatFailToFlushAreTwoEvents(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	passShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "left", Shape: passShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -254,7 +254,7 @@ func forkType() schema.Type[int] {
 
 func flushTemplate(t testing.TB, nodes []Node, edges []job.Edge) Template {
 	t.Helper()
-	template, err := Compile(nodes, edges, job.QueuePolicy{Items: 4}, job.AlignmentPolicy{})
+	template, err := compileFixture(nodes, edges, job.QueuePolicy{Items: 4}, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

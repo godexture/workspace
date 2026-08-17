@@ -61,7 +61,7 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 		}
 	}
 	result := &Execution{observer: observer}
-	edgeTargets := make([]drive.Link, len(t.edges))
+	edgeTargets := make([]drive.Link, len(t.connections))
 	fail := func(err error) (*Execution, error) {
 		result.Abort()
 		return nil, err
@@ -95,9 +95,9 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			}
 			incoming := append([]int(nil), t.incoming[index]...)
 			sort.Slice(incoming, func(left, right int) bool {
-				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
+				return t.connections[incoming[left]].input < t.connections[incoming[right]].input
 			})
-			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, value.tolerance, output, ledger.Domain("join/"+node, node))
+			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.connections[incoming[0]].limit, value.toleranceTicks, output, ledger.Domain("join/"+node, node))
 			if err != nil {
 				return fail(err)
 			}
@@ -140,21 +140,21 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 func (t Template) outputLink(ledger *journal.Ledger, index int, targets []drive.Link, execution *Execution) (drive.Link, error) {
 	node := t.nodes[index].id.String()
 	links := make([]drive.Link, len(t.outgoing[index]))
-	for outputIndex, edgeIndex := range t.outgoing[index] {
-		edge := t.edges[edgeIndex]
-		link := targets[edgeIndex]
+	for outputIndex, connectionIndex := range t.outgoing[index] {
+		connection := t.connections[connectionIndex]
+		link := targets[connectionIndex]
 		if !link.Valid() {
 			return drive.Link{}, ErrTopology
 		}
-		key := edgeKey(edge.value)
+		key := connectionKey(t.edges[connection.logical].value, connection.route, connection.input)
 		local := execution.observer.Local("", key)
 		observed, err := t.nodes[index].binding.Observe(link, local)
 		if err != nil {
 			return drive.Link{}, err
 		}
 		link = observed
-		if edge.reason != 0 && t.nodes[edge.to].kind != drive.Joiner {
-			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link, ledger.Domain("buffer/"+key, key))
+		if connection.reason != 0 && t.nodes[connection.to].kind != drive.Joiner {
+			buffered, bufferTask, err := t.nodes[index].binding.Buffer(connection.limit, link, ledger.Domain("buffer/"+key, key))
 			if err != nil {
 				return drive.Link{}, err
 			}

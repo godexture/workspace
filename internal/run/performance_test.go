@@ -54,7 +54,7 @@ func perfChain(t testing.TB, values []int) (*journal.Ledger, *Execution, *perfCo
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", perfType)})
 	passShape := flow.NewShape([]flow.Port{flow.In("in", perfType)}, []flow.Port{flow.Out("out", perfType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", perfType)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", perfType)},
 			{ID: "first", Shape: passShape, Execution: drive.NewProcessor("in", perfType, "out", perfType)},

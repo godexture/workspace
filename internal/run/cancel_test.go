@@ -70,7 +70,7 @@ func bufferedProcessorTemplate(t testing.TB, typ schema.Type[int]) (Template, fl
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "proc", Shape: processorShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -139,7 +139,7 @@ func TestTwoIndependentTaskFailuresBothReachTheLedger(t *testing.T) {
 		[]flow.Port{flow.Out("out", typ)},
 	)
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "a", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "b", Shape: sourceShape, Execution: drive.NewSource("out", typ)},

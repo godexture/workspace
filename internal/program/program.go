@@ -100,7 +100,7 @@ func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, erro
 	values := make([]run.Node, len(nodes))
 	for index, node := range nodes {
 		execution, _ := plugin.ExecutionOf(node.Compilation())
-		values[index] = run.Node{ID: node.ID(), Shape: node.Shape(), Outputs: node.Outputs(), Execution: execution}
+		values[index] = run.Node{ID: node.ID(), Shape: node.Shape(), Inputs: node.Inputs(), Outputs: node.Outputs(), Execution: execution}
 	}
 	return run.Compile(values, compiled.Edges(), policy.Resources.Queue, policy.Alignment)
 }

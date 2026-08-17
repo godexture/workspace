@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/godexture/godec/job"
-	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/resource"
 )
 
@@ -49,7 +48,7 @@ func (p Program) NodeResources(id job.NodeID) (resource.Request, error) {
 		return resource.Request{}, errors.New("program node is absent")
 	}
 	request := node.Compilation().Resources()
-	multiplier, err := inFlightMultiplier(id.String(), p.plan.Edges(), p.plan.Runtime())
+	multiplier, err := p.runtime.InFlightMultiplier(id)
 	if err != nil {
 		return resource.Request{}, err
 	}
@@ -64,52 +63,11 @@ func (p Program) RuntimeResources() (resource.Request, error) {
 	if !p.Valid() {
 		return resource.Request{}, errors.New("program is invalid")
 	}
-	var result resource.Request
-	for _, buffer := range p.plan.Runtime().Buffers {
-		if buffer.Limit.Items < 0 || uint64(buffer.Limit.Items) > math.MaxUint32 || uint64(result.Queue)+uint64(buffer.Limit.Items) > math.MaxUint32 {
-			return resource.Request{}, errors.New("program resource request overflows")
-		}
-		result.Queue += uint32(buffer.Limit.Items)
+	slots, err := p.runtime.QueueSlots()
+	if err != nil {
+		return resource.Request{}, err
 	}
-	return result, nil
-}
-
-func inFlightMultiplier(node string, edges []plan.Edge, runtime plan.Runtime) (uint64, error) {
-	adjacent := make(map[string][]string, len(edges))
-	for _, edge := range edges {
-		adjacent[edge.FromNode] = append(adjacent[edge.FromNode], edge.ToNode)
-	}
-	reachable := map[string]struct{}{node: {}}
-	pending := []string{node}
-	for len(pending) != 0 {
-		current := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		for _, next := range adjacent[current] {
-			if _, seen := reachable[next]; seen {
-				continue
-			}
-			reachable[next] = struct{}{}
-			pending = append(pending, next)
-		}
-	}
-	// A payload is retained by two kinds of holder, and the grant has to cover
-	// both. Queue slots are the obvious one. The other is the operator itself:
-	// every node reachable from here runs one operator that holds the item it
-	// is working on, and a zero-copy stage keeps the producer's storage alive
-	// for as long as it holds the value derived from it. Counting only the
-	// queues starves the producer once the pipeline is deep enough to fill
-	// them, which stalls conversion of any input larger than the grant.
-	multiplier := uint64(len(reachable))
-	for _, buffer := range runtime.Buffers {
-		if _, ok := reachable[buffer.FromNode]; !ok {
-			continue
-		}
-		if buffer.Limit.Items <= 0 || uint64(buffer.Limit.Items) > math.MaxUint64-multiplier {
-			return 0, errors.New("program payload in-flight bound overflows")
-		}
-		multiplier += uint64(buffer.Limit.Items)
-	}
-	return multiplier, nil
+	return resource.Request{Queue: slots}, nil
 }
 
 func scaleMemory(memory resource.Bytes, multiplier uint64) (resource.Bytes, error) {

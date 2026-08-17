@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
@@ -293,6 +295,21 @@ func TestPlanRuntimeProjectionIsCanonicalImmutableAndExecutable(t *testing.T) {
 	}
 	if planned.ExecutionSignature() == other.ExecutionSignature() {
 		t.Fatal("runtime buffer change did not affect execution signature")
+	}
+}
+
+func TestPlanRuntimeFanInAllowsOneLogicalRepeatedEdge(t *testing.T) {
+	description := testDescription(t)
+	description.Runtime = Runtime{
+		Executable: true,
+		Islands: []Island{
+			{ID: "island-0", Nodes: []string{"source"}},
+			{ID: "island-1", Nodes: []string{"sink"}},
+		},
+		FanIns: []FanIn{{Node: "sink", Port: "in", Policy: flow.ZipFanIn, Tolerance: 250 * time.Millisecond}},
+	}
+	if _, err := New(description); err != nil {
+		t.Fatalf("one logical repeated fan-in edge rejected: %v", err)
 	}
 }
 

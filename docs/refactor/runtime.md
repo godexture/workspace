@@ -404,7 +404,7 @@ queue policy は一つの「resource tracker」に全 item を報告させず、
 type Limit struct {
     Items int
     Bytes int64
-    Span  int64
+    Span  time.Duration
 }
 ```
 
@@ -415,10 +415,11 @@ type Limit struct {
 wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない physical
 dimension は無視して item limit を必ず残す。
 
-physical queue は `Items`、利用可能なら `Bytes` と stream-local tick の `Span` だけを強制する。Plan の
-`Buffer.Limit` と `FanIn.Limit` はこの同じ physical limit を投影する。Zip alignment は別の
-`job.AlignmentPolicy.Zip` から tick へ変換し、Plan の `FanIn.Tolerance` と private Zip execution だけに投影する。
-有効な `Span` または Zip tolerance を持つ fan-in は接続 edge の time base が一致する場合だけ compile する。
+physical queue は `Items`、利用可能なら `Bytes` と stream-local tick の `Span` だけを強制する。一方 Plan は
+logical edge ごとに一つの `Buffer` だけを表示し、その `Limit.Span` と `FanIn.Tolerance` は user-facing な
+wall-clock duration のまま保持する。descriptor ごとの private queue、tick limit、入力順は Plan に複製しない。
+Zip alignment は別の `job.AlignmentPolicy.Zip` から private tick へ変換する。有効な `Span` または Zip tolerance
+を持つ fan-in は接続 edge の time base が一致する場合だけ compile する。
 Zip は各 input から一 item ずつ待ち、batch の timestamp spread が tolerance を超えれば `ErrTolerance` で
 fail-closed にする。physical queue は tolerance を強制せず、Zip は queue span を alignment として解釈しない。
 

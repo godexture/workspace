@@ -331,7 +331,7 @@ func validateRuntime(runtime Runtime, nodes map[string]struct{}, edges []Edge) e
 	}
 	fanInPorts := make(map[string]struct{}, len(runtime.FanIns))
 	for _, fanIn := range runtime.FanIns {
-		if fanIn.Node == "" || fanIn.Port == "" || !fanIn.Policy.Valid() || len(fanIn.Connections) < 2 || !fanIn.Limit.Valid() || fanIn.Tolerance < 0 {
+		if fanIn.Node == "" || fanIn.Port == "" || !fanIn.Policy.Valid() || fanIn.Tolerance < 0 {
 			return errors.New("plan contains an invalid fan-in projection")
 		}
 		if _, exists := nodes[fanIn.Node]; !exists {
@@ -342,19 +342,20 @@ func validateRuntime(runtime Runtime, nodes map[string]struct{}, edges []Edge) e
 			return errors.New("plan contains duplicate fan-in ports")
 		}
 		fanInPorts[key] = struct{}{}
-		previous := ""
-		for _, connection := range fanIn.Connections {
-			connectionKey := connection.FromNode + ":" + connection.FromPort
-			if connection.FromNode == "" || connection.FromPort == "" || connectionKey <= previous {
-				return errors.New("fan-in connection order is not canonical")
-			}
-			previous = connectionKey
-			if _, exists := edgeSet[connectionKey+"->"+key]; !exists {
-				return errors.New("fan-in connection does not correspond to a plan edge")
-			}
+		if !hasFanInInput(key, edges) {
+			return errors.New("fan-in does not correspond to a plan edge")
 		}
 	}
 	return nil
+}
+
+func hasFanInInput(key string, edges []Edge) bool {
+	for _, edge := range edges {
+		if edge.ToNode+":"+edge.ToPort == key {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalPlanOf(description Description, execution Fingerprint) canonicalPlan {
