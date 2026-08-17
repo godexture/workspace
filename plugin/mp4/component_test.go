@@ -166,8 +166,21 @@ func TestSetIsExactlyTheOwnedPluginComposition(t *testing.T) {
 
 func TestMP4ProbeNeedsMatchesAndRejects(t *testing.T) {
 	needs, err := probeMP4(mediaformat.NewProbeContext(t.Context(), nil))
-	if err != nil || needs.Status() != mediaformat.ProbeNeedsData || len(needs.Needs()) != 1 || needs.Needs()[0].Length() != 16 {
+	if err != nil || needs.Status() != mediaformat.ProbeNeedsData || len(needs.Needs()) != 1 || needs.Needs()[0].Offset() != 0 || needs.Needs()[0].Length() != 8 {
 		t.Fatalf("initial probe = %#v, %v", needs, err)
+	}
+	nonFTYP, err := probeMP4(mediaformat.NewProbeContext(t.Context(), []access.ProbeView{access.NewProbeView([]byte("not an M"))}))
+	if err != nil || nonFTYP.Status() != mediaformat.ProbeMismatch {
+		t.Fatalf("8-byte non-ftyp probe = %#v, %v", nonFTYP, err)
+	}
+	ftypHeader := fixtureFileType("isom", "iso2")[:8]
+	needPrefix, err := probeMP4(mediaformat.NewProbeContext(t.Context(), []access.ProbeView{access.NewProbeView(ftypHeader)}))
+	if err != nil || needPrefix.Status() != mediaformat.ProbeNeedsData || len(needPrefix.Needs()) != 1 || needPrefix.Needs()[0].Offset() != 0 || needPrefix.Needs()[0].Length() != 16 {
+		t.Fatalf("8-byte ftyp probe = %#v, %v", needPrefix, err)
+	}
+	short, err := probeMP4(mediaformat.NewProbeContextAtEnd(t.Context(), []access.ProbeView{access.NewProbeView([]byte{0, 0, 0, 20})}, 4))
+	if err != nil || short.Status() != mediaformat.ProbeMismatch {
+		t.Fatalf("short known-end probe = %#v, %v", short, err)
 	}
 	mismatch, err := probeMP4(mediaformat.NewProbeContextAtEnd(t.Context(), []access.ProbeView{access.NewProbeView([]byte("not an MP4 file"))}, 15))
 	if err != nil || mismatch.Status() != mediaformat.ProbeMismatch {

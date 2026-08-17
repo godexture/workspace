@@ -12,12 +12,31 @@ import (
 const mp4ProbeLimit = 256
 
 func probeMP4(ctx mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
-	initial, err := access.NewRangeRequest(0, 16)
+	initial, err := access.NewRangeRequest(0, 8)
+	if err != nil {
+		return mediaformat.ProbeResult{}, err
+	}
+	var header [8]byte
+	count, err := readProbePrefix(ctx, header[:])
+	if err != nil {
+		return mediaformat.ProbeResult{}, err
+	}
+	if count != len(header) {
+		if end, known := ctx.End(); known && end <= int64(count) {
+			return mediaformat.Mismatch(), nil
+		}
+		return mediaformat.Need(initial), nil
+	}
+	if boxType(header[4:8]) != typeFTYP {
+		return mediaformat.Mismatch(), nil
+	}
+
+	request, err := access.NewRangeRequest(0, 16)
 	if err != nil {
 		return mediaformat.ProbeResult{}, err
 	}
 	var prefix [16]byte
-	count, err := readProbePrefix(ctx, prefix[:])
+	count, err = readProbePrefix(ctx, prefix[:])
 	if err != nil {
 		return mediaformat.ProbeResult{}, err
 	}
@@ -25,10 +44,7 @@ func probeMP4(ctx mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
 		if end, known := ctx.End(); known && end <= int64(count) {
 			return mediaformat.Mismatch(), nil
 		}
-		return mediaformat.Need(initial), nil
-	}
-	if boxType(prefix[4:8]) != typeFTYP {
-		return mediaformat.Mismatch(), nil
+		return mediaformat.Need(request), nil
 	}
 	declared := uint64(binary.BigEndian.Uint32(prefix[:4]))
 	if declared == 0 || declared < uint64(len(prefix)) || declared == 1 || (declared-uint64(len(prefix)))%4 != 0 {
@@ -41,7 +57,7 @@ func probeMP4(ctx mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
 	if declared > mp4ProbeLimit {
 		return mediaformat.Mismatch(), nil
 	}
-	request, err := access.NewRangeRequest(0, int64(declared))
+	request, err = access.NewRangeRequest(0, int64(declared))
 	if err != nil {
 		return mediaformat.ProbeResult{}, err
 	}
