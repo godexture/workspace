@@ -3,8 +3,12 @@ package access
 
 import (
 	"context"
+	"errors"
 	"io"
+	"runtime/debug"
 	"sync"
+
+	"github.com/godexture/godec/internal/errorx"
 )
 
 // Sequential and Random are the narrow read views a component receives
@@ -34,6 +38,11 @@ type Patcher interface {
 }
 
 type Ownership uint8
+
+// ErrResourceClosePanic reports that an owned direct handle panicked while
+// Host attempted its one cleanup call. The panic is converted to a stable
+// error and retained so copied Resource values cannot later report success.
+var ErrResourceClosePanic = errors.New("access resource close panicked")
 
 const (
 	Owned Ownership = iota + 1
@@ -86,9 +95,16 @@ func (r *Resource[T]) Close() error {
 		return nil
 	}
 	r.state.once.Do(func() {
+		completed := false
+		defer func() {
+			if recover(); !completed {
+				r.state.closeErr = errorx.MarkPanic(ErrResourceClosePanic, debug.Stack())
+			}
+		}()
 		if r.state.close != nil {
 			r.state.closeErr = r.state.close()
 		}
+		completed = true
 	})
 	return r.state.closeErr
 }

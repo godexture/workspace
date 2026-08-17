@@ -4,7 +4,6 @@ package drive
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/godexture/godec/flow"
@@ -17,6 +16,8 @@ type fanoutDelivery[T any] struct {
 	outputs  []delivery[T]
 	branches []flow.Item[T]
 	typ      schema.Type[T]
+	node     string
+	site     *journal.Site
 	once     sync.Once
 	closeErr error
 }
@@ -25,9 +26,9 @@ type fanoutDelivery[T any] struct {
 // payload the caller is about to fill would reach without the fork.
 func (f *fanoutDelivery[T]) Own(into *flow.Item[T], value T) { f.outputs[0].Own(into, value) }
 
-func fanoutFactory[T any](typ schema.Type[T]) func([]Link) (Link, error) {
+func fanoutFactory[T any](typ schema.Type[T]) func([]Link, string) (Link, error) {
 	traits := typ.Traits()
-	return func(links []Link) (Link, error) {
+	return func(links []Link, node string) (Link, error) {
 		if len(links) == 0 {
 			return Link{}, ErrLink
 		}
@@ -52,6 +53,7 @@ func fanoutFactory[T any](typ schema.Type[T]) func([]Link) (Link, error) {
 			outputs:  outputs,
 			branches: make([]flow.Item[T], len(outputs)-1),
 			typ:      typ,
+			node:     node,
 		}), nil
 	}
 }
@@ -72,34 +74,75 @@ func (f *fanoutDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) (err e
 	}
 	for index := range f.branches {
 		if err := f.outputs[index].Emit(ctx, &f.branches[index]); err != nil {
+			if isAbandoned(err) {
+				continue
+			}
 			return err
 		}
 	}
-	return f.outputs[len(f.outputs)-1].Emit(ctx, item)
+	if err := f.outputs[len(f.outputs)-1].Emit(ctx, item); err != nil && !isAbandoned(err) {
+		return err
+	}
+	return nil
 }
 
+// prepareClose declares the phase context on all bounded descendants before
+// any branch is sealed. This only records a context; each buffer still seals
+// at its own close, so a processor may emit delayed output after preparation.
+func (f *fanoutDelivery[T]) prepareClose(ctx context.Context) {
+	for _, output := range f.outputs {
+		if value, ok := output.(interface{ prepareClose(context.Context) }); ok {
+			value.prepareClose(ctx)
+		}
+	}
+}
+
+// close closes every branch, and every branch records its own failures where
+// they happen. One branch failing never stops another from being closed, and
+// the branches' failures are never joined into one error: they are independent
+// and the run reports them that way.
 func (f *fanoutDelivery[T]) close(ctx context.Context) error {
 	f.once.Do(func() {
-		problems := make([]error, 0, len(f.outputs))
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if cause := context.Cause(ctx); cause != nil {
+			f.closeErr = cause
+			return
+		}
+		f.prepareClose(ctx)
 		for _, output := range f.outputs {
-			if err := output.close(ctx); err != nil {
-				problems = append(problems, err)
+			err := output.close(ctx)
+			if !isAbandoned(err) {
+				f.closeErr = firstFailure(f.closeErr, err)
 			}
 		}
-		f.closeErr = errors.Join(problems...)
 	})
 	return f.closeErr
 }
 
-// bindScope binds the branch slots to the task that drives this fan-out: they
+// bindDomain binds the branch slots to the task that drives this fan-out: they
 // are its slots, and a branch nobody took is released by it.
-func (f *fanoutDelivery[T]) bindScope(scope *journal.Scope) {
+func (f *fanoutDelivery[T]) bindDomain(domain *journal.Domain) {
+	f.site = domain.At(f.node)
 	for index := range f.branches {
-		f.branches[index].Bind(f.typ, scope)
+		f.branches[index].Bind(f.typ, f.site.Reporter())
 	}
 	for _, output := range f.outputs {
-		if value, ok := output.(scopeBinder); ok {
-			value.bindScope(scope)
+		if value, ok := output.(domainBinder); ok {
+			value.bindDomain(domain)
 		}
 	}
+}
+
+func (f *fanoutDelivery[T]) bound() bool {
+	if f.site == nil {
+		return false
+	}
+	for _, output := range f.outputs {
+		if value, ok := output.(domainBinder); ok && !value.bound() {
+			return false
+		}
+	}
+	return true
 }

@@ -5,6 +5,8 @@ import (
 	"runtime/debug"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/errorx"
+	"github.com/godexture/godec/internal/ownership"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -19,6 +21,20 @@ var ErrTransfer = errors.New("flow item transfer is invalid")
 type Reporter interface {
 	Cleanup(error)
 }
+
+// Owner is a failure domain whose lifetime covers a component's whole
+// lifecycle, rather than one call or one lifecycle step.
+//
+// Slots a component fills through Emitter.Own are already owned for that long,
+// so a component only needs this for a slot it fills some other way: one it
+// Moves an input into and keeps across calls, releasing it during Flush or
+// Close. Binding such a slot to the sender's domain instead would tie its
+// lifetime to whichever caller happened to hand over the payload, which is why
+// an unbound slot refuses ownership rather than inheriting one.
+//
+// The runtime supplies it through plugin.OpenContext; a component never
+// constructs one.
+type Owner interface{ Reporter }
 
 // ReleaseError reports a declared Drop that did not complete.
 //
@@ -72,7 +88,11 @@ func NewItem[T any](value T, typ schema.Type[T], into Reporter) Item[T] {
 		return Item[T]{}
 	}
 	traits := typ.Traits()
-	return Item[T]{value: value, fork: traits.Fork, drop: traits.Drop, reporter: into, bound: true, valid: true}
+	audited := hasFlowOwnership(into)
+	if audited {
+		trackFlowOwnership(into, 1)
+	}
+	return Item[T]{value: value, fork: traits.Fork, drop: traits.Drop, reporter: into, bound: true, valid: true, audited: audited}
 }
 
 // noCopy makes `go vet` reject copies of a value that carries a release
@@ -109,29 +129,23 @@ type Item[T any] struct {
 	reporter Reporter
 	bound    bool
 	valid    bool
+	audited  bool
 }
 
 // Bind declares an empty slot: the type its payloads are owned under, and the
 // failure domain that hears about a release it cannot perform.
 //
-// A slot that already holds a payload keeps what it was filled under, because
-// that payload's release obligation was taken on in the domain that owns it
-// now. Binding is how a runtime hands out slots; components receive theirs
-// already bound and take ownership through Emitter.Own.
-// A nil reporter leaves the domain the slot already belongs to, which is how a
-// harness substitutes accounted traits into a slot the runtime handed it: a
-// binding declares a domain, and never takes one away. It cannot establish a
-// slot without one, because a payload owned outside every domain has nowhere to
-// report a release it could not perform.
+// Binding succeeds once. The declaration remains with the slot while it is
+// empty or holds a payload, so repeated Emitter.Own calls cannot change the
+// release traits or failure domain of a slot that is being reused.
 func (i *Item[T]) Bind(typ schema.Type[T], reporter Reporter) {
-	if i == nil || i.valid || !typ.Valid() || (reporter == nil && !i.bound) {
+	if i == nil || i.bound || !typ.Valid() || reporter == nil {
 		return
 	}
 	traits := typ.Traits()
 	i.fork, i.drop, i.bound = traits.Fork, traits.Drop, true
-	if reporter != nil {
-		i.reporter = reporter
-	}
+	i.reporter = reporter
+	i.audited = hasFlowOwnership(reporter)
 }
 
 // Set takes ownership of value under the slot's declared traits, releasing
@@ -159,10 +173,17 @@ func (i *Item[T]) Set(value T) {
 	}
 	i.Drop()
 	i.value, i.valid = value, true
+	i.trackOwnership(1)
 }
 
 // Valid reports whether the slot still holds an unreleased payload.
 func (i *Item[T]) Valid() bool { return i != nil && i.valid }
+
+// Bound reports whether the slot declares a release and a domain, and so can
+// take ownership at all. A boundary that is about to hand a payload over asks
+// this first, so a slot that cannot take one is refused before the payload
+// leaves where it currently lives.
+func (i *Item[T]) Bound() bool { return i != nil && i.bound }
 
 // Value borrows the held payload for the duration of the current call. It stays
 // valid only until the slot is consumed.
@@ -188,48 +209,48 @@ func (i *Item[T]) Drop() {
 	}
 	value := i.value
 	i.empty()
+	i.trackOwnership(-1)
 	i.release(value)
 }
 
-// Move transfers ownership from source into i, leaving source empty. Anything i
-// still held is released first. Neither slot's binding moves: the payload is
-// now owned, and will be released, in i's domain.
-func (i *Item[T]) Move(source *Item[T]) {
-	if i == nil || source == nil || i == source {
-		return
+// Move transfers ownership from source into i, leaving source empty, and
+// reports whether it did. Anything i still held is released first. Neither
+// slot's binding moves: the payload is now owned, and will be released, in i's
+// domain.
+//
+// An unbound target is refused, and source keeps its payload. A slot that
+// declares nothing knows no release to perform and no domain to report one
+// that fails to, and silently adopting the sender's declaration would decide
+// the payload's lifetime by accident: a component keeping a value past the
+// call it arrived in would be reporting into whichever caller's domain
+// happened to hand it over. A slot that outlives its caller declares that
+// itself, by binding to the Owner the runtime granted it.
+func (i *Item[T]) Move(source *Item[T]) bool {
+	if i == nil || source == nil || i == source || !i.bound || !source.valid {
+		return false
 	}
 	i.Drop()
-	if !source.valid {
-		return
-	}
-	i.inherit(source)
 	value := source.value
 	source.empty()
+	source.trackOwnership(-1)
 	i.value, i.valid = value, true
-}
-
-// inherit lets an undeclared slot take the sending slot's declaration. A
-// receiving end that declares nothing of its own belongs to the domain the
-// payload is already in; without this it would hold a payload it does not know
-// how to release.
-func (i *Item[T]) inherit(source *Item[T]) {
-	if i.bound {
-		return
-	}
-	i.fork, i.drop, i.reporter, i.bound = source.fork, source.drop, source.reporter, true
+	i.trackOwnership(1)
+	return true
 }
 
 // Fork places an independent owner of the same logical payload into target. The
 // receiver keeps its own ownership, so only genuine fan-out retains.
+//
+// An unbound target is refused for the same reason Move refuses one, and
+// nothing is forked: the receiver's payload stays exactly as it was.
 func (i *Item[T]) Fork(target *Item[T]) bool {
-	if i == nil || target == nil || !i.valid {
+	if i == nil || target == nil || i == target || !i.valid || !target.bound {
 		return false
 	}
 	value := i.value
 	if i.fork != nil {
 		value = i.fork(value)
 	}
-	target.inherit(i)
 	target.Set(value)
 	return true
 }
@@ -257,13 +278,29 @@ func report(into Reporter, failure error) {
 	into.Cleanup(failure)
 }
 
+func hasFlowOwnership(into Reporter) bool {
+	return ownership.Enabled(into)
+}
+
+func (i *Item[T]) trackOwnership(delta int64) {
+	if i == nil || !i.audited {
+		return
+	}
+	trackFlowOwnership(i.reporter, delta)
+}
+
+func trackFlowOwnership(into Reporter, delta int64) {
+	ownership.Track(into, delta)
+}
+
 func invokeDrop[T any](drop func(T), value T) (failure error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			failure = &ReleaseError{
+			stack := debug.Stack()
+			failure = errorx.MarkPanic(&ReleaseError{
 				Summary: diagnostic.Recovered(recovered),
-				Stack:   append([]byte(nil), debug.Stack()...),
-			}
+				Stack:   append([]byte(nil), stack...),
+			}, stack)
 		}
 	}()
 	drop(value)
@@ -295,6 +332,7 @@ func Transfer[I, O any](source *Item[I], target *Item[O], into Emitter[O], build
 	}
 	value := source.value
 	source.empty()
+	source.trackOwnership(-1)
 	// The source slot is empty from here, so its owner cannot release the
 	// payload any more. Until build returns, this is the only obligation left;
 	// once it returns, the payload lives in result and Set takes over, because

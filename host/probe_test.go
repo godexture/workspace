@@ -79,6 +79,13 @@ func (s *probeTestSession) ReadAt(_ context.Context, destination []byte, offset 
 	return count, nil
 }
 
+func (s *probeTestSession) Size(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return int64(len(s.data)), nil
+}
+
 func (s *probeTestSession) Close() error {
 	s.closed.Add(1)
 	return nil
@@ -114,6 +121,41 @@ func TestProbeStoreDeduplicatesSharedRandomRanges(t *testing.T) {
 	retained, err := finishProbeStores([]*probeStore{store})
 	if err != nil || len(retained) != 0 {
 		t.Fatalf("random cache retained=%d, error=%v", len(retained), err)
+	}
+}
+
+func TestProbeStoreRandomEOFDoesNotInventEndWithoutStableSize(t *testing.T) {
+	_, opening := probeOpening(t, []byte("payload"), access.RandomRead)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request, _ := access.NewRangeRequest(100, 1)
+	progress, unmet, err := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress || unmet != request || store.endKnown {
+		t.Fatalf("random EOF inferred end: progress=%v, unmet=%v, end=%d, known=%v", progress, unmet, store.end, store.endKnown)
+	}
+}
+
+func TestProbeStoreRandomEOFUsesSelectedStableSize(t *testing.T) {
+	data := []byte("payload")
+	_, opening := probeOpeningWithStableSize(t, data)
+	store, err := newProbeStore(opening, job.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request, _ := access.NewRangeRequest(100, 1)
+	progress, _, err := store.Extend(t.Context(), []access.RangeRequest{request}, job.DefaultBudget().ProbeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !progress || !store.endKnown || store.end != int64(len(data)) {
+		t.Fatalf("stable EOF did not identify source end: progress=%v, end=%d, known=%v", progress, store.end, store.endKnown)
 	}
 }
 
@@ -352,6 +394,24 @@ func probeOpening(t *testing.T, data []byte, capabilities ...access.Capability) 
 	return session, opening
 }
 
+func probeOpeningWithStableSize(t *testing.T, data []byte) (*probeTestSession, access.Opening) {
+	t.Helper()
+	available, err := access.NewCapabilities(access.RandomRead, access.StableSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := access.Select(available, access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)))
+	if !ok {
+		t.Fatal("no stable random selection")
+	}
+	session := &probeTestSession{data: append([]byte(nil), data...), capabilities: available}
+	opening, err := access.NewOpening(access.SourceDirection, session, selection, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session, opening
+}
+
 func probeSelectionForTest(capabilities access.Capabilities) (access.Selection, bool) {
 	for _, capability := range []access.Capability{access.RandomRead, access.SequentialRead} {
 		if selection, ok := access.Select(capabilities, access.NewRequirements(access.AllOf(capability))); ok {
@@ -441,6 +501,7 @@ func probeBudget(byteLimit resource.Bytes, rounds int) job.Budget {
 var _ access.Session = (*probeTestSession)(nil)
 var _ access.Sequential = (*probeTestSession)(nil)
 var _ access.Random = (*probeTestSession)(nil)
+var _ access.Sizer = (*probeTestSession)(nil)
 
 type snapshotProbeSession struct {
 	*probeTestSession

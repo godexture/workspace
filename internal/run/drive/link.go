@@ -1,5 +1,5 @@
-// Link is the typed edge between two operators, and Scope names the node an
-// edge belongs to for diagnostics.
+// Link is the typed edge between two operators, and binding one puts every
+// ownership slot below it in the failure domain of the task that drives it.
 package drive
 
 import (
@@ -15,9 +15,14 @@ type closer interface {
 	close(context.Context) error
 }
 
-// A delivery chain is bound to the journal of the task that drives it, which is
-// also the failure domain of every ownership slot that task owns.
-type scopeBinder interface{ bindScope(*journal.Scope) }
+// A delivery chain belongs to the failure domain of the task that drives it,
+// which is also the domain of every ownership slot that task owns. Binding
+// stops at a bounded edge: what is below it is the drain task's, and a release
+// the drain task cannot perform is its failure rather than the producer's.
+type domainBinder interface {
+	bindDomain(*journal.Domain)
+	bound() bool
+}
 
 type delivery[T any] interface {
 	flow.Emitter[T]
@@ -40,13 +45,29 @@ func (l Link) Close(ctx context.Context) error {
 	return l.value.(closer).close(ctx)
 }
 
-func (l Link) BindScope(scope *journal.Scope) {
+// bind is called by the constructor of the task that will drive this chain,
+// with the domain that task owns. Nothing else binds a chain, so there is no
+// separate step to forget and no anonymous domain for an unbound chain to fall
+// back on.
+func (l Link) bind(domain *journal.Domain) {
 	if !l.Valid() {
 		return
 	}
-	if value, ok := l.value.(scopeBinder); ok {
-		value.bindScope(scope)
+	if value, ok := l.value.(domainBinder); ok {
+		value.bindDomain(domain)
 	}
+}
+
+// Bound reports whether this endpoint has been given the failure domain it
+// reports releases to. Build checks it once, so a chain that reached the item
+// path without a domain is a topology error rather than a run whose release
+// failures go nowhere.
+func (l Link) Bound() bool {
+	if !l.Valid() {
+		return false
+	}
+	value, ok := l.value.(domainBinder)
+	return !ok || value.bound()
 }
 
 func linkOf[T any](value delivery[T]) Link {
@@ -63,6 +84,3 @@ func deliveryOf[T any](link Link) (delivery[T], error) {
 	}
 	return value, nil
 }
-
-// Task is a top-level execution loop. Host runs it through the tracked task
-// group, which owns panic recovery, cancellation, and join.

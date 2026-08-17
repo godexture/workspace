@@ -20,6 +20,7 @@ type preparedState uint8
 const (
 	preparedReady preparedState = iota + 1
 	preparedRunning
+	preparedClosing
 	preparedClosed
 )
 
@@ -42,13 +43,14 @@ type Prepared struct {
 	direct         []bound.Entry
 	cleanupTimeout time.Duration
 
-	mu       sync.Mutex
-	state    preparedState
-	cancel   context.CancelCauseFunc
-	done     chan struct{}
-	doneOnce sync.Once
-	closeErr error
-	released sync.Once
+	mu              sync.Mutex
+	state           preparedState
+	stop            func(error)
+	done            chan struct{}
+	doneOnce        sync.Once
+	closeErr        error
+	released        sync.Once
+	releaseFailures []Failure
 }
 
 // Prepare acquires and inspects inputs, resolves the immutable Program,
@@ -57,7 +59,7 @@ type Prepared struct {
 func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) {
 	planning, err := h.resolveInputs(ctx, request)
 	if err != nil {
-		failure := Failure{Phase: PreparePhase, Err: err}
+		failure := failureOf(PreparePhase, "", "", err)
 		return nil, &failure
 	}
 	selected := planning.program
@@ -167,24 +169,21 @@ func (p *Prepared) Close() error {
 	p.mu.Lock()
 	switch p.state {
 	case preparedReady:
-		p.state = preparedClosed
+		p.state = preparedClosing
 		p.mu.Unlock()
 		cleanupContext, cancel := context.WithTimeout(context.Background(), p.cleanupTimeout)
 		failures := p.releaseResources(cleanupContext)
 		cancel()
 		err := joinFailures(failures)
-		p.mu.Lock()
-		p.closeErr = err
-		p.mu.Unlock()
-		p.closeDone()
+		p.complete(err)
 		return err
 	case preparedRunning:
-		cancel := p.cancel
+		stop := p.stop
 		done := p.done
 		timeout := p.cleanupTimeout
 		p.mu.Unlock()
-		if cancel != nil {
-			cancel(context.Canceled)
+		if stop != nil {
+			stop(context.Canceled)
 		}
 		timer := time.NewTimer(timeout)
 		defer timer.Stop()
@@ -197,6 +196,14 @@ func (p *Prepared) Close() error {
 		case <-timer.C:
 			return fmt.Errorf("prepared job cleanup exceeded %s", timeout)
 		}
+	case preparedClosing:
+		done := p.done
+		p.mu.Unlock()
+		<-done
+		p.mu.Lock()
+		err := p.closeErr
+		p.mu.Unlock()
+		return err
 	case preparedClosed:
 		err := p.closeErr
 		p.mu.Unlock()
@@ -207,8 +214,9 @@ func (p *Prepared) Close() error {
 	}
 }
 
-func (p *Prepared) releaseResources(ctx context.Context) (failures []Failure) {
+func (p *Prepared) releaseResources(ctx context.Context) []Failure {
 	p.released.Do(func() {
+		var failures []Failure
 		failures = append(failures, closeSessions(ctx, p.sessions)...)
 		if err := closeProbeStores(p.probeStores); err != nil {
 			failures = append(failures, Failure{Phase: ResourcePhase, Err: err})
@@ -228,24 +236,34 @@ func (p *Prepared) releaseResources(ctx context.Context) (failures []Failure) {
 		}
 		for index := len(p.direct) - 1; index >= 0; index-- {
 			entry := p.direct[index]
-			if err := entry.Close(); err != nil {
-				failures = append(failures, Failure{Phase: ClosePhase, Node: entry.Projection().Node, Err: err})
+			if err := protectedCall(entry.Projection().Node, "direct/close", func() error { return entry.Close() }); err != nil {
+				failures = append(failures, failureOf(ClosePhase, entry.Projection().Node, "direct/close", err))
 			}
 		}
+		p.releaseFailures = failures
 	})
-	return failures
+	result := make([]Failure, len(p.releaseFailures))
+	copy(result, p.releaseFailures)
+	for index := range result {
+		result[index].Stack = append([]byte(nil), result[index].Stack...)
+	}
+	return result
 }
 
 func closeRequestDirects(request job.Job) error {
 	var failures []error
 	for _, input := range request.Inputs() {
 		if direct, ok := input.Direct(); ok {
-			failures = append(failures, direct.Close())
+			if err := protectedCall("", "direct/close", func() error { return direct.Close() }); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	for _, output := range request.Outputs() {
 		if direct, ok := output.Direct(); ok {
-			failures = append(failures, direct.Close())
+			if err := protectedCall("", "direct/close", func() error { return direct.Close() }); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	return errors.Join(failures...)
@@ -255,7 +273,9 @@ func closeBoundDirects(entries []bound.Entry) error {
 	var failures []error
 	for index := len(entries) - 1; index >= 0; index-- {
 		if entries[index].Projection().Kind == plan.DirectBoundary {
-			failures = append(failures, entries[index].Close())
+			if err := protectedCall(entries[index].Projection().Node, "direct/close", func() error { return entries[index].Close() }); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	return errors.Join(failures...)
@@ -265,7 +285,7 @@ func (p *Prepared) complete(err error) {
 	p.mu.Lock()
 	p.state = preparedClosed
 	p.closeErr = err
-	p.cancel = nil
+	p.stop = nil
 	p.mu.Unlock()
 	p.closeDone()
 }

@@ -139,13 +139,15 @@ func TestTypedSourceProcessorSinkComposeWithoutPerItemErasure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := sourceBinding.OpenSource(source, processorLink)
+	ledger, owner := testOwner("source")
+	task, err := sourceBinding.OpenSource(source, processorLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := task.Run(context.Background()); err != nil {
+	if err := perform(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
+	requireNoFailures(t, ledger)
 	if err := task.Finish(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -174,16 +176,21 @@ func TestFanoutRetainsRollbackOwnerAcrossPartialFailure(t *testing.T) {
 	leftLink, _ := sinkBinding.OpenSink(left)
 	rightLink, _ := sinkBinding.OpenSink(right)
 	sourceBinding := NewSource("out", typ)
-	fanout, err := sourceBinding.Fanout([]Link{leftLink, rightLink})
+	fanout, err := sourceBinding.Fanout([]Link{leftLink, rightLink}, "node")
 	if err != nil {
 		t.Fatal(err)
 	}
+	ledger, owner := testOwner("fanout")
+	fanout.bind(owner)
 	target, err := deliveryOf[owned](fanout)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := flow.NewItem(owned{value: 9}, typ, &testDomain)
-	if err := target.Emit(context.Background(), &input); !errors.Is(err, want) {
+	err = owner.Perform(journal.Run, func(*journal.Span) error {
+		return target.Emit(context.Background(), &input)
+	})
+	if !errors.Is(err, want) {
 		t.Fatalf("fan-out error = %v", err)
 	}
 	input.Drop()
@@ -193,6 +200,9 @@ func TestFanoutRetainsRollbackOwnerAcrossPartialFailure(t *testing.T) {
 	if got := left.Values(); len(got) != 1 || got[0] != 9 || len(right.Values()) != 0 {
 		t.Fatalf("fan-out values = left %v right %v", got, right.Values())
 	}
+	if events := ledger.Events(); len(events) != 1 || events[0].Kind != journal.WorkError {
+		t.Fatalf("fan-out failures = %#v, want one callback failure", events)
+	}
 }
 
 func TestOneOutputFanoutIsLinearMove(t *testing.T) {
@@ -201,10 +211,12 @@ func TestOneOutputFanoutIsLinearMove(t *testing.T) {
 	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
 	sink := &recordingWriter{operatorBase: operatorBase{shape}}
 	link, _ := NewSink("in", typ).OpenSink(sink)
-	linear, err := NewSource("out", typ).Fanout([]Link{link})
+	linear, err := NewSource("out", typ).Fanout([]Link{link}, "node")
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, owner := testOwner("fanout")
+	linear.bind(owner)
 	target, _ := deliveryOf[owned](linear)
 	item := flow.NewItem(owned{value: 4}, typ, &testDomain)
 	defer item.Drop()
@@ -293,10 +305,12 @@ func TestAudioFanoutCopiesOnlyModifyingBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fanout, err := NewSource("out", typ).Fanout([]Link{leftLink, rightLink})
+	fanout, err := NewSource("out", typ).Fanout([]Link{leftLink, rightLink}, "node")
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, owner := testOwner("fanout")
+	fanout.bind(owner)
 	target, err := deliveryOf[audio.Frame[int16]](fanout)
 	if err != nil {
 		t.Fatal(err)
@@ -320,21 +334,22 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
 	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
 	sinkLink, _ := NewSink("in", typ).OpenSink(sink)
-	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2, Bytes: 2, Time: 10}, sinkLink)
+	ledger := journal.NewLedger()
+	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2, Bytes: 2, Time: 10}, sinkLink, ledger.Domain("edge", "edge"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	source := &sliceReader{operatorBase: operatorBase{sourceShape}, typ: typ, values: []owned{{1}, {2}, {3}}}
-	sourceTask, err := NewSource("out", typ).OpenSource(source, buffered)
+	sourceTask, err := NewSource("out", typ).OpenSource(source, buffered, ledger.Domain("source", "source"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	results := make(chan error, 2)
-	go func() { results <- bufferTask.Run(ctx) }()
-	go func() { results <- sourceTask.Run(ctx) }()
+	go func() { results <- perform(ctx, bufferTask) }()
+	go func() { results <- perform(ctx, sourceTask) }()
 	if err := <-results; err != nil {
 		t.Fatal(err)
 	}
@@ -344,11 +359,57 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	if err := <-results; err != nil {
 		t.Fatal(err)
 	}
+	requireNoFailures(t, ledger)
 	if got := sink.Values(); len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
 		t.Fatalf("buffered values = %v", got)
 	}
 	if owners.forks.Load() != 0 || owners.drops.Load() != 3 {
 		t.Fatalf("buffer ownership = forks %d drops %d", owners.forks.Load(), owners.drops.Load())
+	}
+}
+
+func TestBufferedLinkCanceledAfterProducerSealDoesNotFlush(t *testing.T) {
+	owners := &ownership{}
+	typ := ownedSchema[driveOutputID](owners)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
+	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
+	sinkLink, err := NewSink("in", typ).OpenSink(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorShape := flow.NewShape(
+		[]flow.Port{flow.In("in", typ)},
+		[]flow.Port{flow.Out("out", typ)},
+	)
+	processor := &mapProcessor{operatorBase: operatorBase{processorShape}, input: typ, output: typ}
+	processorLink, err := NewProcessor("in", typ, "out", typ).Prepend(processor, sinkLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, owner := testOwner("edge")
+	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, processorLink, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	// Seal is the producer's successful EOF signal. Cancel after the seal but
+	// before the drain task starts so its prepared phase context carries the
+	// external cancellation and cannot start Flush.
+	if err := buffered.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("run stopped after producer EOF")
+	cancel(want)
+	if err := perform(ctx, bufferTask); !errors.Is(err, want) {
+		t.Fatalf("buffer task cause = %v, want %v", err, want)
+	}
+	if got := processor.flush.Load(); got != 0 {
+		t.Fatalf("Flush calls after cancellation = %d, want none", got)
+	}
+	for _, event := range ledger.Events() {
+		if event.Operation == journal.Flush {
+			t.Fatalf("canceled sealed edge recorded Flush event: %#v", event)
+		}
 	}
 }
 
@@ -429,7 +490,8 @@ func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
+			ledger, edge := testOwner("edge")
+			buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink, edge)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -437,27 +499,21 @@ func TestAnUnfinishedValueSettlesTheEdgeWithoutQuiescingIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scope := journal.New(journal.Run, "edge")
-			bufferTask.BindScope(scope)
-			buffered.BindScope(journal.New(journal.Run, "producer"))
+			// The producer's end of the edge belongs to whoever fills it, which
+			// here is the test rather than another task.
+			producerLedger := journal.NewLedger()
+			buffered.bind(producerLedger.Domain("producer", "producer"))
 			item := flow.NewItem(owned{value: 1}, typ, &testDomain)
 			if err := producer.Emit(context.Background(), &item); err != nil {
 				t.Fatal(err)
 			}
-			stopped := make(chan struct{})
-			go func() {
-				defer close(stopped)
-				defer func() { _ = recover() }()
-				_ = bufferTask.Run(context.Background())
-			}()
-			<-stopped
+			_ = perform(context.Background(), bufferTask)
 			assertSettledButNotQuiescent(t, producer, bufferTask)
 			if released.Load() != 1 {
 				t.Fatalf("releases of the unfinished value = %d", released.Load())
 			}
-			outcome := scope.Seal()
-			if test.dropPanics != (len(outcome.Cleanup) == 1) {
-				t.Fatalf("cleanup reported to the edge = %#v", outcome.Cleanup)
+			if test.dropPanics != (len(cleanups(ledger)) == 1) {
+				t.Fatalf("releases reported to the edge = %#v", cleanups(ledger))
 			}
 		})
 	}
@@ -534,8 +590,15 @@ func TestBindingRejectsWrongShapeOperatorAndPayload(t *testing.T) {
 	}
 	otherSink := &recordingWriter{operatorBase: operatorBase{flow.NewShape([]flow.Port{flow.In("in", ownedSchema[driveOutputID](&ownership{}))}, nil)}}
 	otherLink, _ := NewSink("in", ownedSchema[driveOutputID](&ownership{})).OpenSink(otherSink)
-	if _, err := NewSource("out", typ).OpenSource(&intReader{operatorBase: operatorBase{operator.Ports()}, typ: typ}, otherLink); !errors.Is(err, ErrLink) {
+	_, owner := testOwner("source")
+	if _, err := NewSource("out", typ).OpenSource(&intReader{operatorBase: operatorBase{operator.Ports()}, typ: typ}, otherLink, owner); !errors.Is(err, ErrLink) {
 		t.Fatalf("payload link error = %v", err)
+	}
+	// A task cannot be constructed without the failure domain it and its slots
+	// report to, so there is no shape of this call that produces one reporting
+	// into an anonymous journal nobody collects.
+	if _, err := NewSource("out", typ).OpenSource(&intReader{operatorBase: operatorBase{operator.Ports()}, typ: typ}, otherLink, nil); !errors.Is(err, ErrDomain) {
+		t.Fatalf("missing domain error = %v", err)
 	}
 	_ = other
 }
@@ -575,6 +638,41 @@ func (j *sumJoiner) Flush(context.Context, flow.Emitter[owned]) error {
 	return nil
 }
 
+func TestAbortedJoinDoesNotFlush(t *testing.T) {
+	in := ownedSchema[driveInputID](&ownership{})
+	out := ownedSchema[driveOutputID](&ownership{})
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sink, err := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, owner := testOwner("join")
+	_, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sink, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- perform(context.Background(), task) }()
+	task.Abort()
+	if err := <-done; err != nil {
+		t.Fatalf("aborted join run = %v", err)
+	}
+	if err := task.Barrier(context.Background()); err != nil {
+		t.Fatalf("aborted join barrier = %v", err)
+	}
+	if err := task.Finish(context.Background()); err != nil {
+		t.Fatalf("aborted join finish = %v", err)
+	}
+	if joiner.flush.Load() != 0 {
+		t.Fatalf("aborted join Flush calls = %d, want none", joiner.flush.Load())
+	}
+}
+
 func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	inputOwners := &ownership{}
 	outputOwners := &ownership{}
@@ -595,24 +693,16 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	if err := binding.Validate(joinShape); err != nil {
 		t.Fatal(err)
 	}
-	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	ledger, owner := testOwner("join")
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
+	producerEnd(inputs...)
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
-	scope := journal.New(journal.Run, "join")
-	task.BindScope(scope)
 	result := make(chan error, 1)
-	// task.Group normally calls Notify's hook after Capture seals the scope;
-	// this test drives the task directly, so it must call it the same way.
-	go func() {
-		err := task.Run(context.Background())
-		if notify := task.Notify(); notify != nil {
-			notify(journal.Outcome{})
-		}
-		result <- err
-	}()
+	go func() { result <- perform(context.Background(), task) }()
 	for _, pair := range [][2]int{{1, 10}, {2, 20}} {
 		leftItem := flow.NewItem(owned{value: pair[0]}, in, &testDomain)
 		if err := left.Emit(context.Background(), &leftItem); err != nil {
@@ -651,6 +741,7 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 	if joiner.flush.Load() != 1 {
 		t.Fatalf("zip flushes = %d", joiner.flush.Load())
 	}
+	requireNoFailures(t, ledger)
 }
 
 type zipReleaseID struct{}
@@ -676,14 +767,14 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	ledger, owner := testOwner("join")
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.New(journal.Run, "join")
-	task.BindScope(scope)
+	producerEnd(inputs...)
 	result := make(chan error, 1)
-	go func() { result <- task.Run(context.Background()) }()
+	go func() { result <- perform(context.Background(), task) }()
 	for _, input := range inputs {
 		edge, err := deliveryOf[owned](input)
 		if err != nil {
@@ -699,14 +790,14 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
-	outcome := scope.Seal()
-	if len(outcome.Cleanup) == 0 {
+	// Nothing stopped the work, but the task ended holding a payload it could
+	// not release, so its cause is that release rather than nothing at all.
+	assertCauseIsRecorded(t, ledger, <-result)
+	releases := cleanups(ledger)
+	if len(releases) == 0 {
 		t.Fatal("the join finished without reporting the batch it could not release")
 	}
-	for _, failure := range outcome.Cleanup {
+	for _, failure := range releases {
 		if failure.Kind != journal.CleanupPanic {
 			t.Errorf("release failure kind = %v, want a cleanup panic", failure.Kind)
 		}
@@ -731,12 +822,14 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2, Time: 5}, sinkLink)
+	_, owner := testOwner("join")
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2, Time: 5}, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
+	producerEnd(inputs...)
 	result := make(chan error, 1)
-	go func() { result <- task.Run(context.Background()) }()
+	go func() { result <- perform(context.Background(), task) }()
 	left, _ := deliveryOf[owned](inputs[0])
 	right, _ := deliveryOf[owned](inputs[1])
 	leftItem := flow.NewItem(owned{value: 1}, in, &testDomain)
@@ -752,7 +845,7 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	if err := <-result; !errors.Is(err, ErrWatermark) {
 		t.Fatalf("watermark error = %v", err)
 	}
-	task.Discard(&testDomain)
+	task.Discard()
 	if inputOwners.drops.Load() != 2 {
 		t.Fatalf("watermark input drops = %d", inputOwners.drops.Load())
 	}
@@ -784,15 +877,16 @@ func TestAPanickingJoinDoesNotReportABarrier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(&panickingJoiner{operatorBase{joinShape}}, 2, queue.Limit{Items: 2}, sinkLink)
+	_, owner := testOwner("join")
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(&panickingJoiner{operatorBase{joinShape}}, 2, queue.Limit{Items: 2}, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
+	producerEnd(inputs...)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		defer func() { _ = recover() }()
-		_ = task.Run(context.Background())
+		_ = perform(context.Background(), task)
 	}()
 	for _, input := range inputs {
 		edge, err := deliveryOf[owned](input)
@@ -843,12 +937,12 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 		t.Fatal(err)
 	}
 	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink)
+	ledger, owner := testOwner("join")
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := journal.New(journal.Run, "join")
-	task.BindScope(scope)
+	producerEnd(inputs...)
 	// Only the first input carries a value, so the join pops it, finds the
 	// second at EOF, and ends holding a batch it never joined.
 	first, err := deliveryOf[owned](inputs[0])
@@ -868,10 +962,8 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := task.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(scope.Seal().Cleanup) == 0 {
+	assertCauseIsRecorded(t, ledger, perform(context.Background(), task))
+	if len(cleanups(ledger)) == 0 {
 		t.Fatal("the join finished without reporting the batch it could not release")
 	}
 	waiting, giveUp := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -896,7 +988,8 @@ func TestJoinerRejectsPolicyMismatchAndUnsupportedExecution(t *testing.T) {
 	joiner := &sumJoiner{operatorBase: operatorBase{shape}, output: out}
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
 	sinkLink, _ := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
-	if _, _, err := latest.OpenJoiner(joiner, 2, queue.Limit{Items: 1}, sinkLink); !errors.Is(err, ErrUnsupported) {
+	_, latestOwner := testOwner("join")
+	if _, _, err := latest.OpenJoiner(joiner, 2, queue.Limit{Items: 1}, sinkLink, latestOwner); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("unsupported policy = %v", err)
 	}
 }

@@ -4,48 +4,49 @@ package drive
 
 import (
 	"context"
-	"errors"
 	"io"
 	"sync"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/errorx"
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/internal/run/release"
 	"github.com/godexture/godec/media/schema"
 )
 
-func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, typ schema.Type[I], next delivery[O]) ([]Link, Task, error) {
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
 	if count < 2 {
 		return nil, Task{}, ErrBinding
 	}
 	traits := typ.Traits()
+	site := owner.At(owner.Home())
 	edges := make([]*queue.Queue[I], count)
 	links := make([]Link, count)
 	for index := range edges {
-		edge, err := queue.New(limit, typ)
+		edge, err := queue.New(limit, typ, site.Reporter())
 		if err != nil {
 			for previous := 0; previous < index; previous++ {
-				edges[previous].Close()
+				edges[previous].Abort()
 			}
 			return nil, Task{}, err
 		}
 		edges[index] = edge
-		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ})
+		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ, node: owner.Home()})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{})}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{}), site: site}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
+		state.items[index].Bind(typ, site.Reporter())
 	}
-	state.bindScope(journal.New(journal.Run, ""))
 	task := Task{
-		close:   state.close,
+		domain:  owner,
+		abort:   state.abort,
 		discard: state.discard,
 		barrier: state.barrier,
 		finish:  state.finish,
-		bind:    state.bindScope,
 		run:     state.run,
-		notify:  state.sealed,
+		sealed:  state.sealed,
 	}
 	return links, task, nil
 }
@@ -61,60 +62,59 @@ type zipState[I, O any] struct {
 	time       func(I) (int64, bool)
 	watermark  int64
 	done       chan struct{}
-	scope      *journal.Scope
+	site       *journal.Site
 	reachedEOF bool
+	stopped    bool
 	quiesced   bool
 	once       sync.Once
 	err        error
 }
 
-// bindScope claims every input for the join: the batch slots and each ring
-// belong to this task, so a release none of them can perform is its failure.
-func (s *zipState[I, O]) bindScope(scope *journal.Scope) {
-	s.scope = scope
-	for index := range s.items {
-		s.items[index].Bind(s.typ, scope)
-	}
+func (s *zipState[I, O]) abort() {
 	for _, edge := range s.edges {
-		edge.Bind(scope)
+		edge.Abort()
 	}
 }
 
-func (s *zipState[I, O]) close() {
+func (s *zipState[I, O]) seal() {
 	for _, edge := range s.edges {
-		edge.Close()
+		edge.Seal()
 	}
 }
 
-func (s *zipState[I, O]) discard(into flow.Reporter) {
+func (s *zipState[I, O]) discard() {
 	for _, edge := range s.edges {
-		edge.Drain(into)
+		edge.Drain()
 	}
 }
 
-func (s *zipState[I, O]) run(ctx context.Context) (err error) {
+func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error) {
 	defer func() {
-		s.close()
-		s.discard(s.scope)
+		s.abort()
+		s.discard()
 		// Reaching EOF is not enough. The batch this join was still holding is
 		// released on the way out, and so is anything left in the inputs; a
-		// release that fails there is recorded in this task's journal, and a
-		// task with anything in its journal did not quiesce. sealed, not this
-		// defer, closes done: Run returning is not the same moment as this
-		// task's journal being sealed, and the barrier must not read this scope
-		// until it is.
-		s.quiesced = s.reachedEOF && err == nil && s.scope.Clean()
+		// release that fails there is recorded against this task's domain, and
+		// a task with anything recorded did not quiesce. The sealed hook, not
+		// this defer, closes done: Run returning is not the same moment as
+		// this task's span ending, and the barrier must not act on this domain
+		// until it has.
+		s.quiesced = (s.reachedEOF || s.stopped) && err == nil && span.Clean()
 	}()
 	defer s.release()
 	for {
 		s.read = 0
 		for index, edge := range s.edges {
 			err := edge.Pop(ctx, &s.items[index])
-			if errors.Is(err, io.EOF) {
+			if errorx.Is(err, io.EOF) {
 				// An input reaching EOF ends the stream for all of them. It is
 				// the only end this join can quiesce from, but the cleanup on
 				// the way out still has to succeed.
 				s.reachedEOF = true
+				return nil
+			}
+			if errorx.Is(err, queue.ErrAbandoned) {
+				s.stopped = true
 				return nil
 			}
 			if err != nil {
@@ -126,10 +126,14 @@ func (s *zipState[I, O]) run(ctx context.Context) (err error) {
 			return ErrWatermark
 		}
 		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
+			if isAbandoned(err) {
+				s.stopped = true
+				return nil
+			}
 			return err
 		}
 		s.release()
-		if !s.scope.Clean() {
+		if !span.Clean() {
 			// The batch could not be released. Joining another one would leave
 			// that behind and keep going over a broken release trait.
 			return nil
@@ -178,11 +182,11 @@ func (s *zipState[I, O]) release() {
 	release.All(s.items[:read])
 }
 
-// sealed is task.Group's post-Capture notify hook: it runs after this task's
-// journal is sealed, so closing done here -- rather than in run's own defer,
-// before Capture has sealed anything -- is what lets barrier's waiter safely
-// touch the same Scope afterward.
-func (s *zipState[I, O]) sealed(journal.Outcome) { close(s.done) }
+// sealed is task.Group's sealed hook: it runs after this task's Run span has
+// ended, so closing done here -- rather than in run's own defer, before the
+// span has recorded what work returned -- is what lets the barrier's waiter,
+// and the run's own Finish afterwards, act on this domain safely.
+func (s *zipState[I, O]) sealed(error) { close(s.done) }
 
 // barrier closes the inputs and waits for the join to finish them. A fan-in's
 // quiescence is the task's own outcome rather than the idle state of its
@@ -195,7 +199,13 @@ func (s *zipState[I, O]) sealed(journal.Outcome) { close(s.done) }
 // boundary noticed the cancellation next. Only a failing task ends this way,
 // and its failure cancels this context, so the wait ends with that failure.
 func (s *zipState[I, O]) barrier(ctx context.Context) error {
-	s.close()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	s.seal()
 	select {
 	case <-s.done:
 		if s.quiesced {
@@ -208,7 +218,22 @@ func (s *zipState[I, O]) barrier(ctx context.Context) error {
 	return context.Cause(ctx)
 }
 
+// finish flushes the join and then closes what it feeds. As with a linear
+// stage, the two are independent failures and each is recorded where it
+// happens rather than joined into one.
 func (s *zipState[I, O]) finish(ctx context.Context) error {
-	s.once.Do(func() { s.err = errors.Join(s.joiner.Flush(ctx, s.next), s.next.close(ctx)) })
+	if !s.reachedEOF {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	s.once.Do(func() {
+		flushed := s.site.Perform(func() error { return s.joiner.Flush(ctx, s.next) })
+		s.err = firstFailure(flushed, s.next.close(ctx))
+	})
 	return s.err
 }

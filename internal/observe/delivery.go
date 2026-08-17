@@ -2,10 +2,10 @@ package observe
 
 import (
 	"context"
-	"errors"
 	"runtime/debug"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/cancel"
 )
 
 // SinkPanicError keeps the stack a sink panicked from, not the value it
@@ -88,5 +88,5 @@ func invokeSink(ctx context.Context, sink Sink, event Event) (err error) {
 }
 
 func cancellationEcho(err error, ctx context.Context) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Cause(ctx))
+	return cancel.Normalize(ctx, err) != nil
 }

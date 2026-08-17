@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/queue"
 	"github.com/godexture/godec/media/schema"
@@ -22,6 +23,7 @@ var (
 	ErrUnsupported  = errors.New("execution binding does not support this operation")
 	ErrForkTrait    = errors.New("owned fan-out requires a fork trait")
 	ErrWatermark    = errors.New("fan-in batch exceeds its timestamp watermark")
+	ErrDomain       = errors.New("execution task requires the failure domain it and its slots report to")
 )
 
 type Kind uint8
@@ -54,11 +56,11 @@ type Binding struct {
 	fanIn       flow.FanInPolicy
 	openSink    func(flow.Operator, string) (Link, error)
 	prepend     func(flow.Operator, Link, string) (Link, error)
-	openSource  func(flow.Operator, Link) (Task, error)
-	fanout      func([]Link) (Link, error)
-	buffer      func(queue.Limit, Link) (Link, Task, error)
+	openSource  func(flow.Operator, Link, *journal.Domain) (Task, error)
+	fanout      func([]Link, string) (Link, error)
+	buffer      func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
 	observe     func(Link, *observe.Local) (Link, error)
-	openJoiner  func(flow.Operator, int, queue.Limit, Link) ([]Link, Task, error)
+	openJoiner  func(flow.Operator, int, queue.Limit, Link, *journal.Domain) ([]Link, Task, error)
 	validate    func(flow.Operator) error
 }
 
@@ -72,7 +74,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
 		fanIn:       policy,
-		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link) ([]Link, Task, error) {
+		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
 			if !ok {
 				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -84,7 +86,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			if policy != flow.ZipFanIn {
 				return nil, Task{}, ErrUnsupported
 			}
-			return zipJoiner(joiner, inputs, limit, in, target)
+			return zipJoiner(joiner, inputs, limit, in, target, owner)
 		},
 		fanout:  fanoutFactory(out),
 		buffer:  bufferFactory(out),
@@ -104,7 +106,7 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 		kind:        Source,
 		output:      port{id: output, schema: typ.Descriptor()},
 		outputStats: measuresOf(traits),
-		openSource: func(operator flow.Operator, next Link) (Task, error) {
+		openSource: func(operator flow.Operator, next Link, owner *journal.Domain) (Task, error) {
 			reader, ok := operator.(flow.Reader[T])
 			if !ok {
 				return Task{}, fmt.Errorf("%w: want flow.Reader[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
@@ -113,7 +115,7 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 			if err != nil {
 				return Task{}, err
 			}
-			return sourceTask(reader, typ, target), nil
+			return sourceTask(reader, typ, target, owner), nil
 		},
 		fanout:  fanoutFactory(typ),
 		buffer:  bufferFactory(typ),
@@ -265,32 +267,53 @@ func (b Binding) PrependAt(operator flow.Operator, next Link, node string) (Link
 	return b.prepend(operator, next, node)
 }
 
-func (b Binding) OpenSource(operator flow.Operator, next Link) (Task, error) {
+// OpenSource, OpenJoiner and Buffer take the failure domain their task will
+// own and bind the whole chain below it before returning. The domain is a
+// construction argument rather than a second call beside the Task, and no
+// constructor invents one of its own, so a task that exists is a task whose
+// every slot reports somewhere the run collects from.
+func (b Binding) OpenSource(operator flow.Operator, next Link, owner *journal.Domain) (Task, error) {
 	if b.openSource == nil {
 		return Task{}, ErrUnsupported
 	}
-	return b.openSource(operator, next)
+	if owner == nil {
+		return Task{}, ErrDomain
+	}
+	next.bind(owner)
+	return b.openSource(operator, next, owner)
 }
 
-func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, next Link) ([]Link, Task, error) {
+func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
 	if b.openJoiner == nil {
 		return nil, Task{}, ErrUnsupported
 	}
-	return b.openJoiner(operator, inputs, limit, next)
+	if owner == nil {
+		return nil, Task{}, ErrDomain
+	}
+	next.bind(owner)
+	return b.openJoiner(operator, inputs, limit, next, owner)
 }
 
-func (b Binding) Fanout(outputs []Link) (Link, error) {
+// Fanout groups this node's outputs. The branch slots it retains belong to
+// whichever task ends up driving them, so it takes only the node it attributes
+// their releases to; the domain arrives when that task's constructor binds the
+// chain.
+func (b Binding) Fanout(outputs []Link, node string) (Link, error) {
 	if b.fanout == nil {
 		return Link{}, ErrUnsupported
 	}
-	return b.fanout(outputs)
+	return b.fanout(outputs, node)
 }
 
-func (b Binding) Buffer(limit queue.Limit, next Link) (Link, Task, error) {
+func (b Binding) Buffer(limit queue.Limit, next Link, owner *journal.Domain) (Link, Task, error) {
 	if b.buffer == nil {
 		return Link{}, Task{}, ErrUnsupported
 	}
-	return b.buffer(limit, next)
+	if owner == nil {
+		return Link{}, Task{}, ErrDomain
+	}
+	next.bind(owner)
+	return b.buffer(limit, next, owner)
 }
 
 func (b Binding) Observe(next Link, local *observe.Local) (Link, error) {

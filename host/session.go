@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/errorx"
 	"github.com/godexture/godec/plan"
 )
 
@@ -38,7 +39,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return sessions, selectionErr
 		}
 		var session access.Session
-		failure := invoke(ctx, PreparePhase, projection.Node, "access/acquire", func(ctx context.Context) error {
+		failure := invokeAccess(ctx, PreparePhase, projection.Node, "access/acquire", func(ctx context.Context) error {
 			var acquireErr error
 			if projection.Direction == plan.InputBoundary {
 				session, acquireErr = entry.SourceTrait().Acquire(ctx, entry.Reference(), selection)
@@ -51,13 +52,13 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			sessions = append(sessions, acquiredSession{node: projection.Node, value: session, selected: selection})
 		}
 		if failure != nil {
-			return sessions, *failure
+			return sessions, failure
 		}
 		if session == nil {
 			return sessions, failureOf(PreparePhase, projection.Node, "access/acquire", errors.New("Access Provider acquired a nil session"))
 		}
 		var actual access.Capabilities
-		failure = invoke(ctx, PreparePhase, projection.Node, "access/capabilities", func(context.Context) error {
+		failure = invokeAccess(ctx, PreparePhase, projection.Node, "access/capabilities", func(context.Context) error {
 			actual = session.Capabilities()
 			if len(actual.Values()) == 0 || !actual.Valid() {
 				return access.ErrInvalidCapabilities
@@ -65,7 +66,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return nil
 		})
 		if failure != nil {
-			return sessions, *failure
+			return sessions, failure
 		}
 		sessions[len(sessions)-1].actual = actual
 		var declared access.Capabilities
@@ -117,9 +118,21 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 		}
 		sessions[len(sessions)-1].opening = opening
 		if projection.Direction == plan.InputBoundary {
-			snapshot, snapshotErr := readSnapshot(ctx, session)
+			// StableSize is a promise made by the acquired session, not by the
+			// initial probe view. Automatic input selection may start with a
+			// narrow RandomRead/SequentialRead view and add StableSize after
+			// probing, so enforce the identity contract from verified capabilities.
+			requireSnapshot := actual.Contains(access.StableSize)
+			snapshot, snapshotErr := readSnapshotAtMode(ctx, PreparePhase, projection.Node, session, requireSnapshot)
 			if snapshotErr != nil {
-				return sessions, sessionDiagnostic("prepare.access-snapshot", projection, "Access source session could not report its content identity", map[string]string{"error": snapshotErr.Error()})
+				if callbackFailure, ok := errorx.Find[*Failure](snapshotErr); ok {
+					return sessions, callbackFailure
+				}
+				detail := map[string]string{"error": snapshotErr.Error()}
+				if requireSnapshot {
+					detail["required"] = string(access.StableSize)
+				}
+				return sessions, sessionDiagnostic("prepare.access-snapshot", projection, "Access source session could not report its content identity", detail)
 			}
 			sessions[len(sessions)-1].snapshot = snapshot
 		}
@@ -128,19 +141,36 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 }
 
 func readSnapshot(ctx context.Context, session access.Session) (access.Snapshot, error) {
+	return readSnapshotAt(ctx, PreparePhase, "", session)
+}
+
+func readSnapshotAt(ctx context.Context, phase Phase, node string, session access.Session) (access.Snapshot, error) {
+	return readSnapshotAtMode(ctx, phase, node, session, false)
+}
+
+func readSnapshotAtMode(ctx context.Context, phase Phase, node string, session access.Session, required bool) (access.Snapshot, error) {
 	reporter, ok := access.SnapshotOf(session)
 	if !ok {
+		if required {
+			return access.Snapshot{}, access.ErrNoSnapshot
+		}
 		return access.Snapshot{}, nil
 	}
-	snapshot, err := reporter.Snapshot(ctx)
-	if errors.Is(err, access.ErrNoSnapshot) {
-		return access.Snapshot{}, nil
-	}
-	if err != nil {
-		return access.Snapshot{}, err
+	snapshot, failure := callAccess(ctx, phase, node, "access/snapshot", reporter.Snapshot)
+	if failure != nil {
+		if errorx.Is(failure, access.ErrNoSnapshot) {
+			if required {
+				return access.Snapshot{}, access.ErrNoSnapshot
+			}
+			return access.Snapshot{}, nil
+		}
+		return access.Snapshot{}, failure
 	}
 	if !snapshot.Valid() {
 		return access.Snapshot{}, access.ErrInvalidSnapshot
+	}
+	if required && snapshot.Nature() == access.NoSnapshot {
+		return access.Snapshot{}, access.ErrNoSnapshot
 	}
 	return snapshot, nil
 }
@@ -154,10 +184,10 @@ func verifySnapshots(ctx context.Context, phase Phase, sessions []acquiredSessio
 		ctx = context.Background()
 	}
 	for _, session := range sessions {
-		if !session.snapshot.Valid() {
+		if !session.snapshot.Valid() || session.snapshot.Nature() == access.NoSnapshot {
 			continue
 		}
-		current, err := readSnapshot(ctx, session.value)
+		current, err := readSnapshotAt(ctx, phase, session.node, session.value)
 		if err != nil {
 			failure := failureOf(phase, session.node, "access/snapshot", err)
 			return &failure
@@ -241,7 +271,7 @@ func closeSessions(ctx context.Context, sessions []acquiredSession) (failures []
 	}
 	for index := len(sessions) - 1; index >= 0; index-- {
 		session := sessions[index]
-		if failure := invoke(ctx, ClosePhase, session.node, "access/session", func(context.Context) error {
+		if failure := invokeAccess(ctx, ClosePhase, session.node, "access/session", func(context.Context) error {
 			return session.value.Close()
 		}); failure != nil {
 			failures = append(failures, *failure)

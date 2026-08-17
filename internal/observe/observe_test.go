@@ -154,3 +154,88 @@ func TestDeliveryFailureAndPanicAreReported(t *testing.T) {
 		})
 	}
 }
+
+func TestCloseTimeoutCommitsFailureBeforeLateSinkError(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	late := errors.New("late sink failure")
+	failed := make(chan error, 2)
+	collector := New(Basic, Config{
+		DeliveryLimit: 2,
+		Sink: func(context.Context, Event) error {
+			close(started)
+			<-release
+			return late
+		},
+		Fail: func(err error) { failed <- err },
+	}, nil)
+	collector.Emit(Event{Kind: Lifecycle})
+	<-started
+	collector.Emit(Event{Kind: Lifecycle})
+	collector.Emit(Event{Kind: Lifecycle})
+	collector.Emit(Event{Kind: Lifecycle})
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	timeoutErr := collector.Close(ctx)
+	if !errors.Is(timeoutErr, context.DeadlineExceeded) {
+		t.Fatalf("Close timeout = %v, want deadline exceeded", timeoutErr)
+	}
+	if summary := collector.Summary(); summary.DeliveryDropped != 3 {
+		t.Fatalf("timeout delivery summary = %#v, want all queued and overflow events dropped", summary)
+	}
+
+	close(release)
+	if err := collector.Close(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("late Close = %v, want the terminal timeout", err)
+	}
+	select {
+	case got := <-failed:
+		if !errors.Is(got, context.DeadlineExceeded) {
+			t.Fatalf("failure callback = %v, want terminal timeout", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal failure callback was not called")
+	}
+	select {
+	case got := <-failed:
+		t.Fatalf("late sink failure replaced terminal failure: %v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := collector.Err(); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, late) {
+		t.Fatalf("collector Err after late sink return = %v", err)
+	}
+}
+
+func TestJoinedCancellationAndSinkFailureRemainDistinct(t *testing.T) {
+	parent, cancel := context.WithCancelCause(t.Context())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	independent := errors.New("independent sink failure")
+	failed := make(chan error, 1)
+	collector := New(Basic, Config{
+		Context:       parent,
+		DeliveryLimit: 1,
+		Sink: func(ctx context.Context, _ Event) error {
+			close(started)
+			<-release
+			return errors.Join(context.Cause(ctx), independent)
+		},
+		Fail: func(err error) { failed <- err },
+	}, nil)
+	collector.Emit(Event{Kind: Lifecycle})
+	<-started
+	cancel(context.Canceled)
+	close(release)
+	if err := collector.Close(t.Context()); !errors.Is(err, independent) {
+		t.Fatalf("Close = %v, want independent sink failure", err)
+	}
+	select {
+	case got := <-failed:
+		if !errors.Is(got, independent) {
+			t.Fatalf("failure callback = %v, want independent sink failure", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("joined sink failure was not reported")
+	}
+}

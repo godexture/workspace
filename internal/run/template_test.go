@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/cancel"
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run/drive"
@@ -124,40 +125,90 @@ var (
 	templateQueue  = job.QueuePolicy{Items: 4}
 )
 
-func runTestExecution(ctx context.Context, execution *Execution) task.Report {
-	group := task.New(ctx)
-	if err := execution.Start(group); err != nil {
-		return task.Report{Outcomes: []journal.Outcome{{Task: "runtime/start", Primary: &journal.Failure{Kind: journal.TaskError, Task: "runtime/start", Err: err}}}}
-	}
-	var finished []journal.Outcome
-	if err := execution.WaitSources(ctx, group); err != nil {
-		execution.Close()
-		group.Cancel(err)
-	} else if err := execution.Quiesce(group.Context()); err != nil {
-		execution.Close()
-		group.Cancel(err)
-	} else {
-		finished = execution.Finish(ctx)
-		for _, outcome := range finished {
-			if outcome.Primary != nil {
-				group.Cancel(outcome.Primary.Err)
-				break
-			}
-		}
-	}
-	report := group.Wait(context.Background())
-	for _, outcome := range finished {
-		if outcome.Failed() {
-			report.Outcomes = append(report.Outcomes, outcome)
-		}
-	}
-	var discarded flow.Collector
-	execution.Discard(&discarded)
-	for _, failure := range discarded.Failures() {
-		report.Outcomes = append(report.Outcomes, journal.Outcome{Task: "runtime/discard", Cleanup: []journal.Failure{{Kind: journal.CleanupPanic, Task: "runtime/discard", Err: failure}}})
-	}
-	return report
+// island drives one execution the way Host does, over one ledger, and reads
+// the ledger afterwards. Everything a run produced is there, so a test asks the
+// ledger rather than collecting failures from several return values.
+type island struct {
+	ledger    *journal.Ledger
+	execution *Execution
+	report    task.Report
 }
+
+func buildIsland(t testing.TB, template Template, operators ...flow.Operator) *island {
+	t.Helper()
+	ledger := journal.NewLedger()
+	execution, err := template.Build(ledger, operators)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	return &island{ledger: ledger, execution: execution}
+}
+
+func (i *island) run(ctx context.Context) *island {
+	phase, phaseCancel, detach := cancel.Link(ctx)
+	defer detach()
+	defer phaseCancel(context.Canceled)
+	job, jobCancel := context.WithCancelCause(phase)
+	stop := func(cause error) {
+		if cause == nil {
+			cause = context.Canceled
+		}
+		if journal.OperationOf(cause) != journal.Flush {
+			phaseCancel(cause)
+		}
+		jobCancel(cause)
+	}
+	group := task.NewLinked(job, i.ledger, stop)
+	if err := i.execution.Start(group); err != nil {
+		i.ledger.Record(journal.Entry{Kind: journal.WorkError, Operation: journal.Run, Task: "runtime/start", Err: err})
+		return i
+	}
+	if err := i.execution.WaitSources(job, group); err != nil {
+		i.ledger.Record(journal.Entry{Kind: journal.WorkError, Operation: journal.Run, Task: "runtime/source", Err: err})
+		stop(err)
+		i.execution.Abort()
+	} else if err := i.execution.Quiesce(group.Context()); err != nil {
+		i.ledger.Record(journal.Entry{Kind: journal.WorkError, Operation: journal.Run, Task: "runtime/quiesce", Err: err})
+		stop(err)
+		i.execution.Abort()
+	} else {
+		// Flushing is the run's own lifecycle step from here, the same way Host
+		// marks it, so a component releasing something it retained lands under
+		// Flush even with no runtime span open for it.
+		i.ledger.EnterStage(journal.Flush)
+		if err := i.execution.Finish(phase); err != nil {
+			i.ledger.Record(journal.Entry{Kind: journal.WorkError, Operation: journal.Flush, Task: "runtime/finish", Err: err})
+			stop(err)
+		}
+	}
+	i.report = group.Wait(context.Background())
+	i.ledger.EnterStage(journal.Discard)
+	i.execution.Discard()
+	return i
+}
+
+func runIsland(t testing.TB, ctx context.Context, template Template, operators ...flow.Operator) *island {
+	t.Helper()
+	return buildIsland(t, template, operators...).run(ctx)
+}
+
+func (i *island) events() []journal.Failure { return i.ledger.Events() }
+
+func (i *island) failures() []journal.Failure { return selectFailures(i.ledger, false) }
+
+func (i *island) cleanups() []journal.Failure { return selectFailures(i.ledger, true) }
+
+func selectFailures(ledger *journal.Ledger, cleanup bool) []journal.Failure {
+	var result []journal.Failure
+	for _, event := range ledger.Events() {
+		if event.Kind.Cleanup() == cleanup {
+			result = append(result, event)
+		}
+	}
+	return result
+}
+
+func (i *island) succeeded() bool { return i.report.Complete() && len(i.events()) == 0 }
 
 func TestCompileFusesMaximalLinearProcessorIsland(t *testing.T) {
 	nodes := []Node{
@@ -300,22 +351,18 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 		t.Fatal(err)
 	}
 	writer := &templateWriter{templateOperator: templateOperator{shape: sinkShape}}
-	execution, err := template.Build([]flow.Operator{
+	value := buildIsland(t, template,
 		&templateReader{templateOperator: templateOperator{shape: sourceShape}, values: []int{1, 2, 3}},
 		&templateProcessor{templateOperator: templateOperator{shape: firstShape}, in: templateInput, out: templateMiddle, add: 10},
 		&templateProcessor{templateOperator: templateOperator{shape: secondShape}, in: templateMiddle, out: templateOutput, add: 100},
 		writer,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sources, edgeTasks := execution.TaskCounts()
+	)
+	sources, edgeTasks := value.execution.TaskCounts()
 	if sources != 1 || edgeTasks != 2 {
 		t.Fatalf("task counts = sources %d edges %d", sources, edgeTasks)
 	}
-	report := runTestExecution(context.Background(), execution)
-	if !report.Complete() || len(report.Outcomes) != 0 {
-		t.Fatalf("run report = %#v", report)
+	if value.run(context.Background()); !value.succeeded() {
+		t.Fatalf("run = %#v, ledger = %#v", value.report, value.events())
 	}
 	if got := writer.Values(); len(got) != 3 || got[0] != 111 || got[1] != 112 || got[2] != 113 {
 		t.Fatalf("sink values = %v", got)
@@ -344,18 +391,14 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := template.Build([]flow.Operator{
+	value := runIsland(t, context.Background(), template,
 		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1}},
 		&panickingProcessor{templateOperator{shape: processorShape}},
 		&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	report := runTestExecution(context.Background(), execution)
+	)
 	var panicErr *journal.PanicError
-	if len(report.Outcomes) != 1 || !errors.As(report.Outcomes[0].Primary.Err, &panicErr) || panicErr.Location != "panic" {
-		t.Fatalf("panic report = %#v", report)
+	if recorded := value.failures(); len(recorded) != 1 || !errors.As(recorded[0].Err, &panicErr) || panicErr.Location != "panic" {
+		t.Fatalf("panic report = %#v", value.events())
 	}
 	if drops.Load() != 1 {
 		t.Fatalf("panic drop count = %d", drops.Load())
@@ -386,15 +429,11 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 			typ:              typ,
 			values:           make([]int, failAt+templateQueue.Items*2),
 		}
-		execution, err := template.Build([]flow.Operator{
+		value := runIsland(t, context.Background(), template,
 			reader,
 			&failingWriter{templateOperator: templateOperator{shape: sinkShape}, failAt: failAt},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		report := runTestExecution(context.Background(), execution)
-		if len(report.Outcomes) == 0 {
+		)
+		if len(value.events()) == 0 {
 			t.Fatalf("run %d unexpectedly succeeded", run)
 		}
 		emitted := int64(reader.index)
@@ -448,37 +487,50 @@ func TestCleanupFailuresSurviveThePanicBesideThem(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 4}, sinkLink)
+			ledger := journal.NewLedger()
+			buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 4}, sinkLink, ledger.Domain("buffer", "edge"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1, 0, 0}}
-			sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered)
+			sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered, ledger.Domain("source", "source"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := sourceTask.Run(context.Background()); err != nil {
+			// Fill and seal the edge before its drain starts. Every owner the
+			// consumer can leave behind is therefore causally accepted before
+			// its failure cancels the group.
+			if err := sourceTask.Domain().Perform(journal.Run, func(span *journal.Span) error {
+				return sourceTask.Run(context.Background(), span)
+			}); err != nil {
 				t.Fatal(err)
 			}
-			scope := journal.New(journal.Run, "edge")
-			bufferTask.BindScope(scope)
-			group := task.New(context.Background())
-			if err := group.StartScoped("buffer", scope, bufferTask.Run); err != nil {
+			if err := sourceTask.Finish(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			report := group.Wait(context.Background())
-			if len(report.Outcomes) != 1 {
-				t.Fatalf("report = %#v", report)
+			group := task.NewLinked(context.Background(), ledger, nil)
+			if err := group.StartDomain(bufferTask.Domain(), bufferTask.Run, bufferTask.Sealed()); err != nil {
+				t.Fatal(err)
 			}
-			outcome := report.Outcomes[0]
-			var panicErr *journal.PanicError
-			if outcome.Primary == nil || errors.As(outcome.Primary.Err, &panicErr) != test.panicked {
-				t.Fatalf("primary = %v, want a panic = %v", outcome.Primary, test.panicked)
+			group.Wait(context.Background())
+			stopped := selectFailures(ledger, false)
+			if len(stopped) != 1 {
+				t.Fatalf("what stopped the edge = %#v, want one consumer failure", stopped)
 			}
-			if len(outcome.Cleanup) != 2 {
-				t.Fatalf("reported release failures = %d, want one per value left in the ring", len(outcome.Cleanup))
+			if test.panicked {
+				var panicErr *journal.PanicError
+				if stopped[0].Kind != journal.WorkPanic || !errors.As(stopped[0].Err, &panicErr) {
+					t.Fatalf("what stopped the edge = %#v, want the consumer panic", stopped)
+				}
+			} else if stopped[0].Kind != journal.WorkError || stopped[0].Err.Error() != "sink failure" {
+				t.Fatalf("what stopped the edge = %#v, want the consumer failure", stopped)
 			}
-			for _, failure := range outcome.Cleanup {
+			releases := selectFailures(ledger, true)
+			wantReleases := reader.index - 1
+			if len(releases) != wantReleases {
+				t.Fatalf("reported release failures = %d, want one per value left in the ring (%d accepted)", len(releases), reader.index)
+			}
+			for _, failure := range releases {
 				if failure.Kind != journal.CleanupPanic || failure.Node != "edge" {
 					t.Errorf("release failure = %#v, want a cleanup panic attributed to the edge", failure)
 				}
@@ -499,7 +551,8 @@ func TestDiscardReportsTheReleasesItCouldNotPerform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink)
+	ledger := journal.NewLedger()
+	buffered, bufferTask, err := drive.NewSource("out", typ).Buffer(queue.Limit{Items: 2}, sinkLink, ledger.Domain("buffer", "edge"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,21 +560,25 @@ func TestDiscardReportsTheReleasesItCouldNotPerform(t *testing.T) {
 	// the state Discard exists for: owners queued behind a consumer that has
 	// already left.
 	reader := &templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{1, 2}}
-	sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered)
+	sourceTask, err := drive.NewSource("out", typ).OpenSource(reader, buffered, ledger.Domain("source", "source"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sourceTask.Run(context.Background()); err != nil {
+	if err := sourceTask.Domain().Perform(journal.Run, func(span *journal.Span) error {
+		return sourceTask.Run(context.Background(), span)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	execution := &Execution{edges: []namedTask{{name: "buffer", task: bufferTask}}}
-	var cleanup flow.Collector
-	execution.Discard(&cleanup)
-	failures := cleanup.Failures()
+	execution := &Execution{edges: []namedTask{{task: bufferTask}}}
+	execution.Discard()
+	failures := selectFailures(ledger, true)
 	if len(failures) != 2 {
-		t.Fatalf("failures reported to the cleanup domain = %d, want one per queued owner", len(failures))
+		t.Fatalf("releases reported to the edge = %d, want one per queued owner", len(failures))
 	}
 	for _, failure := range failures {
+		if failure.Operation != journal.Discard {
+			t.Errorf("release operation = %v, want the Discard the run performed", failure.Operation)
+		}
 		if strings.Contains(failure.Error(), "declared drop panicked") {
 			t.Error("the discard report exposes the recovered panic value")
 		}
@@ -560,15 +617,17 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 	}
 	for _, mode := range []observe.Mode{observe.Off, observe.Basic} {
 		collector := observe.New(mode, observe.Config{HistoryLimit: 8}, clock)
-		execution, err := template.BuildObserved([]flow.Operator{
+		ledger := journal.NewLedger()
+		execution, err := template.BuildObserved(ledger, []flow.Operator{
 			&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{2, 3}},
 			&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
 		}, collector)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Outcomes) != 0 {
-			t.Fatalf("mode %v report = %#v", mode, report)
+		value := (&island{ledger: ledger, execution: execution}).run(context.Background())
+		if !value.succeeded() {
+			t.Fatalf("mode %v report = %#v, ledger = %#v", mode, value.report, value.events())
 		}
 		events := collector.Snapshot()
 		if mode == observe.Off && len(events) != 0 {
@@ -583,15 +642,17 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 	}
 
 	collector := observe.New(observe.Detailed, observe.Config{HistoryLimit: 8}, clock)
-	execution, err := template.BuildObserved([]flow.Operator{
+	detailedLedger := journal.NewLedger()
+	execution, err := template.BuildObserved(detailedLedger, []flow.Operator{
 		&templateReader{templateOperator: templateOperator{shape: sourceShape}, typ: typ, values: []int{2, 3}},
 		&templateWriter{templateOperator: templateOperator{shape: sinkShape}},
 	}, collector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report := runTestExecution(context.Background(), execution); !report.Complete() || len(report.Outcomes) != 0 {
-		t.Fatalf("Detailed report = %#v", report)
+	detailed := (&island{ledger: detailedLedger, execution: execution}).run(context.Background())
+	if !detailed.succeeded() {
+		t.Fatalf("Detailed report = %#v, ledger = %#v", detailed.report, detailed.events())
 	}
 	events := collector.Snapshot()
 	if len(events) != 1 || events[0].Items != 2 || events[0].Bytes != 5 || !events[0].HasMedia || events[0].Media != 3 {

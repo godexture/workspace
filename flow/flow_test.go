@@ -1,19 +1,47 @@
 package flow
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/godexture/godec/internal/ownership"
 	"github.com/godexture/godec/media/schema"
 )
 
 type flowUnitID struct{}
 type flowUnit struct{ Value int }
 type flowValueID struct{}
+type alternateValueID struct{}
 type panicDropID struct{}
 type thirdPartyDropID struct{}
+
+type ownershipAuditDomain struct {
+	deltas []int64
+	live   int64
+	panic  bool
+}
+
+func (*ownershipAuditDomain) Cleanup(error) {}
+
+func (d *ownershipAuditDomain) TrackFlowOwnership(delta int64) {
+	d.track(delta)
+}
+
+func (d *ownershipAuditDomain) track(delta int64) {
+	if d.panic {
+		panic("ownership audit failed")
+	}
+	d.deltas = append(d.deltas, delta)
+	d.live += delta
+}
+
+func auditedReporter(d *ownershipAuditDomain) Reporter {
+	return ownership.Wrap(d, d.track)
+}
 
 var linearValueSchema = schema.Define[flowValueID, int](schema.Traits[int]{})
 
@@ -87,7 +115,10 @@ func TestDeferredDropReleasesOnceWhetherOrNotSomethingConsumedTheCell(t *testing
 		item := NewItem(1, typ, &testDomain)
 		defer item.Drop()
 		var downstream Item[int]
-		downstream.Move(&item)
+		downstream.Bind(typ, &testDomain)
+		if !downstream.Move(&item) || item.Valid() || !downstream.Valid() {
+			t.Fatal("downstream did not consume the source slot")
+		}
 		downstream.Drop()
 	}
 	moved()
@@ -117,6 +148,7 @@ func TestForkIsTheOnlyRetainAndEachOwnerReleasesOnce(t *testing.T) {
 	typ := countingSchema(&drops)
 	original := NewItem(42, typ, &testDomain)
 	var branch Item[int]
+	branch.Bind(typ, &testDomain)
 	if !original.Fork(&branch) || !original.Valid() || !branch.Valid() {
 		t.Fatal("fork did not produce two independent owners")
 	}
@@ -130,6 +162,25 @@ func TestForkIsTheOnlyRetainAndEachOwnerReleasesOnce(t *testing.T) {
 	}
 }
 
+func TestForkRejectsSelfTargetWithoutReleasingOrReplacingSource(t *testing.T) {
+	var drops atomic.Int32
+	typ := countingSchema(&drops)
+	item := NewItem(42, typ, &testDomain)
+	if item.Fork(&item) {
+		t.Fatal("self-target Fork succeeded")
+	}
+	if !item.Valid() || item.Value() != 42 {
+		t.Fatalf("self-target Fork changed source: valid=%v value=%d", item.Valid(), item.Value())
+	}
+	if drops.Load() != 0 {
+		t.Fatalf("self-target Fork released source %d time(s), want zero", drops.Load())
+	}
+	item.Drop()
+	if drops.Load() != 1 {
+		t.Fatalf("source release count = %d, want one", drops.Load())
+	}
+}
+
 func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 	var drops atomic.Int32
 	thirdParty := schema.Define[thirdPartyDropID](schema.Traits[int]{
@@ -138,6 +189,7 @@ func TestItemCanUseThirdPartyTraitsWithoutFlowState(t *testing.T) {
 	})
 	item := NewItem(8, thirdParty, &testDomain)
 	var branch Item[int]
+	branch.Bind(thirdParty, &testDomain)
 	item.Fork(&branch)
 	if branch.Value() != 9 {
 		t.Fatal("third-party fork trait was not used")
@@ -155,6 +207,7 @@ func TestOwnershipTransferHasNoAllocation(t *testing.T) {
 	allocations := testing.AllocsPerRun(1000, func() {
 		item := NewItem(1, linearValueSchema, &testDomain)
 		var stored Item[int]
+		stored.Bind(linearValueSchema, &testDomain)
 		stored.Move(&item)
 		if item.Valid() || !stored.Valid() {
 			t.Fatal("move did not transfer the payload between cells")
@@ -166,6 +219,193 @@ func TestOwnershipTransferHasNoAllocation(t *testing.T) {
 		t.Fatalf("linear ownership transfer allocations = %v, want 0", allocations)
 	}
 }
+
+func TestItemReportsEveryCommittedOwnershipTransition(t *testing.T) {
+	var sourceAudit, targetAudit ownershipAuditDomain
+	var liveAtDrop int64
+	typ := schema.Define[flowValueID, int](schema.Traits[int]{
+		Fork: func(value int) int { return value },
+		Drop: func(int) { liveAtDrop = targetAudit.live },
+	})
+
+	source := NewItem(1, typ, auditedReporter(&sourceAudit))
+	var target Item[int]
+	target.Bind(typ, auditedReporter(&targetAudit))
+	if !target.Move(&source) {
+		t.Fatal("Move was refused")
+	}
+	if got, want := sourceAudit.deltas, []int64{1, -1}; !slicesEqual(got, want) {
+		t.Fatalf("source deltas = %v, want %v", got, want)
+	}
+	if got, want := targetAudit.deltas, []int64{1}; !slicesEqual(got, want) {
+		t.Fatalf("target deltas = %v, want %v", got, want)
+	}
+
+	var branch Item[int]
+	branch.Bind(typ, auditedReporter(&targetAudit))
+	if !target.Fork(&branch) {
+		t.Fatal("Fork was refused")
+	}
+	if target.Fork(&Item[int]{}) || target.Fork(&target) {
+		t.Fatal("Fork refusal semantics changed")
+	}
+	branch.Drop()
+	if liveAtDrop != 1 {
+		t.Fatalf("audit live count at Drop callback = %d, want 1: the slot delta must be applied first", liveAtDrop)
+	}
+	target.Drop()
+	if sourceAudit.live != 0 || targetAudit.live != 0 {
+		t.Fatalf("final audit counts = source %d target %d", sourceAudit.live, targetAudit.live)
+	}
+}
+
+func TestTransferOwnershipAuditBalancesSuccessErrorAndPanic(t *testing.T) {
+	typ := schema.Define[flowValueID, int](schema.Traits[int]{})
+
+	t.Run("success", func(t *testing.T) {
+		var sourceAudit, targetAudit ownershipAuditDomain
+		source := NewItem(1, typ, auditedReporter(&sourceAudit))
+		var target Item[int]
+		edge := auditedEdge[int]{typ: typ, reporter: auditedReporter(&targetAudit)}
+		if err := Transfer(&source, &target, edge, func(value int) (int, error) { return value, nil }); err != nil {
+			t.Fatal(err)
+		}
+		target.Drop()
+		if sourceAudit.live != 0 || targetAudit.live != 0 {
+			t.Fatalf("counts = source %d target %d", sourceAudit.live, targetAudit.live)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		var sourceAudit, targetAudit ownershipAuditDomain
+		source := NewItem(1, typ, auditedReporter(&sourceAudit))
+		var target Item[int]
+		err := Transfer(&source, &target, auditedEdge[int]{typ: typ, reporter: auditedReporter(&targetAudit)}, func(int) (int, error) {
+			return 0, errTransferTest
+		})
+		if !errors.Is(err, errTransferTest) || sourceAudit.live != 0 || targetAudit.live != 0 {
+			t.Fatalf("error = %v, counts = source %d target %d", err, sourceAudit.live, targetAudit.live)
+		}
+	})
+
+	t.Run("panic", func(t *testing.T) {
+		var sourceAudit, targetAudit ownershipAuditDomain
+		func() {
+			defer func() { _ = recover() }()
+			source := NewItem(1, typ, auditedReporter(&sourceAudit))
+			var target Item[int]
+			_ = Transfer(&source, &target, auditedEdge[int]{typ: typ, reporter: auditedReporter(&targetAudit)}, func(int) (int, error) {
+				panic("build")
+			})
+		}()
+		if sourceAudit.live != 0 || targetAudit.live != 0 {
+			t.Fatalf("counts = source %d target %d", sourceAudit.live, targetAudit.live)
+		}
+	})
+}
+
+func TestPanickingOwnershipAuditDoesNotReplaceItemSemantics(t *testing.T) {
+	var drops atomic.Int32
+	domain := ownershipAuditDomain{panic: true}
+	typ := countingSchema(&drops)
+	item := NewItem(1, typ, ownership.Wrap(&domain, func(int64) { panic("ownership audit failed") }))
+	item.Drop()
+	if item.Valid() || drops.Load() != 1 {
+		t.Fatalf("item valid = %v, drops = %d", item.Valid(), drops.Load())
+	}
+}
+
+func TestReporterWithSimilarExportedHookDoesNotOptIntoAudit(t *testing.T) {
+	var domain ownershipAuditDomain
+	item := NewItem(1, linearValueSchema, &domain)
+	item.Drop()
+	if len(domain.deltas) != 0 || domain.live != 0 {
+		t.Fatalf("unwrapped Reporter received ownership callbacks: deltas=%v live=%d", domain.deltas, domain.live)
+	}
+}
+
+func TestBindKeepsFirstSuccessfulDeclarationForReusableSlot(t *testing.T) {
+	var firstDrops, secondDrops atomic.Int32
+	firstType := schema.Define[flowValueID, int](schema.Traits[int]{
+		Drop: func(int) { firstDrops.Add(1) },
+	})
+	secondType := schema.Define[alternateValueID, int](schema.Traits[int]{
+		Drop: func(int) { secondDrops.Add(1) },
+	})
+	var firstDomain, secondDomain ownershipAuditDomain
+	first := auditedEdge[int]{typ: firstType, reporter: auditedReporter(&firstDomain)}
+	second := auditedEdge[int]{typ: secondType, reporter: auditedReporter(&secondDomain)}
+
+	var item Item[int]
+	first.Own(&item, 1)
+	item.Drop()
+	second.Own(&item, 2)
+	item.Drop()
+
+	if firstDrops.Load() != 2 || secondDrops.Load() != 0 {
+		t.Fatalf("drop counts after rebinding = first %d, second %d; want first 2, second 0", firstDrops.Load(), secondDrops.Load())
+	}
+	if firstDomain.live != 0 || !slicesEqual(firstDomain.deltas, []int64{1, -1, 1, -1}) {
+		t.Fatalf("first domain audit = live %d deltas %v", firstDomain.live, firstDomain.deltas)
+	}
+	if secondDomain.live != 0 || len(secondDomain.deltas) != 0 {
+		t.Fatalf("second domain was used after a rejected rebind: live %d deltas %v", secondDomain.live, secondDomain.deltas)
+	}
+}
+
+func TestBindWithNilReporterDoesNotDeclareAnUnboundSlot(t *testing.T) {
+	var item Item[int]
+	item.Bind(linearValueSchema, nil)
+	if item.Bound() {
+		t.Fatal("nil reporter declared an ownership slot")
+	}
+	item.Bind(linearValueSchema, &testDomain)
+	if !item.Bound() {
+		t.Fatal("a valid declaration after a rejected nil reporter was ignored")
+	}
+	item.Set(1)
+	item.Drop()
+}
+
+// Copying an Item is forbidden and go vet normally rejects it. Reflection is
+// used only to reproduce a broken plugin binary and prove the runtime audit
+// still reports the second release as a negative balance.
+func TestOwnershipAuditDetectsCopiedSlotOverrelease(t *testing.T) {
+	var domain ownershipAuditDomain
+	item := NewItem(1, linearValueSchema, auditedReporter(&domain))
+	copyValue := reflect.New(reflect.TypeOf((*Item[int])(nil)).Elem())
+	copyValue.Elem().Set(reflect.ValueOf(&item).Elem())
+	copy := copyValue.Interface().(*Item[int])
+	item.Drop()
+	copy.Drop()
+	if domain.live != -1 || !slicesEqual(domain.deltas, []int64{1, -1, -1}) {
+		t.Fatalf("copy audit = live %d deltas %v", domain.live, domain.deltas)
+	}
+}
+
+func slicesEqual(left, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+type auditedEdge[T any] struct {
+	typ      schema.Type[T]
+	reporter Reporter
+}
+
+func (e auditedEdge[T]) Own(into *Item[T], value T) {
+	into.Bind(e.typ, e.reporter)
+	into.Set(value)
+}
+
+func (auditedEdge[T]) Emit(context.Context, *Item[T]) error { return nil }
 
 // Transfer empties the source before running a conversion it does not control,
 // so every way out of that conversion must release the value exactly once.
@@ -279,6 +519,7 @@ func TestCellsMoveIntoAContainerWithoutASecondOwner(t *testing.T) {
 	for value := 1; value <= 3; value++ {
 		emitted := NewItem(value, typ, &testDomain)
 		stored := new(Item[int])
+		stored.Bind(typ, &testDomain)
 		stored.Move(&emitted)
 		if emitted.Valid() || !stored.Valid() {
 			t.Fatal("moving into a container cell left two owners")

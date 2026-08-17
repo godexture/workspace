@@ -94,6 +94,12 @@ func (boundarySession) Close() error { return nil }
 func (boundarySession) Read(context.Context, []byte) (int, error) {
 	return 0, io.EOF
 }
+func (s boundarySession) Snapshot(context.Context) (access.Snapshot, error) {
+	if !s.capabilities.Contains(access.StableSize) {
+		return access.Snapshot{}, access.ErrNoSnapshot
+	}
+	return access.NewSnapshot("host/test/boundary", access.StrongSnapshot)
+}
 
 func boundaryAcquire(capabilities access.Capabilities) access.AcquireFunc {
 	return func(context.Context, access.Reference, access.Selection) (access.Session, error) {

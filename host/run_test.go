@@ -37,20 +37,25 @@ type (
 var lifecycleType = schema.Define[lifecycleSchemaID](schema.Traits[int]{})
 
 type lifecycleState struct {
-	mu             sync.Mutex
-	entries        []string
-	values         []int
-	fail           map[string]error
-	task           func(context.Context) error
-	block          bool
-	bound          bool
-	multi          bool
-	inputEndpoint  endpoint.Opening
-	outputEndpoint endpoint.Opening
-	panicAt        string
-	direct         bool
-	sourceHandle   *lifecycleHandle
-	sinkHandle     *lifecycleHandle
+	mu               sync.Mutex
+	entries          []string
+	values           []int
+	fail             map[string]error
+	task             func(context.Context) error
+	block            bool
+	bound            bool
+	multi            bool
+	inputEndpoint    endpoint.Opening
+	outputEndpoint   endpoint.Opening
+	panicAt          string
+	direct           bool
+	retain           bool
+	releaseRetained  bool
+	finalizeStarted  chan struct{}
+	finalizeRelease  chan struct{}
+	finalizeCanceled chan struct{}
+	sourceHandle     *lifecycleHandle
+	sinkHandle       *lifecycleHandle
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
@@ -132,9 +137,24 @@ func (p *lifecycleProcessor) Process(ctx context.Context, input *flow.Item[int],
 	return nil
 }
 
-func (p *lifecycleProcessor) Finalize(context.Context) error {
+func (p *lifecycleProcessor) Finalize(ctx context.Context) error {
 	p.state.add("finalize/processor")
 	p.state.panicIf("finalize/processor")
+	if p.state.finalizeStarted != nil {
+		close(p.state.finalizeStarted)
+		if p.state.finalizeRelease == nil {
+			<-ctx.Done()
+		} else {
+			select {
+			case <-ctx.Done():
+				if p.state.finalizeCanceled != nil {
+					close(p.state.finalizeCanceled)
+				}
+				<-p.state.finalizeRelease
+			case <-p.state.finalizeRelease:
+			}
+		}
+	}
 	return p.state.failure("finalize/processor")
 }
 
@@ -144,7 +164,10 @@ func (p *lifecycleProcessor) Flush(context.Context, flow.Emitter[int]) error {
 	return p.state.failure("flow-flush/processor")
 }
 
-type lifecycleSink struct{ *lifecycleBase }
+type lifecycleSink struct {
+	*lifecycleBase
+	held flow.Item[int]
+}
 
 func (s *lifecycleSink) Write(_ context.Context, input *flow.Item[int]) error {
 	phase := "write/" + s.name
@@ -155,8 +178,21 @@ func (s *lifecycleSink) Write(_ context.Context, input *flow.Item[int]) error {
 	s.state.mu.Lock()
 	s.state.values = append(s.state.values, input.Value())
 	s.state.mu.Unlock()
+	if s.state.retain {
+		if !s.held.Move(input) {
+			return errors.New("sink could not retain input")
+		}
+		return nil
+	}
 	input.Drop()
 	return nil
+}
+
+func (s *lifecycleSink) Close() error {
+	if s.state.releaseRetained {
+		s.held.Drop()
+	}
+	return s.lifecycleBase.Close()
 }
 
 func (s *lifecycleSink) Flush(context.Context) error {
@@ -305,7 +341,11 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 						return nil, errors.New("sink direct opening is missing")
 					}
 				}
-				return &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: name, state: state}}, nil
+				sink := &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: name, state: state}}
+				if state.retain {
+					sink.held.Bind(lifecycleType, ctx.Owner())
+				}
+				return sink, nil
 			},
 		})
 	}
@@ -606,6 +646,88 @@ func TestPreparedRunDoesNotFlushAfterFinalizeFailure(t *testing.T) {
 	entries, _ := state.snapshot()
 	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") || contains(entries, "commit/sink") {
 		t.Fatalf("failure path ran success finalization: %v", entries)
+	}
+}
+
+func TestPreparedCloseCancelsPhaseBeforeFinish(t *testing.T) {
+	state := &lifecycleState{finalizeStarted: make(chan struct{})}
+	instance, request := lifecycleFixture(t, state)
+	prepared, err := instance.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := prepared.Run(context.Background())
+		runDone <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-state.finalizeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("run did not reach Finalize")
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- prepared.Close() }()
+	value := <-runDone
+	if value.err == nil || value.result.Primary == nil {
+		t.Fatalf("canceled run = %#v, %v", value.result, value.err)
+	}
+	entries, _ := state.snapshot()
+	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") {
+		t.Fatalf("Prepared.Close allowed Flush after Finalize cancellation: %v", entries)
+	}
+	select {
+	case closeErr := <-closeDone:
+		if closeErr == nil {
+			t.Fatal("Prepared.Close returned nil after canceling the run")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Prepared.Close did not observe the run completion")
+	}
+}
+
+func TestCallerCancellationCancelsPhaseBeforeFinish(t *testing.T) {
+	state := &lifecycleState{finalizeStarted: make(chan struct{})}
+	instance, request := lifecycleFixture(t, state)
+	prepared, err := instance.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := prepared.Run(ctx)
+		runDone <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-state.finalizeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("run did not reach Finalize")
+	}
+	cancel()
+	select {
+	case value := <-runDone:
+		if value.err == nil || value.result.Primary == nil {
+			t.Fatalf("canceled run = %#v, %v", value.result, value.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not stop the run")
+	}
+	entries, _ := state.snapshot()
+	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") {
+		t.Fatalf("caller cancellation allowed Flush after Finalize: %v", entries)
 	}
 }
 

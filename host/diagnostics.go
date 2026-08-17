@@ -1,9 +1,11 @@
 package host
 
 import (
+	"strconv"
 	"sync"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/journal"
 )
 
 type diagnosticLog struct {
@@ -37,7 +39,35 @@ func (d *diagnosticLog) failure(code string, failure Failure) {
 	if len(failure.Stack) != 0 {
 		detail["panic"] = "true"
 	}
+	if ownership, ok := failure.Err.(*journal.OwnershipError); ok {
+		detail["live"] = strconv.FormatInt(ownership.Live, 10)
+		detail["overrelease"] = strconv.FormatUint(ownership.Overrelease, 10)
+	}
 	d.append(diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{Component: failure.Node}, failure.Err.Error(), detail))
+}
+
+// suppressed records repetition the run counted rather than copied, so a
+// surface that only reads diagnostics still learns the total and the fact that
+// detail was dropped.
+func (d *diagnosticLog) suppressed(value Suppressed) {
+	detail := map[string]string{
+		"occurrences": strconv.FormatUint(value.Occurrences, 10),
+		"retained":    strconv.FormatUint(value.Retained, 10),
+		"omitted":     strconv.FormatUint(value.Omitted(), 10),
+		"class":       value.Class,
+		"kind":        value.Kind,
+		"truncated":   strconv.FormatBool(value.Truncated),
+	}
+	if value.Task != "" {
+		detail["task"] = value.Task
+	}
+	if value.Classes > 1 || value.ClassesTruncated {
+		detail["classes"] = strconv.FormatUint(value.Classes, 10)
+	}
+	if value.ClassesTruncated {
+		detail["classesTruncated"] = "true"
+	}
+	d.append(diagnostic.NewItem("host.suppressed."+string(value.Phase), diagnostic.ErrorSeverity, diagnostic.Path{Component: value.Node}, value.Error(), detail))
 }
 
 func (d *diagnosticLog) append(item diagnostic.Item) {

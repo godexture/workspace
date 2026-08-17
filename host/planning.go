@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/errorx"
 	internalplanning "github.com/godexture/godec/internal/planning"
 	"github.com/godexture/godec/internal/program"
 	"github.com/godexture/godec/internal/solve"
@@ -89,9 +90,11 @@ func planningDurationError(ctx context.Context, budget job.Budget, phase string,
 	if !internalplanning.DurationExhausted(ctx) {
 		return err
 	}
-	for _, item := range diagnostic.ItemsOf(err) {
-		if item.Code == "prepare.probe-budget" || item.Code == "solve.budget-exhausted" {
-			return err
+	if aggregate, ok := errorx.Find[*diagnostic.Error](err); ok && aggregate != nil {
+		for _, item := range aggregate.Items() {
+			if item.Code == "prepare.probe-budget" || item.Code == "solve.budget-exhausted" {
+				return err
+			}
 		}
 	}
 	return diagnostic.NewError(diagnostic.NewItem("prepare.budget-exhausted", diagnostic.ErrorSeverity, diagnostic.Path{}, "planning duration budget was exhausted", map[string]string{

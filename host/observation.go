@@ -2,8 +2,8 @@ package host
 
 import (
 	"context"
-	"errors"
 
+	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 )
 
@@ -11,7 +11,15 @@ func (r *runner) emitLifecycle(node string, phase Phase, message string) {
 	r.observe.Emit(observe.Event{Kind: observe.Lifecycle, Node: node, Phase: string(phase), Message: message})
 }
 
-func newObservationCollector(options runOptions, ctx context.Context, cancel context.CancelCauseFunc) *observe.Collector {
+// newObservationCollector wires delivery failure into the run's ledger at the
+// moment it happens, not at the end.
+//
+// A sink that cannot be told what happened stops the run, so it is the reason
+// the run stopped, and the run's own boundaries discover that as a cancellation
+// afterwards. Recording it where it occurs is what makes it the earliest event
+// rather than the last, and what makes everything the cancellation produces
+// resolve back to it instead of reading as independent failures.
+func (r *runner) newObservationCollector(options runOptions, ctx context.Context) *observe.Collector {
 	if !options.observationSet {
 		return nil
 	}
@@ -27,7 +35,10 @@ func newObservationCollector(options runOptions, ctx context.Context, cancel con
 		DeliveryLimit: configuration.delivery,
 		Sink:          sink,
 		Context:       ctx,
-		Fail:          cancel,
+		Fail: func(err error) {
+			r.recordJournal(journal.WorkError, journal.Observation, "", "delivery", err, nil)
+			r.stop(r.ledger.Stopped())
+		},
 	}, nil)
 }
 
@@ -36,28 +47,11 @@ func (r *runner) finishObservation() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.prepared.cleanupTimeout)
-	err := r.observe.Close(ctx)
+	// Collector.Close reports every terminal delivery failure through Fail
+	// before returning, so its error is already in the run ledger. This call is
+	// only the bounded join for the dispatcher.
+	_ = r.observe.Close(ctx)
 	cancel()
-	if err == nil {
-		return
-	}
-	failure := failureOf(ObservationPhase, "", "delivery", err)
-	if r.result.Primary == nil {
-		r.setPrimary(failure)
-		return
-	}
-	r.addCleanup(failure)
-}
-
-func (r *runner) observationFailure(failure Failure) Failure {
-	if r.observe == nil {
-		return failure
-	}
-	err := r.observe.Err()
-	if err == nil || !errors.Is(context.Cause(r.ctx), err) && !errors.Is(failure.Err, err) {
-		return failure
-	}
-	return failureOf(ObservationPhase, "", "delivery", err)
 }
 
 func (r *runner) finishSnapshots() {

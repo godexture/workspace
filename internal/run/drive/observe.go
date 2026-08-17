@@ -40,15 +40,29 @@ func (o *observedDelivery[T]) Emit(ctx context.Context, item *flow.Item[T]) erro
 }
 
 func (o *observedDelivery[T]) close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	err := o.next.close(ctx)
 	o.local.Flush()
 	return err
 }
 
-func (o *observedDelivery[T]) bindScope(scope *journal.Scope) {
-	if next, ok := o.next.(scopeBinder); ok {
-		next.bindScope(scope)
+func (o *observedDelivery[T]) prepareClose(ctx context.Context) {
+	if value, ok := o.next.(interface{ prepareClose(context.Context) }); ok {
+		value.prepareClose(ctx)
 	}
+}
+
+func (o *observedDelivery[T]) bindDomain(domain *journal.Domain) {
+	if next, ok := o.next.(domainBinder); ok {
+		next.bindDomain(domain)
+	}
+}
+
+func (o *observedDelivery[T]) bound() bool {
+	next, ok := o.next.(domainBinder)
+	return !ok || next.bound()
 }
 
 func observeFactory[T any](typ schema.Type[T]) func(Link, *observe.Local) (Link, error) {

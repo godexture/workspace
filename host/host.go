@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/catalog"
+	"github.com/godexture/godec/internal/errorx"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -134,7 +135,13 @@ func (c Catalog) Fingerprint() CatalogFingerprint {
 
 // Diagnostics is a helper for callers that want to inspect an aggregate host
 // error without depending on catalog internals.
-func Diagnostics(err error) []diagnostic.Item { return diagnostic.ItemsOf(err) }
+func Diagnostics(err error) []diagnostic.Item {
+	aggregate, ok := errorx.Find[*diagnostic.Error](err)
+	if !ok || aggregate == nil {
+		return nil
+	}
+	return aggregate.Items()
+}
 
 func optionsState(values []Option) options {
 	result := options{
