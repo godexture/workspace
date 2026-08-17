@@ -115,7 +115,7 @@ func TestDemuxCompileUsesInspectionInsteadOfCarrierProperties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compileContext, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewClonedInspection(WAVE(), inspected, func(value header) header { return value }))
+	compileContext, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(WAVE(), inspected))
 	if err != nil {
 		t.Fatal(err)
 	}

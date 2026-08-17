@@ -142,7 +142,7 @@ func inspect(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
-	return mediaformat.NewClonedInspection(Container(), readerInspection{offset: int64(5 + length), metadata: document}, func(value readerInspection) readerInspection { return value }), nil
+	return mediaformat.NewInspection(Container(), readerInspection{offset: int64(5 + length), metadata: document}), nil
 }
 
 func readFullAt(ctx context.Context, reader access.Random, destination []byte, offset int64) error {

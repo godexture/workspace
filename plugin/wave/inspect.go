@@ -37,7 +37,7 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
-	return mediaformat.NewClonedInspection(WAVE(), value, func(value header) header { return value }), nil
+	return mediaformat.NewInspection(WAVE(), value), nil
 }
 
 func inspectHeader(ctx context.Context, reader access.Random) (header, error) {

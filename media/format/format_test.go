@@ -19,7 +19,7 @@ type fixtureReadComponentID struct{}
 type fixtureWriteComponentID struct{}
 type fixtureConfigID struct{}
 type fixtureUnit int
-type mutableInspection struct{ Values []int }
+type frozenInspection struct{ Values []int }
 
 type fixtureInspectSession struct{ capabilities access.Capabilities }
 
@@ -177,62 +177,59 @@ func TestInspectContextSeparatesReadAndRetainedMemoryLimits(t *testing.T) {
 	}
 }
 
-func TestInspectionRequiresDeclaredCloneForReferenceValues(t *testing.T) {
+func TestInspectionSharesFrozenReferenceValue(t *testing.T) {
 	value, err := Define[fixtureFormatID](nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inspection := NewInspection(value, mutableInspection{Values: []int{1}})
-	if inspection.Valid() {
-		t.Fatal("reference-valued inspection accepted an undeclared clone")
-	}
-	if _, err := WithInspection(plugin.CompileContext{}, inspection); err != ErrInvalidInspection {
-		t.Fatalf("invalid inspection error = %v", err)
-	}
-}
-
-func TestClonedInspectionSnapshotsAndIsolatesValues(t *testing.T) {
-	value, err := Define[fixtureFormatID](nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	original := mutableInspection{Values: []int{1}}
-	inspection := NewClonedInspection(value, original, func(value mutableInspection) mutableInspection {
-		return mutableInspection{Values: append([]int(nil), value.Values...)}
-	})
+	prepared := frozenInspection{Values: []int{1}}
+	inspection := NewInspection(value, prepared)
 	if !inspection.Valid() {
-		t.Fatal("cloned inspection is invalid")
+		t.Fatal("frozen reference-valued inspection is invalid")
 	}
-	original.Values[0] = 9
 	ctx, err := WithInspection(plugin.CompileContext{}, inspection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, ok := InspectionOf[mutableInspection](ctx, value)
-	if !ok || first.Values[0] != 1 {
-		t.Fatalf("registration snapshot = %#v/%v", first, ok)
+	first, ok := InspectionOf[frozenInspection](ctx, value)
+	if !ok || len(first.Values) != 1 {
+		t.Fatalf("first inspection = %#v/%v", first, ok)
 	}
-	first.Values[0] = 7
-	second, ok := InspectionOf[mutableInspection](ctx, value)
-	if !ok || second.Values[0] != 1 {
-		t.Fatalf("retrieval snapshot = %#v/%v", second, ok)
+	second, ok := InspectionOf[frozenInspection](ctx, value)
+	if !ok || len(second.Values) != 1 {
+		t.Fatalf("second inspection = %#v/%v", second, ok)
+	}
+	if &prepared.Values[0] != &first.Values[0] || &first.Values[0] != &second.Values[0] {
+		t.Fatal("InspectionOf copied the frozen reference value")
 	}
 }
 
-func TestClonedInspectionRejectsPanicAndNilClone(t *testing.T) {
+func TestNewInspectionRejectsInvalidFormatAndNilValues(t *testing.T) {
 	value, err := Define[fixtureFormatID](nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	panicInspection := NewClonedInspection(value, mutableInspection{}, func(mutableInspection) mutableInspection {
-		panic("clone failure")
-	})
-	if panicInspection.Valid() {
-		t.Fatal("panicking clone produced a valid inspection")
+	if NewInspection(Format{}, 1).Valid() {
+		t.Fatal("invalid Format produced a valid inspection")
 	}
-	nilInspection := NewClonedInspection(value, (*int)(nil), func(*int) *int { return nil })
-	if nilInspection.Valid() {
-		t.Fatal("nil clone produced a valid inspection")
+	if NewInspection[any](value, nil).Valid() {
+		t.Fatal("nil produced a valid inspection")
+	}
+	var pointer *int
+	var slice []int
+	var values map[string]int
+	var channel chan int
+	var function func()
+	for name, prepared := range map[string]any{
+		"pointer":  pointer,
+		"slice":    slice,
+		"map":      values,
+		"channel":  channel,
+		"function": function,
+	} {
+		if inspection := NewInspection(value, prepared); inspection.Valid() {
+			t.Fatalf("typed-nil %s produced a valid inspection", name)
+		}
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"reflect"
 
 	"github.com/godexture/godec/access"
-	"github.com/godexture/godec/internal/snapshot"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -71,61 +70,16 @@ func (c InspectContext) Valid() bool {
 type Inspection struct {
 	format Format
 	value  any
-	clone  func(any) (any, bool)
 }
 
-// NewInspection snapshots a value whose Go representation contains no
-// reference-bearing fields. Use NewClonedInspection for slices, maps,
-// pointers, interfaces, functions, or structs that contain them.
+// NewInspection transports one Format-owned immutable value unchanged.
+// prepared may contain references, but its contents must remain frozen for
+// every Compile that receives this inspection.
 func NewInspection[T any](value Format, prepared T) Inspection {
-	if snapshot.NeedsClone(reflect.TypeFor[T]()) {
+	if !value.Valid() || isNilValue(prepared) {
 		return Inspection{}
 	}
 	return Inspection{format: value, value: prepared}
-}
-
-// NewClonedInspection registers a typed clone for a semantically immutable
-// value whose Go representation contains references. The first clone is a
-// registration snapshot; each InspectionOf call makes another isolated copy.
-func NewClonedInspection[T any](value Format, prepared T, clone func(T) T) Inspection {
-	if clone == nil || !value.Valid() {
-		return Inspection{}
-	}
-	snapshotValue, ok := clonedValue(prepared, clone)
-	if !ok {
-		return Inspection{}
-	}
-	return Inspection{
-		format: value,
-		value:  snapshotValue,
-		clone: func(value any) (any, bool) {
-			typed, ok := value.(T)
-			if !ok {
-				return nil, false
-			}
-			copied, ok := clonedValue(typed, clone)
-			if !ok {
-				return nil, false
-			}
-			return copied, true
-		},
-	}
-}
-
-func clonedValue[T any](value T, clone func(T) T) (result T, ok bool) {
-	defer func() {
-		if recover() != nil {
-			var zero T
-			result = zero
-			ok = false
-		}
-	}()
-	result = clone(value)
-	if isNilValue(result) {
-		var zero T
-		return zero, false
-	}
-	return result, true
 }
 
 func isNilValue(value any) bool {
@@ -134,7 +88,7 @@ func isNilValue(value any) bool {
 	}
 	reflected := reflect.ValueOf(value)
 	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
 		return reflected.IsNil()
 	default:
 		return false
@@ -160,14 +114,7 @@ func InspectionOf[T any](ctx plugin.CompileContext, expected Format) (T, bool) {
 	if !ok || !value.Valid() || !expected.Valid() || value.format.Identity() != expected.Identity() {
 		return zero, false
 	}
-	preparedValue := value.value
-	if value.clone != nil {
-		preparedValue, ok = value.clone(value.value)
-		if !ok {
-			return zero, false
-		}
-	}
-	prepared, ok := preparedValue.(T)
+	prepared, ok := value.value.(T)
 	if !ok {
 		return zero, false
 	}
