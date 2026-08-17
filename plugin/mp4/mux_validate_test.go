@@ -218,16 +218,19 @@ func TestMP4MuxFailsClosedForJournalFailure(t *testing.T) {
 	inspected := inspectMovie(t, data)
 	component, compiled := compileMP4Mux(t, inspected)
 	packets := mustMP4Allocator(t, 8)
-	first := movieSamples(t, data, inspected, 0)[0]
 
 	t.Run("append cancellation", func(t *testing.T) {
 		journal := &muxMemoryScratch{appendErr: context.Canceled}
 		mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), mustMP4Allocator(t, 1<<20), journal)
-		input := muxSample(t, data, first, packets)
 		collector := &muxWriteCollector{}
-		err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &input), collector)
-		if !errors.Is(err, context.Canceled) || input.Valid() {
-			t.Fatalf("journal append Process = %v input=%t", err, input.Valid())
+		for ordinal := range inspected.tracks {
+			input := muxSample(t, data, movieSamples(t, data, inspected, ordinal)[0], packets)
+			if err := mux.Process(t.Context(), flow.NewSelectedBatch(ordinal, &input), collector); err != nil {
+				t.Fatalf("journal append Process = %v", err)
+			}
+		}
+		if err := mux.Finalize(t.Context()); !errors.Is(err, context.Canceled) {
+			t.Fatalf("journal append Finalize = %v", err)
 		}
 		for _, item := range collector.items {
 			item.Drop()

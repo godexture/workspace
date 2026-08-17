@@ -12,19 +12,52 @@ import (
 )
 
 func (m *muxer) appendChunkOffset(ctx context.Context) error {
-	if m.scratch == nil || m.scratchWritten > m.need-8 {
+	if m.scratch == nil || m.scratchWritten < 0 || m.scratchWritten > m.need || m.scratchPageUsed < 0 || m.scratchPageUsed > len(m.scratchPage)-8 {
 		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
 	}
-	var record [8]byte
-	binary.BigEndian.PutUint64(record[:], m.outputOffset)
-	offset, err := m.scratch.Append(ctx, record[:])
+	remaining := m.need - m.scratchWritten - int64(m.scratchPageUsed)
+	if remaining < 8 {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	position := m.scratchPageUsed
+	var previous [8]byte
+	copy(previous[:], m.scratchPage[position:position+8])
+	binary.BigEndian.PutUint64(m.scratchPage[position:position+8], m.outputOffset)
+	used := m.scratchPageUsed + 8
+	if used < len(m.scratchPage) {
+		m.scratchPageUsed = used
+		return nil
+	}
+	if err := m.appendScratchPage(ctx, used); err != nil {
+		copy(m.scratchPage[position:position+8], previous[:])
+		return err
+	}
+	return nil
+}
+
+func (m *muxer) flushScratchPage(ctx context.Context) error {
+	if m.scratchPageUsed == 0 {
+		return nil
+	}
+	if m.scratch == nil || m.scratchWritten < 0 || m.scratchWritten > m.need || m.scratchPageUsed < 0 || m.scratchPageUsed > len(m.scratchPage) {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	return m.appendScratchPage(ctx, m.scratchPageUsed)
+}
+
+func (m *muxer) appendScratchPage(ctx context.Context, used int) error {
+	if used <= 0 || used > len(m.scratchPage) || int64(used) > m.need-m.scratchWritten {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	offset, err := m.scratch.Append(ctx, m.scratchPage[:used])
 	if err != nil {
 		return err
 	}
 	if offset != m.scratchWritten {
 		return fmt.Errorf("%w: MP4 chunk-offset journal is not append-only", ErrMalformed)
 	}
-	m.scratchWritten += 8
+	m.scratchWritten += int64(used)
+	m.scratchPageUsed = 0
 	return nil
 }
 

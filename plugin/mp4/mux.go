@@ -27,13 +27,15 @@ type muxer struct {
 	cursor    sampleCursor
 	hasCursor bool
 
-	started        bool
-	finalized      bool
-	flushed        bool
-	payloadBytes   uint64
-	outputOffset   uint64
-	scratchWritten int64
-	failure        error
+	started         bool
+	finalized       bool
+	flushed         bool
+	payloadBytes    uint64
+	outputOffset    uint64
+	scratchWritten  int64
+	scratchPage     [muxJournalPageBytes]byte
+	scratchPageUsed int
+	failure         error
 }
 
 func openMuxer(ctx plugin.OpenContext, plan muxPlan) (*muxer, error) {
@@ -169,6 +171,9 @@ func (m *muxer) Finalize(ctx context.Context) error {
 	}
 	if m.payloadBytes != m.movie.media.payloadSize {
 		return m.fail(fmt.Errorf("%w: MP4 muxer payload does not cover mdat", ErrUnsupported))
+	}
+	if err := m.flushScratchPage(ctx); err != nil {
+		return m.fail(err)
 	}
 	if m.scratchWritten != m.need {
 		return m.fail(fmt.Errorf("%w: MP4 muxer chunk-offset journal is incomplete", ErrMalformed))
