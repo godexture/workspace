@@ -7,6 +7,7 @@ type fixtureTrack struct {
 	timeScale     uint32
 	handler       string
 	entryType     string
+	descriptions  uint32
 	size          uint32
 	offset        uint64
 	offsetDelta   uint64
@@ -152,7 +153,7 @@ func fixtureDINF() []byte {
 
 func fixtureSTBL(value fixtureTrack) []byte {
 	children := [][]byte{
-		fixtureSTSD(value.entryType),
+		fixtureSTSD(value.entryType, value.descriptions),
 		fixtureSTTS(value.sttsExtra),
 		fixtureSTSC(value.stsc),
 	}
@@ -176,12 +177,19 @@ func fixtureSTBL(value fixtureTrack) []byte {
 	return fixtureContainer("stbl", children...)
 }
 
-func fixtureSTSD(typeID string) []byte {
-	entry := make([]byte, 16)
-	binary.BigEndian.PutUint32(entry[:4], uint32(len(entry)))
-	copy(entry[4:8], typeID)
-	binary.BigEndian.PutUint16(entry[14:16], 1)
-	payload := append(fixtureFullBox(0, 0, fixtureU32(1)), entry...)
+func fixtureSTSD(typeID string, descriptions ...uint32) []byte {
+	count := uint32(1)
+	if len(descriptions) != 0 && descriptions[0] != 0 {
+		count = descriptions[0]
+	}
+	payload := fixtureFullBox(0, 0, fixtureU32(count))
+	for range count {
+		entry := make([]byte, 16)
+		binary.BigEndian.PutUint32(entry[:4], uint32(len(entry)))
+		copy(entry[4:8], typeID)
+		binary.BigEndian.PutUint16(entry[14:16], 1)
+		payload = append(payload, entry...)
+	}
 	return fixtureBox("stsd", payload)
 }
 

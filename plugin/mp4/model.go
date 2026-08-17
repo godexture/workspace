@@ -10,9 +10,18 @@ import (
 )
 
 var (
-	errMalformedMovie   = errors.New("malformed MP4 movie")
-	errUnsupportedMovie = errors.New("unsupported MP4 movie")
-	errTruncatedMovie   = errors.New("truncated MP4 movie")
+	// ErrMalformed reports an ISO BMFF structure that cannot describe a valid
+	// source for this reader.
+	ErrMalformed = errors.New("malformed MP4 movie")
+	// ErrUnsupported reports a valid ISO BMFF feature outside the current
+	// packet-reader boundary.
+	ErrUnsupported = errors.New("unsupported MP4 movie")
+	// ErrTruncated reports a source that ends before an inspected MP4 range.
+	ErrTruncated = errors.New("truncated MP4 movie")
+
+	errMalformedMovie   = ErrMalformed
+	errUnsupportedMovie = ErrUnsupported
+	errTruncatedMovie   = ErrTruncated
 )
 
 var (
@@ -125,6 +134,18 @@ type sample struct {
 
 type movieBudget struct {
 	remaining uint64
+}
+
+func (m movie) valid() bool {
+	if m.sourceEnd == 0 || m.fileBox.typeID != typeFTYP || m.moov.typeID != typeMOOV || m.movieHead.typeID != typeMVHD || m.media.typeID != typeMDAT || len(m.tracks) == 0 {
+		return false
+	}
+	for _, track := range m.tracks {
+		if track.id == 0 || track.timeScale == 0 || track.descriptionCount == 0 || track.tables.timing.typeID != typeSTTS || track.tables.layout.typeID != typeSTSC || track.tables.sizes.typeID != typeSTSZ && track.tables.sizes.typeID != typeSTZ2 || track.tables.offsets.typeID != typeSTCO && track.tables.offsets.typeID != typeCO64 {
+			return false
+		}
+	}
+	return true
 }
 
 const trackBudgetBytes = uint64(unsafe.Sizeof(track{}))

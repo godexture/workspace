@@ -1,8 +1,19 @@
 package mp4
 
-import "github.com/godexture/godec/media/format"
+import (
+	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/plugin"
+)
 
-type formatID struct{}
+type (
+	pluginID  struct{}
+	demuxerID struct{}
+	formatID  struct{}
+)
+
+// DemuxerIdentity identifies the ISO BMFF packet reader.
+func DemuxerIdentity() plugin.Identity { return plugin.IdentityOf[demuxerID]() }
 
 // MP4 identifies ISO Base Media File Format streams carried as MP4 files.
 func MP4() format.Format {
@@ -12,3 +23,27 @@ func MP4() format.Format {
 	}
 	return value
 }
+
+// SampleEntryTag identifies one ISO BMFF sample-entry four-character code.
+// Codec plugins use it when they declare a binding for packets demuxed from
+// this container.
+func SampleEntryTag(value string) format.Tag {
+	if len(value) != 4 {
+		return ""
+	}
+	return format.NewTag("mp4", value)
+}
+
+// Plugin returns the pure-Go ISO BMFF reader family.
+func Plugin() plugin.Definition {
+	definition := plugin.Define[pluginID](plugin.Descriptor{
+		DisplayName: "MP4",
+		Version:     "0.1.0",
+		License:     "MIT",
+		Build:       plugin.BuildModePureGo,
+	}, demuxerComponent())
+	return definition.WithDeclarations(codec.Declarations()...)
+}
+
+// Set returns the self-contained MP4 composition.
+func Set() plugin.Set { return plugin.NewSet(Plugin()) }
