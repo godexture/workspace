@@ -144,7 +144,8 @@ func (d *demuxer) emitCopy(ctx context.Context, value []byte, output flow.Emitte
 
 func (d *demuxer) emit(ctx context.Context, payload buffer.Handle, output flow.Emitter[packet.Chunk]) error {
 	frames := payload.Bytes().Len() / d.blockAlign
-	output.Own(&d.out, packet.NewChunk(d.sequence, timing.SomePTS(timing.NewPTS(d.sample)), payload))
+	pts := timing.SomePTS(timing.NewPTS(d.sample))
+	output.Own(&d.out, packet.NewChunk(d.sequence, pts, timing.SomeDTS(timing.NewDTS(d.sample)), timing.SomeDuration(timing.NewDuration(int64(frames))), payload))
 	defer d.out.Drop()
 	if err := output.Emit(ctx, &d.out); err != nil {
 		return err

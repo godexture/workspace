@@ -77,6 +77,10 @@ func TestDemuxRangesAlignedPayloadAndCopiesOnlyBoundaryFrame(t *testing.T) {
 	if !bytes.Equal(decoded, payload) {
 		t.Fatalf("demux payload = %v", decoded)
 	}
+	first, second := collector.items[0].Value(), collector.items[1].Value()
+	if first.PTS().Value() != 0 || first.DTS().Value() != 0 || first.Duration().Value() != 1 || second.PTS().Value() != 1 || second.DTS().Value() != 1 || second.Duration().Value() != 1 {
+		t.Fatalf("demux timing = first(%v,%v,%v) second(%v,%v,%v)", first.PTS(), first.DTS(), first.Duration(), second.PTS(), second.DTS(), second.Duration())
+	}
 	if collector.items[0].Value().Payload().Layout().ReadOnly || !collector.items[1].Value().Payload().Layout().ReadOnly {
 		t.Fatalf("copy/range layouts = %#v / %#v", collector.items[0].Value().Payload().Layout(), collector.items[1].Value().Payload().Layout())
 	}

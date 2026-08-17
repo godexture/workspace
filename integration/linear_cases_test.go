@@ -41,24 +41,44 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Config: patch,
 			Input:  testkit.ByteInput(raw),
 			Want: testkit.WantChunks(
-				testkit.Chunk{Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), Bytes: first},
-				testkit.Chunk{Sequence: 1, PTS: timing.SomePTS(timing.NewPTS(2)), Bytes: second},
+				testkit.Chunk{Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: first},
+				testkit.Chunk{Sequence: 1, PTS: timing.SomePTS(timing.NewPTS(2)), DTS: timing.SomeDTS(timing.NewDTS(2)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: second},
 			),
 		},
 	)
 	testkit.Codec(t,
 		testkit.Track(testkit.SubjectIn(set, linear.ParserIdentity(), "chunks", mediaformat.Chunks(), "packets", codec.Packets()), coverage),
 		testkit.Case[packet.Chunk, packet.Packet]{
-			Name:   "chunk-boundaries",
+			Name:   "known-duration-and-dts-are-preserved",
 			Config: patch,
 			Input: testkit.ChunkInput(wire, []testkit.Chunk{
-				{Sequence: 7, PTS: timing.SomePTS(timing.NewPTS(4)), Bytes: first},
-				{Sequence: 8, PTS: timing.SomePTS(timing.NewPTS(6)), Bytes: second},
+				{Sequence: 7, PTS: timing.SomePTS(timing.NewPTS(4)), DTS: timing.SomeDTS(timing.NewDTS(3)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: first},
+				{Sequence: 8, PTS: timing.SomePTS(timing.NewPTS(6)), DTS: timing.SomeDTS(timing.NewDTS(5)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: second},
 			}),
 			Want: testkit.WantPackets(
-				testkit.Packet{Sequence: 7, PTS: timing.SomePTS(timing.NewPTS(4)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: first},
-				testkit.Packet{Sequence: 8, PTS: timing.SomePTS(timing.NewPTS(6)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: second},
+				testkit.Packet{Sequence: 7, PTS: timing.SomePTS(timing.NewPTS(4)), DTS: timing.SomeDTS(timing.NewDTS(3)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: first},
+				testkit.Packet{Sequence: 8, PTS: timing.SomePTS(timing.NewPTS(6)), DTS: timing.SomeDTS(timing.NewDTS(5)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: second},
 			),
+		},
+		testkit.Case[packet.Chunk, packet.Packet]{
+			Name:   "unknown-duration-and-dts-are-inferred-from-payload-and-pts",
+			Config: patch,
+			Input: testkit.ChunkInput(wire, []testkit.Chunk{
+				{Sequence: 9, PTS: timing.SomePTS(timing.NewPTS(10)), DTS: timing.UnknownDTS(), Duration: timing.UnknownDuration(), Bytes: first},
+				{Sequence: 11, PTS: timing.UnknownPTS(), DTS: timing.UnknownDTS(), Duration: timing.UnknownDuration(), Bytes: second},
+			}),
+			Want: testkit.WantPackets(
+				testkit.Packet{Sequence: 9, PTS: timing.SomePTS(timing.NewPTS(10)), DTS: timing.SomeDTS(timing.NewDTS(10)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: first},
+				testkit.Packet{Sequence: 11, PTS: timing.UnknownPTS(), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: second},
+			),
+		},
+		testkit.Case[packet.Chunk, packet.Packet]{
+			Name:   "mismatched-duration-is-rejected",
+			Config: patch,
+			Input: testkit.ChunkInput(wire, []testkit.Chunk{{
+				Sequence: 10, PTS: timing.SomePTS(timing.NewPTS(12)), DTS: timing.SomeDTS(timing.NewDTS(12)), Duration: timing.SomeDuration(timing.NewDuration(7)), Bytes: first,
+			}}),
+			Want: testkit.WantRunError[packet.Packet](linear.ErrDurationMismatch),
 		},
 	)
 	testkit.Codec(t,
@@ -84,7 +104,17 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-1, 1, -2048, 2047}},
 			}}),
 			Want: testkit.WantPackets(testkit.Packet{
-				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(9)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(4)), Bytes: raw,
+				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(9)), DTS: timing.SomeDTS(timing.NewDTS(9)), Duration: timing.SomeDuration(timing.NewDuration(4)), Bytes: raw,
+			}),
+		},
+		testkit.Case[audio.Frame[int16], packet.Packet]{
+			Name:   "unknown-pts-keeps-unknown-dts",
+			Config: patch,
+			Input: testkit.FrameInput(planar, []testkit.Frame{{
+				PTS: timing.UnknownPTS(), Planes: [][]int16{{0, 0}},
+			}}),
+			Want: testkit.WantPackets(testkit.Packet{
+				Sequence: 0, PTS: timing.UnknownPTS(), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: []byte{0, 0, 0, 0},
 			}),
 		},
 		encoderBigEndianCase(),
@@ -135,7 +165,7 @@ func encoderBigEndianCase() testkit.Case[audio.Frame[int16], packet.Packet] {
 			PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]int16{{-32768, 0}, {32767, -1}},
 		}}),
 		Want: testkit.WantPackets(testkit.Packet{
-			Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(2)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)),
+			Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(2)), DTS: timing.SomeDTS(timing.NewDTS(2)), Duration: timing.SomeDuration(timing.NewDuration(2)),
 			Bytes: []byte{0x80, 0x00, 0x7f, 0xff, 0x00, 0x00, 0xff, 0xff},
 		}),
 	}

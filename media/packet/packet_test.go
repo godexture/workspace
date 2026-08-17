@@ -29,9 +29,9 @@ func TestChunkAndPacketRemainDistinctAndPreserveTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := NewChunk(4, pts, payload)
+	chunk := NewChunk(4, pts, dts, duration, payload)
 	packetPayload := chunk.Payload().Share()
-	packet := NewPacket(chunk.Sequence(), chunk.PTS(), dts, duration, packetPayload)
+	packet := NewPacket(chunk.Sequence(), chunk.PTS(), chunk.DTS(), chunk.Duration(), packetPayload)
 	chunk.Release()
 	defer packet.Release()
 	if !packet.Valid() || packet.PTS().Value() != 0 || packet.DTS().Value() != -1 || packet.Duration().Value() != 2 {
@@ -59,12 +59,23 @@ func TestPacketShareRetainsPayload(t *testing.T) {
 	clone.Release()
 }
 
+func TestChunkUnknownTimingStaysDistinctFromKnownZero(t *testing.T) {
+	unknown := NewChunk(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), buffer.Handle{})
+	zero := NewChunk(0, timing.SomePTS(timing.NewPTS(0)), timing.SomeDTS(timing.NewDTS(0)), timing.SomeDuration(timing.NewDuration(0)), buffer.Handle{})
+	if unknown.PTS().Valid() || unknown.DTS().Valid() || unknown.Duration().Valid() {
+		t.Fatal("unknown chunk timing became valid")
+	}
+	if !zero.PTS().Valid() || !zero.DTS().Valid() || !zero.Duration().Valid() {
+		t.Fatal("known zero chunk timing became unknown")
+	}
+}
+
 func TestChunkPayloadIsBorrowed(t *testing.T) {
 	payload, err := packetAllocator(t).FromBytes([]byte{7}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := NewChunk(0, timing.UnknownPTS(), payload)
+	chunk := NewChunk(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), payload)
 	view := chunk.Payload()
 	chunk.Release()
 	if view.Valid() {

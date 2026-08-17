@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrPartialSample = errors.New("linear PCM payload ends inside a sample frame")
-	ErrPlaneCount    = errors.New("linear PCM frame plane count does not match its channel layout")
+	ErrPartialSample    = errors.New("linear PCM payload ends inside a sample frame")
+	ErrPlaneCount       = errors.New("linear PCM frame plane count does not match its channel layout")
+	ErrDurationMismatch = errors.New("linear PCM chunk duration does not match payload sample count")
 )
 
 type operatorBase struct {
@@ -76,7 +77,9 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 			return err
 		}
 		samples := int64((end - offset) / frameBytes)
-		output.Own(&o.out, packet.NewChunk(o.sequence, timing.SomePTS(timing.NewPTS(o.sampleOffset)), payload))
+		pts := timing.SomePTS(timing.NewPTS(o.sampleOffset))
+		duration := timing.SomeDuration(timing.NewDuration(samples))
+		output.Own(&o.out, packet.NewChunk(o.sequence, pts, timing.SomeDTS(timing.NewDTS(o.sampleOffset)), duration, payload))
 		err = output.Emit(ctx, &o.out)
 		o.out.Drop()
 		if err != nil {
@@ -105,10 +108,22 @@ func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Ch
 	if frameBytes == 0 || input.Value().Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
+	expectedDuration := timing.SomeDuration(timing.NewDuration(int64(input.Value().Bytes().Len() / frameBytes)))
 	transferErr := flow.Transfer(input, &o.out, output, func(chunk packet.Chunk) (packet.Packet, error) {
-		duration := timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len() / frameBytes)))
-		sequence, pts, sideData := chunk.Sequence(), chunk.PTS(), chunk.SideData()
-		return packet.NewPacket(sequence, pts, timing.UnknownDTS(), duration, chunk.Detach()).WithSideData(sideData), nil
+		sequence, pts, dts, duration, sideData := chunk.Sequence(), chunk.PTS(), chunk.DTS(), chunk.Duration(), chunk.SideData()
+		if duration.Valid() {
+			if duration.Value() != expectedDuration.Value() {
+				return packet.Packet{}, ErrDurationMismatch
+			}
+		} else {
+			duration = expectedDuration
+		}
+		if !dts.Valid() {
+			if value, ok := pts.Get(); ok {
+				dts = timing.SomeDTS(timing.NewDTS(value.Int64()))
+			}
+		}
+		return packet.NewPacket(sequence, pts, dts, duration, chunk.Detach()).WithSideData(sideData), nil
 	})
 	defer o.out.Drop()
 	if transferErr != nil {
@@ -217,7 +232,7 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 	packetValue := packet.NewPacket(
 		o.sequence,
 		frame.PTS(),
-		timing.UnknownDTS(),
+		dtsFromPTS(frame.PTS()),
 		timing.SomeDuration(timing.NewDuration(int64(frame.Samples()))),
 		payload,
 	).WithSideData(frame.SideData())
@@ -231,6 +246,14 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 }
 
 func (*encoderOperator) Flush(context.Context, flow.Emitter[packet.Packet]) error { return nil }
+
+func dtsFromPTS(pts timing.OptionalPTS) timing.OptionalDTS {
+	value, ok := pts.Get()
+	if !ok {
+		return timing.UnknownDTS()
+	}
+	return timing.SomeDTS(timing.NewDTS(value.Int64()))
+}
 
 type writerOperator struct {
 	operatorBase

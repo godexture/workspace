@@ -59,7 +59,7 @@ func TestPayloadRewrappingHopsAllocateNothing(t *testing.T) {
 			if allocErr != nil {
 				panic(allocErr)
 			}
-			cell.Set(packet.NewChunk(0, timing.SomePTS(timing.NewPTS(0)), payload))
+			cell.Set(packet.NewChunk(0, timing.SomePTS(timing.NewPTS(0)), timing.SomeDTS(timing.NewDTS(0)), timing.SomeDuration(timing.NewDuration(4)), payload))
 		}
 		assertHopIsFree(t, allocator, fill, func() { cell.Drop() }, func() error {
 			return operator.Process(context.Background(), &cell, sink)

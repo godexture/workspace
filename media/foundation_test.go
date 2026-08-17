@@ -136,7 +136,9 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input *flow.Item[
 		if err != nil {
 			return err
 		}
-		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence)*48)), payload)
+		pts := timing.SomePTS(timing.NewPTS(int64(sequence) * 48))
+		duration := timing.SomeDuration(timing.NewDuration(int64((end - offset) / 2)))
+		chunk := packet.NewChunk(sequence, pts, timing.SomeDTS(timing.NewDTS(int64(sequence)*48)), duration, payload)
 		item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
@@ -162,7 +164,7 @@ func (o *skeletonParserOperator) Process(ctx context.Context, input *flow.Item[p
 	}
 	chunk := input.Value()
 	payload := chunk.Payload().Share()
-	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len()/2))), payload)
+	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), chunk.DTS(), chunk.Duration(), payload)
 	item := flow.NewItem(value, skeletonPacketSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
@@ -444,7 +446,7 @@ func (o *skeletonMuxerOperator) Process(ctx context.Context, input *flow.Item[pa
 	}
 	value := input.Value()
 	payload := value.Payload().Share()
-	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
+	chunk := packet.NewChunk(value.Sequence(), value.PTS(), value.DTS(), value.Duration(), payload)
 	item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()

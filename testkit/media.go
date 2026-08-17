@@ -42,6 +42,8 @@ func WithMetadata(document metadata.Document) StreamOption {
 type Chunk struct {
 	Sequence uint64
 	PTS      timing.OptionalPTS
+	DTS      timing.OptionalDTS
+	Duration timing.OptionalDuration
 	Bytes    []byte
 }
 
@@ -107,7 +109,7 @@ func ChunkInputFor(descriptor stream.Descriptor, values []Chunk) Fixture[packet.
 			releaseChunks(items)
 			return Fixture[packet.Chunk]{}
 		}
-		items = append(items, packet.NewChunk(value.Sequence, value.PTS, payload))
+		items = append(items, packet.NewChunk(value.Sequence, value.PTS, value.DTS, value.Duration, payload))
 	}
 	result := Values(descriptor, mediaformat.Chunks(), items...)
 	releaseChunks(items)
@@ -367,7 +369,7 @@ func snapshotChunk(value packet.Chunk) (Chunk, error) {
 	if !value.Valid() {
 		return Chunk{}, errors.New("invalid chunk")
 	}
-	return Chunk{Sequence: value.Sequence(), PTS: value.PTS(), Bytes: value.Bytes().AppendTo(nil)}, nil
+	return Chunk{Sequence: value.Sequence(), PTS: value.PTS(), DTS: value.DTS(), Duration: value.Duration(), Bytes: value.Bytes().AppendTo(nil)}, nil
 }
 
 func snapshotPacket(value packet.Packet) (Packet, error) {

@@ -34,15 +34,15 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Name:  "riff-pcm-split-inside-frame",
 			Input: testkit.ByteInput(encoded[:45], encoded[45:]),
 			Want: testkit.WantChunks(
-				testkit.Chunk{Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), Bytes: payload[:4]},
-				testkit.Chunk{Sequence: 1, PTS: timing.SomePTS(timing.NewPTS(1)), Bytes: payload[4:]},
+				testkit.Chunk{Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(1)), Bytes: payload[:4]},
+				testkit.Chunk{Sequence: 1, PTS: timing.SomePTS(timing.NewPTS(1)), DTS: timing.SomeDTS(timing.NewDTS(1)), Duration: timing.SomeDuration(timing.NewDuration(1)), Bytes: payload[4:]},
 			),
 		},
 		testkit.Case[buffer.Handle, packet.Chunk]{
 			Name:  "extensible-twelve-bit-pcm",
 			Input: testkit.ByteInput(narrow),
 			Want: testkit.WantChunks(testkit.Chunk{
-				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), Bytes: narrowPayload,
+				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: narrowPayload,
 			}),
 		},
 		testkit.Case[buffer.Handle, packet.Chunk]{
@@ -72,7 +72,7 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Name:   "byte-exact-riff",
 			Config: config.NewPatch(),
 			Input: testkit.PacketInput(description, []testkit.Packet{{
-				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: payload,
+				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: payload,
 			}}),
 			Want: testkit.WantWriteImage(muxedWAVE(payload, 2, 48_000, 16)),
 		},
@@ -83,7 +83,7 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 				Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
 				Layout: sample.Mono, Endian: sample.LittleEndian,
 			}, []testkit.Packet{{
-				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: narrowPayload,
+				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: narrowPayload,
 			}}),
 			Want: testkit.WantWriteImage(muxedWAVE(narrowPayload, 1, 32_000, 12)),
 		},

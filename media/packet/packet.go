@@ -14,20 +14,24 @@ import (
 type Chunk struct {
 	sequence uint64
 	pts      timing.OptionalPTS
+	dts      timing.OptionalDTS
+	duration timing.OptionalDuration
 	payload  buffer.Handle
 	sideData side.Data
 }
 
-// NewChunk builds a container chunk. A chunk whose source states no time
-// passes timing.UnknownPTS, which stays distinct from a PTS of zero.
-func NewChunk(sequence uint64, pts timing.OptionalPTS, payload buffer.Handle) Chunk {
-	return Chunk{sequence: sequence, pts: pts, payload: payload}
+// NewChunk builds a container chunk. Unknown timestamps and duration stay
+// distinct from known zero values through the optional timing types.
+func NewChunk(sequence uint64, pts timing.OptionalPTS, dts timing.OptionalDTS, duration timing.OptionalDuration, payload buffer.Handle) Chunk {
+	return Chunk{sequence: sequence, pts: pts, dts: dts, duration: duration, payload: payload}
 }
 
-func (c Chunk) Valid() bool             { return c.payload.Valid() }
-func (c Chunk) Sequence() uint64        { return c.sequence }
-func (c Chunk) PTS() timing.OptionalPTS { return c.pts }
-func (c Chunk) SideData() side.Data     { return c.sideData }
+func (c Chunk) Valid() bool                       { return c.payload.Valid() }
+func (c Chunk) Sequence() uint64                  { return c.sequence }
+func (c Chunk) PTS() timing.OptionalPTS           { return c.pts }
+func (c Chunk) DTS() timing.OptionalDTS           { return c.dts }
+func (c Chunk) Duration() timing.OptionalDuration { return c.duration }
+func (c Chunk) SideData() side.Data               { return c.sideData }
 
 // WithSideData returns a copy carrying immutable side data.
 func (c Chunk) WithSideData(value side.Data) Chunk { c.sideData = value; return c }
