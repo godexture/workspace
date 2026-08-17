@@ -144,7 +144,7 @@ func (t Template) Matches(runtime plan.Runtime) bool {
 func (t Template) validateEdges() error {
 	for index, value := range t.nodes {
 		switch value.kind {
-		case drive.Source:
+		case drive.Source, drive.RoutedSource:
 			if len(t.incoming[index]) != 0 || len(t.outgoing[index]) == 0 {
 				return ErrTopology
 			}
@@ -180,7 +180,7 @@ func (t Template) validateEdges() error {
 			if t.edges[t.connections[connectionIndex].logical].value.From().ID() != value.binding.Output() {
 				return ErrTopology
 			}
-			if value.kind != drive.Router && t.connections[connectionIndex].route != 0 {
+			if value.kind != drive.Router && value.kind != drive.RoutedSource && t.connections[connectionIndex].route != 0 {
 				return ErrTopology
 			}
 		}

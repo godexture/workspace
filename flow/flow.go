@@ -198,6 +198,14 @@ type Reader[T any] interface {
 	Read(context.Context, *Item[T]) error
 }
 
+// RoutedReader publishes one or more items to statically declared output
+// routes during each Read call. It reports io.EOF only after a call that did
+// not emit an item. Route ordinals follow the compiled output descriptor
+// order, and every emitted Item follows the RoutedEmitter ownership rule.
+type RoutedReader[T any] interface {
+	Read(context.Context, RoutedEmitter[T]) error
+}
+
 // Writer accepts one item. Consuming the cell claims ownership; leaving it
 // alone returns the item to whoever passed the pointer.
 type Writer[T any] interface {
@@ -277,7 +285,8 @@ type Processor[I, O any] interface {
 
 // RoutedEmitter selects one statically declared output route. An unavailable
 // ordinal is refused before an Item can be bound to it. A reusable Item binds
-// to one route's reporter, so a Router keeps one reusable Item per route.
+// to one route's reporter, so a Router or RoutedReader keeps one reusable Item
+// per route.
 type RoutedEmitter[T any] interface {
 	Route(ordinal int) (Emitter[T], bool)
 }

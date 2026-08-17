@@ -14,6 +14,13 @@ func WithReader[T any](output string, typ schema.Type[T]) ComponentOption {
 	return withExecution(drive.NewSource(output, typ))
 }
 
+// WithRoutedReader binds a source component's many output to
+// flow.RoutedReader[T]. Route ordinals are assigned by the compiled output
+// descriptor order.
+func WithRoutedReader[T any](output string, typ schema.Type[T]) ComponentOption {
+	return withExecution(drive.NewRoutedSource(output, typ))
+}
+
 // WithProcessor binds a synchronous one-input/one-output component to
 // flow.Processor[I,O]. Adjacent compatible processors can be fused without
 // exposing an execution island or queue to the plugin.

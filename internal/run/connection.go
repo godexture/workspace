@@ -191,7 +191,7 @@ func (t *Template) placeBuffers() {
 		logical := &t.edges[connection.logical]
 		from := t.nodes[connection.from]
 		to := t.nodes[connection.to]
-		if from.kind == drive.Source {
+		if from.kind == drive.Source || from.kind == drive.RoutedSource {
 			connection.reason |= plan.SourceBuffer
 		}
 		if to.kind == drive.Sink {

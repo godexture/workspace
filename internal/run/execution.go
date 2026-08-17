@@ -98,6 +98,16 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 				return fail(err)
 			}
 			edgeTargets[t.incoming[index][0]] = input
+		case drive.RoutedSource:
+			routes, err := t.routeLinks(ledger, index, edgeTargets, result)
+			if err != nil {
+				return fail(err)
+			}
+			sourceTask, err := value.binding.OpenRoutedSource(operator, routes, ledger.Domain("source/"+node, node))
+			if err != nil {
+				return fail(err)
+			}
+			result.sources = append(result.sources, namedTask{task: sourceTask, done: make(chan error, 1)})
 		case drive.Joiner:
 			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {

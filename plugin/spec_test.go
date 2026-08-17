@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -44,6 +45,12 @@ func (specRouterOperator) Process(context.Context, *flow.Item[specUnit], flow.Ro
 }
 
 func (specRouterOperator) Flush(context.Context, flow.RoutedEmitter[specUnit]) error { return nil }
+
+type specRoutedReaderOperator struct{ specOperator }
+
+func (specRoutedReaderOperator) Read(context.Context, flow.RoutedEmitter[specUnit]) error {
+	return io.EOF
+}
 
 type specFinalizerOperator struct{ specOperator }
 
@@ -286,6 +293,55 @@ func TestRouterExecutionBindingRequiresManyOutputAndTypedRouter(t *testing.T) {
 	)
 	if !hasItem(mismatch.Diagnostics(), "plugin.execution-ports") {
 		t.Fatalf("router mismatch diagnostics = %v", mismatch.Diagnostics())
+	}
+}
+
+func TestRoutedReaderExecutionBindingRequiresManyOutputAndTypedReader(t *testing.T) {
+	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ, flow.Many())})
+	spec := Spec[pluginConfig, flow.Shape, int]{
+		Ports: shape,
+		Compile: func(_ CompileContext, _ pluginConfig, _ flow.Descriptors[int]) (Compiled[flow.Shape, int], error) {
+			return Compiled[flow.Shape, int]{
+				Plan:    shape,
+				Outputs: flow.NewDescriptors(flow.Describe("out", 1), flow.Describe("out", 2)),
+			}, nil
+		},
+		Open: func(_ OpenContext, value flow.Shape) (flow.Operator, error) {
+			return specRoutedReaderOperator{specOperator{shape: value}}, nil
+		},
+	}
+	component := NewComponent[specUnitID](
+		Descriptor{DisplayName: "typed routed reader"},
+		pluginSchema(1),
+		WithSpec(spec),
+		WithRoutedReader("out", typ),
+	)
+	if diagnostics := component.Diagnostics(); len(diagnostics) != 0 {
+		t.Fatalf("routed reader diagnostics = %v", diagnostics)
+	}
+	resolved, err := component.Resolve(componentPatch(t, component, "level", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors[int]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = operator.Close()
+
+	wrong := NewComponent[specOtherID](
+		Descriptor{DisplayName: "routed reader shape mismatch"},
+		pluginSchema(1),
+		WithSpec(testSpec(nil, nil)),
+		WithRoutedReader("out", typ),
+	)
+	if !hasItem(wrong.Diagnostics(), "plugin.execution-ports") {
+		t.Fatalf("routed reader mismatch diagnostics = %v", wrong.Diagnostics())
 	}
 }
 
