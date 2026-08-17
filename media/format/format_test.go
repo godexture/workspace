@@ -127,7 +127,7 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	if !ok || !trait.HasInspect() {
 		t.Fatalf("read trait = %#v/%v", trait, ok)
 	}
-	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 1<<20))
+	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 1<<20, 2<<20))
 	if err != nil || called != 1 {
 		t.Fatalf("Inspect = %#v, %v; calls = %d", inspection, err, called)
 	}
@@ -145,6 +145,35 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	}
 	if _, ok := InspectionOf[prepared](compileContext, other); ok {
 		t.Fatal("inspection accepted a different Format")
+	}
+}
+
+func TestInspectContextSeparatesReadAndRetainedMemoryLimits(t *testing.T) {
+	_, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := access.NewCapabilities(access.RandomRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := access.Select(capabilities, access.NewRequirements(access.AllOf(access.RandomRead)))
+	if !ok {
+		t.Fatal("random read selection failed")
+	}
+	opening, err := access.NewOpening(access.SourceDirection, fixtureInspectSession{capabilities: capabilities}, selection, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 17, 53)
+	if !ctx.Valid() {
+		t.Fatal("InspectContext is invalid")
+	}
+	if ctx.Limit() != 17 || ctx.MemoryLimit() != 53 {
+		t.Fatalf("InspectContext limits = read %d, memory %d", ctx.Limit(), ctx.MemoryLimit())
+	}
+	if NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 17, 0).Valid() {
+		t.Fatal("zero retained-memory limit accepted")
 	}
 }
 

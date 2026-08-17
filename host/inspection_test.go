@@ -55,6 +55,9 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	capabilities := mustCapabilities(t, access.RandomRead)
 	sessions := &sessionCounters{}
 	var inspected, compiled, sinkInspected atomic.Int32
+	budget := job.DefaultBudget()
+	budget.InspectBytes = 8 << 10
+	budget.InspectMemory = 37
 	configuration := config.Struct[inspectConfigID](func() inspectConfig { return inspectConfig{} }).Version("1").Build()
 	component := func(shape flow.Shape, compile plugin.CompileFunc[inspectConfig, inspectPlan, stream.Descriptor]) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[inspectConfig, inspectPlan, stream.Descriptor]{
@@ -97,6 +100,9 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		}),
 		plugin.WithProcessor("bytes", access.Bytes(), "out", inspectSchemaA),
 		format.Read(value, access.NewRequirements(access.AllOf(access.RandomRead)), format.WithInspect(func(ctx format.InspectContext) (format.Inspection, error) {
+			if ctx.Limit() != budget.InspectBytes || ctx.MemoryLimit() != budget.InspectMemory {
+				return format.Inspection{}, errors.New("Inspect did not receive separate read and memory limits")
+			}
 			if _, ok := access.RandomOf(ctx.Opening()); !ok {
 				return format.Inspection{}, errors.New("Inspect did not receive the selected Random view")
 			}
@@ -186,7 +192,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	}
 	reference, _ := access.Parse("inspect:input")
 	input, _ := job.InputFromReference(reference)
-	request, err := job.New([]job.Input{input}, nil, requested)
+	request, err := job.New([]job.Input{input}, nil, requested, job.WithBudget(budget))
 	if err != nil {
 		t.Fatal(err)
 	}

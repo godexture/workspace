@@ -87,7 +87,7 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 		var inspection mediaformat.Inspection
 		failure := invoke(ctx, PreparePhase, adjacent.String(), "format/inspect", func(callContext context.Context) error {
 			var inspectErr error
-			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, limited, contexts[adjacent], limit.Remaining()))
+			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, limited, contexts[adjacent], limit.Remaining(), request.Budget().InspectMemory))
 			return inspectErr
 		})
 		used += limit.Used()

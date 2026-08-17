@@ -72,7 +72,7 @@ func TestInspectHeaderUsesStableSizeForRIFFAndRF64(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			truncated := complete[:len(complete)-2]
-			_, err := inspectHeaderWithSize(context.Background(), memoryRandom(truncated), uint64(len(truncated)), true, metadata.Resolver{}, job.DefaultBudget().InspectBytes)
+			_, err := inspectHeaderWithSize(context.Background(), memoryRandom(truncated), uint64(len(truncated)), true, metadata.Resolver{}, job.DefaultBudget().InspectMemory)
 			if !errors.Is(err, ErrTruncatedData) {
 				t.Fatalf("stable-size inspection error = %v", err)
 			}
@@ -211,8 +211,8 @@ func pcmFormat(channels uint16, rate uint32, bits uint16) []byte {
 }
 
 // A declared chunk size is content the source controls, so preserving it must
-// not size an allocation beyond the planning budget.
-func TestInspectRefusesToPreserveChunksBeyondTheBudget(t *testing.T) {
+// not size an allocation beyond the retained inspection-memory budget.
+func TestInspectRefusesToPreserveChunksBeyondTheMemoryBudget(t *testing.T) {
 	payload := make([]byte, 4096)
 	value := testWAVE([]byte{1, 0, 2, 0}, 1, 48_000, testChunk{id: "BULK", payload: payload})
 	if _, err := inspectHeaderWithSize(context.Background(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 1<<20); err != nil {

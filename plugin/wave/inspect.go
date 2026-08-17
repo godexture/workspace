@@ -33,7 +33,7 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is negative", ErrMalformed)
 	}
 	resolver, _ := metadata.ResolverOf(ctx.Prepared())
-	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.Limit())
+	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.MemoryLimit())
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -45,11 +45,11 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 }
 
 func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolver metadata.Resolver) (header, error) {
-	return inspectHeaderWithSize(ctx, reader, 0, false, resolver, job.DefaultBudget().InspectBytes)
+	return inspectHeaderWithSize(ctx, reader, 0, false, resolver, job.DefaultBudget().InspectMemory)
 }
 
-func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, limit resource.Bytes) (header, error) {
-	budget := preserveBudget{remaining: uint64(limit)}
+func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, memoryLimit resource.Bytes) (header, error) {
+	budget := preserveBudget{remaining: uint64(memoryLimit)}
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}

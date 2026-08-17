@@ -424,10 +424,10 @@ func TestResolveDistinguishesPlannerBudgets(t *testing.T) {
 		limit     int
 		dimension string
 	}{
-		{name: "states", budget: job.Budget{States: 1, Compiles: 20, SuggestionsPerNeed: 4, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192}, dimension: "states"},
-		{name: "compiles", budget: job.Budget{States: 20, Compiles: 1, SuggestionsPerNeed: 4, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192}, dimension: "compiles"},
-		{name: "suggestions", budget: job.Budget{States: 20, Compiles: 20, SuggestionsPerNeed: 1, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192}, suggest: suggest, limit: 2, dimension: "suggestions"},
-		{name: "fixpoints", budget: job.Budget{States: 20, Compiles: 20, SuggestionsPerNeed: 4, FixpointIterations: 1, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192}, dimension: "fixpoints"},
+		{name: "states", budget: job.Budget{States: 1, Compiles: 20, SuggestionsPerNeed: 4, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192, InspectMemory: 16384}, dimension: "states"},
+		{name: "compiles", budget: job.Budget{States: 20, Compiles: 1, SuggestionsPerNeed: 4, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192, InspectMemory: 16384}, dimension: "compiles"},
+		{name: "suggestions", budget: job.Budget{States: 20, Compiles: 20, SuggestionsPerNeed: 1, FixpointIterations: 4, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192, InspectMemory: 16384}, suggest: suggest, limit: 2, dimension: "suggestions"},
+		{name: "fixpoints", budget: job.Budget{States: 20, Compiles: 20, SuggestionsPerNeed: 4, FixpointIterations: 1, ProbeBytes: 4096, ProbeRounds: 4, InspectBytes: 8192, InspectMemory: 16384}, dimension: "fixpoints"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

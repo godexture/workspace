@@ -268,6 +268,9 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	if request.Budget() != DefaultBudget() {
 		t.Fatalf("default budget = %#v", request.Budget())
 	}
+	if DefaultBudget().InspectMemory != 64<<20 {
+		t.Fatalf("default inspection memory = %d", DefaultBudget().InspectMemory)
+	}
 
 	portable, ok := PolicyFor(Portable)
 	if !ok {
@@ -277,7 +280,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}) || realtime.Alignment != (AlignmentPolicy{Zip: 250 * time.Millisecond}) {
 		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
 	}
-	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192}
+	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192, InspectMemory: 16384}
 	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
 	if err != nil {
 		t.Fatal(err)
@@ -290,6 +293,11 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	}
 	if _, err := New(nil, nil, graph, WithBudget(Budget{})); err == nil {
 		t.Fatal("invalid budget was accepted")
+	}
+	invalidInspectMemory := DefaultBudget()
+	invalidInspectMemory.InspectMemory = 0
+	if _, err := New(nil, nil, graph, WithBudget(invalidInspectMemory)); err == nil {
+		t.Fatal("zero inspection memory budget was accepted")
 	}
 	invalidSpool := portable
 	invalidSpool.Resources.AllowSpool = true
