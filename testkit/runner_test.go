@@ -121,7 +121,7 @@ func runnerDefinition() plugin.Definition {
 		Build()
 	shape := flow.NewShape([]flow.Port{flow.In("in", runnerType)}, []flow.Port{flow.Out("out", runnerType)})
 	spec := plugin.Spec[runnerConfig, runnerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[runnerConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, value runnerConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[runnerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -172,7 +172,7 @@ func runnerFormatDefinition(inspections, probes *atomic.Int32) plugin.Definition
 		return mediaformat.NewInspection(formatValue, value[0]), nil
 	}
 	spec := plugin.Spec[runnerFormatConfig, runnerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[runnerFormatConfig](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ runnerFormatConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[runnerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {

@@ -39,7 +39,7 @@ func Codec() plugin.Definition {
 	typ := schema.Define[exampleUnitID, exampleUnit](schema.Traits[exampleUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("output", typ)})
 	spec := plugin.Spec[codecConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[codecConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, codecConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("output", 1))}, nil
 		},

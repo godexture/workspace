@@ -253,7 +253,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		plugin.Descriptor{DisplayName: "source", Version: "1"},
 		configuration,
 		append([]plugin.ComponentOption{plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[lifecycleConfig](sourceShape),
+			Ports: sourceShape,
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				resources := resource.Request{}
 				if state.task != nil {
@@ -295,7 +295,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		plugin.Descriptor{DisplayName: "processor", Version: "1"},
 		configuration,
 		plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[lifecycleConfig](processorShape),
+			Ports: processorShape,
 			Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				input, _ := inputs.One("in")
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{
@@ -318,7 +318,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	)
 	sinkOption := func(name string) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[lifecycleConfig](sinkShape),
+			Ports: sinkShape,
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 			},

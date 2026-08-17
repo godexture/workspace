@@ -271,14 +271,11 @@ func (r Registry) endpointSelection(request job.EndpointRequest, index int, dire
 }
 
 func boundaryPort(component plugin.Component, patch config.Patch, direction plan.BoundaryDirection) (string, error) {
-	resolved, err := component.Resolve(patch)
+	_, err := component.Resolve(patch)
 	if err != nil {
 		return "", err
 	}
-	shape, err := component.Shape(plugin.ShapeContext{}, resolved)
-	if err != nil {
-		return "", err
-	}
+	shape := component.Ports()
 	port, valid := bound.Port(shape, direction)
 	if !valid {
 		return "", diagnostic.NewError(bindItem("bind.endpoint-shape", component.Identity(), "boundary component must have exactly one directional port", map[string]string{"direction": strconv.Itoa(int(direction))}))
@@ -299,14 +296,11 @@ func (r Registry) openPorts(nodes []job.Node, edges []job.Edge) ([]job.Port, []j
 		if !ok {
 			continue
 		}
-		resolved, err := component.Resolve(node.Config())
+		_, err := component.Resolve(node.Config())
 		if err != nil {
 			return nil, nil, err
 		}
-		shape, err := component.Shape(plugin.ShapeContext{}, resolved)
-		if err != nil {
-			return nil, nil, err
-		}
+		shape := component.Ports()
 		for _, port := range shape.Inputs {
 			value := job.At(node.ID(), port.ID())
 			if port.Required() {

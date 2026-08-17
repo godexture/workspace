@@ -80,7 +80,7 @@ func TestPreparedRunDropsEveryItemAcceptedFromSourceOnFailure(t *testing.T) {
 
 	source := plugin.NewComponent[failureDropSourceID](plugin.Descriptor{DisplayName: "failure source"}, configuration,
 		plugin.WithSpec(plugin.Spec[failureDropConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[failureDropConfig](sourceShape),
+			Ports: sourceShape,
 			Compile: func(plugin.CompileContext, failureDropConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
 			},
@@ -97,7 +97,7 @@ func TestPreparedRunDropsEveryItemAcceptedFromSourceOnFailure(t *testing.T) {
 	)
 	sink := plugin.NewComponent[failureDropSinkID](plugin.Descriptor{DisplayName: "failure sink"}, configuration,
 		plugin.WithSpec(plugin.Spec[failureDropConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[failureDropConfig](sinkShape),
+			Ports: sinkShape,
 			Compile: func(_ plugin.CompileContext, _ failureDropConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				if _, ok := inputs.One("in"); !ok {
 					return plugin.Compiled[flow.Shape, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("failure.input"))}}, nil
@@ -216,7 +216,7 @@ func TestFlushFailureReportsFlushPhaseAcrossABufferedBoundary(t *testing.T) {
 
 	source := plugin.NewComponent[flushPhaseSourceID](plugin.Descriptor{DisplayName: "flush phase source"}, configuration,
 		plugin.WithSpec(plugin.Spec[flushPhaseConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[flushPhaseConfig](sourceShape),
+			Ports: sourceShape,
 			Compile: func(plugin.CompileContext, flushPhaseConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
 			},
@@ -228,7 +228,7 @@ func TestFlushFailureReportsFlushPhaseAcrossABufferedBoundary(t *testing.T) {
 	)
 	processor := plugin.NewComponent[flushPhaseProcessorID](plugin.Descriptor{DisplayName: "flush phase processor"}, configuration,
 		plugin.WithSpec(plugin.Spec[flushPhaseConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[flushPhaseConfig](processorShape),
+			Ports: processorShape,
 			Compile: func(_ plugin.CompileContext, _ flushPhaseConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				input, ok := inputs.One("in")
 				if !ok {
@@ -244,7 +244,7 @@ func TestFlushFailureReportsFlushPhaseAcrossABufferedBoundary(t *testing.T) {
 	)
 	sink := plugin.NewComponent[flushPhaseSinkID](plugin.Descriptor{DisplayName: "flush phase sink"}, configuration,
 		plugin.WithSpec(plugin.Spec[flushPhaseConfig, flow.Shape, stream.Descriptor]{
-			Shape: plugin.StaticShape[flushPhaseConfig](sinkShape),
+			Ports: sinkShape,
 			Compile: func(_ plugin.CompileContext, _ flushPhaseConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				if _, ok := inputs.One("in"); !ok {
 					return plugin.Compiled[flow.Shape, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("flush-phase.sink"))}}, nil

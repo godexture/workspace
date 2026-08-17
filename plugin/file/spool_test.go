@@ -322,7 +322,7 @@ func spoolFixture() plugin.Definition {
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[lifecycleConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[lifecyclePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {

@@ -53,7 +53,7 @@ type graphCompile func(flow.Descriptors[stream.Descriptor]) plugin.Compiled[grap
 func fixtureComponent[Marker any](shape flow.Shape, compile graphCompile, opened *atomic.Int32, finalizes bool) plugin.Component {
 	schemaValue := config.Struct[graphConfigID](func() graphConfig { return graphConfig{} }).Version("1").Build()
 	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: "fixture"}, schemaValue, plugin.WithSpec(plugin.Spec[graphConfig, graphPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[graphConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ graphConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[graphPlan, stream.Descriptor], error) {
 			result := compile(inputs)
 			result.Plan = graphPlan{shape: shape.Clone()}

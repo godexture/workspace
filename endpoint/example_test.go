@@ -44,7 +44,7 @@ func ExampleWithTrait() {
 		plugin.Descriptor{DisplayName: "capture", Version: "1"},
 		config.Struct[endpointExampleConfig](func() endpointExampleConfig { return endpointExampleConfig{} }).Version("1").Build(),
 		plugin.WithSpec(plugin.Spec[endpointExampleConfig, flow.Shape, int]{
-			Shape: plugin.StaticShape[endpointExampleConfig](shape),
+			Ports: shape,
 			Compile: func(plugin.CompileContext, endpointExampleConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 				return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("frames", 1))}, nil
 			},

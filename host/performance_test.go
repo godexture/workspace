@@ -93,7 +93,7 @@ func performanceFixture() (*Host, job.Job, *performanceState, error) {
 	state := &performanceState{}
 
 	source := plugin.NewComponent[performanceSourceID](plugin.Descriptor{DisplayName: "performance source"}, configuration, plugin.WithSpec(plugin.Spec[performanceConfig, performancePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[performanceConfig](sourceShape),
+		Ports: sourceShape,
 		Compile: func(plugin.CompileContext, performanceConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[performancePlan, stream.Descriptor], error) {
 			return plugin.Compiled[performancePlan, stream.Descriptor]{Plan: performancePlan{shape: sourceShape}, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
 		},
@@ -103,7 +103,7 @@ func performanceFixture() (*Host, job.Job, *performanceState, error) {
 	}), plugin.WithReader("out", performanceSchema))
 
 	processor := plugin.NewComponent[performanceProcessorID](plugin.Descriptor{DisplayName: "performance processor"}, configuration, plugin.WithSpec(plugin.Spec[performanceConfig, performancePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[performanceConfig](processorShape),
+		Ports: processorShape,
 		Compile: func(_ plugin.CompileContext, _ performanceConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[performancePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -117,7 +117,7 @@ func performanceFixture() (*Host, job.Job, *performanceState, error) {
 	}), plugin.WithProcessor("in", performanceSchema, "out", performanceSchema))
 
 	sink := plugin.NewComponent[performanceSinkID](plugin.Descriptor{DisplayName: "performance sink"}, configuration, plugin.WithSpec(plugin.Spec[performanceConfig, performancePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[performanceConfig](sinkShape),
+		Ports: sinkShape,
 		Compile: func(_ plugin.CompileContext, _ performanceConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[performancePlan, stream.Descriptor], error) {
 			if _, ok := inputs.One("in"); !ok {
 				return plugin.Compiled[performancePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("performance.input"))}}, nil

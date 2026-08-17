@@ -30,7 +30,7 @@ func demuxerShape() flow.Shape {
 func demuxerComponent() plugin.Component {
 	shape := demuxerShape()
 	spec := plugin.Spec[configuration, demuxPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {

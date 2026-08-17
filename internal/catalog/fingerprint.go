@@ -22,7 +22,6 @@ type fingerprintComponent struct {
 	Provenance      plugin.Provenance
 	Ports           []fingerprintPort
 	HasSpec         bool
-	DynamicShape    bool
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
@@ -72,7 +71,6 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 			Provenance:      component.Provenance(),
 			Ports:           fingerprintPorts(component.Ports()),
 			HasSpec:         component.View().HasSpec,
-			DynamicShape:    component.View().DynamicShape,
 			HasSuggest:      component.View().HasSuggest,
 			SuggestionLimit: component.View().SuggestionLimit,
 			Finalizes:       component.View().Finalizes,

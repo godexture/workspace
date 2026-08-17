@@ -37,7 +37,7 @@ func sinkShape() flow.Shape {
 func sourceComponent() plugin.Component {
 	shape := sourceShape()
 	spec := plugin.Spec[configuration, sourcePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, configuration, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sourcePlan, stream.Descriptor], error) {
 			descriptor, err := stream.NewDescriptor("file", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
@@ -74,7 +74,7 @@ func sinkComponent() plugin.Component {
 func sinkComponentWith(descriptor plugin.Descriptor, traits ...plugin.ComponentOption) plugin.Component {
 	shape := sinkShape()
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sinkPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("writes")
 			if !ok {

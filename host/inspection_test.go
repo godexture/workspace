@@ -57,7 +57,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	configuration := config.Struct[inspectConfigID](func() inspectConfig { return inspectConfig{} }).Version("1").Build()
 	component := func(shape flow.Shape, compile plugin.CompileFunc[inspectConfig, inspectPlan, stream.Descriptor]) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[inspectConfig, inspectPlan, stream.Descriptor]{
-			Shape:   plugin.StaticShape[inspectConfig](shape),
+			Ports:   shape,
 			Compile: compile,
 			Open: func(plugin.OpenContext, inspectPlan) (flow.Operator, error) {
 				return inspectOperator{shape: shape}, nil

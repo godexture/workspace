@@ -254,7 +254,7 @@ func metadataAnchorDefinition() plugin.Definition {
 	shape := flow.NewShape([]flow.Port{flow.In("in", metadataAnchorType)}, []flow.Port{flow.Out("out", metadataAnchorType)})
 	component := plugin.NewComponent[metadataAnchorComponentID](plugin.Descriptor{DisplayName: "testkit Metadata anchor"}, configuration,
 		plugin.WithSpec(plugin.Spec[metadataAnchorConfig, metadataAnchorPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[metadataAnchorConfig](shape),
+			Ports: shape,
 			Compile: func(_ plugin.CompileContext, _ metadataAnchorConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[metadataAnchorPlan, stream.Descriptor], error) {
 				input, ok := inputs.One("in")
 				if !ok {

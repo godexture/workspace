@@ -23,7 +23,7 @@ func (b PortDescriptor[D]) Port() string  { return b.port }
 func (b PortDescriptor[D]) Descriptor() D { return b.descriptor }
 func (b PortDescriptor[D]) Valid() bool   { return b.port != "" }
 
-// Descriptors is an immutable ordered collection used at the Shape/Compile
+// Descriptors is an immutable ordered collection used at the Ports/Compile
 // boundary. It deliberately is not a map: order on a many port can be
 // semantic, and map iteration must not affect planning.
 type Descriptors[D any] struct{ bindings []PortDescriptor[D] }

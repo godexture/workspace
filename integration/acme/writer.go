@@ -27,7 +27,7 @@ func writerComponent() plugin.Component {
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[configuration, writerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[writerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("values")
 			if !ok {

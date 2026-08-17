@@ -33,7 +33,7 @@ type componentPlan struct {
 func newComponent[Marker any](kind operation, name string) plugin.Component {
 	shape := operationShape(kind)
 	spec := plugin.Spec[configuration, componentPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, configuration configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[componentPlan, stream.Descriptor], error) {
 			return compileOperation(kind, shape, configuration, inputs)
 		},

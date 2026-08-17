@@ -498,7 +498,7 @@ func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkT
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", access.Writes())}, nil)
 	component := func(shape flow.Shape, compile plugin.CompileFunc[boundaryConfig, boundaryPlan, stream.Descriptor], operator func(flow.Shape) flow.Operator) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
-			Shape:   plugin.StaticShape[boundaryConfig](shape),
+			Ports:   shape,
 			Compile: compile,
 			Open: func(plugin.OpenContext, boundaryPlan) (flow.Operator, error) {
 				if opens != nil {
@@ -551,7 +551,7 @@ func boundaryReadSink(trait endpoint.Trait, withFormat bool) plugin.Component {
 	shape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil)
 	options := []plugin.ComponentOption{
 		plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[boundaryConfig](shape),
+			Ports: shape,
 			Compile: func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 				return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: shape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 			},

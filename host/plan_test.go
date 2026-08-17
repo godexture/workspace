@@ -41,7 +41,7 @@ func (hostPlanOperator) Close() error        { return nil }
 func hostPlanComponent[Marker any](shape flow.Shape, compile func(flow.Descriptors[stream.Descriptor]) plugin.Compiled[flow.Shape, stream.Descriptor], opened *atomic.Int32) plugin.Component {
 	schemaValue := config.Struct[hostPlanConfigID](func() hostPlanConfig { return hostPlanConfig{} }).Version("1").Build()
 	spec := plugin.Spec[hostPlanConfig, flow.Shape, stream.Descriptor]{
-		Shape: plugin.StaticShape[hostPlanConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, hostPlanConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 			result := compile(flow.NewDescriptors[stream.Descriptor]())
 			result.Plan = shape.Clone()

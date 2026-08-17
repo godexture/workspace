@@ -32,7 +32,7 @@ func muxerShape() flow.Shape {
 func muxerComponent() plugin.Component {
 	shape := muxerShape()
 	spec := plugin.Spec[configuration, muxPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[muxPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("packets")
 			if !ok {

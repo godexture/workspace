@@ -19,6 +19,7 @@ type fixtureReadComponentID struct{}
 type fixtureWriteComponentID struct{}
 type fixtureConfigID struct{}
 type fixtureUnit int
+type mutableInspection struct{ Values []int }
 
 type fixtureInspectSession struct{ capabilities access.Capabilities }
 
@@ -144,6 +145,65 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	}
 	if _, ok := InspectionOf[prepared](compileContext, other); ok {
 		t.Fatal("inspection accepted a different Format")
+	}
+}
+
+func TestInspectionRequiresDeclaredCloneForReferenceValues(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := NewInspection(value, mutableInspection{Values: []int{1}})
+	if inspection.Valid() {
+		t.Fatal("reference-valued inspection accepted an undeclared clone")
+	}
+	if _, err := WithInspection(plugin.CompileContext{}, inspection); err != ErrInvalidInspection {
+		t.Fatalf("invalid inspection error = %v", err)
+	}
+}
+
+func TestClonedInspectionSnapshotsAndIsolatesValues(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := mutableInspection{Values: []int{1}}
+	inspection := NewClonedInspection(value, original, func(value mutableInspection) mutableInspection {
+		return mutableInspection{Values: append([]int(nil), value.Values...)}
+	})
+	if !inspection.Valid() {
+		t.Fatal("cloned inspection is invalid")
+	}
+	original.Values[0] = 9
+	ctx, err := WithInspection(plugin.CompileContext{}, inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := InspectionOf[mutableInspection](ctx, value)
+	if !ok || first.Values[0] != 1 {
+		t.Fatalf("registration snapshot = %#v/%v", first, ok)
+	}
+	first.Values[0] = 7
+	second, ok := InspectionOf[mutableInspection](ctx, value)
+	if !ok || second.Values[0] != 1 {
+		t.Fatalf("retrieval snapshot = %#v/%v", second, ok)
+	}
+}
+
+func TestClonedInspectionRejectsPanicAndNilClone(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	panicInspection := NewClonedInspection(value, mutableInspection{}, func(mutableInspection) mutableInspection {
+		panic("clone failure")
+	})
+	if panicInspection.Valid() {
+		t.Fatal("panicking clone produced a valid inspection")
+	}
+	nilInspection := NewClonedInspection(value, (*int)(nil), func(*int) *int { return nil })
+	if nilInspection.Valid() {
+		t.Fatal("nil clone produced a valid inspection")
 	}
 }
 

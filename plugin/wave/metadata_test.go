@@ -61,7 +61,7 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compileContext, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(WAVE(), inspected))
+	compileContext, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewClonedInspection(WAVE(), inspected, func(value header) header { return value }))
 	if err != nil {
 		t.Fatal(err)
 	}

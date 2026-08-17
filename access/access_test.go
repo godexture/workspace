@@ -177,7 +177,7 @@ func providerSchema() config.Schema[providerConfig] {
 
 func providerFixtureComponent[Marker any](name string, shape flow.Shape, options ...plugin.ComponentOption) plugin.Component {
 	spec := plugin.Spec[providerConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[providerConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, providerConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			outputs := flow.NewDescriptors[int]()
 			for _, port := range shape.Outputs {

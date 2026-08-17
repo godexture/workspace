@@ -564,7 +564,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("writes", access.Writes())}, nil)
 	source := plugin.NewComponent[fixtureSourceID](plugin.Descriptor{DisplayName: "PCM fixture source"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](sourceShape),
+		Ports: sourceShape,
 		Compile: func(plugin.CompileContext, fixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{
 				Plan:      fixturePlan{shape: sourceShape},
@@ -578,7 +578,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 	}), plugin.WithReader("bytes", access.Bytes()))
 	observeShape := flow.NewShape([]flow.Port{flow.In("in", sample.S16())}, []flow.Port{flow.Out("out", sample.S16())})
 	observer := plugin.NewComponent[fixtureObserveID](plugin.Descriptor{DisplayName: "PCM fixture observer"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](observeShape),
+		Ports: observeShape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -596,7 +596,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 		Finalizes: true,
 	}), plugin.WithProcessor("in", sample.S16(), "out", sample.S16()))
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "PCM fixture sink"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](sinkShape),
+		Ports: sinkShape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			if _, ok := inputs.One("writes"); !ok {
 				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("pcm.fixture-input"))}}, nil

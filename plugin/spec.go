@@ -11,7 +11,6 @@ import (
 	"github.com/godexture/godec/resource"
 )
 
-type ShapeContext struct{}
 type CompileContext struct {
 	context context.Context
 	traits  traitStore
@@ -138,28 +137,19 @@ func Boundary[T any](c OpenContext) (T, bool) {
 	return value, ok
 }
 
-type ShapeFunc[C any] func(ShapeContext, C) (flow.Shape, error)
 type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
 type SuggestFunc[C, D any] func(SuggestContext, D, Need[D]) []C
 type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
-
-// StaticShape adapts a fixed shape to the same phase used by dynamic
-// components.
-func StaticShape[C any](shape flow.Shape) ShapeFunc[C] {
-	shape = shape.Clone()
-	return func(ShapeContext, C) (flow.Shape, error) { return shape.Clone(), nil }
-}
 
 // Spec is the complete semantic contract for one component implementation.
 // D is the control-plane descriptor type; normal media components use
 // stream.Descriptor without making flow or plugin import media/stream.
 type Spec[C, P, D any] struct {
-	Shape           ShapeFunc[C]
+	Ports           flow.Shape
 	Compile         CompileFunc[C, P, D]
 	Suggest         SuggestFunc[C, D]
 	Open            OpenFunc[P]
 	SuggestionLimit int
-	DynamicShape    bool
 	Finalizes       bool
 	Contract        Contract
 }
@@ -177,12 +167,11 @@ type Compiled[P, D any] struct {
 }
 
 type componentImplementation struct {
-	shape           func(ShapeContext, config.ResolvedView) (flow.Shape, error)
+	ports           flow.Shape
 	compile         func(CompileContext, config.ResolvedView, any) (compiledErased, error)
 	suggest         func(SuggestContext, any, any) ([]any, error)
 	open            func(OpenContext, any) (flow.Operator, error)
 	suggestionLimit int
-	dynamicShape    bool
 	finalizes       bool
 	contract        Contract
 	problems        []diagnostic.Item
@@ -202,23 +191,15 @@ type compiledErased struct {
 func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 	implementation := &componentImplementation{
 		suggestionLimit: spec.SuggestionLimit,
-		dynamicShape:    spec.DynamicShape,
 		finalizes:       spec.Finalizes,
 		contract:        normalizeContract(spec.Contract),
+		ports:           spec.Ports.Clone(),
 	}
 	if !implementation.contract.Valid() {
 		implementation.problems = append(implementation.problems, specItem("plugin.contract", "component Spec has an invalid implementation contract"))
 	}
-	if spec.Shape == nil {
-		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))
-	} else {
-		implementation.shape = func(ctx ShapeContext, resolved config.ResolvedView) (flow.Shape, error) {
-			value, err := typedConfig[C](resolved)
-			if err != nil {
-				return flow.Shape{}, err
-			}
-			return spec.Shape(ctx, value)
-		}
+	if err := spec.Ports.Validate(); err != nil {
+		implementation.problems = append(implementation.problems, specItem("plugin.ports", "component Spec requires valid Ports: "+err.Error()))
 	}
 	if spec.Compile == nil {
 		implementation.problems = append(implementation.problems, specItem("plugin.compile", "component Spec requires Compile"))

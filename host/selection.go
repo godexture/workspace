@@ -117,14 +117,11 @@ func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.
 	if !ok {
 		return job.Job{}, job.Node{}, nil, errors.New("automatic Format selection requires a normalized graph")
 	}
-	resolved, err := component.Resolve(patch)
+	_, err := component.Resolve(patch)
 	if err != nil {
 		return job.Job{}, job.Node{}, nil, err
 	}
-	shape, err := component.Shape(plugin.ShapeContext{}, resolved)
-	if err != nil {
-		return job.Job{}, job.Node{}, nil, err
-	}
+	shape := component.Ports()
 	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 {
 		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-shape", boundary, component.Identity(), "automatically selected Format must expose one input and one output in M6", map[string]string{
 			"inputs": strconv.Itoa(len(shape.Inputs)), "outputs": strconv.Itoa(len(shape.Outputs)),

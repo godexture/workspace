@@ -322,7 +322,7 @@ func replaySourcePlugin(state *replaySourceState) plugin.Definition {
 	configuration := config.Struct[replayConfigID](func() replayConfig { return replayConfig{} }).Version("1").Build()
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
 	spec := plugin.Spec[replayConfig, replayPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[replayConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, replayConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[replayPlan, stream.Descriptor], error) {
 			descriptor, err := stream.NewDescriptor("sequence", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {

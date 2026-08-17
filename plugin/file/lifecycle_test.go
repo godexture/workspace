@@ -176,7 +176,7 @@ func lifecycleComponent(openFails bool) plugin.Component {
 	)
 	schema := lifecycleSchema()
 	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[lifecycleConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[lifecyclePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -213,7 +213,7 @@ func lifecycleComponent(openFails bool) plugin.Component {
 func lifecycleSinkComponent(phase host.Phase) plugin.Component {
 	shape := sinkShape()
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sinkPlan, stream.Descriptor], error) {
 			if _, ok := inputs.One("writes"); !ok {
 				return plugin.Compiled[sinkPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("file.input"))}}, nil

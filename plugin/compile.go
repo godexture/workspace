@@ -56,28 +56,15 @@ func RequirementsOf[D any](compilation Compilation) ([]Requirement[D], bool) {
 	return append([]Requirement[D](nil), values...), ok
 }
 
-// Shape resolves the component port topology from a validated config.
-func (c Component) Shape(ctx ShapeContext, resolved config.ResolvedView) (shape flow.Shape, err error) {
-	if c.implementation == nil || c.implementation.shape == nil {
+func (c Component) staticPorts() (flow.Shape, error) {
+	if c.implementation == nil {
 		return flow.Shape{}, ErrComponentSpec
 	}
-	if err := c.validateResolved(resolved); err != nil {
-		return flow.Shape{}, err
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = c.panicError("plugin.shape-panic", "component Shape panicked", recovered)
-			shape = flow.Shape{}
-		}
-	}()
-	shape, err = c.implementation.shape(ctx, resolved)
-	if err != nil {
-		return flow.Shape{}, c.phaseError("plugin.shape", "component Shape failed", err.Error())
-	}
+	shape := c.Ports()
 	if err := shape.Validate(); err != nil {
-		return flow.Shape{}, c.phaseError("plugin.port-shape", "component Shape returned invalid ports", err.Error())
+		return flow.Shape{}, c.phaseError("plugin.ports", "component Spec has invalid Ports", err.Error())
 	}
-	return shape.Clone(), nil
+	return shape, nil
 }
 
 // Compile invokes the component's pure semantic transformation. D remains
@@ -89,7 +76,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if err := component.validateResolved(resolved); err != nil {
 		return Compilation{}, err
 	}
-	shape, err := component.Shape(ShapeContext{}, resolved)
+	shape, err := component.staticPorts()
 	if err != nil {
 		return Compilation{}, err
 	}
@@ -238,7 +225,7 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 		return nil, c.phaseError("plugin.open", "component Open returned a nil operator", "")
 	}
 	if openedShape := operator.Ports(); !openedShape.Equal(compilation.shape) {
-		detail := "operator ports differ from the compiled Shape"
+		detail := "operator ports differ from the compiled Ports"
 		if closeErr := operator.Close(); closeErr != nil {
 			detail += ": close failed: " + closeErr.Error()
 		}

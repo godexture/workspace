@@ -69,7 +69,7 @@ func formatSelectionComponent[Marker any](value mediaformat.Format) plugin.Compo
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[formatSelectionConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[formatSelectionConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, formatSelectionConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("writes", 1))}, nil
 		},

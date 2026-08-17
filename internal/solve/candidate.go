@@ -133,10 +133,7 @@ type compileEntry struct {
 type compileCache map[compileKey][]compileEntry
 
 func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, input stream.Descriptor, prepared plugin.CompileContext, preparedKey string) (candidateResult, error) {
-	shape, err := candidate.component.Shape(plugin.ShapeContext{}, resolved)
-	if err != nil {
-		return candidateResult{}, rejectError{code: "shape"}
-	}
+	shape := candidate.component.Ports()
 	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.One || !shape.Inputs[0].Schema().Equal(input.SchemaDescriptor()) {
 		return candidateResult{}, rejectError{code: "shape"}
 	}

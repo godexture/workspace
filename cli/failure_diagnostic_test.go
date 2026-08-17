@@ -83,7 +83,7 @@ func cliDiagnosticPlugin() plugin.Definition {
 	source := plugin.NewComponent[cliDiagnosticSourceID](
 		plugin.Descriptor{DisplayName: "CLI diagnostic source"}, schema,
 		plugin.WithSpec(plugin.Spec[cliDiagnosticConfig, cliDiagnosticPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[cliDiagnosticConfig](shapeSource),
+			Ports: shapeSource,
 			Compile: func(_ plugin.CompileContext, _ cliDiagnosticConfig, _ flow.Descriptors[stream.Descriptor]) (plugin.Compiled[cliDiagnosticPlan, stream.Descriptor], error) {
 				descriptor, err := stream.NewDescriptor("diagnostic", access.Bytes().Descriptor(), timing.Base{}, property.New())
 				if err != nil {
@@ -104,7 +104,7 @@ func cliDiagnosticPlugin() plugin.Definition {
 	sink := plugin.NewComponent[cliDiagnosticSinkID](
 		plugin.Descriptor{DisplayName: "CLI diagnostic sink"}, schema,
 		plugin.WithSpec(plugin.Spec[cliDiagnosticConfig, cliDiagnosticPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[cliDiagnosticConfig](shapeSink),
+			Ports: shapeSink,
 			Compile: func(_ plugin.CompileContext, _ cliDiagnosticConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[cliDiagnosticPlan, stream.Descriptor], error) {
 				if _, ok := inputs.One("bytes"); !ok {
 					return plugin.Compiled[cliDiagnosticPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("cli.diagnostic.input"))}}, nil

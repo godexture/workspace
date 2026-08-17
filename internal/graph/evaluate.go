@@ -50,11 +50,7 @@ func evaluate(index catalog.Index, requested job.Graph, contexts CompileContexts
 			items = append(items, prefixNode(errorItems(err), request.ID())...)
 			continue
 		}
-		shape, err := component.Shape(plugin.ShapeContext{}, resolved)
-		if err != nil {
-			items = append(items, prefixNode(errorItems(err), request.ID())...)
-			continue
-		}
+		shape := component.Ports()
 		componentIndex := len(components)
 		components = append(components, component)
 		configs = append(configs, resolved)

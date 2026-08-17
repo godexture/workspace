@@ -71,7 +71,7 @@ func solveComponent[Marker any](shape flow.Shape, compile solveCompile, suggest 
 
 func solveContextComponent[Marker any](shape flow.Shape, compile solveContextCompile, suggest plugin.SuggestFunc[solveConfig, stream.Descriptor], suggestionLimit int, contract plugin.Contract, opened, compiles *atomic.Int32) plugin.Component {
 	spec := plugin.Spec[solveConfig, solvePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[solveConfig](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
 			if compiles != nil {
 				compiles.Add(1)

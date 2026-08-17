@@ -228,7 +228,7 @@ func accessReadFixture(requirements access.Requirements, output recorder[buffer.
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil)
 	pass := plugin.NewComponent[accessReadPassID](plugin.Descriptor{DisplayName: "testkit Access read pass"}, schema,
 		plugin.WithSpec(plugin.Spec[accessFixtureConfig, accessFixturePlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[accessFixtureConfig](passShape),
+			Ports: passShape,
 			Compile: func(_ plugin.CompileContext, _ accessFixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[accessFixturePlan, stream.Descriptor], error) {
 				input, ok := inputs.One("in")
 				if !ok {
@@ -251,7 +251,7 @@ func accessReadFixture(requirements access.Requirements, output recorder[buffer.
 	)
 	sink := plugin.NewComponent[accessReadSinkID](plugin.Descriptor{DisplayName: "testkit Access read sink"}, schema,
 		plugin.WithSpec(plugin.Spec[accessFixtureConfig, accessFixturePlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[accessFixtureConfig](sinkShape),
+			Ports: sinkShape,
 			Compile: func(_ plugin.CompileContext, _ accessFixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[accessFixturePlan, stream.Descriptor], error) {
 				if _, ok := inputs.One("in"); !ok {
 					return plugin.Compiled[accessFixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("testkit.access.output"))}}, nil
@@ -274,7 +274,7 @@ func accessWriteFixture(requirements access.Requirements, input *Fixture[buffer.
 	passShape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", access.Writes())})
 	source := plugin.NewComponent[accessWriteSourceID](plugin.Descriptor{DisplayName: "testkit Access write source"}, schema,
 		plugin.WithSpec(plugin.Spec[accessFixtureConfig, accessFixturePlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[accessFixtureConfig](sourceShape),
+			Ports: sourceShape,
 			Compile: func(plugin.CompileContext, accessFixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[accessFixturePlan, stream.Descriptor], error) {
 				return plugin.Compiled[accessFixturePlan, stream.Descriptor]{Plan: accessFixturePlan{shape: sourceShape.Clone()}, Outputs: flow.NewDescriptors(flow.Describe("out", input.descriptor))}, nil
 			},
@@ -287,7 +287,7 @@ func accessWriteFixture(requirements access.Requirements, input *Fixture[buffer.
 	)
 	pass := plugin.NewComponent[accessWritePassID](plugin.Descriptor{DisplayName: "testkit Access write pass"}, schema,
 		plugin.WithSpec(plugin.Spec[accessFixtureConfig, accessFixturePlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[accessFixtureConfig](passShape),
+			Ports: passShape,
 			Compile: func(_ plugin.CompileContext, _ accessFixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[accessFixturePlan, stream.Descriptor], error) {
 				input, ok := inputs.One("in")
 				if !ok {

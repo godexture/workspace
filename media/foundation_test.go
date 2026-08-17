@@ -654,7 +654,7 @@ type skeletonPlanner func(flow.Descriptors[stream.Descriptor]) (skeletonPlan, fl
 
 func skeletonSpec(shape flow.Shape, effect plugin.Effect, plan skeletonPlanner, open plugin.OpenFunc[skeletonPlan]) plugin.Spec[skeletonConfig, skeletonPlan, stream.Descriptor] {
 	return plugin.Spec[skeletonConfig, skeletonPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[skeletonConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ skeletonConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[skeletonPlan, stream.Descriptor], error) {
 			compiledPlan, outputs, requirements, err := plan(inputs)
 			compiledPlan.shape = shape.Clone()

@@ -437,7 +437,7 @@ func waveDecoyParser(compiles *atomic.Int32) plugin.Component {
 	)
 	schema := config.Struct[waveDecoyConfigID](func() waveDecoyConfig { return waveDecoyConfig{} }).Version("1").Build()
 	spec := plugin.Spec[waveDecoyConfig, waveDecoyPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[waveDecoyConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ waveDecoyConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[waveDecoyPlan, stream.Descriptor], error) {
 			if compiles != nil {
 				compiles.Add(1)

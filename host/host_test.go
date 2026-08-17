@@ -45,7 +45,7 @@ func hostComponent[Marker any](descriptor plugin.Descriptor, schemaValue config.
 	typ := schema.Define[hostUnitID, hostUnit](schema.Traits[hostUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[hostConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[hostConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, hostConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},

@@ -55,7 +55,7 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},
@@ -71,7 +71,7 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 
 func catalogTraitComponent[Marker any](name string, shape flow.Shape, options ...plugin.ComponentOption) plugin.Component {
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			outputs := flow.NewDescriptors[int]()
 			if len(shape.Outputs) == 1 {
@@ -465,7 +465,7 @@ func TestBuildRejectsSchemaMarkerBoundToDifferentPayloadTypes(t *testing.T) {
 	typ := schema.Define[catalogUnitID, catalogOtherUnit](schema.Traits[catalogOtherUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},

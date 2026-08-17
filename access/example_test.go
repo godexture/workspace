@@ -118,7 +118,7 @@ func ExampleSource() {
 		plugin.Descriptor{DisplayName: "memory source", Version: "1"},
 		config.Struct[accessTraitConfig](func() accessTraitConfig { return accessTraitConfig{} }).Version("1").Build(),
 		plugin.WithSpec(plugin.Spec[accessTraitConfig, flow.Shape, int]{
-			Shape: plugin.StaticShape[accessTraitConfig](shape),
+			Ports: shape,
 			Compile: func(plugin.CompileContext, accessTraitConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 				return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("bytes", 1))}, nil
 			},

@@ -3,7 +3,6 @@ package plugin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -61,7 +60,7 @@ func testSpec(opened *atomic.Int32, suggest SuggestFunc[pluginConfig, int]) Spec
 		limit = 3
 	}
 	return Spec[pluginConfig, specPlan, int]{
-		Shape: StaticShape[pluginConfig](shape),
+		Ports: shape,
 		Compile: func(_ CompileContext, value pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -188,7 +187,7 @@ func TestExecutionBindingRejectsDuplicateAndShapeMismatch(t *testing.T) {
 		WithSpec(testSpec(nil, nil)),
 		WithProcessor("wrong", typ, "out", typ),
 	)
-	if !hasItem(mismatch.Diagnostics(), "plugin.execution-shape") {
+	if !hasItem(mismatch.Diagnostics(), "plugin.execution-ports") {
 		t.Fatalf("execution shape diagnostics = %v", mismatch.Diagnostics())
 	}
 }
@@ -407,47 +406,7 @@ func TestSuggestIsBoundedCanonicalAndDoesNotOpen(t *testing.T) {
 	}
 }
 
-type mixerConfig struct{ Inputs int }
-type mixerConfigID struct{}
-type mixerComponentID struct{}
-
-func TestDynamicShapeComesFromResolvedConfig(t *testing.T) {
-	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
-	schemaValue := config.Struct[mixerConfigID](func() mixerConfig { return mixerConfig{Inputs: 2} }).
-		Version("1").
-		AddField(config.Field("inputs", func(value *mixerConfig) *int { return &value.Inputs }, config.Int().Range(1, 8))).
-		Build()
-	spec := Spec[mixerConfig, struct{}, int]{
-		DynamicShape: true,
-		Shape: func(_ ShapeContext, value mixerConfig) (flow.Shape, error) {
-			inputs := make([]flow.Port, value.Inputs)
-			for index := range inputs {
-				inputs[index] = flow.In(fmt.Sprintf("in-%d", index), typ)
-			}
-			return flow.NewShape(inputs, []flow.Port{flow.Out("out", typ)}), nil
-		},
-		Compile: func(CompileContext, mixerConfig, flow.Descriptors[int]) (Compiled[struct{}, int], error) {
-			return Compiled[struct{}, int]{Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
-		},
-		Open: func(OpenContext, struct{}) (flow.Operator, error) {
-			return specOperator{}, nil
-		},
-	}
-	component := NewComponent[mixerComponentID](Descriptor{DisplayName: "mixer"}, schemaValue, WithSpec(spec))
-	resolved, err := component.Resolve(componentPatch(t, component, "inputs", 4))
-	if err != nil {
-		t.Fatal(err)
-	}
-	shape, err := component.Shape(ShapeContext{}, resolved)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(shape.Inputs) != 4 || !component.View().DynamicShape {
-		t.Fatalf("dynamic shape = %#v", shape)
-	}
-}
-
-func TestComponentSpecRejectsMissingPhaseOrInvalidDefaultShape(t *testing.T) {
+func TestComponentSpecRejectsMissingPhaseOrInvalidPorts(t *testing.T) {
 	withoutSpec := NewComponent[specUnitID](Descriptor{DisplayName: "missing spec"}, pluginSchema(1))
 	if !hasItem(withoutSpec.Diagnostics(), "plugin.spec") {
 		t.Fatalf("missing Spec diagnostics = %v", withoutSpec.Diagnostics())
@@ -461,10 +420,25 @@ func TestComponentSpecRejectsMissingPhaseOrInvalidDefaultShape(t *testing.T) {
 		t.Fatalf("missing phase diagnostics = %v", missing.Diagnostics())
 	}
 	invalid := testSpec(nil, nil)
-	invalid.Shape = StaticShape[pluginConfig](flow.Shape{})
+	invalid.Ports = flow.Shape{}
 	component := NewComponent[specUnitID](Descriptor{DisplayName: "invalid"}, pluginSchema(1), WithSpec(invalid))
-	if !hasItem(component.Diagnostics(), "plugin.port-shape") {
-		t.Fatalf("invalid default shape diagnostics = %v", component.Diagnostics())
+	if !hasItem(component.Diagnostics(), "plugin.ports") {
+		t.Fatalf("invalid Ports diagnostics = %v", component.Diagnostics())
+	}
+}
+
+func TestComponentPortsAreStaticAndImmutable(t *testing.T) {
+	spec := testSpec(nil, nil)
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "static ports"}, pluginSchema(1), WithSpec(spec))
+	spec.Ports.Inputs[0] = flow.Port{}
+	first := component.Ports()
+	first.Inputs[0] = flow.Port{}
+	second := component.Ports()
+	if second.Inputs[0].ID() != "in" {
+		t.Fatalf("Ports retained caller mutation: %#v", second)
+	}
+	if !component.View().Ports.Equal(second) {
+		t.Fatal("component view Ports diverged from the component Ports")
 	}
 }
 
@@ -569,9 +543,8 @@ func TestOpenEnforcesDeclaredFinalizerCapability(t *testing.T) {
 	spec.Finalizes = true
 	spec.Compile = func(_ CompileContext, value pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
 		input, _ := inputs.One("in")
-		shape, _ := spec.Shape(ShapeContext{}, value)
 		return Compiled[specPlan, int]{
-			Plan:         specPlan{shape: shape},
+			Plan:         specPlan{shape: spec.Ports},
 			Outputs:      flow.NewDescriptors(flow.Describe("out", input+value.Level)),
 			Finalization: RequiresFinalization,
 		}, nil
@@ -602,55 +575,6 @@ func TestOpenEnforcesDeclaredFinalizerCapability(t *testing.T) {
 	_ = operator.Close()
 }
 
-type phaseConfigID struct{}
-type phaseComponentID struct{}
-
-type phaseConfig struct{ Values []int }
-
-// Shape and Compile are separate phases over one resolved config with one
-// fingerprint. A component that writes through the slice it received in Shape
-// must not change what Compile sees, or the plan would stop matching the
-// identity it was cached under.
-func TestShapeCannotChangeWhatCompileSees(t *testing.T) {
-	typ := schema.Define[specUnitID, specUnit](schema.Traits[specUnit]{})
-	shape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
-	schemaValue := config.Struct[phaseConfigID](func() phaseConfig { return phaseConfig{Values: []int{1, 2}} }).
-		Version("1").
-		AddField(config.Field("values", func(value *phaseConfig) *[]int { return &value.Values }, config.Slice(config.Int()))).
-		Build()
-	spec := Spec[phaseConfig, specPlan, int]{
-		Shape: func(_ ShapeContext, value phaseConfig) (flow.Shape, error) {
-			value.Values[0] = 99
-			return shape, nil
-		},
-		Compile: func(_ CompileContext, value phaseConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
-			input, _ := inputs.One("in")
-			return Compiled[specPlan, int]{
-				Plan:    specPlan{shape: shape, value: input},
-				Outputs: flow.NewDescriptors(flow.Describe("out", value.Values[0])),
-			}, nil
-		},
-		Open: func(OpenContext, specPlan) (flow.Operator, error) { return specOperator{shape: shape}, nil },
-	}
-	component := NewComponent[phaseComponentID](Descriptor{DisplayName: "phase"}, schemaValue, WithSpec(spec))
-	resolved, err := component.Resolve(config.NewPatch())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := component.Shape(ShapeContext{}, resolved); err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 5)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	outputs, _ := OutputsOf[int](compiled)
-	value, _ := outputs.One("out")
-	if value != 1 {
-		t.Errorf("Compile saw a config element of %d, want the resolved 1", value)
-	}
-}
-
 type leakyConfigID struct{}
 type leakyComponentID struct{}
 
@@ -670,14 +594,14 @@ func TestPhasePanicsNeverRenderTheRecoveredValue(t *testing.T) {
 		AddField(config.Field("token", func(value *leakyConfig) *config.SecretValue[string] { return &value.Token }, config.SecretCodec(config.String()))).
 		Build()
 	leak := func(value leakyConfig) { panic(errors.New(value.Token.Reveal())) }
+	compilePanics := true
 	spec := Spec[leakyConfig, specPlan, int]{
-		Shape: func(_ ShapeContext, value leakyConfig) (flow.Shape, error) {
-			leak(value)
-			return shape, nil
-		},
+		Ports: shape,
 		Compile: func(_ CompileContext, value leakyConfig, _ flow.Descriptors[int]) (Compiled[specPlan, int], error) {
-			leak(value)
-			return Compiled[specPlan, int]{}, nil
+			if compilePanics {
+				leak(value)
+			}
+			return Compiled[specPlan, int]{Plan: specPlan{shape: shape}, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},
 		Suggest: func(SuggestContext, int, Need[int]) []leakyConfig {
 			panic(errors.New(secret))
@@ -693,12 +617,15 @@ func TestPhasePanicsNeverRenderTheRecoveredValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, shapeErr := component.Shape(ShapeContext{}, resolved)
 	_, compileErr := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
 	_, suggestErr := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("leak"))
-	_, openErr := component.Open(OpenContext{}, Compilation{})
+	compilePanics = false
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, openErr := component.Open(NewOpenContext(context.Background(), OpenServices{}), compiled)
 	for name, err := range map[string]error{
-		"Shape":   shapeErr,
 		"Compile": compileErr,
 		"Suggest": suggestErr,
 		"Open":    openErr,
