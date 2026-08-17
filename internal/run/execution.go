@@ -97,7 +97,7 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			sort.Slice(incoming, func(left, right int) bool {
 				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
 			})
-			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output, ledger.Domain("join/"+node, node))
+			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, value.tolerance, output, ledger.Domain("join/"+node, node))
 			if err != nil {
 				return fail(err)
 			}

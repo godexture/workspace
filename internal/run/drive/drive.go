@@ -22,7 +22,7 @@ var (
 	ErrReadWithItem = errors.New("reader returned an owned item together with an error")
 	ErrUnsupported  = errors.New("execution binding does not support this operation")
 	ErrForkTrait    = errors.New("owned fan-out requires a fork trait")
-	ErrWatermark    = errors.New("fan-in batch exceeds its timestamp watermark")
+	ErrTolerance    = errors.New("fan-in batch exceeds its timestamp tolerance")
 	ErrDomain       = errors.New("execution task requires the failure domain it and its slots report to")
 )
 
@@ -60,7 +60,7 @@ type Binding struct {
 	fanout      func([]Link, string) (Link, error)
 	buffer      func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
 	observe     func(Link, *observe.Local) (Link, error)
-	openJoiner  func(flow.Operator, int, queue.Limit, Link, *journal.Domain) ([]Link, Task, error)
+	openJoiner  func(flow.Operator, int, queue.Limit, int64, Link, *journal.Domain) ([]Link, Task, error)
 	validate    func(flow.Operator) error
 }
 
@@ -74,7 +74,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
 		fanIn:       policy,
-		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
+		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
 			if !ok {
 				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -86,7 +86,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			if policy != flow.ZipFanIn {
 				return nil, Task{}, ErrUnsupported
 			}
-			return zipJoiner(joiner, inputs, limit, in, target, owner)
+			return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
 		},
 		fanout:  fanoutFactory(out),
 		buffer:  bufferFactory(out),
@@ -283,15 +283,18 @@ func (b Binding) OpenSource(operator flow.Operator, next Link, owner *journal.Do
 	return b.openSource(operator, next, owner)
 }
 
-func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
+func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 	if b.openJoiner == nil {
 		return nil, Task{}, ErrUnsupported
+	}
+	if tolerance < 0 {
+		return nil, Task{}, ErrBinding
 	}
 	if owner == nil {
 		return nil, Task{}, ErrDomain
 	}
 	next.bind(owner)
-	return b.openJoiner(operator, inputs, limit, next, owner)
+	return b.openJoiner(operator, inputs, limit, tolerance, next, owner)
 }
 
 // Fanout groups this node's outputs. The branch slots it retains belong to

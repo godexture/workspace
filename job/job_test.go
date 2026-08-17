@@ -274,7 +274,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal("portable policy did not expand")
 	}
 	realtime, ok := PolicyFor(Realtime)
-	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}) {
+	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}) || realtime.Alignment != (AlignmentPolicy{Zip: 250 * time.Millisecond}) {
 		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
 	}
 	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192}
@@ -313,7 +313,8 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 	}
 	policy := Policy{}
 	policy.Resources.Queue.Bytes = resource.Bytes(1 << 63)
-	policy.Resources.Queue.Window = -time.Nanosecond
+	policy.Resources.Queue.Span = -time.Nanosecond
+	policy.Alignment.Zip = -time.Nanosecond
 	_, err = New(nil, nil, graph, WithPolicy(policy))
 	if err == nil {
 		t.Fatal("invalid policy was accepted")
@@ -328,7 +329,8 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 		"job.invalid-policy-continuity":     "policy.continuity",
 		"job.invalid-policy-queue-items":    "policy.resources.queue.items",
 		"job.invalid-policy-queue-bytes":    "policy.resources.queue.bytes",
-		"job.invalid-policy-queue-window":   "policy.resources.queue.window",
+		"job.invalid-policy-queue-span":     "policy.resources.queue.span",
+		"job.invalid-policy-alignment-zip":  "policy.alignment.zip",
 	}
 	items := diagnostic.ItemsOf(err)
 	if len(items) != len(want) {

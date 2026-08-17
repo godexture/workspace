@@ -32,11 +32,12 @@ type Node struct {
 }
 
 type node struct {
-	id      job.NodeID
-	shape   flow.Shape
-	binding drive.Binding
-	kind    drive.Kind
-	base    timing.Base
+	id        job.NodeID
+	shape     flow.Shape
+	binding   drive.Binding
+	kind      drive.Kind
+	base      timing.Base
+	tolerance int64
 }
 
 type edge struct {
@@ -56,8 +57,8 @@ type Template struct {
 	executable bool
 }
 
-func Compile(values []Node, connections []job.Edge, policy job.QueuePolicy) (Template, error) {
-	if len(values) == 0 || !policy.Valid() {
+func Compile(values []Node, connections []job.Edge, queuePolicy job.QueuePolicy, alignmentPolicy job.AlignmentPolicy) (Template, error) {
+	if len(values) == 0 || !queuePolicy.Valid() || !alignmentPolicy.Valid() {
 		return Template{}, ErrTopology
 	}
 	result := Template{
@@ -105,13 +106,23 @@ func Compile(values []Node, connections []job.Edge, policy job.QueuePolicy) (Tem
 		if from >= to {
 			return Template{}, ErrTopologyOrder
 		}
-		limit, err := result.edgeLimit(from, to, policy)
+		limit, err := result.edgeLimit(from, to, queuePolicy)
 		if err != nil {
 			return Template{}, err
 		}
 		result.edges[index] = edge{value: connection, from: from, to: to, limit: limit}
 		result.outgoing[from] = append(result.outgoing[from], index)
 		result.incoming[to] = append(result.incoming[to], index)
+	}
+	for index := range result.nodes {
+		if result.nodes[index].kind != drive.Joiner {
+			continue
+		}
+		tolerance, err := result.alignmentTolerance(index, alignmentPolicy)
+		if err != nil {
+			return Template{}, err
+		}
+		result.nodes[index].tolerance = tolerance
 	}
 	if missing {
 		return result, nil
@@ -138,8 +149,14 @@ func (t Template) validateFanInLimits() error {
 		base := t.nodes[t.edges[incoming[0]].from].base
 		for _, edgeIndex := range incoming[1:] {
 			edge := t.edges[edgeIndex]
-			if edge.limit != limit || limit.Time != 0 && t.nodes[edge.from].base != base {
-				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical queue limits and time bases"))
+			if edge.limit != limit {
+				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical physical queue limits"))
+			}
+			if limit.Span != 0 && t.nodes[edge.from].base != base {
+				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical time bases for queue spans"))
+			}
+			if value.tolerance != 0 && t.nodes[edge.from].base != base {
+				return errors.Join(ErrTopology, errors.New("fan-in inputs require identical time bases for zip tolerance"))
 			}
 		}
 	}
@@ -155,22 +172,44 @@ func (t Template) edgeLimit(from, to int, policy job.QueuePolicy) (queue.Limit, 
 	if measure.Size {
 		limit.Bytes = int64(policy.Bytes)
 	}
-	if !measure.Time || policy.Window == 0 {
+	if !measure.Time || policy.Span == 0 {
 		return limit, nil
 	}
 	base := t.nodes[from].base
 	if !base.Valid() {
 		return queue.Limit{}, ErrTopology
 	}
-	ticks, err := timing.MustBase(1, int64(time.Second)).Rescale(int64(policy.Window), base, timing.RoundCeil)
+	ticks, err := timing.MustBase(1, int64(time.Second)).Rescale(int64(policy.Span), base, timing.RoundCeil)
 	if err != nil {
 		return queue.Limit{}, errors.Join(ErrTopology, err)
 	}
 	if ticks < 1 {
 		ticks = 1
 	}
-	limit.Time = ticks
+	limit.Span = ticks
 	return limit, nil
+}
+
+func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (int64, error) {
+	if policy.Zip == 0 || !t.nodes[index].binding.InputMeasures().Time {
+		return 0, nil
+	}
+	incoming := t.incoming[index]
+	if len(incoming) == 0 {
+		return 0, nil
+	}
+	base := t.nodes[t.edges[incoming[0]].from].base
+	if !base.Valid() {
+		return 0, ErrTopology
+	}
+	ticks, err := timing.MustBase(1, int64(time.Second)).Rescale(int64(policy.Zip), base, timing.RoundCeil)
+	if err != nil {
+		return 0, errors.Join(ErrTopology, err)
+	}
+	if ticks < 1 {
+		ticks = 1
+	}
+	return ticks, nil
 }
 
 func (t Template) Executable() bool { return t.executable }
@@ -296,7 +335,7 @@ func (t Template) project() plan.Runtime {
 			Port:      value.binding.Input(),
 			Policy:    value.binding.FanIn(),
 			Limit:     projectLimit(limit),
-			Watermark: limit.Time,
+			Tolerance: value.tolerance,
 		}
 		for _, edgeIndex := range incoming {
 			from := t.edges[edgeIndex].value.From()
@@ -308,7 +347,7 @@ func (t Template) project() plan.Runtime {
 }
 
 func projectLimit(value queue.Limit) plan.Limit {
-	return plan.Limit{Items: value.Items, Bytes: value.Bytes, Time: value.Time}
+	return plan.Limit{Items: value.Items, Bytes: value.Bytes, Span: value.Span}
 }
 
 func cloneProjection(value plan.Runtime) plan.Runtime {

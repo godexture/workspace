@@ -1,5 +1,5 @@
 // Fan-in joins one item per input into a batch, bounded by the timestamp
-// watermark the zip policy allows.
+// tolerance the zip policy allows.
 package drive
 
 import (
@@ -15,8 +15,8 @@ import (
 	"github.com/godexture/godec/media/schema"
 )
 
-func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
-	if count < 2 {
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, tolerance int64, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
+	if count < 2 || tolerance < 0 {
 		return nil, Task{}, ErrBinding
 	}
 	traits := typ.Traits()
@@ -34,7 +34,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ, node: owner.Home()})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, watermark: limit.Time, done: make(chan struct{}), site: site}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 		state.items[index].Bind(typ, site.Reporter())
@@ -60,7 +60,7 @@ type zipState[I, O any] struct {
 	read       int
 	next       delivery[O]
 	time       func(I) (int64, bool)
-	watermark  int64
+	tolerance  int64
 	done       chan struct{}
 	site       *journal.Site
 	reachedEOF bool
@@ -122,8 +122,8 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 			}
 			s.read++
 		}
-		if !s.withinWatermark() {
-			return ErrWatermark
+		if !s.withinTolerance() {
+			return ErrTolerance
 		}
 		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
 			if isAbandoned(err) {
@@ -141,8 +141,8 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 	}
 }
 
-func (s *zipState[I, O]) withinWatermark() bool {
-	if s.watermark == 0 {
+func (s *zipState[I, O]) withinTolerance() bool {
+	if s.tolerance == 0 {
 		return true
 	}
 	minimum, maximum := int64(0), int64(0)
@@ -158,7 +158,7 @@ func (s *zipState[I, O]) withinWatermark() bool {
 			maximum = value
 		}
 	}
-	return uint64(maximum)-uint64(minimum) <= uint64(s.watermark)
+	return uint64(maximum)-uint64(minimum) <= uint64(s.tolerance)
 }
 
 // release drops whatever the joiner left behind and returns the group's slots

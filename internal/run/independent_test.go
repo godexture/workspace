@@ -58,6 +58,7 @@ func TestTwoStagesThatFailToFlushAreTwoEvents(t *testing.T) {
 			job.Connect(job.At("second", "out"), job.At("sink", "in")),
 		},
 		job.QueuePolicy{Items: 4},
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +131,7 @@ func TestTwoFanOutBranchesThatFailToFlushAreTwoEvents(t *testing.T) {
 			job.Connect(job.At("right", "out"), job.At("rightSink", "in")),
 		},
 		job.QueuePolicy{Items: 4},
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +254,7 @@ func forkType() schema.Type[int] {
 
 func flushTemplate(t testing.TB, nodes []Node, edges []job.Edge) Template {
 	t.Helper()
-	template, err := Compile(nodes, edges, job.QueuePolicy{Items: 4})
+	template, err := Compile(nodes, edges, job.QueuePolicy{Items: 4}, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

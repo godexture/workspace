@@ -61,7 +61,7 @@ func popValue[T any](ctx context.Context, queue *Queue[T], typ schema.Type[T]) (
 }
 
 func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
-	queue, err := New(Limit{Items: 4, Bytes: 7, Time: 10}, itemTraits(), &testDomain)
+	queue, err := New(Limit{Items: 4, Bytes: 7, Span: 10}, itemTraits(), &testDomain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
 		}
 	}
 	snapshot := queue.Snapshot()
-	if snapshot.Items != 2 || snapshot.Bytes != 7 || snapshot.Time != 10 {
+	if snapshot.Items != 2 || snapshot.Bytes != 7 || snapshot.Span != 10 {
 		t.Fatalf("queue snapshot = %#v", snapshot)
 	}
 
@@ -91,7 +91,7 @@ func TestQueueEnforcesItemsBytesAndTime(t *testing.T) {
 	if err := <-pushed; err != nil {
 		t.Fatal(err)
 	}
-	if got := queue.Snapshot(); got.Items != 2 || got.Bytes != 5 || got.Time != 5 {
+	if got := queue.Snapshot(); got.Items != 2 || got.Bytes != 5 || got.Span != 5 {
 		t.Fatalf("queue after unblock = %#v", got)
 	}
 }
@@ -230,14 +230,14 @@ func TestQueueRejectsUnavailableOrInvalidLimitTraits(t *testing.T) {
 	if _, err := New(Limit{Items: 1, Bytes: 1}, itemType(schema.Traits[item]{}), &testDomain); !errors.Is(err, ErrSizeTrait) {
 		t.Fatalf("missing size trait error = %v", err)
 	}
-	if _, err := New(Limit{Items: 1, Time: 1}, itemType(schema.Traits[item]{}), &testDomain); !errors.Is(err, ErrTimeTrait) {
+	if _, err := New(Limit{Items: 1, Span: 1}, itemType(schema.Traits[item]{}), &testDomain); !errors.Is(err, ErrTimeTrait) {
 		t.Fatalf("missing time trait error = %v", err)
 	}
 	queue, _ := New(Limit{Items: 1, Bytes: 1}, itemType(schema.Traits[item]{Size: func(item) int { return -1 }}), &testDomain)
 	if err := pushValue(context.Background(), queue, itemTraits(), item{}); !errors.Is(err, ErrInvalidSize) {
 		t.Fatalf("invalid size error = %v", err)
 	}
-	queue, _ = New(Limit{Items: 1, Time: 1}, itemType(schema.Traits[item]{Time: func(item) (int64, bool) { return 0, false }}), &testDomain)
+	queue, _ = New(Limit{Items: 1, Span: 1}, itemType(schema.Traits[item]{Time: func(item) (int64, bool) { return 0, false }}), &testDomain)
 	if err := pushValue(context.Background(), queue, itemTraits(), item{}); !errors.Is(err, ErrUnknownTime) {
 		t.Fatalf("unknown time error = %v", err)
 	}

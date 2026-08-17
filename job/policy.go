@@ -111,25 +111,31 @@ type ResourcePolicy struct {
 	SpoolStorage  access.SpoolStorage
 }
 
-// QueuePolicy selects the per-edge bounds fixed into the executable Plan.
-// Bytes and Window are applied only when the connected schema supplies the
-// corresponding inexpensive trait. Window is converted to stream-local ticks
-// during planning, never in the item loop. In M5 it also supplies the
-// fail-closed timestamp tolerance for zip fan-in; that semantic alignment
-// tolerance is scheduled to become a separate policy in M7.
+// QueuePolicy selects the per-edge physical bounds fixed into the executable
+// Plan. Bytes and Span are applied only when the connected schema supplies the
+// corresponding inexpensive trait. Span is converted to stream-local ticks
+// during planning, never in the item loop.
 type QueuePolicy struct {
-	Items  int
-	Bytes  resource.Bytes
-	Window time.Duration
+	Items int
+	Bytes resource.Bytes
+	Span  time.Duration
 }
 
 func (p QueuePolicy) Valid() bool {
-	return p.validItems() && p.validBytes() && p.validWindow()
+	return p.validItems() && p.validBytes() && p.validSpan()
 }
 
-func (p QueuePolicy) validItems() bool  { return p.Items > 0 }
-func (p QueuePolicy) validBytes() bool  { return uint64(p.Bytes) <= math.MaxInt64 }
-func (p QueuePolicy) validWindow() bool { return p.Window >= 0 }
+func (p QueuePolicy) validItems() bool { return p.Items > 0 }
+func (p QueuePolicy) validBytes() bool { return uint64(p.Bytes) <= math.MaxInt64 }
+func (p QueuePolicy) validSpan() bool  { return p.Span >= 0 }
+
+// AlignmentPolicy selects semantic timestamp tolerances for fan-in policies.
+// A zero value disables zip alignment tolerance.
+type AlignmentPolicy struct {
+	Zip time.Duration
+}
+
+func (p AlignmentPolicy) Valid() bool { return p.Zip >= 0 }
 
 func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validSpool() }
 
@@ -150,6 +156,7 @@ type Policy struct {
 	Artifact       ArtifactPolicy
 	Implementation ImplementationPolicy
 	Continuity     ContinuityPolicy
+	Alignment      AlignmentPolicy
 	Resources      ResourcePolicy
 }
 
@@ -186,8 +193,11 @@ func (p Policy) diagnostics() (items []diagnostic.Item) {
 	if !queue.validBytes() {
 		items = append(items, policyDiagnostic("job.invalid-policy-queue-bytes", "queue byte limit exceeds the runtime range", "resources", "queue", "bytes"))
 	}
-	if !queue.validWindow() {
-		items = append(items, policyDiagnostic("job.invalid-policy-queue-window", "queue window must not be negative", "resources", "queue", "window"))
+	if !queue.validSpan() {
+		items = append(items, policyDiagnostic("job.invalid-policy-queue-span", "queue span must not be negative", "resources", "queue", "span"))
+	}
+	if !p.Alignment.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-alignment-zip", "zip alignment tolerance must not be negative", "alignment", "zip"))
 	}
 	if !p.Resources.validSpool() {
 		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, and neither when disabled", "resources", "spool"))
@@ -210,6 +220,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Artifact:       ArtifactNone,
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
+		Alignment:      AlignmentPolicy{},
 		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}},
 	}
 	switch preset {
@@ -221,7 +232,8 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		policy.Implementation = ImplementationPolicy{PureGo: true}
 	case Realtime:
 		policy.Goal = LatencyGoal
-		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}
+		policy.Alignment = AlignmentPolicy{Zip: 250 * time.Millisecond}
+		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}
 	default:
 		return Policy{}, false
 	}

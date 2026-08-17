@@ -335,7 +335,7 @@ func TestBufferedLinkDrainsInOrderAndClosesDownstream(t *testing.T) {
 	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
 	sinkLink, _ := NewSink("in", typ).OpenSink(sink)
 	ledger := journal.NewLedger()
-	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2, Bytes: 2, Time: 10}, sinkLink, ledger.Domain("edge", "edge"))
+	buffered, bufferTask, err := NewSource("out", typ).Buffer(queue.Limit{Items: 2, Bytes: 2, Span: 10}, sinkLink, ledger.Domain("edge", "edge"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestAbortedJoinDoesNotFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, owner := testOwner("join")
-	_, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sink, owner)
+	_, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 0, sink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +694,7 @@ func TestZipJoinerUsesConnectionOrderAndRuntimeOwnsBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger, owner := testOwner("join")
-	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 0, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,7 +768,7 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 	}
 	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
 	ledger, owner := testOwner("join")
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 0, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -807,7 +807,7 @@ func TestZipReportsAFailedReleaseBetweenBatches(t *testing.T) {
 	}
 }
 
-func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
+func TestZipJoinerEnforcesTimestampTolerance(t *testing.T) {
 	inputOwners := &ownership{}
 	outputOwners := &ownership{}
 	in := ownedSchema[driveInputID](inputOwners)
@@ -823,7 +823,11 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, owner := testOwner("join")
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2, Time: 5}, sinkLink, owner)
+	binding := NewJoiner("in", in, flow.ZipFanIn, "out", out)
+	if _, _, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2}, -1, sinkLink, owner); !errors.Is(err, ErrBinding) {
+		t.Fatalf("negative tolerance error = %v", err)
+	}
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 2, Span: 1}, 5, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -842,12 +846,12 @@ func TestZipJoinerEnforcesTimestampWatermark(t *testing.T) {
 	if err := right.Emit(context.Background(), &rightItem); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, ErrWatermark) {
-		t.Fatalf("watermark error = %v", err)
+	if err := <-result; !errors.Is(err, ErrTolerance) {
+		t.Fatalf("tolerance error = %v", err)
 	}
 	task.Discard()
 	if inputOwners.drops.Load() != 2 {
-		t.Fatalf("watermark input drops = %d", inputOwners.drops.Load())
+		t.Fatalf("tolerance input drops = %d", inputOwners.drops.Load())
 	}
 }
 
@@ -878,7 +882,7 @@ func TestAPanickingJoinDoesNotReportABarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, owner := testOwner("join")
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(&panickingJoiner{operatorBase{joinShape}}, 2, queue.Limit{Items: 2}, sinkLink, owner)
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(&panickingJoiner{operatorBase{joinShape}}, 2, queue.Limit{Items: 2}, 0, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -938,7 +942,7 @@ func TestAJoinThatCannotReleaseItsLastBatchDoesNotQuiesce(t *testing.T) {
 	}
 	joiner := &sumJoiner{operatorBase: operatorBase{joinShape}, output: out}
 	ledger, owner := testOwner("join")
-	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, sinkLink, owner)
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).OpenJoiner(joiner, 2, queue.Limit{Items: 2}, 0, sinkLink, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -989,7 +993,7 @@ func TestJoinerRejectsPolicyMismatchAndUnsupportedExecution(t *testing.T) {
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
 	sinkLink, _ := NewSink("in", out).OpenSink(&recordingWriter{operatorBase: operatorBase{sinkShape}})
 	_, latestOwner := testOwner("join")
-	if _, _, err := latest.OpenJoiner(joiner, 2, queue.Limit{Items: 1}, sinkLink, latestOwner); !errors.Is(err, ErrUnsupported) {
+	if _, _, err := latest.OpenJoiner(joiner, 2, queue.Limit{Items: 1}, 0, sinkLink, latestOwner); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("unsupported policy = %v", err)
 	}
 }

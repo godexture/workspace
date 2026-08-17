@@ -81,6 +81,7 @@ func bufferedProcessorTemplate(t testing.TB, typ schema.Type[int]) (Template, fl
 			job.Connect(job.At("proc", "out"), job.At("sink", "in")),
 		},
 		job.QueuePolicy{Items: 2},
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +152,7 @@ func TestTwoIndependentTaskFailuresBothReachTheLedger(t *testing.T) {
 			job.Connect(job.At("join", "out"), job.At("sink", "in")),
 		},
 		job.QueuePolicy{Items: 4},
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)

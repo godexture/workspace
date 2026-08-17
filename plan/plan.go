@@ -331,7 +331,7 @@ func validateRuntime(runtime Runtime, nodes map[string]struct{}, edges []Edge) e
 	}
 	fanInPorts := make(map[string]struct{}, len(runtime.FanIns))
 	for _, fanIn := range runtime.FanIns {
-		if fanIn.Node == "" || fanIn.Port == "" || !fanIn.Policy.Valid() || len(fanIn.Connections) < 2 || !fanIn.Limit.Valid() || fanIn.Watermark < 0 {
+		if fanIn.Node == "" || fanIn.Port == "" || !fanIn.Policy.Valid() || len(fanIn.Connections) < 2 || !fanIn.Limit.Valid() || fanIn.Tolerance < 0 {
 			return errors.New("plan contains an invalid fan-in projection")
 		}
 		if _, exists := nodes[fanIn.Node]; !exists {

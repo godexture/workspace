@@ -192,7 +192,7 @@ MP4 `ilst` vocabulary mapping、generic loss DTO、Plan/Result の predicted/act
 
 finite graph seek、preroll/reset、Result projection は MP4 と移行後の MP3/FLAC/decoder path が揃う M8 で確定する。M7 の MP4 sample index は remux にだけ使い、seek placeholder API を作らない。
 
-`QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。M7 の DTS merge は Zip alignment を使わず、finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
+M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。M7 の DTS merge は Zip alignment を使わず、finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
 
 ## Deferred without blocking the first implementation
 

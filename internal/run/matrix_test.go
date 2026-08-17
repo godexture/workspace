@@ -259,6 +259,7 @@ var matrixTopologies = []matrixTopology{
 				},
 				[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -287,6 +288,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("second", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -315,6 +317,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("source", "out"), job.At("right", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -345,6 +348,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("join", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -376,6 +380,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("keep", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)

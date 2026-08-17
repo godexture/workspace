@@ -67,6 +67,7 @@ func perfChain(t testing.TB, values []int) (*journal.Ledger, *Execution, *perfCo
 			job.Connect(job.At("second", "out"), job.At("sink", "in")),
 		},
 		job.QueuePolicy{Items: 8},
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)

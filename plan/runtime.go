@@ -28,10 +28,10 @@ func (r BufferReason) Has(value BufferReason) bool {
 type Limit struct {
 	Items int
 	Bytes int64
-	Time  int64
+	Span  int64
 }
 
-func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Time >= 0 }
+func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Span >= 0 }
 
 // Island is one maximal synchronous execution region. Source and sink I/O
 // appear as single-node islands; adjacent Processor nodes share one island.
@@ -57,14 +57,14 @@ type Connection struct {
 }
 
 // FanIn records deterministic connection order, local buffering, and the
-// watermark selected for one many-input port.
+// timestamp tolerance selected for one many-input port.
 type FanIn struct {
 	Node        string
 	Port        string
 	Policy      flow.FanInPolicy
 	Connections []Connection
 	Limit       Limit
-	Watermark   int64
+	Tolerance   int64
 }
 
 // Runtime is the inert projection of private Program specialization.

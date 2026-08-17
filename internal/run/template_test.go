@@ -222,7 +222,7 @@ func TestCompileFusesMaximalLinearProcessorIsland(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := Compile(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 		job.Connect(job.At("a", "out"), job.At("join", "in")),
 		job.Connect(job.At("join", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := Compile(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 	}
 }
 
-func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
+func TestCompileSelectsTraitAwareQueueLimitsAndFanInTolerance(t *testing.T) {
 	type timedID struct{}
 	typ := schema.Define[timedID](schema.Traits[int]{
 		Size: func(int) int { return 8 },
@@ -282,22 +282,44 @@ func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
 		{ID: "join", Shape: joinShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Execution: drive.NewJoiner("in", typ, flow.ZipFanIn, "out", typ)},
 		{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
 	}
-	template, err := Compile(nodes, []job.Edge{
+	edges := []job.Edge{
 		job.Connect(job.At("a", "out"), job.At("join", "in")),
 		job.Connect(job.At("b", "out"), job.At("join", "in")),
 		job.Connect(job.At("join", "out"), job.At("sink", "in")),
-	}, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Window: 250 * time.Millisecond})
+	}
+	template, err := Compile(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Span: 250 * time.Millisecond}, job.AlignmentPolicy{Zip: 250 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := template.Projection()
-	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Watermark != 250 {
-		t.Fatalf("fan-in watermark = %#v", runtime.FanIns)
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 250 {
+		t.Fatalf("fan-in tolerance = %#v", runtime.FanIns)
 	}
 	for _, buffer := range runtime.Buffers {
-		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20, Time: 250}) {
+		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20, Span: 250}) {
 			t.Fatalf("buffer limit = %#v", buffer.Limit)
 		}
+	}
+	template, err = Compile(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20}, job.AlignmentPolicy{Zip: 250 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime = template.Projection()
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 250 {
+		t.Fatalf("fan-in tolerance without queue span = %#v", runtime.FanIns)
+	}
+	for _, buffer := range runtime.Buffers {
+		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20}) {
+			t.Fatalf("buffer limit without queue span = %#v", buffer.Limit)
+		}
+	}
+	template, err = Compile(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Span: 250 * time.Millisecond}, job.AlignmentPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime = template.Projection()
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 0 {
+		t.Fatalf("fan-in tolerance without alignment policy = %#v", runtime.FanIns)
 	}
 }
 
@@ -307,9 +329,31 @@ func TestCompileRejectsNodesOutsideTopologicalOrder(t *testing.T) {
 	_, err := Compile([]Node{
 		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateInput)},
 		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
-	}, []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}, templateQueue)
+	}, []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}, templateQueue, job.AlignmentPolicy{})
 	if !errors.Is(err, ErrTopologyOrder) {
 		t.Fatalf("topological order error = %v", err)
+	}
+}
+
+func TestCompileRejectsNegativeAlignmentTolerance(t *testing.T) {
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)
+	nodes := []Node{
+		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
+		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateInput)},
+	}
+	edges := []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}
+	if _, err := Compile(nodes, edges, templateQueue, job.AlignmentPolicy{}); err != nil {
+		t.Fatalf("valid alignment policy rejected valid graph: %v", err)
+	}
+	_, err := Compile(
+		nodes,
+		edges,
+		templateQueue,
+		job.AlignmentPolicy{Zip: -time.Nanosecond},
+	)
+	if !errors.Is(err, ErrTopology) {
+		t.Fatalf("negative alignment tolerance error = %v", err)
 	}
 }
 
@@ -321,6 +365,7 @@ func TestCompileKeepsPlanningOnlyGraphNonExecutable(t *testing.T) {
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +391,7 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := Compile(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,6 +432,7 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 			job.Connect(job.At("panic", "out"), job.At("sink", "in")),
 		},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -420,6 +466,7 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 			},
 			[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 			templateQueue,
+			job.AlignmentPolicy{},
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -607,6 +654,7 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)

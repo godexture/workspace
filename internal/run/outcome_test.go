@@ -44,6 +44,7 @@ func linearTemplate(t testing.TB, typ schema.Type[int], policy job.QueuePolicy) 
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		policy,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +228,7 @@ func TestARetainedPayloadReleasedAfterRunIsStillCollected(t *testing.T) {
 					job.Connect(job.At("keep", "out"), job.At("sink", "in")),
 				},
 				templateQueue,
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -332,6 +334,7 @@ func TestABoundedEdgesOwnFlushFailureSurfacesUnderTheFlushOperation(t *testing.T
 			job.Connect(job.At("proc", "out"), job.At("sink", "in")),
 		},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
