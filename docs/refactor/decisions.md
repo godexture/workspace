@@ -168,31 +168,31 @@ media 領域を `media/` 配下へ置き、それ以外は root に置く。単�
 
 ### C22. multi-stream identity は compiled edge に属する
 
-stream identity は inspected `stream.Descriptor` と compiled edge が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
+stream identity は ordered repeated `stream.Descriptor` と private compiled connection が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
 
-dynamic port は Inspect 後に得た immutable prepared fact からのみ Shape する。`ShapeContext` と `CompileContext` は同一の typed prepared value を読む。実行 topology は typed `Router` と typed `Merger` で増やし、item ごとの reflection、port string lookup、`any` を使う multiplexing/route map を導入しない。
+Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router が ordinal で一つへ dispatch する。ordered merge は新しい public Merger ではなく既存 `flow.Joiner` の `MergeFanIn` execution とする。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
 
 ### C23. mapping は Inspect 後に解決し、保存を既定にする
 
-Job の selector は input choice、canonical stream ID、open schema ID、format-specific typed language/disposition property を表す。closed media role enum や任意 function/predicate は入れない。selector は Inspect 後に canonical ID へ決定的に解決し、明示されない zero/many match は diagnostic とする。
+M7 の明示 mapping は input index、canonical stream ID、output indexを持つ exact `job.MapStream` に限定する。rich selector、language/disposition query、任意 function/predicate は surface consumer が現れる M9 まで追加しない。
 
-入力一つ・出力一つで mapping を省略した場合は eligible track を Inspect order のまま全て map する。複数 input または複数 output で mapping を省略した場合は ambiguity とする。無指定の既定は copy/remux を優先し、codec Binding のない track は raw copy に残す。変換を要求した unbound codec と、target に表せない明示 selected track だけを Compile error にする。
+入力一つ・出力一つで mapping を省略した場合は eligible track を Inspect order のまま全て map する。無指定の既定は copy/remux を優先し、codec Binding のない track は raw copy に残す。変換を要求した unbound codec、存在しない stream、target に表せない明示 selected track は Planning error とする。
 
-### C24. MP4 の I/O alternative と exact boundary を明示する
+### C24. MP4 の I/O slice と exact boundary を明示する
 
-moov-first MP4 input は sequential read を許容するが、moov-after-mdat/index/seek は RandomRead を要する。sequential sink は fragmented MP4、non-fragmented output は RandomWrite を選ぶ。spool は explicit policy と quota/storage がある finite job の capability alternative であり、preset が暗黙に有効化しない。mode、capability、spool effect は Plan に残す。
+M7 の MP4 vertical slice は unfragmented RandomRead+StableSize input と RandomWrite output だけを扱う。sequential/fragmented mode と spool alternative は stdin/stdout、remote、streaming consumer が現れる M9 まで追加しない。選択 capability と mode は既存 Plan boundary に残す。
 
-unchanged same-format remux だけが narrow immutable provenance により raw box/sample entry/metadata carrier を再利用できる。MP4 lossless exact は selected sample payload、PTS/DTS/duration、track/mapping order、preservable `ilst`、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、再生成する既知 box の全体順、offset、interleave、fragment boundary は含まない。保持不能な raw data は必ず loss report に残す。
+unchanged same-format remux だけが narrow immutable provenance により raw box/sample entry/metadata carrier を再利用できる。MP4 lossless exact は selected sample payload、PTS/DTS/duration、track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、再生成する既知 box の全体順、offset、interleave は含まない。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
 
-### C25. metadata loss は Plan と Result で分離する
+### C25. metadata loss API は実 encoding consumer まで延期する
 
-M7 の最初の metadata encoding consumer は MP4 `ilst` である。RIFF INFO と `ilst` の間では declared `metadata.Mapping` だけを使う。Plan は予測 loss、Result は actual loss を持つ。strict metadata policy は予測可能な loss を Planning で、runtime にしか判明しない loss を output commit 前に失敗にする。RF64 `JUNK` reservation loss もこの report の consumer とする。
+MP4 `ilst` vocabulary mapping、generic loss DTO、Plan/Result の predicted/actual loss 分離、strict metadata policy は M8 の metadata encoding consumer と同時に確定する。M7 は unchanged raw metadata carrier を narrow provenance で保持し、default path で保持不能なら失敗する。placeholder DTO や空の strict policy は追加しない。
 
-### C26. finite MP4 seek と queue span を分離する
+### C26. finite seek を延期し、queue span と Zip alignment を分離する
 
-seek は finite MP4 graph operation とする。PCM は target sample へ exact、raw video/subtitle/data は直前 sync sample へ seek し、output timestamp は seek point から zero に rebase する。requested と actual start の差、reset、replay を Plan/Result に記録する。
+finite graph seek、preroll/reset、Result projection は MP4 と移行後の MP3/FLAC/decoder path が揃う M8 で確定する。M7 の MP4 sample index は remux にだけ使い、seek placeholder API を作らない。
 
-`QueuePolicy.Window` が兼ねていた physical queue span と media alignment semantics は分ける。M7 の DTS merge は finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
+`QueuePolicy.Window` が兼ねていた physical queue span と Zip alignment semantics は分ける。physical limit は `Span`、Zip tolerance は別の alignment field/Plan projection とする。M7 の DTS merge は Zip alignment を使わず、finite offline として non-EOF input を待機し、invalid order を fail-closed にする。late/drop/conceal は M9 の realtime consumer まで追加しない。
 
 ## Deferred without blocking the first implementation
 
