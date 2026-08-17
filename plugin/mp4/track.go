@@ -8,71 +8,70 @@ import (
 	"github.com/godexture/godec/access"
 )
 
-func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) ([]track, []anchor, error) {
-	var tracks []track
-	var anchors []anchor
-	trackIDs := make(map[uint32]struct{})
+func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) ([]track, box, error) {
+	var movieHead box
 	var haveHeader bool
+	var trackCount uint64
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
 		switch child.typeID {
 		case typeMVHD:
 			if haveHeader {
 				return fmt.Errorf("%w: mvhd is repeated", errMalformedMovie)
 			}
-			raw, err := preserveRaw(ctx, reader, child, budget, "mvhd")
-			if err != nil {
+			if err := validateMovieHeader(ctx, reader, child); err != nil {
 				return err
 			}
-			data, err := rawPayload(raw, child, "mvhd")
-			if err != nil {
-				return err
-			}
-			if err := parseMovieHeader(data); err != nil {
-				return err
-			}
-			anchors = append(anchors, anchor{typeID: child.typeID, index: 0, raw: raw})
+			movieHead = child
 			haveHeader = true
 		case typeTRAK:
-			if err := budget.reserve(trackBudgetBytes, "track model"); err != nil {
-				return err
+			if trackCount == ^uint64(0) {
+				return fmt.Errorf("%w: track count overflows", errMalformedMovie)
 			}
-			parsed, err := parseTrack(ctx, reader, sourceEnd, child, budget)
-			if err != nil {
-				return err
-			}
-			if _, exists := trackIDs[parsed.id]; exists {
-				return fmt.Errorf("%w: track ID %d is repeated", errMalformedMovie, parsed.id)
-			}
-			trackIDs[parsed.id] = struct{}{}
-			if err := budget.reserve(anchorBudgetBytes, "moov track anchor"); err != nil {
-				return err
-			}
-			anchors = append(anchors, anchor{typeID: child.typeID, index: len(tracks)})
-			tracks = append(tracks, parsed)
+			trackCount++
 		case typeMVEX, typeMOOF:
 			return fmt.Errorf("%w: fragmented movie boxes are not supported", errUnsupportedMovie)
 		case typeEDTS, typeELST:
 			return fmt.Errorf("%w: edit lists are not supported", errUnsupportedMovie)
-		default:
-			raw, err := preserveRaw(ctx, reader, child, budget, "moov child")
-			if err != nil {
-				return err
-			}
-			anchors = append(anchors, anchor{typeID: child.typeID, index: -1, raw: raw})
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, box{}, err
 	}
-	if !haveHeader || len(tracks) == 0 {
-		return nil, nil, fmt.Errorf("%w: moov requires mvhd and one trak", errMalformedMovie)
+	if !haveHeader || trackCount == 0 {
+		return nil, box{}, fmt.Errorf("%w: moov requires mvhd and one trak", errMalformedMovie)
 	}
-	return tracks, anchors, nil
+	if trackCount > uint64(^uint(0)>>1) {
+		return nil, box{}, fmt.Errorf("%w: track count exceeds runtime range", errUnsupportedMovie)
+	}
+	if err := budget.reserveTracks(trackCount); err != nil {
+		return nil, box{}, err
+	}
+	tracks := make([]track, 0, int(trackCount))
+	trackIDs := make(map[uint32]struct{}, trackCount)
+	err = scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
+		if child.typeID != typeTRAK {
+			return nil
+		}
+		parsed, err := parseTrack(ctx, reader, sourceEnd, child)
+		if err != nil {
+			return err
+		}
+		if _, exists := trackIDs[parsed.id]; exists {
+			return fmt.Errorf("%w: track ID %d is repeated", errMalformedMovie, parsed.id)
+		}
+		trackIDs[parsed.id] = struct{}{}
+		tracks = append(tracks, parsed)
+		return nil
+	})
+	if err != nil {
+		return nil, box{}, err
+	}
+	return tracks, movieHead, nil
 }
 
-func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) (track, error) {
-	var result track
+func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (track, error) {
+	result := track{trak: value}
 	var haveHeader, haveMedia bool
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
 		switch child.typeID {
@@ -80,51 +79,24 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 			if haveHeader {
 				return fmt.Errorf("%w: tkhd is repeated", errMalformedMovie)
 			}
-			raw, err := readRawBox(ctx, reader, child, budget, "tkhd")
-			if err != nil {
-				return err
-			}
-			data, err := rawPayload(raw, child, "tkhd")
-			if err != nil {
-				return err
-			}
-			id, err := parseTrackID(data)
+			id, err := readTrackID(ctx, reader, child)
 			if err != nil {
 				return err
 			}
 			result.id = id
-			result.trackHeader = raw
-			if err := budget.reserve(anchorBudgetBytes, "trak anchor"); err != nil {
-				return err
-			}
-			result.anchors = append(result.anchors, anchor{typeID: child.typeID, index: 0})
+			result.trackHead = child
 			haveHeader = true
 		case typeMDIA:
 			if haveMedia {
 				return fmt.Errorf("%w: mdia is repeated", errMalformedMovie)
 			}
-			if err := parseMedia(ctx, reader, sourceEnd, child, budget, &result); err != nil {
+			if err := parseMedia(ctx, reader, sourceEnd, child, &result); err != nil {
 				return err
 			}
-			if err := budget.reserve(anchorBudgetBytes, "trak anchor"); err != nil {
-				return err
-			}
-			result.anchors = append(result.anchors, anchor{typeID: child.typeID, index: 0})
 			haveMedia = true
 		case typeEDTS:
-			raw, err := preserveRaw(ctx, reader, child, budget, "edts")
-			if err != nil {
-				return err
-			}
-			result.anchors = append(result.anchors, anchor{typeID: child.typeID, index: -1, raw: raw})
 		case typeELST:
 			return fmt.Errorf("%w: elst outside edts", errUnsupportedMovie)
-		default:
-			raw, err := preserveRaw(ctx, reader, child, budget, "trak child")
-			if err != nil {
-				return err
-			}
-			result.anchors = append(result.anchors, anchor{typeID: child.typeID, index: -1, raw: raw})
 		}
 		return nil
 	})
@@ -135,6 +107,21 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 		return track{}, fmt.Errorf("%w: trak requires tkhd and mdia", errMalformedMovie)
 	}
 	return result, nil
+}
+
+func readTrackID(ctx context.Context, reader access.Random, value box) (uint32, error) {
+	var prefix [96]byte
+	if err := readBoxPrefix(ctx, reader, value, prefix[:1], "tkhd"); err != nil {
+		return 0, err
+	}
+	length := 84
+	if prefix[0] == 1 {
+		length = 96
+	}
+	if err := readBoxPrefix(ctx, reader, value, prefix[:length], "tkhd"); err != nil {
+		return 0, err
+	}
+	return parseTrackID(prefix[:length])
 }
 
 func parseTrackID(data []byte) (uint32, error) {
@@ -165,7 +152,8 @@ func parseTrackID(data []byte) (uint32, error) {
 	}
 }
 
-func parseMedia(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget, result *track) error {
+func parseMedia(ctx context.Context, reader access.Random, sourceEnd uint64, value box, result *track) error {
+	result.media = value
 	var haveHeader, haveHandler, haveInfo bool
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
 		switch child.typeID {
@@ -173,45 +161,29 @@ func parseMedia(ctx context.Context, reader access.Random, sourceEnd uint64, val
 			if haveHeader {
 				return fmt.Errorf("%w: mdhd is repeated", errMalformedMovie)
 			}
-			raw, err := readRawBox(ctx, reader, child, budget, "mdhd")
-			if err != nil {
-				return err
-			}
-			data, err := rawPayload(raw, child, "mdhd")
-			if err != nil {
-				return err
-			}
-			timeScale, err := parseTimeScale(data)
+			timeScale, err := readTimeScale(ctx, reader, child)
 			if err != nil {
 				return err
 			}
 			result.timeScale = timeScale
-			result.mediaHeader = raw
+			result.mediaHead = child
 			haveHeader = true
 		case typeHDLR:
 			if haveHandler {
 				return fmt.Errorf("%w: hdlr is repeated", errMalformedMovie)
 			}
-			raw, err := readRawBox(ctx, reader, child, budget, "hdlr")
-			if err != nil {
-				return err
-			}
-			data, err := rawPayload(raw, child, "hdlr")
-			if err != nil {
-				return err
-			}
-			handler, err := parseHandler(data)
+			handler, err := readHandler(ctx, reader, child)
 			if err != nil {
 				return err
 			}
 			result.handler = handler
-			result.handlerHeader = raw
+			result.handlerBox = child
 			haveHandler = true
 		case typeMINF:
 			if haveInfo {
 				return fmt.Errorf("%w: minf is repeated", errMalformedMovie)
 			}
-			if err := parseMediaInfo(ctx, reader, sourceEnd, child, budget, result); err != nil {
+			if err := parseMediaInfo(ctx, reader, sourceEnd, child, result); err != nil {
 				return err
 			}
 			haveInfo = true
@@ -229,6 +201,21 @@ func parseMedia(ctx context.Context, reader access.Random, sourceEnd uint64, val
 		return fmt.Errorf("%w: mdia requires mdhd, hdlr, and minf", errMalformedMovie)
 	}
 	return nil
+}
+
+func readTimeScale(ctx context.Context, reader access.Random, value box) (uint32, error) {
+	var prefix [36]byte
+	if err := readBoxPrefix(ctx, reader, value, prefix[:1], "mdhd"); err != nil {
+		return 0, err
+	}
+	length := 24
+	if prefix[0] == 1 {
+		length = 36
+	}
+	if err := readBoxPrefix(ctx, reader, value, prefix[:length], "mdhd"); err != nil {
+		return 0, err
+	}
+	return parseTimeScale(prefix[:length])
 }
 
 func parseTimeScale(data []byte) (uint32, error) {
@@ -256,6 +243,14 @@ func parseTimeScale(data []byte) (uint32, error) {
 	return timeScale, nil
 }
 
+func readHandler(ctx context.Context, reader access.Random, value box) (boxType, error) {
+	var prefix [24]byte
+	if err := readBoxPrefix(ctx, reader, value, prefix[:], "hdlr"); err != nil {
+		return boxType{}, err
+	}
+	return parseHandler(prefix[:])
+}
+
 func parseHandler(data []byte) (boxType, error) {
 	if len(data) < 24 {
 		return boxType{}, fmt.Errorf("%w: hdlr is shorter than 24 bytes", errMalformedMovie)
@@ -266,7 +261,8 @@ func parseHandler(data []byte) (boxType, error) {
 	return boxType(data[8:12]), nil
 }
 
-func parseMediaInfo(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget, result *track) error {
+func parseMediaInfo(ctx context.Context, reader access.Random, sourceEnd uint64, value box, result *track) error {
+	result.mediaInfo = value
 	var haveHeader, haveDataInfo, haveSampleTable bool
 	var dataInfo, sampleTable box
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
@@ -275,11 +271,7 @@ func parseMediaInfo(ctx context.Context, reader access.Random, sourceEnd uint64,
 			if haveHeader {
 				return fmt.Errorf("%w: minf media header is repeated", errMalformedMovie)
 			}
-			raw, err := readRawBox(ctx, reader, child, budget, "minf media header")
-			if err != nil {
-				return err
-			}
-			result.mediaInfo = raw
+			result.mediaInfo = child
 			haveHeader = true
 		case typeDINF:
 			if haveDataInfo {
@@ -304,22 +296,20 @@ func parseMediaInfo(ctx context.Context, reader access.Random, sourceEnd uint64,
 	if !haveHeader || !haveDataInfo || !haveSampleTable {
 		return fmt.Errorf("%w: minf requires media header, dinf, and stbl", errMalformedMovie)
 	}
-	count, raw, err := parseDataInfo(ctx, reader, sourceEnd, dataInfo, budget)
+	count, err := parseDataInfo(ctx, reader, sourceEnd, dataInfo)
 	if err != nil {
 		return err
 	}
-	result.dataInfo = raw
-	return parseSampleTable(ctx, reader, sourceEnd, sampleTable, budget, result, count)
+	result.dataInfo = dataInfo
+	result.dataReferences = count
+	result.sampleBox = sampleTable
+	return parseSampleTable(ctx, reader, sourceEnd, sampleTable, result, count)
 }
 
-func parseDataInfo(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) (uint32, []byte, error) {
-	raw, err := readRawBox(ctx, reader, value, budget, "dinf")
-	if err != nil {
-		return 0, nil, err
-	}
+func parseDataInfo(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (uint32, error) {
 	var count uint32
 	var found bool
-	err = scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
+	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
 		if child.typeID != typeDREF {
 			return fmt.Errorf("%w: dinf child %q", errUnsupportedMovie, child.typeID)
 		}
@@ -335,12 +325,12 @@ func parseDataInfo(ctx context.Context, reader access.Random, sourceEnd uint64, 
 		return nil
 	})
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
 	if !found {
-		return 0, nil, fmt.Errorf("%w: dinf has no dref", errMalformedMovie)
+		return 0, fmt.Errorf("%w: dinf has no dref", errMalformedMovie)
 	}
-	return count, raw, nil
+	return count, nil
 }
 
 func parseDataReferences(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (uint32, error) {
@@ -351,7 +341,7 @@ func parseDataReferences(ctx context.Context, reader access.Random, sourceEnd ui
 	if prefix[0] != 0 || prefix[1] != 0 || prefix[2] != 0 || prefix[3] != 0 {
 		return 0, fmt.Errorf("%w: dref full-box header", errUnsupportedMovie)
 	}
-	want := binary.BigEndian.Uint32(prefix[4:8])
+	want := binary.BigEndian.Uint32(prefix[4:])
 	if want == 0 {
 		return 0, fmt.Errorf("%w: dref has no entries", errMalformedMovie)
 	}

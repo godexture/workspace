@@ -12,73 +12,59 @@ import (
 )
 
 func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, readLimit, memoryLimit resource.Bytes) (movie, error) {
-	if reader == nil || readLimit == 0 || memoryLimit == 0 {
+	if reader == nil || sourceEnd == 0 || readLimit == 0 || memoryLimit == 0 {
 		return movie{}, fmt.Errorf("%w: parser input is invalid", errMalformedMovie)
 	}
-	budget := newMovieBudget(readLimit, memoryLimit)
+	inspection := newInspectReader(reader, readLimit)
+	budget := newMovieBudget(memoryLimit)
 	var result movie
-	var haveFileType, haveMovie bool
-	err := scanTopLevelBoxes(ctx, reader, sourceEnd, func(value box) error {
+	result.sourceEnd = sourceEnd
+	var haveFileType, haveMovie, haveMedia bool
+	err := scanTopLevelBoxes(ctx, inspection, sourceEnd, func(value box) error {
 		switch value.typeID {
 		case typeFTYP:
 			if haveFileType {
 				return fmt.Errorf("%w: ftyp is repeated", errMalformedMovie)
 			}
-			fileType, err := parseFileType(ctx, reader, value, &budget)
+			fileType, err := parseFileType(ctx, inspection, value)
 			if err != nil {
 				return err
 			}
-			if err := budget.reserve(anchorBudgetBytes, "top-level anchor"); err != nil {
-				return err
-			}
 			result.fileType = fileType
+			result.fileBox = value
 			haveFileType = true
-			result.top = append(result.top, anchor{typeID: value.typeID, index: 0})
 		case typeMOOV:
 			if haveMovie {
 				return fmt.Errorf("%w: moov is repeated", errMalformedMovie)
 			}
-			tracks, anchors, err := parseMoov(ctx, reader, sourceEnd, value, &budget)
+			tracks, movieHead, err := parseMoov(ctx, inspection, sourceEnd, value, &budget)
 			if err != nil {
-				return err
-			}
-			if err := budget.reserve(anchorBudgetBytes, "top-level anchor"); err != nil {
 				return err
 			}
 			result.tracks = tracks
-			result.moov = anchors
+			result.moov = value
+			result.movieHead = movieHead
 			haveMovie = true
-			result.top = append(result.top, anchor{typeID: value.typeID, index: 0})
 		case typeMDAT:
-			end, ok := payloadEnd(value)
-			if !ok {
-				return fmt.Errorf("%w: mdat payload overflows", errMalformedMovie)
+			if haveMedia {
+				return fmt.Errorf("%w: multiple mdat boxes are not supported", errUnsupportedMovie)
 			}
-			if err := budget.reserve(anchorBudgetBytes, "mdat anchor"); err != nil {
-				return err
-			}
-			result.media = append(result.media, mediaRange{start: value.payloadOffset, end: end})
-			result.top = append(result.top, anchor{typeID: value.typeID, index: len(result.media) - 1})
+			result.media = value
+			haveMedia = true
 		case typeMOOF:
 			return fmt.Errorf("%w: fragmented moof is not supported", errUnsupportedMovie)
-		default:
-			raw, err := preserveRaw(ctx, reader, value, &budget, "top-level box")
-			if err != nil {
-				return err
-			}
-			result.top = append(result.top, anchor{typeID: value.typeID, index: -1, raw: raw})
 		}
 		return nil
 	})
 	if err != nil {
 		return movie{}, normalizeMovieError(err)
 	}
-	if !haveFileType || !haveMovie || len(result.media) == 0 {
+	if !haveFileType || !haveMovie || !haveMedia {
 		return movie{}, fmt.Errorf("%w: ftyp, moov, and one mdat are required", errMalformedMovie)
 	}
 	for index := range result.tracks {
-		if err := expandTrack(&result.tracks[index], result.media, &budget); err != nil {
-			return movie{}, err
+		if err := validateTrack(ctx, inspection, result.media, &result.tracks[index]); err != nil {
+			return movie{}, normalizeMovieError(err)
 		}
 	}
 	return result, nil
@@ -109,38 +95,42 @@ func parseMovieHeader(data []byte) error {
 	return nil
 }
 
-func parseFileType(ctx context.Context, reader access.Random, value box, budget *movieBudget) (fileType, error) {
-	data, err := readBoxData(ctx, reader, value, budget, "ftyp")
-	if err != nil {
-		return fileType{}, err
+func validateMovieHeader(ctx context.Context, reader access.Random, value box) error {
+	var prefix [112]byte
+	if err := readBoxPrefix(ctx, reader, value, prefix[:4], "mvhd"); err != nil {
+		return err
 	}
-	if len(data) < 8 || (len(data)-8)%4 != 0 {
+	length := 100
+	if prefix[0] == 1 {
+		length = 112
+	}
+	if err := readBoxPrefix(ctx, reader, value, prefix[:length], "mvhd"); err != nil {
+		return err
+	}
+	return parseMovieHeader(prefix[:length])
+}
+
+func parseFileType(ctx context.Context, reader access.Random, value box) (fileType, error) {
+	if value.payloadSize < 8 || (value.payloadSize-8)%4 != 0 {
 		return fileType{}, fmt.Errorf("%w: ftyp has an invalid brand list", errMalformedMovie)
 	}
-	result := fileType{
-		major: boxType(data[:4]),
-		minor: binary.BigEndian.Uint32(data[4:8]),
-	}
-	if err := budget.reserveRecords(uint64((len(data)-8)/4), 8, "compatible brands"); err != nil {
+	var prefix [8]byte
+	if err := readBoxPrefix(ctx, reader, value, prefix[:], "ftyp"); err != nil {
 		return fileType{}, err
 	}
+	result := fileType{major: boxType(prefix[:4]), minor: binary.BigEndian.Uint32(prefix[4:])}
 	supported := knownMP4Brand(result.major)
-	for offset := 8; offset < len(data); offset += 4 {
-		compatible := boxType(data[offset : offset+4])
-		result.compatible = append(result.compatible, compatible)
-		supported = supported || knownMP4Brand(compatible)
+	for offset := uint64(8); offset < value.payloadSize; offset += 4 {
+		var compatible [4]byte
+		if err := readMovieAt(ctx, reader, compatible[:], value.payloadOffset+offset, "ftyp compatible brand"); err != nil {
+			return fileType{}, err
+		}
+		supported = supported || knownMP4Brand(boxType(compatible[:]))
 	}
 	if !supported {
 		return fileType{}, fmt.Errorf("%w: ftyp major brand %q is not an MP4 brand", errUnsupportedMovie, result.major)
 	}
 	return result, nil
-}
-
-func preserveRaw(ctx context.Context, reader access.Random, value box, budget *movieBudget, what string) ([]byte, error) {
-	if err := budget.reserve(anchorBudgetBytes, what+" anchor"); err != nil {
-		return nil, err
-	}
-	return readRawBox(ctx, reader, value, budget, what)
 }
 
 func normalizeMovieError(err error) error {

@@ -1,180 +1,218 @@
 package mp4
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"unsafe"
+
+	"github.com/godexture/godec/resource"
 )
 
-func TestParseMovieExpandsUnfragmentedTracks(t *testing.T) {
+func TestParseMovieBuildsBoundedTracksAndLazySamples(t *testing.T) {
 	data := twoTrackMovie(false, "isom", "iso2")
 	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.fileType.major != boxTypeOf("isom") || len(parsed.media) != 1 || len(parsed.tracks) != 2 {
+	if parsed.fileType.major != boxTypeOf("isom") || parsed.sourceEnd != uint64(len(data)) || parsed.media.typeID != typeMDAT || len(parsed.tracks) != 2 {
 		t.Fatalf("movie = %#v", parsed)
 	}
 	first, second := parsed.tracks[0], parsed.tracks[1]
-	if first.id != 1 || first.timeScale != 48000 || first.handler != boxTypeOf("soun") || len(first.samples) != 1 {
+	if first.id != 1 || first.timeScale != 48000 || first.handler != boxTypeOf("soun") || first.codec != boxTypeOf("mp4a") || first.sampleCount != 1 || first.maxSampleSize != 2 {
 		t.Fatalf("first track = %#v", first)
 	}
-	if first.samples[0].size != 2 || first.samples[0].duration != 1024 || first.samples[0].dts != 0 || first.samples[0].pts != 0 || !first.samples[0].sync {
-		t.Fatalf("first sample = %#v", first.samples[0])
-	}
-	if second.id != 2 || second.timeScale != 1000 || second.handler != boxTypeOf("vide") || len(second.samples) != 1 {
+	if second.id != 2 || second.timeScale != 1000 || second.handler != boxTypeOf("vide") || second.codec != boxTypeOf("avc1") || second.sampleCount != 1 || second.maxSampleSize != 3 {
 		t.Fatalf("second track = %#v", second)
 	}
-	if second.samples[0].size != 3 || second.samples[0].duration != 40 || second.samples[0].dts != 0 || second.samples[0].pts != -2 || !second.samples[0].sync {
-		t.Fatalf("second sample = %#v", second.samples[0])
-	}
-	if !bytes.Equal(first.descriptions[0].raw[4:8], []byte("mp4a")) || !bytes.Equal(second.descriptions[0].raw[4:8], []byte("avc1")) {
-		t.Fatalf("sample descriptions = %#v %#v", first.descriptions, second.descriptions)
-	}
 	for _, value := range parsed.tracks {
-		if value.timing != nil || value.composition != nil || value.chunkLayout != nil || value.chunkOffsets != nil || value.sampleSizes != nil || value.syncSamples != nil || value.hasSyncSample {
-			t.Fatalf("parse-only table state survives expansion: %#v", value)
+		if value.trak.typeID != typeTRAK || value.tables.timing.typeID != typeSTTS || value.tables.layout.typeID != typeSTSC || value.tables.sizes.typeID != typeSTSZ && value.tables.sizes.typeID != typeSTZ2 {
+			t.Fatalf("track table ranges = %#v", value)
 		}
-		if len(value.trackHeader) == 0 || len(value.mediaHeader) == 0 || len(value.handlerHeader) == 0 || len(value.dataInfo) == 0 || len(value.mediaInfo) == 0 {
-			t.Fatalf("track provenance is incomplete: %#v", value)
-		}
+		assertNoRetainedSampleState(t, value)
+	}
+
+	cursor, err := newSampleCursor(context.Background(), memoryRandom(data), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, more, err := cursor.next(context.Background())
+	if err != nil || !more {
+		t.Fatalf("cursor.next() = %#v, %t, %v", item, more, err)
+	}
+	if item.size != 3 || item.duration != 40 || item.dts != 0 || item.pts != -2 || !item.sync || item.sequence != 1 {
+		t.Fatalf("sample = %#v", item)
+	}
+	if _, more, err := cursor.next(context.Background()); err != nil || more {
+		t.Fatalf("cursor EOF = more=%t err=%v", more, err)
 	}
 }
 
-func TestParseMovieAcceptsMoovAfterMdat(t *testing.T) {
+func TestParseMovieRejectsMultipleMdat(t *testing.T) {
+	data := append(twoTrackMovie(false, "isom", "iso2"), fixtureBox("mdat", nil)...)
+	_, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
+	if !errors.Is(err, errUnsupportedMovie) || !strings.Contains(err.Error(), "multiple mdat") {
+		t.Fatalf("parseMovie() error = %v, want multiple-mdat rejection", err)
+	}
+}
+
+func TestInspectReadLimitStopsBeforeTablePageRead(t *testing.T) {
+	data := manyTimingMovie(1_024)
+	reader := &recordingRandom{data: data}
+	_, err := parseMovie(context.Background(), reader, uint64(len(data)), resource.Bytes(tablePageBytes), 1<<20)
+	if !errors.Is(err, errUnsupportedMovie) {
+		t.Fatalf("parseMovie() error = %v, want read-limit rejection", err)
+	}
+	if reader.largestRead >= tablePageBytes {
+		t.Fatalf("inspect read %d-byte table page after budget exhaustion", reader.largestRead)
+	}
+}
+
+func TestSampleCursorReconstructsMixedTables(t *testing.T) {
+	data, want := mixedTableMovie(false)
+	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := newSampleCursor(context.Background(), memoryRandom(data), parsed.tracks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, expected := range want {
+		got, more, err := cursor.next(context.Background())
+		if err != nil || !more || got != expected {
+			t.Fatalf("sample %d = %#v, %t, %v; want %#v", index+1, got, more, err, expected)
+		}
+	}
+	if _, more, err := cursor.next(context.Background()); err != nil || more {
+		t.Fatalf("cursor EOF = more=%t err=%v", more, err)
+	}
+}
+
+func TestParseMovieAcceptsMoovAfterMdatAndCO64(t *testing.T) {
 	data := twoTrackMovie(true, "isom", "iso2")
 	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.top) != 3 || parsed.top[1].typeID != typeMDAT || parsed.top[2].typeID != typeMOOV || len(parsed.tracks[1].samples) != 1 {
-		t.Fatalf("movie order = %#v", parsed.top)
+	if !parsed.tracks[1].tables.largeOffsets || parsed.tracks[1].tables.offsets.typeID != typeCO64 {
+		t.Fatalf("co64 range = %#v", parsed.tracks[1].tables)
 	}
 }
 
-func TestParseMoviePreservesDirectRawAnchorOrder(t *testing.T) {
-	edts := fixtureContainer("edts", fixtureBox("elst", fixtureFullBox(0, 0, fixtureU32(0))))
-	first := fixtureTrack{
-		id:            1,
-		timeScale:     48000,
-		handler:       "soun",
-		entryType:     "mp4a",
-		size:          2,
-		sttsExtra:     []fixtureTiming{{count: 1, duration: 1}},
-		directBefore:  [][]byte{fixtureBox("free", []byte{1})},
-		directBetween: [][]byte{fixtureBox("skip", []byte{2})},
-		directAfter:   [][]byte{fixtureBox("wide", []byte{3}), edts},
+func TestInspectionRetainedStateDoesNotScaleWithSamples(t *testing.T) {
+	small := parseFixtureMovie(t, manySampleMovie(1_000))
+	large := parseFixtureMovie(t, manySampleMovie(1_000_000))
+	if got, want := retainedMovieBytes(small), retainedMovieBytes(large); got != want {
+		t.Fatalf("retained model bytes = %d for 1k, %d for 1m samples", got, want)
 	}
-	second := fixtureTrack{id: 2, timeScale: 1000, handler: "vide", entryType: "avc1", size: 3, compact: true, largeOffset: true, sttsExtra: []fixtureTiming{{count: 1, duration: 1}}}
-	data := fixtureMovie(false, "isom", []string{"iso2"}, []fixtureTrack{first, second}, [][]byte{fixtureBox("free", []byte{9})}, [][]byte{fixtureBox("udta", []byte{8})})
-	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
+	if small.tracks[0].sampleCount != 1_000 || large.tracks[0].sampleCount != 1_000_000 {
+		t.Fatalf("sample summaries = %d, %d", small.tracks[0].sampleCount, large.tracks[0].sampleCount)
+	}
+}
+
+func TestInspectionKeepsOpaqueBoxesAsSourceRanges(t *testing.T) {
+	track := fixtureTrack{id: 1, timeScale: 1_000, handler: "vide", entryType: "avc1", size: 1, sttsExtra: []fixtureTiming{{count: 1, duration: 1}}}
+	plain := parseFixtureMovie(t, fixtureMovie(false, "isom", []string{"iso2"}, []fixtureTrack{track}, nil, nil))
+	data := fixtureMovie(false, "isom", []string{"iso2"}, []fixtureTrack{track}, [][]byte{fixtureBox("free", make([]byte, 2<<20))}, nil)
+	reader := &recordingRandom{data: data}
+	opaque, err := parseMovie(context.Background(), reader, uint64(len(data)), 1<<20, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertAnchorTypes(t, parsed.top, "ftyp", "free", "moov", "mdat")
-	assertAnchorTypes(t, parsed.moov, "mvhd", "udta", "trak", "trak")
-	assertAnchorTypes(t, parsed.tracks[0].anchors, "free", "tkhd", "skip", "mdia", "wide", "edts")
-	for _, index := range []int{0, 2, 4, 5} {
-		if len(parsed.tracks[0].anchors[index].raw) == 0 {
-			t.Fatalf("raw trak anchor %d was not preserved", index)
-		}
+	if retainedMovieBytes(plain) != retainedMovieBytes(opaque) {
+		t.Fatalf("opaque box changed retained model size: %d -> %d", retainedMovieBytes(plain), retainedMovieBytes(opaque))
 	}
-	if parsed.tracks[0].anchors[1].raw != nil || parsed.tracks[0].anchors[3].raw != nil {
-		t.Fatalf("known trak anchors unexpectedly carry raw bytes: %#v", parsed.tracks[0].anchors)
-	}
-	if len(parsed.moov[0].raw) == 0 || len(parsed.moov[1].raw) == 0 {
-		t.Fatalf("mvhd or raw moov anchor was discarded: %#v", parsed.moov)
-	}
-	if !bytes.Equal(parsed.tracks[0].anchors[5].raw, edts) {
-		t.Fatalf("edts raw anchor = %x, want %x", parsed.tracks[0].anchors[5].raw, edts)
+	if reader.largestRead > 112 {
+		t.Fatalf("inspection read %d opaque bytes, want only fixed fields", reader.largestRead)
 	}
 }
 
-func TestParseMovieFreezesRawProvenance(t *testing.T) {
+func TestMemoryLimitAccountsForRetainedTrackModel(t *testing.T) {
 	data := twoTrackMovie(false, "isom", "iso2")
-	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
+	_, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, resource.Bytes(trackBudgetBytes-1))
+	if !errors.Is(err, errUnsupportedMovie) {
+		t.Fatalf("parseMovie() error = %v, want retained-model limit", err)
+	}
+}
+
+func TestSampleCursorHotPathDoesNotAllocate(t *testing.T) {
+	data, _ := mixedTableMovie(false)
+	parsed := parseFixtureMovie(t, data)
+	template, err := newSampleCursor(context.Background(), memoryRandom(data), parsed.tracks[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := append([]byte(nil), parsed.tracks[0].trackHeader...)
-	for index := range data {
-		data[index] = 0
+	cursors := make([]sampleCursor, 256)
+	for index := range cursors {
+		cursors[index] = template
 	}
-	if !bytes.Equal(parsed.tracks[0].trackHeader, before) || len(parsed.tracks[0].descriptions[0].raw) == 0 {
-		t.Fatal("movie provenance aliases input bytes")
+	run := 0
+	if allocations := testing.AllocsPerRun(100, func() {
+		cursor := &cursors[run]
+		run++
+		for {
+			_, more, err := cursor.next(context.Background())
+			if err != nil || !more {
+				return
+			}
+		}
+	}); allocations != 0 {
+		t.Fatalf("cursor steady-state allocations = %f, want 0", allocations)
+	}
+}
+
+func TestSampleCursorCancellationAndTruncation(t *testing.T) {
+	data, _ := mixedTableMovie(false)
+	parsed := parseFixtureMovie(t, data)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := newSampleCursor(ctx, memoryRandom(data), parsed.tracks[0]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled cursor error = %v", err)
+	}
+	if _, err := newSampleCursor(context.Background(), memoryRandom(data[:8]), parsed.tracks[0]); !errors.Is(err, errTruncatedMovie) {
+		t.Fatalf("truncated cursor error = %v", err)
 	}
 }
 
 func TestParseMovieBrandPolicy(t *testing.T) {
-	t.Run("known audio brand", func(t *testing.T) {
-		data := twoTrackMovie(false, "M4A ", "isom")
-		if _, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("compatible MP4 brand", func(t *testing.T) {
-		data := twoTrackMovie(false, "xfoo", "isom")
-		if _, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("unknown only", func(t *testing.T) {
-		data := twoTrackMovie(false, "heic", "mif1")
+	for _, test := range []struct {
+		major, compatible string
+		want              error
+	}{
+		{major: "M4A ", compatible: "isom"},
+		{major: "xfoo", compatible: "isom"},
+		{major: "heic", compatible: "mif1", want: errUnsupportedMovie},
+	} {
+		data := twoTrackMovie(false, test.major, test.compatible)
 		_, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
-		if !errors.Is(err, errUnsupportedMovie) {
-			t.Fatalf("parseMovie() error = %v, want unsupported", err)
+		if !errors.Is(err, test.want) {
+			t.Fatalf("brand %q/%q error = %v, want %v", test.major, test.compatible, err, test.want)
 		}
-	})
-}
-
-func TestParseMovieRejectsBudgetBeforeRawRead(t *testing.T) {
-	data := fixtureBox("free", make([]byte, 64))
-	value := collectTopLevel(t, data)[0]
-	reader := &recordingRandom{data: data}
-	_, err := preserveRaw(context.Background(), reader, value, &movieBudget{readLimit: math.MaxUint64, remaining: anchorBudgetBytes}, "test raw")
-	if !errors.Is(err, errUnsupportedMovie) {
-		t.Fatalf("preserveRaw() error = %v, want budget failure", err)
-	}
-	if reader.largestRead != 0 {
-		t.Fatalf("budget failure read %d bytes before rejecting raw allocation", reader.largestRead)
 	}
 }
 
-func TestMovieBudgetFitsOneHourAVSampleModel(t *testing.T) {
-	const audioSamples = uint64(3600 * 48000 / 1024)
-	const videoSamples = uint64(3600 * 30)
-	budget := movieBudget{remaining: 16 << 20}
-	if err := budget.reserveRecords(audioSamples+videoSamples, sampleBudgetBytes, "one-hour A/V samples"); err != nil {
-		t.Fatalf("one-hour A/V sample model does not fit: %v", err)
-	}
-}
-
-func TestSampleBudgetCoversModelSize(t *testing.T) {
-	if size := unsafe.Sizeof(sample{}); size > uintptr(sampleBudgetBytes) {
-		t.Fatalf("sample size = %d, budget = %d", size, sampleBudgetBytes)
-	}
-}
-
-func TestParseMovieHonorsCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := parseMovie(ctx, memoryRandom(twoTrackMovie(false, "isom", "iso2")), 1, 1<<20, 1<<20)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("parseMovie() error = %v, want canceled", err)
-	}
-}
-
-func assertAnchorTypes(t *testing.T, values []anchor, want ...string) {
+func parseFixtureMovie(t testing.TB, data []byte) movie {
 	t.Helper()
-	if len(values) != len(want) {
-		t.Fatalf("anchor count = %d, want %d: %#v", len(values), len(want), values)
+	parsed, err := parseMovie(context.Background(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for index, value := range values {
-		if got := string(value.typeID[:]); got != want[index] {
-			t.Fatalf("anchor %d = %q, want %q", index, got, want[index])
+	return parsed
+}
+
+func retainedMovieBytes(value movie) uintptr {
+	return unsafe.Sizeof(value) + uintptr(cap(value.tracks))*unsafe.Sizeof(track{})
+}
+
+func assertNoRetainedSampleState(t testing.TB, value track) {
+	t.Helper()
+	typeOf := reflect.TypeOf(value)
+	for index := 0; index < typeOf.NumField(); index++ {
+		if typeOf.Field(index).Type.Kind() == reflect.Slice {
+			t.Fatalf("track retains a slice in %s", typeOf.Field(index).Name)
 		}
 	}
 }

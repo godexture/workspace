@@ -283,3 +283,132 @@ func fixtureU64(value uint64) []byte {
 	binary.BigEndian.PutUint64(result[:], value)
 	return result[:]
 }
+
+func manySampleMovie(count uint32) []byte {
+	fileType := fixtureFileType("isom", "iso2")
+	buildMoov := func(offset uint64) []byte {
+		stbl := fixtureContainer("stbl",
+			fixtureSTSD("avc1"),
+			fixtureSTTS([]fixtureTiming{{count: count, duration: 1}}),
+			fixtureSTSC([]fixtureChunk{{first: 1, samples: count, description: 1}}),
+			fixtureSTSZCount(1, count),
+			fixtureSTCOValues([]uint64{offset}),
+		)
+		return fixtureContainer("moov", fixtureMVHD(), fixtureTrackWithTable(1, 1_000, "vide", stbl))
+	}
+	moov := buildMoov(0)
+	mediaStart := uint64(len(fileType) + len(moov) + 8)
+	moov = buildMoov(mediaStart)
+	return append(append(fileType, moov...), fixtureBox("mdat", make([]byte, int(count)))...)
+}
+
+func manyTimingMovie(count uint32) []byte {
+	timing := make([]fixtureTiming, count)
+	for index := range timing {
+		timing[index] = fixtureTiming{count: 1, duration: 1}
+	}
+	fileType := fixtureFileType("isom", "iso2")
+	buildMoov := func(offset uint64) []byte {
+		stbl := fixtureContainer("stbl",
+			fixtureSTSD("avc1"),
+			fixtureSTTS(timing),
+			fixtureSTSC([]fixtureChunk{{first: 1, samples: count, description: 1}}),
+			fixtureSTSZCount(1, count),
+			fixtureSTCOValues([]uint64{offset}),
+		)
+		return fixtureContainer("moov", fixtureMVHD(), fixtureTrackWithTable(1, 1_000, "vide", stbl))
+	}
+	moov := buildMoov(0)
+	mediaStart := uint64(len(fileType) + len(moov) + 8)
+	moov = buildMoov(mediaStart)
+	return append(append(fileType, moov...), fixtureBox("mdat", make([]byte, int(count)))...)
+}
+
+func mixedTableMovie(largeOffsets bool) ([]byte, []sample) {
+	fileType := fixtureFileType("isom", "iso2")
+	buildMoov := func(first, second uint64) []byte {
+		offsets := fixtureSTCOValues([]uint64{first, second})
+		if largeOffsets {
+			offsets = fixtureCO64Values([]uint64{first, second})
+		}
+		stbl := fixtureContainer("stbl",
+			fixtureSTSD("avc1"),
+			fixtureSTTS([]fixtureTiming{{count: 2, duration: 10}, {count: 2, duration: 20}}),
+			fixtureCTTSRuns([]fixtureCompositionRun{{count: 1, offset: -2}, {count: 2, offset: 3}, {count: 1, offset: 0}}),
+			fixtureSTSC([]fixtureChunk{{first: 1, samples: 2, description: 1}, {first: 2, samples: 2, description: 1}}),
+			fixtureSTSZValues([]uint32{2, 3, 4, 5}),
+			offsets,
+			fixtureSTSS([]uint32{1, 3}),
+		)
+		return fixtureContainer("moov", fixtureMVHD(), fixtureTrackWithTable(1, 1_000, "vide", stbl))
+	}
+	moov := buildMoov(0, 0)
+	first := uint64(len(fileType) + len(moov) + 8)
+	second := first + 5
+	moov = buildMoov(first, second)
+	data := append(append(fileType, moov...), fixtureBox("mdat", make([]byte, 14))...)
+	return data, []sample{
+		{offset: first, size: 2, duration: 10, dts: 0, pts: -2, descriptionIndex: 1, sync: true, sequence: 1},
+		{offset: first + 2, size: 3, duration: 10, dts: 10, pts: 13, descriptionIndex: 1, sequence: 2},
+		{offset: second, size: 4, duration: 20, dts: 20, pts: 23, descriptionIndex: 1, sync: true, sequence: 3},
+		{offset: second + 4, size: 5, duration: 20, dts: 40, pts: 40, descriptionIndex: 1, sequence: 4},
+	}
+}
+
+func fixtureTrackWithTable(id, timeScale uint32, handler string, stbl []byte) []byte {
+	mdhd := make([]byte, 24)
+	binary.BigEndian.PutUint32(mdhd[12:16], timeScale)
+	hdlr := make([]byte, 24)
+	copy(hdlr[8:12], handler)
+	mediaHeader := fixtureBox("smhd", make([]byte, 8))
+	if handler == "vide" {
+		mediaHeader = fixtureBox("vmhd", make([]byte, 12))
+	}
+	minf := fixtureContainer("minf", mediaHeader, fixtureDINF(), stbl)
+	return fixtureContainer("trak", fixtureTKHD(id), fixtureContainer("mdia", fixtureBox("mdhd", mdhd), fixtureBox("hdlr", hdlr), minf))
+}
+
+func fixtureSTSZCount(size, count uint32) []byte {
+	payload := fixtureFullBox(0, 0, fixtureU32(size))
+	payload = append(payload, fixtureU32(count)...)
+	return fixtureBox("stsz", payload)
+}
+
+func fixtureSTSZValues(values []uint32) []byte {
+	payload := fixtureFullBox(0, 0, fixtureU32(0))
+	payload = append(payload, fixtureU32(uint32(len(values)))...)
+	for _, value := range values {
+		payload = append(payload, fixtureU32(value)...)
+	}
+	return fixtureBox("stsz", payload)
+}
+
+func fixtureSTCOValues(values []uint64) []byte {
+	payload := fixtureFullBox(0, 0, fixtureU32(uint32(len(values))))
+	for _, value := range values {
+		payload = append(payload, fixtureU32(uint32(value))...)
+	}
+	return fixtureBox("stco", payload)
+}
+
+func fixtureCO64Values(values []uint64) []byte {
+	payload := fixtureFullBox(0, 0, fixtureU32(uint32(len(values))))
+	for _, value := range values {
+		payload = append(payload, fixtureU64(value)...)
+	}
+	return fixtureBox("co64", payload)
+}
+
+type fixtureCompositionRun struct {
+	count  uint32
+	offset int32
+}
+
+func fixtureCTTSRuns(values []fixtureCompositionRun) []byte {
+	payload := fixtureFullBox(1, 0, fixtureU32(uint32(len(values))))
+	for _, value := range values {
+		payload = append(payload, fixtureU32(value.count)...)
+		payload = append(payload, fixtureU32(uint32(value.offset))...)
+	}
+	return fixtureBox("ctts", payload)
+}

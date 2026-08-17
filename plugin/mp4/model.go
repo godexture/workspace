@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/godexture/godec/resource"
 )
@@ -52,61 +53,65 @@ var (
 	typeGMHD = boxType{'g', 'm', 'h', 'd'}
 )
 
+// movie is a frozen inspection result. It contains only source ranges and
+// bounded per-track summaries; the source itself is lent to a cursor at Open.
 type movie struct {
-	fileType fileType
-	media    []mediaRange
-	tracks   []track
-	top      []anchor
-	moov     []anchor
+	sourceEnd uint64
+	fileType  fileType
+	fileBox   box
+	moov      box
+	movieHead box
+	media     box
+	tracks    []track
 }
 
 type fileType struct {
-	major      boxType
-	minor      uint32
-	compatible []boxType
+	major boxType
+	minor uint32
 }
 
-type mediaRange struct {
-	start uint64
-	end   uint64
-}
-
-// anchor is a direct child in one scope. A nil raw value means the box is
-// regenerated from the movie model; otherwise raw is reinserted unchanged.
-type anchor struct {
-	typeID boxType
-	index  int
-	raw    []byte
-}
-
+// track holds the fixed set of ranges needed to re-read its sample tables.
+// Unknown boxes are deliberately not indexed: a preserving mux rescans the
+// enclosing known range from the borrowed source.
 type track struct {
-	id            uint32
-	timeScale     uint32
-	handler       boxType
-	trackHeader   []byte
-	mediaHeader   []byte
-	handlerHeader []byte
-	dataInfo      []byte
-	mediaInfo     []byte
-	descriptions  []sampleDescription
-	samples       []sample
-	anchors       []anchor
+	id               uint32
+	timeScale        uint32
+	duration         uint64
+	sampleCount      uint64
+	maxSampleSize    uint32
+	handler          boxType
+	codec            boxType
+	descriptionCount uint32
+	dataReferences   uint32
 
-	timing        []timingRun
-	composition   []compositionRun
-	chunkLayout   []chunkRun
-	chunkOffsets  []uint64
-	sampleSizes   []uint32
-	syncSamples   []uint32
-	hasSyncSample bool
+	trak       box
+	trackHead  box
+	media      box
+	mediaHead  box
+	handlerBox box
+	mediaInfo  box
+	dataInfo   box
+	sampleBox  box
+	tables     sampleTables
 }
 
-type sampleDescription struct {
-	typeID             boxType
-	dataReferenceIndex uint16
-	raw                []byte
+type sampleTables struct {
+	description box
+	timing      box
+	composition box
+	layout      box
+	sizes       box
+	offsets     box
+	sync        box
+
+	hasComposition bool
+	hasSync        bool
+	compactSizes   bool
+	largeOffsets   bool
+	fixedSize      uint32
 }
 
+// sample is reconstructed by sampleCursor and is never retained by movie.
 type sample struct {
 	offset           uint64
 	size             uint32
@@ -115,38 +120,17 @@ type sample struct {
 	pts              int64
 	descriptionIndex uint32
 	sync             bool
-}
-
-type timingRun struct {
-	count    uint32
-	duration uint32
-}
-
-type compositionRun struct {
-	count  uint32
-	offset int64
-}
-
-type chunkRun struct {
-	firstChunk       uint32
-	samplesPerChunk  uint32
-	descriptionIndex uint32
+	sequence         uint64
 }
 
 type movieBudget struct {
-	readLimit uint64
 	remaining uint64
 }
 
-const (
-	anchorBudgetBytes      = uint64(64)
-	trackBudgetBytes       = uint64(512)
-	descriptionBudgetBytes = uint64(64)
-	sampleBudgetBytes      = uint64(40)
-)
+const trackBudgetBytes = uint64(unsafe.Sizeof(track{}))
 
-func newMovieBudget(readLimit, memoryLimit resource.Bytes) movieBudget {
-	return movieBudget{readLimit: uint64(readLimit), remaining: uint64(memoryLimit)}
+func newMovieBudget(memoryLimit resource.Bytes) movieBudget {
+	return movieBudget{remaining: uint64(memoryLimit)}
 }
 
 func (b *movieBudget) reserve(size uint64, what string) error {
@@ -157,33 +141,11 @@ func (b *movieBudget) reserve(size uint64, what string) error {
 	return nil
 }
 
-func (b *movieBudget) release(size uint64) {
-	if math.MaxUint64-b.remaining < size {
-		b.remaining = math.MaxUint64
-		return
+func (b *movieBudget) reserveTracks(count uint64) error {
+	if count != 0 && count > math.MaxUint64/trackBudgetBytes {
+		return fmt.Errorf("%w: track count overflows", errMalformedMovie)
 	}
-	b.remaining += size
-}
-
-func (b *movieBudget) reserveRecords(count, size uint64, what string) error {
-	if count != 0 && size > math.MaxUint64/count {
-		return fmt.Errorf("%w: %s count overflows", errMalformedMovie, what)
-	}
-	return b.reserve(count*size, what)
-}
-
-func (b *movieBudget) releaseRecords(count, size uint64) {
-	if count == 0 || size == 0 || size > math.MaxUint64/count {
-		return
-	}
-	b.release(count * size)
-}
-
-func (b movieBudget) checkRead(size uint64, what string) error {
-	if size > b.readLimit || size > uint64(math.MaxInt) {
-		return fmt.Errorf("%w: %s needs a %d-byte read allocation", errUnsupportedMovie, what, size)
-	}
-	return nil
+	return b.reserve(count*trackBudgetBytes, "track model")
 }
 
 func boxTypeOf(value string) boxType {

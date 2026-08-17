@@ -1,235 +1,270 @@
 package mp4
 
 import (
+	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
+
+	"github.com/godexture/godec/access"
 )
 
-func expandTrack(value *track, media []mediaRange, budget *movieBudget) error {
-	sampleCount, err := timingSampleCount(value.timing)
+// sampleCursor reconstructs one track's samples from frozen table ranges. The
+// cursor owns the borrowed reader; movie deliberately never does.
+type sampleCursor struct {
+	reader access.Random
+	track  track
+
+	sequence uint64
+	dts      uint64
+
+	timing        rawTableReader
+	timingLeft    uint32
+	timingValue   uint32
+	composition   rawTableReader
+	composeLeft   uint32
+	composeValue  int64
+	composeSigned bool
+
+	layout        rawTableReader
+	layoutCurrent chunkRun
+	layoutNext    chunkRun
+	haveLayout    bool
+	haveNext      bool
+	chunk         uint32
+	chunkLeft     uint32
+	chunkOffset   uint64
+
+	offsets rawTableReader
+	sizes   sizeCursor
+	sync    rawTableReader
+	syncAt  uint32
+	hasSync bool
+}
+
+func newSampleCursor(ctx context.Context, reader access.Random, value track) (sampleCursor, error) {
+	if reader == nil {
+		return sampleCursor{}, fmt.Errorf("%w: sample cursor has no reader", errMalformedMovie)
+	}
+	timing, err := newTableReader(ctx, reader, value.tables.timing, "stts", 8, 0, false)
 	if err != nil {
-		return err
+		return sampleCursor{}, err
 	}
-	if sampleCount != uint64(len(value.sampleSizes)) {
-		return fmt.Errorf("%w: stts and sample-size counts disagree", errMalformedMovie)
-	}
-	if err := validateCompositionCount(value.composition, sampleCount); err != nil {
-		return err
-	}
-	if err := budget.reserveRecords(sampleCount, sampleBudgetBytes, "sample model"); err != nil {
-		return err
-	}
-	samples, err := expandChunks(value, media, sampleCount)
+	layout, err := newTableReader(ctx, reader, value.tables.layout, "stsc", 12, 0, false)
 	if err != nil {
-		return err
+		return sampleCursor{}, err
 	}
-	if err := assignTiming(samples, value.timing); err != nil {
-		return err
+	offsetSize := uint64(4)
+	offsetName := "stco"
+	if value.tables.largeOffsets {
+		offsetSize = 8
+		offsetName = "co64"
 	}
-	if err := assignComposition(samples, value.composition); err != nil {
-		return err
+	offsets, err := newTableReader(ctx, reader, value.tables.offsets, offsetName, offsetSize, 0, false)
+	if err != nil {
+		return sampleCursor{}, err
 	}
-	if err := assignSync(samples, value.syncSamples, value.hasSyncSample); err != nil {
-		return err
+	sizes, err := newSizeCursor(ctx, reader, value.tables.sizes, value.tables.compactSizes)
+	if err != nil {
+		return sampleCursor{}, err
 	}
-	value.samples = samples
-	budget.releaseRecords(uint64(len(value.timing)), 16)
-	budget.releaseRecords(uint64(len(value.composition)), 16)
-	budget.releaseRecords(uint64(len(value.chunkLayout)), 16)
-	budget.releaseRecords(uint64(len(value.chunkOffsets)), 8)
-	budget.releaseRecords(uint64(len(value.sampleSizes)), 4)
-	budget.releaseRecords(uint64(len(value.syncSamples)), 4)
-	value.timing = nil
-	value.composition = nil
-	value.chunkLayout = nil
-	value.chunkOffsets = nil
-	value.sampleSizes = nil
-	value.syncSamples = nil
-	value.hasSyncSample = false
-	return nil
-}
-
-func timingSampleCount(values []timingRun) (uint64, error) {
-	var total uint64
-	for _, value := range values {
-		next, ok := checkedBoxAdd(total, uint64(value.count))
-		if !ok {
-			return 0, fmt.Errorf("%w: stts sample count overflows", errMalformedMovie)
+	result := sampleCursor{reader: reader, track: value, timing: timing, layout: layout, offsets: offsets, sizes: sizes, hasSync: value.tables.hasSync}
+	if value.tables.hasComposition {
+		composition, err := newTableReader(ctx, reader, value.tables.composition, "ctts", 8, 0, true)
+		if err != nil {
+			return sampleCursor{}, err
 		}
-		total = next
-	}
-	return total, nil
-}
-
-func validateCompositionCount(values []compositionRun, sampleCount uint64) error {
-	if values == nil {
-		return nil
-	}
-	var total uint64
-	for _, value := range values {
-		next, ok := checkedBoxAdd(total, uint64(value.count))
-		if !ok {
-			return fmt.Errorf("%w: ctts sample count overflows", errMalformedMovie)
+		result.composition = composition
+		var version [1]byte
+		if err := readBoxPrefix(ctx, reader, value.tables.composition, version[:], "ctts"); err != nil {
+			return sampleCursor{}, err
 		}
-		total = next
+		result.composeSigned = version[0] == 1
 	}
-	if total != sampleCount {
-		return fmt.Errorf("%w: ctts and sample counts disagree", errMalformedMovie)
-	}
-	return nil
-}
-
-func expandChunks(value *track, media []mediaRange, sampleCount uint64) ([]sample, error) {
-	if sampleCount == 0 {
-		if len(value.chunkLayout) != 0 || len(value.chunkOffsets) != 0 {
-			return nil, fmt.Errorf("%w: empty track has chunks", errMalformedMovie)
+	if value.tables.hasSync {
+		sync, err := newTableReader(ctx, reader, value.tables.sync, "stss", 4, 0, false)
+		if err != nil {
+			return sampleCursor{}, err
 		}
-		return []sample{}, nil
-	}
-	if len(value.chunkLayout) == 0 || len(value.chunkOffsets) == 0 {
-		return nil, fmt.Errorf("%w: non-empty track has no chunk layout", errMalformedMovie)
-	}
-	if value.chunkLayout[0].firstChunk != 1 {
-		return nil, fmt.Errorf("%w: first stsc chunk is not one", errMalformedMovie)
-	}
-	for index, run := range value.chunkLayout {
-		if run.samplesPerChunk == 0 || run.descriptionIndex == 0 || uint64(run.descriptionIndex) > uint64(len(value.descriptions)) {
-			return nil, fmt.Errorf("%w: stsc entry %d", errMalformedMovie, index+1)
-		}
-		if uint64(run.firstChunk) > uint64(len(value.chunkOffsets)) {
-			return nil, fmt.Errorf("%w: stsc entry %d starts after the last chunk", errMalformedMovie, index+1)
-		}
-		if index != 0 && run.firstChunk <= value.chunkLayout[index-1].firstChunk {
-			return nil, fmt.Errorf("%w: stsc first_chunk is not ascending", errMalformedMovie)
+		result.sync = sync
+		if err := result.loadSync(ctx); err != nil {
+			return sampleCursor{}, err
 		}
 	}
-	if sampleCount > uint64(math.MaxInt) {
-		return nil, fmt.Errorf("%w: sample count exceeds runtime range", errUnsupportedMovie)
-	}
-	result := make([]sample, 0, int(sampleCount))
-	for runIndex, run := range value.chunkLayout {
-		first := uint64(run.firstChunk - 1)
-		last := uint64(len(value.chunkOffsets))
-		if runIndex+1 < len(value.chunkLayout) {
-			last = uint64(value.chunkLayout[runIndex+1].firstChunk - 1)
+	if value.sampleCount != 0 {
+		if err := result.loadLayout(ctx); err != nil {
+			return sampleCursor{}, err
 		}
-		for chunkIndex := first; chunkIndex < last; chunkIndex++ {
-			offset := value.chunkOffsets[chunkIndex]
-			for sampleIndex := uint32(0); sampleIndex < run.samplesPerChunk; sampleIndex++ {
-				if uint64(len(result)) == sampleCount {
-					return nil, fmt.Errorf("%w: stsc describes too many samples", errMalformedMovie)
-				}
-				size := value.sampleSizes[len(result)]
-				if !withinMedia(media, offset, uint64(size)) {
-					return nil, fmt.Errorf("%w: sample %d lies outside mdat payload", errMalformedMovie, len(result)+1)
-				}
-				result = append(result, sample{offset: offset, size: size, descriptionIndex: run.descriptionIndex})
-				next, ok := checkedBoxAdd(offset, uint64(size))
-				if !ok {
-					return nil, fmt.Errorf("%w: sample offset overflows", errMalformedMovie)
-				}
-				offset = next
-			}
-		}
-	}
-	if uint64(len(result)) != sampleCount {
-		return nil, fmt.Errorf("%w: stsc and sample counts disagree", errMalformedMovie)
 	}
 	return result, nil
 }
 
-func withinMedia(values []mediaRange, offset, size uint64) bool {
-	end, ok := checkedBoxAdd(offset, size)
+func (c *sampleCursor) next(ctx context.Context) (sample, bool, error) {
+	if c.sequence == c.track.sampleCount {
+		return sample{}, false, nil
+	}
+	if c.sequence == math.MaxUint64 {
+		return sample{}, false, fmt.Errorf("%w: sample sequence overflows", errMalformedMovie)
+	}
+	if c.chunkLeft == 0 {
+		if err := c.nextChunk(ctx); err != nil {
+			return sample{}, false, err
+		}
+	}
+	duration, err := c.nextTiming(ctx)
+	if err != nil {
+		return sample{}, false, err
+	}
+	composition, err := c.nextComposition(ctx)
+	if err != nil {
+		return sample{}, false, err
+	}
+	size, err := c.sizes.next(ctx)
+	if err != nil {
+		return sample{}, false, err
+	}
+	if c.dts > math.MaxInt64 {
+		return sample{}, false, fmt.Errorf("%w: PTS exceeds runtime range", errUnsupportedMovie)
+	}
+	pts, ok := addCompositionOffset(c.dts, composition)
 	if !ok {
-		return false
+		return sample{}, false, fmt.Errorf("%w: PTS overflows", errMalformedMovie)
 	}
-	for _, value := range values {
-		if offset >= value.start && end <= value.end {
-			return true
+	c.sequence++
+	item := sample{
+		offset:           c.chunkOffset,
+		size:             size,
+		duration:         duration,
+		dts:              c.dts,
+		pts:              pts,
+		descriptionIndex: c.layoutCurrent.descriptionIndex,
+		sequence:         c.sequence,
+	}
+	if !c.hasSync {
+		item.sync = true
+	} else if c.syncAt != 0 && uint64(c.syncAt) == c.sequence {
+		item.sync = true
+		if err := c.loadSync(ctx); err != nil {
+			return sample{}, false, err
 		}
 	}
-	return false
+	nextOffset, ok := checkedBoxAdd(c.chunkOffset, uint64(size))
+	if !ok {
+		return sample{}, false, fmt.Errorf("%w: sample offset overflows", errMalformedMovie)
+	}
+	c.chunkOffset = nextOffset
+	c.chunkLeft--
+	nextDTS, ok := checkedBoxAdd(c.dts, uint64(duration))
+	if !ok {
+		return sample{}, false, fmt.Errorf("%w: DTS overflows", errMalformedMovie)
+	}
+	c.dts = nextDTS
+	return item, true, nil
 }
 
-func assignTiming(samples []sample, runs []timingRun) error {
-	index := 0
-	var dts uint64
-	for _, run := range runs {
-		for count := uint32(0); count < run.count; count++ {
-			if index == len(samples) {
-				return fmt.Errorf("%w: stts describes too many samples", errMalformedMovie)
-			}
-			samples[index].dts = dts
-			samples[index].duration = run.duration
-			next, ok := checkedBoxAdd(dts, uint64(run.duration))
-			if !ok {
-				return fmt.Errorf("%w: DTS overflows", errMalformedMovie)
-			}
-			dts = next
-			index++
+func (c *sampleCursor) nextTiming(ctx context.Context) (uint32, error) {
+	if c.timingLeft == 0 {
+		entry, err := c.timing.next(ctx)
+		if err != nil {
+			return 0, err
+		}
+		c.timingLeft = binary.BigEndian.Uint32(entry[:4])
+		c.timingValue = binary.BigEndian.Uint32(entry[4:8])
+		if c.timingLeft == 0 {
+			return 0, fmt.Errorf("%w: stts entry has zero samples", errMalformedMovie)
 		}
 	}
-	if index != len(samples) {
-		return fmt.Errorf("%w: stts and sample counts disagree", errMalformedMovie)
+	c.timingLeft--
+	return c.timingValue, nil
+}
+
+func (c *sampleCursor) nextComposition(ctx context.Context) (int64, error) {
+	if !c.track.tables.hasComposition {
+		return 0, nil
+	}
+	if c.composeLeft == 0 {
+		entry, err := c.composition.next(ctx)
+		if err != nil {
+			return 0, err
+		}
+		c.composeLeft = binary.BigEndian.Uint32(entry[:4])
+		if c.composeLeft == 0 {
+			return 0, fmt.Errorf("%w: ctts entry has zero samples", errMalformedMovie)
+		}
+		offset := binary.BigEndian.Uint32(entry[4:8])
+		if c.composeSigned {
+			c.composeValue = int64(int32(offset))
+		} else {
+			c.composeValue = int64(offset)
+		}
+	}
+	c.composeLeft--
+	return c.composeValue, nil
+}
+
+func (c *sampleCursor) loadLayout(ctx context.Context) error {
+	entry, err := c.layout.next(ctx)
+	if err != nil {
+		return err
+	}
+	c.layoutCurrent = chunkRun{firstChunk: binary.BigEndian.Uint32(entry[:4]), samplesPerChunk: binary.BigEndian.Uint32(entry[4:8]), descriptionIndex: binary.BigEndian.Uint32(entry[8:12])}
+	c.haveLayout = true
+	return c.loadNextLayout(ctx)
+}
+
+func (c *sampleCursor) loadNextLayout(ctx context.Context) error {
+	c.haveNext = false
+	if c.layout.remaining == 0 {
+		return nil
+	}
+	entry, err := c.layout.next(ctx)
+	if err != nil {
+		return err
+	}
+	c.layoutNext = chunkRun{firstChunk: binary.BigEndian.Uint32(entry[:4]), samplesPerChunk: binary.BigEndian.Uint32(entry[4:8]), descriptionIndex: binary.BigEndian.Uint32(entry[8:12])}
+	c.haveNext = true
+	return nil
+}
+
+func (c *sampleCursor) nextChunk(ctx context.Context) error {
+	if !c.haveLayout || c.chunk == math.MaxUint32 {
+		return fmt.Errorf("%w: stsc chunk layout", errMalformedMovie)
+	}
+	c.chunk++
+	if c.haveNext && c.layoutNext.firstChunk == c.chunk {
+		c.layoutCurrent = c.layoutNext
+		if err := c.loadNextLayout(ctx); err != nil {
+			return err
+		}
+	}
+	if c.haveNext && c.layoutNext.firstChunk < c.chunk {
+		return fmt.Errorf("%w: stsc chunk layout", errMalformedMovie)
+	}
+	entry, err := c.offsets.next(ctx)
+	if err != nil {
+		return err
+	}
+	if c.track.tables.largeOffsets {
+		c.chunkOffset = binary.BigEndian.Uint64(entry[:8])
+	} else {
+		c.chunkOffset = uint64(binary.BigEndian.Uint32(entry[:4]))
+	}
+	c.chunkLeft = c.layoutCurrent.samplesPerChunk
+	if c.chunkLeft == 0 {
+		return fmt.Errorf("%w: stsc chunk layout", errMalformedMovie)
 	}
 	return nil
 }
 
-func assignComposition(samples []sample, runs []compositionRun) error {
-	if runs == nil {
-		for index := range samples {
-			if samples[index].dts > math.MaxInt64 {
-				return fmt.Errorf("%w: PTS exceeds runtime range", errUnsupportedMovie)
-			}
-			samples[index].pts = int64(samples[index].dts)
-		}
+func (c *sampleCursor) loadSync(ctx context.Context) error {
+	c.syncAt = 0
+	if c.sync.remaining == 0 {
 		return nil
 	}
-	index := 0
-	for _, run := range runs {
-		for count := uint32(0); count < run.count; count++ {
-			if index == len(samples) {
-				return fmt.Errorf("%w: ctts describes too many samples", errMalformedMovie)
-			}
-			pts, ok := addCompositionOffset(samples[index].dts, run.offset)
-			if !ok {
-				return fmt.Errorf("%w: PTS overflows", errMalformedMovie)
-			}
-			samples[index].pts = pts
-			index++
-		}
+	entry, err := c.sync.next(ctx)
+	if err != nil {
+		return err
 	}
-	if index != len(samples) {
-		return fmt.Errorf("%w: ctts and sample counts disagree", errMalformedMovie)
-	}
-	return nil
-}
-
-func addCompositionOffset(dts uint64, offset int64) (int64, bool) {
-	if dts > math.MaxInt64 {
-		return 0, false
-	}
-	base := int64(dts)
-	if offset > 0 && base > math.MaxInt64-offset || offset < 0 && base < math.MinInt64-offset {
-		return 0, false
-	}
-	return base + offset, true
-}
-
-func assignSync(samples []sample, syncSamples []uint32, hasTable bool) error {
-	if !hasTable {
-		for index := range samples {
-			samples[index].sync = true
-		}
-		return nil
-	}
-	previous := uint32(0)
-	for _, number := range syncSamples {
-		if number == 0 || number <= previous || uint64(number) > uint64(len(samples)) {
-			return fmt.Errorf("%w: stss sample number", errMalformedMovie)
-		}
-		samples[number-1].sync = true
-		previous = number
-	}
+	c.syncAt = binary.BigEndian.Uint32(entry[:4])
 	return nil
 }

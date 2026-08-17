@@ -10,31 +10,6 @@ import (
 	"github.com/godexture/godec/access"
 )
 
-func readBoxData(ctx context.Context, reader access.Random, value box, budget *movieBudget, what string) ([]byte, error) {
-	if err := budget.checkRead(value.payloadSize, what); err != nil {
-		return nil, err
-	}
-	data := make([]byte, int(value.payloadSize))
-	if err := readMovieAt(ctx, reader, data, value.payloadOffset, what); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func readRawBox(ctx context.Context, reader access.Random, value box, budget *movieBudget, what string) ([]byte, error) {
-	if err := budget.checkRead(value.size, what); err != nil {
-		return nil, err
-	}
-	if err := budget.reserve(value.size, what); err != nil {
-		return nil, err
-	}
-	data := make([]byte, int(value.size))
-	if err := readMovieAt(ctx, reader, data, value.offset, what); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
 func readBoxPrefix(ctx context.Context, reader access.Random, value box, destination []byte, what string) error {
 	if uint64(len(destination)) > value.payloadSize {
 		return fmt.Errorf("%w: %s is shorter than %d bytes", errMalformedMovie, what, len(destination))
@@ -60,13 +35,6 @@ func readMovieAt(ctx context.Context, reader access.Random, destination []byte, 
 
 func payloadEnd(value box) (uint64, bool) {
 	return checkedBoxAdd(value.payloadOffset, value.payloadSize)
-}
-
-func rawPayload(raw []byte, value box, what string) ([]byte, error) {
-	if value.headerSize > uint64(len(raw)) || value.size != uint64(len(raw)) {
-		return nil, fmt.Errorf("%w: %s raw range", errMalformedMovie, what)
-	}
-	return raw[int(value.headerSize):], nil
 }
 
 func fullBox(data []byte, what string) (uint8, uint32, error) {

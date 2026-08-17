@@ -237,9 +237,11 @@ func (r memoryRandom) ReadAt(ctx context.Context, destination []byte, offset int
 type recordingRandom struct {
 	data        []byte
 	largestRead int
+	readCalls   int
 }
 
 func (r *recordingRandom) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
+	r.readCalls++
 	if len(destination) > r.largestRead {
 		r.largestRead = len(destination)
 	}
