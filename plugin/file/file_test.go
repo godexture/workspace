@@ -597,6 +597,44 @@ func TestValidateDistinctRejectsEquivalentFileIdentities(t *testing.T) {
 	}
 }
 
+func TestEquivalentHonorsCanceledContextBeforeFilesystemAccess(t *testing.T) {
+	directory := t.TempDir()
+	left, err := Reference(filepath.Join(directory, "left"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := Reference(filepath.Join(directory, "right"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := equivalent(ctx, left, right); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled equivalent error = %v, want context.Canceled", err)
+	}
+}
+
+func TestEquivalentReturnsCancellationCauseIdentity(t *testing.T) {
+	left, err := Reference(filepath.Join(t.TempDir(), "left"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := Reference(filepath.Join(t.TempDir(), "right"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("caller cancellation cause")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(cause)
+	got, err := equivalent(ctx, left, right)
+	if got {
+		t.Fatal("canceled equivalent reported equal paths")
+	}
+	if err != cause {
+		t.Fatalf("cancellation error identity = %v, want %v", err, cause)
+	}
+}
+
 func TestReferenceCanonicalizesWindowsUNC(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows UNC syntax")

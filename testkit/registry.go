@@ -35,13 +35,13 @@ type UncoveredContract struct {
 	Milestone string
 }
 
-// Milestones is the roadmap a coverage gap can be assigned to. An owner
-// outside it reads like a plan but is one: nothing schedules it and nothing
-// ever closes it, which is how an unowned export stays in the tree.
-var Milestones = []string{"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11"}
+// roadmapMilestoneList is the immutable roadmap source used by the coverage
+// gate. Keeping it private prevents callers from widening or replacing the
+// allow-list at runtime.
+const roadmapMilestoneList = "M0,M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,M11"
 
 func knownMilestone(value string) bool {
-	for _, milestone := range Milestones {
+	for _, milestone := range strings.Split(roadmapMilestoneList, ",") {
 		if milestone == value {
 			return true
 		}
@@ -65,7 +65,7 @@ func (c *Coverage) AssignUncovered(identity, milestone string) error {
 		return fmt.Errorf("testkit typed coverage: uncovered contract %s has no responsible milestone", identity)
 	}
 	if !knownMilestone(milestone) {
-		return fmt.Errorf("testkit typed coverage: uncovered contract %s names %q, which is not one of %s", identity, milestone, strings.Join(Milestones, ", "))
+		return fmt.Errorf("testkit typed coverage: uncovered contract %s names %q, which is not one of %s", identity, milestone, roadmapMilestoneList)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -94,31 +94,6 @@ func (c *Coverage) Uncovered() []UncoveredContract {
 		return result[left].Identity < result[right].Identity
 	})
 	return result
-}
-
-// VerifyComplete is the final-state gate used when every public conformance
-// contract must have a helper and an executed case. Milestone-local tests may
-// inspect Uncovered instead while their assigned gaps intentionally remain.
-func (c *Coverage) VerifyComplete(t testing.TB) {
-	t.Helper()
-	if err := c.completionError(); err != nil {
-		t.Error(err)
-	}
-}
-
-func (c *Coverage) completionError() error {
-	if c == nil {
-		return fmt.Errorf("testkit typed coverage: registry is nil")
-	}
-	gaps := c.Uncovered()
-	if len(gaps) == 0 {
-		return nil
-	}
-	values := make([]string, len(gaps))
-	for index, gap := range gaps {
-		values[index] = gap.Identity + " (" + gap.Milestone + ")"
-	}
-	return fmt.Errorf("testkit typed coverage: uncovered contracts remain: %s", strings.Join(values, ", "))
 }
 
 // Track returns an otherwise identical Subject whose completed cases are

@@ -30,7 +30,6 @@ type Fixture[T any] struct {
 	descriptor stream.Descriptor
 	typ        schema.Type[T]
 	values     []T
-	owners     *owners
 	verify     func() error
 }
 
@@ -40,7 +39,7 @@ func Values[T any](descriptor stream.Descriptor, typ schema.Type[T], values ...T
 	for index, value := range values {
 		owned[index] = typ.Fork(value)
 	}
-	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned, owners: &owners{}}
+	return Fixture[T]{descriptor: descriptor, typ: typ, values: owned}
 }
 
 func (f Fixture[T]) valid() bool {
@@ -48,41 +47,20 @@ func (f Fixture[T]) valid() bool {
 }
 
 func (f Fixture[T]) clone() Fixture[T] {
-	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values)), owners: &owners{}}
+	result := Fixture[T]{descriptor: f.descriptor, typ: f.typ, values: make([]T, len(f.values))}
 	for index, value := range f.values {
 		result.values[index] = f.typ.Fork(value)
 	}
 	return result
 }
 
-// emit hands the next unread value to the runtime under ownership accounting.
-// The slot keeps the failure domain the runtime bound it to and takes the
-// counting traits, so the component under test sees the declared behaviour and
-// only the accounting differs.
+// emit hands the next unread value to the runtime. The bound slot and Host's
+// ownership audit account for it without substituting schema traits.
 func (f *Fixture[T]) emit(index int, into *flow.Item[T]) {
 	value := f.values[index]
 	var zero T
 	f.values[index] = zero
-	f.owners.hand()
-	into.Bind(f.counted(), nil)
 	into.Set(value)
-}
-
-func (f *Fixture[T]) counted() schema.Type[T] {
-	typ, counter := f.typ, f.owners
-	traits := typ.Traits()
-	return typ.WithTraits(schema.Traits[T]{
-		Fork: func(value T) T {
-			counter.hand()
-			return typ.Fork(value)
-		},
-		Drop: func(value T) {
-			counter.release()
-			typ.Drop(value)
-		},
-		Size: traits.Size,
-		Time: traits.Time,
-	})
 }
 
 func (f *Fixture[T]) close() error {
@@ -95,7 +73,7 @@ func (f *Fixture[T]) close() error {
 		f.values[index] = zero
 	}
 	f.values = nil
-	problems := []error{f.owners.verify()}
+	var problems []error
 	if f.verify != nil {
 		problems = append(problems, f.verify())
 	}

@@ -4,6 +4,8 @@ package testkit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"sync"
@@ -28,14 +30,28 @@ type fixtureConfig struct{}
 type fixturePlan struct{ shape flow.Shape }
 
 type lifecycleState struct {
-	sourceOpen  atomic.Int32
-	sourceClose atomic.Int32
-	sinkOpen    atomic.Int32
-	sinkClose   atomic.Int32
-	eof         atomic.Int32
+	active         *activeRun
+	cancelObserved atomic.Bool
+	sourceOpen     atomic.Int32
+	sourceClose    atomic.Int32
+	sinkOpen       atomic.Int32
+	sinkClose      atomic.Int32
+	eof            atomic.Int32
+}
+
+func (s *lifecycleState) blockActive(ctx context.Context) error {
+	if s == nil || s.active == nil {
+		return nil
+	}
+	if err := s.active.block(ctx); err != nil {
+		s.cancelObserved.Store(true)
+		return err
+	}
+	return nil
 }
 
 func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *Fixture[I], output recorder[O], state *lifecycleState, settings scenarioSettings) plugin.Definition {
+	state.active = settings.active
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", subject.input.schema)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", subject.output.schema)}, nil)
@@ -82,13 +98,13 @@ func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *
 					if err != nil {
 						return nil, err
 					}
-					return &readSession{data: payload, caps: capabilities}, nil
+					return &readSession{data: payload, caps: capabilities, state: state}, nil
 				}))
 			}
 			if _, write := mediaformat.WriteOf(component); write {
 				capabilities, _ := access.NewCapabilities(access.SequentialWrite, access.RandomWrite)
 				sinkOptions = append(sinkOptions, access.Sink("testkit", capabilities, access.LiveNoCommit, func(context.Context, access.Reference, access.Selection) (access.Session, error) {
-					return &writeSession{caps: capabilities}, nil
+					return &writeSession{caps: capabilities, state: state}, nil
 				}))
 			}
 		}
@@ -156,12 +172,19 @@ type fixtureReader[T any] struct {
 func (r *fixtureReader[T]) Ports() flow.Shape { return r.shape.Clone() }
 
 func (r *fixtureReader[T]) Read(ctx context.Context, into *flow.Item[T]) error {
+	if r.state != nil && r.state.active != nil {
+		r.state.active.mark()
+	}
 	if err := ctx.Err(); err != nil {
+		r.state.cancelObserved.Store(true)
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.index >= len(r.input.values) {
+		if err := r.state.blockActive(ctx); err != nil {
+			return err
+		}
 		r.state.eof.Add(1)
 		return io.EOF
 	}
@@ -189,7 +212,11 @@ type fixtureWriter[T any] struct {
 
 func (w *fixtureWriter[T]) Ports() flow.Shape { return w.shape.Clone() }
 
-func (w *fixtureWriter[T]) Write(_ context.Context, input *flow.Item[T]) error {
+func (w *fixtureWriter[T]) Write(ctx context.Context, input *flow.Item[T]) error {
+	if err := w.state.blockActive(ctx); err != nil {
+		input.Drop()
+		return err
+	}
 	defer input.Drop()
 	if !input.Valid() {
 		return errors.New("testkit sink received an invalid input")
@@ -211,6 +238,7 @@ type readSession struct {
 	offset int64
 	closed atomic.Bool
 	caps   access.Capabilities
+	state  *lifecycleState
 }
 
 func (s *readSession) Capabilities() access.Capabilities { return s.caps }
@@ -219,7 +247,13 @@ func (s *readSession) Close() error {
 	return nil
 }
 func (s *readSession) Read(ctx context.Context, destination []byte) (int, error) {
+	if err := s.state.blockActive(ctx); err != nil {
+		return 0, err
+	}
 	if err := ctx.Err(); err != nil {
+		if s.state != nil {
+			s.state.cancelObserved.Store(true)
+		}
 		return 0, err
 	}
 	count, err := s.ReadAt(ctx, destination, s.offset)
@@ -227,7 +261,13 @@ func (s *readSession) Read(ctx context.Context, destination []byte) (int, error)
 	return count, err
 }
 func (s *readSession) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
+	if err := s.state.blockActive(ctx); err != nil {
+		return 0, err
+	}
 	if err := ctx.Err(); err != nil {
+		if s.state != nil {
+			s.state.cancelObserved.Store(true)
+		}
 		return 0, err
 	}
 	if offset < 0 || offset >= int64(len(s.data)) {
@@ -250,18 +290,48 @@ func (s *readSession) Size(ctx context.Context) (int64, error) {
 	return int64(len(s.data)), nil
 }
 
-type writeSession struct{ caps access.Capabilities }
+func (s *readSession) Snapshot(ctx context.Context) (access.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return access.Snapshot{}, err
+	}
+	if s.closed.Load() {
+		return access.Snapshot{}, errors.New("testkit read session is closed")
+	}
+	digest := sha256.Sum256(s.data)
+	return access.NewSnapshot("testkit/sha256:"+hex.EncodeToString(digest[:]), access.StrongSnapshot)
+}
+
+type writeSession struct {
+	caps  access.Capabilities
+	state *lifecycleState
+}
 
 func (s *writeSession) Capabilities() access.Capabilities { return s.caps }
 func (*writeSession) Close() error                        { return nil }
-func (*writeSession) Write(ctx context.Context, value []byte) (int, error) {
+func (s *writeSession) Write(ctx context.Context, value []byte) (int, error) {
+	if s.state != nil && s.state.active != nil {
+		if err := s.state.blockActive(ctx); err != nil {
+			return 0, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
+		if s.state != nil {
+			s.state.cancelObserved.Store(true)
+		}
 		return 0, err
 	}
 	return len(value), nil
 }
-func (*writeSession) WriteAt(ctx context.Context, value []byte, _ int64) (int, error) {
+func (s *writeSession) WriteAt(ctx context.Context, value []byte, _ int64) (int, error) {
+	if s.state != nil && s.state.active != nil {
+		if err := s.state.blockActive(ctx); err != nil {
+			return 0, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
+		if s.state != nil {
+			s.state.cancelObserved.Store(true)
+		}
 		return 0, err
 	}
 	return len(value), nil

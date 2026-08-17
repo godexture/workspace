@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
@@ -15,9 +16,9 @@ import (
 )
 
 // A local file session advertises StableSize, so Probe, Inspect, and the run
-// must all describe the same bytes. Every mutation another handle can make
-// between Prepare and Run is either detected and refused, or provably invisible
-// to the session that already opened the file.
+// must all describe the same bytes. Size changes and same-size writes whose
+// mtime changes are detected; a same-size write restored to the original mtime
+// is intentionally outside a WeakSnapshot's identity guarantee.
 func TestLocalFileMutationBetweenPreparationAndRun(t *testing.T) {
 	payload := []byte{
 		0x01, 0x00, 0xff, 0x7f,
@@ -45,30 +46,50 @@ func TestLocalFileMutationBetweenPreparationAndRun(t *testing.T) {
 
 	for _, test := range []struct {
 		name    string
-		mutate  func(t *testing.T, path string)
+		mutate  func(t *testing.T, path string, preparedMTime time.Time)
 		refused bool
 	}{
 		{
 			name:    "truncate",
-			mutate:  func(t *testing.T, path string) { writeFile(t, path, original[:len(original)/2]) },
+			mutate:  func(t *testing.T, path string, _ time.Time) { writeFile(t, path, original[:len(original)/2]) },
 			refused: true,
 		},
 		{
 			name:    "grow",
-			mutate:  func(t *testing.T, path string) { writeFile(t, path, grown) },
+			mutate:  func(t *testing.T, path string, _ time.Time) { writeFile(t, path, grown) },
 			refused: true,
 		},
 		{
-			name:    "same-size-overwrite",
-			mutate:  func(t *testing.T, path string) { writeFile(t, path, overwritten) },
+			name: "same-size-overwrite-mtime-changed",
+			mutate: func(t *testing.T, path string, preparedMTime time.Time) {
+				writeFile(t, path, overwritten)
+				setDistinctMTime(t, path, preparedMTime)
+			},
 			refused: true,
+		},
+		{
+			name: "same-size-overwrite-mtime-restored-weak-undetectable",
+			mutate: func(t *testing.T, path string, preparedMTime time.Time) {
+				writeFile(t, path, overwritten)
+				if err := os.Chtimes(path, preparedMTime, preparedMTime); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !info.ModTime().Equal(preparedMTime) {
+					t.Fatalf("restored mtime = %s, want %s", info.ModTime(), preparedMTime)
+				}
+			},
+			refused: false,
 		},
 		{
 			// The session holds the file it opened, not the path. Replacing
 			// what the path points at leaves the acquired content intact, so
 			// the run must succeed on the bytes it planned against.
 			name:    "path-replacement",
-			mutate:  replacePath(original, overwritten),
+			mutate:  func(t *testing.T, path string, _ time.Time) { replacePath(original, overwritten)(t, path) },
 			refused: false,
 		},
 	} {
@@ -77,6 +98,11 @@ func TestLocalFileMutationBetweenPreparationAndRun(t *testing.T) {
 			inputPath := filepath.Join(directory, "input.wav")
 			outputPath := filepath.Join(directory, "output.wav")
 			writeFile(t, inputPath, original)
+			beforePrepare, err := os.Stat(inputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preparedMTime := beforePrepare.ModTime()
 
 			instance, err := host.New(
 				host.Plugins(standard.Set()),
@@ -101,6 +127,13 @@ func TestLocalFileMutationBetweenPreparationAndRun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			afterPrepare, err := os.Stat(inputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !afterPrepare.ModTime().Equal(preparedMTime) {
+				t.Fatalf("input mtime changed during Prepare: before=%s after=%s", preparedMTime, afterPrepare.ModTime())
+			}
 			// A refused run reports its failure again through Close, which is
 			// the contract; only an unchanged source must close cleanly.
 			defer func() {
@@ -109,12 +142,12 @@ func TestLocalFileMutationBetweenPreparationAndRun(t *testing.T) {
 				}
 			}()
 
-			test.mutate(t, inputPath)
+			test.mutate(t, inputPath, preparedMTime)
 
 			result, runErr := prepared.Run(context.Background())
 			if !test.refused {
 				if runErr != nil || !result.Succeeded() {
-					t.Fatalf("run over an unchanged session failed: %v", runErr)
+					t.Fatalf("run with weak or path-replacement mutation failed: %v", runErr)
 				}
 				return
 			}
@@ -133,6 +166,24 @@ func writeFile(t *testing.T, path string, value []byte) {
 	if err := os.WriteFile(path, value, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func setDistinctMTime(t *testing.T, path string, baseline time.Time) {
+	t.Helper()
+	for attempt := 1; attempt <= 8; attempt++ {
+		candidate := baseline.Add(time.Duration(attempt) * 24 * time.Hour)
+		if err := os.Chtimes(path, candidate, candidate); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(baseline) {
+			return
+		}
+	}
+	t.Fatalf("filesystem rounded every changed mtime back to %s", baseline)
 }
 
 // replacePath swaps the file behind the path for a different one. Windows

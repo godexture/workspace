@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -144,7 +145,7 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 	}{
 		{name: "usage", ctx: t.Context(), args: []string{wavePath}, want: ExitUsage, text: "usage error"},
 		{name: "planning", ctx: t.Context(), args: []string{rawPath, filepath.Join(directory, "planning.wav")}, want: ExitPlanning, text: "prepare.format-config-required"},
-		{name: "input inspection", ctx: t.Context(), args: []string{filepath.Join(directory, "missing.wav"), existingOutput}, want: ExitPlanning, text: "missing.wav"},
+		{name: "input inspection", ctx: t.Context(), args: []string{filepath.Join(directory, "missing.wav"), existingOutput}, want: ExitPlanning, text: "not-found"},
 		{name: "same file", ctx: t.Context(), args: []string{wavePath, wavePath}, want: ExitPlanning, text: "prepare.boundary-conflict"},
 	}
 	canceled, cancel := context.WithCancel(t.Context())
@@ -173,6 +174,28 @@ func TestRunReportsStableUsagePlanningRuntimeAndCancellationCodes(t *testing.T) 
 			t.Fatalf("renderer exit = %v", result)
 		}
 	})
+}
+
+func TestRunRedactsMissingSecretPath(t *testing.T) {
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "credentials", "missing-secret.wav")
+	output := filepath.Join(t.TempDir(), "output.wav")
+	var stdout, stderr bytes.Buffer
+	result := Run(t.Context(), instance, []string{secret, output}, WithStreams(&stdout, &stderr))
+	if result.Code != ExitPlanning {
+		t.Fatalf("missing source exit = %v, stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+	for name, value := range map[string]string{"result": fmt.Sprint(result.Err), "stdout": stdout.String(), "stderr": stderr.String()} {
+		if strings.Contains(value, secret) || strings.Contains(value, filepath.Base(secret)) {
+			t.Fatalf("%s leaked missing source path %q: %s", name, secret, value)
+		}
+	}
+	if !strings.Contains(stderr.String(), "not-found") {
+		t.Fatalf("missing source lost safe class: %s", stderr.String())
+	}
 }
 
 func TestRunDoesNotBackpressureConversionOnBlockedRenderer(t *testing.T) {
@@ -228,9 +251,9 @@ func TestRunStopsRenderingAfterObservationCleanupTimeout(t *testing.T) {
 	waitForFile(t, outputPath)
 	select {
 	case value := <-finished:
-		if value.Code != ExitCanceled {
+		if value.Code != ExitRuntime {
 			close(blocked.release)
-			t.Fatalf("cleanup timeout exit = %v, want %d", value, ExitCanceled)
+			t.Fatalf("cleanup timeout exit = %v, want %d", value, ExitRuntime)
 		}
 	case <-time.After(time.Second):
 		close(blocked.release)

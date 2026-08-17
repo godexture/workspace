@@ -605,6 +605,9 @@ func (e *skeletonEmitter[T]) Emit(_ context.Context, input *flow.Item[T]) error 
 		return fmt.Errorf("collector received an unowned item")
 	}
 	stored := new(flow.Item[T])
+	// A collector keeps a payload past the call it arrived in, so the cell it
+	// keeps declares its own domain rather than inheriting the sender's.
+	stored.Bind(e.typ, &testDomain)
 	stored.Move(input)
 	e.items = append(e.items, stored)
 	return nil

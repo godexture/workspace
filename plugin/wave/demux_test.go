@@ -25,6 +25,7 @@ func (c *chunkCollector) Emit(_ context.Context, input *flow.Item[packet.Chunk])
 		return errors.New("collector received an unowned chunk")
 	}
 	stored := new(flow.Item[packet.Chunk])
+	stored.Bind(format.Chunks(), &testDomain)
 	stored.Move(input)
 	c.items = append(c.items, stored)
 	return nil

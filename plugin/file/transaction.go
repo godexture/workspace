@@ -24,7 +24,7 @@ func createTemporary(target string) (*os.File, error) {
 			return handle, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
-			return nil, err
+			return nil, redactIO("open-temp", err)
 		}
 	}
 	return nil, errors.New("file: could not allocate a unique temporary file")
@@ -36,7 +36,7 @@ func preservePermissions(temporary, target string) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return redactIO("stat", err)
 	}
-	return os.Chmod(temporary, info.Mode().Perm())
+	return redactIO("chmod", os.Chmod(temporary, info.Mode().Perm()))
 }

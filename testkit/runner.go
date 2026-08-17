@@ -14,6 +14,8 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
+const activeCancellationTimeout = 5 * time.Second
+
 type runnerKind uint8
 
 const (
@@ -74,14 +76,19 @@ func runOne[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O], test
 	factory := func() (*scenarioCore, error) {
 		return newScenario(kind, subject, test.Config, master.clone(), test.Want.newRecorder())
 	}
-	executeCase(t, subject.identity, test.Want.failure, factory)
-	if test.Want.failure.stage == 0 && acceptsRejection(kind, subject) {
+	executed := executeCase(t, subject.identity, test.Want.failure, factory)
+	if executed && test.Want.failure.stage == 0 && acceptsRejection(kind, subject) {
 		runRejected(t, kind, subject, test, master.clone())
 	}
-	subject.coverage.record(subject.identity)
+	if executed {
+		subject.coverage.record(subject.identity)
+	}
 }
 
-func executeCase(t testing.TB, identity plugin.Identity, failure failureExpectation, factory func() (*scenarioCore, error)) {
+// executeCase returns whether a real Prepared.Run scenario was exercised.
+// Planning-only failures intentionally stop after Host.Plan and do not count
+// toward executable runtime coverage.
+func executeCase(t testing.TB, identity plugin.Identity, failure failureExpectation, factory func() (*scenarioCore, error)) bool {
 	t.Helper()
 	if failure.stage == planFailure {
 		first := planFailureScenario(t, factory, time.Hour, failure)
@@ -89,15 +96,16 @@ func executeCase(t testing.TB, identity plugin.Identity, failure failureExpectat
 		if first != second {
 			t.Fatalf("planning failure purity: result changed with deadline: %q != %q", first, second)
 		}
-		return
+		return false
 	}
 	first := planScenario(t, identity, factory, time.Hour)
 	second := planScenario(t, identity, factory, 2*time.Hour)
 	if first.fingerprint != second.fingerprint {
 		t.Fatalf("Compile purity: planning result changed with deadline: %s != %s", first.fingerprint, second.fingerprint)
 	}
-	runCancelled(t, factory)
+	runCancelled(t, factory, failure.stage == 0)
 	runSuccessful(t, failure, factory, first.plan)
+	return true
 }
 
 func planFailureScenario(t testing.TB, factory func() (*scenarioCore, error), timeout time.Duration, want failureExpectation) string {
@@ -166,7 +174,7 @@ func planScenario(t testing.TB, identity plugin.Identity, factory func() (*scena
 	return scenarioPlan{plan: selected, fingerprint: fingerprint}
 }
 
-func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
+func runCancelled(t testing.TB, factory func() (*scenarioCore, error), active bool) {
 	t.Helper()
 	scenario, err := factory()
 	if err != nil {
@@ -182,14 +190,45 @@ func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
 		t.Fatalf("testkit cancellation Prepare: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	result, runErr := prepared.Run(ctx)
+	defer cancel()
+	if active && scenario.active != nil {
+		scenario.active.enable()
+	}
+	var result host.Result
+	var runErr error
+	done := make(chan struct{})
+	if !active {
+		cancel()
+	}
+	go func() {
+		result, runErr = prepared.Run(ctx, host.VerifyOwnership())
+		close(done)
+	}()
+	if active && scenario.active != nil {
+		if waitErr := scenario.active.wait(activeCancellationTimeout); waitErr != nil {
+			t.Errorf("testkit cancellation active-run gate: %v", waitErr)
+		}
+	}
+	if active {
+		cancel()
+	}
+	timer := time.NewTimer(activeCancellationTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		if active && scenario.active != nil {
+			scenario.active.unblock()
+		}
+		t.Fatalf("testkit cancellation Run did not terminate after cancellation")
+	}
+	if active && scenario.active != nil {
+		scenario.active.unblock()
+	}
 	if !errors.Is(runErr, context.Canceled) {
 		t.Errorf("testkit cancellation Run error = %v, want context.Canceled", runErr)
 	}
-	if len(result.Cleanup) != 0 {
-		t.Errorf("testkit cancellation cleanup failures = %v", result.Cleanup)
-	}
+	assertNoIncidentalFailures(t, "testkit cancellation", result)
 	if err := prepared.Close(); err != nil && !errors.Is(err, context.Canceled) {
 		t.Errorf("testkit cancellation Prepared.Close: %v", err)
 	}
@@ -197,6 +236,9 @@ func runCancelled(t testing.TB, factory func() (*scenarioCore, error)) {
 		if err := scenario.cancelCheck(); err != nil {
 			t.Errorf("testkit cancellation contract: %v", err)
 		}
+	}
+	if active && scenario.state != nil && !scenario.state.cancelObserved.Load() {
+		t.Errorf("testkit cancellation callback did not observe context cancellation")
 	}
 }
 
@@ -223,7 +265,7 @@ func runSuccessful(t testing.TB, failure failureExpectation, factory func() (*sc
 			t.Errorf("testkit prepared Plan inspection: %v", err)
 		}
 	}
-	result, runErr := prepared.Run(context.Background())
+	result, runErr := prepared.Run(context.Background(), host.VerifyOwnership())
 	closeErr := prepared.Close()
 	if failure.stage == 0 {
 		if runErr != nil || closeErr != nil || !result.Succeeded() {
@@ -240,9 +282,7 @@ func runSuccessful(t testing.TB, failure failureExpectation, factory func() (*sc
 		} else if !failure.matches(runErr) {
 			t.Errorf("testkit Host.Run error = %v, diagnostics = %v, want %s", runErr, host.Diagnostics(runErr), failure.describe())
 		}
-		if len(result.Cleanup) != 0 {
-			t.Errorf("testkit expected-failure cleanup = %v", result.Cleanup)
-		}
+		assertNoIncidentalFailures(t, "testkit expected-failure", result)
 	}
 	assertLifecycle(t, scenario.state, failure.stage == 0)
 }

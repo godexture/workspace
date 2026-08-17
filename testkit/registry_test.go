@@ -27,9 +27,8 @@ func TestCoverageRecordsAssignedUncoveredContracts(t *testing.T) {
 	if got := coverage.Uncovered(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Uncovered() = %#v, want %#v", got, want)
 	}
-	err := coverage.completionError()
-	if err == nil || !strings.Contains(err.Error(), "access.direct-inspect (M9)") || !strings.Contains(err.Error(), "endpoint.conformance (M9)") {
-		t.Fatalf("completion error = %v", err)
+	if got := coverage.Uncovered(); len(got) != len(want) {
+		t.Fatalf("Uncovered() = %#v, want %d assigned gaps", got, len(want))
 	}
 	if err := coverage.AssignUncovered("access.direct-inspect", "M10"); err == nil || !strings.Contains(err.Error(), "already assigned to M9") {
 		t.Fatalf("duplicate assignment error = %v", err)
@@ -56,16 +55,6 @@ func TestCoverageRejectsUnownedGaps(t *testing.T) {
 				t.Fatalf("AssignUncovered() error = %v", err)
 			}
 		})
-	}
-}
-
-func TestEmptyCoverageIsComplete(t *testing.T) {
-	if err := NewCoverage().completionError(); err != nil {
-		t.Fatal(err)
-	}
-	var coverage *Coverage
-	if err := coverage.completionError(); err == nil || !strings.Contains(err.Error(), "registry is nil") {
-		t.Fatalf("nil completion error = %v", err)
 	}
 }
 

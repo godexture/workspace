@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
@@ -21,12 +24,79 @@ type scenarioCore struct {
 	host        *host.Host
 	job         job.Job
 	state       *lifecycleState
+	active      *activeRun
 	selected    plugin.Identity
 	purity      func(context.Context) (string, error)
 	inspectPlan func(plan.Plan) error
 	cancelCheck func() error
 	finish      func() error
 	cleanup     func() error
+}
+
+// activeRun is enabled only by the cancellation scenario.  Fixture callbacks
+// then stop at their first execution and wait on the run context, giving the
+// runner evidence that execution is live before it requests cancellation.
+// Planning and the ordinary success path leave it disabled, so plugin authors
+// do not need a scheduler or a test-only hook in their Case.
+type activeRun struct {
+	enabled atomic.Bool
+	target  sync.Once
+	reached chan struct{}
+	release sync.Once
+	open    chan struct{}
+}
+
+func newActiveRun() *activeRun {
+	return &activeRun{reached: make(chan struct{}), open: make(chan struct{})}
+}
+
+func (a *activeRun) enable() {
+	if a != nil {
+		a.enabled.Store(true)
+	}
+}
+
+func (a *activeRun) mark() {
+	if a == nil || !a.enabled.Load() {
+		return
+	}
+}
+
+func (a *activeRun) block(ctx context.Context) error {
+	if a == nil || !a.enabled.Load() {
+		return nil
+	}
+	a.mark()
+	a.target.Do(func() { close(a.reached) })
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-a.open:
+		if err := ctx.Err(); err != nil {
+			return context.Cause(ctx)
+		}
+		return nil
+	}
+}
+
+func (a *activeRun) wait(timeout time.Duration) error {
+	if a == nil {
+		return errors.New("active cancellation gate is absent")
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-a.reached:
+		return nil
+	case <-timer.C:
+		return errors.New("active cancellation callback was not reached")
+	}
+}
+
+func (a *activeRun) unblock() {
+	if a != nil {
+		a.release.Do(func() { close(a.open) })
+	}
 }
 
 func (s *scenarioCore) close() error {
@@ -44,14 +114,17 @@ func (s *scenarioCore) close() error {
 // success and failure paths.
 type scenarioOption func(*scenarioSettings)
 
-type scenarioSettings struct{ reject *rejection }
+type scenarioSettings struct {
+	reject *rejection
+	active *activeRun
+}
 
 func withRejection(value *rejection) scenarioOption {
 	return func(settings *scenarioSettings) { settings.reject = value }
 }
 
 func newScenario[I, O any](kind runnerKind, subject Subject[I, O], patch config.Patch, input Fixture[I], output recorder[O], options ...scenarioOption) (*scenarioCore, error) {
-	settings := scenarioSettings{}
+	settings := scenarioSettings{active: newActiveRun()}
 	for _, option := range options {
 		option(&settings)
 	}
@@ -70,6 +143,7 @@ func newScenario[I, O any](kind runnerKind, subject Subject[I, O], patch config.
 		host:   instance,
 		job:    request,
 		state:  state,
+		active: settings.active,
 		finish: output.finish,
 		cleanup: func() error {
 			var problems []error

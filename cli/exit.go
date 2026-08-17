@@ -23,15 +23,15 @@ func requestExit(err error) ExitCode {
 	return ExitUsage
 }
 
-func planningExit(ctx context.Context, err error) ExitCode {
-	if canceled(ctx, err) {
+func planningExit(ctx context.Context, _ error) ExitCode {
+	if canceled(ctx) {
 		return ExitCanceled
 	}
 	return ExitPlanning
 }
 
 func runtimeExit(ctx context.Context, err error) ExitCode {
-	if canceled(ctx, err) {
+	if canceled(ctx) {
 		return ExitCanceled
 	}
 	var failure *host.Failure
@@ -41,6 +41,6 @@ func runtimeExit(ctx context.Context, err error) ExitCode {
 	return ExitRuntime
 }
 
-func canceled(ctx context.Context, err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx != nil && ctx.Err() != nil
+func canceled(ctx context.Context) bool {
+	return ctx != nil && ctx.Err() != nil
 }

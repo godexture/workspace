@@ -67,7 +67,7 @@ func (s *sinkSession) Write(ctx context.Context, source []byte) (int, error) {
 	if cause := contextFailure(ctx); cause != nil {
 		return count, cause
 	}
-	return count, err
+	return count, redactIO("write", err)
 }
 
 func (s *sinkSession) WriteAt(ctx context.Context, source []byte, offset int64) (int, error) {
@@ -83,7 +83,7 @@ func (s *sinkSession) WriteAt(ctx context.Context, source []byte, offset int64) 
 	if cause := contextFailure(ctx); cause != nil {
 		return count, cause
 	}
-	return count, err
+	return count, redactIO("write-at", err)
 }
 
 func (s *sinkSession) Flush(ctx context.Context) error {
@@ -107,7 +107,7 @@ func (s *sinkSession) Sync(ctx context.Context) error {
 	if s.state != sinkWriting || s.handle == nil {
 		return errSessionClosed
 	}
-	return s.handle.Sync()
+	return redactIO("sync", s.handle.Sync())
 }
 
 func (s *sinkSession) PrepareCommit(ctx context.Context) error {
@@ -122,7 +122,7 @@ func (s *sinkSession) PrepareCommit(ctx context.Context) error {
 	if s.state != sinkWriting || s.handle == nil {
 		return errSessionClosed
 	}
-	err := s.handle.Close()
+	err := redactIO("close", s.handle.Close())
 	s.handle = nil
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (s *sinkSession) Commit(ctx context.Context) error {
 	if err := preservePermissions(s.temp, s.target); err != nil {
 		return err
 	}
-	if err := os.Rename(s.temp, s.target); err != nil {
+	if err := redactIO("rename", os.Rename(s.temp, s.target)); err != nil {
 		return err
 	}
 	s.temp = ""
@@ -162,11 +162,11 @@ func (s *sinkSession) Abort(ctx context.Context) error {
 	}
 	var failures []error
 	if s.handle != nil {
-		failures = append(failures, s.handle.Close())
+		failures = append(failures, redactIO("close", s.handle.Close()))
 		s.handle = nil
 	}
 	if s.temp != "" {
-		if err := os.Remove(s.temp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := redactIO("remove", os.Remove(s.temp)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			failures = append(failures, err)
 		}
 		s.temp = ""

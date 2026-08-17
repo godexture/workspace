@@ -3,44 +3,12 @@ package testkit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync/atomic"
 	"testing"
 
+	"github.com/godexture/godec/host"
 	mediaformat "github.com/godexture/godec/media/format"
 )
-
-// owners detects releases of an input fixture item that its releaser did not
-// own. A flow.Item cell makes a repeated Drop a no-op, so this counter guards
-// the paths that bypass the cell: a component that keeps the raw value and
-// calls the schema Drop itself, or that releases a forked owner twice.
-//
-// Leaks stay with the payload allocator. A component may legitimately move a
-// value out of the accounted chain, so a non-zero balance is not by itself a
-// defect.
-type owners struct {
-	live  atomic.Int64
-	extra atomic.Int64
-}
-
-func (o *owners) hand() {
-	if o != nil {
-		o.live.Add(1)
-	}
-}
-
-func (o *owners) release() {
-	if o != nil && o.live.Add(-1) < 0 {
-		o.extra.Add(1)
-	}
-}
-
-func (o *owners) verify() error {
-	if o == nil || o.extra.Load() == 0 {
-		return nil
-	}
-	return fmt.Errorf("fixture item was released %d time(s) by a holder that did not own it: a component released a value whose ownership it had already given up", o.extra.Load())
-}
 
 var errRejectedItem = errors.New("testkit rejected an item")
 
@@ -101,7 +69,7 @@ func runRejected[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O],
 	if err != nil {
 		t.Fatalf("testkit rejection Prepare: %v", err)
 	}
-	result, runErr := prepared.Run(context.Background())
+	result, runErr := prepared.Run(context.Background(), host.VerifyOwnership())
 	closeErr := prepared.Close()
 	if !reject.triggered.Load() {
 		if runErr != nil || closeErr != nil {
@@ -112,7 +80,5 @@ func runRejected[I, O any](t testing.TB, kind runnerKind, subject Subject[I, O],
 	if !errors.Is(runErr, errRejectedItem) {
 		t.Errorf("testkit rejection Run error = %v, want %v", runErr, errRejectedItem)
 	}
-	if len(result.Cleanup) != 0 {
-		t.Errorf("testkit rejection cleanup failures = %v", result.Cleanup)
-	}
+	assertNoIncidentalFailures(t, "testkit rejection", result)
 }

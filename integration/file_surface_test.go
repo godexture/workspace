@@ -76,7 +76,8 @@ func TestFileJobSelectsRequestedOutputFormatEndToEnd(t *testing.T) {
 	}
 }
 
-// TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip pins M6 stream copy until M7 owns it as policy.
+// TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip pins M6's format-specific
+// lossless WAVE fast path; M7 generalizes copy/remux policy.
 func TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.wav")

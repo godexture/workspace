@@ -2,6 +2,7 @@ package acme
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -156,6 +157,19 @@ func (s *memorySession) Size(ctx context.Context) (int64, error) {
 		return 0, errors.New("ACME session is closed")
 	}
 	return int64(len(s.data)), nil
+}
+
+func (s *memorySession) Snapshot(ctx context.Context) (access.Snapshot, error) {
+	if err := context.Cause(ctx); err != nil {
+		return access.Snapshot{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return access.Snapshot{}, errors.New("ACME session is closed")
+	}
+	digest := sha256.Sum256(s.data)
+	return access.NewSnapshot("acme/sha256:"+hex.EncodeToString(digest[:]), access.StrongSnapshot)
 }
 
 func (s *memorySession) Close() error {

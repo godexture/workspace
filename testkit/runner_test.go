@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -70,6 +71,22 @@ func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 		},
 	)
 	coverage.VerifyExecutable(t, plugin.NewSet(definition))
+}
+
+func TestCoverageDoesNotCountPlanOnlyCaseAsExecutableRun(t *testing.T) {
+	var inspections, probes atomic.Int32
+	definition := runnerFormatDefinition(&inspections, &probes)
+	coverage := NewCoverage()
+	subject := Track(SubjectOf(definition, plugin.IdentityOf[runnerFormatComponentID](), "bytes", access.Bytes(), "out", access.Bytes()), coverage)
+	runOne(t, formatRunner, subject, Case[buffer.Handle, buffer.Handle]{
+		Name:  "plan-only",
+		Input: ByteInput([]byte{0x43}),
+		Want:  WantPlanError[buffer.Handle](errRunnerPlan),
+	})
+	problems := coverage.executableProblems(plugin.NewSet(definition))
+	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "no executed typed case") {
+		t.Fatalf("plan-only case counted as executable coverage: %v", problems)
+	}
 }
 
 func TestFormatUsesAccessBoundaryInspection(t *testing.T) {
@@ -196,6 +213,7 @@ func (o runnerOperator) Process(ctx context.Context, input *flow.Item[int], outp
 		return diagnostic.NewError(diagnostic.NewItem("runner.negative", diagnostic.ErrorSeverity, diagnostic.Path{}, "negative fixture", nil))
 	}
 	value := flow.NewItem(input.Value()*o.factor, runnerType, &testDomain)
+	defer value.Drop()
 	if err := output.Emit(ctx, &value); err != nil {
 		return err
 	}

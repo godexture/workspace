@@ -55,11 +55,11 @@ func acquireSource(ctx context.Context, reference access.Reference, selected acc
 	}
 	handle, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, redactIO("open", err)
 	}
 	info, err := handle.Stat()
 	if err != nil {
-		return nil, errors.Join(err, handle.Close())
+		return nil, errors.Join(redactIO("stat", err), redactIO("close", handle.Close()))
 	}
 	return &sourceSession{handle: handle, size: info.Size(), modified: info.ModTime().UnixNano()}, nil
 }
@@ -84,7 +84,7 @@ func (s *sourceSession) Read(ctx context.Context, destination []byte) (int, erro
 	if cause := contextFailure(ctx); cause != nil {
 		return count, cause
 	}
-	return count, err
+	return count, redactIO("read", err)
 }
 
 func (s *sourceSession) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
@@ -104,7 +104,7 @@ func (s *sourceSession) ReadAt(ctx context.Context, destination []byte, offset i
 	if cause := contextFailure(ctx); cause != nil {
 		return count, cause
 	}
-	return count, err
+	return count, redactIO("read-at", err)
 }
 
 func (s *sourceSession) Size(ctx context.Context) (int64, error) {
@@ -135,7 +135,7 @@ func (s *sourceSession) Snapshot(ctx context.Context) (access.Snapshot, error) {
 	}
 	info, err := s.handle.Stat()
 	if err != nil {
-		return access.Snapshot{}, err
+		return access.Snapshot{}, redactIO("stat", err)
 	}
 	return access.NewSnapshot(snapshotIdentity(info.Size(), info.ModTime().UnixNano()), access.WeakSnapshot)
 }
@@ -150,7 +150,7 @@ func (s *sourceSession) Close() error {
 	if s.handle == nil {
 		return nil
 	}
-	err := s.handle.Close()
+	err := redactIO("close", s.handle.Close())
 	s.handle = nil
 	return err
 }

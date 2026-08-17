@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -33,6 +34,28 @@ func hasDiagnostic(err error, code string) bool {
 		}
 	}
 	return false
+}
+
+// assertNoIncidentalFailures fixes what a run must not produce beside the one
+// failure a scenario is about.
+//
+// Secondary and Cleanup are separate axes, and a component that leaks a
+// release or fails a second time independently shows up in exactly one of
+// them. Checking only Cleanup would let an independent second failure pass
+// unnoticed now that the Result can express one.
+func assertNoIncidentalFailures(t testing.TB, scenario string, result host.Result) {
+	t.Helper()
+	if len(result.Cleanup) != 0 {
+		t.Errorf("%s cleanup failures = %v", scenario, result.Cleanup)
+	}
+	if len(result.Secondary) != 0 {
+		t.Errorf("%s independent failures beside the expected one = %v", scenario, result.Secondary)
+	}
+	// A repeated failure is summarised rather than copied, so a component that
+	// leaks releases in bulk shows up here and nowhere else.
+	for _, suppressed := range result.Suppressed {
+		t.Errorf("%s repeated failure: %v", scenario, suppressed)
+	}
 }
 
 func assertSelectedSubject(t testing.TB, selected plan.Plan, identity plugin.Identity) {

@@ -33,6 +33,7 @@ func (c *writeCollector) Emit(_ context.Context, input *flow.Item[access.Write])
 		return errors.New("collector received an unowned write")
 	}
 	stored := new(flow.Item[access.Write])
+	stored.Bind(access.Writes(), &testDomain)
 	stored.Move(input)
 	c.items = append(c.items, stored)
 	return nil

@@ -11,7 +11,7 @@ import (
 func syncDirectory(target string) error {
 	directory, err := os.Open(filepath.Dir(target))
 	if err != nil {
-		return err
+		return redactIO("open-directory", err)
 	}
-	return errors.Join(directory.Sync(), directory.Close())
+	return errors.Join(redactIO("sync-directory", directory.Sync()), redactIO("close-directory", directory.Close()))
 }

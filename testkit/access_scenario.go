@@ -49,7 +49,7 @@ func newAccessScenario(subject AccessSubject, direction access.Direction, input 
 		return nil, closeAccessTarget(target, err)
 	}
 
-	state := &lifecycleState{}
+	state := &lifecycleState{active: newActiveRun()}
 	var fixture plugin.Definition
 	var request job.Job
 	var ownedInput Fixture[buffer.Handle]
@@ -108,9 +108,10 @@ func newAccessScenario(subject AccessSubject, direction access.Direction, input 
 		return closeAccessTarget(target, ownedInput.close(), residueErr)
 	}
 	return &scenarioCore{
-		host:  instance,
-		job:   request,
-		state: state,
+		host:   instance,
+		job:    request,
+		state:  state,
+		active: state.active,
 		inspectPlan: func(selected plan.Plan) error {
 			return inspectAccessPlan(selected, subject, target.reference, direction, want.requirements)
 		},
@@ -328,6 +329,7 @@ type accessReadPassOperator struct {
 
 func (o *accessReadPassOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (o *accessReadPassOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[buffer.Handle]) error {
+	o.state.active.mark()
 	return output.Emit(ctx, input)
 }
 func (*accessReadPassOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
@@ -351,6 +353,7 @@ type accessWritePassOperator struct {
 
 func (o *accessWritePassOperator) Ports() flow.Shape { return o.shape.Clone() }
 func (o *accessWritePassOperator) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.Emitter[access.Write]) error {
+	o.state.active.mark()
 	defer input.Drop()
 	var item flow.Item[access.Write]
 	defer item.Drop()
