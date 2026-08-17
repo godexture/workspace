@@ -18,6 +18,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
@@ -329,7 +330,7 @@ func spoolFixture() plugin.Definition {
 					plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("spool.input")),
 				}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
 			}

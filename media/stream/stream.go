@@ -30,35 +30,40 @@ func (i ID) String() string { return string(i) }
 // stream. It intentionally has no media-kind enum.
 type Descriptor struct {
 	id         ID
-	schema     schema.ID
+	schema     schema.Descriptor
 	timeBase   timing.Base
 	properties property.Set
 	metadata   metadata.Document
 }
 
-func NewDescriptor(id ID, identity schema.ID, timeBase timing.Base, properties property.Set) (Descriptor, error) {
+func NewDescriptor(id ID, descriptor schema.Descriptor, timeBase timing.Base, properties property.Set) (Descriptor, error) {
 	if id.IsZero() {
 		return Descriptor{}, ErrInvalidID
 	}
-	if identity.IsZero() || !timeBase.Valid() {
+	if !descriptor.Valid() || (descriptor.HasTime() && !timeBase.Valid()) || (!descriptor.HasTime() && timeBase != (timing.Base{})) {
 		return Descriptor{}, ErrInvalidDescriptor
 	}
-	return Descriptor{id: id, schema: identity, timeBase: timeBase, properties: properties}, nil
+	return Descriptor{id: id, schema: descriptor, timeBase: timeBase, properties: properties}, nil
 }
 
-func MustDescriptor(id ID, identity schema.ID, timeBase timing.Base, properties property.Set) Descriptor {
-	descriptor, err := NewDescriptor(id, identity, timeBase, properties)
+func MustDescriptor(id ID, schemaDescriptor schema.Descriptor, timeBase timing.Base, properties property.Set) Descriptor {
+	descriptor, err := NewDescriptor(id, schemaDescriptor, timeBase, properties)
 	if err != nil {
 		panic(err)
 	}
 	return descriptor
 }
 
-func (d Descriptor) Valid() bool              { return !d.id.IsZero() && !d.schema.IsZero() && d.timeBase.Valid() }
-func (d Descriptor) ID() ID                   { return d.id }
-func (d Descriptor) Schema() schema.ID        { return d.schema }
-func (d Descriptor) TimeBase() timing.Base    { return d.timeBase }
-func (d Descriptor) Properties() property.Set { return d.properties }
+func (d Descriptor) Valid() bool {
+	return !d.id.IsZero() && d.schema.Valid() &&
+		((d.schema.HasTime() && d.timeBase.Valid()) || (!d.schema.HasTime() && d.timeBase == (timing.Base{})))
+}
+func (d Descriptor) ID() ID                              { return d.id }
+func (d Descriptor) Schema() schema.ID                   { return d.schema.Identity() }
+func (d Descriptor) SchemaDescriptor() schema.Descriptor { return d.schema }
+func (d Descriptor) HasTimeline() bool                   { return d.schema.HasTime() }
+func (d Descriptor) TimeBase() timing.Base               { return d.timeBase }
+func (d Descriptor) Properties() property.Set            { return d.properties }
 
 // Metadata returns the static document describing this stream. It is empty
 // when the source carried none. Metadata that varies over time belongs in a

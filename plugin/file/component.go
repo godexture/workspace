@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -38,7 +39,7 @@ func sourceComponent() plugin.Component {
 	spec := plugin.Spec[configuration, sourcePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
 		Compile: func(plugin.CompileContext, configuration, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sourcePlan, stream.Descriptor], error) {
-			descriptor, err := stream.NewDescriptor("file", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+			descriptor, err := stream.NewDescriptor("file", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[sourcePlan, stream.Descriptor]{}, err
 			}
@@ -81,8 +82,8 @@ func sinkComponentWith(descriptor plugin.Descriptor, traits ...plugin.ComponentO
 					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("file.input"))},
 				}, nil
 			}
-			if input.TimeBase() != access.CarrierTimeBase() || input.Properties().Len() != 0 {
-				desired, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			if input.HasTimeline() || input.TimeBase() != (timing.Base{}) || input.Properties().Len() != 0 {
+				desired, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 				if err != nil {
 					return plugin.Compiled[sinkPlan, stream.Descriptor]{}, err
 				}

@@ -46,7 +46,7 @@ var (
 
 func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 	definition := runnerDefinition()
-	descriptor := stream.MustDescriptor("fixture", runnerType.Identity(), timing.MustBase(1, 1), property.New())
+	descriptor := stream.MustDescriptor("fixture", runnerType.Descriptor(), timing.Base{}, property.New())
 	coverage := NewCoverage()
 	subject := Track(SubjectOf(definition, plugin.IdentityOf[runnerComponentID](), "in", runnerType, "out", runnerType), coverage)
 

@@ -64,7 +64,7 @@ func hostPlanComponent[Marker any](shape flow.Shape, compile func(flow.Descripto
 
 func TestHostPlanReturnsPublicPlanWithoutOpening(t *testing.T) {
 	var opened atomic.Int32
-	descriptorA := stream.MustDescriptor("stream", hostPlanSchemaA.Identity(), timing.MustBase(1, 1000), property.New())
+	descriptorA := stream.MustDescriptor("stream", hostPlanSchemaA.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", hostPlanSchemaA)})
 	source := hostPlanComponent[hostPlanSourceID](sourceShape, func(flow.Descriptors[stream.Descriptor]) plugin.Compiled[flow.Shape, stream.Descriptor] {
 		return plugin.Compiled[flow.Shape, stream.Descriptor]{Outputs: flow.NewDescriptors(flow.Describe("out", descriptorA))}
@@ -72,7 +72,7 @@ func TestHostPlanReturnsPublicPlanWithoutOpening(t *testing.T) {
 	bridgeShape := flow.NewShape([]flow.Port{flow.In("in", hostPlanSchemaA)}, []flow.Port{flow.Out("out", hostPlanSchemaB)})
 	bridge := hostPlanComponent[hostPlanBridgeID](bridgeShape, func(inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[flow.Shape, stream.Descriptor] {
 		input, _ := inputs.One("in")
-		output := stream.MustDescriptor(input.ID(), hostPlanSchemaB.Identity(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
+		output := stream.MustDescriptor(input.ID(), hostPlanSchemaB.Descriptor(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
 		return plugin.Compiled[flow.Shape, stream.Descriptor]{Outputs: flow.NewDescriptors(flow.Describe("out", output)), Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "bridge"}}}
 	}, &opened)
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", hostPlanSchemaB)}, nil)

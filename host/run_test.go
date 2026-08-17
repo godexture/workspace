@@ -231,7 +231,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		state.fail = make(map[string]error)
 	}
 	configuration := config.Struct[lifecycleConfigID](func() lifecycleConfig { return lifecycleConfig{} }).Version("1").Build()
-	descriptor := stream.MustDescriptor("fixture", lifecycleType.Identity(), timing.MustBase(1, 1000), property.New())
+	descriptor := stream.MustDescriptor("fixture", lifecycleType.Descriptor(), timing.Base{}, property.New())
 	sourcePort := flow.Out("out", lifecycleType)
 	if state.multi {
 		sourcePort = flow.Out("out", lifecycleType, flow.Many())

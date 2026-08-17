@@ -124,7 +124,7 @@ func TestDemuxCompileUsesInspectionInsteadOfCarrierProperties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	carrier := stream.MustDescriptor("wave", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	carrier := stream.MustDescriptor("wave", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	compiled, err := plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("bytes", carrier)))
 	if err != nil {
 		t.Fatal(err)

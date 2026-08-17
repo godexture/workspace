@@ -7,6 +7,7 @@ import "github.com/godexture/godec/media/stream"
 type Descriptor struct {
 	Stream              string
 	Schema              string
+	HasTimeline         bool
 	TimeBaseNumerator   int64
 	TimeBaseDenominator int64
 	PropertyFingerprint string
@@ -15,7 +16,9 @@ type Descriptor struct {
 }
 
 func (d Descriptor) Valid() bool {
-	return d.Stream != "" && d.Schema != "" && d.TimeBaseNumerator > 0 && d.TimeBaseDenominator > 0 && d.PropertyFingerprint != "" && d.MetadataScope != "" && d.Fingerprint != ""
+	timeBaseValid := d.HasTimeline && d.TimeBaseNumerator > 0 && d.TimeBaseDenominator > 0 ||
+		!d.HasTimeline && d.TimeBaseNumerator == 0 && d.TimeBaseDenominator == 0
+	return d.Stream != "" && d.Schema != "" && timeBaseValid && d.PropertyFingerprint != "" && d.MetadataScope != "" && d.Fingerprint != ""
 }
 
 // ProjectDescriptor removes runtime factories and values from a descriptor.
@@ -28,6 +31,7 @@ func ProjectDescriptor(value stream.Descriptor) (Descriptor, error) {
 	return Descriptor{
 		Stream:              value.ID().String(),
 		Schema:              value.Schema().String(),
+		HasTimeline:         value.HasTimeline(),
 		TimeBaseNumerator:   timeBase.Numerator,
 		TimeBaseDenominator: timeBase.Denominator,
 		PropertyFingerprint: value.Properties().Fingerprint().String(),

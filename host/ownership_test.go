@@ -73,7 +73,7 @@ func TestPreparedRunDropsEveryItemAcceptedFromSourceOnFailure(t *testing.T) {
 	)
 	var emitted, dropped atomic.Int64
 	typ := schema.Define[failureDropSchemaID](schema.Traits[int]{Drop: func(int) { dropped.Add(1) }})
-	descriptor := stream.MustDescriptor("failure-drop", typ.Identity(), timing.MustBase(1, 1_000), property.New())
+	descriptor := stream.MustDescriptor("failure-drop", typ.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
 	configuration := config.Struct[failureDropConfigID](func() failureDropConfig { return failureDropConfig{} }).Version("1").Build()
@@ -208,7 +208,7 @@ func (*flushPhaseWriter) Write(_ context.Context, input *flow.Item[int]) error {
 // which goroutine noticed it.
 func TestFlushFailureReportsFlushPhaseAcrossABufferedBoundary(t *testing.T) {
 	typ := schema.Define[flushPhaseSchemaID](schema.Traits[int]{})
-	descriptor := stream.MustDescriptor("flush-phase", typ.Identity(), timing.MustBase(1, 1_000), property.New())
+	descriptor := stream.MustDescriptor("flush-phase", typ.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)

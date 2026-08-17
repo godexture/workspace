@@ -85,7 +85,7 @@ func (w *performanceWriter) Write(_ context.Context, input *flow.Item[int]) erro
 }
 
 func performanceFixture() (*Host, job.Job, *performanceState, error) {
-	descriptor := stream.MustDescriptor("performance", performanceSchema.Identity(), timing.MustBase(1, 1_000), property.New())
+	descriptor := stream.MustDescriptor("performance", performanceSchema.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", performanceSchema)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", performanceSchema)}, []flow.Port{flow.Out("out", performanceSchema)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", performanceSchema)}, nil)

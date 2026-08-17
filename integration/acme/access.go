@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -54,7 +55,7 @@ func sourceComponent() plugin.Component {
 	spec := plugin.Spec[configuration, sourcePlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[configuration](shape),
 		Compile: func(plugin.CompileContext, configuration, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sourcePlan, stream.Descriptor], error) {
-			descriptor, err := stream.NewDescriptor("acme", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+			descriptor, err := stream.NewDescriptor("acme", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[sourcePlan, stream.Descriptor]{}, err
 			}

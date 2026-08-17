@@ -160,13 +160,13 @@ func validateFormatWriteTrait(component plugin.Component, shape flow.Shape, trai
 func canonicalBytes(port flow.Port) bool {
 	want := access.Bytes().Descriptor()
 	got := port.Schema()
-	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
+	return got.Equal(want)
 }
 
 func canonicalWrites(port flow.Port) bool {
 	want := access.Writes().Descriptor()
 	got := port.Schema()
-	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
+	return got.Equal(want)
 }
 
 func validateScheme(identity plugin.Identity, direction, scheme string, valid bool, seen map[accessScheme]plugin.Identity) []diagnostic.Item {

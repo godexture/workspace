@@ -59,7 +59,7 @@ func newMetadataScenario(subject MetadataSubject, test MetadataCase) (*scenarioC
 	}
 	set := subject.set.Add(metadataAnchorDefinition())
 	anchor := SubjectIn(set, plugin.IdentityOf[metadataAnchorComponentID](), "in", metadataAnchorType, "out", metadataAnchorType)
-	descriptor := stream.MustDescriptor("testkit-metadata", metadataAnchorType.Identity(), timing.MustBase(1, 1), property.New())
+	descriptor := stream.MustDescriptor("testkit-metadata", metadataAnchorType.Descriptor(), timing.Base{}, property.New())
 	base, err := newScenario(componentRunner, anchor, config.NewPatch(), Values(descriptor, metadataAnchorType, 1), EqualValues(1).newRecorder())
 	if err != nil {
 		return nil, err

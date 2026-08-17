@@ -132,8 +132,8 @@ func testDescription(t *testing.T) Description {
 	if err != nil {
 		t.Fatal(err)
 	}
-	typ := schema.Define[planSchemaID, planUnit](schema.Traits[planUnit]{})
-	descriptor, err := ProjectDescriptor(stream.MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), property.New()))
+	typ := schema.Define[planSchemaID, planUnit](schema.Traits[planUnit]{Time: func(planUnit) (int64, bool) { return 0, true }})
+	descriptor, err := ProjectDescriptor(stream.MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 48000), property.New()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +153,20 @@ func testDescription(t *testing.T) Description {
 		},
 		Edges:    []Edge{{FromNode: "source", FromPort: "out", ToNode: "sink", ToPort: "in", Origin: Requested}},
 		Warnings: []string{"display warning"},
+	}
+}
+
+func TestProjectDescriptorPreservesUntimedTimelineState(t *testing.T) {
+	type carrierID struct{}
+	type carrierValue struct{}
+	typ := schema.Define[carrierID, carrierValue](schema.Traits[carrierValue]{})
+	value := stream.MustDescriptor("bytes", typ.Descriptor(), timing.Base{}, property.New())
+	descriptor, err := ProjectDescriptor(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !descriptor.Valid() || descriptor.HasTimeline || descriptor.TimeBaseNumerator != 0 || descriptor.TimeBaseDenominator != 0 {
+		t.Fatalf("untimed plan descriptor = %#v", descriptor)
 	}
 }
 

@@ -13,12 +13,12 @@ type eventPayload struct{}
 type eventPropertyID struct{}
 
 func TestStreamEventsKeepFollowPolicyUndecided(t *testing.T) {
-	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{})
+	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{Time: func(eventPayload) (int64, bool) { return 0, true }})
 	properties, err := property.Define[eventPropertyID](property.Scalar[int]()).Set(property.New(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor, err := NewDescriptor("audio-0", typ.Identity(), timing.MustBase(1, 1000), properties)
+	descriptor, err := NewDescriptor("audio-0", typ.Descriptor(), timing.MustBase(1, 1000), properties)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,13 +58,13 @@ func TestStreamEventsRepresentRemovalAndPropertyChange(t *testing.T) {
 // Two streams that carry the same schema must still be distinguishable, which
 // is the reason stream.ID exists separately from schema.ID.
 func TestEventsTellApartTwoStreamsOfTheSameSchema(t *testing.T) {
-	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{})
+	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{Time: func(eventPayload) (int64, bool) { return 0, true }})
 	base := timing.MustBase(1, 1000)
-	first, err := NewDescriptor("audio-0", typ.Identity(), base, property.New())
+	first, err := NewDescriptor("audio-0", typ.Descriptor(), base, property.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewDescriptor("audio-1", typ.Identity(), base, property.New())
+	second, err := NewDescriptor("audio-1", typ.Descriptor(), base, property.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +85,8 @@ func TestEventsTellApartTwoStreamsOfTheSameSchema(t *testing.T) {
 }
 
 func TestDescriptorWithoutAnIdentityIsRejected(t *testing.T) {
-	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{})
-	if _, err := NewDescriptor("", typ.Identity(), timing.MustBase(1, 1000), property.New()); err == nil {
+	typ := schema.Define[eventSchemaID, eventPayload](schema.Traits[eventPayload]{Time: func(eventPayload) (int64, bool) { return 0, true }})
+	if _, err := NewDescriptor("", typ.Descriptor(), timing.MustBase(1, 1000), property.New()); err == nil {
 		t.Fatal("descriptor without a stream id accepted")
 	}
 }

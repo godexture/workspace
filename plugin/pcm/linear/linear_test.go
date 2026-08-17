@@ -374,7 +374,7 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("pcm", codec.Packets().Identity(), timing.MustBase(1, 32_000), properties)
+	input := stream.MustDescriptor("pcm", codec.Packets().Descriptor(), timing.MustBase(1, 32_000), properties)
 	component := componentByIdentity(t, DecoderIdentity())
 	resolved, err := component.Resolve(config.NewPatch().SetText("rate", "32000").SetText("validBits", "12"))
 	if err != nil {
@@ -406,7 +406,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	carrier := stream.MustDescriptor("pcm", access.Bytes().Identity(), access.CarrierTimeBase(), property.New()).WithMetadata(document)
+	carrier := stream.MustDescriptor("pcm", access.Bytes().Descriptor(), timing.Base{}, property.New()).WithMetadata(document)
 	patch := config.NewPatch().SetText("rate", "32000").SetText("validBits", "12")
 
 	reader := componentByIdentity(t, ReaderIdentity())
@@ -436,7 +436,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packets := stream.MustDescriptor(carrier.ID(), codec.Packets().Identity(), timing.MustBase(1, 32_000), chunks.Properties()).WithMetadata(document)
+	packets := stream.MustDescriptor(carrier.ID(), codec.Packets().Descriptor(), timing.MustBase(1, 32_000), chunks.Properties()).WithMetadata(document)
 	compiledWriter, err := plugin.Compile(writer, plugin.CompileContext{}, resolvedWriter, flow.NewDescriptors(flow.Describe("packets", packets)))
 	if err != nil {
 		t.Fatal(err)
@@ -446,7 +446,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 		t.Fatal("writer output descriptor type was erased incorrectly")
 	}
 	writesDescriptor, ok := writerOutputs.One("writes")
-	if !ok || writesDescriptor.ID() != carrier.ID() || writesDescriptor.Metadata().Scope() != metadata.StreamScope || writesDescriptor.TimeBase() != access.CarrierTimeBase() || writesDescriptor.Properties().Len() != 0 {
+	if !ok || writesDescriptor.ID() != carrier.ID() || writesDescriptor.Metadata().Scope() != metadata.StreamScope || writesDescriptor.HasTimeline() || writesDescriptor.TimeBase() != (timing.Base{}) || writesDescriptor.Properties().Len() != 0 {
 		t.Fatalf("writer carrier descriptor = %#v", writesDescriptor)
 	}
 }
@@ -459,7 +459,7 @@ type pcmFixture struct {
 
 func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture {
 	t.Helper()
-	descriptor := stream.MustDescriptor("pcm", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	descriptor := stream.MustDescriptor("pcm", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	state := &fixtureState{}
 	definition := fixtureDefinition(descriptor, state)
 	set := Set().Add(definition)

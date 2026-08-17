@@ -120,7 +120,7 @@ func newOwnershipScenario(ownership access.Ownership) (*scenarioCore, error) {
 
 func ownershipDefinition(state *lifecycleState, sourceHandle, sinkHandle *ownershipHandle, received *atomic.Int32) plugin.Definition {
 	configuration := config.Struct[ownershipConfigID](func() ownershipConfig { return ownershipConfig{} }).Version("1").Build()
-	descriptor := stream.MustDescriptor("testkit-direct", ownershipType.Identity(), timing.MustBase(1, 1), property.New())
+	descriptor := stream.MustDescriptor("testkit-direct", ownershipType.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", ownershipType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", ownershipType)}, nil)
 	source := plugin.NewComponent[ownershipSourceID](plugin.Descriptor{DisplayName: "testkit direct source"}, configuration,

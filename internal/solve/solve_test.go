@@ -91,7 +91,7 @@ func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
 			if value.Mode != 3 {
 				return input
 			}
-			return stream.MustDescriptor(input.ID(), input.Schema(), timing.MustBase(1, 48_000), input.Properties()).WithMetadata(input.Metadata())
+			return stream.MustDescriptor(input.ID(), input.SchemaDescriptor(), timing.MustBase(1, 48_000), input.Properties()).WithMetadata(input.Metadata())
 		},
 		func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
 			return []solveConfig{{Mode: 3}}

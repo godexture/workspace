@@ -52,7 +52,7 @@ func demuxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Identity(), timing.MustBase(1, int64(inspected.description.Rate)), properties)
+			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties)
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}

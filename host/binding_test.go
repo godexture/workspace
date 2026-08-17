@@ -17,6 +17,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -491,7 +492,7 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 
 func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkTraits []plugin.ComponentOption, requirements access.Requirements, readOptions ...mediaformat.ReadOption) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
-	descriptor := stream.MustDescriptor("boundary", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	descriptor := stream.MustDescriptor("boundary", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())})
 	transformShape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", access.Writes())})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", access.Writes())}, nil)
@@ -518,7 +519,7 @@ func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkT
 		if !ok {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
-		output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+		output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 		if err != nil {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{}, err
 		}

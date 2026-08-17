@@ -448,7 +448,7 @@ func waveDecoyParser(compiles *atomic.Int32) plugin.Component {
 					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("chunks", plugin.ConditionNeed[stream.Descriptor]("decoy.input"))},
 				}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), codec.Packets().Identity(), input.TimeBase(), input.Properties())
+			output, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), input.TimeBase(), input.Properties())
 			if err != nil {
 				return plugin.Compiled[waveDecoyPlan, stream.Descriptor]{}, err
 			}

@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -54,7 +55,7 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}

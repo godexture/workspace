@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+
+	"github.com/godexture/godec/internal/gotype"
 )
 
 // Fingerprint identifies the canonical planning state of one stream
@@ -23,9 +25,15 @@ func (d Descriptor) Fingerprint() (Fingerprint, error) {
 		return Fingerprint{}, ErrInvalidDescriptor
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("godec/stream/fingerprint/v1\x00"))
+	_, _ = hash.Write([]byte("godec/stream/fingerprint/v3\x00"))
 	writeStatePart(hash, []byte(d.id.String()))
-	writeStatePart(hash, []byte(d.schema.String()))
+	writeStatePart(hash, []byte(d.schema.Identity().String()))
+	writeStatePart(hash, []byte(gotype.Canonical(d.schema.Payload())))
+	if d.schema.HasTime() {
+		writeStatePart(hash, []byte{1})
+	} else {
+		writeStatePart(hash, []byte{0})
+	}
 	var timeBase [16]byte
 	binary.BigEndian.PutUint64(timeBase[:8], uint64(d.timeBase.Numerator))
 	binary.BigEndian.PutUint64(timeBase[8:], uint64(d.timeBase.Denominator))
@@ -42,7 +50,7 @@ func (d Descriptor) Fingerprint() (Fingerprint, error) {
 // the fields included by Fingerprint so hash collisions never merge states.
 func (d Descriptor) SameState(other Descriptor) bool {
 	return d.id == other.id &&
-		d.schema == other.schema &&
+		d.schema.Equal(other.schema) &&
 		d.timeBase == other.timeBase &&
 		d.properties.Equal(other.properties) &&
 		d.metadata.Scope() == other.metadata.Scope()

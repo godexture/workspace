@@ -105,7 +105,7 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 			continue
 		}
 		terminalSatisfied := !constrained || len(current.path) != 0 && current.path[len(current.path)-1].result.bridge.component.Identity() == terminal.component
-		if current.descriptor.Schema() == gap.ExpectedSchema() && terminalSatisfied {
+		if current.descriptor.SchemaDescriptor().Equal(gap.ExpectedDescriptor()) && terminalSatisfied {
 			if err := p.beforeCompile(); err != nil {
 				return nil, rejected, err
 			}
@@ -183,7 +183,7 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 					rejected.add("non-progress")
 					continue
 				}
-				if constrained && result.output.Schema() == gap.ExpectedSchema() && candidate.component.Identity() != terminal.component {
+				if constrained && result.output.SchemaDescriptor().Equal(gap.ExpectedDescriptor()) && candidate.component.Identity() != terminal.component {
 					rejected.add("terminal-format")
 					continue
 				}

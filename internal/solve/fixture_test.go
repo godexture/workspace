@@ -39,10 +39,10 @@ type solveControlTraitID struct{}
 type solveTerminalContextID struct{}
 
 var (
-	solveSchemaA = schema.Define[solveSchemaAID, solveUnit](schema.Traits[solveUnit]{})
-	solveSchemaB = schema.Define[solveSchemaBID, solveUnit](schema.Traits[solveUnit]{})
-	solveSchemaC = schema.Define[solveSchemaCID, solveUnit](schema.Traits[solveUnit]{})
-	solveSchemaD = schema.Define[solveSchemaDID, solveUnit](schema.Traits[solveUnit]{})
+	solveSchemaA = schema.Define[solveSchemaAID, solveUnit](schema.Traits[solveUnit]{Time: func(solveUnit) (int64, bool) { return 0, true }})
+	solveSchemaB = schema.Define[solveSchemaBID, solveUnit](schema.Traits[solveUnit]{Time: func(solveUnit) (int64, bool) { return 0, true }})
+	solveSchemaC = schema.Define[solveSchemaCID, solveUnit](schema.Traits[solveUnit]{Time: func(solveUnit) (int64, bool) { return 0, true }})
+	solveSchemaD = schema.Define[solveSchemaDID, solveUnit](schema.Traits[solveUnit]{Time: func(solveUnit) (int64, bool) { return 0, true }})
 )
 
 type solveConfig struct{ Mode int }
@@ -133,18 +133,18 @@ func solveBridge[Marker any](from, to schema.Type[solveUnit], effect plugin.Effe
 
 func schemaTransform(target schema.Type[solveUnit]) func(stream.Descriptor, solveConfig) stream.Descriptor {
 	return func(input stream.Descriptor, _ solveConfig) stream.Descriptor {
-		return stream.MustDescriptor(input.ID(), target.Identity(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
+		return stream.MustDescriptor(input.ID(), target.Descriptor(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
 	}
 }
 
 func timeBaseTransform(input stream.Descriptor, _ solveConfig) stream.Descriptor {
-	return stream.MustDescriptor(input.ID(), input.Schema(), timing.MustBase(1, 48000), input.Properties()).WithMetadata(input.Metadata())
+	return stream.MustDescriptor(input.ID(), input.SchemaDescriptor(), timing.MustBase(1, 48000), input.Properties()).WithMetadata(input.Metadata())
 }
 
 func identityTransform(input stream.Descriptor, _ solveConfig) stream.Descriptor { return input }
 
 func solveDescriptor(typ schema.Type[solveUnit], denominator int64) stream.Descriptor {
-	return stream.MustDescriptor("stream", typ.Identity(), timing.MustBase(1, denominator), property.New())
+	return stream.MustDescriptor("stream", typ.Descriptor(), timing.MustBase(1, denominator), property.New())
 }
 
 func solveIndex(t testing.TB, components ...plugin.Component) catalog.Index {

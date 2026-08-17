@@ -29,6 +29,7 @@ type graphCycleAID struct{}
 type graphCycleBID struct{}
 type graphSchemaAID struct{}
 type graphSchemaBID struct{}
+type graphUntimedSchemaID struct{}
 type graphUnit struct{}
 type graphOtherUnit struct{}
 type graphConfig struct{}
@@ -36,8 +37,9 @@ type graphControlID struct{}
 type graphControlTraitID struct{}
 
 var (
-	graphSchemaA = schema.Define[graphSchemaAID, graphUnit](schema.Traits[graphUnit]{})
-	graphSchemaB = schema.Define[graphSchemaBID, graphUnit](schema.Traits[graphUnit]{})
+	graphSchemaA       = schema.Define[graphSchemaAID, graphUnit](schema.Traits[graphUnit]{Time: func(graphUnit) (int64, bool) { return 0, true }})
+	graphSchemaB       = schema.Define[graphSchemaBID, graphUnit](schema.Traits[graphUnit]{Time: func(graphUnit) (int64, bool) { return 0, true }})
+	graphUntimedSchema = schema.Define[graphUntimedSchemaID, graphUnit](schema.Traits[graphUnit]{})
 )
 
 type graphPlan struct{ shape flow.Shape }
@@ -98,7 +100,11 @@ func sinkCompile(flow.Descriptors[stream.Descriptor]) plugin.Compiled[graphPlan,
 }
 
 func fixtureDescriptor(id stream.ID, typ schema.Type[graphUnit]) stream.Descriptor {
-	return stream.MustDescriptor(id, typ.Identity(), timing.MustBase(1, 1000), property.New())
+	base := timing.Base{}
+	if typ.Descriptor().HasTime() {
+		base = timing.MustBase(1, 1000)
+	}
+	return stream.MustDescriptor(id, typ.Descriptor(), base, property.New())
 }
 
 func fixtureCatalog(t *testing.T, components ...plugin.Component) catalog.Index {
@@ -225,6 +231,53 @@ func TestEvaluateReturnsTypedSchemaGapWithoutOpeningOperators(t *testing.T) {
 	}
 }
 
+func TestEvaluateSchemaGapPreservesTimelinePresence(t *testing.T) {
+	tests := []struct {
+		name         string
+		source       schema.Type[graphUnit]
+		target       schema.Type[graphUnit]
+		wantDesired  bool
+		wantTimeline bool
+	}{
+		{name: "untimed-to-timed", source: graphUntimedSchema, target: graphSchemaA, wantDesired: false, wantTimeline: false},
+		{name: "timed-to-timed", source: graphSchemaA, target: graphSchemaB, wantDesired: true, wantTimeline: true},
+		{name: "timed-to-untimed", source: graphSchemaA, target: graphUntimedSchema, wantDesired: true, wantTimeline: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			index := fixtureCatalog(t,
+				fixtureComponent[graphSourceID](sourceShape(test.source), sourceCompile(test.source), nil, false),
+				fixtureComponent[graphSinkID](sinkShape(test.target), sinkCompile, nil, false),
+			)
+			request := fixtureRequest(t,
+				[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("sink")},
+				[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
+			)
+			evaluation, err := Evaluate(index, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gaps := evaluation.Gaps()
+			if len(gaps) != 1 {
+				t.Fatalf("gaps = %#v", gaps)
+			}
+			desired, desiredOK := gaps[0].Need().Desired()
+			if desiredOK != test.wantDesired {
+				t.Fatalf("desired presence = %v, want %v", desiredOK, test.wantDesired)
+			}
+			if !desiredOK {
+				return
+			}
+			if desired.HasTimeline() != test.wantTimeline {
+				t.Fatalf("desired timeline = %v, want %v", desired.HasTimeline(), test.wantTimeline)
+			}
+			if !test.wantTimeline && desired.TimeBase() != (timing.Base{}) {
+				t.Fatalf("untimed desired base = %v", desired.TimeBase())
+			}
+		})
+	}
+}
+
 func TestEvaluateConfirmsConditionGapThroughDownstreamCompile(t *testing.T) {
 	requireAccepted := func(inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[graphPlan, stream.Descriptor] {
 		input, ok := inputs.One("in")
@@ -257,7 +310,7 @@ func TestEvaluateConfirmsConditionGapThroughDownstreamCompile(t *testing.T) {
 	if accepted, err := gaps[0].Accepts(original); err != nil || accepted {
 		t.Fatalf("original descriptor accepted=%v error=%v", accepted, err)
 	}
-	candidate := stream.MustDescriptor("accepted", graphSchemaA.Identity(), original.TimeBase(), original.Properties()).WithMetadata(original.Metadata())
+	candidate := stream.MustDescriptor("accepted", graphSchemaA.Descriptor(), original.TimeBase(), original.Properties()).WithMetadata(original.Metadata())
 	if accepted, err := gaps[0].Accepts(candidate); err != nil || !accepted {
 		t.Fatalf("condition candidate accepted=%v error=%v", accepted, err)
 	}
@@ -444,7 +497,7 @@ func TestTopologyDiagnosticsAreCanonical(t *testing.T) {
 }
 
 func TestTopologyRejectsSameSchemaMarkerWithDifferentPayloadTypes(t *testing.T) {
-	conflicting := schema.Define[graphSchemaAID, graphOtherUnit](schema.Traits[graphOtherUnit]{})
+	conflicting := schema.Define[graphSchemaAID, graphOtherUnit](schema.Traits[graphOtherUnit]{Time: func(graphOtherUnit) (int64, bool) { return 0, true }})
 	nodes := []shapedNode{
 		{request: fixtureNode[graphSourceID]("source"), shape: sourceShape(graphSchemaA)},
 		{request: fixtureNode[graphSinkID]("sink"), shape: flow.NewShape([]flow.Port{flow.In("in", conflicting)}, nil)},

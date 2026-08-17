@@ -2,6 +2,7 @@ package graph
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
@@ -9,6 +10,7 @@ import (
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -195,17 +197,25 @@ func descriptorSchemaGaps(node shapedNode, edges []job.Edge, compiled map[job.No
 		values := inputs.At(port.ID())
 		mismatch := false
 		for _, descriptor := range values {
-			mismatch = mismatch || descriptor.Schema() != port.Schema().Identity()
+			mismatch = mismatch || !descriptor.SchemaDescriptor().Equal(port.Schema())
 		}
 		if !mismatch {
 			continue
 		}
 		var desired stream.Descriptor
 		if len(values) != 0 {
-			desired, _ = stream.NewDescriptor(values[0].ID(), port.Schema().Identity(), values[0].TimeBase(), values[0].Properties())
-			desired = desired.WithMetadata(values[0].Metadata())
+			base := timing.Base{}
+			if port.Schema().HasTime() {
+				base = values[0].TimeBase()
+			}
+			if candidate, err := stream.NewDescriptor(values[0].ID(), port.Schema(), base, values[0].Properties()); err == nil {
+				desired = candidate.WithMetadata(values[0].Metadata())
+			}
 		}
-		need := plugin.DescriptorNeed("graph.schema-mismatch", desired)
+		need := plugin.ConditionNeed[stream.Descriptor]("graph.schema-mismatch")
+		if desired.Valid() {
+			need = plugin.DescriptorNeed("graph.schema-mismatch", desired)
+		}
 		gaps = append(gaps, gapFor(node, edges, compiled, component, configValue, compileContext, inputs, need, port.ID()))
 	}
 	return gaps
@@ -221,13 +231,15 @@ func validateCompiledOutputs(node shapedNode, outputs flow.Descriptors[stream.De
 		if !ok {
 			continue
 		}
-		if binding.Descriptor().Schema() != port.Schema().Identity() {
+		if !binding.Descriptor().SchemaDescriptor().Equal(port.Schema()) {
 			items = append(items, graphItem("graph.schema-mismatch", job.At(node.request.ID(), binding.Port()), "compiled descriptor schema does not match output port", map[string]string{
-				"declared": port.Schema().Identity().String(),
-				"actual":   binding.Descriptor().Schema().String(),
+				"declared":        port.Schema().Identity().String(),
+				"actual":          binding.Descriptor().Schema().String(),
+				"declaredHasTime": strconv.FormatBool(port.Schema().HasTime()),
+				"actualHasTime":   strconv.FormatBool(binding.Descriptor().HasTimeline()),
 			}))
 		}
-		if !binding.Descriptor().TimeBase().Valid() {
+		if !binding.Descriptor().Valid() || (binding.Descriptor().HasTimeline() && !binding.Descriptor().TimeBase().Valid()) {
 			items = append(items, graphItem("graph.time-base", job.At(node.request.ID(), binding.Port()), "compiled descriptor has no resolved time base", nil))
 		}
 	}

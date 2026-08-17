@@ -70,19 +70,19 @@ type Write struct {
 // ByteInput builds grant-independent input bytes. The common runner verifies
 // that every retained handle is returned after all scenario shares close.
 func ByteInput(parts ...[]byte) Fixture[buffer.Handle] {
-	descriptor := stream.MustDescriptor("fixture", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	descriptor := stream.MustDescriptor("fixture", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	return byteFixture(descriptor, parts)
 }
 
 // ByteInputWith builds bytes carrying the requested stream descriptor options.
 func ByteInputWith(parts [][]byte, options ...StreamOption) Fixture[buffer.Handle] {
-	descriptor := carrierDescriptor(access.Bytes().Identity(), options...)
+	descriptor := carrierDescriptor(access.Bytes().Descriptor(), options...)
 	return byteFixture(descriptor, parts)
 }
 
 // ChunkInput builds container chunks for a sample description.
 func ChunkInput(description sample.Description, values []Chunk, options ...StreamOption) Fixture[packet.Chunk] {
-	descriptor, err := mediaDescriptor(mediaformat.Chunks().Identity(), description, options...)
+	descriptor, err := mediaDescriptor(mediaformat.Chunks().Descriptor(), description, options...)
 	if err != nil {
 		return Fixture[packet.Chunk]{}
 	}
@@ -117,7 +117,7 @@ func ChunkInputFor(descriptor stream.Descriptor, values []Chunk) Fixture[packet.
 
 // PacketInput builds codec packets for a sample description.
 func PacketInput(description sample.Description, values []Packet, options ...StreamOption) Fixture[packet.Packet] {
-	descriptor, err := mediaDescriptor(codec.Packets().Identity(), description, options...)
+	descriptor, err := mediaDescriptor(codec.Packets().Descriptor(), description, options...)
 	if err != nil {
 		return Fixture[packet.Packet]{}
 	}
@@ -151,7 +151,7 @@ func PacketInputFor(descriptor stream.Descriptor, values []Packet) Fixture[packe
 
 // FrameInput builds signed-16 planar frames. description must describe S16P.
 func FrameInput(description sample.Description, values []Frame, options ...StreamOption) Fixture[audio.Frame[int16]] {
-	descriptor, err := mediaDescriptor(sample.S16().Identity(), description, options...)
+	descriptor, err := mediaDescriptor(sample.S16().Descriptor(), description, options...)
 	if err != nil || description.Format != sample.S16Planar || description.Endian != sample.NoEndian {
 		return Fixture[audio.Frame[int16]]{}
 	}
@@ -241,14 +241,14 @@ func byteFixture(descriptor stream.Descriptor, parts [][]byte) Fixture[buffer.Ha
 	return result
 }
 
-func carrierDescriptor(identity schema.ID, options ...StreamOption) stream.Descriptor {
+func carrierDescriptor(schemaDescriptor schema.Descriptor, options ...StreamOption) stream.Descriptor {
 	state := applyStreamOptions(options)
-	descriptor := stream.MustDescriptor(state.id, identity, access.CarrierTimeBase(), property.New())
+	descriptor := stream.MustDescriptor(state.id, schemaDescriptor, timing.Base{}, property.New())
 	return descriptor.WithMetadata(state.metadata)
 }
 
-func mediaDescriptor(identity schema.ID, description sample.Description, options ...StreamOption) (stream.Descriptor, error) {
-	if identity.IsZero() {
+func mediaDescriptor(schemaDescriptor schema.Descriptor, description sample.Description, options ...StreamOption) (stream.Descriptor, error) {
+	if !schemaDescriptor.Valid() || !schemaDescriptor.HasTime() {
 		return stream.Descriptor{}, errors.New("fixture schema identity is invalid")
 	}
 	properties, err := description.Properties()
@@ -256,7 +256,7 @@ func mediaDescriptor(identity schema.ID, description sample.Description, options
 		return stream.Descriptor{}, err
 	}
 	state := applyStreamOptions(options)
-	descriptor, err := stream.NewDescriptor(state.id, identity, timing.MustBase(1, int64(description.Rate)), properties)
+	descriptor, err := stream.NewDescriptor(state.id, schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}

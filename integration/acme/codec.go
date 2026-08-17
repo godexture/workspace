@@ -29,7 +29,7 @@ func decoderComponent() plugin.Component {
 					plugin.Require("packets", plugin.ConditionNeed[stream.Descriptor]("acme.packet")),
 				}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), Values().Identity(), timing.MustBase(1, 1), property.New())
+			output, err := stream.NewDescriptor(input.ID(), Values().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[decoderPlan, stream.Descriptor]{}, err
 			}

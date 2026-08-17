@@ -23,7 +23,7 @@ type Gap struct {
 	hasEdge   bool
 	input     stream.Descriptor
 	hasInput  bool
-	expected  schema.ID
+	expected  schema.Descriptor
 	need      plugin.Need[stream.Descriptor]
 	component plugin.Component
 	config    config.ResolvedView
@@ -34,7 +34,7 @@ type Gap struct {
 func (g Gap) Node() job.NodeID                            { return g.node }
 func (g Gap) Port() string                                { return g.port }
 func (g Gap) Need() plugin.Need[stream.Descriptor]        { return g.need }
-func (g Gap) ExpectedSchema() schema.ID                   { return g.expected }
+func (g Gap) ExpectedDescriptor() schema.Descriptor       { return g.expected }
 func (g Gap) Component() plugin.Component                 { return g.component }
 func (g Gap) Config() config.ResolvedView                 { return g.config }
 func (g Gap) Inputs() flow.Descriptors[stream.Descriptor] { return copyDescriptors(g.inputs) }
@@ -47,7 +47,7 @@ func (g Gap) Accepts(candidate stream.Descriptor) (bool, error) {
 	if !g.hasEdge || !g.hasInput {
 		return false, ErrGapCardinality
 	}
-	if !candidate.Valid() || candidate.Schema() != g.expected {
+	if !candidate.Valid() || !candidate.SchemaDescriptor().Equal(g.expected) {
 		return false, nil
 	}
 	bindings := g.inputs.Bindings()
@@ -81,7 +81,7 @@ func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, com
 	gap := Gap{
 		node:      node.request.ID(),
 		port:      port,
-		expected:  portSchema(node.shape.Inputs, port),
+		expected:  portDescriptor(node.shape.Inputs, port),
 		need:      need,
 		component: component,
 		config:    configValue,
@@ -107,12 +107,12 @@ func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, com
 	return gap
 }
 
-func portSchema(ports []flow.Port, id string) schema.ID {
+func portDescriptor(ports []flow.Port, id string) schema.Descriptor {
 	port, ok := findPort(ports, id)
 	if !ok {
-		return schema.ID{}
+		return schema.Descriptor{}
 	}
-	return port.Schema().Identity()
+	return port.Schema()
 }
 
 func sortGaps(gaps []Gap) {

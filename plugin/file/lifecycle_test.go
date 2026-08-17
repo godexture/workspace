@@ -16,6 +16,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -181,7 +182,7 @@ func lifecycleComponent(openFails bool) plugin.Component {
 			if !ok {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("lifecycle.input"))}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
 			}

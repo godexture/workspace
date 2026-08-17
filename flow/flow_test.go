@@ -96,6 +96,10 @@ func TestShapeEqualityUsesSchemaIdentityAndPayload(t *testing.T) {
 	if left.Equal(NewShape(nil, []Port{Out("out", otherPayload)})) {
 		t.Fatal("same schema marker with a different payload produced an equal shape")
 	}
+	timed := schema.Define[flowUnitID, flowUnit](schema.Traits[flowUnit]{Time: func(flowUnit) (int64, bool) { return 0, true }})
+	if left.Equal(NewShape(nil, []Port{Out("out", timed)})) {
+		t.Fatal("same schema marker with a different time-trait presence produced an equal shape")
+	}
 }
 
 func countingSchema(drops *atomic.Int32) schema.Type[int] {

@@ -137,8 +137,7 @@ func equalPorts(left, right []Port) bool {
 	for index := range left {
 		if left[index].id != right[index].id ||
 			left[index].direction != right[index].direction ||
-			left[index].descriptor.Identity() != right[index].descriptor.Identity() ||
-			left[index].descriptor.Payload() != right[index].descriptor.Payload() ||
+			!left[index].descriptor.Equal(right[index].descriptor) ||
 			left[index].required != right[index].required ||
 			left[index].multiplicity != right[index].multiplicity ||
 			left[index].fanIn != right[index].fanIn {

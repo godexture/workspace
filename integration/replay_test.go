@@ -20,6 +20,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -323,7 +324,7 @@ func replaySourcePlugin(state *replaySourceState) plugin.Definition {
 	spec := plugin.Spec[replayConfig, replayPlan, stream.Descriptor]{
 		Shape: plugin.StaticShape[replayConfig](shape),
 		Compile: func(plugin.CompileContext, replayConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[replayPlan, stream.Descriptor], error) {
-			descriptor, err := stream.NewDescriptor("sequence", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+			descriptor, err := stream.NewDescriptor("sequence", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[replayPlan, stream.Descriptor]{}, err
 			}

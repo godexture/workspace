@@ -4,7 +4,7 @@
 package catalog
 
 import (
-	"reflect"
+	"fmt"
 	"sort"
 
 	"github.com/godexture/godec/diagnostic"
@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/internal/gotype"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -50,9 +51,9 @@ func Build(set plugin.Set) (Index, error) {
 	seenComponents := make(map[plugin.Identity]struct{}, len(components))
 	componentsByID := make(map[plugin.Identity]plugin.Component, len(components))
 	type schemaUse struct {
-		payload   reflect.Type
-		component plugin.Identity
-		port      string
+		descriptor schema.Descriptor
+		component  plugin.Identity
+		port       string
 	}
 	seenSchemas := make(map[string]schemaUse)
 	for _, component := range components {
@@ -82,18 +83,20 @@ func Build(set plugin.Set) (Index, error) {
 			}
 			key := descriptor.Identity().String()
 			previous, exists := seenSchemas[key]
-			if exists && previous.payload != descriptor.Payload() {
-				items = append(items, diagnostic.NewItem("catalog.schema-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String(), Descriptor: port.ID()}, "schema identity is bound to different Go payload types", map[string]string{
+			if exists && !previous.descriptor.Equal(descriptor) {
+				items = append(items, diagnostic.NewItem("catalog.schema-conflict", diagnostic.ErrorSeverity, diagnostic.Path{Component: identity.String(), Descriptor: port.ID()}, "schema identity is bound to conflicting payload or time-trait declarations", map[string]string{
 					"identity":          key,
 					"previousComponent": previous.component.String(),
 					"previousPort":      previous.port,
-					"previousPayload":   gotype.Canonical(previous.payload),
+					"previousPayload":   gotype.Canonical(previous.descriptor.Payload()),
 					"payload":           gotype.Canonical(descriptor.Payload()),
+					"previousHasTime":   fmt.Sprintf("%t", previous.descriptor.HasTime()),
+					"hasTime":           fmt.Sprintf("%t", descriptor.HasTime()),
 				}))
 				continue
 			}
 			if !exists {
-				seenSchemas[key] = schemaUse{payload: descriptor.Payload(), component: identity, port: port.ID()}
+				seenSchemas[key] = schemaUse{descriptor: descriptor, component: identity, port: port.ID()}
 			}
 		}
 	}

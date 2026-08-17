@@ -137,7 +137,7 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	if err != nil {
 		return candidateResult{}, rejectError{code: "shape"}
 	}
-	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.One || shape.Inputs[0].Schema().Identity() != input.Schema() {
+	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.One || !shape.Inputs[0].Schema().Equal(input.SchemaDescriptor()) {
 		return candidateResult{}, rejectError{code: "shape"}
 	}
 	fingerprint, err := input.Fingerprint()
@@ -180,7 +180,7 @@ func validateBridgeResult(compilation plugin.Compilation, outputPort flow.Port, 
 		return stream.Descriptor{}, rejectError{code: "output-type"}
 	}
 	output, one := outputs.One(outputPort.ID())
-	if !one || !output.Valid() || output.Schema() != outputPort.Schema().Identity() {
+	if !one || !output.Valid() || !output.SchemaDescriptor().Equal(outputPort.Schema()) {
 		return stream.Descriptor{}, rejectError{code: "output"}
 	}
 	if output.ID() != input.ID() {

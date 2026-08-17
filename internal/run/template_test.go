@@ -271,7 +271,7 @@ func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
 		Time: func(value int) (int64, bool) { return int64(value), true },
 	})
 	base := timing.MustBase(1, 1_000)
-	descriptor := stream.MustDescriptor("timed", typ.Identity(), base, property.New())
+	descriptor := stream.MustDescriptor("timed", typ.Descriptor(), base, property.New())
 	joinShape := flow.NewShape(
 		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
 		[]flow.Port{flow.Out("out", typ)},

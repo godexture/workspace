@@ -15,6 +15,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -292,7 +293,7 @@ func accessWriteFixture(requirements access.Requirements, input *Fixture[buffer.
 				if !ok {
 					return plugin.Compiled[accessFixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("testkit.access.input"))}}, nil
 				}
-				output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+				output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 				if err != nil {
 					return plugin.Compiled[accessFixturePlan, stream.Descriptor]{}, err
 				}

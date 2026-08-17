@@ -330,6 +330,5 @@ func validPort(value port) bool { return value.id != "" && value.schema.Valid() 
 
 func matches(declared flow.Port, runtime port) bool {
 	return declared.ID() == runtime.id &&
-		declared.Schema().Identity() == runtime.schema.Identity() &&
-		declared.Schema().Payload() == runtime.schema.Payload()
+		declared.Schema().Equal(runtime.schema)
 }

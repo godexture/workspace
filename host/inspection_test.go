@@ -35,8 +35,8 @@ type inspectUnit int
 type inspectConfig struct{}
 
 var (
-	inspectSchemaA = schema.Define[inspectSchemaAID, inspectUnit](schema.Traits[inspectUnit]{})
-	inspectSchemaB = schema.Define[inspectSchemaBID, inspectUnit](schema.Traits[inspectUnit]{})
+	inspectSchemaA = schema.Define[inspectSchemaAID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
+	inspectSchemaB = schema.Define[inspectSchemaBID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
 )
 
 type inspectPlan struct{ shape flow.Shape }
@@ -67,7 +67,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
 	source := plugin.NewComponent[inspectSourceID](plugin.Descriptor{DisplayName: "inspection source"}, configuration,
 		component(sourceShape, func(plugin.CompileContext, inspectConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[inspectPlan, stream.Descriptor], error) {
-			descriptor, descriptorErr := stream.NewDescriptor("inspect", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+			descriptor, descriptorErr := stream.NewDescriptor("inspect", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if descriptorErr != nil {
 				return plugin.Compiled[inspectPlan, stream.Descriptor]{}, descriptorErr
 			}
@@ -91,7 +91,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			if !ok {
 				return plugin.Compiled[inspectPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("inspect.input"))}}, nil
 			}
-			output := stream.MustDescriptor(input.ID(), inspectSchemaA.Identity(), timing.MustBase(1, 1), property.New()).WithMetadata(input.Metadata())
+			output := stream.MustDescriptor(input.ID(), inspectSchemaA.Descriptor(), timing.MustBase(1, 1), property.New()).WithMetadata(input.Metadata())
 			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: readerShape}, Outputs: flow.NewDescriptors(flow.Describe("out", output)), Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "inspect"}}}, nil
 		}),
 		plugin.WithProcessor("bytes", access.Bytes(), "out", inspectSchemaA),
@@ -117,7 +117,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			if !ok {
 				return plugin.Compiled[inspectPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("bridge.input"))}}, nil
 			}
-			output := stream.MustDescriptor(input.ID(), inspectSchemaB.Identity(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
+			output := stream.MustDescriptor(input.ID(), inspectSchemaB.Descriptor(), input.TimeBase(), input.Properties()).WithMetadata(input.Metadata())
 			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: bridgeShape}, Outputs: flow.NewDescriptors(flow.Describe("out", output)), Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "bridge"}}}, nil
 		}),
 		plugin.WithProcessor("in", inspectSchemaA, "out", inspectSchemaB),

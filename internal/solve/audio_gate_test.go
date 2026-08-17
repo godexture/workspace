@@ -147,20 +147,20 @@ func audioGateDescriptor(t testing.TB, format sample.Format) stream.Descriptor {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schemaID := sample.S16().Identity()
+	schemaDescriptor := sample.S16().Descriptor()
 	if format == sample.F32Planar {
-		schemaID = sample.F32().Identity()
+		schemaDescriptor = sample.F32().Descriptor()
 	}
-	return stream.MustDescriptor("audio", schemaID, timing.MustBase(1, 48_000), properties)
+	return stream.MustDescriptor("audio", schemaDescriptor, timing.MustBase(1, 48_000), properties)
 }
 
 func audioGateDescriptorFrom(base timing.Base, input stream.Descriptor, format sample.Format) stream.Descriptor {
 	description := sample.Description{Format: format, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.NoEndian}
-	schemaID := sample.S16().Identity()
+	schemaDescriptor := sample.S16().Descriptor()
 	if format == sample.F32Planar {
 		description.ValidBits = 32
-		schemaID = sample.F32().Identity()
+		schemaDescriptor = sample.F32().Descriptor()
 	}
 	properties, _ := description.Apply(input.Properties())
-	return stream.MustDescriptor(input.ID(), schemaID, base, properties).WithMetadata(input.Metadata())
+	return stream.MustDescriptor(input.ID(), schemaDescriptor, base, properties).WithMetadata(input.Metadata())
 }

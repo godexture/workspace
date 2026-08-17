@@ -16,6 +16,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -84,7 +85,7 @@ func cliDiagnosticPlugin() plugin.Definition {
 		plugin.WithSpec(plugin.Spec[cliDiagnosticConfig, cliDiagnosticPlan, stream.Descriptor]{
 			Shape: plugin.StaticShape[cliDiagnosticConfig](shapeSource),
 			Compile: func(_ plugin.CompileContext, _ cliDiagnosticConfig, _ flow.Descriptors[stream.Descriptor]) (plugin.Compiled[cliDiagnosticPlan, stream.Descriptor], error) {
-				descriptor, err := stream.NewDescriptor("diagnostic", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+				descriptor, err := stream.NewDescriptor("diagnostic", access.Bytes().Descriptor(), timing.Base{}, property.New())
 				if err != nil {
 					return plugin.Compiled[cliDiagnosticPlan, stream.Descriptor]{}, err
 				}

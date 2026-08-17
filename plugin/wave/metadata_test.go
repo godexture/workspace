@@ -70,7 +70,7 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", access.Bytes().Identity(), access.CarrierTimeBase(), property.New()).WithMetadata(providerDocument)
+	input := stream.MustDescriptor("wave", access.Bytes().Descriptor(), timing.Base{}, property.New()).WithMetadata(providerDocument)
 	compiled, err := plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("bytes", input)))
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", codec.Packets().Identity(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(inspected.metadata)
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(inspected.metadata)
 	component := muxerComponent()
 	resolved, err := component.Resolve(config.NewPatch())
 	if err != nil {
@@ -221,7 +221,7 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", codec.Packets().Identity(), timing.MustBase(1, 48_000), properties).WithMetadata(document)
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(document)
 	component := muxerComponent()
 	resolved, err := component.Resolve(config.NewPatch())
 	if err != nil {

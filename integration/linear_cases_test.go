@@ -186,7 +186,7 @@ func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Covera
 		},
 		{
 			Name:  "offers-nothing-without-sample-properties",
-			Input: stream.MustDescriptor("opaque", codec.Packets().Identity(), timing.MustBase(1, 48_000), property.New()),
+			Input: stream.MustDescriptor("opaque", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), property.New()),
 			Need:  plugin.ConditionNeed[stream.Descriptor]("linear.config"),
 		},
 	}
@@ -231,5 +231,5 @@ func linearDescriptor(t *testing.T, description sample.Description) stream.Descr
 	if err != nil {
 		t.Fatal(err)
 	}
-	return stream.MustDescriptor("linear", codec.Packets().Identity(), timing.MustBase(1, int64(description.Rate)), properties)
+	return stream.MustDescriptor("linear", codec.Packets().Descriptor(), timing.MustBase(1, int64(description.Rate)), properties)
 }

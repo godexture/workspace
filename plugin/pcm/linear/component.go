@@ -114,7 +114,7 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 	if kind != readerOperation {
 		actual, err := sample.FromProperties(input.Properties())
 		if err != nil || actual != expected || input.TimeBase() != timing.MustBase(1, int64(expected.Rate)) {
-			desired, desiredErr := descriptorWith(input, inputPort.Schema().Identity(), expected)
+			desired, desiredErr := descriptorWith(input, inputPort.Schema(), expected)
 			if desiredErr != nil {
 				return plugin.Compiled[componentPlan, stream.Descriptor]{}, desiredErr
 			}
@@ -128,11 +128,11 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 	var err error
 	switch kind {
 	case readerOperation:
-		outputDescriptor, err = describedCarrier(input, outputPort.Schema().Identity(), output)
+		outputDescriptor, err = describedCarrier(input, outputPort.Schema(), output)
 	case writerOperation:
-		outputDescriptor, err = carrierDescriptor(input, outputPort.Schema().Identity())
+		outputDescriptor, err = carrierDescriptor(input, outputPort.Schema())
 	default:
-		outputDescriptor, err = descriptorWith(input, outputPort.Schema().Identity(), output)
+		outputDescriptor, err = descriptorWith(input, outputPort.Schema(), output)
 	}
 	if err != nil {
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
@@ -182,32 +182,32 @@ func operationEffect(kind operation) plugin.Effect {
 	return plugin.Effect{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "pcm.framing"}
 }
 
-func descriptorWith(input stream.Descriptor, schemaID schema.ID, description sample.Description) (stream.Descriptor, error) {
+func descriptorWith(input stream.Descriptor, schemaDescriptor schema.Descriptor, description sample.Description) (stream.Descriptor, error) {
 	properties, err := description.Apply(input.Properties())
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
 	return result.WithMetadata(input.Metadata()), nil
 }
 
-func describedCarrier(input stream.Descriptor, schemaID schema.ID, description sample.Description) (stream.Descriptor, error) {
+func describedCarrier(input stream.Descriptor, schemaDescriptor schema.Descriptor, description sample.Description) (stream.Descriptor, error) {
 	properties, err := description.Properties()
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
 	return result.WithMetadata(input.Metadata()), nil
 }
 
-func carrierDescriptor(input stream.Descriptor, schemaID schema.ID) (stream.Descriptor, error) {
-	result, err := stream.NewDescriptor(input.ID(), schemaID, access.CarrierTimeBase(), property.New())
+func carrierDescriptor(input stream.Descriptor, schemaDescriptor schema.Descriptor) (stream.Descriptor, error) {
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.Base{}, property.New())
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
