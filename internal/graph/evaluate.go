@@ -83,6 +83,13 @@ func evaluate(index catalog.Index, requested job.Graph, contexts CompileContexts
 				continue
 			}
 		}
+		if err := inputs.Validate(stream.Descriptor.Valid); err != nil {
+			items = append(items, diagnostic.NewItem("graph.invalid-descriptor", diagnostic.ErrorSeverity, diagnostic.Path{Component: node.request.ID().String()}, "component received an invalid stream descriptor", map[string]string{"cause": err.Error()}))
+		}
+		items = append(items, validateDescriptorBindings(node, flow.InputDirection, node.shape.Inputs, inputs.Bindings(), !allowGaps)...)
+		if hasNodeErrors(items, node.request.ID()) {
+			continue
+		}
 		if beforeCompile != nil {
 			if err := beforeCompile(); err != nil {
 				return Evaluation{}, err
@@ -112,7 +119,7 @@ func evaluate(index catalog.Index, requested job.Graph, contexts CompileContexts
 			items = append(items, diagnostic.NewItem("graph.output-type", diagnostic.ErrorSeverity, diagnostic.Path{Component: node.request.ID().String()}, "component compilation returned incompatible outputs", nil))
 			continue
 		}
-		items = append(items, validateCompiledOutputs(node, outputs)...)
+		items = append(items, validateCompiledOutputs(node, outputs, !allowGaps || len(requirements) == 0)...)
 		if len(requirements) != 0 || hasNodeErrors(items, node.request.ID()) {
 			continue
 		}
@@ -217,26 +224,85 @@ func descriptorSchemaGaps(node shapedNode, edges []job.Edge, compiled map[job.No
 	return gaps
 }
 
-func validateCompiledOutputs(node shapedNode, outputs flow.Descriptors[stream.Descriptor]) []diagnostic.Item {
+func validateCompiledOutputs(node shapedNode, outputs flow.Descriptors[stream.Descriptor], requireCardinality bool) []diagnostic.Item {
 	var items []diagnostic.Item
 	if err := outputs.Validate(stream.Descriptor.Valid); err != nil {
 		items = append(items, diagnostic.NewItem("graph.invalid-descriptor", diagnostic.ErrorSeverity, diagnostic.Path{Component: node.request.ID().String()}, "component returned an invalid stream descriptor", map[string]string{"cause": err.Error()}))
 	}
-	for _, binding := range outputs.Bindings() {
-		port, ok := findPort(node.shape.Outputs, binding.Port())
+	bindings := outputs.Bindings()
+	items = append(items, validateDescriptorBindings(node, flow.OutputDirection, node.shape.Outputs, bindings, requireCardinality)...)
+	for _, binding := range bindings {
+		_, ok := findPort(node.shape.Outputs, binding.Port())
 		if !ok {
 			continue
 		}
-		if !binding.Descriptor().SchemaDescriptor().Equal(port.Schema()) {
-			items = append(items, graphItem("graph.schema-mismatch", job.At(node.request.ID(), binding.Port()), "compiled descriptor schema does not match output port", map[string]string{
-				"declared":        port.Schema().Identity().String(),
-				"actual":          binding.Descriptor().Schema().String(),
-				"declaredHasTime": strconv.FormatBool(port.Schema().HasTime()),
-				"actualHasTime":   strconv.FormatBool(binding.Descriptor().HasTimeline()),
-			}))
-		}
 		if !binding.Descriptor().Valid() || (binding.Descriptor().HasTimeline() && !binding.Descriptor().TimeBase().Valid()) {
 			items = append(items, graphItem("graph.time-base", job.At(node.request.ID(), binding.Port()), "compiled descriptor has no resolved time base", nil))
+		}
+	}
+	return items
+}
+
+func validateDescriptorBindings(node shapedNode, direction flow.Direction, ports []flow.Port, bindings []flow.PortDescriptor[stream.Descriptor], requireCardinality bool) []diagnostic.Item {
+	output := direction == flow.OutputDirection
+	side := "input"
+	unknownCode := "graph.unknown-input"
+	fanCode := "graph.fan-in"
+	requiredCode := "graph.required-input"
+	if output {
+		side = "output"
+		unknownCode = "graph.unknown-output"
+		fanCode = "graph.fan-out"
+		requiredCode = "graph.required-output"
+	}
+	portByID := make(map[string]flow.Port, len(ports))
+	counts := make(map[string]int, len(ports))
+	seenIDs := make(map[string]map[stream.ID]struct{}, len(ports))
+	var items []diagnostic.Item
+	for _, port := range ports {
+		portByID[port.ID()] = port
+	}
+	for _, binding := range bindings {
+		port, ok := portByID[binding.Port()]
+		if !binding.Valid() || !ok {
+			items = append(items, graphItem(unknownCode, job.At(node.request.ID(), binding.Port()), "descriptor binding names an unknown "+side+" port", nil))
+			continue
+		}
+		counts[port.ID()]++
+		descriptor := binding.Descriptor()
+		if descriptor.Valid() && !descriptor.SchemaDescriptor().Equal(port.Schema()) {
+			message := "descriptor schema does not match " + side + " port"
+			if output {
+				message = "compiled descriptor schema does not match output port"
+			}
+			items = append(items, graphItem("graph.schema-mismatch", job.At(node.request.ID(), binding.Port()), message, map[string]string{
+				"declared":        port.Schema().Identity().String(),
+				"actual":          descriptor.Schema().String(),
+				"declaredHasTime": strconv.FormatBool(port.Schema().HasTime()),
+				"actualHasTime":   strconv.FormatBool(descriptor.HasTimeline()),
+			}))
+		}
+		if !output || port.Multiplicity() != flow.ManyMultiplicity || !descriptor.Valid() {
+			continue
+		}
+		ids := seenIDs[port.ID()]
+		if ids == nil {
+			ids = make(map[stream.ID]struct{})
+			seenIDs[port.ID()] = ids
+		}
+		if _, exists := ids[descriptor.ID()]; exists {
+			items = append(items, graphItem("graph.duplicate-stream", job.At(node.request.ID(), binding.Port()), "many port contains a duplicate stream ID", map[string]string{"stream": descriptor.ID().String()}))
+			continue
+		}
+		ids[descriptor.ID()] = struct{}{}
+	}
+	for _, port := range ports {
+		count := counts[port.ID()]
+		if count > 1 && port.Multiplicity() != flow.ManyMultiplicity {
+			items = append(items, graphItem(fanCode, job.At(node.request.ID(), port.ID()), side+" port does not permit multiple descriptors", nil))
+		}
+		if requireCardinality && port.Required() && count == 0 {
+			items = append(items, graphItem(requiredCode, job.At(node.request.ID(), port.ID()), "required "+side+" port has no descriptor", nil))
 		}
 	}
 	return items
