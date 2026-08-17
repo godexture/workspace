@@ -6,8 +6,10 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/internal/program"
+	"github.com/godexture/godec/internal/scratch"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
+	"github.com/godexture/godec/resource"
 )
 
 func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
@@ -60,6 +62,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			Effects:      compilation.Effects(),
 			Contract:     component.Contract(),
 			Resources:    compilation.Resources(),
+			Scratch:      compilation.Scratch(),
 			Estimate:     compilation.Estimate(),
 			Finalization: compilation.Finalization(),
 		})
@@ -83,6 +86,20 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		return program.Program{}, err
 	}
 	description.Runtime = runtime
+	claims := make([]resource.Bytes, 0, len(description.Nodes)+len(description.Boundaries))
+	for _, node := range description.Nodes {
+		claims = append(claims, node.Scratch)
+	}
+	for _, boundary := range description.Boundaries {
+		if boundary.Spool.Valid() {
+			claims = append(claims, resource.Bytes(boundary.Spool.MaximumBytes()))
+		}
+	}
+	reserved, err := scratch.Reserve(p.policy.Resources.ScratchMaxBytes, claims...)
+	if err != nil {
+		return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "scratch", nil)
+	}
+	description.Scratch = plan.Scratch{Limit: reserved.Limit(), Reserved: reserved.Reserved()}
 	public, err := plan.New(description)
 	if err != nil {
 		return program.Program{}, err

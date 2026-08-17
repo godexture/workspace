@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type planConfigID struct{}
@@ -93,6 +95,9 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 4096
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 4096
+	description.Scratch = Scratch{Limit: 4096, Reserved: 4096}
 	description.Boundaries = []Boundary{{
 		Direction:            OutputBoundary,
 		Kind:                 ProviderBoundary,
@@ -114,6 +119,9 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	}
 	changed := testDescription(t)
 	changed.Boundaries = description.Boundaries
+	changed.RequestedPolicy.Resources.ScratchMaxBytes = 8192
+	changed.EffectivePolicy.Resources.ScratchMaxBytes = 8192
+	changed.Scratch = Scratch{Limit: 8192, Reserved: 8192}
 	changed.Boundaries[0].Spool, err = access.NewSpoolSpec(8192, 0, access.MemorySpool, 0, true, access.AtomicReplace)
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +132,72 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	}
 	if first.ExecutionSignature() == second.ExecutionSignature() {
 		t.Fatal("spool quota did not affect execution identity")
+	}
+}
+
+func TestPlanScratchProjectionIsCanonicalAndValidated(t *testing.T) {
+	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 8
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 8
+	description.Nodes[0].Scratch = 2
+	description.Scratch = Scratch{Limit: 8, Reserved: 2}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := first.Scratch(); got != (Scratch{Limit: 8, Reserved: 2}) {
+		t.Fatalf("scratch projection = %#v", got)
+	}
+	changed := description
+	changed.Nodes = append([]Node(nil), description.Nodes...)
+	changed.Nodes[0].Scratch = 3
+	changed.Scratch.Reserved = 3
+	second, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == second.ExecutionSignature() {
+		t.Fatal("node scratch claim did not affect execution identity")
+	}
+	invalid := description
+	invalid.Scratch.Reserved = 1
+	if _, err := New(invalid); err == nil {
+		t.Fatal("mismatched scratch reservation was accepted")
+	}
+}
+
+func TestPlanScratchAggregatesNodeAndSpoolClaims(t *testing.T) {
+	spool, err := access.NewSpoolSpec(4, 0, access.MemorySpool, 0, true, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 6
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 6
+	description.Nodes[0].Scratch = 2
+	description.Scratch = Scratch{Limit: 6, Reserved: 6}
+	description.Boundaries = []Boundary{{
+		Direction:            OutputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "sink",
+		Port:                 "in",
+		Component:            "fixture.sink",
+		Scheme:               "memory",
+		Reference:            "memory:redacted",
+		ReferenceFingerprint: "scratch-spool",
+		Available:            []access.Capability{access.SequentialWrite},
+		Effective:            []access.Capability{access.RandomWrite, access.SequentialWrite},
+		Selected:             []access.Capability{access.RandomWrite},
+		Spool:                spool,
+	}}
+	if _, err := New(description); err != nil {
+		t.Fatalf("node and spool aggregate = %v", err)
+	}
+	description.Nodes[0].Scratch = resource.Bytes(math.MaxInt64)
+	description.Scratch = Scratch{Limit: resource.Bytes(math.MaxInt64), Reserved: resource.Bytes(math.MaxInt64)}
+	if _, err := New(description); err == nil {
+		t.Fatal("node and spool reservation overflow was accepted")
 	}
 }
 

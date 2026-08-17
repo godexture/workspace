@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime/debug"
 
 	"github.com/godexture/godec/config"
@@ -29,6 +30,7 @@ type Compilation struct {
 	requirements   any
 	effects        []Effect
 	resources      resource.Request
+	scratch        resource.Bytes
 	estimate       resource.Estimate
 	finalization   Finalization
 	execution      drive.Binding
@@ -43,6 +45,7 @@ func (c Compilation) Component() Identity                   { return c.component
 func (c Compilation) ConfigFingerprint() config.Fingerprint { return c.config }
 func (c Compilation) Effects() []Effect                     { return append([]Effect(nil), c.effects...) }
 func (c Compilation) Resources() resource.Request           { return c.resources }
+func (c Compilation) Scratch() resource.Bytes               { return c.scratch }
 func (c Compilation) Estimate() resource.Estimate           { return c.estimate }
 func (c Compilation) Finalization() Finalization            { return c.finalization }
 
@@ -139,6 +142,9 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if !compiled.estimate.Valid() {
 		items = append(items, diagnostic.NewItem("plugin.compile-estimate", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid resource estimate", nil))
 	}
+	if uint64(compiled.scratch) > math.MaxInt64 {
+		items = append(items, diagnostic.NewItem("plugin.compile-scratch", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned a scratch claim outside the runtime range", nil))
+	}
 	if !compiled.finalization.Valid() {
 		items = append(items, diagnostic.NewItem("plugin.compile-finalization", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid finalization requirement", nil))
 	}
@@ -158,6 +164,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		requirements:   append([]Requirement[D](nil), requirements...),
 		effects:        append([]Effect(nil), compiled.effects...),
 		resources:      compiled.resources,
+		scratch:        compiled.scratch,
 		estimate:       compiled.estimate,
 		finalization:   compiled.finalization,
 		execution:      component.execution,

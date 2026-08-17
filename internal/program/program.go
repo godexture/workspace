@@ -10,9 +10,11 @@ import (
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/observe"
 	"github.com/godexture/godec/internal/run"
+	"github.com/godexture/godec/internal/scratch"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type Program struct {
@@ -60,7 +62,11 @@ func New(compiled graph.Graph, public plan.Plan, boundaries bound.State) (Progra
 	if !template.Matches(public.Runtime()) {
 		return Program{}, errors.New("program runtime topology differs from Plan")
 	}
-	return Program{graph: compiled, plan: public, nodes: nodes, byID: byID, bound: boundaries, runtime: template}, nil
+	result := Program{graph: compiled, plan: public, nodes: nodes, byID: byID, bound: boundaries, runtime: template}
+	if _, err := result.Scratch(); err != nil {
+		return Program{}, err
+	}
+	return result, nil
 }
 
 func (p Program) Valid() bool {
@@ -93,6 +99,49 @@ func (p Program) BuildObserved(ledger *journal.Ledger, operators []flow.Operator
 		return nil, errors.New("program has no complete typed execution binding")
 	}
 	return p.runtime.BuildObserved(ledger, operators, observer)
+}
+
+// ScratchClaims returns the fixed node-local temporary-byte ceilings selected
+// during compilation. Payload resources deliberately remain separate.
+func (p Program) ScratchClaims() (map[job.NodeID]resource.Bytes, error) {
+	if !p.Valid() {
+		return nil, errors.New("program is invalid")
+	}
+	claims := make(map[job.NodeID]resource.Bytes)
+	for _, node := range p.nodes {
+		claim := node.Compilation().Scratch()
+		if claim != 0 {
+			claims[node.ID()] = claim
+		}
+	}
+	return claims, nil
+}
+
+// Scratch re-derives the aggregate reservation from private compilation and
+// boundary state, then verifies the public Plan projection did not drift.
+func (p Program) Scratch() (scratch.Reservation, error) {
+	claims, err := p.ScratchClaims()
+	if err != nil {
+		return scratch.Reservation{}, err
+	}
+	values := make([]resource.Bytes, 0, len(claims)+len(p.plan.Boundaries()))
+	for _, value := range claims {
+		values = append(values, value)
+	}
+	for _, boundary := range p.plan.Boundaries() {
+		if boundary.Spool.Valid() {
+			values = append(values, resource.Bytes(boundary.Spool.MaximumBytes()))
+		}
+	}
+	reservation, err := scratch.Reserve(p.plan.EffectivePolicy().Resources.ScratchMaxBytes, values...)
+	if err != nil {
+		return scratch.Reservation{}, err
+	}
+	projection := p.plan.Scratch()
+	if projection.Limit != reservation.Limit() || projection.Reserved != reservation.Reserved() {
+		return scratch.Reservation{}, errors.New("program scratch reservation differs from Plan")
+	}
+	return reservation, nil
 }
 
 func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, error) {

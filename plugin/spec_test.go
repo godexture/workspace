@@ -54,6 +54,12 @@ type trackedSpecOperator struct {
 	closed *atomic.Int32
 }
 
+type specScratch struct{}
+
+func (specScratch) Append(context.Context, []byte) (int64, error) { return 0, nil }
+func (specScratch) ReadAt(context.Context, []byte, int64) error   { return nil }
+func (specScratch) WriteAt(context.Context, []byte, int64) error  { return nil }
+
 func (o trackedSpecOperator) Ports() flow.Shape { return o.shape }
 func (o trackedSpecOperator) Close() error {
 	o.closed.Add(1)
@@ -125,6 +131,39 @@ func TestComponentSpecShapesCompilesAndOpensSelectedPlan(t *testing.T) {
 	}
 	if err := operator.Ports().Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestScratchClaimFlowsOnlyToItsOpenContext(t *testing.T) {
+	var got Scratch
+	spec := testSpec(nil, nil)
+	compile := spec.Compile
+	spec.Compile = func(ctx CompileContext, value pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		compiled, err := compile(ctx, value, inputs)
+		compiled.Scratch = 64
+		return compiled, err
+	}
+	spec.Open = func(ctx OpenContext, plan specPlan) (flow.Operator, error) {
+		got = ctx.Scratch()
+		return specOperator{shape: plan.shape}, nil
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "scratch"}, pluginSchema(1), WithSpec(spec))
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
+	if err != nil || compiled.Scratch() != 64 {
+		t.Fatalf("scratch compilation = %d, %v", compiled.Scratch(), err)
+	}
+	journal := specScratch{}
+	operator, err := component.Open(NewOpenContext(t.Context(), OpenServices{Scratch: journal}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operator.Close()
+	if got != journal {
+		t.Fatalf("OpenContext scratch = %#v", got)
 	}
 }
 

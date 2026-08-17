@@ -90,6 +90,10 @@ func (r *runner) openNode(index int) *Failure {
 	// the run collects from -- during Flush, during Close, or after both.
 	owner := r.ledger.Domain("node/"+node.ID().String(), node.ID().String())
 	r.owners[index] = owner
+	var scratchService plugin.Scratch
+	if journal := r.prepared.scratch[node.ID()]; journal != nil {
+		scratchService = journal
+	}
 	services := plugin.OpenServices{
 		Buffers:     lease.Buffers(),
 		Tasks:       task.NewStarter(r.plugins, lease.Grant().Workers),
@@ -97,6 +101,7 @@ func (r *runner) openNode(index int) *Failure {
 		Owner:       owner.At(node.ID().String()).Reporter(),
 		Boundary:    boundary,
 		Source:      source,
+		Scratch:     scratchService,
 	}
 	r.emitLifecycle(node.ID().String(), OpenPhase, "start")
 	operator, err := r.prepared.program.Open(plugin.NewOpenContext(r.ctx, services), node.ID())

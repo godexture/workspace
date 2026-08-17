@@ -103,12 +103,15 @@ func (p ContinuityPolicy) Valid() bool {
 // ResourcePolicy bounds planning-visible coarse resources. A zero Limit with
 // Limited false means that the Host decides the grant during preparation.
 type ResourcePolicy struct {
-	Limited       bool
-	Limit         resource.Grant
-	Queue         QueuePolicy
-	AllowSpool    bool
-	SpoolMaxBytes resource.Bytes
-	SpoolStorage  access.SpoolStorage
+	Limited bool
+	Limit   resource.Grant
+	Queue   QueuePolicy
+	// ScratchMaxBytes is the aggregate fixed ceiling shared by node-local
+	// scratch journals and selected output spools. Zero disables both.
+	ScratchMaxBytes resource.Bytes
+	AllowSpool      bool
+	SpoolMaxBytes   resource.Bytes
+	SpoolStorage    access.SpoolStorage
 }
 
 // QueuePolicy selects the per-edge physical bounds fixed into the executable
@@ -137,13 +140,17 @@ type AlignmentPolicy struct {
 
 func (p AlignmentPolicy) Valid() bool { return p.Zip >= 0 }
 
-func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validSpool() }
+func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validScratch() && p.validSpool() }
+
+func (p ResourcePolicy) validScratch() bool {
+	return uint64(p.ScratchMaxBytes) <= math.MaxInt64
+}
 
 func (p ResourcePolicy) validSpool() bool {
 	if !p.AllowSpool {
 		return p.SpoolMaxBytes == 0 && p.SpoolStorage == 0
 	}
-	return p.SpoolMaxBytes > 0 && uint64(p.SpoolMaxBytes) <= math.MaxInt64 && p.SpoolStorage.Valid()
+	return p.SpoolMaxBytes > 0 && uint64(p.SpoolMaxBytes) <= math.MaxInt64 && p.SpoolStorage.Valid() && p.ScratchMaxBytes >= p.SpoolMaxBytes
 }
 
 // Policy is the expanded vector consumed by the planner. Preset is retained
@@ -200,7 +207,10 @@ func (p Policy) diagnostics() (items []diagnostic.Item) {
 		items = append(items, policyDiagnostic("job.invalid-policy-alignment-zip", "zip alignment tolerance must not be negative", "alignment", "zip"))
 	}
 	if !p.Resources.validSpool() {
-		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, and neither when disabled", "resources", "spool"))
+		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, neither when disabled, and an aggregate scratch limit at least as large", "resources", "spool"))
+	}
+	if !p.Resources.validScratch() {
+		items = append(items, policyDiagnostic("job.invalid-policy-scratch", "aggregate scratch byte limit exceeds the runtime range", "resources", "scratch"))
 	}
 	return items
 }

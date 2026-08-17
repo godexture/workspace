@@ -194,6 +194,9 @@ func TestPositionedOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *tes
 				t.Fatal(err)
 			}
 			boundary := outputBoundary(t, prepared.Plan())
+			if got := prepared.Plan().Scratch(); got != (plan.Scratch{Limit: 1 << 20, Reserved: 1 << 20}) {
+				t.Fatalf("spooled scratch reservation = %#v", got)
+			}
 			if len(boundary.Available) != 1 || boundary.Available[0] != access.SequentialWrite ||
 				len(boundary.Effective) != 2 || boundary.Effective[0] != access.RandomWrite || boundary.Effective[1] != access.SequentialWrite ||
 				len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomWrite || !boundary.Spool.Valid() || boundary.Spool.Storage() != storage || !boundary.Spool.FinalCopy() {
@@ -371,6 +374,7 @@ func spoolPolicy(t *testing.T, storage access.SpoolStorage, maximum resource.Byt
 		t.Fatal("Fast policy is unavailable")
 	}
 	policy.Resources.AllowSpool = true
+	policy.Resources.ScratchMaxBytes = maximum
 	policy.Resources.SpoolMaxBytes = maximum
 	policy.Resources.SpoolStorage = storage
 	if !policy.Valid() {

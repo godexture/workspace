@@ -34,8 +34,17 @@ type Node struct {
 	Effects      []plugin.Effect
 	Contract     plugin.Contract
 	Resources    resource.Request
+	Scratch      resource.Bytes
 	Estimate     resource.Estimate
 	Finalization plugin.Finalization
+}
+
+// Scratch projects the fixed aggregate temporary-byte reservation. Limit comes
+// from the effective resource policy; Reserved is the sum of every node claim
+// and selected output spool ceiling.
+type Scratch struct {
+	Limit    resource.Bytes
+	Reserved resource.Bytes
 }
 
 type Edge struct {
@@ -91,6 +100,7 @@ type Description struct {
 	Edges              []Edge
 	Boundaries         []Boundary
 	Runtime            Runtime
+	Scratch            Scratch
 	Warnings           []string
 }
 

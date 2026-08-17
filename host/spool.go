@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"sync"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/internal/scratch"
 )
 
 const spoolCopyBlockSize = 64 * 1024
@@ -257,11 +257,11 @@ func newSpoolStorage(spec access.SpoolSpec) (spoolStorage, error) {
 	case access.MemorySpool:
 		return &memorySpool{}, nil
 	case access.DiskSpool:
-		handle, err := os.CreateTemp("", "godec-spool-*")
+		temporary, err := scratch.NewTemporary("godec-spool-*")
 		if err != nil {
 			return nil, err
 		}
-		return &diskSpool{handle: handle, path: handle.Name()}, nil
+		return &diskSpool{temporary: temporary, path: temporary.Path()}, nil
 	default:
 		return nil, access.ErrInvalidSpoolSpec
 	}
@@ -301,19 +301,19 @@ func (s *memorySpool) Close() error {
 }
 
 type diskSpool struct {
-	handle *os.File
-	path   string
+	temporary *scratch.Temporary
+	path      string
 }
 
 func (s *diskSpool) WriteAt(source []byte, offset int64) (int, error) {
-	if s.handle == nil {
+	if s.temporary == nil {
 		return 0, errors.New("disk spool is closed")
 	}
-	return s.handle.WriteAt(source, offset)
+	return s.temporary.WriteAt(source, offset)
 }
 
 func (s *diskSpool) CopyTo(ctx context.Context, destination access.Appender, extent int64) error {
-	if s.handle == nil || extent < 0 {
+	if s.temporary == nil || extent < 0 {
 		return errors.New("disk spool extent is invalid")
 	}
 	buffer := make([]byte, spoolCopyBlockSize)
@@ -325,7 +325,7 @@ func (s *diskSpool) CopyTo(ctx context.Context, destination access.Appender, ext
 		if remaining := extent - offset; remaining < size {
 			size = remaining
 		}
-		count, err := s.handle.ReadAt(buffer[:int(size)], offset)
+		count, err := s.temporary.ReadAt(buffer[:int(size)], offset)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
@@ -341,18 +341,12 @@ func (s *diskSpool) CopyTo(ctx context.Context, destination access.Appender, ext
 }
 
 func (s *diskSpool) Close() error {
-	var failures []error
-	if s.handle != nil {
-		failures = append(failures, s.handle.Close())
-		s.handle = nil
+	if s.temporary == nil {
+		return nil
 	}
-	if s.path != "" {
-		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			failures = append(failures, err)
-		}
-		s.path = ""
-	}
-	return errors.Join(failures...)
+	temporary := s.temporary
+	s.temporary = nil
+	return temporary.Close()
 }
 
 func appendAll(ctx context.Context, destination access.Appender, source []byte) error {

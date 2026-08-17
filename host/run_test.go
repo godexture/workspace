@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -56,6 +57,8 @@ type lifecycleState struct {
 	finalizeCanceled chan struct{}
 	sourceHandle     *lifecycleHandle
 	sinkHandle       *lifecycleHandle
+	scratchClaims    map[string]resource.Bytes
+	scratchSeen      map[string]plugin.Scratch
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
@@ -81,6 +84,21 @@ func (s *lifecycleState) snapshot() ([]string, []int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.entries...), append([]int(nil), s.values...)
+}
+
+func (s *lifecycleState) rememberScratch(node string, value plugin.Scratch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.scratchSeen == nil {
+		s.scratchSeen = make(map[string]plugin.Scratch)
+	}
+	s.scratchSeen[node] = value
+}
+
+func (s *lifecycleState) scratch(node string) resource.Bytes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scratchClaims[node]
 }
 
 func (s *lifecycleState) panicIf(name string) {
@@ -259,7 +277,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 				if state.task != nil {
 					resources.Workers = 1
 				}
-				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Resources: resources}, nil
+				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Resources: resources, Scratch: state.scratch("source")}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/source")
@@ -280,6 +298,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 						return nil, errors.New("source direct opening is missing")
 					}
 				}
+				state.rememberScratch("source", ctx.Scratch())
 				if state.task != nil {
 					if err := ctx.Tasks().Start("fixture/background", state.task); err != nil {
 						return nil, err
@@ -301,15 +320,17 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{
 					Plan:         processorShape,
 					Outputs:      flow.NewDescriptors(flow.Describe("out", input)),
+					Scratch:      state.scratch("processor"),
 					Finalization: plugin.RequiresFinalization,
 				}, nil
 			},
-			Open: func(_ plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
+			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/processor")
 				state.panicIf("open/processor")
 				if err := state.failure("open/processor"); err != nil {
 					return nil, err
 				}
+				state.rememberScratch("processor", ctx.Scratch())
 				return &lifecycleProcessor{lifecycleBase: &lifecycleBase{shape: shape, name: "processor", state: state}}, nil
 			},
 			Finalizes: true,
@@ -320,7 +341,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		return plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
 			Ports: sinkShape,
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
-				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
+				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor](), Scratch: state.scratch(name)}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/" + name)
@@ -341,6 +362,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 						return nil, errors.New("sink direct opening is missing")
 					}
 				}
+				state.rememberScratch(name, ctx.Scratch())
 				sink := &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: name, state: state}}
 				if state.retain {
 					sink.held.Bind(lifecycleType, ctx.Owner())
@@ -463,6 +485,108 @@ func TestPreparedRunHandsNodeLocalEndpointOpeningsToComponents(t *testing.T) {
 	if len(result.Outputs) != 1 || result.Outputs[0].Class != 0 || result.Outputs[0].State != OutputCommitted {
 		t.Fatalf("output = %#v", result.Outputs)
 	}
+}
+
+func TestPreparedRunGrantsScratchOnlyToClaimingNode(t *testing.T) {
+	state := &lifecycleState{scratchClaims: map[string]resource.Bytes{"source": 8}}
+	instance, request := lifecycleFixture(t, state)
+	policy := request.Policy()
+	policy.Resources.ScratchMaxBytes = 8
+	graph, ok := request.Graph()
+	if !ok {
+		t.Fatal("fixture graph is missing")
+	}
+	request, err := job.New(nil, nil, graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.Plan().Scratch(); got != (plan.Scratch{Limit: 8, Reserved: 8}) {
+		t.Fatalf("scratch plan = %#v", got)
+	}
+	result, err := prepared.Run(t.Context())
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("result = %#v, %v", result, err)
+	}
+	state.mu.Lock()
+	source := state.scratchSeen["source"]
+	processor := state.scratchSeen["processor"]
+	sink := state.scratchSeen["sink"]
+	state.mu.Unlock()
+	if source == nil || processor != nil || sink != nil {
+		t.Fatalf("node scratch services = source:%T processor:%T sink:%T", source, processor, sink)
+	}
+	if _, err := source.Append(t.Context(), []byte("x")); err == nil {
+		t.Fatal("scratch journal remained usable after operator cleanup")
+	}
+}
+
+func TestScratchRejectionPrecedesOutputAcquireAndOpen(t *testing.T) {
+	var opens atomic.Int32
+	sourceCapabilities := mustCapabilities(t, access.SequentialRead)
+	sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+	sourceState := &sessionCounters{}
+	sinkState := &sessionCounters{}
+	source, _, sink, _ := boundaryComponentsWithRequirements(
+		&opens,
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, sourceState.acquire(sourceCapabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, sinkState.acquire(sinkCapabilities))},
+		access.NewRequirements(access.AllOf(access.SequentialRead)),
+	)
+	transform := scratchBoundaryTransform(8, &opens)
+	set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "scratch boundary", Version: "1"}, source, transform, sink))
+	instance, err := New(Plugins(set), PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputReference, _ := access.Parse("memory:input")
+	outputReference, _ := access.Parse("memory:output")
+	input, _ := job.InputFromReference(inputReference)
+	output, _ := job.OutputToReference(outputReference)
+	graph, err := boundaryGraph(transform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New([]job.Input{input}, []job.Output{output}, graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.Prepare(t.Context(), request); err == nil {
+		t.Fatal("scratch claim with a disabled aggregate limit was prepared")
+	}
+	if sinkState.acquired.Load() != 0 || opens.Load() != 0 {
+		t.Fatalf("scratch rejection acquired output=%d or opened=%d", sinkState.acquired.Load(), opens.Load())
+	}
+}
+
+func scratchBoundaryTransform(claim resource.Bytes, opens *atomic.Int32) plugin.Component {
+	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
+	shape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", access.Writes())})
+	return plugin.NewComponent[lifecycleProcessorID](
+		plugin.Descriptor{DisplayName: "scratch transform", Version: "1"},
+		configuration,
+		plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
+			Ports: shape,
+			Compile: func(_ plugin.CompileContext, _ boundaryConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
+				input, ok := inputs.One("in")
+				if !ok {
+					return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("scratch.input"))}}, nil
+				}
+				output := stream.MustDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New()).WithMetadata(input.Metadata())
+				return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: shape}, Outputs: flow.NewDescriptors(flow.Describe("out", output)), Scratch: claim}, nil
+			},
+			Open: func(plugin.OpenContext, boundaryPlan) (flow.Operator, error) {
+				opens.Add(1)
+				return boundaryTransformOperator{boundaryOperator{shape: shape}}, nil
+			},
+		}),
+		plugin.WithProcessor("in", access.Bytes(), "out", access.Writes()),
+		mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AllOf(access.SequentialRead))),
+		mediaformat.Write(boundaryFormat(), access.NewRequirements(access.AllOf(access.SequentialWrite))),
+	)
 }
 
 func TestPreparedRunOwnsDirectResourcesAndUsesExplicitAdaptors(t *testing.T) {

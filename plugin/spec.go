@@ -69,6 +69,9 @@ type OpenServices struct {
 	// Source is the optional read-only source view associated with prepared
 	// Format state. It is borrowed for this component's Open-to-Close lifetime.
 	Source any
+	// Scratch is the optional node-local temporary byte journal reserved by
+	// this component's Compile result. It is borrowed for Open-to-Close only.
+	Scratch Scratch
 }
 
 // NewOpenContext snapshots the narrow services granted to one component
@@ -86,6 +89,7 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 		owner:       services.Owner,
 		boundary:    services.Boundary,
 		source:      services.Source,
+		scratch:     services.Scratch,
 	}
 }
 
@@ -97,6 +101,7 @@ type OpenContext struct {
 	owner       flow.Owner
 	boundary    any
 	source      any
+	scratch     Scratch
 }
 
 func (c OpenContext) Context() context.Context {
@@ -150,6 +155,10 @@ func Source[T any](c OpenContext) (T, bool) {
 	return value, ok
 }
 
+// Scratch returns the node-local, Host-owned temporary byte journal. It is nil
+// unless this component declared a positive scratch claim during Compile.
+func (c OpenContext) Scratch() Scratch { return c.scratch }
+
 type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
 type SuggestFunc[C, D any] func(SuggestContext, D, Need[D]) []C
 type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
@@ -175,6 +184,7 @@ type Compiled[P, D any] struct {
 	Requirements []Requirement[D]
 	Effects      []Effect
 	Resources    resource.Request
+	Scratch      resource.Bytes
 	Estimate     resource.Estimate
 	Finalization Finalization
 }
@@ -196,6 +206,7 @@ type compiledErased struct {
 	requirements any
 	effects      []Effect
 	resources    resource.Request
+	scratch      resource.Bytes
 	estimate     resource.Estimate
 	finalization Finalization
 }
@@ -233,6 +244,7 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 				requirements: append([]Requirement[D](nil), compiled.Requirements...),
 				effects:      append([]Effect(nil), compiled.Effects...),
 				resources:    compiled.Resources,
+				scratch:      compiled.Scratch,
 				estimate:     compiled.Estimate,
 				finalization: compiled.Finalization,
 			}, err

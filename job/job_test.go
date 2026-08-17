@@ -262,7 +262,7 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := request.Policy()
-	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) {
+	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) || policy.Resources.ScratchMaxBytes != 0 {
 		t.Fatalf("default policy = %#v", policy)
 	}
 	if request.Budget() != DefaultBudget() {
@@ -308,6 +308,13 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	invalidSpool.Resources.SpoolMaxBytes = 1024
 	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
 		t.Fatal("disabled spool with a quota was accepted")
+	}
+	invalidSpool = portable
+	invalidSpool.Resources.AllowSpool = true
+	invalidSpool.Resources.SpoolMaxBytes = 1024
+	invalidSpool.Resources.SpoolStorage = access.MemorySpool
+	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
+		t.Fatal("spool outside an aggregate scratch cap was accepted")
 	}
 }
 

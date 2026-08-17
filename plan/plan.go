@@ -5,6 +5,7 @@ package plan
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 
 	"github.com/godexture/godec/access"
@@ -67,6 +68,7 @@ func (p Plan) CatalogFingerprint() string      { return p.description.CatalogFin
 func (p Plan) Platform() Platform              { return p.Description().Platform }
 func (p Plan) Boundaries() []Boundary          { return p.Description().Boundaries }
 func (p Plan) Runtime() Runtime                { return cloneRuntime(p.description.Runtime) }
+func (p Plan) Scratch() Scratch                { return p.description.Scratch }
 func (p Plan) Warnings() []string              { return append([]string(nil), p.description.Warnings...) }
 
 func validate(description Description) error {
@@ -87,7 +89,7 @@ func validate(description Description) error {
 	}
 	seen := make(map[string]struct{}, len(description.Nodes))
 	for _, node := range description.Nodes {
-		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || !node.Finalization.Valid() || node.Origin == Automatic && node.Reason == "" {
+		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || !node.Finalization.Valid() || uint64(node.Scratch) > math.MaxInt64 || node.Origin == Automatic && node.Reason == "" {
 			return errors.New("plan contains an invalid node")
 		}
 		if _, exists := seen[node.ID]; exists {
@@ -130,6 +132,9 @@ func validate(description Description) error {
 			return errors.New("plan boundary node is absent")
 		}
 	}
+	if err := validateScratch(description); err != nil {
+		return err
+	}
 	if err := validateRuntime(description.Runtime, seen, description.Edges); err != nil {
 		return err
 	}
@@ -139,6 +144,39 @@ func validate(description Description) error {
 			return errors.New("plan platform features are invalid")
 		}
 		previous = feature
+	}
+	return nil
+}
+
+func validateScratch(description Description) error {
+	if description.Scratch.Limit != description.EffectivePolicy.Resources.ScratchMaxBytes || uint64(description.Scratch.Limit) > math.MaxInt64 {
+		return errors.New("plan scratch limit differs from effective policy")
+	}
+	var total resource.Bytes
+	add := func(value resource.Bytes) error {
+		if uint64(value) > math.MaxInt64 || uint64(total) > math.MaxInt64-uint64(value) {
+			return errors.New("plan scratch reservation overflows")
+		}
+		total += value
+		return nil
+	}
+	for _, node := range description.Nodes {
+		if err := add(node.Scratch); err != nil {
+			return err
+		}
+	}
+	for _, boundary := range description.Boundaries {
+		if boundary.Spool.Valid() {
+			if err := add(resource.Bytes(boundary.Spool.MaximumBytes())); err != nil {
+				return err
+			}
+		}
+	}
+	if total != description.Scratch.Reserved {
+		return errors.New("plan scratch reservation does not match claims")
+	}
+	if total > description.Scratch.Limit || total != 0 && description.Scratch.Limit == 0 {
+		return errors.New("plan scratch reservation exceeds its limit")
 	}
 	return nil
 }
@@ -164,6 +202,7 @@ type canonicalNode struct {
 	Effects      []plugin.Effect
 	Contract     plugin.Contract
 	Resources    resource.Request
+	Scratch      resource.Bytes
 	Estimate     resource.Estimate
 	Finalization plugin.Finalization
 }
@@ -176,6 +215,7 @@ type canonicalExecution struct {
 	Edges      []Edge
 	Boundaries []canonicalBoundary
 	Runtime    Runtime
+	Scratch    Scratch
 }
 
 type canonicalBoundary struct {
@@ -231,6 +271,7 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Effects:      append([]plugin.Effect(nil), node.Effects...),
 			Contract:     node.Contract,
 			Resources:    node.Resources,
+			Scratch:      node.Scratch,
 			Estimate:     node.Estimate,
 			Finalization: node.Finalization,
 		}
@@ -260,7 +301,7 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Ownership:            boundary.Ownership,
 		}
 	}
-	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime)}
+	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime), Scratch: description.Scratch}
 }
 
 func canonicalSpoolOf(value access.SpoolSpec) canonicalSpool {
