@@ -24,6 +24,9 @@ func ReadFullAt(ctx context.Context, reader Random, destination []byte, offset i
 	if len(destination) == 0 {
 		return nil
 	}
+	if offset > math.MaxInt64-int64(len(destination)-1) {
+		return fmt.Errorf("%w: read range overflows", ErrInvalidRead)
+	}
 
 	read := 0
 	for read < len(destination) {

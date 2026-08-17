@@ -145,7 +145,7 @@ func TestReadFullAtChecksContextBeforeEachRead(t *testing.T) {
 	})
 }
 
-func TestReadFullAtChecksOffsetOverflowBeforeNextRead(t *testing.T) {
+func TestReadFullAtRejectsOffsetRangeOverflowBeforeReading(t *testing.T) {
 	calls := 0
 	err := ReadFullAt(context.Background(), readAtFunc(func(_ context.Context, destination []byte, offset int64) (int, error) {
 		calls++
@@ -158,8 +158,21 @@ func TestReadFullAtChecksOffsetOverflowBeforeNextRead(t *testing.T) {
 	if !errors.Is(err, ErrInvalidRead) {
 		t.Fatalf("ReadFullAt error = %v, want ErrInvalidRead", err)
 	}
-	if calls != 1 {
-		t.Fatalf("ReadAt calls = %d, want 1", calls)
+	if calls != 0 {
+		t.Fatalf("ReadAt calls = %d, want 0", calls)
+	}
+}
+
+func TestReadFullAtAcceptsMaxInt64SingleByte(t *testing.T) {
+	err := ReadFullAt(context.Background(), readAtFunc(func(_ context.Context, destination []byte, offset int64) (int, error) {
+		if offset != math.MaxInt64 {
+			t.Fatalf("read offset = %d, want %d", offset, int64(math.MaxInt64))
+		}
+		destination[0] = 1
+		return 1, nil
+	}), make([]byte, 1), math.MaxInt64)
+	if err != nil {
+		t.Fatalf("ReadFullAt error = %v, want nil", err)
 	}
 }
 
