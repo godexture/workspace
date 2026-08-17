@@ -3,6 +3,7 @@ package mp4
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 
 	"github.com/godexture/godec/access"
@@ -20,7 +21,10 @@ type demuxer struct {
 	reader  access.Random
 	buffers *buffer.Allocator
 	items   []flow.Item[packet.Packet]
-	started bool
+	cursor  sampleCursor
+	track   int
+	ready   bool
+	done    bool
 	failure error
 }
 
@@ -63,53 +67,50 @@ func (d *demuxer) Ports() flow.Shape { return d.shape.Clone() }
 func (d *demuxer) Close() error {
 	d.reader = nil
 	d.buffers = nil
+	d.cursor = sampleCursor{}
 	return nil
 }
 
-func (d *demuxer) Process(ctx context.Context, input *flow.Item[buffer.Handle], output flow.RoutedEmitter[packet.Packet]) error {
-	if input == nil || !input.Valid() {
-		return fmt.Errorf("%w: MP4 demuxer received unowned bytes", ErrMalformed)
-	}
-	input.Drop()
+func (d *demuxer) Read(ctx context.Context, output flow.RoutedEmitter[packet.Packet]) error {
 	if d.failure != nil {
 		return d.failure
 	}
-	if d.started {
-		return nil
+	if d.done {
+		return io.EOF
 	}
-	d.started = true
 	if err := context.Cause(ctx); err != nil {
 		d.failure = err
 		return err
 	}
-	for ordinal, track := range d.movie.tracks {
-		if err := d.demuxTrack(ctx, ordinal, track, output); err != nil {
+	for d.track < len(d.movie.tracks) {
+		if !d.ready {
+			cursor, err := newSampleCursor(ctx, d.reader, d.movie.tracks[d.track])
+			if err != nil {
+				d.failure = err
+				return err
+			}
+			d.cursor = cursor
+			d.ready = true
+		}
+		value, more, err := d.cursor.next(ctx)
+		if err != nil {
 			d.failure = err
 			return err
 		}
-	}
-	return nil
-}
-
-func (d *demuxer) Flush(context.Context, flow.RoutedEmitter[packet.Packet]) error { return d.failure }
-
-func (d *demuxer) demuxTrack(ctx context.Context, ordinal int, track track, output flow.RoutedEmitter[packet.Packet]) error {
-	cursor, err := newSampleCursor(ctx, d.reader, track)
-	if err != nil {
-		return err
-	}
-	for {
-		value, more, err := cursor.next(ctx)
-		if err != nil {
-			return err
-		}
 		if !more {
-			return nil
+			d.cursor = sampleCursor{}
+			d.track++
+			d.ready = false
+			continue
 		}
-		if err := d.emit(ctx, ordinal, value, output); err != nil {
+		if err := d.emit(ctx, d.track, value, output); err != nil {
+			d.failure = err
 			return err
 		}
+		return nil
 	}
+	d.done = true
+	return io.EOF
 }
 
 func (d *demuxer) emit(ctx context.Context, ordinal int, value sample, output flow.RoutedEmitter[packet.Packet]) error {

@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
+	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/standard"
 )
@@ -51,6 +52,31 @@ func TestMP4StandardExplicitRemuxPreservesTracksAndPayload(t *testing.T) {
 		t.Fatalf("MP4 remux changed source bytes: got %d bytes, want %d", len(outputBytes), len(inputBytes))
 	}
 	assertMP4FixtureSemantics(t, outputBytes)
+}
+
+func TestMP4AutomaticFileJobRejectsDirectReaderUntilMapping(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.mp4")
+	outputPath := filepath.Join(directory, "output.mp4")
+	if err := os.WriteFile(inputPath, mp4TwoTrackFixture(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(inputPath, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = instance.Prepare(t.Context(), request)
+	items := host.Diagnostics(err)
+	if len(items) != 1 || items[0].Code != "prepare.format-direct-automatic" || items[0].Detail["milestone"] != "M7-3" {
+		t.Fatalf("automatic MP4 diagnostic = %#v, %v", items, err)
+	}
+	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("automatic MP4 planning failure acquired output: %v", statErr)
+	}
 }
 
 func TestMP4RealtimeRemuxRejectsScratchBeforeOutputAcquire(t *testing.T) {
@@ -112,9 +138,18 @@ func newMP4RemuxJob(t testing.TB, inputPath, outputPath string, preset job.Prese
 func assertMP4RemuxPlan(t testing.TB, value plan.Plan, preset job.Preset) {
 	t.Helper()
 	nodes := value.Nodes()
+	if len(nodes) != 3 {
+		t.Fatalf("MP4 Plan nodes = %d, want demux, mux, and output provider", len(nodes))
+	}
+	if len(value.Edges()) != 2 {
+		t.Fatalf("MP4 Plan edges = %#v, want no input provider carrier edge", value.Edges())
+	}
 	var demux, mux *plan.Node
 	for index := range nodes {
 		node := nodes[index]
+		if node.Component == file.SourceIdentity().String() {
+			t.Fatalf("MP4 Plan retained the file source carrier: %#v", node)
+		}
 		switch node.ID {
 		case "demux":
 			copy := node
@@ -165,7 +200,7 @@ func assertMP4RemuxPlan(t testing.TB, value plan.Plan, preset job.Preset) {
 		switch boundary.Direction {
 		case plan.InputBoundary:
 			foundInput = true
-			if len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize {
+			if boundary.Node != "demux" || boundary.Port != "packets" || boundary.Component != file.SourceIdentity().String() || len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize {
 				t.Fatalf("MP4 input boundary = %#v", boundary)
 			}
 		case plan.OutputBoundary:

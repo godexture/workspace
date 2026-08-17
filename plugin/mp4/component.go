@@ -23,7 +23,7 @@ type demuxPlan struct {
 
 func demuxerShape() flow.Shape {
 	return flow.NewShape(
-		[]flow.Port{flow.In("bytes", access.Bytes())},
+		nil,
 		[]flow.Port{flow.Out("packets", codec.Packets(), flow.Many())},
 	)
 }
@@ -32,20 +32,14 @@ func demuxerComponent() plugin.Component {
 	shape := demuxerShape()
 	spec := plugin.Spec[configuration, demuxPlan, stream.Descriptor]{
 		Ports: shape,
-		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
-			input, ok := inputs.One("bytes")
-			if !ok {
-				return plugin.Compiled[demuxPlan, stream.Descriptor]{
-					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("mp4.input"))},
-				}, nil
-			}
+		Compile: func(ctx plugin.CompileContext, _ configuration, _ flow.Descriptors[stream.Descriptor]) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
 			inspected, ok := mediaformat.InspectionOf[movie](ctx, MP4())
 			if !ok || !inspected.valid() {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, diagnostic.NewError(diagnostic.NewItem(
 					"mp4.inspection", diagnostic.ErrorSeverity, diagnostic.Path{}, "MP4 demuxer requires a prepared movie inspection", nil,
 				))
 			}
-			return compileDemux(shape, input, inspected)
+			return compileDemux(shape, inspected)
 		},
 		Open: func(ctx plugin.OpenContext, plan demuxPlan) (flow.Operator, error) {
 			return openDemuxer(ctx, plan)
@@ -53,12 +47,12 @@ func demuxerComponent() plugin.Component {
 	}
 	return plugin.NewComponent[demuxerID](plugin.Descriptor{DisplayName: "MP4 demuxer"}, configurationSchema(),
 		plugin.WithSpec(spec),
-		plugin.WithRouter("bytes", access.Bytes(), "packets", codec.Packets()),
+		plugin.WithRoutedReader("packets", codec.Packets()),
 		mediaformat.Read(MP4(), access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)), mediaformat.WithProbe(probeMP4), mediaformat.WithInspect(inspectMP4)),
 	)
 }
 
-func compileDemux(shape flow.Shape, input stream.Descriptor, inspected movie) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
+func compileDemux(shape flow.Shape, inspected movie) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
 	if err := validateDemuxMovie(inspected); err != nil {
 		return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 	}

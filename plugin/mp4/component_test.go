@@ -1,6 +1,7 @@
 package mp4
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,7 +16,6 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
-	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
@@ -107,8 +107,7 @@ func compileMP4(t testing.TB, inspected movie) (plugin.Component, plugin.Compila
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("source", access.Bytes().Descriptor(), timing.Base{}, property.New())
-	compiled, err := plugin.Compile(component, context, resolved, flow.NewDescriptors(flow.Describe("bytes", input)))
+	compiled, err := plugin.Compile(component, context, resolved, flow.NewDescriptors[stream.Descriptor]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +115,7 @@ func compileMP4(t testing.TB, inspected movie) (plugin.Component, plugin.Compila
 }
 
 type packetCollector struct {
-	items  []*flow.Item[packet.Packet]
-	before func() error
+	items []*flow.Item[packet.Packet]
 }
 
 func (*packetCollector) Own(into *flow.Item[packet.Packet], value packet.Packet) {
@@ -126,11 +124,6 @@ func (*packetCollector) Own(into *flow.Item[packet.Packet], value packet.Packet)
 }
 
 func (c *packetCollector) Emit(_ context.Context, input *flow.Item[packet.Packet]) error {
-	if c.before != nil {
-		if err := c.before(); err != nil {
-			return err
-		}
-	}
 	if !input.Valid() {
 		return errors.New("collector received an unowned packet")
 	}
@@ -248,8 +241,7 @@ func TestMP4CompileRequiresInspection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("source", access.Bytes().Descriptor(), timing.Base{}, property.New())
-	_, err = plugin.Compile(component, plugin.CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("bytes", input)))
+	_, err = plugin.Compile(component, plugin.CompileContext{}, resolved, flow.NewDescriptors[stream.Descriptor]())
 	items := diagnostic.ItemsOf(err)
 	if len(items) != 1 || items[0].Code != "plugin.compile" {
 		t.Fatalf("Compile without inspection error = %v", err)
@@ -270,28 +262,21 @@ func TestMP4DemuxesTracksFromTheBorrowedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputBuffers, _ := buffer.NewAllocator(1)
-	handle, err := inputBuffers.FromBytes([]byte{0}, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := flow.NewItem(handle, access.Bytes(), &componentTestDomain)
 	routes := &packetRoutes{routes: make([]packetCollector, 2)}
-	routes.routes[0].before = func() error {
-		if inputBuffers.Used() != 0 {
-			return errors.New("MP4 demux retained raw input while emitting packets")
-		}
-		return nil
-	}
-	router, ok := operator.(flow.Router[buffer.Handle, packet.Packet])
+	reader, ok := operator.(flow.RoutedReader[packet.Packet])
 	if !ok {
-		t.Fatal("MP4 operator is not a byte-to-packet router")
+		t.Fatal("MP4 operator is not a routed packet reader")
 	}
-	if err := router.Process(t.Context(), &input, routes); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if err := reader.Read(t.Context(), routes); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if input.Valid() || len(routes.routes[0].items) != 1 || len(routes.routes[1].items) != 1 {
-		t.Fatalf("input/routes = %v/%d/%d", input.Valid(), len(routes.routes[0].items), len(routes.routes[1].items))
+	if err := reader.Read(t.Context(), routes); !errors.Is(err, io.EOF) {
+		t.Fatalf("MP4 reader completion = %v, want EOF after emitting call", err)
+	}
+	if len(routes.routes[0].items) != 1 || len(routes.routes[1].items) != 1 {
+		t.Fatalf("routes = %d/%d", len(routes.routes[0].items), len(routes.routes[1].items))
 	}
 	first, second := routes.routes[0].items[0].Value(), routes.routes[1].items[0].Value()
 	if first.Sequence() != 0 || first.PTS().Value() != 0 || first.DTS().Value() != 0 || first.Duration().Value() != 1024 || string(first.Bytes().AppendTo(nil)) != "\x01\x02" {
@@ -305,11 +290,67 @@ func TestMP4DemuxesTracksFromTheBorrowedSource(t *testing.T) {
 			item.Drop()
 		}
 	}
-	if allocator.Used() != 0 || inputBuffers.Used() != 0 {
-		t.Fatalf("retained buffers = output %d input %d", allocator.Used(), inputBuffers.Used())
+	if allocator.Used() != 0 {
+		t.Fatalf("retained output buffers = %d", allocator.Used())
 	}
-	if err := router.Flush(t.Context(), routes); err != nil {
+}
+
+func TestMP4RoutedReaderEmitsEverySampleBeforeEOF(t *testing.T) {
+	data, samples := mixedTableMovie(false)
+	component, compiled := compileMP4(t, inspectMovie(t, data))
+	allocator, _ := buffer.NewAllocator(14)
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{Buffers: allocator, Source: movieSourceOpening(t, data)}), compiled)
+	if err != nil {
 		t.Fatal(err)
+	}
+	routes := &packetRoutes{routes: make([]packetCollector, 1)}
+	reader := operator.(flow.RoutedReader[packet.Packet])
+	for index := range samples {
+		if err := reader.Read(t.Context(), routes); err != nil {
+			t.Fatalf("MP4 routed sample %d Read = %v", index, err)
+		}
+		if got := len(routes.routes[0].items); got != index+1 {
+			t.Fatalf("MP4 routed samples after Read %d = %d, want %d", index, got, index+1)
+		}
+	}
+	if got := len(routes.routes[0].items); got != len(samples) {
+		t.Fatalf("MP4 routed samples = %d, want %d", got, len(samples))
+	}
+	for index, item := range routes.routes[0].items {
+		value := item.Value()
+		want := samples[index]
+		if value.Sequence() != want.sequence-1 || value.PTS().Value() != timing.NewPTS(want.pts) || value.DTS().Value() != timing.NewDTS(int64(want.dts)) || value.Duration().Value() != timing.NewDuration(int64(want.duration)) || value.Bytes().Len() != int(want.size) {
+			t.Fatalf("MP4 routed sample %d = %#v, want %#v", index, value, want)
+		}
+		start := int(want.offset)
+		end := start + int(want.size)
+		if got := value.Bytes().AppendTo(nil); !bytes.Equal(got, data[start:end]) {
+			t.Fatalf("MP4 routed sample %d payload = %v, want %v", index, got, data[start:end])
+		}
+		item.Drop()
+	}
+	if err := reader.Read(t.Context(), routes); !errors.Is(err, io.EOF) {
+		t.Fatalf("MP4 routed reader completion = %v, want EOF", err)
+	}
+	if allocator.Used() != 0 {
+		t.Fatalf("MP4 routed reader retained %d payload bytes", allocator.Used())
+	}
+}
+
+func TestMP4RoutedReaderReturnsImmediateEOFWithoutSamples(t *testing.T) {
+	data := emptyTrackMovie()
+	component, compiled := compileMP4(t, inspectMovie(t, data))
+	allocator, _ := buffer.NewAllocator(1)
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{Buffers: allocator, Source: movieSourceOpening(t, data)}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := &packetRoutes{routes: make([]packetCollector, 1)}
+	if err := operator.(flow.RoutedReader[packet.Packet]).Read(t.Context(), routes); !errors.Is(err, io.EOF) {
+		t.Fatalf("empty MP4 routed reader = %v, want EOF", err)
+	}
+	if len(routes.routes[0].items) != 0 || allocator.Used() != 0 {
+		t.Fatalf("empty MP4 routed reader emitted %d items and retained %d bytes", len(routes.routes[0].items), allocator.Used())
 	}
 }
 
@@ -341,11 +382,8 @@ func TestMP4DemuxKeepsUnknownSampleEntriesAsRawPackets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputAllocator, _ := buffer.NewAllocator(1)
-	handle, _ := inputAllocator.FromBytes([]byte{0}, 1)
-	input := flow.NewItem(handle, access.Bytes(), &componentTestDomain)
 	routes := &packetRoutes{routes: make([]packetCollector, 1)}
-	if err := operator.(flow.Router[buffer.Handle, packet.Packet]).Process(t.Context(), &input, routes); err != nil {
+	if err := operator.(flow.RoutedReader[packet.Packet]).Read(t.Context(), routes); err != nil {
 		t.Fatal(err)
 	}
 	if got := routes.routes[0].items[0].Value().Bytes().AppendTo(nil); string(got) != "\x09\x0a" {
@@ -364,14 +402,11 @@ func TestMP4DemuxFailsClosedForCanceledTruncatedAndMissingRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inputAllocator, _ := buffer.NewAllocator(1)
-		handle, _ := inputAllocator.FromBytes([]byte{0}, 1)
-		input := flow.NewItem(handle, access.Bytes(), &componentTestDomain)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		err = operator.(flow.Router[buffer.Handle, packet.Packet]).Process(ctx, &input, &packetRoutes{routes: make([]packetCollector, 2)})
-		if !errors.Is(err, context.Canceled) || input.Valid() || inputAllocator.Used() != 0 {
-			t.Fatalf("canceled Process = %v, input valid=%t used=%d", err, input.Valid(), inputAllocator.Used())
+		err = operator.(flow.RoutedReader[packet.Packet]).Read(ctx, &packetRoutes{routes: make([]packetCollector, 2)})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled Read = %v", err)
 		}
 	})
 
@@ -383,12 +418,9 @@ func TestMP4DemuxFailsClosedForCanceledTruncatedAndMissingRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inputAllocator, _ := buffer.NewAllocator(1)
-		handle, _ := inputAllocator.FromBytes([]byte{0}, 1)
-		input := flow.NewItem(handle, access.Bytes(), &componentTestDomain)
-		err = operator.(flow.Router[buffer.Handle, packet.Packet]).Process(t.Context(), &input, &packetRoutes{routes: make([]packetCollector, 1)})
+		err = operator.(flow.RoutedReader[packet.Packet]).Read(t.Context(), &packetRoutes{routes: make([]packetCollector, 1)})
 		if !errors.Is(err, ErrTruncated) {
-			t.Fatalf("truncated Process = %v", err)
+			t.Fatalf("truncated Read = %v", err)
 		}
 	})
 
@@ -397,13 +429,17 @@ func TestMP4DemuxFailsClosedForCanceledTruncatedAndMissingRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inputAllocator, _ := buffer.NewAllocator(1)
-		handle, _ := inputAllocator.FromBytes([]byte{0}, 1)
-		input := flow.NewItem(handle, access.Bytes(), &componentTestDomain)
 		routes := &packetRoutes{routes: make([]packetCollector, 1)}
-		err = operator.(flow.Router[buffer.Handle, packet.Packet]).Process(t.Context(), &input, routes)
+		reader := operator.(flow.RoutedReader[packet.Packet])
+		if err := reader.Read(t.Context(), routes); err != nil || len(routes.routes[0].items) != 1 {
+			t.Fatalf("first routed Read = %v, items = %d", err, len(routes.routes[0].items))
+		}
+		err = reader.Read(t.Context(), routes)
 		if !errors.Is(err, ErrMalformed) {
-			t.Fatalf("missing route Process = %v", err)
+			t.Fatalf("missing later route Read = %v", err)
+		}
+		if sticky := reader.Read(t.Context(), routes); sticky != err {
+			t.Fatalf("sticky missing route Read = %v, want original %v", sticky, err)
 		}
 		for _, item := range routes.routes[0].items {
 			item.Drop()
@@ -430,3 +466,5 @@ func TestMP4DemuxCloseDropsBorrowedSourceViews(t *testing.T) {
 		t.Fatal("MP4 Close retained borrowed source or payload allocator")
 	}
 }
+
+var _ flow.RoutedReader[packet.Packet] = (*demuxer)(nil)
