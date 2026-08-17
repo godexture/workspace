@@ -173,7 +173,7 @@ media 領域を `media/` 配下へ置き、それ以外は root に置く。単�
 
 stream identity は ordered repeated `stream.Descriptor` と private compiled connection が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
 
-Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router が ordinal で一つへ dispatch する。`SerialFanIn` は input ordinal を保持して callback を同期直列化する汎用 fan-in policy とし、ordering algorithm とはしない。Serial input buffer のない direct な single synchronous execution island で単一 Router producer が emit する場合だけ call 順を physical order として扱う。buffer/fan-out/concurrent producer の cross-track physical interleave、wall-clock 順、再現性は契約せず、これらを理由に generic `SerialFanIn` を Compile で reject しない。public time-ordered merger や cross-track timestamp policy は作らない。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
+Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router/RoutedReader が ordinal で一つへ dispatch する。`SerialFanIn` は input ordinal を保持して callback を同期直列化する汎用 fan-in policy とし、ordering algorithm とはしない。Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ call 順を physical order として扱う。buffer/fan-out/concurrent producer の cross-track physical interleave、wall-clock 順、再現性は契約せず、これらを理由に generic `SerialFanIn` を Compile で reject しない。public time-ordered merger や cross-track timestamp policy は作らない。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
 
 ### C23. mapping は Inspect 後に解決し、保存を既定にする
 
@@ -195,6 +195,12 @@ bounded summary だけを置き、source Opening/I/O handle、raw payload bytes�
 は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、Compile と Inspection は I/O を
 行わない。`InspectBytes` は Inspect 中の全 `ReadAt` を underlying source の前で要求 byte 数だけ課金し、MP4 table scan は
 固定 page を使う。Open の lazy cursor は Inspect の wrapper/残予算を継承せず、元の borrowed source を読む。
+MP4 demux は carrier input のない direct `RoutedReader` とし、explicit graph の input Boundary は demux の Many output を
+anchor にしつつ Access provider identity を保持する。provider carrier node/edge は生成せず、Host は provider session を
+lifecycle 内で一度だけ Acquire して同じ Opening を Inspect、demux、same-format mux へ渡す。automatic no-graph MP4 は
+Many mapping を構成する M7-3 まで `prepare.format-direct-automatic` で失敗し、carrier へ fallback しない。Run の
+payload-heavy I/O gate は Prepare 後に計数をリセットし、read bytes を source size の 1.25 倍以下に固定して全 carrier scan の
+復活を検出する。
 unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
 から再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。
 MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、
@@ -225,7 +231,7 @@ M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip al
 
 ### Superseded M7 ordering proposals
 
-以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、Serial input buffer のない direct な single synchronous execution island にある単一 Router producer の emit call 順を physical mdat 書きへ利用する。buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。
+以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、Serial input buffer のない direct な single synchronous execution island にある単一 routed producer の emit call 順を physical mdat 書きへ利用する。buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。
 
 ## Deferred without blocking the first implementation
 

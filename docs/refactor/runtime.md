@@ -48,6 +48,13 @@ bridge の自動挿入範囲、Effect と Host policy、探索 budget、default 
 
 これは完成時の pipeline である。M4/M5 が実装した現在の経路は宣言を Normalize/Bind した後の Shape/Compile/Solve/Validate/Describe/Build と runtime lifecycle で、段階 3〜5 と spool bridge の最初の実装は M6 の file/WAVE consumer が担当する。M6 以降の Prepare は input I/O を含むが、各 component の `Compile` は pure のままである。prepared session が Plan と input snapshot を所有し、Run まで同じ session を使う。output transaction は dry-run/Plan 時に開始しない。Access/Endpoint の詳細は [access と endpoint contract](access.md) に定義する。
 
+random-access Format が carrier bytes を消費せず static `Many` output から直接 emit する場合、explicit graph のその output を
+input boundary anchor とする。Boundary は provider identity/capability を保持するが、provider carrier node/edge は
+Plan/Program に生成しない。Prepare は provider session を一度だけ Acquire し、その Opening を Inspect と anchored reader、
+same-format inspection consumer へ共有する。anchored reader へ通常の `OpenServices.Boundary` を重ねず、Format の
+`SourceOpening` だけを渡す。automatic graph が Many terminal/mapping を構成できない段階では明示 diagnostic で失敗し、
+carrier path へ fallback しない。
+
 ## graph model
 
 Node の固定 role を列挙するのではなく、typed input/output port と phase behavior で表す。
@@ -126,6 +133,11 @@ island 内は direct typed call とし、edge ごとの interface dispatch を c
 public な `flow.Router[I, O]` は `flow.RoutedEmitter[O]` から ordinal を選び、各 emitted item を一つの
 route へ渡す。`Process`/`Flush` は複数 item を複数 route へ emit できる。Router は同じ item を fork せず、
 選択された route の downstream fan-out だけが runtime の `Fork` を使う。
+carrier input を必要としない source は `flow.RoutedReader[O]` で同じ table へ直接 emit する。一回の `Read` は
+複数 item/route を publish できるが、成功 call は一つ以上 emit しなければならない。item を emit した call と
+`io.EOF` を同時に返さず、最後の emitting call は `nil`、次の item-less call が `io.EOF` を返す。zero-item source は
+初回から `io.EOF` を返す。
+
 `flow.Item` の binding は slot に固定されるため、第三者 plugin が output item を再利用する場合も route ごとに
 一つを保持し、異なる route で同じ slot を使い回さない。
 
@@ -503,7 +515,7 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 
 複数 input の意味は component が選ぶ fan-in policy で決める。`SerialFanIn` は callback を同期直列化し、
 input ordinal を保持するだけで、timestamp order や wall-clock order を導出しない。Serial input buffer のない direct な
-single synchronous execution island で単一 Router producer が emit する場合だけ、その call 順が downstream の physical order
+single synchronous execution island で単一 routed producer が emit する場合だけ、その call 順が downstream の physical order
 になる。buffer/fan-out/concurrent producer がある場合の cross-track physical interleave、wall-clock 順、再現性は契約しない。
 これらの構成だけを理由に generic `SerialFanIn` を Compile で reject しない。
 mixer、sidechain、subtitle overlay、A/V sync が時刻順や lockstep を必要とする場合は、実 consumer と backpressure

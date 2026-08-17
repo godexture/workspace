@@ -158,15 +158,15 @@ go test ./host -run '^$' -bench '^BenchmarkPreparedRunLinear$' -benchmem
 ## M7 multi-stream performance gate
 
 M7 の fast path は `MP4 demux → per-track copy or typed PCM path → SerialFanIn → MP4 mux` とする。同一
-process/fixture で Router と SerialFanIn を含む unchanged remux、PCM-bound path を AB/BA で交互に測り、Open と
-steady-state Run を分けて `-benchmem` を取る。Router/SerialFanIn の orchestration は item ごとの mandatory
+process/fixture で Router/RoutedReader と SerialFanIn を含む unchanged remux、PCM-bound path を AB/BA で交互に測り、Open と
+steady-state Run を分けて `-benchmem` を取る。routed producer/SerialFanIn の orchestration は item ごとの mandatory
 allocation を 0 とする。route ordinal、callback、queue handoff に reflection、string lookup、`any` transport を
 持ち込まない。
 
 `buffer.Handle.Range` など payload slicing の control allocation はこの literal zero gate の対象外とする。user-visible
 time または無視できない `B/op`・`allocs/op` が同一条件で概ね 2 倍以上悪化した場合だけ、paired AB/BA の再測定と
 profile を行い、payload slicing を再設計する。小さな差や payload size に比例する copy 自体を gate failure にしない。
-Serial input buffer のない direct な single synchronous execution island で単一 Router producer が emit する場合だけ、
+Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ、
 その call 順を MP4 の physical order として correctness vector にする。buffer/fan-out/concurrent producer の cross-track
 physical interleave、wall-clock order、byte reproducibility は performance gate の前提にしない。MP4 correctness/exact は
 track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table で判定し、physical interleave の変更を semantic
