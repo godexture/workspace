@@ -217,14 +217,41 @@ type Emitter[T any] interface {
 
 // Batch is one deterministic fan-in group. Each cell follows the ordinary
 // ownership rule, so a Joiner may consume some, all, or none of them.
-type Batch[T any] struct{ items []*Item[T] }
+//
+// A selected batch is the one-item form used by MergeFanIn to preserve the
+// input ordinal without allocating a one-element slice.
+type Batch[T any] struct {
+	items    []*Item[T]
+	selected *Item[T]
+	input    int
+}
 
 func NewBatch[T any](items []*Item[T]) Batch[T] { return Batch[T]{items: items} }
 
-func (b Batch[T]) Len() int { return len(b.items) }
+// NewSelectedBatch makes the one-item batch used by MergeFanIn. A nil item or
+// negative input ordinal produces an empty batch.
+func NewSelectedBatch[T any](input int, item *Item[T]) Batch[T] {
+	if input < 0 || item == nil {
+		return Batch[T]{}
+	}
+	return Batch[T]{selected: item, input: input}
+}
+
+func (b Batch[T]) Len() int {
+	if b.selected != nil {
+		return 1
+	}
+	return len(b.items)
+}
 
 // At returns the cell at index, or nil when the index is out of range.
 func (b Batch[T]) At(index int) *Item[T] {
+	if b.selected != nil {
+		if index == 0 {
+			return b.selected
+		}
+		return nil
+	}
 	if index < 0 || index >= len(b.items) {
 		return nil
 	}
@@ -238,6 +265,15 @@ func (b Batch[T]) Value(index int) (T, bool) {
 		return zero, false
 	}
 	return item.Value(), true
+}
+
+// InputOrdinal reports the source input ordinal carried by a MergeFanIn
+// selected batch.
+func (b Batch[T]) InputOrdinal() (int, bool) {
+	if b.selected == nil {
+		return 0, false
+	}
+	return b.input, true
 }
 
 // Processor is the common one-item transform contract. Flush handles delayed

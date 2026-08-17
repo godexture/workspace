@@ -41,6 +41,30 @@ func TestTypedTraitsRemainOnTypedSchema(t *testing.T) {
 	}
 }
 
+func TestOrderTraitIsRuntimeOnly(t *testing.T) {
+	type unit struct{ Value int }
+	untimed := Define[thirdPartyUnitID](Traits[unit]{})
+	ordered := Define[thirdPartyUnitID](Traits[unit]{
+		Order: func(value unit) (int64, bool) { return int64(value.Value), true },
+	})
+	if !ordered.Valid() || !ordered.Descriptor().Equal(untimed.Descriptor()) {
+		t.Fatalf("order presence changed descriptor equality: ordered=%#v untimed=%#v", ordered.Descriptor(), untimed.Descriptor())
+	}
+	if ordered.Descriptor().HasTime() || ordered.Descriptor().Identity() != untimed.Descriptor().Identity() {
+		t.Fatal("order presence changed descriptor state")
+	}
+	if got, ok := ordered.Order(unit{Value: 7}); !ok || got != 7 {
+		t.Fatalf("order = %d/%v", got, ok)
+	}
+	if got, ok := untimed.Order(unit{}); ok || got != 0 {
+		t.Fatalf("missing order = %d/%v", got, ok)
+	}
+	patched := untimed.WithTraits(Traits[unit]{Order: func(unit) (int64, bool) { return 3, true }})
+	if !patched.Valid() {
+		t.Fatalf("WithTraits rejected an order-only runtime change: %v", patched.Problem())
+	}
+}
+
 func TestDescriptorRetainsIdentityAndPayloadWithoutRuntimeProducts(t *testing.T) {
 	typ := Define[thirdPartyUnitID](Traits[alternatePayload]{
 		Fork: func(value alternatePayload) alternatePayload { return value },

@@ -15,6 +15,10 @@ var packetSchema = schema.Define[packetSchemaID](schema.Traits[packet.Packet]{
 		pts, ok := value.PTS().Get()
 		return pts.Int64(), ok
 	},
+	Order: func(value packet.Packet) (int64, bool) {
+		dts, ok := value.DTS().Get()
+		return dts.Int64(), ok
+	},
 })
 
 // Packets is the canonical codec-packet schema shared by parsers and codecs.

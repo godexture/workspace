@@ -84,6 +84,56 @@ func TestShapeReportsInvalidSchemaMarker(t *testing.T) {
 	}
 }
 
+func TestSelectedBatchCarriesOneItemAndInputOrdinal(t *testing.T) {
+	item := &Item[int]{}
+	batch := NewSelectedBatch(4, item)
+	if batch.Len() != 1 || batch.At(0) != item || batch.At(1) != nil || batch.At(-1) != nil {
+		t.Fatalf("selected batch = len %d, at0 %p, at1 %p, at-1 %p", batch.Len(), batch.At(0), batch.At(1), batch.At(-1))
+	}
+	if got, ok := batch.InputOrdinal(); !ok || got != 4 {
+		t.Fatalf("selected input ordinal = %d/%v", got, ok)
+	}
+}
+
+func TestSelectedBatchRejectsInvalidSelection(t *testing.T) {
+	item := &Item[int]{}
+	for name, batch := range map[string]Batch[int]{
+		"nil item":       NewSelectedBatch[int](0, nil),
+		"negative input": NewSelectedBatch(-1, item),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if batch.Len() != 0 || batch.At(0) != nil {
+				t.Fatalf("invalid selected batch = len %d, at0 %p", batch.Len(), batch.At(0))
+			}
+			if _, ok := batch.InputOrdinal(); ok {
+				t.Fatal("invalid selected batch exposed an input ordinal")
+			}
+		})
+	}
+}
+
+func TestZipBatchHasNoInputOrdinal(t *testing.T) {
+	batch := NewBatch([]*Item[int]{{}, {}})
+	if batch.Len() != 2 {
+		t.Fatalf("zip batch length = %d", batch.Len())
+	}
+	if _, ok := batch.InputOrdinal(); ok {
+		t.Fatal("zip batch exposed an input ordinal")
+	}
+}
+
+func TestSelectedBatchInputOrdinalDoesNotAllocate(t *testing.T) {
+	batch := NewSelectedBatch(2, &Item[int]{})
+	allocs := testing.AllocsPerRun(100, func() {
+		if got, ok := batch.InputOrdinal(); !ok || got != 2 {
+			t.Fatalf("input ordinal = %d/%v", got, ok)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("InputOrdinal allocations = %v, want zero", allocs)
+	}
+}
+
 func TestShapeEqualityUsesSchemaIdentityAndPayload(t *testing.T) {
 	type alternateUnit struct{}
 	typ := flowSchema()

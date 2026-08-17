@@ -18,13 +18,16 @@ func (id ID) PackagePath() string { return marker.PackagePath(id.canonical) }
 func (id ID) Name() string        { return marker.Name(id.canonical) }
 
 // Traits are optional typed operations used when a data path needs the
-// operation. A linear path never needs to call Size or Time just to transport
-// a value.
+// operation. A linear path never needs to call Size, Time, or Order just to
+// transport a value; Order is runtime-only and is not part of erased
+// descriptor identity.
 type Traits[T any] struct {
 	Fork func(T) T
 	Drop func(T)
 	Size func(T) int
 	Time func(T) (int64, bool)
+	// Order returns the MergeFanIn order key when one is known.
+	Order func(T) (int64, bool)
 }
 
 // Type is the typed schema handle retained by code that knows T.
@@ -122,6 +125,14 @@ func (t Type[T]) Time(value T) (int64, bool) {
 		return 0, false
 	}
 	return t.traits.Time(value)
+}
+
+// Order returns the MergeFanIn order key when one is known.
+func (t Type[T]) Order(value T) (int64, bool) {
+	if t.traits.Order == nil {
+		return 0, false
+	}
+	return t.traits.Order(value)
 }
 
 // noCompare keeps Descriptor non-comparable so schema equality always goes
