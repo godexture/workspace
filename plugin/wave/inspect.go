@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/godexture/godec/access"
@@ -59,7 +57,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		resolver, _ = metadata.NewResolver(nil)
 	}
 	var root [12]byte
-	if err := readFullAt(ctx, reader, root[:], 0); err != nil {
+	if err := access.ReadFullAt(ctx, reader, root[:], 0); err != nil {
 		return header{}, fmt.Errorf("%w: RIFF header: %w", ErrMalformed, err)
 	}
 	rf64 := string(root[0:4]) == tagRF64
@@ -97,7 +95,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			return header{}, fmt.Errorf("%w: chunk offset exceeds runtime range", ErrUnsupported)
 		}
 		var chunk [8]byte
-		if err := readFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
+		if err := access.ReadFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
 			return header{}, fmt.Errorf("%w: chunk header at %d: %w", ErrMalformed, offset, err)
 		}
 		id := string(chunk[0:4])
@@ -129,7 +127,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 				return header{}, fmt.Errorf("%w: invalid ds64 chunk", ErrMalformed)
 			}
 			var payload [28]byte
-			if err := readFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
+			if err := access.ReadFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
 				return header{}, fmt.Errorf("%w: ds64 chunk: %w", ErrMalformed, err)
 			}
 			riffSize := binary.LittleEndian.Uint64(payload[0:8])
@@ -244,7 +242,7 @@ func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver m
 		return err
 	}
 	raw := make([]byte, int(length))
-	if err := readFullAt(ctx, reader, raw, int64(offset)); err != nil {
+	if err := access.ReadFullAt(ctx, reader, raw, int64(offset)); err != nil {
 		return fmt.Errorf("%w: preserved chunk %q at %d: %w", ErrMalformed, id, offset, err)
 	}
 	if id == tagLIST && declaredSize >= 4 && len(raw) >= 12 && string(raw[8:12]) == tagINFO {
@@ -275,7 +273,7 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 		readSize = 40
 	}
 	buffer := make([]byte, int(readSize))
-	if err := readFullAt(ctx, reader, buffer, int64(offset)); err != nil {
+	if err := access.ReadFullAt(ctx, reader, buffer, int64(offset)); err != nil {
 		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
 	}
 	audioFormat := binary.LittleEndian.Uint16(buffer[0:2])
@@ -331,39 +329,6 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	return description, int(blockAlign), nil
 }
 
-func readFullAt(ctx context.Context, reader access.Random, destination []byte, offset int64) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: negative read offset", ErrMalformed)
-	}
-	read := 0
-	for read < len(destination) {
-		if err := context.Cause(ctx); err != nil {
-			return err
-		}
-		count, err := reader.ReadAt(ctx, destination[read:], offset+int64(read))
-		if count < 0 || count > len(destination)-read {
-			return fmt.Errorf("%w: invalid random read count", ErrMalformed)
-		}
-		read += count
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				if read == 0 {
-					return io.EOF
-				}
-				return io.ErrUnexpectedEOF
-			}
-			return err
-		}
-		if count == 0 {
-			return io.ErrNoProgress
-		}
-	}
-	return nil
-}
-
 func checkedAdd(left, right uint64) (uint64, bool) {
 	if left > math.MaxUint64-right {
 		return 0, false
@@ -396,7 +361,7 @@ func inspectTrailer(ctx context.Context, reader access.Random, builder *metadata
 		return err
 	}
 	raw := make([]byte, int(length))
-	if err := readFullAt(ctx, reader, raw, int64(start)); err != nil {
+	if err := access.ReadFullAt(ctx, reader, raw, int64(start)); err != nil {
 		return fmt.Errorf("%w: trailing region at %d: %w", ErrMalformed, start, err)
 	}
 	builder.AddBlock(metadata.NewRawBlock(
