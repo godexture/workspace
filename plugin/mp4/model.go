@@ -72,6 +72,10 @@ type movie struct {
 	movieHead box
 	media     box
 	tracks    []track
+	// totalSampleBytes is the checked sum of every inspected sample payload.
+	// A preserving remux can reuse the mdat header only when this covers the
+	// complete mdat payload.
+	totalSampleBytes uint64
 }
 
 type fileType struct {
@@ -87,6 +91,7 @@ type track struct {
 	timeScale        uint32
 	duration         uint64
 	sampleCount      uint64
+	chunkCount       uint32
 	maxSampleSize    uint32
 	handler          boxType
 	codec            boxType
@@ -129,6 +134,7 @@ type sample struct {
 	pts              int64
 	descriptionIndex uint32
 	sync             bool
+	chunkStart       bool
 	sequence         uint64
 }
 

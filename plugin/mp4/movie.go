@@ -63,8 +63,14 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 		return movie{}, fmt.Errorf("%w: ftyp, moov, and one mdat are required", errMalformedMovie)
 	}
 	for index := range result.tracks {
-		if err := validateTrack(ctx, inspection, result.media, &result.tracks[index]); err != nil {
+		total, err := validateTrack(ctx, inspection, result.media, &result.tracks[index])
+		if err != nil {
 			return movie{}, normalizeMovieError(err)
+		}
+		var ok bool
+		result.totalSampleBytes, ok = checkedBoxAdd(result.totalSampleBytes, total)
+		if !ok {
+			return movie{}, fmt.Errorf("%w: movie sample payload total overflows", errMalformedMovie)
 		}
 	}
 	return result, nil

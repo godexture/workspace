@@ -8,21 +8,27 @@ import (
 	"github.com/godexture/godec/access"
 )
 
-func validateTrack(ctx context.Context, reader access.Random, media box, value *track) error {
+func validateTrack(ctx context.Context, reader access.Random, media box, value *track) (uint64, error) {
 	cursor, err := newSampleCursor(ctx, reader, *value)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	var total uint64
 	for {
 		item, more, err := cursor.next(ctx)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if !more {
-			return nil
+			return total, nil
 		}
 		if !withinMedia(media, item.offset, item.size) {
-			return fmt.Errorf("%w: sample %d lies outside mdat payload", errMalformedMovie, item.sequence)
+			return 0, fmt.Errorf("%w: sample %d lies outside mdat payload", errMalformedMovie, item.sequence)
+		}
+		var ok bool
+		total, ok = checkedBoxAdd(total, uint64(item.size))
+		if !ok {
+			return 0, fmt.Errorf("%w: sample payload total overflows", errMalformedMovie)
 		}
 	}
 }

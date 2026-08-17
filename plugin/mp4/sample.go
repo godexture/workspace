@@ -106,7 +106,8 @@ func (c *sampleCursor) next(ctx context.Context) (sample, bool, error) {
 	if c.sequence == math.MaxUint64 {
 		return sample{}, false, fmt.Errorf("%w: sample sequence overflows", errMalformedMovie)
 	}
-	if c.chunkLeft == 0 {
+	chunkStart := c.chunkLeft == 0
+	if chunkStart {
 		if err := c.nextChunk(ctx); err != nil {
 			return sample{}, false, err
 		}
@@ -138,6 +139,7 @@ func (c *sampleCursor) next(ctx context.Context) (sample, bool, error) {
 		dts:              c.dts,
 		pts:              pts,
 		descriptionIndex: c.layoutCurrent.descriptionIndex,
+		chunkStart:       chunkStart,
 		sequence:         c.sequence,
 	}
 	if !c.hasSync {

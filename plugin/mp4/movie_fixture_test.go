@@ -356,9 +356,9 @@ func mixedTableMovie(largeOffsets bool) ([]byte, []sample) {
 	moov = buildMoov(first, second)
 	data := append(append(fileType, moov...), fixtureBox("mdat", make([]byte, 14))...)
 	return data, []sample{
-		{offset: first, size: 2, duration: 10, dts: 0, pts: -2, descriptionIndex: 1, sync: true, sequence: 1},
+		{offset: first, size: 2, duration: 10, dts: 0, pts: -2, descriptionIndex: 1, sync: true, chunkStart: true, sequence: 1},
 		{offset: first + 2, size: 3, duration: 10, dts: 10, pts: 13, descriptionIndex: 1, sequence: 2},
-		{offset: second, size: 4, duration: 20, dts: 20, pts: 23, descriptionIndex: 1, sync: true, sequence: 3},
+		{offset: second, size: 4, duration: 20, dts: 20, pts: 23, descriptionIndex: 1, sync: true, chunkStart: true, sequence: 3},
 		{offset: second + 4, size: 5, duration: 20, dts: 40, pts: 40, descriptionIndex: 1, sequence: 4},
 	}
 }

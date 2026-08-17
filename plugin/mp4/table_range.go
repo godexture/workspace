@@ -111,6 +111,7 @@ func parseSampleTable(ctx context.Context, reader access.Random, sourceEnd uint6
 	result.descriptionCount = descriptionCount
 	result.codec = codec
 	result.sampleCount = sampleCount
+	result.chunkCount = offsetCount
 	result.duration = duration
 	result.maxSampleSize = maxSize
 	result.tables.fixedSize = fixedSize
