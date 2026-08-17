@@ -26,6 +26,7 @@ type inspectSourceID struct{}
 type inspectReaderID struct{}
 type inspectBridgeID struct{}
 type inspectSinkID struct{}
+type inspectTerminalID struct{}
 type inspectFormatID struct{}
 type inspectEncodingID struct{}
 type inspectCarrierID struct{}
@@ -53,7 +54,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	}
 	capabilities := mustCapabilities(t, access.RandomRead)
 	sessions := &sessionCounters{}
-	var inspected, compiled atomic.Int32
+	var inspected, compiled, sinkInspected atomic.Int32
 	configuration := config.Struct[inspectConfigID](func() inspectConfig { return inspectConfig{} }).Version("1").Build()
 	component := func(shape flow.Shape, compile plugin.CompileFunc[inspectConfig, inspectPlan, stream.Descriptor]) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[inspectConfig, inspectPlan, stream.Descriptor]{
@@ -122,15 +123,36 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		}),
 		plugin.WithProcessor("in", inspectSchemaA, "out", inspectSchemaB),
 	)
-	sinkShape := flow.NewShape([]flow.Port{flow.In("in", inspectSchemaB)}, nil)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", inspectSchemaB)}, []flow.Port{flow.Out("writes", access.Writes())})
 	sink := plugin.NewComponent[inspectSinkID](plugin.Descriptor{DisplayName: "inspection sink"}, configuration,
-		component(sinkShape, func(_ plugin.CompileContext, _ inspectConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[inspectPlan, stream.Descriptor], error) {
+		component(sinkShape, func(ctx plugin.CompileContext, _ inspectConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[inspectPlan, stream.Descriptor], error) {
+			prepared, ok := format.InspectionOf[int](ctx, value)
+			if !ok || prepared != 44 {
+				return plugin.Compiled[inspectPlan, stream.Descriptor]{}, errors.New("Write Compile did not receive the prepared inspection")
+			}
+			sinkInspected.Add(1)
 			if _, ok := inputs.One("in"); !ok {
 				return plugin.Compiled[inspectPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("sink.input"))}}, nil
 			}
-			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: sinkShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
+			input, _ := inputs.One("in")
+			output, outputErr := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
+			if outputErr != nil {
+				return plugin.Compiled[inspectPlan, stream.Descriptor]{}, outputErr
+			}
+			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: sinkShape}, Outputs: flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata())))}, nil
 		}),
-		plugin.WithWriter("in", inspectSchemaB),
+		plugin.WithProcessor("in", inspectSchemaB, "writes", access.Writes()),
+		format.Write(value, access.NewRequirements(access.AllOf(access.SequentialWrite))),
+	)
+	terminalShape := flow.NewShape([]flow.Port{flow.In("writes", access.Writes())}, nil)
+	terminal := plugin.NewComponent[inspectTerminalID](plugin.Descriptor{DisplayName: "inspection terminal"}, configuration,
+		component(terminalShape, func(_ plugin.CompileContext, _ inspectConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[inspectPlan, stream.Descriptor], error) {
+			if _, ok := inputs.One("writes"); !ok {
+				return plugin.Compiled[inspectPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("terminal.input"))}}, nil
+			}
+			return plugin.Compiled[inspectPlan, stream.Descriptor]{Plan: inspectPlan{shape: terminalShape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
+		}),
+		plugin.WithWriter("writes", access.Writes()),
 	)
 	encoding := plugin.NewComponent[inspectEncodingID](plugin.Descriptor{DisplayName: "inspection metadata encoding"}, configuration,
 		metadata.WithEncoding(
@@ -143,7 +165,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			func(metadata.MarshalContext) (metadata.Blob, error) { return metadata.NewBlob("", nil), nil },
 		),
 	)
-	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink, encoding)).AddDeclaration(metadata.Bind(slot, encoding.Identity()))
+	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink, terminal, encoding)).AddDeclaration(metadata.Bind(slot, encoding.Identity()))
 	instance, err := New(Plugins(set))
 	if err != nil {
 		t.Fatal(err)
@@ -152,8 +174,12 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 		[]job.Node{
 			job.NewNode("reader", reader.Identity(), config.NewPatch()),
 			job.NewNode("sink", sink.Identity(), config.NewPatch()),
+			job.NewNode("terminal", terminal.Identity(), config.NewPatch()),
 		},
-		[]job.Edge{job.Connect(job.At("reader", "out"), job.At("sink", "in"))},
+		[]job.Edge{
+			job.Connect(job.At("reader", "out"), job.At("sink", "in")),
+			job.Connect(job.At("sink", "writes"), job.At("terminal", "writes")),
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -168,8 +194,8 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !public.Valid() || inspected.Load() != 1 || compiled.Load() < 2 {
-		t.Fatalf("Plan valid=%v, Inspect=%d, Compile=%d", public.Valid(), inspected.Load(), compiled.Load())
+	if !public.Valid() || inspected.Load() != 1 || compiled.Load() < 2 || sinkInspected.Load() == 0 {
+		t.Fatalf("Plan valid=%v, Inspect=%d, Compile=%d, WriteInspect=%d", public.Valid(), inspected.Load(), compiled.Load(), sinkInspected.Load())
 	}
 	if sessions.acquired.Load() != 1 || sessions.closed.Load() != 1 {
 		t.Fatalf("input sessions = %d/%d", sessions.acquired.Load(), sessions.closed.Load())

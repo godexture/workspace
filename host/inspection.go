@@ -34,6 +34,7 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 	if err != nil {
 		return graph.CompileContexts{}, used, err
 	}
+	var inspected []inspectedFormat
 	for _, entry := range entries {
 		projection := entry.Projection()
 		if projection.Direction != plan.InputBoundary || projection.Kind == plan.EndpointBoundary {
@@ -98,6 +99,10 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-result", projection, component.Identity(), "Format returned an invalid or duplicate inspection", map[string]string{"cause": err.Error()})
 		}
 		contexts[adjacent] = compileContext
+		inspected = append(inspected, inspectedFormat{source: adjacent, value: inspection})
+	}
+	if err := h.handoffInspections(requested, contexts, inspected); err != nil {
+		return graph.CompileContexts{}, used, err
 	}
 	return graph.NewCompileContexts(contexts), used, nil
 }
