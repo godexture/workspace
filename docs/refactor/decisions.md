@@ -177,7 +177,7 @@ Component topology は static `Spec.Ports` だけで宣言し、track cardinalit
 
 ### C23. mapping は Inspect 後に解決し、保存を既定にする
 
-M7 の明示 mapping は input index、canonical stream ID、output indexを持つ exact `job.MapStream` に限定する。M7-2 の MP4 graph は明示された 1 input/1 output に閉じ、standard が Many terminal と mapping を自動解決する no-map path は M7-3 で追加する。rich selector、language/disposition query、任意 function/predicate は surface consumer が現れる M9 まで追加しない。
+M7 の明示 mapping は input index、canonical stream ID、output indexを持つ exact `job.MapStream` に限定する。M7-2 の MP4 graph は明示された 1 input/1 output に閉じ、M7-3 の standard no-map path は selected direct reader と writer を固定 node として挿入し、Inspect order の全 track を Many terminal へ渡す。rich selector、language/disposition query、任意 function/predicate は surface consumer が現れる M9 まで追加しない。
 
 入力一つ・出力一つで mapping を省略した場合は eligible track を Inspect order のまま全て map する。無指定の既定は copy/remux を優先し、codec Binding のない track は raw copy に残す。変換を要求した unbound codec、存在しない stream、target に表せない明示 selected track は Planning error とする。
 
@@ -195,10 +195,10 @@ bounded summary だけを置き、source Opening/I/O handle、raw payload bytes�
 は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、Compile と Inspection は I/O を
 行わない。`InspectBytes` は Inspect 中の全 `ReadAt` を underlying source の前で要求 byte 数だけ課金し、MP4 table scan は
 固定 page を使う。Open の lazy cursor は Inspect の wrapper/残予算を継承せず、元の borrowed source を読む。
-MP4 demux は carrier input のない direct `RoutedReader` とし、explicit graph の input Boundary は demux の Many output を
+MP4 demux は carrier input のない direct `RoutedReader` とし、input Boundary は demux の Many output を
 anchor にしつつ Access provider identity を保持する。provider carrier node/edge は生成せず、Host は provider session を
 lifecycle 内で一度だけ Acquire して同じ Opening を Inspect、demux、same-format mux へ渡す。automatic no-graph MP4 は
-Many mapping を構成する M7-3 まで `prepare.format-direct-automatic` で失敗し、carrier へ fallback しない。Run の
+direct reader と writer を固定挿入し、no-map では全 track を preserve-all で mux する。carrier へ fallback しない。Run の
 payload-heavy I/O gate は Prepare 後に計数をリセットし、read bytes を source size の 1.25 倍以下に固定して全 carrier scan の
 復活を検出する。
 unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
