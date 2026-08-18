@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
@@ -191,47 +192,55 @@ func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Covera
 		Layout: sample.Stereo, Endian: sample.BigEndian,
 	}
 
-	suggestions := []testkit.Suggestion{
+	for _, subject := range []struct {
+		identity plugin.Identity
+		input    string
+		output   string
+		run      func(*testing.T, plugin.Set, plugin.Identity, *testkit.Coverage, []testkit.Suggestion)
+	}{
+		{identity: linear.ReaderIdentity(), input: "bytes", output: "chunks", run: suggestBytesToChunks},
+		{identity: linear.ParserIdentity(), input: "chunks", output: "packets", run: suggestChunksToPackets},
+		{identity: linear.DecoderIdentity(), input: "packets", output: "frames", run: suggestPacketsToFrames},
+		{identity: linear.EncoderIdentity(), input: "frames", output: "packets", run: suggestFramesToPackets},
+		{identity: linear.WriterIdentity(), input: "packets", output: "writes", run: suggestPacketsToWrites},
+	} {
+		subject.run(t, set, subject.identity, coverage, linearSuggestionCases(t, subject.input, subject.output, linearDescriptor(t, input)))
+	}
+}
+
+func linearSuggestionCases(t *testing.T, inputPort, outputPort string, input stream.Descriptor) []testkit.Suggestion {
+	t.Helper()
+	return []testkit.Suggestion{
 		{
-			Name:  "follows-the-inspected-input",
-			Input: linearDescriptor(t, input),
-			Need:  plugin.ConditionNeed[stream.Descriptor]("linear.config"),
+			Name:    "follows-the-inspected-input",
+			Inputs:  flow.NewDescriptors(flow.Describe(inputPort, input)),
+			Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand(outputPort, plugin.ConditionNeed[stream.Descriptor]("linear.config"))},
 			Want: []testkit.Candidate{{
 				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "big",
 			}},
 		},
 		{
-			Name:  "adopts-the-requested-endian",
-			Input: linearDescriptor(t, input),
-			Need: plugin.DescriptorNeed(
-				"linear.config",
-				linearDescriptor(t, sample.Description{
-					Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-					Layout: sample.Stereo, Endian: sample.LittleEndian,
-				}),
-			),
+			Name:   "adopts-the-requested-endian",
+			Inputs: flow.NewDescriptors(flow.Describe(inputPort, input)),
+			Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand(
+				outputPort,
+				plugin.DescriptorNeed(
+					"linear.config",
+					linearDescriptor(t, sample.Description{
+						Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
+						Layout: sample.Stereo, Endian: sample.LittleEndian,
+					}),
+				),
+			)},
 			Want: []testkit.Candidate{{
 				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "little",
 			}},
 		},
 		{
-			Name:  "offers-nothing-without-sample-properties",
-			Input: stream.MustDescriptor("opaque", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), property.New()),
-			Need:  plugin.ConditionNeed[stream.Descriptor]("linear.config"),
+			Name:    "offers-nothing-without-sample-properties",
+			Inputs:  flow.NewDescriptors(flow.Describe(inputPort, stream.MustDescriptor("opaque", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), property.New()))),
+			Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand(outputPort, plugin.ConditionNeed[stream.Descriptor]("linear.config"))},
 		},
-	}
-
-	for _, subject := range []struct {
-		identity plugin.Identity
-		run      func(*testing.T, plugin.Set, plugin.Identity, *testkit.Coverage, []testkit.Suggestion)
-	}{
-		{identity: linear.ReaderIdentity(), run: suggestBytesToChunks},
-		{identity: linear.ParserIdentity(), run: suggestChunksToPackets},
-		{identity: linear.DecoderIdentity(), run: suggestPacketsToFrames},
-		{identity: linear.EncoderIdentity(), run: suggestFramesToPackets},
-		{identity: linear.WriterIdentity(), run: suggestPacketsToWrites},
-	} {
-		subject.run(t, set, subject.identity, coverage, suggestions)
 	}
 }
 

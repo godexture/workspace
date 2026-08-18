@@ -14,9 +14,11 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
+	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/standard"
@@ -130,6 +132,45 @@ func TestMP4DirectReaderDoesNotScanTheCarrierDuringRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	closed := false
+	defer func() {
+		if !closed {
+			if err := prepared.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	value := prepared.Plan()
+	if len(value.Nodes()) != 3 || len(value.Edges()) != 2 {
+		t.Fatalf("automatic MP4 Plan = nodes %#v edges %#v", value.Nodes(), value.Edges())
+	}
+	var demux *plan.Node
+	for index := range value.Nodes() {
+		node := value.Nodes()[index]
+		if node.Component == plugin.IdentityOf[countingMP4SourceID]().String() {
+			t.Fatalf("automatic MP4 Plan retained the counting carrier: %#v", value.Nodes())
+		}
+		if node.Component == mp4.DemuxerIdentity().String() {
+			copy := node
+			demux = &copy
+		}
+	}
+	if demux == nil || demux.Origin != plan.Automatic || demux.Reason != "format.probe" {
+		t.Fatalf("automatic MP4 demux = %#v", demux)
+	}
+	foundInput := false
+	for _, boundary := range value.Boundaries() {
+		if boundary.Direction != plan.InputBoundary {
+			continue
+		}
+		foundInput = true
+		if boundary.Node != demux.ID || boundary.Port != "packets" || boundary.Component != plugin.IdentityOf[countingMP4SourceID]().String() || len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize {
+			t.Fatalf("automatic MP4 input boundary = %#v", boundary)
+		}
+	}
+	if !foundInput {
+		t.Fatalf("automatic MP4 Plan has no input boundary: %#v", value.Boundaries())
+	}
 	if state.acquires.Load() != 1 || state.opens.Load() != 0 || state.session == nil || state.session.bytes.Load() == 0 {
 		t.Fatalf("MP4 Prepare lifecycle = acquire %d, carrier open %d, session %#v, bytes %d", state.acquires.Load(), state.opens.Load(), state.session, state.session.bytes.Load())
 	}
@@ -152,6 +193,7 @@ func TestMP4DirectReaderDoesNotScanTheCarrierDuringRun(t *testing.T) {
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
 	}
+	closed = true
 	if state.session.closed.Load() != 1 {
 		t.Fatalf("MP4 source closes = %d, want one shared session", state.session.closed.Load())
 	}
@@ -166,22 +208,24 @@ func TestMP4DirectReaderDoesNotScanTheCarrierDuringRun(t *testing.T) {
 
 func newMP4RemuxJobFromInput(t testing.TB, input job.Input, outputPath string) job.Job {
 	t.Helper()
+	extension, err := mediaformat.ParseExtension("mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := job.SelectFormatExtension(extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err = input.WithFormatHint(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
 	output, err := job.OutputToReference(localFileReference(t, outputPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("demux", mp4.DemuxerIdentity(), config.NewPatch()),
-			job.NewNode("mux", mp4.MuxerIdentity(), config.NewPatch()),
-		},
-		[]job.Edge{job.Connect(job.At("demux", "packets"), job.At("mux", "packets"))},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	policy, _ := job.PolicyFor(job.Fast)
-	request, err := job.New([]job.Input{input}, []job.Output{output}, graph, job.WithPolicy(policy))
+	request, err := job.New([]job.Input{input}, []job.Output{output}, job.Graph{}, job.WithPolicy(policy))
 	if err != nil {
 		t.Fatal(err)
 	}

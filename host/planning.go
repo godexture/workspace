@@ -71,8 +71,13 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
 	selection.inspected = inspectedFormats
-	selection.preselection = selection.preselection.WithInspected(inspectedBytes)
+	selection.contexts = contexts
+	selection.usage.InspectBytes += inspectedBytes
 	selection, err = h.selectOutputFormats(selection)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	preselection, err := solve.NewPreselection(selection.nodes, selection.edges, selection.warnings, selection.usage)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
@@ -81,7 +86,7 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	selected.program, err = solve.ResolvePrepared(planningContext, h.index, selection.request, h.platform, bound.New(selected.entries...), contexts, selection.preselection)
+	selected.program, err = solve.ResolvePrepared(planningContext, h.index, selection.request, h.platform, bound.New(selected.entries...), selection.contexts, preselection)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}

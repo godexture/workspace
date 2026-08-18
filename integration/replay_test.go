@@ -382,13 +382,13 @@ func assertRawFallbackPlan(t *testing.T, value plan.Plan) {
 		if node.Origin != plan.Automatic || node.Reason != "format.fallback" {
 			t.Fatalf("raw fallback node = %#v", node)
 		}
-		planned := make(map[string]bool)
+		explicit := make(map[string]bool)
 		for _, field := range node.Config.Fields() {
-			planned[field.ID] = field.Source == config.SourcePlanner
+			explicit[field.ID] = field.Source == config.SourceExplicit
 		}
 		for _, field := range []string{"rate", "validBits", "layout", "endian"} {
-			if !planned[field] {
-				t.Fatalf("raw fallback config %q is not planner-derived: %#v", field, node.Config.Fields())
+			if !explicit[field] {
+				t.Fatalf("raw fallback config %q is not an explicit hint: %#v", field, node.Config.Fields())
 			}
 		}
 	}

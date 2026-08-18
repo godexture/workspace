@@ -63,7 +63,7 @@ func directReaderPort(component plugin.Component) (flow.Port, bool) {
 		return flow.Port{}, false
 	}
 	shape := component.Ports()
-	if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity {
+	if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || (shape.Outputs[0].Multiplicity() != flow.One && shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity) {
 		return flow.Port{}, false
 	}
 	return shape.Outputs[0], true

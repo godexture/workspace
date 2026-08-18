@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
@@ -18,14 +19,14 @@ import (
 // config summary, which keeps a secret field out of the test source.
 type Candidate map[string]string
 
-// Suggestion is one bounded Suggest scenario: an input descriptor, the need a
-// planner would be trying to satisfy, and the candidates the component must
-// offer, in order.
+// Suggestion is one bounded Suggest scenario: ordered component inputs,
+// directional descriptor demands, and the candidates the component must offer
+// in order.
 type Suggestion struct {
-	Name  string
-	Input stream.Descriptor
-	Need  plugin.Need[stream.Descriptor]
-	Want  []Candidate
+	Name    string
+	Inputs  flow.Descriptors[stream.Descriptor]
+	Demands []plugin.Demand[stream.Descriptor]
+	Want    []Candidate
 }
 
 // Suggests verifies the bounded Suggest contract for a component that declares
@@ -68,11 +69,15 @@ func Suggests[I, O any](t testing.TB, subject Subject[I, O], cases ...Suggestion
 
 func runSuggestion(t testing.TB, component plugin.Component, view plugin.ComponentView, test Suggestion) {
 	t.Helper()
-	if !test.Input.Valid() {
-		t.Fatalf("testkit Suggest input descriptor is invalid")
+	for index, binding := range test.Inputs.Bindings() {
+		if !binding.Valid() || !binding.Descriptor().Valid() {
+			t.Fatalf("testkit Suggest input descriptor %d is invalid", index)
+		}
 	}
-	if !test.Need.Valid() {
-		t.Fatalf("testkit Suggest need is invalid")
+	for index, demand := range test.Demands {
+		if !demand.Valid() {
+			t.Fatalf("testkit Suggest demand %d is invalid", index)
+		}
 	}
 
 	candidates := suggestOnce(t, component, test)
@@ -132,7 +137,7 @@ func verifySuggestions(view plugin.ComponentView, identity string, candidates, r
 
 func suggestOnce(t testing.TB, component plugin.Component, test Suggestion) []config.ResolvedView {
 	t.Helper()
-	candidates, err := plugin.Suggest(component, plugin.SuggestContext{}, test.Input, test.Need)
+	candidates, err := plugin.Suggest(component, plugin.SuggestContext{}, plugin.NewSuggestion(test.Inputs, test.Demands...))
 	if err != nil {
 		t.Fatalf("Suggest failed: %v", err)
 	}

@@ -17,7 +17,10 @@ import (
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
+
+type solvePreparedWriterTraitID struct{}
 
 func TestResolveDirectGraphProducesRequestedProgramWithoutOpening(t *testing.T) {
 	var opened atomic.Int32
@@ -83,6 +86,7 @@ func TestRequestedNodeConfigRemainsExplicit(t *testing.T) {
 func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
 	source := solveSource(solveSchemaA, nil)
 	sink := solveSink(solveSchemaA, true, nil)
+	var received plugin.Suggestion[stream.Descriptor]
 	bridge := solveBridge[solveBridgeAAID](
 		solveSchemaA,
 		solveSchemaA,
@@ -93,7 +97,8 @@ func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
 			}
 			return stream.MustDescriptor(input.ID(), input.SchemaDescriptor(), timing.MustBase(1, 48_000), input.Properties()).WithMetadata(input.Metadata())
 		},
-		func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
+		func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			received = suggestion
 			return []solveConfig{{Mode: 3}}
 		},
 		1,
@@ -104,6 +109,13 @@ func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
 	program, err := Resolve(context.Background(), solveIndex(t, source, sink, bridge), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if inputs := received.Inputs(); len(inputs.At("in")) != 1 {
+		t.Fatalf("bridge Suggest inputs = %#v", inputs)
+	}
+	demands := received.Demands()
+	if len(demands) != 1 || demands[0].Direction() != flow.OutputDirection || demands[0].Port() != "out" || demands[0].Need().Code() != "fixture.48000" {
+		t.Fatalf("bridge Suggest demands = %#v", demands)
 	}
 	for _, node := range program.Plan().Nodes() {
 		if node.Component != bridge.Identity().String() {
@@ -116,6 +128,408 @@ func TestSuggestedBridgeConfigUsesPlannerProvenance(t *testing.T) {
 		return
 	}
 	t.Fatal("suggested bridge node is absent")
+}
+
+func TestResolveInfersAutomaticNodeConfigWithoutBridge(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	var received plugin.Suggestion[stream.Descriptor]
+	writer := solveComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, nil),
+		func(value solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+			if _, ok := inputs.One("in"); !ok || value.Mode != 3 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.writer-config"))}}
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{
+				Outputs: flow.NewDescriptors[stream.Descriptor](),
+				Effects: []plugin.Effect{structural("fixture.writer")},
+			}
+		},
+		func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			received = suggestion
+			return []solveConfig{{Mode: 3}}
+		},
+		1, plugin.Contract{}, nil, nil,
+	)
+	requested, err := job.NewGraph(
+		[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch())},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs := received.Inputs(); len(inputs.At("in")) != 1 {
+		t.Fatalf("fixed Suggest inputs = %#v", inputs)
+	}
+	demands := received.Demands()
+	if len(demands) != 1 || demands[0].Direction() != flow.InputDirection || demands[0].Port() != "in" || demands[0].Need().Code() != "fixture.writer-config" {
+		t.Fatalf("fixed Suggest demands = %#v", demands)
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.ID != "writer" {
+			continue
+		}
+		fields := node.Config.Fields()
+		if node.Origin != plan.Automatic || node.Reason != "format.output" || len(fields) != 1 || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner {
+			t.Fatalf("resolved writer = %#v", node)
+		}
+		if len(program.Plan().Nodes()) != 2 || program.Plan().Usage().FixpointIterations != 2 {
+			t.Fatalf("config-only plan = %#v", program.Plan())
+		}
+		return
+	}
+	t.Fatal("automatic writer is absent")
+}
+
+func TestResolveAutomaticFixedWriterKeepsPreparedContextAcrossBridgeAndConfigInference(t *testing.T) {
+	key := plugin.TraitKeyOf[solvePreparedWriterTraitID]()
+	prepared, err := plugin.CompileContextWithTrait(plugin.CompileContext{}, key, "writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := solveSource(solveSchemaA, nil)
+	bridge := solveBridge[solveBridgeABID](solveSchemaA, solveSchemaB, structural("fixture.bridge"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, nil)
+	writer := solveContextComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaB)}, nil),
+		func(ctx plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
+			preparedValue, ok := plugin.TraitValueOf[string](ctx, key)
+			if !ok || preparedValue != "writer" {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{}, errors.New("writer Compile is missing its prepared context trait")
+			}
+			if _, ok := inputs.One("in"); !ok || value.Mode != 3 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.writer-config"))}}, nil
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{
+				Outputs: flow.NewDescriptors[stream.Descriptor](),
+				Effects: []plugin.Effect{structural("fixture.writer")},
+			}, nil
+		},
+		func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			return []solveConfig{{Mode: 3}}
+		},
+		1, plugin.Contract{}, nil, nil,
+	)
+	requested, err := job.NewGraph(
+		[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch())},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(
+		context.Background(),
+		solveIndex(t, source, bridge, writer),
+		request,
+		solvePlatform(),
+		bound.State{},
+		graph.NewCompileContexts(map[job.NodeID]plugin.CompileContext{"writer": prepared}),
+		selected,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := program.Plan()
+	var resolvedWriter, insertedBridge plan.Node
+	for _, node := range value.Nodes() {
+		switch {
+		case node.ID == "writer":
+			resolvedWriter = node
+		case node.Component == bridge.Identity().String():
+			insertedBridge = node
+		}
+	}
+	fields := resolvedWriter.Config.Fields()
+	if resolvedWriter.Origin != plan.Automatic || resolvedWriter.Reason != "format.output" || len(fields) != 1 || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner {
+		t.Fatalf("resolved writer = %#v", resolvedWriter)
+	}
+	if insertedBridge.Origin != plan.Automatic || insertedBridge.Reason != "graph.schema-mismatch" {
+		t.Fatalf("inserted bridge = %#v", insertedBridge)
+	}
+	edges := value.Edges()
+	if len(edges) != 2 {
+		t.Fatalf("bridge Plan edges = %#v", edges)
+	}
+	for _, edge := range edges {
+		if edge.Origin != plan.Automatic || edge.Reason != "graph.schema-mismatch" {
+			t.Fatalf("bridge-adjacent edge = %#v", edge)
+		}
+	}
+}
+
+func TestResolveInfersAutomaticManyNodeConfigFromWholeInputSequence(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	var received plugin.Suggestion[stream.Descriptor]
+	writer := solveComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaA, flow.Many(), flow.WithFanIn(flow.ZipFanIn))}, nil),
+		func(value solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+			if len(inputs.At("in")) != 2 || value.Mode != 3 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.many-config"))}}
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{
+				Outputs: flow.NewDescriptors[stream.Descriptor](),
+				Effects: []plugin.Effect{structural("fixture.writer")},
+			}
+		},
+		func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			received = suggestion
+			if len(suggestion.Inputs().At("in")) != 2 {
+				return nil
+			}
+			return []solveConfig{{Mode: 3}}
+		},
+		1, plugin.Contract{}, nil, nil,
+	)
+	requested, err := job.NewGraph(
+		[]job.Node{
+			job.NewNode("left", source.Identity(), config.NewPatch()),
+			job.NewNode("right", source.Identity(), config.NewPatch()),
+			job.NewNode("writer", writer.Identity(), config.NewPatch()),
+		},
+		[]job.Edge{
+			job.Connect(job.At("left", "out"), job.At("writer", "in")),
+			job.Connect(job.At("right", "out"), job.At("writer", "in")),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs := received.Inputs(); len(inputs.At("in")) != 2 {
+		t.Fatalf("many fixed Suggest inputs = %#v", inputs)
+	}
+	if len(program.Plan().Nodes()) != 3 {
+		t.Fatalf("many config inference inserted a route bridge: %#v", program.Plan().Nodes())
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.ID != "writer" {
+			continue
+		}
+		fields := node.Config.Fields()
+		if len(fields) != 1 || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner {
+			t.Fatalf("resolved many writer = %#v", node)
+		}
+		return
+	}
+	t.Fatal("automatic many writer is absent")
+}
+
+func TestResolveRanksAutomaticFixedConfigsByCompilation(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	var fingerprintFirstMode int
+	writer := solveComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, nil),
+		func(value solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+			if _, ok := inputs.One("in"); !ok || value.Mode == 0 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.rank-config"))}}
+			}
+			cpu := resource.Work(1)
+			if value.Mode == fingerprintFirstMode {
+				cpu = 10
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{
+				Outputs:  flow.NewDescriptors[stream.Descriptor](),
+				Effects:  []plugin.Effect{structural("fixture.writer")},
+				Estimate: resource.Estimate{CPU: cpu},
+			}
+		},
+		func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			return []solveConfig{{Mode: 1}, {Mode: 2}}
+		},
+		2, plugin.Contract{}, nil, nil,
+	)
+	key := solveKey(t, "mode")
+	one, err := writer.Resolve(config.NewPatch().Set(key, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := writer.Resolve(config.NewPatch().Set(key, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantedMode := 1
+	wantedValue := "1"
+	fingerprintFirstMode = 2
+	if one.Fingerprint().String() < two.Fingerprint().String() {
+		fingerprintFirstMode = 1
+		wantedMode = 2
+		wantedValue = "2"
+	}
+	requested, err := job.NewGraph(
+		[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch())},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range program.Plan().Nodes() {
+		if node.ID != "writer" {
+			continue
+		}
+		fields := node.Config.Fields()
+		if len(fields) != 1 || fields[0].Value != wantedValue {
+			t.Fatalf("rank-selected writer config = %#v, want mode %d", fields, wantedMode)
+		}
+		return
+	}
+	t.Fatal("automatic writer is absent")
+}
+
+func TestResolveDoesNotInferConfiguredAutomaticNode(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	var suggested atomic.Int32
+	writer := solveComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, nil),
+		func(value solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+			if _, ok := inputs.One("in"); !ok || value.Mode != 3 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.explicit-config"))}}
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{Outputs: flow.NewDescriptors[stream.Descriptor]()}
+		},
+		func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			suggested.Add(1)
+			return []solveConfig{{Mode: 3}}
+		},
+		1, plugin.Contract{}, nil, nil,
+	)
+	requested, err := job.NewGraph(
+		[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch().Set(solveKey(t, "mode"), 1))},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+	assertSolveCode(t, err, "solve.unsupported")
+	if suggested.Load() != 0 {
+		t.Fatalf("explicit automatic config invoked Suggest %d times", suggested.Load())
+	}
+}
+
+func TestResolveRejectsForbiddenAutomaticFixedEffect(t *testing.T) {
+	source := solveSource(solveSchemaA, nil)
+	writer := solveComponent[solveSinkID](
+		flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, nil),
+		func(value solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+			if _, ok := inputs.One("in"); !ok || value.Mode != 3 {
+				return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.forbidden-writer"))}}
+			}
+			return plugin.Compiled[solvePlan, stream.Descriptor]{
+				Outputs: flow.NewDescriptors[stream.Descriptor](),
+				Effects: []plugin.Effect{{Kind: plugin.ContentEffect, Loss: plugin.NoLoss, Detail: "fixture.forbidden"}},
+			}
+		},
+		func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
+			return []solveConfig{{Mode: 3}}
+		},
+		1, plugin.Contract{}, nil, nil,
+	)
+	requested, err := job.NewGraph(
+		[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch())},
+		[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(nil, nil, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+	assertSolveCode(t, err, "solve.unsupported")
+}
+
+func TestResolveRejectsDefaultAutomaticFixedCompilation(t *testing.T) {
+	tests := map[string][]plugin.Effect{
+		"missing effects": nil,
+		"content effect":  {{Kind: plugin.ContentEffect, Loss: plugin.NoLoss, Detail: "fixture.content"}},
+		"topology effect": {{Kind: plugin.TopologyEffect, Loss: plugin.NoLoss, Detail: "fixture.topology"}},
+	}
+	for name, effects := range tests {
+		t.Run(name, func(t *testing.T) {
+			source := solveSource(solveSchemaA, nil)
+			writer := solveComponent[solveSinkID](
+				flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, nil),
+				func(_ solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
+					if _, ok := inputs.One("in"); !ok {
+						return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("fixture.default-effect"))}}
+					}
+					return plugin.Compiled[solvePlan, stream.Descriptor]{Outputs: flow.NewDescriptors[stream.Descriptor](), Effects: effects}
+				},
+				nil, 0, plugin.Contract{}, nil, nil,
+			)
+			requested, err := job.NewGraph(
+				[]job.Node{job.NewNode("source", source.Identity(), config.NewPatch()), job.NewNode("writer", writer.Identity(), config.NewPatch())},
+				[]job.Edge{job.Connect(job.At("source", "out"), job.At("writer", "in"))},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := job.New(nil, nil, requested)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, plan.Usage{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ResolvePrepared(context.Background(), solveIndex(t, source, writer), request, solvePlatform(), bound.State{}, graph.CompileContexts{}, selected)
+			assertSolveCode(t, err, "solve.unsupported")
+		})
+	}
 }
 
 func TestResolveInsertsOneBridgeAndExplainsIt(t *testing.T) {
@@ -181,109 +595,6 @@ func TestResolveFindsLongPathAndIgnoresUnrelatedCandidates(t *testing.T) {
 	if unrelatedCompiles.Load() != 0 {
 		t.Fatalf("unrelated candidate compiled %d times", unrelatedCompiles.Load())
 	}
-}
-
-func TestTerminalConstraintKeepsIntermediateBridgesAndExplainsSelectedFormat(t *testing.T) {
-	source := solveSource(solveSchemaA, nil)
-	sink := solveSink(solveSchemaD, false, nil)
-	ab := solveBridge[solveBridgeABID](solveSchemaA, solveSchemaB, structural("ab"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, nil)
-	bc := solveBridge[solveBridgeBCID](solveSchemaB, solveSchemaC, structural("bc"), schemaTransform(solveSchemaC), nil, 0, plugin.Contract{}, nil, nil)
-	selectedFormat := solveBridge[solveBridgeCDID](solveSchemaC, solveSchemaD, structural("selected"), schemaTransform(solveSchemaD), nil, 0, plugin.Contract{}, nil, nil)
-	competingFormat := solveBridge[solveBridgeADID](solveSchemaA, solveSchemaD, structural("competing"), schemaTransform(solveSchemaD), nil, 0, plugin.Contract{}, nil, nil)
-	preselection, err := NewPreselection(nil, nil, nil, plan.Usage{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	preselection, err = preselection.WithTerminals(TerminalSelection{
-		Boundary: job.At("sink", "in"), Component: selectedFormat.Identity(), Reason: "format.output",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, sink, competingFormat, selectedFormat, bc, ab), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform(), bound.State{}, graph.CompileContexts{}, preselection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := make(map[string]plan.Node)
-	for _, node := range program.Plan().Nodes() {
-		if node.Origin == plan.Automatic {
-			found[node.Component] = node
-		}
-	}
-	for _, component := range []plugin.Component{ab, bc, selectedFormat} {
-		if _, ok := found[component.Identity().String()]; !ok {
-			t.Fatalf("terminal path omitted %s: %#v", component.Identity(), found)
-		}
-	}
-	if _, ok := found[competingFormat.Identity().String()]; ok {
-		t.Fatalf("competing terminal Format was selected: %#v", found)
-	}
-	if found[selectedFormat.Identity().String()].Reason != "format.output" || found[ab.Identity().String()].Reason == "format.output" || found[bc.Identity().String()].Reason == "format.output" {
-		t.Fatalf("terminal reasons = %#v", found)
-	}
-	selectedID := found[selectedFormat.Identity().String()].ID
-	adjacent := 0
-	for _, edge := range program.Plan().Edges() {
-		if edge.FromNode == selectedID || edge.ToNode == selectedID {
-			adjacent++
-			if edge.Reason != "format.output" {
-				t.Fatalf("terminal edge reason = %#v", edge)
-			}
-		}
-	}
-	if adjacent != 2 {
-		t.Fatalf("terminal adjacent edges = %d", adjacent)
-	}
-}
-
-func TestTerminalConstraintCarriesPreparedContextAndFixedConfig(t *testing.T) {
-	source := solveSource(solveSchemaA, nil)
-	sink := solveSink(solveSchemaB, false, nil)
-	key := plugin.TraitKeyOf[solveTerminalContextID]()
-	var suggestions atomic.Int32
-	shape := flow.NewShape([]flow.Port{flow.In("in", solveSchemaA)}, []flow.Port{flow.Out("out", solveSchemaB)})
-	terminal := solveContextComponent[solveBridgeABID](shape, func(ctx plugin.CompileContext, value solveConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[solvePlan, stream.Descriptor], error) {
-		prepared, ok := plugin.TraitValueOf[string](ctx, key)
-		input, inputOK := inputs.One("in")
-		if !ok || prepared != "prepared" || !inputOK || value.Mode != 3 {
-			return plugin.Compiled[solvePlan, stream.Descriptor]{}, errors.New("terminal Compile did not receive fixed prepared inputs")
-		}
-		return plugin.Compiled[solvePlan, stream.Descriptor]{
-			Outputs: flow.NewDescriptors(flow.Describe("out", schemaTransform(solveSchemaB)(input, value))), Effects: []plugin.Effect{structural("terminal")},
-		}, nil
-	}, func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
-		suggestions.Add(1)
-		return []solveConfig{{Mode: 4}}
-	}, 1, plugin.Contract{}, nil, nil)
-	prepared, err := plugin.CompileContextWithTrait(plugin.CompileContext{}, key, "prepared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	preselection, _ := NewPreselection(nil, nil, nil, plan.Usage{})
-	preselection, err = preselection.WithTerminals(TerminalSelection{
-		Boundary: job.At("sink", "in"), Component: terminal.Identity(), Config: config.NewPatch().Set(solveKey(t, "mode"), 3), Configured: true, Context: prepared, Reason: "format.output",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	program, err := ResolvePrepared(context.Background(), solveIndex(t, source, sink, terminal), solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform(), bound.State{}, graph.CompileContexts{}, preselection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if suggestions.Load() != 0 {
-		t.Fatalf("fixed terminal config invoked Suggest %d times", suggestions.Load())
-	}
-	for _, node := range program.Plan().Nodes() {
-		if node.Component != terminal.Identity().String() {
-			continue
-		}
-		fields := node.Config.Fields()
-		if len(fields) != 1 || fields[0].ID != "mode" || fields[0].Value != "3" || fields[0].Source != config.SourcePlanner || node.Reason != "format.output" {
-			t.Fatalf("fixed terminal node = %#v", node)
-		}
-		return
-	}
-	t.Fatal("fixed terminal node is absent")
 }
 
 func TestResolveConditionGapSkipsNonProgressCandidate(t *testing.T) {
@@ -414,7 +725,7 @@ func TestResolveRejectsForbiddenEffectsAndIncompatibleContracts(t *testing.T) {
 }
 
 func TestResolveDistinguishesPlannerBudgets(t *testing.T) {
-	suggest := func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
+	suggest := func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
 		return []solveConfig{{Mode: 2}, {Mode: 1}}
 	}
 	tests := []struct {
@@ -465,7 +776,7 @@ func TestResolveIsIndependentOfCatalogAndSuggestionOrder(t *testing.T) {
 	var fingerprints []plan.Fingerprint
 	for _, values := range orders {
 		values := append([]solveConfig(nil), values...)
-		suggest := func(plugin.SuggestContext, stream.Descriptor, plugin.Need[stream.Descriptor]) []solveConfig {
+		suggest := func(plugin.SuggestContext, plugin.Suggestion[stream.Descriptor]) []solveConfig {
 			return append([]solveConfig(nil), values...)
 		}
 		bridge := solveBridge[solveBridgeABID](solveSchemaA, solveSchemaB, structural("ab"), schemaTransform(solveSchemaB), suggest, 2, plugin.Contract{}, nil, nil)

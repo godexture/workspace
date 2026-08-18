@@ -45,6 +45,11 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			return program.Program{}, err
 		}
 		compilation := node.Compilation()
+		if metadata.origin == plan.Automatic {
+			if err := validateAutomaticCompilation(component, compilation, p.policy, p.platform); err != nil {
+				return program.Program{}, p.planningError(err, nil, nil)
+			}
+		}
 		if p.policy.Resources.Limited && !p.policy.Resources.Limit.Satisfies(compilation.Resources()) {
 			return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "resource", nil)
 		}

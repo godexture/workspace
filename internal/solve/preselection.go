@@ -5,16 +5,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
-	"github.com/godexture/godec/plugin"
-	"github.com/godexture/godec/resource"
 )
 
 type SelectedNode struct {
-	ID     job.NodeID
-	Reason string
+	ID          job.NodeID
+	Reason      string
+	InferConfig bool
 }
 
 type SelectedEdge struct {
@@ -22,43 +20,26 @@ type SelectedEdge struct {
 	Reason string
 }
 
-// TerminalSelection constrains only the component that completes one output
-// boundary gap. Intermediate bridge candidates remain unrestricted.
-type TerminalSelection struct {
-	Boundary   job.Port
-	Component  plugin.Identity
-	Config     config.Patch
-	Configured bool
-	Context    plugin.CompileContext
-	Reason     string
-}
-
-type terminalSelection struct {
-	boundary   job.Port
-	component  plugin.Identity
-	config     config.Patch
-	configured bool
-	context    plugin.CompileContext
-	reason     string
-}
-
 // Preselection carries only Format choices made before solver gap filling.
 // It is internal so caller-owned Job nodes remain explicitly requested.
 type Preselection struct {
-	nodes     map[job.NodeID]string
-	edges     map[string]string
-	terminals map[string]terminalSelection
-	warnings  []string
-	usage     plan.Usage
+	nodes    map[job.NodeID]selectedNode
+	edges    map[string]string
+	warnings []string
+	usage    plan.Usage
+}
+
+type selectedNode struct {
+	reason      string
+	inferConfig bool
 }
 
 func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []string, usage plan.Usage) (Preselection, error) {
 	result := Preselection{
-		nodes:     make(map[job.NodeID]string, len(nodes)),
-		edges:     make(map[string]string, len(edges)),
-		terminals: make(map[string]terminalSelection),
-		warnings:  append([]string(nil), warnings...),
-		usage:     usage,
+		nodes:    make(map[job.NodeID]selectedNode, len(nodes)),
+		edges:    make(map[string]string, len(edges)),
+		warnings: append([]string(nil), warnings...),
+		usage:    usage,
 	}
 	for _, value := range nodes {
 		value.Reason = strings.TrimSpace(value.Reason)
@@ -68,7 +49,7 @@ func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []stri
 		if _, exists := result.nodes[value.ID]; exists {
 			return Preselection{}, errors.New("preselected node is repeated")
 		}
-		result.nodes[value.ID] = value.Reason
+		result.nodes[value.ID] = selectedNode{reason: value.Reason, inferConfig: value.InferConfig}
 	}
 	for _, value := range edges {
 		value.Reason = strings.TrimSpace(value.Reason)
@@ -90,51 +71,6 @@ func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []stri
 	return result, nil
 }
 
-func (s Preselection) WithTerminals(values ...TerminalSelection) (Preselection, error) {
-	result := s.clone()
-	if result.terminals == nil {
-		result.terminals = make(map[string]terminalSelection, len(values))
-	}
-	for _, value := range values {
-		value.Reason = strings.TrimSpace(value.Reason)
-		if !value.Boundary.Valid() || value.Component.IsZero() || value.Reason == "" {
-			return Preselection{}, errors.New("terminal selection requires a boundary, component, and reason")
-		}
-		if !value.Configured && (value.Config.PresetName() != "" || len(value.Config.FieldIDs()) != 0) {
-			return Preselection{}, errors.New("unconfigured terminal selection carries config")
-		}
-		key := value.Boundary.String()
-		if _, exists := result.terminals[key]; exists {
-			return Preselection{}, errors.New("terminal selection is repeated")
-		}
-		result.terminals[key] = terminalSelection{
-			boundary: value.Boundary, component: value.Component, config: value.Config.Planned(), configured: value.Configured, context: value.Context, reason: value.Reason,
-		}
-	}
-	return result, nil
-}
-
-func (s Preselection) clone() Preselection {
-	result := Preselection{
-		nodes:     make(map[job.NodeID]string, len(s.nodes)),
-		edges:     make(map[string]string, len(s.edges)),
-		terminals: make(map[string]terminalSelection, len(s.terminals)),
-		warnings:  append([]string(nil), s.warnings...),
-		usage:     s.usage,
-	}
-	for key, value := range s.nodes {
-		result.nodes[key] = value
-	}
-	for key, value := range s.edges {
-		result.edges[key] = value
-	}
-	for key, value := range s.terminals {
-		value.config = value.config.Clone()
-		result.terminals[key] = value
-	}
-	return result
-}
-
 func (s Preselection) validFor(graph job.Graph) bool {
 	nodes := make(map[job.NodeID]struct{}, len(graph.Nodes()))
 	for _, node := range graph.Nodes() {
@@ -154,31 +90,5 @@ func (s Preselection) validFor(graph job.Graph) bool {
 			return false
 		}
 	}
-	for key, terminal := range s.terminals {
-		if terminal.boundary.String() != key {
-			return false
-		}
-		if _, ok := nodes[terminal.boundary.Node()]; !ok {
-			return false
-		}
-		connected := false
-		for _, edge := range graph.Edges() {
-			if edge.To() == terminal.boundary {
-				connected = true
-				break
-			}
-		}
-		if !connected || terminal.component.IsZero() || strings.TrimSpace(terminal.reason) == "" {
-			return false
-		}
-	}
 	return true
-}
-
-// WithInspected records the bytes Format Inspect read after the preselection
-// was built, so the Plan reports the whole planning budget it consumed.
-func (s Preselection) WithInspected(bytes resource.Bytes) Preselection {
-	result := s.clone()
-	result.usage.InspectBytes += bytes
-	return result
 }

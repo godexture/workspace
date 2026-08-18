@@ -160,7 +160,7 @@ func Source[T any](c OpenContext) (T, bool) {
 func (c OpenContext) Scratch() Scratch { return c.scratch }
 
 type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
-type SuggestFunc[C, D any] func(SuggestContext, D, Need[D]) []C
+type SuggestFunc[C, D any] func(SuggestContext, Suggestion[D]) []C
 type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
 
 // Spec is the complete semantic contract for one component implementation.
@@ -192,7 +192,7 @@ type Compiled[P, D any] struct {
 type componentImplementation struct {
 	ports           flow.Shape
 	compile         func(CompileContext, config.ResolvedView, any) (compiledErased, error)
-	suggest         func(SuggestContext, any, any) ([]any, error)
+	suggest         func(SuggestContext, any) ([]any, error)
 	open            func(OpenContext, any) (flow.Operator, error)
 	suggestionLimit int
 	finalizes       bool
@@ -269,16 +269,12 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		if spec.SuggestionLimit <= 0 {
 			implementation.problems = append(implementation.problems, specItem("plugin.suggest", "Suggest requires a positive SuggestionLimit"))
 		}
-		implementation.suggest = func(ctx SuggestContext, input, need any) ([]any, error) {
-			typedInput, ok := input.(D)
+		implementation.suggest = func(ctx SuggestContext, suggestion any) ([]any, error) {
+			typedSuggestion, ok := suggestion.(Suggestion[D])
 			if !ok {
-				return nil, errors.New("input descriptor type does not match component Suggest")
+				return nil, errors.New("suggestion descriptor type does not match component Suggest")
 			}
-			typedNeed, ok := need.(Need[D])
-			if !ok {
-				return nil, errors.New("need descriptor type does not match component Suggest")
-			}
-			values := spec.Suggest(ctx, typedInput, typedNeed)
+			values := spec.Suggest(ctx, cloneSuggestion(typedSuggestion))
 			result := make([]any, len(values))
 			for index := range values {
 				result[index] = values[index]

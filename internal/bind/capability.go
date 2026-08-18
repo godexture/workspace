@@ -174,6 +174,12 @@ func FinalizeInput(entry bound.Entry, node job.Node, component plugin.Component,
 		return bound.Entry{}, access.Selection{}, unsatisfiedCapabilities(projection, node, trait.Format().Identity(), trait.Requirements())
 	}
 	projection.Selected = selection.Capabilities()
+	shape := component.Ports()
+	if len(shape.Inputs) == 0 && len(shape.Outputs) == 1 {
+		projection.Node = node.ID().String()
+		projection.Port = shape.Outputs[0].ID()
+		return bound.AnchorSource(entry, projection, node.ID()), selection, nil
+	}
 	return bound.ResolveSource(entry, projection), selection, nil
 }
 

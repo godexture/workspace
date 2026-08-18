@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plugin"
 )
@@ -32,7 +33,11 @@ func (r rank) less(other rank) bool {
 }
 
 func (r rank) add(result candidateResult, policy job.Policy) rank {
-	for _, effect := range result.compilation.Effects() {
+	return r.addCompilation(result.bridge.component, result.config, result.compilation, policy)
+}
+
+func (r rank) addCompilation(component plugin.Component, resolved config.ResolvedView, compilation plugin.Compilation, policy job.Policy) rank {
+	for _, effect := range compilation.Effects() {
 		switch effect.Kind {
 		case plugin.RepresentationEffect:
 			r.copy = saturatingInt(r.copy, 1)
@@ -41,15 +46,15 @@ func (r rank) add(result candidateResult, policy job.Policy) rank {
 		}
 		r.loss = saturatingInt(r.loss, int(effect.Loss))
 	}
-	contract := result.bridge.component.Contract()
+	contract := component.Contract()
 	if contract.Accuracy != plugin.ExactContract {
 		r.contract = saturatingInt(r.contract, 1)
 	}
 	if contract.Repeatability != plugin.RepeatableContract {
 		r.contract = saturatingInt(r.contract, 1)
 	}
-	estimate := result.compilation.Estimate()
-	request := result.compilation.Resources()
+	estimate := compilation.Estimate()
+	request := compilation.Resources()
 	cpu := uint64(estimate.CPU)
 	latency := durationValue(estimate.Latency)
 	memory := saturatingAdd(uint64(estimate.Memory), uint64(request.Memory))
@@ -68,7 +73,7 @@ func (r rank) add(result candidateResult, policy job.Policy) rank {
 		r.resource3 = saturatingAdd(r.resource3, memory)
 	}
 	r.steps = saturatingInt(r.steps, 1)
-	r.tie += "\x00" + result.bridge.component.Identity().String() + "@" + result.config.Fingerprint().String()
+	r.tie += "\x00" + component.Identity().String() + "@" + resolved.Fingerprint().String()
 	return r
 }
 

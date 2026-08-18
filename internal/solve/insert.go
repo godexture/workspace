@@ -6,19 +6,36 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 )
 
-func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Graph, error) {
+func (p *planner) insert(current job.Graph, gap graph.Gap, result searchResult) (job.Graph, error) {
+	nodes := current.Nodes()
+	if result.hasConfig {
+		var err error
+		nodes, err = p.patchConfig(nodes, gap, result.config)
+		if err != nil {
+			return job.Graph{}, err
+		}
+	}
+	if len(result.path) == 0 {
+		updated, err := job.NewGraph(nodes, current.Edges(), current.Mappings()...)
+		if err != nil {
+			return job.Graph{}, err
+		}
+		p.markInferred(gap.Node(), result.config)
+		return updated, nil
+	}
+
 	replaced, ok := gap.Edge()
 	if !ok {
 		return job.Graph{}, errors.New("cannot insert a bridge into an ambiguous gap")
 	}
-	nodes := current.Nodes()
 	edges := current.Edges()
-	kept := make([]job.Edge, 0, len(edges)-1+len(path)+1)
+	kept := make([]job.Edge, 0, len(edges)-1+len(result.path)+1)
 	found := false
 	for _, edge := range edges {
 		if edge == replaced && !found {
@@ -31,17 +48,16 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 		return job.Graph{}, errors.New("gap edge is absent from the requested graph")
 	}
 
-	used := make(map[job.NodeID]struct{}, len(nodes)+len(path))
+	used := make(map[job.NodeID]struct{}, len(nodes)+len(result.path))
 	for _, node := range nodes {
 		used[node.ID()] = struct{}{}
 	}
 	previous := replaced.From()
-	newNodes := make([]job.Node, 0, len(path))
-	newEdges := make([]job.Edge, 0, len(path)+1)
-	newAnnotations := make(map[job.NodeID]annotation, len(path))
-	newEdgeAnnotations := make(map[string]annotation, len(path)+1)
-	terminal, constrained := p.terminals[jobPortKey(gap.Node(), gap.Port())]
-	for index, selected := range path {
+	newNodes := make([]job.Node, 0, len(result.path))
+	newEdges := make([]job.Edge, 0, len(result.path)+1)
+	newAnnotations := make(map[job.NodeID]annotation, len(result.path))
+	newEdgeAnnotations := make(map[string]annotation, len(result.path)+1)
+	for index, selected := range result.path {
 		patch, err := selected.result.bridge.component.Schema().Patch(selected.result.config)
 		if err != nil {
 			return job.Graph{}, err
@@ -55,22 +71,12 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 		newEdges = append(newEdges, edge)
 		previous = job.At(id, selected.result.bridge.output.ID())
 		reason := gap.Need().Code()
-		if constrained && selected.result.bridge.component.Identity() == terminal.component && index == len(path)-1 {
-			reason = terminal.reason
-		}
 		newAnnotations[id] = annotation{origin: plan.Automatic, reason: reason, summary: selected.result.config.Summary()}
 		newEdgeAnnotations[edgeKey(edge)] = annotation{origin: plan.Automatic, reason: reason}
-		if constrained && selected.result.bridge.component.Identity() == terminal.component && index == len(path)-1 {
-			p.contexts = p.contexts.WithPrepared(id, terminal.context)
-		}
 	}
 	last := job.Connect(previous, replaced.To())
 	newEdges = append(newEdges, last)
-	lastReason := gap.Need().Code()
-	if constrained && len(path) != 0 && path[len(path)-1].result.bridge.component.Identity() == terminal.component {
-		lastReason = terminal.reason
-	}
-	newEdgeAnnotations[edgeKey(last)] = annotation{origin: plan.Automatic, reason: lastReason}
+	newEdgeAnnotations[edgeKey(last)] = annotation{origin: plan.Automatic, reason: gap.Need().Code()}
 	nodes = append(nodes, newNodes...)
 	kept = append(kept, newEdges...)
 	updated, err := job.NewGraph(nodes, kept, current.Mappings()...)
@@ -84,7 +90,44 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, path []step) (job.Gra
 	for key, value := range newEdgeAnnotations {
 		p.edges[key] = value
 	}
+	p.markInferred(gap.Node(), result.config)
 	return updated, nil
+}
+
+func (p *planner) patchConfig(nodes []job.Node, gap graph.Gap, resolved config.ResolvedView) ([]job.Node, error) {
+	metadata, ok := p.nodes[gap.Node()]
+	if !ok || !metadata.inferConfig {
+		return nil, errors.New("attempted to infer config for a fixed node")
+	}
+	patch, err := gap.Component().Schema().Patch(resolved)
+	if err != nil {
+		return nil, err
+	}
+	result := append([]job.Node(nil), nodes...)
+	for index, node := range result {
+		if node.ID() != gap.Node() {
+			continue
+		}
+		if node.Component() != gap.Component().Identity() {
+			return nil, errors.New("gap component differs from the node being configured")
+		}
+		result[index] = job.NewNode(node.ID(), node.Component(), patch.Planned())
+		return result, nil
+	}
+	return nil, errors.New("gap node is absent from the requested graph")
+}
+
+func (p *planner) markInferred(id job.NodeID, resolved config.ResolvedView) {
+	if resolved.Fingerprint().IsZero() {
+		return
+	}
+	metadata, ok := p.nodes[id]
+	if !ok || !metadata.inferConfig {
+		return
+	}
+	metadata.inferConfig = false
+	metadata.summary = resolved.Summary()
+	p.nodes[id] = metadata
 }
 
 func automaticNodeID(edge job.Edge, index int, result candidateResult, used map[job.NodeID]struct{}) job.NodeID {

@@ -2,15 +2,13 @@ package host
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strconv"
 
 	"github.com/godexture/godec/access"
-	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/internal/bound"
+	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/internal/solve"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
@@ -18,12 +16,16 @@ import (
 )
 
 type inputSelection struct {
-	request      job.Job
-	entries      []bound.Entry
-	sessions     []acquiredSession
-	stores       []*probeStore
-	inspected    []inspectedFormat
-	preselection solve.Preselection
+	request   job.Job
+	entries   []bound.Entry
+	sessions  []acquiredSession
+	stores    []*probeStore
+	inspected []inspectedFormat
+	contexts  graph.CompileContexts
+	nodes     []solve.SelectedNode
+	edges     []solve.SelectedEdge
+	warnings  []string
+	usage     plan.Usage
 }
 
 func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries []bound.Entry, sessions []acquiredSession) (inputSelection, error) {
@@ -65,11 +67,11 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 			return fail(probeBudgetDiagnostic(projection, "job", usage, request.Budget(), nil))
 		}
 
-		updated, node, insertedEdges, err := insertFormatNode(result.request, projection, choice.component, choice.config.Planned())
+		insertion, err := insertInputFormat(result.request, projection, choice.component, choice.config)
 		if err != nil {
 			return fail(err)
 		}
-		resolvedEntry, selection, err := bind.FinalizeInput(entry, node, choice.component, result.sessions[sessionIndex].actual)
+		resolvedEntry, selection, err := bind.FinalizeInput(entry, insertion.node, choice.component, result.sessions[sessionIndex].actual)
 		if err != nil {
 			return fail(err)
 		}
@@ -87,8 +89,11 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 		}
 		result.sessions[sessionIndex].selected = selection
 		result.sessions[sessionIndex].opening = opening
+		if anchor := resolvedEntry.Anchor(); anchor.Valid() {
+			result.sessions[sessionIndex].node = anchor.String()
+		}
 		result.entries[entryIndex] = resolvedEntry
-		result.request = updated
+		result.request = insertion.request
 
 		reason := "format.probe"
 		if choice.fallback {
@@ -99,88 +104,16 @@ func (h *Host) selectInputFormats(ctx context.Context, request job.Job, entries 
 			}
 			warnings = append(warnings, "input "+strconv.Itoa(projection.Choice)+" selected "+choice.trait.Format().Identity().String()+" without content evidence through "+basis)
 		}
-		nodes = append(nodes, solve.SelectedNode{ID: node.ID(), Reason: reason})
-		for _, edge := range insertedEdges {
+		nodes = append(nodes, solve.SelectedNode{ID: insertion.node.ID(), Reason: reason, InferConfig: !choice.configured})
+		for _, edge := range insertion.inserted {
 			edges = append(edges, solve.SelectedEdge{Edge: edge, Reason: reason})
 		}
 	}
-
-	selected, err := solve.NewPreselection(nodes, edges, warnings, usage)
-	if err != nil {
-		return fail(err)
-	}
-	result.preselection = selected
+	result.nodes = nodes
+	result.edges = edges
+	result.warnings = warnings
+	result.usage = usage
 	return result, nil
-}
-
-func insertFormatNode(request job.Job, boundary plan.Boundary, component plugin.Component, patch config.Patch) (job.Job, job.Node, []job.Edge, error) {
-	graph, ok := request.Graph()
-	if !ok {
-		return job.Job{}, job.Node{}, nil, errors.New("automatic Format selection requires a normalized graph")
-	}
-	_, err := component.Resolve(patch)
-	if err != nil {
-		return job.Job{}, job.Node{}, nil, err
-	}
-	shape := component.Ports()
-	if len(shape.Inputs) == 0 {
-		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.format-direct-automatic", boundary, component.Identity(), "automatic Format selection cannot insert a direct reader", map[string]string{
-			"milestone": "M7-3",
-		})
-	}
-	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 {
-		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-shape", boundary, component.Identity(), "automatically selected Format must expose one input and one output in M6", map[string]string{
-			"inputs": strconv.Itoa(len(shape.Inputs)), "outputs": strconv.Itoa(len(shape.Outputs)),
-		})
-	}
-
-	nodes := graph.Nodes()
-	edges := graph.Edges()
-	used := make(map[job.NodeID]struct{}, len(nodes)+1)
-	for _, node := range nodes {
-		used[node.ID()] = struct{}{}
-	}
-	var replaced job.Edge
-	replacedIndex := -1
-	for index, edge := range edges {
-		if edge.From().Node().String() == boundary.Node && edge.From().ID() == boundary.Port {
-			if replacedIndex >= 0 {
-				return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-edge", boundary, component.Identity(), "automatic Format boundary has multiple outgoing edges", nil)
-			}
-			replaced = edge
-			replacedIndex = index
-		}
-	}
-	if replacedIndex < 0 {
-		return job.Job{}, job.Node{}, nil, probeDiagnostic("prepare.probe-edge", boundary, component.Identity(), "automatic Format boundary edge is missing", nil)
-	}
-	id := selectedFormatNodeID(replaced, component.Identity(), used)
-	node := job.NewNode(id, component.Identity(), patch)
-	first := job.Connect(replaced.From(), job.At(id, shape.Inputs[0].ID()))
-	second := job.Connect(job.At(id, shape.Outputs[0].ID()), replaced.To())
-	nodes = append(nodes, node)
-	edges[replacedIndex] = first
-	edges = append(edges, second)
-	updatedGraph, err := job.NewGraph(nodes, edges, graph.Mappings()...)
-	if err != nil {
-		return job.Job{}, job.Node{}, nil, err
-	}
-	updated, err := job.New(request.Inputs(), request.Outputs(), updatedGraph, job.WithPolicy(request.Policy()), job.WithBudget(request.Budget()))
-	if err != nil {
-		return job.Job{}, job.Node{}, nil, err
-	}
-	return updated, node, []job.Edge{first, second}, nil
-}
-
-func selectedFormatNodeID(edge job.Edge, identity plugin.Identity, used map[job.NodeID]struct{}) job.NodeID {
-	base := edge.From().String() + "->" + edge.To().String() + "\x00" + identity.String()
-	for nonce := 0; ; nonce++ {
-		digest := sha256.Sum256([]byte("godec/format-selection/v1\x00" + base + "\x00" + strconv.Itoa(nonce)))
-		id := job.NodeID("format-" + hex.EncodeToString(digest[:8]))
-		if _, exists := used[id]; !exists {
-			return id
-		}
-	}
 }
 
 func sessionIndex(values []acquiredSession, node string) int {

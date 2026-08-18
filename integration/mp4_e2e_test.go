@@ -54,11 +54,12 @@ func TestMP4StandardExplicitRemuxPreservesTracksAndPayload(t *testing.T) {
 	assertMP4FixtureSemantics(t, outputBytes)
 }
 
-func TestMP4AutomaticFileJobRejectsDirectReaderUntilMapping(t *testing.T) {
+func TestMP4AutomaticFileJobRemuxesEveryTrack(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.mp4")
 	outputPath := filepath.Join(directory, "output.mp4")
-	if err := os.WriteFile(inputPath, mp4TwoTrackFixture(), 0o600); err != nil {
+	inputBytes := mp4TwoTrackFixture()
+	if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(inputPath, outputPath)
@@ -69,14 +70,69 @@ func TestMP4AutomaticFileJobRejectsDirectReaderUntilMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = instance.Prepare(t.Context(), request)
-	items := host.Diagnostics(err)
-	if len(items) != 1 || items[0].Code != "prepare.format-direct-automatic" || items[0].Detail["milestone"] != "M7-3" {
-		t.Fatalf("automatic MP4 diagnostic = %#v, %v", items, err)
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("automatic MP4 planning failure acquired output: %v", statErr)
+	closed := false
+	defer func() {
+		if !closed {
+			if err := prepared.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	value := prepared.Plan()
+	if len(value.Nodes()) != 3 || len(value.Edges()) != 2 {
+		t.Fatalf("automatic MP4 Plan = nodes %#v edges %#v", value.Nodes(), value.Edges())
 	}
+	var demux, mux *plan.Node
+	for index := range value.Nodes() {
+		node := value.Nodes()[index]
+		if node.Component == file.SourceIdentity().String() {
+			t.Fatalf("automatic MP4 Plan retained the file source carrier: %#v", value.Nodes())
+		}
+		switch node.Component {
+		case mp4.DemuxerIdentity().String():
+			copy := node
+			demux = &copy
+		case mp4.MuxerIdentity().String():
+			copy := node
+			mux = &copy
+		}
+	}
+	if demux == nil || mux == nil || demux.Origin != plan.Automatic || demux.Reason != "format.probe" || mux.Origin != plan.Automatic || mux.Reason != "format.output" || len(demux.Outputs) != 2 || len(mux.Inputs) != 2 {
+		t.Fatalf("automatic MP4 plan = %#v", value.Nodes())
+	}
+	foundInput := false
+	for _, boundary := range value.Boundaries() {
+		if boundary.Direction != plan.InputBoundary {
+			continue
+		}
+		foundInput = true
+		if boundary.Node != demux.ID || boundary.Port != "packets" || boundary.Component != file.SourceIdentity().String() || len(boundary.Selected) != 2 || boundary.Selected[0] != access.RandomRead || boundary.Selected[1] != access.StableSize {
+			t.Fatalf("automatic MP4 input boundary = %#v", boundary)
+		}
+	}
+	if !foundInput {
+		t.Fatalf("automatic MP4 Plan has no input boundary: %#v", value.Boundaries())
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("automatic MP4 Run = %#v, %v", result, runErr)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	outputBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(outputBytes, inputBytes) {
+		t.Fatalf("automatic MP4 remux changed source bytes: got %d bytes, want %d", len(outputBytes), len(inputBytes))
+	}
+	assertMP4FixtureSemantics(t, outputBytes)
 }
 
 func TestMP4RealtimeRemuxRejectsScratchBeforeOutputAcquire(t *testing.T) {

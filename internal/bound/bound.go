@@ -66,6 +66,12 @@ func ResolveSource(entry Entry, projection plan.Boundary) Entry {
 	return entry
 }
 
+func AnchorSource(entry Entry, projection plan.Boundary, anchor job.NodeID) Entry {
+	entry = ResolveSource(entry, projection)
+	entry.anchor = anchor
+	return entry
+}
+
 func (e Entry) Valid() bool {
 	if e.automatic && !e.resolved && e.projection.Direction == plan.OutputBoundary {
 		if !validPendingOutput(e.projection) {

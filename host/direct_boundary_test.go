@@ -17,21 +17,27 @@ import (
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
-	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
 
 type directBoundaryPluginID struct{}
 type directBoundaryFormatID struct{}
 type directBoundaryReaderID struct{}
+type directBoundaryOneReaderID struct{}
 type directBoundaryMuxID struct{}
 
 type directBoundaryReader struct{ shape flow.Shape }
+type directBoundaryOneReader struct{ shape flow.Shape }
 type directBoundaryMux struct{ shape flow.Shape }
 
 func (o directBoundaryReader) Ports() flow.Shape { return o.shape.Clone() }
 func (directBoundaryReader) Close() error        { return nil }
 func (directBoundaryReader) Read(context.Context, flow.RoutedEmitter[access.Write]) error {
+	return io.EOF
+}
+func (o directBoundaryOneReader) Ports() flow.Shape { return o.shape.Clone() }
+func (directBoundaryOneReader) Close() error        { return nil }
+func (directBoundaryOneReader) Read(context.Context, *flow.Item[access.Write]) error {
 	return io.EOF
 }
 func (o directBoundaryMux) Ports() flow.Shape { return o.shape.Clone() }
@@ -54,10 +60,44 @@ func directBoundaryReaderComponent(opens *atomic.Int32) plugin.Component {
 	return directBoundaryReaderComponentWithInspect(opens, false)
 }
 
+func directBoundaryOneReaderComponent(opens *atomic.Int32) plugin.Component {
+	shape := flow.NewShape(nil, []flow.Port{flow.Out("packets", access.Writes())})
+	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
+	return plugin.NewComponent[directBoundaryOneReaderID](plugin.Descriptor{DisplayName: "direct one reader"}, configuration,
+		plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
+			Ports: shape,
+			Compile: func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
+				descriptor := stream.MustDescriptor("direct", access.Writes().Descriptor(), timing.Base{}, property.New())
+				return plugin.Compiled[boundaryPlan, stream.Descriptor]{
+					Plan:    boundaryPlan{shape: shape},
+					Outputs: flow.NewDescriptors(flow.Describe("packets", descriptor)),
+					Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "direct.reader"}},
+				}, nil
+			},
+			Open: func(ctx plugin.OpenContext, value boundaryPlan) (flow.Operator, error) {
+				if _, ok := plugin.Boundary[access.Opening](ctx); ok {
+					return nil, errors.New("direct one reader received a duplicate boundary opening")
+				}
+				if _, ok := mediaformat.SourceOpening(ctx); !ok {
+					return nil, errors.New("direct one reader did not receive the source opening")
+				}
+				opens.Add(1)
+				return directBoundaryOneReader{shape: value.shape.Clone()}, nil
+			},
+		}),
+		plugin.WithReader("packets", access.Writes()),
+		mediaformat.Read(directBoundaryFormat(), access.NewRequirements(access.AllOf(access.SequentialRead)), mediaformat.WithProbe(func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+			return mediaformat.Fallback(), nil
+		})),
+	)
+}
+
 func directBoundaryReaderComponentWithInspect(opens *atomic.Int32, inspect bool) plugin.Component {
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("packets", access.Writes(), flow.Many())})
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
-	options := []mediaformat.ReadOption{}
+	options := []mediaformat.ReadOption{mediaformat.WithProbe(func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+		return mediaformat.Fallback(), nil
+	})}
 	if inspect {
 		options = append(options, mediaformat.WithInspect(func(mediaformat.InspectContext) (mediaformat.Inspection, error) {
 			return mediaformat.NewInspection(directBoundaryFormat(), 1), nil
@@ -71,6 +111,7 @@ func directBoundaryReaderComponentWithInspect(opens *atomic.Int32, inspect bool)
 				return plugin.Compiled[boundaryPlan, stream.Descriptor]{
 					Plan:    boundaryPlan{shape: shape},
 					Outputs: flow.NewDescriptors(flow.Describe("packets", descriptor)),
+					Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "direct.reader"}},
 				}, nil
 			},
 			Open: func(ctx plugin.OpenContext, value boundaryPlan) (flow.Operator, error) {
@@ -122,67 +163,144 @@ func directBoundaryMuxComponent(opens *atomic.Int32) plugin.Component {
 }
 
 func TestReferenceInputDirectReaderUsesAnchorWithoutCarrier(t *testing.T) {
-	capabilities := mustCapabilities(t, access.SequentialRead)
-	var acquired atomic.Int32
-	acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
-		acquired.Add(1)
-		return boundarySession{capabilities: capabilities}, nil
+	readers := []struct {
+		name  string
+		build func(*atomic.Int32) plugin.Component
+	}{
+		{name: "one", build: directBoundaryOneReaderComponent},
+		{name: "many", build: directBoundaryReaderComponent},
 	}
-	source, _, sink, _ := boundaryComponentsWith(nil, []plugin.ComponentOption{access.Source("direct", capabilities, acquire)}, nil)
-	var opens atomic.Int32
-	reader := directBoundaryReaderComponent(&opens)
-	instance, err := New(Plugins(plugin.NewSet(plugin.Define[directBoundaryPluginID](plugin.Descriptor{DisplayName: "direct boundary", Version: "1"}, source, reader, sink))))
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range readers {
+		t.Run(test.name, func(t *testing.T) {
+			capabilities := mustCapabilities(t, access.SequentialRead)
+			var acquired atomic.Int32
+			acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+				acquired.Add(1)
+				return boundarySession{capabilities: capabilities}, nil
+			}
+			source, _, sink, _ := boundaryComponentsWith(nil, []plugin.ComponentOption{access.Source("direct", capabilities, acquire)}, nil)
+			var opens atomic.Int32
+			reader := test.build(&opens)
+			instance, err := New(Plugins(plugin.NewSet(plugin.Define[directBoundaryPluginID](plugin.Descriptor{DisplayName: "direct boundary", Version: "1"}, source, reader, sink))))
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	graph, err := job.NewGraph(
-		[]job.Node{
-			job.NewNode("demux", reader.Identity(), config.NewPatch()),
-			job.NewNode("sink", sink.Identity(), config.NewPatch()),
-		},
-		[]job.Edge{job.Connect(job.At("demux", "packets"), job.At("sink", "in"))},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference, _ := access.Parse("direct:input")
-	input, _ := job.InputFromReference(reference)
-	request, err := job.New([]job.Input{input}, nil, graph)
-	if err != nil {
-		t.Fatal(err)
-	}
-	normalized, err := bind.Normalize(instance.bindings, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries := normalized.Boundaries().Entries()
-	if len(entries) != 1 || entries[0].Anchor() != job.NodeID("demux") {
-		t.Fatalf("capability selection lost direct anchor: %#v", entries)
-	}
+			graph, err := job.NewGraph(
+				[]job.Node{
+					job.NewNode("demux", reader.Identity(), config.NewPatch()),
+					job.NewNode("sink", sink.Identity(), config.NewPatch()),
+				},
+				[]job.Edge{job.Connect(job.At("demux", "packets"), job.At("sink", "in"))},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference, _ := access.Parse("direct:input")
+			input, _ := job.InputFromReference(reference)
+			request, err := job.New([]job.Input{input}, nil, graph)
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, err := bind.Normalize(instance.bindings, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries := normalized.Boundaries().Entries()
+			if len(entries) != 1 || entries[0].Anchor() != job.NodeID("demux") {
+				t.Fatalf("capability selection lost direct anchor: %#v", entries)
+			}
 
-	planned, err := instance.Plan(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
+			planned, err := instance.Plan(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(planned.Nodes()); got != 2 {
+				t.Fatalf("direct Plan nodes = %d, want 2 without a provider carrier", got)
+			}
+			if got := len(planned.Edges()); got != 1 {
+				t.Fatalf("direct Plan edges = %d, want 1 without a provider edge", got)
+			}
+			boundaries := planned.Boundaries()
+			if len(boundaries) != 1 || boundaries[0].Node != "demux" || boundaries[0].Port != "packets" || boundaries[0].Component != source.Identity().String() || len(boundaries[0].Selected) != 1 || boundaries[0].Selected[0] != access.SequentialRead {
+				t.Fatalf("direct boundary projection = %#v", boundaries)
+			}
+			if acquired.Load() != 1 || opens.Load() != 0 {
+				t.Fatalf("Plan lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
+			}
+			if _, err := instance.Run(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if acquired.Load() != 2 || opens.Load() != 1 {
+				t.Fatalf("Run lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
+			}
+		})
 	}
-	if got := len(planned.Nodes()); got != 2 {
-		t.Fatalf("direct Plan nodes = %d, want 2 without a provider carrier", got)
+}
+
+func TestAutomaticDirectReaderUsesAnchorWithoutCarrier(t *testing.T) {
+	readers := []struct {
+		name  string
+		build func(*atomic.Int32) plugin.Component
+	}{
+		{name: "one", build: directBoundaryOneReaderComponent},
+		{name: "many", build: directBoundaryReaderComponent},
 	}
-	if got := len(planned.Edges()); got != 1 {
-		t.Fatalf("direct Plan edges = %d, want 1 without a provider edge", got)
-	}
-	boundaries := planned.Boundaries()
-	if len(boundaries) != 1 || boundaries[0].Node != "demux" || boundaries[0].Port != "packets" || boundaries[0].Component != source.Identity().String() || len(boundaries[0].Selected) != 1 || boundaries[0].Selected[0] != access.SequentialRead {
-		t.Fatalf("direct boundary projection = %#v", boundaries)
-	}
-	if acquired.Load() != 1 || opens.Load() != 0 {
-		t.Fatalf("Plan lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
-	}
-	if _, err := instance.Run(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	if acquired.Load() != 2 || opens.Load() != 1 {
-		t.Fatalf("Run lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
+	for _, test := range readers {
+		t.Run(test.name, func(t *testing.T) {
+			capabilities := mustCapabilities(t, access.SequentialRead)
+			var acquired atomic.Int32
+			acquire := func(context.Context, access.Reference, access.Selection) (access.Session, error) {
+				acquired.Add(1)
+				return boundarySession{capabilities: capabilities}, nil
+			}
+			source, _, sink, _ := boundaryComponentsWith(nil, []plugin.ComponentOption{access.Source("direct-auto", capabilities, acquire)}, nil)
+			var opens atomic.Int32
+			reader := test.build(&opens)
+			instance, err := New(Plugins(plugin.NewSet(plugin.Define[directBoundaryPluginID](plugin.Descriptor{DisplayName: "automatic direct boundary", Version: "1"}, source, reader, sink))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph, err := job.NewGraph([]job.Node{job.NewNode("sink", sink.Identity(), config.NewPatch())}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference, _ := access.Parse("direct-auto:input")
+			input, _ := job.InputFromReference(reference)
+			input, err = input.WithFormatHint(mustFormatSelector(t, directBoundaryFormat()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := job.New([]job.Input{input}, nil, graph)
+			if err != nil {
+				t.Fatal(err)
+			}
+			planned, err := instance.Plan(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(planned.Nodes()) != 2 || len(planned.Edges()) != 1 {
+				t.Fatalf("automatic direct Plan = nodes %#v edges %#v", planned.Nodes(), planned.Edges())
+			}
+			for _, node := range planned.Nodes() {
+				if node.Component == source.Identity().String() {
+					t.Fatalf("automatic direct Plan retained provider carrier: %#v", planned.Nodes())
+				}
+			}
+			boundaries := planned.Boundaries()
+			if len(boundaries) != 1 || boundaries[0].Node == "input-0" || boundaries[0].Port != "packets" || boundaries[0].Component != source.Identity().String() || len(boundaries[0].Selected) != 1 || boundaries[0].Selected[0] != access.SequentialRead {
+				t.Fatalf("automatic direct boundary = %#v", boundaries)
+			}
+			if acquired.Load() != 1 || opens.Load() != 0 {
+				t.Fatalf("automatic Plan lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
+			}
+			if _, err := instance.Run(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if acquired.Load() != 2 || opens.Load() != 1 {
+				t.Fatalf("automatic Run lifecycle = acquisitions %d, opens %d", acquired.Load(), opens.Load())
+			}
+		})
 	}
 }
 
@@ -348,23 +466,6 @@ func TestNormalFormatReaderStillUsesProviderCarrier(t *testing.T) {
 	}
 	if got := len(planned.Nodes()); got != 3 {
 		t.Fatalf("normal Plan nodes = %d, want provider carrier plus requested graph", got)
-	}
-}
-
-func TestInsertFormatNodeRejectsAutomaticDirectReader(t *testing.T) {
-	reader := directBoundaryReaderComponent(&atomic.Int32{})
-	graph, err := job.NewGraph([]job.Node{job.NewNode("reader", reader.Identity(), config.NewPatch())}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err := job.New(nil, nil, graph)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, _, err = insertFormatNode(request, plan.Boundary{Node: "input", Port: "out"}, reader, config.NewPatch())
-	items := diagnostic.ItemsOf(err)
-	if len(items) != 1 || items[0].Code != "prepare.format-direct-automatic" || items[0].Detail["milestone"] != "M7-3" {
-		t.Fatalf("automatic direct reader diagnostic = %#v, %v", items, err)
 	}
 }
 

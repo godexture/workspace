@@ -36,7 +36,6 @@ type solveSchemaDID struct{}
 type solveUnit struct{}
 type solveControlID struct{}
 type solveControlTraitID struct{}
-type solveTerminalContextID struct{}
 
 var (
 	solveSchemaA = schema.Define[solveSchemaAID, solveUnit](schema.Traits[solveUnit]{Time: func(solveUnit) (int64, bool) { return 0, true }})

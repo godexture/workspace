@@ -37,16 +37,29 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 		Compile: func(_ plugin.CompileContext, configuration configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[componentPlan, stream.Descriptor], error) {
 			return compileOperation(kind, shape, configuration, inputs)
 		},
-		Suggest: func(_ plugin.SuggestContext, input stream.Descriptor, need plugin.Need[stream.Descriptor]) []configuration {
+		Suggest: func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []configuration {
+			inputPort, outputPort := shape.Inputs[0], shape.Outputs[0]
+			input, ok := suggestion.Inputs().One(inputPort.ID())
+			if !ok {
+				return nil
+			}
 			current, err := sample.FromProperties(input.Properties())
 			if err != nil {
 				return nil
 			}
 			var desired *sample.Description
-			if target, ok := need.Desired(); ok {
+			for _, demand := range suggestion.Demands() {
+				if demand.Port() != inputPort.ID() && demand.Port() != outputPort.ID() {
+					continue
+				}
+				target, ok := demand.Need().Desired()
+				if !ok {
+					continue
+				}
 				value, err := sample.FromProperties(target.Properties())
 				if err == nil {
 					desired = &value
+					break
 				}
 			}
 			value, ok := suggestConfiguration(current, desired)

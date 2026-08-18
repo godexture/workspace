@@ -219,12 +219,16 @@ func TestEvaluateReturnsTypedSchemaGapWithoutOpeningOperators(t *testing.T) {
 	if !edgeOK || edge.From() != job.At("source", "out") || !inputOK || input.Schema() != graphSchemaA.Identity() || !desiredOK || desired.Schema() != graphSchemaB.Identity() {
 		t.Fatalf("gap edge=%#v input=%#v desired=%#v", edge, input, desired)
 	}
-	accepted, err := gaps[0].Accepts(desired)
-	if err != nil || !accepted {
-		t.Fatalf("desired descriptor accepted=%v error=%v", accepted, err)
+	inputs, replaced := gaps[0].WithCandidate(desired)
+	if !replaced {
+		t.Fatal("desired descriptor did not replace the gap input")
 	}
-	if accepted, err := gaps[0].Accepts(input); err != nil || accepted {
-		t.Fatalf("mismatched descriptor accepted=%v error=%v", accepted, err)
+	_, requirements, err := gaps[0].Compile(gaps[0].Config(), inputs)
+	if err != nil || len(requirements) != 0 {
+		t.Fatalf("desired descriptor Compile requirements=%#v error=%v", requirements, err)
+	}
+	if _, replaced := gaps[0].WithCandidate(input); replaced {
+		t.Fatal("mismatched descriptor replaced the gap input")
 	}
 	if opened.Load() != 0 {
 		t.Fatalf("evaluation opened %d operators", opened.Load())
@@ -307,12 +311,22 @@ func TestEvaluateConfirmsConditionGapThroughDownstreamCompile(t *testing.T) {
 		t.Fatalf("condition gaps = %#v", gaps)
 	}
 	original, _ := gaps[0].Input()
-	if accepted, err := gaps[0].Accepts(original); err != nil || accepted {
-		t.Fatalf("original descriptor accepted=%v error=%v", accepted, err)
+	originalInputs, replaced := gaps[0].WithCandidate(original)
+	if !replaced {
+		t.Fatal("original descriptor did not replace the gap input")
+	}
+	_, requirements, err := gaps[0].Compile(gaps[0].Config(), originalInputs)
+	if err != nil || len(requirements) != 1 {
+		t.Fatalf("original descriptor Compile requirements=%#v error=%v", requirements, err)
 	}
 	candidate := stream.MustDescriptor("accepted", graphSchemaA.Descriptor(), original.TimeBase(), original.Properties()).WithMetadata(original.Metadata())
-	if accepted, err := gaps[0].Accepts(candidate); err != nil || !accepted {
-		t.Fatalf("condition candidate accepted=%v error=%v", accepted, err)
+	candidateInputs, replaced := gaps[0].WithCandidate(candidate)
+	if !replaced {
+		t.Fatal("condition candidate did not replace the gap input")
+	}
+	_, requirements, err = gaps[0].Compile(gaps[0].Config(), candidateInputs)
+	if err != nil || len(requirements) != 0 {
+		t.Fatalf("condition candidate Compile requirements=%#v error=%v", requirements, err)
 	}
 }
 

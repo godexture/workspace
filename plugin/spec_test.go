@@ -343,6 +343,15 @@ func TestRoutedReaderExecutionBindingRequiresManyOutputAndTypedReader(t *testing
 	if !hasItem(wrong.Diagnostics(), "plugin.execution-ports") {
 		t.Fatalf("routed reader mismatch diagnostics = %v", wrong.Diagnostics())
 	}
+	wrongSource := NewComponent[specOtherID](
+		Descriptor{DisplayName: "reader shape mismatch"},
+		pluginSchema(1),
+		WithSpec(spec),
+		WithReader("out", typ),
+	)
+	if !hasItem(wrongSource.Diagnostics(), "plugin.execution-ports") {
+		t.Fatalf("reader mismatch diagnostics = %v", wrongSource.Diagnostics())
+	}
 }
 
 func TestComponentTraitSlotIsTypedAndRejectsDuplicateKeys(t *testing.T) {
@@ -523,15 +532,16 @@ func TestCompilationCannotOpenThroughAnotherSpec(t *testing.T) {
 
 func TestSuggestIsBoundedCanonicalAndDoesNotOpen(t *testing.T) {
 	var opened atomic.Int32
-	suggest := func(_ SuggestContext, _ int, _ Need[int]) []pluginConfig {
+	suggest := func(_ SuggestContext, _ Suggestion[int]) []pluginConfig {
 		return []pluginConfig{{Level: 2}, {Level: 3}}
 	}
 	component := NewComponent[specUnitID](Descriptor{DisplayName: "suggest"}, pluginSchema(1), WithSpec(testSpec(&opened, suggest)))
-	first, err := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("fixture.target"))
+	target := NewSuggestion(flow.NewDescriptors(flow.Describe("in", 1)), OutputDemand("out", ConditionNeed[int]("fixture.target")))
+	first, err := Suggest(component, SuggestContext{}, target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("fixture.target"))
+	second, err := Suggest(component, SuggestContext{}, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,20 +552,53 @@ func TestSuggestIsBoundedCanonicalAndDoesNotOpen(t *testing.T) {
 		t.Fatal("Suggest opened an operator")
 	}
 
-	duplicate := func(_ SuggestContext, _ int, _ Need[int]) []pluginConfig {
+	duplicate := func(_ SuggestContext, _ Suggestion[int]) []pluginConfig {
 		return []pluginConfig{{Level: 2}, {Level: 2}}
 	}
 	component = NewComponent[specUnitID](Descriptor{DisplayName: "duplicate"}, pluginSchema(1), WithSpec(testSpec(nil, duplicate)))
-	if _, err := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("fixture.target")); !hasDiagnostic(err, "plugin.suggest-duplicate") {
+	if _, err := Suggest(component, SuggestContext{}, target); !hasDiagnostic(err, "plugin.suggest-duplicate") {
 		t.Fatalf("duplicate Suggest error = %v", err)
 	}
 
-	overLimit := func(_ SuggestContext, _ int, _ Need[int]) []pluginConfig {
+	overLimit := func(_ SuggestContext, _ Suggestion[int]) []pluginConfig {
 		return []pluginConfig{{Level: 1}, {Level: 2}, {Level: 3}, {Level: 4}}
 	}
 	component = NewComponent[specUnitID](Descriptor{DisplayName: "limit"}, pluginSchema(1), WithSpec(testSpec(nil, overLimit)))
-	if _, err := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("fixture.target")); !hasDiagnostic(err, "plugin.suggest-limit") {
+	if _, err := Suggest(component, SuggestContext{}, target); !hasDiagnostic(err, "plugin.suggest-limit") {
 		t.Fatalf("over-limit Suggest error = %v", err)
+	}
+}
+
+func TestSuggestCarriesDirectionalDemandsAndCopiesSequences(t *testing.T) {
+	var observed Suggestion[int]
+	suggest := func(_ SuggestContext, value Suggestion[int]) []pluginConfig {
+		observed = value
+		bindings := value.Inputs().Bindings()
+		bindings[0] = flow.Describe("in", 99)
+		demands := value.Demands()
+		demands[0] = InputDemand("in", ConditionNeed[int]("mutated"))
+		return []pluginConfig{{Level: 1}}
+	}
+	component := NewComponent[specUnitID](Descriptor{DisplayName: "suggestion"}, pluginSchema(1), WithSpec(testSpec(nil, suggest)))
+	inputs := flow.NewDescriptors(flow.Describe("in", 7))
+	demands := []Demand[int]{OutputDemand("out", ConditionNeed[int]("fixture.target"))}
+	suggestion := NewSuggestion(inputs, demands...)
+	demands[0] = OutputDemand("missing", ConditionNeed[int]("fixture.target"))
+	if _, err := Suggest(component, SuggestContext{}, suggestion); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := observed.Inputs().One("in"); !ok || value != 7 {
+		t.Fatalf("Suggest input alias leaked: %v/%v", value, ok)
+	}
+	observedDemands := observed.Demands()
+	if len(observedDemands) != 1 || observedDemands[0].Direction() != flow.OutputDirection || observedDemands[0].Port() != "out" {
+		t.Fatalf("Suggest demand alias leaked: %#v", observedDemands)
+	}
+	if _, err := Suggest(component, SuggestContext{}, NewSuggestion(inputs, OutputDemand("in", ConditionNeed[int]("fixture.target")))); !hasDiagnostic(err, "plugin.suggest-demand-port") {
+		t.Fatalf("direction mismatch error = %v", err)
+	}
+	if _, err := Suggest(component, SuggestContext{}, NewSuggestion(inputs, OutputDemand("out", Need[int]{}))); !hasDiagnostic(err, "plugin.suggest-need") {
+		t.Fatalf("invalid need error = %v", err)
 	}
 }
 
@@ -769,7 +812,7 @@ func TestPhasePanicsNeverRenderTheRecoveredValue(t *testing.T) {
 			}
 			return Compiled[specPlan, int]{Plan: specPlan{shape: shape}, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},
-		Suggest: func(SuggestContext, int, Need[int]) []leakyConfig {
+		Suggest: func(SuggestContext, Suggestion[int]) []leakyConfig {
 			panic(errors.New(secret))
 		},
 		SuggestionLimit: 1,
@@ -784,7 +827,7 @@ func TestPhasePanicsNeverRenderTheRecoveredValue(t *testing.T) {
 	}
 
 	_, compileErr := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
-	_, suggestErr := Suggest(component, SuggestContext{}, 1, ConditionNeed[int]("leak"))
+	_, suggestErr := Suggest(component, SuggestContext{}, NewSuggestion(flow.NewDescriptors(flow.Describe("in", 1)), OutputDemand("out", ConditionNeed[int]("leak"))))
 	compilePanics = false
 	compiled, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1)))
 	if err != nil {
