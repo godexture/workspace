@@ -250,11 +250,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 	}
 	configuration := config.Struct[lifecycleConfigID](func() lifecycleConfig { return lifecycleConfig{} }).Version("1").Build()
 	descriptor := stream.MustDescriptor("fixture", lifecycleType.Descriptor(), timing.Base{}, property.New())
-	sourcePort := flow.Out("out", lifecycleType)
-	if state.multi {
-		sourcePort = flow.Out("out", lifecycleType, flow.Many())
-	}
-	sourceShape := flow.NewShape(nil, []flow.Port{sourcePort})
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", lifecycleType)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, []flow.Port{flow.Out("out", lifecycleType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", lifecycleType)}, nil)
 	var sourceTraits, sinkTraits []plugin.ComponentOption

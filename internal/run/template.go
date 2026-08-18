@@ -121,6 +121,9 @@ func Compile(values []Node, logicalEdges []job.Edge, queuePolicy job.QueuePolicy
 	if err := result.validateEdges(); err != nil {
 		return Template{}, err
 	}
+	if err := result.validateFanOutSafety(); err != nil {
+		return Template{}, err
+	}
 	if err := result.validateFanInLimits(); err != nil {
 		return Template{}, err
 	}

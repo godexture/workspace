@@ -85,7 +85,7 @@ func TestValidateDescriptorBindingsRejectsRepeatedOne(t *testing.T) {
 	shape := sinkShape(graphSchemaA)
 	node := shapedNode{request: fixtureNode[graphSinkID]("sink"), shape: shape}
 	items := validateDescriptorBindings(node, flow.InputDirection, shape.Inputs, descriptorBindingsFor("in", "track-a", "track-b").Bindings(), true)
-	if !hasCode(items, "graph.fan-in") {
+	if !hasCode(items, "graph.input-multiplicity") {
 		t.Fatalf("repeated One diagnostics = %v", items)
 	}
 }

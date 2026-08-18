@@ -55,6 +55,7 @@ type Binding struct {
 	output           port
 	inputStats       Measures
 	outputStats      Measures
+	fanoutSafe       bool
 	fanIn            flow.FanInPolicy
 	openSink         func(flow.Operator, string) (Link, error)
 	prepend          func(flow.Operator, Link, string) (Link, error)
@@ -77,6 +78,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 		output:      port{id: output, schema: out.Descriptor()},
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		fanIn:       policy,
 		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
@@ -114,6 +116,7 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 		kind:        Source,
 		output:      port{id: output, schema: typ.Descriptor()},
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		openSource: func(operator flow.Operator, next Link, owner *journal.Domain) (Task, error) {
 			reader, ok := operator.(flow.Reader[T])
 			if !ok {
@@ -143,6 +146,7 @@ func NewRoutedSource[T any](output string, typ schema.Type[T]) Binding {
 		kind:        RoutedSource,
 		output:      port{id: output, schema: typ.Descriptor()},
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		openRoutedSource: func(operator flow.Operator, routes []Link, owner *journal.Domain) (Task, error) {
 			reader, ok := operator.(flow.RoutedReader[T])
 			if !ok {
@@ -175,6 +179,7 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 		output:      port{id: output, schema: out.Descriptor()},
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		prepend: func(operator flow.Operator, next Link, node string) (Link, error) {
 			processor, ok := operator.(flow.Processor[I, O])
 			if !ok {
@@ -207,6 +212,7 @@ func NewRouter[I, O any](input string, in schema.Type[I], output string, out sch
 		output:      port{id: output, schema: out.Descriptor()},
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		openRouter: func(operator flow.Operator, routes []Link, node string) (Link, error) {
 			router, ok := operator.(flow.Router[I, O])
 			if !ok {
@@ -289,7 +295,7 @@ func (b Binding) Validate(shape flow.Shape) error {
 	}
 	switch b.kind {
 	case Source:
-		if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || !matches(shape.Outputs[0], b.output) {
+		if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.One || !matches(shape.Outputs[0], b.output) {
 			return ErrBinding
 		}
 	case RoutedSource:
@@ -319,6 +325,7 @@ func (b Binding) Validate(shape flow.Shape) error {
 func (b Binding) Input() string            { return b.input.id }
 func (b Binding) Output() string           { return b.output.id }
 func (b Binding) FanIn() flow.FanInPolicy  { return b.fanIn }
+func (b Binding) FanoutSafe() bool         { return b.fanoutSafe }
 func (b Binding) InputMeasures() Measures  { return b.inputStats }
 func (b Binding) OutputMeasures() Measures { return b.outputStats }
 

@@ -584,6 +584,10 @@ func TestBindingRejectsWrongShapeOperatorAndPayload(t *testing.T) {
 	if err := binding.Validate(wrongShape); !errors.Is(err, ErrBinding) {
 		t.Fatalf("shape error = %v", err)
 	}
+	manyShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ, flow.Many())})
+	if err := binding.Validate(manyShape); !errors.Is(err, ErrBinding) {
+		t.Fatalf("Source accepted a many output = %v", err)
+	}
 	operator := operatorBase{shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})}
 	if err := binding.ValidateOperator(operator); !errors.Is(err, ErrOperator) {
 		t.Fatalf("operator error = %v", err)

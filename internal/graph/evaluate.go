@@ -247,12 +247,12 @@ func validateDescriptorBindings(node shapedNode, direction flow.Direction, ports
 	output := direction == flow.OutputDirection
 	side := "input"
 	unknownCode := "graph.unknown-input"
-	fanCode := "graph.fan-in"
+	multiplicityCode := "graph.input-multiplicity"
 	requiredCode := "graph.required-input"
 	if output {
 		side = "output"
 		unknownCode = "graph.unknown-output"
-		fanCode = "graph.fan-out"
+		multiplicityCode = "graph.output-multiplicity"
 		requiredCode = "graph.required-output"
 	}
 	portByID := make(map[string]flow.Port, len(ports))
@@ -299,7 +299,7 @@ func validateDescriptorBindings(node shapedNode, direction flow.Direction, ports
 	for _, port := range ports {
 		count := counts[port.ID()]
 		if count > 1 && port.Multiplicity() != flow.ManyMultiplicity {
-			items = append(items, graphItem(fanCode, job.At(node.request.ID(), port.ID()), side+" port does not permit multiple descriptors", nil))
+			items = append(items, graphItem(multiplicityCode, job.At(node.request.ID(), port.ID()), side+" port does not permit multiple descriptors", nil))
 		}
 		if requireCardinality && port.Required() && count == 0 {
 			items = append(items, graphItem(requiredCode, job.At(node.request.ID(), port.ID()), "required "+side+" port has no descriptor", nil))

@@ -61,9 +61,6 @@ func validateTopologyMode(nodes []shapedNode, edges []job.Edge, allowSchemaGaps 
 		}
 		outputCounts[fromIndex][fromPort.ID()]++
 		inputCounts[toIndex][toPort.ID()]++
-		if outputCounts[fromIndex][fromPort.ID()] > 1 && fromPort.Multiplicity() != flow.ManyMultiplicity {
-			items = append(items, graphItem("graph.fan-out", edge.From(), "output port does not permit multiple connections", nil))
-		}
 		if inputCounts[toIndex][toPort.ID()] > 1 && toPort.Multiplicity() != flow.ManyMultiplicity {
 			items = append(items, graphItem("graph.fan-in", edge.To(), "input port does not permit multiple connections", nil))
 		}

@@ -57,8 +57,9 @@ func Optional() PortOption {
 	return func(options *portOptions) { options.required = false }
 }
 
-// Many declares a port that may carry multiple connections. It may still be
-// required; Required and multiplicity are separate axes.
+// Many declares a port that may carry multiple ordered descriptors or routes.
+// Edge fan-out is independent of descriptor cardinality. A Many port may
+// still be required; Required and multiplicity are separate axes.
 func Many() PortOption {
 	return func(options *portOptions) { options.multiplicity = ManyMultiplicity }
 }

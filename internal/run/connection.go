@@ -162,6 +162,19 @@ func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (tim
 	return policy.Zip, ticks, nil
 }
 
+func (t Template) validateFanOutSafety() error {
+	for index := range t.edges {
+		if !t.logicalFanOut(index) {
+			continue
+		}
+		from := t.nodes[t.edges[index].from]
+		if !from.binding.FanoutSafe() {
+			return errors.Join(ErrTopology, drive.ErrForkTrait)
+		}
+	}
+	return nil
+}
+
 func (t Template) validateFanInLimits() error {
 	for index, value := range t.nodes {
 		if value.kind != drive.Joiner || value.binding.FanIn() != flow.ZipFanIn {

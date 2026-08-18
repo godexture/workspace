@@ -359,20 +359,6 @@ func TestCompileRejectsTopologyFailuresWithStableCodes(t *testing.T) {
 			codes: []string{"graph.fan-in"},
 		},
 		{
-			name: "fan out",
-			components: []plugin.Component{
-				fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), nil, false),
-				fixtureComponent[graphSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
-				fixtureComponent[graphSecondSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
-			},
-			nodes: []job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("a"), fixtureNode[graphSecondSinkID]("b")},
-			edges: []job.Edge{
-				job.Connect(job.At("source", "out"), job.At("a", "in")),
-				job.Connect(job.At("source", "out"), job.At("b", "in")),
-			},
-			codes: []string{"graph.fan-out"},
-		},
-		{
 			name: "required and reachability",
 			components: []plugin.Component{
 				fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), nil, false),
@@ -401,6 +387,25 @@ func TestCompileRejectsTopologyFailuresWithStableCodes(t *testing.T) {
 			_, err := Compile(fixtureCatalog(t, test.components...), fixtureRequest(t, test.nodes, test.edges))
 			assertCodes(t, err, test.codes...)
 		})
+	}
+}
+
+func TestCompileAllowsOneOutputFanOut(t *testing.T) {
+	index := fixtureCatalog(t,
+		fixtureComponent[graphSourceID](sourceShape(graphSchemaA), sourceCompile(graphSchemaA), nil, false),
+		fixtureComponent[graphSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
+		fixtureComponent[graphSecondSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
+	)
+	request := fixtureRequest(t,
+		[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("a"), fixtureNode[graphSecondSinkID]("b")},
+		[]job.Edge{
+			job.Connect(job.At("source", "out"), job.At("a", "in")),
+			job.Connect(job.At("source", "out"), job.At("b", "in")),
+		},
+	)
+	compiled, err := Compile(index, request)
+	if err != nil || !compiled.Valid() {
+		t.Fatalf("one-output fan-out compilation = %#v, %v", compiled, err)
 	}
 }
 

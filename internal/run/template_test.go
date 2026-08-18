@@ -320,6 +320,59 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsOwnedFanOutWithoutFork(t *testing.T) {
+	type ownedID struct{}
+	typ := schema.Define[ownedID](schema.Traits[int]{Drop: func(int) {}})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	_, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
+	if !errors.Is(err, drive.ErrForkTrait) || !errors.Is(err, ErrTopology) {
+		t.Fatalf("owned fan-out Compile error = %v", err)
+	}
+}
+
+func TestCompileAllowsUnownedOneFanOut(t *testing.T) {
+	type valueID struct{}
+	typ := schema.Define[valueID](schema.Traits[int]{})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	if _, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{}); err != nil {
+		t.Fatalf("unowned One fan-out Compile = %v", err)
+	}
+}
+
+func TestCompileRejectsRoutedSourceFanOutWithoutFork(t *testing.T) {
+	type ownedRouteID struct{}
+	typ := schema.Define[ownedRouteID](schema.Traits[int]{Drop: func(int) {}})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ, flow.Many())}), Execution: drive.NewRoutedSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	_, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
+	if !errors.Is(err, drive.ErrForkTrait) || !errors.Is(err, ErrTopology) {
+		t.Fatalf("owned routed-source fan-out Compile error = %v", err)
+	}
+}
+
 func TestCompileSelectsTraitAwareQueueLimitsAndFanInTolerance(t *testing.T) {
 	type timedID struct{}
 	typ := schema.Define[timedID](schema.Traits[int]{
