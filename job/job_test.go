@@ -186,15 +186,12 @@ func TestDirectChoiceCarriesTypedResourceAndExplicitAdaptor(t *testing.T) {
 	}
 }
 
-func TestGraphRejectsDuplicateIdentityAndMapping(t *testing.T) {
+func TestGraphRejectsDuplicateIdentity(t *testing.T) {
 	source := NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch())
 	sink := NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch())
-	mapping := MapStream(0, stream.ID("audio"), 0)
 	_, err := NewGraph(
 		[]Node{source, source, sink},
 		[]Edge{Connect(At("source", "out"), At("sink", "in"))},
-		mapping,
-		mapping,
 	)
 	if err == nil {
 		t.Fatal("invalid graph was accepted")
@@ -203,8 +200,89 @@ func TestGraphRejectsDuplicateIdentityAndMapping(t *testing.T) {
 	for _, item := range diagnostic.ItemsOf(err) {
 		codes[item.Code] = true
 	}
-	if !codes["job.duplicate-node"] || !codes["job.duplicate-mapping"] {
+	if !codes["job.duplicate-node"] {
 		t.Fatalf("graph diagnostics = %v", err)
+	}
+}
+
+func TestJobCanonicalizesAndOwnsMappings(t *testing.T) {
+	inputReference, err := access.Parse("file:///input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputReference, err := access.Parse("file:///output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := InputFromReference(inputReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := OutputToReference(outputReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := []Mapping{
+		MapStream(1, stream.ID("z"), 0),
+		MapStream(0, stream.ID("b"), 1),
+		MapStream(0, stream.ID("a"), 0),
+	}
+	option := WithMappings(mappings...)
+	mappings[0] = MapStream(1, stream.ID("changed"), 0)
+	request, err := New([]Input{input, input}, []Output{output, output}, graph, option)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := request.Mappings()
+	want := []Mapping{
+		MapStream(0, stream.ID("a"), 0),
+		MapStream(0, stream.ID("b"), 1),
+		MapStream(1, stream.ID("z"), 0),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("mapping count = %d, want %d", len(got), len(want))
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("mapping[%d] = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+	got[0] = MapStream(0, stream.ID("changed"), 0)
+	if request.Mappings()[0] != want[0] {
+		t.Fatal("Job exposed mutable mapping storage")
+	}
+}
+
+func TestJobRejectsDuplicateAndOutOfRangeMappings(t *testing.T) {
+	inputReference, _ := access.Parse("file:///input")
+	outputReference, _ := access.Parse("file:///output")
+	input, _ := InputFromReference(inputReference)
+	output, _ := OutputToReference(outputReference)
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mappings := range map[string][]Mapping{
+		"duplicate":    {MapStream(0, stream.ID("audio"), 0), MapStream(0, stream.ID("audio"), 0)},
+		"input range":  {MapStream(1, stream.ID("audio"), 0)},
+		"output range": {MapStream(0, stream.ID("audio"), 1)},
+		"invalid":      {MapStream(0, stream.ID(""), 0)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New([]Input{input}, []Output{output}, graph, WithMappings(mappings...)); err == nil {
+				t.Fatal("invalid mappings were accepted")
+			}
+		})
 	}
 }
 

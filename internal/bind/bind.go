@@ -45,7 +45,6 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	graph, hasGraph := request.Graph()
 	nodes := graph.Nodes()
 	edges := graph.Edges()
-	mappings := graph.Mappings()
 	var openInputs []openInput
 	var openOutputs []job.Port
 	if hasGraph {
@@ -118,11 +117,12 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	}
 	entries = selectedEntries
 
-	normalizedGraph, err := job.NewGraph(nodes, edges, mappings...)
+	normalizedGraph, err := job.NewGraph(nodes, edges)
 	if err != nil {
 		return Result{}, err
 	}
-	normalized, err := job.New(inputs, outputs, normalizedGraph, job.WithPolicy(request.Policy()), job.WithBudget(request.Budget()))
+	normalized, err := job.New(inputs, outputs, normalizedGraph,
+		job.WithMappings(request.Mappings()...), job.WithPolicy(request.Policy()), job.WithBudget(request.Budget()))
 	if err != nil {
 		return Result{}, err
 	}

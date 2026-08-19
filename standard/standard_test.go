@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/mp4"
@@ -168,6 +169,24 @@ func TestNewFileJobForwardsPolicyAndBudget(t *testing.T) {
 	}
 	if request.Policy() != policy || request.Budget() != budget {
 		t.Fatalf("file job policy/budget = %#v, %#v", request.Policy(), request.Budget())
+	}
+}
+
+func TestNewFileJobForwardsMappings(t *testing.T) {
+	values := []job.Mapping{job.MapStream(0, stream.ID("video"), 0)}
+	option := standard.WithMappings(values...)
+	values[0] = job.MapStream(0, stream.ID("changed"), 0)
+	request, err := standard.NewFileJob(
+		"input.mp4",
+		"output.mp4",
+		option,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := request.Mappings()
+	if len(mappings) != 1 || mappings[0].Stream() != stream.ID("video") {
+		t.Fatalf("file job mappings = %#v", mappings)
 	}
 }
 

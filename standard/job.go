@@ -10,14 +10,16 @@ import (
 type FileJobOption func(*fileJobOptions)
 
 type fileJobOptions struct {
-	input     job.FormatSelector
-	inputSet  bool
-	output    job.FormatSelector
-	outputSet bool
-	policy    job.Policy
-	policySet bool
-	budget    job.Budget
-	budgetSet bool
+	input       job.FormatSelector
+	inputSet    bool
+	output      job.FormatSelector
+	outputSet   bool
+	mappings    []job.Mapping
+	mappingsSet bool
+	policy      job.Policy
+	policySet   bool
+	budget      job.Budget
+	budgetSet   bool
 }
 
 // WithInputFormat supplies an explicit input Format hint and optional config.
@@ -33,6 +35,15 @@ func WithOutputFormat(selector job.FormatSelector) FileJobOption {
 	return func(options *fileJobOptions) {
 		options.output = selector
 		options.outputSet = true
+	}
+}
+
+// WithMappings supplies exact stream mappings for the file request.
+func WithMappings(values ...job.Mapping) FileJobOption {
+	snapshot := append([]job.Mapping(nil), values...)
+	return func(options *fileJobOptions) {
+		options.mappings = append([]job.Mapping(nil), snapshot...)
+		options.mappingsSet = true
 	}
 }
 
@@ -82,6 +93,9 @@ func NewFileJob(inputPath, outputPath string, values ...FileJobOption) (job.Job,
 	}
 	if options.budgetSet {
 		jobOptions = append(jobOptions, job.WithBudget(options.budget))
+	}
+	if options.mappingsSet {
+		jobOptions = append(jobOptions, job.WithMappings(options.mappings...))
 	}
 	return surface.FileJob(inputPath, inputReference, outputPath, outputReference, input, output, jobOptions...)
 }

@@ -22,7 +22,7 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, result searchResult) 
 		}
 	}
 	if len(result.path) == 0 {
-		updated, err := job.NewGraph(nodes, current.Edges(), current.Mappings()...)
+		updated, err := job.NewGraph(nodes, current.Edges())
 		if err != nil {
 			return job.Graph{}, err
 		}
@@ -79,7 +79,7 @@ func (p *planner) insert(current job.Graph, gap graph.Gap, result searchResult) 
 	newEdgeAnnotations[edgeKey(last)] = annotation{origin: plan.Automatic, reason: gap.Need().Code()}
 	nodes = append(nodes, newNodes...)
 	kept = append(kept, newEdges...)
-	updated, err := job.NewGraph(nodes, kept, current.Mappings()...)
+	updated, err := job.NewGraph(nodes, kept)
 	if err != nil {
 		return job.Graph{}, err
 	}

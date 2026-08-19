@@ -80,11 +80,12 @@ func insertFormat(request job.Job, boundary plan.Boundary, component plugin.Comp
 		inserted = []job.Edge{first, second}
 	}
 
-	updatedGraph, err := job.NewGraph(nodes, edges, requested.Mappings()...)
+	updatedGraph, err := job.NewGraph(nodes, edges)
 	if err != nil {
 		return formatInsertion{}, err
 	}
-	updated, err := job.New(request.Inputs(), request.Outputs(), updatedGraph, job.WithPolicy(request.Policy()), job.WithBudget(request.Budget()))
+	updated, err := job.New(request.Inputs(), request.Outputs(), updatedGraph,
+		job.WithMappings(request.Mappings()...), job.WithPolicy(request.Policy()), job.WithBudget(request.Budget()))
 	if err != nil {
 		return formatInsertion{}, err
 	}

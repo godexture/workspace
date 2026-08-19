@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/buffer"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -189,6 +190,41 @@ func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 	}
 	if readPorts != 2 || writePorts != 2 {
 		t.Fatalf("directional carrier ports = read %d, write %d", readPorts, writePorts)
+	}
+}
+
+func TestNormalizePreservesJobMappingsDuringBoundaryRebuild(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.SequentialRead)
+	sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+	source, transform, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, boundaryAcquire(sourceCapabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, boundaryAcquire(sinkCapabilities))},
+	)
+	instance, err := New(Plugins(plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputReference, _ := access.Parse("memory:input")
+	outputReference, _ := access.Parse("memory:output")
+	input, _ := job.InputFromReference(inputReference)
+	output, _ := job.OutputToReference(outputReference)
+	graph, err := boundaryGraph(transform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := job.MapStream(0, stream.ID("boundary"), 0)
+	request, err := job.New([]job.Input{input}, []job.Output{output}, graph, job.WithMappings(mapping))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := bind.Normalize(instance.bindings, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := normalized.Request().Mappings()
+	if len(got) != 1 || got[0] != mapping {
+		t.Fatalf("normalized Job mappings = %#v, want %#v", got, []job.Mapping{mapping})
 	}
 }
 
