@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -145,6 +146,59 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	}
 	if _, ok := InspectionOf[prepared](compileContext, other); ok {
 		t.Fatal("inspection accepted a different Format")
+	}
+}
+
+func TestSelectionIsFormatBoundImmutableAndCanonical(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := Define[fixtureOtherFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []stream.ID{"video", "audio"}
+	selection, err := NewSelection(value, ids...)
+	if err != nil || !selection.Valid() {
+		t.Fatalf("selection = %#v, %v", selection, err)
+	}
+	ids[0] = "changed"
+	if got := selection.Streams(); !slices.Equal(got, []stream.ID{"audio", "video"}) {
+		t.Fatalf("canonical streams = %#v", got)
+	}
+	streams := selection.Streams()
+	streams[0] = "changed"
+	if selection.Streams()[0] != "audio" {
+		t.Fatal("Selection exposed mutable stream storage")
+	}
+	for name, ids := range map[string][]stream.ID{
+		"empty":     nil,
+		"zero":      {"audio", ""},
+		"duplicate": {"audio", "audio"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewSelection(value, ids...); err == nil {
+				t.Fatal("invalid selection was accepted")
+			}
+		})
+	}
+	if _, err := NewSelection(Format{}, stream.ID("audio")); err == nil {
+		t.Fatal("selection for invalid Format was accepted")
+	}
+	context, err := WithSelection(plugin.CompileContext{}, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := SelectionOf(context, value)
+	if !ok || !slices.Equal(got.Streams(), []stream.ID{"audio", "video"}) || got.Format().Identity() != value.Identity() {
+		t.Fatalf("selection context = %#v/%v", got, ok)
+	}
+	if _, ok := SelectionOf(context, other); ok {
+		t.Fatal("selection accepted a different Format")
+	}
+	if _, ok := SelectionOf(plugin.CompileContext{}, value); ok {
+		t.Fatal("missing selection did not retain preserve-all distinction")
 	}
 }
 
