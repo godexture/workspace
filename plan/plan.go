@@ -60,6 +60,7 @@ func (p Plan) ExecutionSignature() Fingerprint { return p.execution }
 func (p Plan) Description() Description        { return cloneDescription(p.description) }
 func (p Plan) Nodes() []Node                   { return p.Description().Nodes }
 func (p Plan) Edges() []Edge                   { return p.Description().Edges }
+func (p Plan) Mappings() []Mapping             { return append([]Mapping(nil), p.description.Mappings...) }
 func (p Plan) RequestedPolicy() job.Policy     { return p.description.RequestedPolicy }
 func (p Plan) EffectivePolicy() job.Policy     { return p.description.EffectivePolicy }
 func (p Plan) Budget() job.Budget              { return p.description.Budget }
@@ -146,6 +147,22 @@ func validate(description Description) error {
 			return errors.New("plan boundary port is absent or has the wrong direction")
 		}
 	}
+	seenMappings := make(map[Mapping]struct{}, len(description.Mappings))
+	for _, mapping := range description.Mappings {
+		if !mapping.Valid() {
+			return errors.New("plan contains an invalid mapping")
+		}
+		if _, exists := seenMappings[mapping]; exists {
+			return errors.New("plan contains duplicate mappings")
+		}
+		seenMappings[mapping] = struct{}{}
+		if _, exists := seenBoundaries[[2]int{int(InputBoundary), mapping.Input}]; !exists {
+			return errors.New("plan mapping input boundary is absent")
+		}
+		if _, exists := seenBoundaries[[2]int{int(OutputBoundary), mapping.Output}]; !exists {
+			return errors.New("plan mapping output boundary is absent")
+		}
+	}
 	if err := validateScratch(description); err != nil {
 		return err
 	}
@@ -227,6 +244,7 @@ type canonicalExecution struct {
 	Platform   Platform
 	Nodes      []canonicalNode
 	Edges      []Edge
+	Mappings   []Mapping
 	Boundaries []canonicalBoundary
 	Runtime    Runtime
 	Scratch    Scratch
@@ -265,6 +283,7 @@ type canonicalPlan struct {
 	RequestedPolicy job.Policy
 	Budget          job.Budget
 	Usage           Usage
+	Mappings        []Mapping
 	Origins         []Origin
 	Reasons         []string
 	EdgeOrigins     []Origin
@@ -315,7 +334,7 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Ownership:            boundary.Ownership,
 		}
 	}
-	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime), Scratch: description.Scratch}
+	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Mappings: append([]Mapping(nil), description.Mappings...), Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime), Scratch: description.Scratch}
 }
 
 func canonicalSpoolOf(value access.SpoolSpec) canonicalSpool {
@@ -419,6 +438,7 @@ func canonicalPlanOf(description Description, execution Fingerprint) canonicalPl
 		RequestedPolicy: description.RequestedPolicy,
 		Budget:          description.Budget,
 		Usage:           description.Usage,
+		Mappings:        append([]Mapping(nil), description.Mappings...),
 		Origins:         make([]Origin, len(description.Nodes)),
 		Reasons:         make([]string, len(description.Nodes)),
 		EdgeOrigins:     make([]Origin, len(description.Edges)),

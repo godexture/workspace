@@ -98,6 +98,7 @@ type Description struct {
 	Platform           Platform
 	Nodes              []Node
 	Edges              []Edge
+	Mappings           []Mapping
 	Boundaries         []Boundary
 	Runtime            Runtime
 	Scratch            Scratch
@@ -119,6 +120,7 @@ func cloneDescription(description Description) Description {
 		description.Nodes[index] = cloneNode(description.Nodes[index])
 	}
 	description.Edges = append([]Edge(nil), description.Edges...)
+	description.Mappings = append([]Mapping(nil), description.Mappings...)
 	description.Boundaries = append([]Boundary(nil), description.Boundaries...)
 	for index := range description.Boundaries {
 		description.Boundaries[index] = cloneBoundary(description.Boundaries[index])
