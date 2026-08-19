@@ -195,7 +195,7 @@ func TestMP4ProbeNeedsMatchesAndRejects(t *testing.T) {
 	}
 }
 
-func TestInspectMP4UsesLimitsAndRejectsMultipleDescriptions(t *testing.T) {
+func TestInspectMP4UsesLimitsAndRetainsTrackDescriptions(t *testing.T) {
 	data := twoTrackMovie(false, "isom", "iso2")
 	_, err := inspectMP4(mediaformat.NewInspectContext(t.Context(), movieSourceOpening(t, data), plugin.CompileContext{}, 8, 1<<20))
 	if !errors.Is(err, ErrUnsupported) {
@@ -203,9 +203,9 @@ func TestInspectMP4UsesLimitsAndRejectsMultipleDescriptions(t *testing.T) {
 	}
 	multiple := fixtureTrack{id: 1, timeScale: 1000, handler: "vide", entryType: "avc1", descriptions: 2, size: 1, sttsExtra: []fixtureTiming{{count: 1, duration: 1}}}
 	data = fixtureMovie(false, "isom", []string{"iso2"}, []fixtureTrack{multiple}, nil, nil)
-	_, err = inspectMP4(mediaformat.NewInspectContext(t.Context(), movieSourceOpening(t, data), plugin.CompileContext{}, 1<<20, 1<<20))
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("multi-description inspection error = %v", err)
+	inspection, err := inspectMP4(mediaformat.NewInspectContext(t.Context(), movieSourceOpening(t, data), plugin.CompileContext{}, 1<<20, 1<<20))
+	if err != nil || !inspection.Valid() {
+		t.Fatalf("multi-description inspection = %#v, %v", inspection, err)
 	}
 }
 

@@ -147,11 +147,15 @@ func (m movie) valid() bool {
 		return false
 	}
 	for _, track := range m.tracks {
-		if track.id == 0 || track.timeScale == 0 || track.descriptionCount == 0 || track.tables.timing.typeID != typeSTTS || track.tables.layout.typeID != typeSTSC || track.tables.sizes.typeID != typeSTSZ && track.tables.sizes.typeID != typeSTZ2 || track.tables.offsets.typeID != typeSTCO && track.tables.offsets.typeID != typeCO64 {
+		if !track.valid() {
 			return false
 		}
 	}
 	return true
+}
+
+func (t track) valid() bool {
+	return t.id != 0 && t.timeScale != 0 && t.descriptionCount != 0 && t.tables.timing.typeID == typeSTTS && t.tables.layout.typeID == typeSTSC && (t.tables.sizes.typeID == typeSTSZ || t.tables.sizes.typeID == typeSTZ2) && (t.tables.offsets.typeID == typeSTCO || t.tables.offsets.typeID == typeCO64)
 }
 
 const trackBudgetBytes = uint64(unsafe.Sizeof(track{}))

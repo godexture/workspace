@@ -30,7 +30,7 @@ func inspectMP4(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) 
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
-	if err := validateDemuxMovie(value); err != nil {
+	if err := validateInspectedMovie(value); err != nil {
 		return mediaformat.Inspection{}, err
 	}
 	return mediaformat.NewInspection(MP4(), value), nil

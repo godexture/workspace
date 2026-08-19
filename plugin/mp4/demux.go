@@ -17,7 +17,7 @@ import (
 
 type demuxer struct {
 	shape   flow.Shape
-	movie   movie
+	tracks  []demuxTrack
 	reader  access.Random
 	buffers *buffer.Allocator
 	items   []flow.Item[packet.Packet]
@@ -29,7 +29,7 @@ type demuxer struct {
 }
 
 func openDemuxer(ctx plugin.OpenContext, plan demuxPlan) (*demuxer, error) {
-	if !plan.shape.Equal(demuxerShape()) || validateDemuxMovie(plan.movie) != nil {
+	if !validDemuxPlan(plan) {
 		return nil, fmt.Errorf("%w: MP4 demux plan is invalid", ErrMalformed)
 	}
 	if ctx.Buffers() == nil {
@@ -51,22 +51,38 @@ func openDemuxer(ctx plugin.OpenContext, plan demuxPlan) (*demuxer, error) {
 	if err != nil {
 		return nil, err
 	}
-	if size < 0 || uint64(size) != plan.movie.sourceEnd {
+	if size < 0 || uint64(size) != plan.sourceEnd {
 		return nil, fmt.Errorf("%w: MP4 source size changed after inspection", ErrMalformed)
 	}
 	return &demuxer{
 		shape:   plan.shape.Clone(),
-		movie:   plan.movie,
+		tracks:  plan.tracks,
 		reader:  reader,
 		buffers: ctx.Buffers(),
-		items:   make([]flow.Item[packet.Packet], len(plan.movie.tracks)),
+		items:   make([]flow.Item[packet.Packet], len(plan.tracks)),
 	}, nil
+}
+
+func validDemuxPlan(plan demuxPlan) bool {
+	if !plan.shape.Equal(demuxerShape()) || plan.sourceEnd == 0 || len(plan.tracks) == 0 {
+		return false
+	}
+	previous := -1
+	for _, selected := range plan.tracks {
+		if selected.inspectionIndex <= previous || validateDemuxTrack(selected.value) != nil {
+			return false
+		}
+		previous = selected.inspectionIndex
+	}
+	return true
 }
 
 func (d *demuxer) Ports() flow.Shape { return d.shape.Clone() }
 func (d *demuxer) Close() error {
 	d.reader = nil
 	d.buffers = nil
+	d.tracks = nil
+	d.items = nil
 	d.cursor = sampleCursor{}
 	return nil
 }
@@ -82,9 +98,9 @@ func (d *demuxer) Read(ctx context.Context, output flow.RoutedEmitter[packet.Pac
 		d.failure = err
 		return err
 	}
-	for d.track < len(d.movie.tracks) {
+	for d.track < len(d.tracks) {
 		if !d.ready {
-			cursor, err := newSampleCursor(ctx, d.reader, d.movie.tracks[d.track])
+			cursor, err := newSampleCursor(ctx, d.reader, d.tracks[d.track].value)
 			if err != nil {
 				d.failure = err
 				return err

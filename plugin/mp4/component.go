@@ -17,8 +17,14 @@ import (
 )
 
 type demuxPlan struct {
-	shape flow.Shape
-	movie movie
+	shape     flow.Shape
+	sourceEnd uint64
+	tracks    []demuxTrack
+}
+
+type demuxTrack struct {
+	inspectionIndex int
+	value           track
 }
 
 func demuxerShape() flow.Shape {
@@ -39,7 +45,8 @@ func demuxerComponent() plugin.Component {
 					"mp4.inspection", diagnostic.ErrorSeverity, diagnostic.Path{}, "MP4 demuxer requires a prepared movie inspection", nil,
 				))
 			}
-			return compileDemux(shape, inspected)
+			selection, selected := mediaformat.SelectionOf(ctx, MP4())
+			return compileDemux(shape, inspected, selection, selected)
 		},
 		Open: func(ctx plugin.OpenContext, plan demuxPlan) (flow.Operator, error) {
 			return openDemuxer(ctx, plan)
@@ -52,13 +59,23 @@ func demuxerComponent() plugin.Component {
 	)
 }
 
-func compileDemux(shape flow.Shape, inspected movie) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
-	if err := validateDemuxMovie(inspected); err != nil {
+func compileDemux(shape flow.Shape, inspected movie, selection mediaformat.Selection, selected bool) (plugin.Compiled[demuxPlan, stream.Descriptor], error) {
+	if err := validateInspectedMovie(inspected); err != nil {
 		return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 	}
-	outputs := make([]flow.PortDescriptor[stream.Descriptor], 0, len(inspected.tracks))
+	tracks, err := selectDemuxTracks(inspected, selection, selected)
+	if err != nil {
+		return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+	}
+	for _, selectedTrack := range tracks {
+		if err := validateDemuxTrack(selectedTrack.value); err != nil {
+			return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+		}
+	}
+	outputs := make([]flow.PortDescriptor[stream.Descriptor], 0, len(tracks))
 	memory := resource.Bytes(1)
-	for _, value := range inspected.tracks {
+	for _, selectedTrack := range tracks {
+		value := selectedTrack.value
 		properties, err := codec.WithTag(property.New(), SampleEntryTag(string(value.codec[:])))
 		if err != nil {
 			return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
@@ -73,21 +90,65 @@ func compileDemux(shape flow.Shape, inspected movie) (plugin.Compiled[demuxPlan,
 		}
 	}
 	return plugin.Compiled[demuxPlan, stream.Descriptor]{
-		Plan:      demuxPlan{shape: shape.Clone(), movie: inspected},
+		Plan:      demuxPlan{shape: shape.Clone(), sourceEnd: inspected.sourceEnd, tracks: tracks},
 		Outputs:   flow.NewDescriptors(outputs...),
 		Effects:   []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-demux"}},
 		Resources: resource.Request{Memory: memory},
 	}, nil
 }
 
-func validateDemuxMovie(value movie) error {
+func selectDemuxTracks(inspected movie, selection mediaformat.Selection, selected bool) ([]demuxTrack, error) {
+	if !selected {
+		result := make([]demuxTrack, len(inspected.tracks))
+		for index, value := range inspected.tracks {
+			result[index] = demuxTrack{inspectionIndex: index, value: value}
+		}
+		return result, nil
+	}
+	if !selection.Valid() || selection.Format().Identity() != MP4().Identity() {
+		return nil, fmt.Errorf("%w: MP4 stream selection is invalid", ErrUnsupported)
+	}
+	ids := selection.Streams()
+	wanted := make(map[stream.ID]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	result := make([]demuxTrack, 0, len(wanted))
+	for index, value := range inspected.tracks {
+		id := trackStreamID(value.id)
+		if _, ok := wanted[id]; !ok {
+			continue
+		}
+		result = append(result, demuxTrack{inspectionIndex: index, value: value})
+		delete(wanted, id)
+	}
+	if len(wanted) != 0 {
+		for _, id := range ids {
+			if _, missing := wanted[id]; missing {
+				return nil, fmt.Errorf("%w: selected stream %q is absent from MP4 inspection", ErrUnsupported, id)
+			}
+		}
+		return nil, fmt.Errorf("%w: MP4 stream selection cannot be represented", ErrUnsupported)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("%w: MP4 stream selection is empty", ErrUnsupported)
+	}
+	return result, nil
+}
+
+func validateInspectedMovie(value movie) error {
 	if !value.valid() {
 		return fmt.Errorf("%w: MP4 inspection is invalid", ErrMalformed)
 	}
-	for _, track := range value.tracks {
-		if track.descriptionCount != 1 {
-			return fmt.Errorf("%w: track %d has %d sample descriptions", ErrUnsupported, track.id, track.descriptionCount)
-		}
+	return nil
+}
+
+func validateDemuxTrack(value track) error {
+	if !value.valid() {
+		return fmt.Errorf("%w: MP4 track model is invalid", ErrMalformed)
+	}
+	if value.descriptionCount != 1 {
+		return fmt.Errorf("%w: track %d has %d sample descriptions", ErrUnsupported, value.id, value.descriptionCount)
 	}
 	return nil
 }

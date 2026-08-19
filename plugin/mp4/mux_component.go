@@ -102,8 +102,13 @@ func compileMux(shape flow.Shape, inputs []stream.Descriptor, inspected movie) (
 }
 
 func validateMuxMovie(value movie) error {
-	if err := validateDemuxMovie(value); err != nil {
+	if err := validateInspectedMovie(value); err != nil {
 		return err
+	}
+	for _, track := range value.tracks {
+		if err := validateDemuxTrack(track); err != nil {
+			return err
+		}
 	}
 	if value.totalSampleBytes != value.media.payloadSize {
 		return fmt.Errorf("%w: mdat payload %d does not exactly match %d referenced sample bytes", ErrUnsupported, value.media.payloadSize, value.totalSampleBytes)
