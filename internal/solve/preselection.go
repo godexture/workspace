@@ -20,13 +20,28 @@ type SelectedEdge struct {
 	Reason string
 }
 
+// SelectedFormat identifies the Format component Host resolved at one Job
+// boundary. Keeping this fact explicit avoids rediscovering boundary topology
+// after solver insertion.
+type SelectedFormat struct {
+	Direction plan.BoundaryDirection
+	Choice    int
+	Node      job.NodeID
+}
+
 // Preselection carries only Format choices made before solver gap filling.
 // It is internal so caller-owned Job nodes remain explicitly requested.
 type Preselection struct {
 	nodes    map[job.NodeID]selectedNode
 	edges    map[string]string
+	formats  map[formatBoundary]job.NodeID
 	warnings []string
 	usage    plan.Usage
+}
+
+type formatBoundary struct {
+	direction plan.BoundaryDirection
+	choice    int
 }
 
 type selectedNode struct {
@@ -34,10 +49,11 @@ type selectedNode struct {
 	inferConfig bool
 }
 
-func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []string, usage plan.Usage) (Preselection, error) {
+func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, formats []SelectedFormat, warnings []string, usage plan.Usage) (Preselection, error) {
 	result := Preselection{
 		nodes:    make(map[job.NodeID]selectedNode, len(nodes)),
 		edges:    make(map[string]string, len(edges)),
+		formats:  make(map[formatBoundary]job.NodeID, len(formats)),
 		warnings: append([]string(nil), warnings...),
 		usage:    usage,
 	}
@@ -62,6 +78,16 @@ func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []stri
 		}
 		result.edges[key] = value.Reason
 	}
+	for _, value := range formats {
+		if !value.Direction.Valid() || value.Choice < 0 || !value.Node.Valid() {
+			return Preselection{}, errors.New("preselected Format requires a boundary and node identity")
+		}
+		key := formatBoundary{direction: value.Direction, choice: value.Choice}
+		if _, exists := result.formats[key]; exists {
+			return Preselection{}, errors.New("preselected Format boundary is repeated")
+		}
+		result.formats[key] = value.Node
+	}
 	for _, warning := range result.warnings {
 		if strings.TrimSpace(warning) == "" {
 			return Preselection{}, errors.New("preselection warning must not be empty")
@@ -71,7 +97,7 @@ func NewPreselection(nodes []SelectedNode, edges []SelectedEdge, warnings []stri
 	return result, nil
 }
 
-func (s Preselection) validFor(graph job.Graph) bool {
+func (s Preselection) validFor(graph job.Graph, boundaries []plan.Boundary) bool {
 	nodes := make(map[job.NodeID]struct{}, len(graph.Nodes()))
 	for _, node := range graph.Nodes() {
 		nodes[node.ID()] = struct{}{}
@@ -87,6 +113,18 @@ func (s Preselection) validFor(graph job.Graph) bool {
 	}
 	for key := range s.edges {
 		if _, ok := edges[key]; !ok {
+			return false
+		}
+	}
+	boundaryKeys := make(map[formatBoundary]struct{}, len(boundaries))
+	for _, boundary := range boundaries {
+		boundaryKeys[formatBoundary{direction: boundary.Direction, choice: boundary.Choice}] = struct{}{}
+	}
+	for key, id := range s.formats {
+		if _, ok := nodes[id]; !ok {
+			return false
+		}
+		if _, ok := boundaryKeys[key]; !ok {
 			return false
 		}
 	}

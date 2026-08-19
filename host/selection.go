@@ -24,6 +24,7 @@ type inputSelection struct {
 	contexts  graph.CompileContexts
 	nodes     []solve.SelectedNode
 	edges     []solve.SelectedEdge
+	formats   []solve.SelectedFormat
 	warnings  []string
 	usage     plan.Usage
 }

@@ -77,7 +77,11 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	preselection, err := solve.NewPreselection(selection.nodes, selection.edges, selection.warnings, selection.usage)
+	selection, err = h.prepareMappings(selection)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	preselection, err := solve.NewPreselection(selection.nodes, selection.edges, selection.formats, selection.warnings, selection.usage)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}

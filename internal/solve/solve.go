@@ -37,6 +37,7 @@ type planner struct {
 	environment string
 	nodes       map[job.NodeID]annotation
 	edges       map[string]annotation
+	formats     map[formatBoundary]job.NodeID
 	bound       bound.State
 	contexts    graph.CompileContexts
 	warnings    []string
@@ -71,7 +72,7 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 	if !ok {
 		return program.Program{}, solveDiagnostic("solve.binding-unavailable", nil, plan.Usage{}, request.Budget(), "binding", nil)
 	}
-	if !selected.validFor(requested) {
+	if !selected.validFor(requested, boundaries.Projections()) {
 		return program.Program{}, solveDiagnostic("solve.invalid-request", nil, selected.usage, request.Budget(), "preselection", nil)
 	}
 	if err := validateRequestedContracts(index, requested, request.Policy(), platform); err != nil {
@@ -89,10 +90,14 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 		cache:    make(compileCache),
 		nodes:    make(map[job.NodeID]annotation),
 		edges:    make(map[string]annotation),
+		formats:  make(map[formatBoundary]job.NodeID, len(selected.formats)),
 		bound:    boundaries,
 		contexts: contexts,
 		usage:    selected.usage,
 		warnings: append([]string(nil), selected.warnings...),
+	}
+	for boundary, node := range selected.formats {
+		p.formats[boundary] = node
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)

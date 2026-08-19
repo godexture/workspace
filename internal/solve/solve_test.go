@@ -161,7 +161,7 @@ func TestResolveInfersAutomaticNodeConfigWithoutBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestResolveAutomaticFixedWriterKeepsPreparedContextAcrossBridgeAndConfigInf
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestResolveInfersAutomaticManyNodeConfigFromWholeInputSequence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestResolveRanksAutomaticFixedConfigsByCompilation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestResolveDoesNotInferConfiguredAutomaticNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestResolveRejectsForbiddenAutomaticFixedEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, plan.Usage{})
+	selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output", InferConfig: true}}, nil, nil, nil, plan.Usage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,7 @@ func TestResolveRejectsDefaultAutomaticFixedCompilation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, plan.Usage{})
+			selected, err := NewPreselection([]SelectedNode{{ID: "writer", Reason: "format.output"}}, nil, nil, nil, plan.Usage{})
 			if err != nil {
 				t.Fatal(err)
 			}

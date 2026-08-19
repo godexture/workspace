@@ -13,6 +13,10 @@ import (
 )
 
 func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
+	mappings, err := p.projectMappings(compiled)
+	if err != nil {
+		return program.Program{}, err
+	}
 	description := plan.Description{
 		RequestedPolicy:    p.request.Policy(),
 		EffectivePolicy:    p.policy,
@@ -21,6 +25,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		CatalogFingerprint: catalogFingerprint(p.index),
 		Platform:           p.platform,
 		Boundaries:         p.bound.Projections(),
+		Mappings:           mappings,
 		Warnings:           append([]string(nil), p.warnings...),
 	}
 	for _, node := range compiled.Nodes() {
