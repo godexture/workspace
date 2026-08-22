@@ -14,6 +14,20 @@ type mp4FixtureTrack struct {
 	// channels is non-zero for a sample entry that carries the AudioSampleEntry
 	// fields, so the track describes 16-bit linear PCM at timeScale.
 	channels uint16
+	// samples repeats payload that many times in one chunk. Zero means one
+	// sample, so a track that only needs a single payload says nothing.
+	samples uint32
+}
+
+func (t mp4FixtureTrack) sampleCount() uint32 {
+	if t.samples == 0 {
+		return 1
+	}
+	return t.samples
+}
+
+func (t mp4FixtureTrack) mediaBytes() uint64 {
+	return uint64(t.sampleCount()) * uint64(len(t.payload))
 }
 
 func mp4TwoTrackFixture() []byte {
@@ -53,12 +67,14 @@ func mp4FixtureOrdered(tracks []mp4FixtureTrack, order []int) []byte {
 	position := mediaStart
 	for _, index := range order {
 		tracks[index].offset = int32(position)
-		position += uint64(len(tracks[index].payload))
+		position += tracks[index].mediaBytes()
 	}
 	moov = mp4FixtureMoov(tracks)
 	media := make([]byte, 0, position-mediaStart)
 	for _, index := range order {
-		media = append(media, tracks[index].payload...)
+		for range tracks[index].sampleCount() {
+			media = append(media, tracks[index].payload...)
+		}
 	}
 	return append(append(fileType, moov...), mp4FixtureBox("mdat", media)...)
 }
@@ -104,11 +120,11 @@ func mp4FixtureTrackBox(track mp4FixtureTrack) []byte {
 			mp4FixtureBox("hdlr", hdlr),
 			mp4FixtureContainer("minf", mediaHeader, mp4FixtureDINF(), mp4FixtureContainer("stbl",
 				mp4FixtureSTSD(track),
-				mp4FixtureSTTS(track.duration),
-				mp4FixtureSTSC(),
-				mp4FixtureSTSZ(uint32(len(track.payload))),
+				mp4FixtureSTTS(track.duration, track.sampleCount()),
+				mp4FixtureSTSC(track.sampleCount()),
+				mp4FixtureSTSZ(uint32(len(track.payload)), track.sampleCount()),
 				mp4FixtureSTCO(uint32(track.offset)),
-				mp4FixtureCTTS(track.composition),
+				mp4FixtureCTTS(track.composition, track.sampleCount()),
 			)),
 		),
 	)
@@ -135,39 +151,28 @@ func mp4FixtureSTSD(track mp4FixtureTrack) []byte {
 	return mp4FixtureBox("stsd", payload)
 }
 
-func mp4FixtureSTTS(duration uint32) []byte {
-	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(1))
-	payload = append(payload, mp4FixtureU32(1)...)
-	payload = append(payload, mp4FixtureU32(duration)...)
-	return mp4FixtureBox("stts", payload)
+func mp4FixtureSTTS(duration, samples uint32) []byte {
+	return mp4FixtureBox("stts", mp4FixtureTable(mp4FixtureU32(samples), mp4FixtureU32(duration)))
 }
 
-func mp4FixtureSTSC() []byte {
-	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(1))
-	payload = append(payload, mp4FixtureU32(1)...)
-	payload = append(payload, mp4FixtureU32(1)...)
-	payload = append(payload, mp4FixtureU32(1)...)
-	return mp4FixtureBox("stsc", payload)
+func mp4FixtureSTSC(samples uint32) []byte {
+	return mp4FixtureBox("stsc", mp4FixtureTable(mp4FixtureU32(1), mp4FixtureU32(samples), mp4FixtureU32(1)))
 }
 
-func mp4FixtureSTSZ(size uint32) []byte {
-	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(size))
-	payload = append(payload, mp4FixtureU32(1)...)
-	return mp4FixtureBox("stsz", payload)
+func mp4FixtureSTSZ(size, samples uint32) []byte {
+	return mp4FixtureBox("stsz", append(mp4FixtureFullBox(0, 0, mp4FixtureU32(size)), mp4FixtureU32(samples)...))
 }
 
 func mp4FixtureSTCO(offset uint32) []byte {
-	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(1))
-	payload = append(payload, mp4FixtureU32(offset)...)
-	return mp4FixtureBox("stco", payload)
+	return mp4FixtureBox("stco", mp4FixtureTable(mp4FixtureU32(offset)))
 }
 
-func mp4FixtureCTTS(offset int32) []byte {
+func mp4FixtureCTTS(offset int32, samples uint32) []byte {
 	if offset == 0 {
 		return nil
 	}
 	payload := mp4FixtureFullBox(1, 0, mp4FixtureU32(1))
-	payload = append(payload, mp4FixtureU32(1)...)
+	payload = append(payload, mp4FixtureU32(samples)...)
 	payload = append(payload, mp4FixtureU32(uint32(offset))...)
 	return mp4FixtureBox("ctts", payload)
 }
@@ -205,37 +210,20 @@ func mp4FixtureU32(value uint32) []byte {
 // chunk. Every sample table stays a fixed size, so anything that grows with the
 // sample count is the reader's own state rather than the file's.
 func mp4ManySampleFixture(count uint32) []byte {
-	track := mp4FixtureTrack{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1"}
-	build := func(offset uint32) []byte {
-		stbl := mp4FixtureContainer("stbl",
-			mp4FixtureSTSD(track),
-			mp4FixtureBox("stts", mp4FixtureTable(mp4FixtureU32(count), mp4FixtureU32(1))),
-			mp4FixtureBox("stsc", mp4FixtureTable(mp4FixtureU32(1), mp4FixtureU32(count), mp4FixtureU32(1))),
-			mp4FixtureBox("stsz", append(mp4FixtureFullBox(0, 0, mp4FixtureU32(1)), mp4FixtureU32(count)...)),
-			mp4FixtureBox("stco", mp4FixtureTable(mp4FixtureU32(offset))),
-		)
-		tkhd := make([]byte, 84)
-		binary.BigEndian.PutUint32(tkhd[12:16], track.id)
-		mdhd := make([]byte, 24)
-		binary.BigEndian.PutUint32(mdhd[12:16], track.timeScale)
-		hdlr := make([]byte, 24)
-		copy(hdlr[8:12], track.handler)
-		trak := mp4FixtureContainer("trak",
-			mp4FixtureBox("tkhd", tkhd),
-			mp4FixtureContainer("mdia",
-				mp4FixtureBox("mdhd", mdhd),
-				mp4FixtureBox("hdlr", hdlr),
-				mp4FixtureContainer("minf", mp4FixtureBox("vmhd", make([]byte, 12)), mp4FixtureDINF(), stbl),
-			),
-		)
-		return mp4FixtureContainer("moov", mp4FixtureMVHD(), trak)
-	}
-	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
-	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
-	fileType := mp4FixtureBox("ftyp", fileTypePayload)
-	moov := build(0)
-	moov = build(uint32(len(fileType) + len(moov) + 8))
-	return append(append(fileType, moov...), mp4FixtureBox("mdat", make([]byte, int(count)))...)
+	return mp4Fixture([]mp4FixtureTrack{
+		{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 1, payload: []byte{0}, samples: count},
+	})
+}
+
+// mp4ManySampleTwoTrackFixture is the ordinary shape of a real movie: more than
+// one track, and more than one sample in each. A remux only stays correct here
+// while every sample of a track reaches the muxer before the next track starts,
+// so this is the fixture that notices when the routes are reordered on the way.
+func mp4ManySampleTwoTrackFixture(count uint32) []byte {
+	return mp4Fixture([]mp4FixtureTrack{
+		{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 40, payload: []byte{0xde, 0xad}, samples: count},
+		{id: 2, timeScale: 48_000, handler: "soun", entry: "zzzz", duration: 1024, payload: []byte{0xca, 0xfe, 0xba}, samples: count},
+	})
 }
 
 // mp4FixtureTable writes a full box holding one entry count and its rows.

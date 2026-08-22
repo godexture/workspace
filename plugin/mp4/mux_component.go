@@ -27,7 +27,10 @@ type muxPlan struct {
 
 func muxerShape() flow.Shape {
 	return flow.NewShape(
-		[]flow.Port{flow.In("packets", codec.Packets(), flow.Many(), flow.WithFanIn(flow.SerialFanIn))},
+		// The mdat payload is laid out in the order the packets arrive, so this
+		// port needs its producer's own emit order rather than whatever order
+		// separate tasks would deliver in.
+		[]flow.Port{flow.In("packets", codec.Packets(), flow.Many(), flow.WithFanIn(flow.SerialFanIn), flow.Direct())},
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 }

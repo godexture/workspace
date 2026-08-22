@@ -56,11 +56,16 @@ type Buffer struct {
 // FanIn records the policy and timestamp tolerance selected for one
 // many-input port. Its ordered inputs remain the node's port descriptors and
 // the logical graph edges.
+//
+// Direct reports that the port declared flow.Direct and planning confirmed it:
+// one routed producer drives the port from inside the same synchronous island,
+// so the order it emits in is the order the port observes.
 type FanIn struct {
 	Node      string
 	Port      string
 	Policy    flow.FanInPolicy
 	Tolerance time.Duration
+	Direct    bool
 }
 
 // Runtime is the inert projection of private Program specialization.

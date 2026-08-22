@@ -128,6 +128,9 @@ func Compile(values []Node, logicalEdges []job.Edge, queuePolicy job.QueuePolicy
 		return Template{}, err
 	}
 	result.placeBuffers()
+	if err := result.validateDirectInputs(); err != nil {
+		return Template{}, err
+	}
 	result.projection = result.project()
 	result.executable = true
 	return result, nil

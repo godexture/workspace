@@ -3,6 +3,7 @@ package run
 import (
 	"strconv"
 
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/run/drive"
 	"github.com/godexture/godec/plan"
 )
@@ -53,9 +54,19 @@ func (t Template) project() plan.Runtime {
 			Port:      value.binding.Input(),
 			Policy:    value.binding.FanIn(),
 			Tolerance: value.tolerance,
+			Direct:    directInput(value.shape, value.binding.Input()),
 		})
 	}
 	return result
+}
+
+func directInput(shape flow.Shape, port string) bool {
+	for _, value := range shape.Inputs {
+		if value.ID() == port {
+			return value.Direct()
+		}
+	}
+	return false
 }
 
 func cloneProjection(value plan.Runtime) plan.Runtime {
