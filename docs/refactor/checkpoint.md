@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **8 / 12 マイルストーン完了（M0〜M7）**。M6 の再完了は 2026-08-17、M7 の完了検証は 2026-08-22（M7-6 の stack review 反映まで）。
+> 実装進捗: **8 / 12 マイルストーン完了（M0〜M7）、M8 進行中**。M6 の再完了は 2026-08-17、M7 の完了検証は 2026-08-22（M7-6 の stack review 反映まで）。
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -23,7 +23,7 @@
 | M5 | 完了 | typed runtime、ownership/COW、bounded queue、cancel、Finalize、transactional lifecycle を完成し、旧 contract を切断した。 |
 | M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI の実経路と R-17 の final contract を repository-wide verification まで確認した（2026-08-17）。 |
 | M7 | 完了 | static `Spec.Ports` と typed Router/RoutedReader、buffer を置かない `SerialFanIn` と `flow.Direct` の island gate、単一 `mdat` の unfragmented MP4 direct reader/writer、aggregate `ScratchMaxBytes` と node-local journal、preserve-all/exact `MapStream`、選択 track subset を一つの `muxLayout` で書く remux、必要時だけ選ぶ MP4 PCM binding を完成し、M7-C01〜M7-C12 の negative gate、multi-track × 多 sample を含む physical order、1k/1M resource gate、公式 composition 全体の conformance を確認した（2026-08-22、M7-6 の stack review 反映まで）。remux は source の格納順を保ち、全 track を保つ場合は入力と byte 一致する。 |
-| M8 | 未着手 | 公式 family 移行とともに `ilst`/generic loss/strictness、finite seek を実 consumer から確定し、`_legacy/` を削除する。 |
+| M8 | 進行中 | [M8-0](m8-0.md) で公開境界、product semantics、M8-C01〜M8-C13、M8-1〜M8-9 の依存順、固有完了条件を確定した。次は M8-1 の typed sample vocabulary。 |
 | M9 | 未着手 | stdin/stdout、WASM、demo、rich selector、pure fragmented/sequential MP4、output boundary spool、device/session Endpoint を扱う。 |
 | M10 | 未着手 | milestone と並行できる品質・配布基盤を扱う。 |
 | M11 | 未着手 | 移行文書を終端処理し、設計文書を恒久化する。 |
@@ -40,3 +40,4 @@
 - M7-5 は #43〜#53 の stack review で見つけた前提の破れを閉じた。`SerialFanIn` は callback を直列化するだけで到着順は決めないのに、`placeBuffers` が input へ source buffer を挿入して単一 routed producer を route ごとの drain task へ置き換えていた。到着順を mdat の配置に使う MP4 mux はこれで非決定的に失敗し、multi-track × 多 sample では GOMAXPROCS=1 でほぼ常に落ちた。設計文書はこの構成を前提と書いていたが、検査する主体が無く、corpus も「multi-track なら 1 sample」「多 sample なら single track」に分かれていて誰も踏まなかった。現在は serial input を buffer せず、`flow.Direct` を宣言した component が単一 routed producer の island を要求し、満たせない topology は Planning error になる。詳細は [F56/F57](findings.md)。
 - M7-5 で同 review の残り指摘も閉じた。`MapStream` が表せるのは「どの track を残すか」だけで、複製と並べ替えは M9 の selector surface へ延期する。`edts` を持つ track は copy では保持されるが decode では失われるため、decodable PCM として広告しない。`plan.Buffer` は `Connections` で private queue 数を示し、Many edge の実コストが `Limit` だけでは過小評価になる問題を閉じた。MP4 の未知 box 受理範囲（[B11](capability.md)、[F58](findings.md)）は記録の上で M8 へ送った。
 - M7-6 は #43〜#55 の stack review で見つけた設計上の指摘を閉じた。(1) [F60](findings.md): remux が mdat を track 順に書き直して interleave された movie を de-interleave していた。延期理由だった「ordered policy と cross-route backpressure が要る」は cross-track の *timestamp* 順を作る場合の話であり、source の格納順は同一 file 内の byte offset として入力に既にある。demux が per-track cursor を offset で merge して格納順に emit し、mux が track ごとの journal region へ `Scratch.WriteAt` で記録する形にした結果、全 track を保つ remux は入力と byte 一致する。(2) [F59](findings.md): 全 MP4 fixture が「1 track = 1 chunk」で、chunk-offset table の再構成も journal の page またぎも end-to-end で通っていなかった。fixture builder に chunk 軸を足した。(3) 受理範囲の記録漏れ（[B12](capability.md)/[B13](capability.md)）と、MP4 が remux でしか出力になれないこと（[B14](capability.md)、担当 M9）を記録した。(4) mapping projection が reader の shape に「input port を持たない」ことを要求していた結合を外した。(5) [B15](capability.md): `sidx`/`iloc` 等を持つ movie を、出力が source を再現する選択に限って受理するようにした。判定は plugin 内で閉じ、Compile で layout を、Process で各 sample の着地位置を確認する。
+- M8-0 は sub-unit を M8-1 typed sample vocabulary、M8-2 PCM family completion、M8-3 audio processor family、M8-4 metadata encodings と loss policy、M8-5 MP3、M8-6 FLAC、M8-7 variant selection と `sdk` 配置、M8-8 graph seek、M8-9 completion と `_legacy/` 削除に分けた。着手前監査で先行 milestone が M8 へ送った項目を全件対応付け、M0 baseline の MP3/FLAC `Seek` に呼び出し元が無いことを確認した上で、graph operation としての seek を M8 で完成させる判断を維持した。sample vocabulary は coding/packing/endian を直交させ、decoded frame の canonical schema を `S16`/`S32`/`F32`/`F64` に固定する。metadata の多重度は key ではなく encoding が持ち、畳み込みと loss 報告は encoding 側の責務とする。
