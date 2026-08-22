@@ -28,11 +28,11 @@ func TestParseAudioEntryDescribesLinearPCM(t *testing.T) {
 	}{
 		{
 			name: "stereo little endian", channels: 2, size: 16, rate: 48_000 << 16, endian: mediasample.LittleEndian,
-			want: mediasample.Description{Format: mediasample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: mediasample.Stereo, Endian: mediasample.LittleEndian},
+			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian, Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16},
 		},
 		{
 			name: "mono big endian", channels: 1, size: 16, rate: 44_100 << 16, endian: mediasample.BigEndian,
-			want: mediasample.Description{Format: mediasample.S16Interleaved, ValidBits: 16, Rate: 44_100, Layout: mediasample.Mono, Endian: mediasample.BigEndian},
+			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 44_100, Layout: mediasample.Mono(), ValidBits: 16},
 		},
 		{name: "unsupported channel count", channels: 6, size: 16, rate: 48_000 << 16, endian: mediasample.LittleEndian},
 		{name: "unsupported sample size", channels: 2, size: 24, rate: 48_000 << 16, endian: mediasample.LittleEndian},
@@ -74,7 +74,7 @@ func TestLinearPCMEntryCoversTheDecodableSampleEntries(t *testing.T) {
 // time base and the published sample rate in agreement, so a decoder never sees
 // a description its input contradicts.
 func TestTrackPropertiesPublishAudioOnlyWithAMatchingTimescale(t *testing.T) {
-	description := mediasample.Description{Format: mediasample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: mediasample.Stereo, Endian: mediasample.LittleEndian}
+	description := mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian, Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16}
 	matching, err := trackProperties(track{codec: typeSOWT, timeScale: 48_000, audio: description})
 	if err != nil {
 		t.Fatal(err)

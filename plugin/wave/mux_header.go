@@ -136,10 +136,10 @@ func reserveChunkOf(chunks muxChunks) []byte {
 }
 
 func marshalFormat(description sample.Description) ([]byte, int, error) {
-	if !description.Valid() || description.Format != sample.S16Interleaved || description.Endian != sample.LittleEndian {
+	if !description.Valid() || description.Coding != sample.S16 || description.Packing != sample.Interleaved || description.Endian != sample.LittleEndian {
 		return nil, 0, fmt.Errorf("%w: WAVE mux requires interleaved little-endian signed 16-bit PCM", ErrUnsupported)
 	}
-	channels := description.Layout.Channels()
+	channels := description.Layout.Count()
 	if channels < 1 || channels > 2 || description.Rate > math.MaxUint32 {
 		return nil, 0, fmt.Errorf("%w: WAVE channel layout or sample rate is unsupported", ErrUnsupported)
 	}
@@ -167,7 +167,7 @@ func marshalFormat(description sample.Description) ([]byte, int, error) {
 		binary.LittleEndian.PutUint16(value[16:18], 22)
 		binary.LittleEndian.PutUint16(value[18:20], uint16(description.ValidBits))
 		mask := uint32(0x4)
-		if description.Layout == sample.Stereo {
+		if description.Layout == sample.Stereo() {
 			mask = 0x3
 		}
 		binary.LittleEndian.PutUint32(value[20:24], mask)

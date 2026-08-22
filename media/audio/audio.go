@@ -199,3 +199,23 @@ func (e *Editor[S]) Discard() {
 		e.edit.Discard()
 	}
 }
+
+// Plane reinterprets a leased mutable byte plane as count samples of type S.
+// A codec filling a freshly leased frame gets the typed view Editor exposes
+// for shared frames, without the copy-on-write bookkeeping it carries.
+func Plane[S Sample](storage []byte, count int) ([]S, error) {
+	if count < 0 {
+		return nil, ErrInvalidSampleCount
+	}
+	size := int(unsafe.Sizeof(*new(S)))
+	if count > len(storage)/size {
+		return nil, ErrInvalidPlanes
+	}
+	if count == 0 {
+		return []S{}, nil
+	}
+	if uintptr(unsafe.Pointer(&storage[0]))%unsafe.Alignof(*new(S)) != 0 {
+		return nil, ErrSampleAlignment
+	}
+	return unsafe.Slice((*S)(unsafe.Pointer(&storage[0])), count), nil
+}

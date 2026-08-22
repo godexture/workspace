@@ -125,9 +125,9 @@ func parseAudioEntry(data []byte, endian mediasample.Endian) mediasample.Descrip
 	var layout mediasample.Layout
 	switch binary.BigEndian.Uint16(data[24:26]) {
 	case 1:
-		layout = mediasample.Mono
+		layout = mediasample.Mono()
 	case 2:
-		layout = mediasample.Stereo
+		layout = mediasample.Stereo()
 	default:
 		return mediasample.Description{}
 	}
@@ -139,11 +139,12 @@ func parseAudioEntry(data []byte, endian mediasample.Endian) mediasample.Descrip
 		return mediasample.Description{}
 	}
 	return mediasample.Description{
-		Format:    mediasample.S16Interleaved,
-		ValidBits: 16,
+		Coding:    mediasample.S16,
+		Packing:   mediasample.Interleaved,
+		Endian:    endian,
 		Rate:      int(rate >> 16),
 		Layout:    layout,
-		Endian:    endian,
+		ValidBits: 16,
 	}
 }
 

@@ -127,7 +127,7 @@ func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Fr
 	}
 	o.state.events = append(o.state.events, "frame")
 	o.state.mu.Unlock()
-	forwarded := flow.NewItem(frame.Share(), sample.S16(), &testDomain)
+	forwarded := flow.NewItem(frame.Share(), sample.Frames[int16](), &testDomain)
 	if err := output.Emit(ctx, &forwarded); err != nil {
 		forwarded.Drop()
 		return err
@@ -225,19 +225,19 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}{
 		{
 			name:        "little endian mono",
-			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian},
+			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16},
 			input:       []byte{0x00, 0x80, 0xff, 0xff, 0x00, 0x00, 0x01, 0x00, 0xff, 0x7f},
 			planes:      [][]int16{{-32768, -1, 0, 1, 32767}},
 		},
 		{
 			name:        "big endian stereo",
-			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 44_100, Layout: sample.Stereo, Endian: sample.BigEndian},
+			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian, Rate: 44_100, Layout: sample.Stereo(), ValidBits: 16},
 			input:       []byte{0x80, 0x00, 0x7f, 0xff, 0x00, 0x00, 0xff, 0xff, 0x7f, 0xff, 0x00, 0x01},
 			planes:      [][]int16{{-32768, 0, 32767}, {32767, -1, 1}},
 		},
 		{
 			name:        "twelve bit left justified",
-			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian},
+			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12},
 			input:       []byte{0xf0, 0xff, 0x10, 0x00, 0x00, 0x80, 0xf0, 0x7f},
 			planes:      [][]int16{{-1, 1, -2048, 2047}},
 		},
@@ -270,7 +270,7 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 }
 
 func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
 	input := []byte{
 		0, 0, 1, 0, 2, 0, 3, 0, 4, 0,
 		5, 0, 6, 0, 7, 0, 8, 0,
@@ -310,7 +310,7 @@ func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
 }
 
 func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
 	fixture := compilePCMProgram(t, description)
 	graph, ok := fixture.request.Graph()
 	if !ok {
@@ -345,7 +345,7 @@ func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
 }
 
 func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
 	fixture := compilePCMProgram(t, description)
 	fixture.state.block = true
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -365,7 +365,7 @@ func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
 func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) {
 	type foreignID struct{}
 	foreign := property.Define[foreignID](property.Scalar[string]())
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}
 	properties, err := description.Properties()
 	if err != nil {
 		t.Fatal(err)
@@ -389,11 +389,11 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 		t.Fatal("decoder output descriptor type was erased incorrectly")
 	}
 	output, ok := outputs.One("frames")
-	if !ok || output.Schema() != sample.S16().Identity() {
+	if !ok || output.Schema() != sample.Frames[int16]().Identity() {
 		t.Fatalf("decoder output = %#v", output)
 	}
 	decoded, err := sample.FromProperties(output.Properties())
-	if err != nil || decoded != (sample.Description{Format: sample.S16Planar, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.NoEndian}) {
+	if err != nil || decoded != (sample.Description{Coding: sample.S16, Packing: sample.Planar, Endian: sample.NoEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}) {
 		t.Fatalf("decoded properties = %#v, %v", decoded, err)
 	}
 	if value, ok := foreign.Get(output.Properties()); !ok || value != "preserved" {
@@ -427,7 +427,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 		t.Fatalf("reader output descriptor = %#v", chunks)
 	}
 	description, err := sample.FromProperties(chunks.Properties())
-	if err != nil || description != (sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian}) {
+	if err != nil || description != (sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}) {
 		t.Fatalf("reader output properties = %#v, %v", description, err)
 	}
 
@@ -504,7 +504,7 @@ func pcmConfiguration(description sample.Description) config.Patch {
 	return config.NewPatch().
 		SetText("rate", strconv.Itoa(description.Rate)).
 		SetText("validBits", strconv.Itoa(description.ValidBits)).
-		SetText("layout", string(description.Layout)).
+		SetText("layout", description.Layout.String()).
 		SetText("endian", string(description.Endian)).
 		SetText("chunkSamples", "2")
 }
@@ -514,7 +514,7 @@ func assertPCMPlan(t *testing.T, compiled plan.Plan) {
 	automatic := 0
 	for _, node := range compiled.Nodes() {
 		if node.ID == "decoder" {
-			if len(node.Outputs) != 1 || node.Outputs[0].Descriptor.Schema != sample.S16().Identity().String() {
+			if len(node.Outputs) != 1 || node.Outputs[0].Descriptor.Schema != sample.Frames[int16]().Identity().String() {
 				t.Fatalf("Plan selected decoder schema = %#v", node.Outputs)
 			}
 		}
@@ -576,7 +576,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 			return &fixtureSource{fixtureOperator: fixtureOperator{shape: sourceShape}, state: state, buffers: ctx.Buffers()}, nil
 		},
 	}), plugin.WithReader("bytes", access.Bytes()))
-	observeShape := flow.NewShape([]flow.Port{flow.In("in", sample.S16())}, []flow.Port{flow.Out("out", sample.S16())})
+	observeShape := flow.NewShape([]flow.Port{flow.In("in", sample.Frames[int16]())}, []flow.Port{flow.Out("out", sample.Frames[int16]())})
 	observer := plugin.NewComponent[fixtureObserveID](plugin.Descriptor{DisplayName: "PCM fixture observer"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Ports: observeShape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
@@ -594,7 +594,7 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 			return &fixtureObserver{fixtureOperator: fixtureOperator{shape: observeShape}, state: state}, nil
 		},
 		Finalizes: true,
-	}), plugin.WithProcessor("in", sample.S16(), "out", sample.S16()))
+	}), plugin.WithProcessor("in", sample.Frames[int16](), "out", sample.Frames[int16]()))
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "PCM fixture sink"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Ports: sinkShape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {

@@ -63,8 +63,8 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	)
 
 	description := sample.Description{
-		Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000,
-		Layout: sample.Stereo, Endian: sample.LittleEndian,
+		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 16, Rate: 48_000,
+		Layout: sample.Stereo(), Endian: sample.LittleEndian,
 	}
 	testkit.Format(t,
 		testkit.Track(testkit.SubjectIn(set, wave.MuxerIdentity(), "packets", codec.Packets(), "writes", access.Writes()), coverage),
@@ -80,8 +80,8 @@ func runWAVECases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Name:   "byte-exact-extensible-twelve-bit",
 			Config: config.NewPatch(),
 			Input: testkit.PacketInput(sample.Description{
-				Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-				Layout: sample.Mono, Endian: sample.LittleEndian,
+				Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
+				Layout: sample.Mono(), Endian: sample.LittleEndian,
 			}, []testkit.Packet{{
 				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(0)), DTS: timing.SomeDTS(timing.NewDTS(0)), Duration: timing.SomeDuration(timing.NewDuration(2)), Bytes: narrowPayload,
 			}}),

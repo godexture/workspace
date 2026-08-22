@@ -182,7 +182,7 @@ func muxerComponent() plugin.Component {
 // header marshaller reports it.
 func muxDescription(value sample.Description) sample.Description {
 	result := value
-	result.Format = sample.S16Interleaved
+	result.Coding, result.Packing = sample.S16, sample.Interleaved
 	result.Endian = sample.LittleEndian
 	if !result.Valid() {
 		return value

@@ -62,7 +62,7 @@ func (o *readerOperator) Process(ctx context.Context, input *flow.Item[buffer.Ha
 		return errors.New("raw PCM reader received unowned bytes")
 	}
 	data := input.Value().Bytes()
-	frameBytes := o.configuration.Layout.Channels() * 2
+	frameBytes := o.configuration.Layout.Count() * 2
 	if frameBytes == 0 || data.Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
@@ -104,7 +104,7 @@ func (o *parserOperator) Process(ctx context.Context, input *flow.Item[packet.Ch
 	if !input.Valid() {
 		return errors.New("linear PCM parser received an unowned chunk")
 	}
-	frameBytes := o.configuration.Layout.Channels() * 2
+	frameBytes := o.configuration.Layout.Count() * 2
 	if frameBytes == 0 || input.Value().Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
 	}
@@ -147,7 +147,7 @@ func (o *decoderOperator) Process(ctx context.Context, input *flow.Item[packet.P
 		return errors.New("linear PCM decoder received an unowned packet")
 	}
 	value := input.Value()
-	channels := o.configuration.Layout.Channels()
+	channels := o.configuration.Layout.Count()
 	frameBytes := channels * 2
 	if channels == 0 || value.Bytes().Len()%frameBytes != 0 {
 		return ErrPartialSample
@@ -209,7 +209,7 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 		return errors.New("linear PCM encoder received an unowned frame")
 	}
 	frame := input.Value()
-	channels := o.configuration.Layout.Channels()
+	channels := o.configuration.Layout.Count()
 	if len(frame.Planes().Layout().Planes) != channels {
 		return ErrPlaneCount
 	}

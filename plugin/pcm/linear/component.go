@@ -87,9 +87,9 @@ func operationExecution(kind operation) plugin.ComponentOption {
 	case parserOperation:
 		return plugin.WithProcessor("chunks", format.Chunks(), "packets", codec.Packets())
 	case decoderOperation:
-		return plugin.WithProcessor("packets", codec.Packets(), "frames", sample.S16())
+		return plugin.WithProcessor("packets", codec.Packets(), "frames", sample.Frames[int16]())
 	case encoderOperation:
-		return plugin.WithProcessor("frames", sample.S16(), "packets", codec.Packets())
+		return plugin.WithProcessor("frames", sample.Frames[int16](), "packets", codec.Packets())
 	case writerOperation:
 		return plugin.WithProcessor("packets", codec.Packets(), "writes", access.Writes())
 	default:
@@ -104,9 +104,9 @@ func operationShape(kind operation) flow.Shape {
 	case parserOperation:
 		return flow.NewShape([]flow.Port{flow.In("chunks", format.Chunks())}, []flow.Port{flow.Out("packets", codec.Packets())})
 	case decoderOperation:
-		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("frames", sample.S16())})
+		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("frames", sample.Frames[int16]())})
 	case encoderOperation:
-		return flow.NewShape([]flow.Port{flow.In("frames", sample.S16())}, []flow.Port{flow.Out("packets", codec.Packets())})
+		return flow.NewShape([]flow.Port{flow.In("frames", sample.Frames[int16]())}, []flow.Port{flow.Out("packets", codec.Packets())})
 	case writerOperation:
 		return flow.NewShape([]flow.Port{flow.In("packets", codec.Packets())}, []flow.Port{flow.Out("writes", access.Writes())})
 	default:
@@ -159,7 +159,7 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 }
 
 func operationResources(kind operation, configuration configuration) resource.Request {
-	channels := configuration.Layout.Channels()
+	channels := configuration.Layout.Count()
 	planeBytes := configuration.ChunkSamples * 2
 	interleavedBytes := planeBytes * channels
 	switch kind {
