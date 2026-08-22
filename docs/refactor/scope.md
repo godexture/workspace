@@ -232,3 +232,11 @@ M6 時点で foundation が定義する trait 種は Access（source/sink）、F
 - 初期未対応 capability が runtime panic ではなく Compile diagnostic になる。
 - video/subtitle/custom schema と live/device fixture が、同じ Host/planner/runtime へ参加できる。
 - decode 実装を持たない stream（MP4 の video/subtitle track など）が、raw carrier と structured diagnostic を通じて情報を失わずに copy される。
+
+## M7 の contract 分類
+
+`plugin.Scratch` の三 method はいずれも MP4 mux の chunk-offset journal を実 consumer に持つ。`Append` は Open 後に journal 全体を一度だけ確保し、`WriteAt` は到着した chunk の出力 offset をその track の region へ書き、`ReadAt` は Flush で region ごとに読み戻して `stco`/`co64` を patch する。positioned write が要るのは、demux が source の格納順に emit するために track の chunk が互いに割り込んで届くからであり、append-only の journal では track ごとの run を作れない。
+
+`flow.Direct` は MP4 mux の packets port を consumer に持つ。runtime の topology gate、`plan.FanIn.Direct` 投影、`plan.Buffer.Connections` はいずれもこの一つの宣言を説明するために存在する。
+
+`job.Mapping` の input/output index は M7 では 0 だけを受け付ける。複数 input/output を持つ surface が現れる M9 まで、この二つは「将来の値域を先に型へ置いた」のではなく、mapping が結び付ける両端を名前で指すための識別子として使う。M9 で rich selector を追加する時に、値域の拡張と duplication/並べ替えを同時に扱う。

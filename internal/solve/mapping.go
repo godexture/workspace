@@ -38,13 +38,13 @@ func (p *planner) projectMappings(compiled graph.Graph) ([]plan.Mapping, error) 
 	}
 	read, readOK := mediaformat.ReadOf(readerComponent)
 	write, writeOK := mediaformat.WriteOf(writerComponent)
-	readerPort, readerMany := directManyOutput(reader.Shape())
-	writerPort, writerMany := onlyManyInput(writer.Shape())
+	readerPort, readerMany := onlyManyPort(reader.Shape(), flow.OutputDirection)
+	writerPort, writerMany := onlyManyPort(writer.Shape(), flow.InputDirection)
 	if !readOK || !read.Valid() || !writeOK || !write.Valid() || !readerMany || !writerMany {
 		if len(requested) == 0 {
 			return nil, nil
 		}
-		return nil, mappingError("solve.mapping-shape", "exact stream mapping requires a direct Many-output reader and a Many-input writer", readerComponent.Identity(), map[string]string{
+		return nil, mappingError("solve.mapping-shape", "exact stream mapping requires a Many-output reader and a Many-input writer", readerComponent.Identity(), map[string]string{
 			"reader": readerID.String(), "writer": writerID.String(),
 		})
 	}
@@ -91,18 +91,26 @@ func (p *planner) projectMappings(compiled graph.Graph) ([]plan.Mapping, error) 
 	return result, nil
 }
 
-func directManyOutput(shape flow.Shape) (string, bool) {
-	if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity {
-		return "", false
+// onlyManyPort names a shape's sole Many port in one direction. What a mapping
+// needs is somewhere unambiguous to read the repeated stream descriptors from;
+// whether the reader also takes a byte carrier is its own business, so a format
+// that reads through a carrier maps the same way a direct one does.
+func onlyManyPort(shape flow.Shape, direction flow.Direction) (string, bool) {
+	ports := shape.Outputs
+	if direction == flow.InputDirection {
+		ports = shape.Inputs
 	}
-	return shape.Outputs[0].ID(), true
-}
-
-func onlyManyInput(shape flow.Shape) (string, bool) {
-	if len(shape.Inputs) != 1 || shape.Inputs[0].Multiplicity() != flow.ManyMultiplicity {
-		return "", false
+	result, found := "", false
+	for _, port := range ports {
+		if port.Multiplicity() != flow.ManyMultiplicity {
+			continue
+		}
+		if found {
+			return "", false
+		}
+		result, found = port.ID(), true
 	}
-	return shape.Inputs[0].ID(), true
+	return result, found
 }
 
 func mappingStreams(values []stream.Descriptor) ([]stream.ID, error) {
