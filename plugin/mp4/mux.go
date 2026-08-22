@@ -14,6 +14,10 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
+// muxer rebuilds the mdat payload from the packets as they arrive and patches
+// the tables that record where the bytes landed. The arriving order is the
+// reader's own emit order, which is the order the source stored the samples in,
+// so an interleaved movie stays interleaved.
 type muxer struct {
 	out     flow.Item[access.Write]
 	shape   flow.Shape
@@ -24,27 +28,34 @@ type muxer struct {
 	scratch plugin.Scratch
 	need    int64
 
-	track     int
-	cursor    sampleCursor
-	hasCursor bool
+	tracks []muxCursor
 
-	started         bool
-	finalized       bool
-	flushed         bool
-	payloadBytes    uint64
-	outputOffset    uint64
-	scratchWritten  int64
-	scratchPage     [muxJournalPageBytes]byte
-	scratchPageUsed int
-	failure         error
+	started      bool
+	sized        bool
+	finalized    bool
+	flushed      bool
+	payloadBytes uint64
+	outputOffset uint64
+	failure      error
+}
+
+// muxCursor holds one track's expected samples and the chunk offsets it has
+// recorded so far. Entries are buffered per track and written into that track's
+// journal region, because chunks from different tracks now arrive interleaved.
+type muxCursor struct {
+	cursor   sampleCursor
+	opened   bool
+	page     [muxJournalTrackPageBytes]byte
+	used     int
+	recorded uint32
 }
 
 func openMuxer(ctx plugin.OpenContext, plan muxPlan) (*muxer, error) {
 	if !plan.shape.Equal(muxerShape()) || validateMuxLayout(plan.movie, plan.layout) != nil {
 		return nil, fmt.Errorf("%w: MP4 mux plan is invalid", ErrMalformed)
 	}
-	need, err := plan.layout.journalBytes()
-	if err != nil || need != plan.scratch || uint64(need) > math.MaxInt64 {
+	need := plan.layout.journalBytes()
+	if need != plan.scratch || uint64(need) > math.MaxInt64 {
 		return nil, fmt.Errorf("%w: MP4 mux scratch plan is invalid", ErrMalformed)
 	}
 	if ctx.Buffers() == nil {
@@ -80,6 +91,7 @@ func openMuxer(ctx plugin.OpenContext, plan muxPlan) (*muxer, error) {
 		buffers: ctx.Buffers(),
 		scratch: ctx.Scratch(),
 		need:    int64(need),
+		tracks:  make([]muxCursor, len(plan.layout.tracks)),
 	}, nil
 }
 
@@ -89,7 +101,7 @@ func (m *muxer) Close() error {
 	m.reader = nil
 	m.buffers = nil
 	m.scratch = nil
-	m.cursor.reader = nil
+	m.tracks = nil
 	return nil
 }
 
@@ -114,7 +126,7 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	if err := m.selectTrack(ctx, ordinal); err != nil {
 		return m.fail(err)
 	}
-	expected, more, err := m.cursor.next(ctx)
+	expected, more, err := m.tracks[ordinal].cursor.next(ctx)
 	if err != nil {
 		return m.fail(err)
 	}
@@ -131,11 +143,18 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	if uint64(expected.size) > math.MaxUint64-m.payloadBytes || uint64(expected.size) > math.MaxUint64-outputOffset {
 		return m.fail(fmt.Errorf("%w: MP4 output offset overflows", ErrUnsupported))
 	}
+	// A movie carrying byte offsets outside the sample tables was accepted on
+	// the promise that nothing moves. The layout placed the payload; the
+	// arrival order decides the rest, so it is checked here rather than assumed
+	// from the topology that produced it.
+	if m.layout.verbatim && expected.offset != outputOffset {
+		return m.fail(fmt.Errorf("%w: MP4 sample %d moved from %d to %d, and this movie records byte offsets that would go stale", ErrUnsupported, expected.sequence, expected.offset, outputOffset))
+	}
 	if err := m.start(ctx, output); err != nil {
 		return m.fail(err)
 	}
 	if expected.chunkStart {
-		if err := m.appendChunkOffset(ctx); err != nil {
+		if err := m.recordChunkOffset(ctx, ordinal); err != nil {
 			return m.fail(err)
 		}
 	}
@@ -150,10 +169,6 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	}
 	m.payloadBytes += uint64(expected.size)
 	m.outputOffset += uint64(expected.size)
-	if m.cursor.sequence == m.cursor.track.sampleCount {
-		m.hasCursor = false
-		m.track++
-	}
 	return nil
 }
 
@@ -167,18 +182,19 @@ func (m *muxer) Finalize(ctx context.Context) error {
 	if err := context.Cause(ctx); err != nil {
 		return m.fail(err)
 	}
-	m.skipEmptyTracks()
-	if m.hasCursor || m.track != len(m.layout.tracks) {
-		return m.fail(fmt.Errorf("%w: MP4 muxer did not receive every inspected sample", ErrUnsupported))
+	for ordinal, selected := range m.layout.tracks {
+		if m.tracks[ordinal].cursor.sequence != selected.value.sampleCount {
+			return m.fail(fmt.Errorf("%w: MP4 muxer did not receive every inspected sample", ErrUnsupported))
+		}
+		if err := m.flushChunkOffsets(ctx, ordinal); err != nil {
+			return m.fail(err)
+		}
+		if m.tracks[ordinal].recorded != selected.value.chunkCount {
+			return m.fail(fmt.Errorf("%w: MP4 muxer chunk-offset journal is incomplete", ErrMalformed))
+		}
 	}
 	if m.payloadBytes != m.layout.payloadSize() {
 		return m.fail(fmt.Errorf("%w: MP4 muxer payload does not cover mdat", ErrUnsupported))
-	}
-	if err := m.flushScratchPage(ctx); err != nil {
-		return m.fail(err)
-	}
-	if m.scratchWritten != m.need {
-		return m.fail(fmt.Errorf("%w: MP4 muxer chunk-offset journal is incomplete", ErrMalformed))
 	}
 	m.finalized = true
 	return nil
@@ -198,9 +214,6 @@ func (m *muxer) Flush(ctx context.Context, output flow.Emitter[access.Write]) er
 		return m.fail(err)
 	}
 	if err := m.start(ctx, output); err != nil {
-		return m.fail(err)
-	}
-	if err := m.preflightOffsets(ctx); err != nil {
 		return m.fail(err)
 	}
 	if err := m.emitPieces(ctx, m.layout.suffix(), output); err != nil {
@@ -224,26 +237,19 @@ func (m *muxer) fail(err error) error {
 }
 
 func (m *muxer) selectTrack(ctx context.Context, ordinal int) error {
-	m.skipEmptyTracks()
-	if ordinal != m.track || ordinal < 0 || ordinal >= len(m.layout.tracks) {
-		return fmt.Errorf("%w: MP4 packet input %d is not the next selected track", ErrUnsupported, ordinal)
+	if ordinal < 0 || ordinal >= len(m.layout.tracks) {
+		return fmt.Errorf("%w: MP4 packet input %d is not a selected track", ErrUnsupported, ordinal)
 	}
-	if m.hasCursor {
+	if m.tracks[ordinal].opened {
 		return nil
 	}
 	cursor, err := newSampleCursor(ctx, m.reader, m.layout.tracks[ordinal].value)
 	if err != nil {
 		return err
 	}
-	m.cursor = cursor
-	m.hasCursor = true
+	m.tracks[ordinal].cursor = cursor
+	m.tracks[ordinal].opened = true
 	return nil
-}
-
-func (m *muxer) skipEmptyTracks() {
-	for !m.hasCursor && m.track < len(m.layout.tracks) && m.layout.tracks[m.track].value.sampleCount == 0 {
-		m.track++
-	}
 }
 
 func validateMuxPacket(value packet.Packet, expected sample) error {

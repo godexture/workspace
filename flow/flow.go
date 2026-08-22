@@ -45,6 +45,7 @@ type portOptions struct {
 	required     bool
 	multiplicity Multiplicity
 	fanIn        FanInPolicy
+	direct       bool
 }
 
 // Required and Optional control whether a port must be connected. They are
@@ -73,6 +74,23 @@ func WithFanIn(policy FanInPolicy) PortOption {
 	return func(options *portOptions) { options.fanIn = policy }
 }
 
+// Direct declares that one routed producer must drive this port from inside
+// the same synchronous execution island, so the order that producer emits in
+// is the order this port observes.
+//
+// A serial fan-in already serializes its callbacks, but serialization alone
+// says nothing about which input goes first when several tasks feed the port.
+// A component that turns the arrival order into output structure -- a
+// container muxer laying out one payload region -- needs the stronger promise,
+// and declares it here so an unsatisfiable topology fails during planning
+// rather than intermittently at run time.
+//
+// Only a serial fan-in port can require it: every other policy either combines
+// its inputs itself or owns queues that decouple them on purpose.
+func Direct() PortOption {
+	return func(options *portOptions) { options.direct = true }
+}
+
 // Port is an erased static port declaration. The schema descriptor retains
 // marker identity and payload type; typed runtime operations remain on the
 // schema.Type captured by execution binding constructors.
@@ -83,6 +101,7 @@ type Port struct {
 	required     bool
 	multiplicity Multiplicity
 	fanIn        FanInPolicy
+	direct       bool
 }
 
 func In[T any](id string, typ schema.Type[T], options ...PortOption) Port {
@@ -100,7 +119,7 @@ func newPort(id string, direction Direction, descriptor schema.Descriptor, optio
 			option(&state)
 		}
 	}
-	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity, fanIn: state.fanIn}
+	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity, fanIn: state.fanIn, direct: state.direct}
 }
 
 func (p Port) ID() string                 { return p.id }
@@ -109,6 +128,10 @@ func (p Port) Schema() schema.Descriptor  { return p.descriptor }
 func (p Port) Required() bool             { return p.required }
 func (p Port) Multiplicity() Multiplicity { return p.multiplicity }
 func (p Port) FanIn() FanInPolicy         { return p.fanIn }
+
+// Direct reports whether this port requires one routed producer inside its own
+// synchronous execution island. See the Direct option for what that promises.
+func (p Port) Direct() bool { return p.direct }
 
 // Shape is a static set of input and output ports. Dynamic topology is a
 // planner phase and is intentionally absent here.
@@ -141,7 +164,8 @@ func equalPorts(left, right []Port) bool {
 			!left[index].descriptor.Equal(right[index].descriptor) ||
 			left[index].required != right[index].required ||
 			left[index].multiplicity != right[index].multiplicity ||
-			left[index].fanIn != right[index].fanIn {
+			left[index].fanIn != right[index].fanIn ||
+			left[index].direct != right[index].direct {
 			return false
 		}
 	}
@@ -177,6 +201,9 @@ func (s Shape) Validate() error {
 				}
 			} else if port.fanIn != 0 {
 				return fmt.Errorf("port %q has a fan-in policy without many-input multiplicity", port.id)
+			}
+			if port.direct && port.fanIn != SerialFanIn {
+				return fmt.Errorf("port %q requires a direct producer without serial fan-in", port.id)
 			}
 		}
 	}

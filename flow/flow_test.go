@@ -76,6 +76,42 @@ func TestShapeValidatesTypedPorts(t *testing.T) {
 	}
 }
 
+// TestDirectPortRequiresSerialFanIn keeps the option attached to the only
+// policy whose meaning it sharpens. Every other policy either combines its
+// inputs itself or owns queues that decouple them on purpose, so requiring one
+// producer's emit order there would be a contradiction rather than a promise.
+func TestDirectPortRequiresSerialFanIn(t *testing.T) {
+	typ := flowSchema()
+	direct := In("packets", typ, Many(), WithFanIn(SerialFanIn), Direct())
+	if err := NewShape([]Port{direct}, []Port{Out("writes", typ)}).Validate(); err != nil {
+		t.Fatalf("direct serial fan-in port rejected: %v", err)
+	}
+	if !direct.Direct() {
+		t.Fatal("direct port did not report its requirement")
+	}
+	for name, port := range map[string]Port{
+		"zip":        In("zip", typ, Many(), WithFanIn(ZipFanIn), Direct()),
+		"one input":  In("one", typ, Direct()),
+		"one output": Out("out", typ, Direct()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			shape := NewShape([]Port{port}, []Port{Out("sink", typ)})
+			if port.Direction() == OutputDirection {
+				shape = NewShape([]Port{In("source", typ)}, []Port{port})
+			}
+			if err := shape.Validate(); err == nil {
+				t.Fatal("direct requirement accepted without serial fan-in")
+			}
+		})
+	}
+	// Two shapes that differ only in the requirement are different contracts,
+	// so a component cannot be swapped for one that drops it.
+	plain := In("packets", typ, Many(), WithFanIn(SerialFanIn))
+	if NewShape([]Port{direct}, nil).Equal(NewShape([]Port{plain}, nil)) {
+		t.Fatal("a direct port compared equal to one without the requirement")
+	}
+}
+
 func TestSelectedBatchKeepsItsInputWithoutChangingZipBatches(t *testing.T) {
 	typ := flowSchema()
 	item := NewItem(flowUnit{Value: 3}, typ, &testDomain)

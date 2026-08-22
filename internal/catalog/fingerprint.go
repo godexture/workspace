@@ -37,6 +37,8 @@ type fingerprintPort struct {
 	HasTime      bool
 	Required     bool
 	Multiplicity flow.Multiplicity
+	FanIn        flow.FanInPolicy
+	Direct       bool
 }
 
 type fingerprintDefinition struct {
@@ -99,7 +101,7 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 func fingerprintPorts(shape flow.Shape) []fingerprintPort {
 	ports := make([]fingerprintPort, 0, len(shape.Inputs)+len(shape.Outputs))
 	for _, port := range append(append([]flow.Port(nil), shape.Inputs...), shape.Outputs...) {
-		ports = append(ports, fingerprintPort{ID: port.ID(), Direction: port.Direction(), Schema: port.Schema().Identity().String(), Payload: gotype.Canonical(port.Schema().Payload()), HasTime: port.Schema().HasTime(), Required: port.Required(), Multiplicity: port.Multiplicity()})
+		ports = append(ports, fingerprintPort{ID: port.ID(), Direction: port.Direction(), Schema: port.Schema().Identity().String(), Payload: gotype.Canonical(port.Schema().Payload()), HasTime: port.Schema().HasTime(), Required: port.Required(), Multiplicity: port.Multiplicity(), FanIn: port.FanIn(), Direct: port.Direct()})
 	}
 	sort.Slice(ports, func(left, right int) bool { return ports[left].ID < ports[right].ID })
 	return ports

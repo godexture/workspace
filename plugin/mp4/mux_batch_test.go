@@ -12,7 +12,9 @@ import (
 type muxBatchScratchSpy struct {
 	data         []byte
 	appendSizes  []int
+	writeSizes   []int
 	appendErr    error
+	writeErr     error
 	returnedBase int64
 }
 
@@ -37,7 +39,14 @@ func (s *muxBatchScratchSpy) ReadAt(_ context.Context, target []byte, offset int
 	return nil
 }
 
-func (s *muxBatchScratchSpy) WriteAt(_ context.Context, value []byte, offset int64) error {
+func (s *muxBatchScratchSpy) WriteAt(ctx context.Context, value []byte, offset int64) error {
+	s.writeSizes = append(s.writeSizes, len(value))
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	if offset < 0 || int64(len(value)) > int64(len(s.data))-offset {
 		return errors.New("scratch write outside test extent")
 	}
@@ -46,89 +55,167 @@ func (s *muxBatchScratchSpy) WriteAt(_ context.Context, value []byte, offset int
 }
 
 // journalOnlyMuxer drives the chunk-offset journal without a movie. Finalize
-// only reads the payload size and the selected track count, so an empty payload
-// layout with no selected track is enough.
-func journalOnlyMuxer(journal plugin.Scratch, need int64) *muxer {
+// reads the payload size, each track's sample count and each track's chunk
+// count, so tracks that describe chunks but no samples are enough to exercise
+// the journal on its own.
+func journalOnlyMuxer(journal plugin.Scratch, chunks ...uint32) *muxer {
+	layout := muxLayout{pieces: []muxPiece{{kind: muxCopy}, {kind: muxPayload}}, payload: 1}
+	for _, count := range chunks {
+		layout.tracks = append(layout.tracks, muxTrack{value: track{chunkCount: count}})
+	}
+	if err := layout.placeJournal(); err != nil {
+		panic(err)
+	}
+	need := layout.journalBytes()
 	return &muxer{
-		layout:  muxLayout{pieces: []muxPiece{{kind: muxCopy}, {kind: muxPayload}}, payload: 1},
+		layout:  layout,
 		scratch: journal,
-		need:    need,
+		need:    int64(need),
+		tracks:  make([]muxCursor, len(layout.tracks)),
 	}
 }
 
-func TestMP4MuxBatchesChunkOffsetScratchAppends(t *testing.T) {
+func TestMP4MuxBatchesChunkOffsetScratchWrites(t *testing.T) {
 	const chunks = 10_000
 	const recordBytes = 8
+	const perPage = muxJournalTrackPageBytes / recordBytes
 	spy := &muxBatchScratchSpy{}
-	mux := journalOnlyMuxer(spy, chunks*recordBytes)
+	mux := journalOnlyMuxer(spy, chunks)
+	if err := mux.sizeJournal(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// The journal exists in full before any track records into it, because the
+	// tracks fill their own regions rather than appending in turn.
+	if len(spy.data) != chunks*recordBytes {
+		t.Fatalf("sized journal = %d bytes, want %d", len(spy.data), chunks*recordBytes)
+	}
+	if len(spy.writeSizes) != 0 {
+		t.Fatalf("sizing the journal wrote %v", spy.writeSizes)
+	}
 
-	for index := 0; index < chunks; index++ {
+	for index := range chunks {
 		mux.outputOffset = uint64(index * 1024)
-		if err := mux.appendChunkOffset(t.Context()); err != nil {
+		if err := mux.recordChunkOffset(t.Context(), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if mux.scratchPageUsed != 784*recordBytes {
-		t.Fatalf("partial page used = %d, want %d", mux.scratchPageUsed, 784*recordBytes)
+	if want := chunks / perPage; len(spy.writeSizes) != want {
+		t.Fatalf("full page writes = %d, want %d", len(spy.writeSizes), want)
 	}
-	if mux.scratchWritten != 9*muxJournalPageBytes {
-		t.Fatalf("scratch written = %d, want %d", mux.scratchWritten, 9*muxJournalPageBytes)
-	}
-	if len(spy.appendSizes) != 9 {
-		t.Fatalf("full page append count = %d, want 9", len(spy.appendSizes))
-	}
-	for index, size := range spy.appendSizes {
-		if size != muxJournalPageBytes {
-			t.Fatalf("append %d size = %d, want %d", index, size, muxJournalPageBytes)
-		}
+	if mux.tracks[0].used != (chunks%perPage)*recordBytes {
+		t.Fatalf("partial page used = %d, want %d", mux.tracks[0].used, (chunks%perPage)*recordBytes)
 	}
 
 	if err := mux.Finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(spy.appendSizes) != 10 || spy.appendSizes[9] != 784*recordBytes {
-		t.Fatalf("final append sizes = %v, want nine %d-byte pages and %d bytes", spy.appendSizes, muxJournalPageBytes, 784*recordBytes)
+	if mux.tracks[0].used != 0 || mux.tracks[0].recorded != chunks {
+		t.Fatalf("final track state = used %d recorded %d", mux.tracks[0].used, mux.tracks[0].recorded)
 	}
-	if mux.scratchPageUsed != 0 || mux.scratchWritten != chunks*recordBytes {
-		t.Fatalf("final scratch state = used %d written %d", mux.scratchPageUsed, mux.scratchWritten)
-	}
-	for index := 0; index < chunks; index++ {
+	for index := range chunks {
 		got := binary.BigEndian.Uint64(spy.data[index*recordBytes : index*recordBytes+recordBytes])
-		want := uint64(index * 1024)
-		if got != want {
+		if want := uint64(index * 1024); got != want {
 			t.Fatalf("journal offset %d = %d, want %d", index, got, want)
 		}
 	}
 }
 
+// TestMP4MuxKeepsInterleavedChunkOffsetsInTrackRegions is what the per-track
+// regions exist for. Chunks arrive interleaved, so an append-only journal would
+// mix the tracks together; each entry has to land in its own track's run, in
+// chunk order, for the patch phase to read one table as a sequence.
+func TestMP4MuxKeepsInterleavedChunkOffsetsInTrackRegions(t *testing.T) {
+	const chunks = 3
+	spy := &muxBatchScratchSpy{}
+	mux := journalOnlyMuxer(spy, chunks, chunks)
+	if err := mux.sizeJournal(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for index := range chunks {
+		for ordinal := range 2 {
+			mux.outputOffset = uint64(index*100 + ordinal*10)
+			if err := mux.recordChunkOffset(t.Context(), ordinal); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := mux.Finalize(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for ordinal := range 2 {
+		base := mux.layout.tracks[ordinal].journal
+		if want := uint64(ordinal * chunks * 8); base != want {
+			t.Fatalf("track %d journal region starts at %d, want %d", ordinal, base, want)
+		}
+		for index := range chunks {
+			position := base + uint64(index*8)
+			got := binary.BigEndian.Uint64(spy.data[position : position+8])
+			if want := uint64(index*100 + ordinal*10); got != want {
+				t.Fatalf("track %d chunk %d recorded %d, want %d", ordinal, index, got, want)
+			}
+		}
+	}
+}
+
 func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
-	t.Run("append error", func(t *testing.T) {
+	t.Run("sizing error", func(t *testing.T) {
 		wantErr := errors.New("scratch append failed")
 		spy := &muxBatchScratchSpy{appendErr: wantErr}
-		mux := &muxer{scratch: spy, need: muxJournalPageBytes, scratchPageUsed: muxJournalPageBytes - 8}
-		if err := mux.appendChunkOffset(t.Context()); !errors.Is(err, wantErr) {
-			t.Fatalf("append error = %v", err)
+		mux := journalOnlyMuxer(spy, 1)
+		if err := mux.sizeJournal(t.Context()); !errors.Is(err, wantErr) {
+			t.Fatalf("sizing error = %v", err)
 		}
-		if mux.scratchPageUsed != muxJournalPageBytes-8 || mux.scratchWritten != 0 {
-			t.Fatalf("failed append advanced state: used %d written %d", mux.scratchPageUsed, mux.scratchWritten)
+		if mux.sized {
+			t.Fatal("a failed sizing left the journal marked ready")
+		}
+		if err := mux.recordChunkOffset(t.Context(), 0); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("recording into an unsized journal = %v", err)
 		}
 	})
 
-	t.Run("offset mismatch", func(t *testing.T) {
+	t.Run("sizing offset mismatch", func(t *testing.T) {
 		spy := &muxBatchScratchSpy{returnedBase: 1}
-		mux := &muxer{scratch: spy, need: muxJournalPageBytes, scratchPageUsed: muxJournalPageBytes - 8}
-		if err := mux.appendChunkOffset(t.Context()); !errors.Is(err, ErrMalformed) {
+		mux := journalOnlyMuxer(spy, 1)
+		if err := mux.sizeJournal(t.Context()); !errors.Is(err, ErrMalformed) {
 			t.Fatalf("offset mismatch = %v", err)
 		}
-		if mux.scratchPageUsed != muxJournalPageBytes-8 || mux.scratchWritten != 0 {
-			t.Fatalf("mismatched append advanced state: used %d written %d", mux.scratchPageUsed, mux.scratchWritten)
+	})
+
+	t.Run("write error", func(t *testing.T) {
+		const perPage = muxJournalTrackPageBytes / 8
+		wantErr := errors.New("scratch write failed")
+		spy := &muxBatchScratchSpy{}
+		mux := journalOnlyMuxer(spy, perPage)
+		if err := mux.sizeJournal(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		spy.writeErr = wantErr
+		var err error
+		for index := 0; index < perPage && err == nil; index++ {
+			err = mux.recordChunkOffset(t.Context(), 0)
+		}
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("page write error = %v", err)
+		}
+		// The page keeps its bytes so a retry would not lose an entry, and the
+		// journal keeps its zeros so no partial run is mistaken for offsets.
+		if mux.tracks[0].used != muxJournalTrackPageBytes {
+			t.Fatalf("failed write emptied the page: used %d", mux.tracks[0].used)
+		}
+		for index, value := range spy.data {
+			if value != 0 {
+				t.Fatalf("failed write left byte %d as %d", index, value)
+			}
 		}
 	})
 
 	t.Run("finalize cancellation", func(t *testing.T) {
 		spy := &muxBatchScratchSpy{}
-		mux := journalOnlyMuxer(spy, 8)
-		if err := mux.appendChunkOffset(t.Context()); err != nil {
+		mux := journalOnlyMuxer(spy, 1)
+		if err := mux.sizeJournal(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := mux.recordChunkOffset(t.Context(), 0); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(t.Context())
@@ -136,8 +223,8 @@ func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
 		if err := mux.Finalize(ctx); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled Finalize = %v", err)
 		}
-		if mux.scratchPageUsed != 8 || mux.scratchWritten != 0 || len(spy.appendSizes) != 0 {
-			t.Fatalf("canceled finalize advanced state: used %d written %d appends %v", mux.scratchPageUsed, mux.scratchWritten, spy.appendSizes)
+		if mux.tracks[0].used != 8 || len(spy.writeSizes) != 0 {
+			t.Fatalf("canceled finalize advanced state: used %d writes %v", mux.tracks[0].used, spy.writeSizes)
 		}
 	})
 }
@@ -145,20 +232,37 @@ func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
 func TestMP4MuxChunkOffsetCardinalityAndEmptyJournal(t *testing.T) {
 	t.Run("cardinality", func(t *testing.T) {
 		spy := &muxBatchScratchSpy{}
-		mux := journalOnlyMuxer(spy, 16)
-		if err := mux.appendChunkOffset(t.Context()); err != nil {
+		mux := journalOnlyMuxer(spy, 2)
+		if err := mux.sizeJournal(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := mux.recordChunkOffset(t.Context(), 0); err != nil {
 			t.Fatal(err)
 		}
 		if err := mux.Finalize(t.Context()); !errors.Is(err, ErrMalformed) {
 			t.Fatalf("incomplete journal Finalize = %v", err)
 		}
-		if mux.scratchPageUsed != 0 || mux.scratchWritten != 8 || len(spy.appendSizes) != 1 || spy.appendSizes[0] != 8 {
-			t.Fatalf("incomplete journal state: used %d written %d appends %v", mux.scratchPageUsed, mux.scratchWritten, spy.appendSizes)
+	})
+
+	t.Run("beyond the track's chunks", func(t *testing.T) {
+		spy := &muxBatchScratchSpy{}
+		mux := journalOnlyMuxer(spy, 1)
+		if err := mux.sizeJournal(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := mux.recordChunkOffset(t.Context(), 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := mux.recordChunkOffset(t.Context(), 0); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("recording a chunk the track does not have = %v", err)
 		}
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		mux := journalOnlyMuxer(nil, 0)
+		mux := journalOnlyMuxer(nil)
+		if err := mux.sizeJournal(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 		if err := mux.Finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -169,18 +273,22 @@ func BenchmarkMP4MuxChunkOffsetScratchBatch(b *testing.B) {
 	const chunks = 10_000
 	const recordBytes = 8
 	spy := &muxBatchScratchSpy{
-		data:        make([]byte, 0, chunks*recordBytes),
-		appendSizes: make([]int, 0, (chunks*recordBytes+muxJournalPageBytes-1)/muxJournalPageBytes),
+		data:       make([]byte, 0, chunks*recordBytes),
+		writeSizes: make([]int, 0, chunks*recordBytes/muxJournalTrackPageBytes+1),
 	}
 	b.SetBytes(chunks * recordBytes)
 	b.ReportAllocs()
-	for index := 0; index < b.N; index++ {
+	for range b.N {
 		spy.data = spy.data[:0]
 		spy.appendSizes = spy.appendSizes[:0]
-		mux := journalOnlyMuxer(spy, chunks*recordBytes)
-		for chunk := 0; chunk < chunks; chunk++ {
+		spy.writeSizes = spy.writeSizes[:0]
+		mux := journalOnlyMuxer(spy, chunks)
+		if err := mux.sizeJournal(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+		for chunk := range chunks {
 			mux.outputOffset = uint64(chunk * 1024)
-			if err := mux.appendChunkOffset(context.Background()); err != nil {
+			if err := mux.recordChunkOffset(context.Background(), 0); err != nil {
 				b.Fatal(err)
 			}
 		}

@@ -18,6 +18,10 @@ import (
 const muxPageBytes = 64 * 1024
 const muxJournalPageBytes = 8 * 1024
 
+// muxJournalTrackPageBytes is held once per selected track, so it stays well
+// under the page the patch phase reads back through the buffer grant.
+const muxJournalTrackPageBytes = 1024
+
 type muxPlan struct {
 	shape   flow.Shape
 	movie   movie
@@ -27,7 +31,10 @@ type muxPlan struct {
 
 func muxerShape() flow.Shape {
 	return flow.NewShape(
-		[]flow.Port{flow.In("packets", codec.Packets(), flow.Many(), flow.WithFanIn(flow.SerialFanIn))},
+		// The mdat payload is laid out in the order the packets arrive, so this
+		// port needs its producer's own emit order rather than whatever order
+		// separate tasks would deliver in.
+		[]flow.Port{flow.In("packets", codec.Packets(), flow.Many(), flow.WithFanIn(flow.SerialFanIn), flow.Direct())},
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 }
@@ -53,10 +60,7 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
-			scratch, err := layout.journalBytes()
-			if err != nil {
-				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
-			}
+			scratch := layout.journalBytes()
 			output, err := stream.NewDescriptor("mp4", access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
@@ -108,6 +112,9 @@ func validateMuxLayout(value movie, layout muxLayout) error {
 	}
 	if payload != layout.payloadSize() {
 		return fmt.Errorf("%w: MP4 output payload does not cover the selected samples", ErrMalformed)
+	}
+	if layout.verbatim != value.offsetIndex || value.offsetIndex && !layout.reproduces(value) {
+		return fmt.Errorf("%w: MP4 output layout no longer reproduces a movie that records external byte offsets", ErrMalformed)
 	}
 	return nil
 }

@@ -67,12 +67,12 @@ func TestMP4MuxSubsetFailuresAreSticky(t *testing.T) {
 		packets := mustMP4Allocator(t, 8)
 		item := muxSample(t, data, movieSamples(t, data, inspected, 1)[0], packets)
 		collector := &muxWriteCollector{}
-		if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &item), collector); err != nil {
-			t.Fatal(err)
+		processErr := mux.Process(t.Context(), flow.NewSelectedBatch(0, &item), collector)
+		if processErr == nil {
+			t.Fatal("a journal the muxer could not reserve still accepted a packet")
 		}
-		finalizeErr := mux.Finalize(t.Context())
-		if finalizeErr == nil || mux.Finalize(t.Context()) != finalizeErr {
-			t.Fatalf("subset scratch sticky Finalize = %v", finalizeErr)
+		if mux.Finalize(t.Context()) != processErr {
+			t.Fatalf("subset scratch sticky failure = %v", processErr)
 		}
 		for _, output := range collector.items {
 			output.Drop()
@@ -118,9 +118,10 @@ func TestMP4MuxCompileRejectsUnsafeStructure(t *testing.T) {
 			t.Fatalf("dropped tref error = %v", err)
 		}
 	})
-	// A rebuilt mdat invalidates any byte offset recorded outside the sample
-	// tables, whether or not the selection drops a track.
-	for _, unsafe := range []struct {
+	// A byte offset recorded outside the sample tables survives exactly one
+	// remux: the one that puts every byte back where it was. Dropping a track
+	// moves everything after it, so that selection stays rejected.
+	for _, external := range []struct {
 		name     string
 		topLevel [][]byte
 		inMoov   [][]byte
@@ -129,13 +130,17 @@ func TestMP4MuxCompileRejectsUnsafeStructure(t *testing.T) {
 		{name: "meta iloc", topLevel: [][]byte{fixtureBox("meta", append(fixtureFullBox(0, 0, nil), fixtureBox("iloc", nil)...))}},
 		{name: "moov meta iloc", inMoov: [][]byte{fixtureBox("meta", append(fixtureFullBox(0, 0, nil), fixtureBox("iloc", nil)...))}},
 	} {
-		t.Run(unsafe.name, func(t *testing.T) {
-			data := fixtureMovie(false, "isom", []string{"iso2"}, muxLayoutFixtureTracks(), unsafe.topLevel, unsafe.inMoov)
+		t.Run(external.name, func(t *testing.T) {
+			data := fixtureMovie(false, "isom", []string{"iso2"}, muxLayoutFixtureTracks(), external.topLevel, external.inMoov)
 			if err := compile(t, data, 1); !errors.Is(err, ErrUnsupported) {
 				t.Fatalf("subset error = %v", err)
 			}
-			if err := compile(t, data, 0, 1); !errors.Is(err, ErrUnsupported) {
+			layout, err := compileMuxSelection(t, inspectMovie(t, data), 0, 1)
+			if err != nil {
 				t.Fatalf("all-track error = %v", err)
+			}
+			if !layout.verbatim {
+				t.Fatal("all-track layout was accepted without requiring the source to be reproduced")
 			}
 		})
 	}

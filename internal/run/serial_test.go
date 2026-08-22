@@ -15,7 +15,6 @@ import (
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
-	"github.com/godexture/godec/plan"
 )
 
 type serialOrdinalJoiner struct {
@@ -80,9 +79,12 @@ func TestSerialFanInBuildUsesNoTaskAndAcceptsOneInput(t *testing.T) {
 	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Policy != flow.SerialFanIn || runtime.FanIns[0].Tolerance != 0 {
 		t.Fatalf("serial fan-in projection = %#v", runtime.FanIns)
 	}
+	// A queue anywhere on a serial input decouples the producer from the
+	// joiner, which is the one thing the policy exists to prevent. No reason
+	// for one is acceptable, not just the fan-in reason.
 	for _, buffer := range runtime.Buffers {
-		if buffer.ToNode == "join" && buffer.Reason.Has(plan.FanInBuffer) {
-			t.Fatalf("serial fan-in input projected a fan-in buffer: %#v", buffer)
+		if buffer.ToNode == "join" {
+			t.Fatalf("serial fan-in input projected a buffer: %#v", buffer)
 		}
 	}
 	joiner := &serialOrdinalJoiner{templateOperator: templateOperator{shape: joinShape}}
@@ -92,8 +94,8 @@ func TestSerialFanInBuildUsesNoTaskAndAcceptsOneInput(t *testing.T) {
 		joiner,
 		writer,
 	)
-	if sources, edgeTasks := value.execution.TaskCounts(); sources != 1 || edgeTasks != 2 {
-		t.Fatalf("serial fan-in task counts = sources %d edges %d, want source plus independent buffers", sources, edgeTasks)
+	if sources, edgeTasks := value.execution.TaskCounts(); sources != 1 || edgeTasks != 1 {
+		t.Fatalf("serial fan-in task counts = sources %d edges %d, want the source plus only the join output buffer", sources, edgeTasks)
 	}
 	if value.run(context.Background()); !value.succeeded() {
 		t.Fatalf("run = %#v, ledger = %#v", value.report, value.events())

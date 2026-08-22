@@ -116,7 +116,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
 		defer cancel()
 		failure := failureOf(phase, "", "", err)
-		failure.Err = errors.Join(failure.Err, joinFailures(prepared.releaseScratch(cleanupContext)), joinFailures(prepared.releaseResources(cleanupContext)))
+		failure.Err = errors.Join(failure.Err, joinFailures(prepared.releaseScratch()), joinFailures(prepared.releaseResources(cleanupContext)))
 		return nil, &failure
 	}
 	runtimeRequest, err := selected.RuntimeResources()
@@ -185,7 +185,7 @@ func (p *Prepared) Close() error {
 		p.state = preparedClosing
 		p.mu.Unlock()
 		cleanupContext, cancel := context.WithTimeout(context.Background(), p.cleanupTimeout)
-		failures := append(p.releaseScratch(cleanupContext), p.releaseResources(cleanupContext)...)
+		failures := append(p.releaseScratch(), p.releaseResources(cleanupContext)...)
 		cancel()
 		err := joinFailures(failures)
 		p.complete(err)

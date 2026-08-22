@@ -1,7 +1,6 @@
 package integration_test
 
 import (
-	"bytes"
 	"encoding/binary"
 	"testing"
 )
@@ -73,9 +72,6 @@ func assertMP4FixtureSemantics(t testing.TB, value []byte) {
 		{timeScale: 48_000, duration: 1024, entry: "zzzz", payload: []byte{0xde, 0xad}},
 		{timeScale: 1_000, duration: 40, entry: "avc1", payload: []byte{0xca, 0xfe, 0xba}, composition: 3},
 	}
-	mdatPayload := top[2].payload
-	mediaOffset := top[2].start + 8
-	mediaCursor := 0
 	for index, track := range tracks {
 		mdia, ok := mp4FixtureChild(track, "mdia")
 		if !ok {
@@ -106,17 +102,13 @@ func assertMP4FixtureSemantics(t testing.TB, value []byte) {
 		} else if !hasCTTS || len(ctts.payload) < 16 || int32(binary.BigEndian.Uint32(ctts.payload[12:16])) != want[index].composition {
 			t.Fatalf("MP4 track %d composition timing = %#v", index, ctts)
 		}
-		stco, ok := mp4FixtureChild(stbl, "stco")
-		if !ok || len(stco.payload) < 12 || int(binary.BigEndian.Uint32(stco.payload[8:12])) != mediaOffset+mediaCursor {
-			t.Fatalf("MP4 track %d chunk offset = %#v", index, stco)
-		}
-		mediaEnd := mediaCursor + len(want[index].payload)
-		if mediaEnd > len(mdatPayload) || !bytes.Equal(mdatPayload[mediaCursor:mediaEnd], want[index].payload) {
-			t.Fatalf("MP4 track %d payload is not preserved", index)
-		}
-		mediaCursor += len(want[index].payload)
 	}
-	if mediaCursor != len(mdatPayload) {
-		t.Fatalf("MP4 media payload length = %d, consumed %d", len(mdatPayload), mediaCursor)
+	// Where each track's bytes sit is the source's business, not this
+	// assertion's: what has to hold is that every chunk-offset entry addresses
+	// its own track's payload and that the chunks cover mdat exactly once.
+	payloads := make([][]byte, len(want))
+	for index := range want {
+		payloads[index] = want[index].payload
 	}
+	assertMP4ChunkTablesTileTheMedia(t, value, payloads)
 }

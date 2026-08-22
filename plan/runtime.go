@@ -41,26 +41,36 @@ type Island struct {
 	Nodes []string
 }
 
-// Buffer projects the queue policy selected for one logical edge. A logical
-// edge can expand into several private runtime queues.
+// Buffer projects the queue policy selected for one logical edge.
+//
+// A logical edge over a Many port expands into one private runtime queue per
+// descriptor. Connections reports how many, and Limit is what each one of them
+// bounds, so the edge's real cost is Connections times Limit rather than Limit
+// alone.
 type Buffer struct {
-	ID       string
-	FromNode string
-	FromPort string
-	ToNode   string
-	ToPort   string
-	Limit    Limit
-	Reason   BufferReason
+	ID          string
+	FromNode    string
+	FromPort    string
+	ToNode      string
+	ToPort      string
+	Limit       Limit
+	Connections int
+	Reason      BufferReason
 }
 
 // FanIn records the policy and timestamp tolerance selected for one
 // many-input port. Its ordered inputs remain the node's port descriptors and
 // the logical graph edges.
+//
+// Direct reports that the port declared flow.Direct and planning confirmed it:
+// one routed producer drives the port from inside the same synchronous island,
+// so the order it emits in is the order the port observes.
 type FanIn struct {
 	Node      string
 	Port      string
 	Policy    flow.FanInPolicy
 	Tolerance time.Duration
+	Direct    bool
 }
 
 // Runtime is the inert projection of private Program specialization.

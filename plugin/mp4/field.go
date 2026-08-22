@@ -28,7 +28,10 @@ func readMovieAt(ctx context.Context, reader access.Random, destination []byte, 
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return fmt.Errorf("%w: %s: %w", errTruncatedMovie, what, err)
 		}
-		return fmt.Errorf("%w: %s: %w", errMalformedMovie, what, err)
+		// A source that stopped answering says nothing about the movie's
+		// structure. Calling it malformed would blame the file for a failure
+		// that happened underneath it.
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
 }
