@@ -16,6 +16,12 @@ import (
 func Set() plugin.Set {
 	result := plugin.NewSet(file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin()).
 		AddDeclaration(codec.Bind(wave.PCMTag(), codec.New(linear.DecoderIdentity()), codec.NewParser(linear.ParserIdentity())))
+	// MP4 carries linear PCM in already packetized sample entries, so these
+	// bind the decoder without a parser. A planner only reaches for them when
+	// copying the packets cannot satisfy the output.
+	for _, entry := range []string{"sowt", "twos"} {
+		result = result.AddDeclaration(codec.BindWithoutParser(mp4.SampleEntryTag(entry), codec.New(linear.DecoderIdentity())))
+	}
 	return result
 }
 

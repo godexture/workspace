@@ -52,6 +52,17 @@ func muxerComponent() plugin.Component {
 					"wave.sample-description", diagnostic.ErrorSeverity, diagnostic.Path{}, "WAVE muxer requires a complete PCM sample description", nil,
 				))
 			}
+			// WAVE stores interleaved little-endian samples. Ask the planner to
+			// convert anything else rather than refusing the stream outright.
+			if want := muxDescription(description); want != description {
+				desired, err := describedPackets(input, want)
+				if err != nil {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+				}
+				return plugin.Compiled[muxPlan, stream.Descriptor]{
+					Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("packets", plugin.DescriptorNeed("wave.sample-description", desired))},
+				}, nil
+			}
 			var muxHeaderValue muxHeader
 			var rewrite metadata.Document
 			var rewriteNeeded bool
@@ -164,4 +175,29 @@ func muxerComponent() plugin.Component {
 		plugin.WithProcessor("packets", codec.Packets(), "writes", access.Writes()),
 		mediaformat.Write(WAVE(), access.NewRequirements(access.AllOf(access.RandomWrite))),
 	)
+}
+
+// muxDescription is the closest description this muxer can write for the one it
+// received. An unrepresentable rate or channel layout is left unchanged so the
+// header marshaller reports it.
+func muxDescription(value sample.Description) sample.Description {
+	result := value
+	result.Format = sample.S16Interleaved
+	result.Endian = sample.LittleEndian
+	if !result.Valid() {
+		return value
+	}
+	return result
+}
+
+func describedPackets(input stream.Descriptor, description sample.Description) (stream.Descriptor, error) {
+	properties, err := description.Apply(input.Properties())
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, int64(description.Rate)), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
 }

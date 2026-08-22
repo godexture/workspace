@@ -49,7 +49,7 @@ func newComponent[Marker any](kind operation, name string) plugin.Component {
 			}
 			var desired *sample.Description
 			for _, demand := range suggestion.Demands() {
-				if demand.Port() != inputPort.ID() && demand.Port() != outputPort.ID() {
+				if !wireSide(kind, demand.Port(), inputPort.ID(), outputPort.ID()) {
 					continue
 				}
 				target, ok := demand.Need().Desired()
@@ -185,6 +185,21 @@ func operationDescriptions(kind operation, configuration configuration) (sample.
 		return configuration.planar(), configuration.wire()
 	default:
 		return configuration.wire(), configuration.wire()
+	}
+}
+
+// wireSide reports whether a demand on this port describes the interleaved wire
+// samples this operation reads or writes. A decoder emits planar frames and an
+// encoder consumes them, so a demand on that side says nothing about the byte
+// order of the wire and must not configure it.
+func wireSide(kind operation, port, input, output string) bool {
+	switch kind {
+	case decoderOperation:
+		return port == input
+	case encoderOperation:
+		return port == output
+	default:
+		return port == input || port == output
 	}
 }
 

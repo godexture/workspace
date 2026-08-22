@@ -204,12 +204,21 @@ func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Covera
 		{identity: linear.EncoderIdentity(), input: "frames", output: "packets", run: suggestFramesToPackets},
 		{identity: linear.WriterIdentity(), input: "packets", output: "writes", run: suggestPacketsToWrites},
 	} {
-		subject.run(t, set, subject.identity, coverage, linearSuggestionCases(t, subject.input, subject.output, linearDescriptor(t, input)))
+		subject.run(t, set, subject.identity, coverage, linearSuggestionCases(t, subject.input, subject.output, subject.identity == linear.DecoderIdentity(), linearDescriptor(t, input)))
 	}
 }
 
-func linearSuggestionCases(t *testing.T, inputPort, outputPort string, input stream.Descriptor) []testkit.Suggestion {
+// linearSuggestionCases demands the wire description on the port that carries
+// it. Only a decoder reads interleaved samples and writes planar frames, so a
+// demand on its output says nothing about the byte order it must read.
+func linearSuggestionCases(t *testing.T, inputPort, outputPort string, wireIsInput bool, input stream.Descriptor) []testkit.Suggestion {
 	t.Helper()
+	wireDemand := func(need plugin.Need[stream.Descriptor]) plugin.Demand[stream.Descriptor] {
+		if wireIsInput {
+			return plugin.InputDemand(inputPort, need)
+		}
+		return plugin.OutputDemand(outputPort, need)
+	}
 	return []testkit.Suggestion{
 		{
 			Name:    "follows-the-inspected-input",
@@ -222,16 +231,13 @@ func linearSuggestionCases(t *testing.T, inputPort, outputPort string, input str
 		{
 			Name:   "adopts-the-requested-endian",
 			Inputs: flow.NewDescriptors(flow.Describe(inputPort, input)),
-			Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand(
-				outputPort,
-				plugin.DescriptorNeed(
-					"linear.config",
-					linearDescriptor(t, sample.Description{
-						Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-						Layout: sample.Stereo, Endian: sample.LittleEndian,
-					}),
-				),
-			)},
+			Demands: []plugin.Demand[stream.Descriptor]{wireDemand(plugin.DescriptorNeed(
+				"linear.config",
+				linearDescriptor(t, sample.Description{
+					Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
+					Layout: sample.Stereo, Endian: sample.LittleEndian,
+				}),
+			))},
 			Want: []testkit.Candidate{{
 				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "little",
 			}},
