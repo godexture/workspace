@@ -21,7 +21,7 @@ func decoderComponent() plugin.Component {
 		[]flow.Port{flow.Out("values", Values())},
 	)
 	spec := plugin.Spec[configuration, decoderPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[decoderPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("packets")
 			if !ok {
@@ -29,7 +29,7 @@ func decoderComponent() plugin.Component {
 					plugin.Require("packets", plugin.ConditionNeed[stream.Descriptor]("acme.packet")),
 				}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), Values().Identity(), timing.MustBase(1, 1), property.New())
+			output, err := stream.NewDescriptor(input.ID(), Values().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[decoderPlan, stream.Descriptor]{}, err
 			}

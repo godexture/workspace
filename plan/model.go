@@ -34,8 +34,17 @@ type Node struct {
 	Effects      []plugin.Effect
 	Contract     plugin.Contract
 	Resources    resource.Request
+	Scratch      resource.Bytes
 	Estimate     resource.Estimate
 	Finalization plugin.Finalization
+}
+
+// Scratch projects the fixed aggregate temporary-byte reservation. Limit comes
+// from the effective resource policy; Reserved is the sum of every node claim
+// and selected output spool ceiling.
+type Scratch struct {
+	Limit    resource.Bytes
+	Reserved resource.Bytes
 }
 
 type Edge struct {
@@ -89,8 +98,10 @@ type Description struct {
 	Platform           Platform
 	Nodes              []Node
 	Edges              []Edge
+	Mappings           []Mapping
 	Boundaries         []Boundary
 	Runtime            Runtime
+	Scratch            Scratch
 	Warnings           []string
 }
 
@@ -109,6 +120,7 @@ func cloneDescription(description Description) Description {
 		description.Nodes[index] = cloneNode(description.Nodes[index])
 	}
 	description.Edges = append([]Edge(nil), description.Edges...)
+	description.Mappings = append([]Mapping(nil), description.Mappings...)
 	description.Boundaries = append([]Boundary(nil), description.Boundaries...)
 	for index := range description.Boundaries {
 		description.Boundaries[index] = cloneBoundary(description.Boundaries[index])

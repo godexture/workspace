@@ -17,8 +17,13 @@ import (
 func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, error) {
 	result := selected
 	result.entries = append([]bound.Entry(nil), selected.entries...)
+	requested, ok := result.request.Graph()
+	if !ok {
+		return inputSelection{}, errors.New("normalized Job has no graph for output Format selection")
+	}
+	inspectedByNode := indexInspections(result.inspected)
+	upstream := reverseNodeAdjacency(requested.Edges())
 	outputs := result.request.Outputs()
-	var terminals []solve.TerminalSelection
 	for entryIndex, entry := range result.entries {
 		projection := entry.Projection()
 		if !entry.Pending() || projection.Direction != plan.OutputBoundary {
@@ -59,16 +64,32 @@ func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, err
 				map[string]string{"boundary": projection.Node, "cause": err.Error()},
 			))
 		}
+		values := upstreamInspections(job.NodeID(projection.Node), match.Format(), upstream, inspectedByNode)
+		switch len(values) {
+		case 0:
+		case 1:
+			prepared, err = mediaformat.WithInspection(prepared, values[0].value)
+			if err != nil {
+				return inputSelection{}, inspectHandoffDiagnostic(match.Component().Identity(), map[string]string{
+					"format":    match.Format().Identity().String(),
+					"source":    values[0].source.String(),
+					"writeNode": projection.Node,
+					"cause":     err.Error(),
+				}, "writable Format CompileContext already contains a different inspection")
+			}
+		default:
+			return inputSelection{}, ambiguousInspection(writeFormatNode{id: job.NodeID(projection.Node), component: match.Component(), format: match.Format()}, values)
+		}
+		insertion, err := insertOutputFormat(result.request, projection, match.Component(), patch)
+		if err != nil {
+			return inputSelection{}, err
+		}
 		result.entries[entryIndex] = resolved
-		terminals = append(terminals, solve.TerminalSelection{
-			Boundary: job.At(job.NodeID(projection.Node), projection.Port), Component: match.Component().Identity(), Config: patch, Configured: configured, Context: prepared, Reason: "format.output",
-		})
+		result.request = insertion.request
+		result.contexts = result.contexts.WithPrepared(insertion.node.ID(), prepared)
+		result.nodes = append(result.nodes, solve.SelectedNode{ID: insertion.node.ID(), Reason: "format.output", InferConfig: !configured})
+		result.edges = replaceSelectedEdge(result.edges, insertion.replaced, insertion.inserted, "format.output")
 	}
-	preselection, err := result.preselection.WithTerminals(terminals...)
-	if err != nil {
-		return inputSelection{}, err
-	}
-	result.preselection = preselection
 	return result, nil
 }
 
@@ -87,7 +108,7 @@ func (h *Host) defaultOutputFormat(request job.Job, entries []bound.Entry) (medi
 		if projection.Direction != plan.InputBoundary || entry.Pending() {
 			continue
 		}
-		adjacent, err := bind.AdjacentBoundaryNode(projection, requested.Edges())
+		adjacent, err := bind.FormatNode(entry, requested.Edges())
 		if err != nil {
 			return mediaformat.Format{}, err
 		}

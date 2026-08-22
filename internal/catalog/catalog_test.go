@@ -55,7 +55,7 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},
@@ -71,7 +71,7 @@ func catalogComponentWithSchema[Marker any](descriptor plugin.Descriptor, schema
 
 func catalogTraitComponent[Marker any](name string, shape flow.Shape, options ...plugin.ComponentOption) plugin.Component {
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			outputs := flow.NewDescriptors[int]()
 			if len(shape.Outputs) == 1 {
@@ -310,7 +310,7 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			code: "catalog.access-scheme",
 		},
 		"format read shape": {
-			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())}), mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))))},
+			components: []plugin.Component{catalogTraitComponent[catalogFirstID]("read", flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes()), flow.Out("side", access.Bytes())}), mediaformat.Read(formatValue, access.NewRequirements(access.AllOf(access.SequentialRead))))},
 			code:       "catalog.format-shape",
 		},
 		"format read schema": {
@@ -338,6 +338,112 @@ func TestBuildRejectsTraitShapeMismatchAndDirectionalSchemeConflict(t *testing.T
 			_, err := Build(plugin.NewSet(definition))
 			if err == nil || !hasCatalogDiagnostic(err, test.code) {
 				t.Fatalf("diagnostic %s = %v", test.code, err)
+			}
+		})
+	}
+}
+
+func TestFormatReadTraitAllowsDirectOutputShape(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	formatValue, err := mediaformat.Define[catalogFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements := access.NewRequirements(access.AllOf(access.SequentialRead))
+	tests := map[string]struct {
+		shape flow.Shape
+		valid bool
+	}{
+		"carrier": {
+			shape: flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("packets", typ)}),
+			valid: true,
+		},
+		"carrier many": {
+			shape: flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("packets", typ, flow.Many())}),
+			valid: true,
+		},
+		"carrier missing output": {
+			shape: flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, nil),
+		},
+		"carrier multiple outputs": {
+			shape: flow.NewShape([]flow.Port{flow.In("bytes", access.Bytes())}, []flow.Port{flow.Out("packets", typ), flow.Out("side", typ)}),
+		},
+		"direct one": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ)}),
+			valid: true,
+		},
+		"direct many": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many())}),
+			valid: true,
+		},
+		"hybrid outputs": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many()), flow.Out("side", typ)}),
+		},
+		"zero outputs": {
+			shape: flow.NewShape(nil, nil),
+		},
+		"multiple direct outputs": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("packets", typ, flow.Many()), flow.Out("side", typ, flow.Many())}),
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			component := catalogTraitComponent[catalogFirstID]("read", test.shape, mediaformat.Read(formatValue, requirements))
+			_, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, component)))
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !hasCatalogDiagnostic(err, "catalog.format-shape") {
+				t.Fatalf("direct read shape diagnostic = %v", err)
+			}
+		})
+	}
+}
+
+func TestFormatWriteTraitAllowsOneOrManyInputShape(t *testing.T) {
+	typ := schema.Define[catalogUnitID, catalogUnit](schema.Traits[catalogUnit]{})
+	formatValue, err := mediaformat.Define[catalogFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements := access.NewRequirements(access.AllOf(access.SequentialWrite))
+	tests := map[string]struct {
+		shape flow.Shape
+		valid bool
+	}{
+		"one input": {
+			shape: flow.NewShape([]flow.Port{flow.In("packets", typ)}, []flow.Port{flow.Out("writes", access.Writes())}),
+			valid: true,
+		},
+		"many input": {
+			shape: flow.NewShape([]flow.Port{flow.In("packets", typ, flow.Many(), flow.WithFanIn(flow.SerialFanIn))}, []flow.Port{flow.Out("writes", access.Writes())}),
+			valid: true,
+		},
+		"missing input": {
+			shape: flow.NewShape(nil, []flow.Port{flow.Out("writes", access.Writes())}),
+		},
+		"multiple inputs": {
+			shape: flow.NewShape([]flow.Port{flow.In("packets", typ), flow.In("side", typ)}, []flow.Port{flow.Out("writes", access.Writes())}),
+		},
+		"many output": {
+			shape: flow.NewShape([]flow.Port{flow.In("packets", typ)}, []flow.Port{flow.Out("writes", access.Writes(), flow.Many())}),
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			component := catalogTraitComponent[catalogFirstID]("write", test.shape, mediaformat.Write(formatValue, requirements))
+			_, err := Build(plugin.NewSet(plugin.Define[catalogPluginID](plugin.Descriptor{DisplayName: "catalog", Version: "1"}, component)))
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !hasCatalogDiagnostic(err, "catalog.format-shape") {
+				t.Fatalf("Format write shape diagnostic = %v", err)
 			}
 		})
 	}
@@ -465,7 +571,7 @@ func TestBuildRejectsSchemaMarkerBoundToDifferentPayloadTypes(t *testing.T) {
 	typ := schema.Define[catalogUnitID, catalogOtherUnit](schema.Traits[catalogOtherUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := plugin.Spec[catalogConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[catalogConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, catalogConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},

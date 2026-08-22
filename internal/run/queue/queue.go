@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	ErrInvalidLimit = errors.New("runtime queue requires a positive item limit and non-negative byte/time limits")
+	ErrInvalidLimit = errors.New("runtime queue requires a positive item limit and non-negative byte/span limits")
 	ErrSizeTrait    = errors.New("runtime queue byte limit requires a size trait")
-	ErrTimeTrait    = errors.New("runtime queue time limit requires a timestamp trait")
+	ErrTimeTrait    = errors.New("runtime queue span limit requires a timestamp trait")
 	ErrInvalidSize  = errors.New("runtime queue size trait returned an invalid size")
 	ErrUnknownTime  = errors.New("runtime queue time trait returned an unknown timestamp")
 	ErrClosed       = errors.New("runtime queue is closed")
@@ -33,16 +33,16 @@ const (
 	abandoned
 )
 
-// Limit is enforced locally by one edge. Time is expressed in the connected
+// Limit is enforced locally by one edge. Span is expressed in the connected
 // stream descriptor's ticks; conversion into a common time base is a planner
 // decision and never occurs in the item loop.
 type Limit struct {
 	Items int
 	Bytes int64
-	Time  int64
+	Span  int64
 }
 
-func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Time >= 0 }
+func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Span >= 0 }
 
 type entry[T any] struct {
 	cell flow.Item[T]
@@ -93,7 +93,7 @@ func New[T any](limit Limit, typ schema.Type[T], into flow.Reporter) (*Queue[T],
 	if limit.Bytes != 0 && traits.Size == nil {
 		return nil, ErrSizeTrait
 	}
-	if limit.Time != 0 && traits.Time == nil {
+	if limit.Span != 0 && traits.Time == nil {
 		return nil, ErrTimeTrait
 	}
 	result := &Queue[T]{
@@ -378,7 +378,7 @@ type Snapshot struct {
 	Items     int
 	Active    int
 	Bytes     int64
-	Time      int64
+	Span      int64
 	Closed    bool
 	Sealed    bool
 	Abandoned bool
@@ -396,7 +396,7 @@ func (q *Queue[T]) Snapshot() Snapshot {
 		Items:     q.count,
 		Active:    q.active,
 		Bytes:     q.bytes,
-		Time:      q.span(),
+		Span:      q.span(),
 		Closed:    q.terminal != accepting,
 		Sealed:    q.terminal == sealed,
 		Abandoned: q.terminal == abandoned,
@@ -421,7 +421,7 @@ func (q *Queue[T]) measure(value T) (size, valueTime int64, err error) {
 			return 0, 0, ErrInvalidSize
 		}
 	}
-	if q.limit.Time != 0 {
+	if q.limit.Span != 0 {
 		measured, ok := q.time(value)
 		if !ok {
 			return 0, 0, ErrUnknownTime
@@ -435,7 +435,7 @@ func (q *Queue[T]) fits(size, itemTime int64) bool {
 	if q.count == q.limit.Items || q.limit.Bytes != 0 && size > q.limit.Bytes-q.bytes {
 		return false
 	}
-	if q.limit.Time == 0 || q.count == 0 {
+	if q.limit.Span == 0 || q.count == 0 {
 		return true
 	}
 	minimum, maximum := q.minTime, q.maxTime
@@ -445,7 +445,7 @@ func (q *Queue[T]) fits(size, itemTime int64) bool {
 	if itemTime > maximum {
 		maximum = itemTime
 	}
-	return uint64(maximum)-uint64(minimum) <= uint64(q.limit.Time)
+	return uint64(maximum)-uint64(minimum) <= uint64(q.limit.Span)
 }
 
 func (q *Queue[T]) push(item *flow.Item[T], size, itemTime int64) bool {
@@ -458,7 +458,7 @@ func (q *Queue[T]) push(item *flow.Item[T], size, itemTime int64) bool {
 	q.bytes += size
 	if q.count == 1 {
 		q.minTime, q.maxTime = itemTime, itemTime
-	} else if q.limit.Time != 0 {
+	} else if q.limit.Span != 0 {
 		if itemTime < q.minTime {
 			q.minTime = itemTime
 		}
@@ -479,7 +479,7 @@ func (q *Queue[T]) pop(into *flow.Item[T]) {
 	q.bytes -= size
 	if q.count == 0 {
 		q.minTime, q.maxTime = 0, 0
-	} else if q.limit.Time != 0 && (slotTime == q.minTime || slotTime == q.maxTime) {
+	} else if q.limit.Span != 0 && (slotTime == q.minTime || slotTime == q.maxTime) {
 		q.recomputeTime()
 	}
 }
@@ -500,7 +500,7 @@ func (q *Queue[T]) recomputeTime() {
 }
 
 func (q *Queue[T]) span() int64 {
-	if q.limit.Time == 0 || q.count < 2 {
+	if q.limit.Span == 0 || q.count < 2 {
 		return 0
 	}
 	return q.maxTime - q.minTime

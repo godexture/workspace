@@ -19,6 +19,8 @@ const (
 	Realtime
 )
 
+const defaultScratchMaxBytes resource.Bytes = 64 << 20
+
 func (p Preset) Valid() bool { return p >= Fast && p <= Realtime }
 
 func (p Preset) String() string {
@@ -103,41 +105,54 @@ func (p ContinuityPolicy) Valid() bool {
 // ResourcePolicy bounds planning-visible coarse resources. A zero Limit with
 // Limited false means that the Host decides the grant during preparation.
 type ResourcePolicy struct {
-	Limited       bool
-	Limit         resource.Grant
-	Queue         QueuePolicy
-	AllowSpool    bool
-	SpoolMaxBytes resource.Bytes
-	SpoolStorage  access.SpoolStorage
+	Limited bool
+	Limit   resource.Grant
+	Queue   QueuePolicy
+	// ScratchMaxBytes is the aggregate fixed ceiling shared by node-local
+	// scratch journals and selected output spools. Zero disables both.
+	ScratchMaxBytes resource.Bytes
+	AllowSpool      bool
+	SpoolMaxBytes   resource.Bytes
+	SpoolStorage    access.SpoolStorage
 }
 
-// QueuePolicy selects the per-edge bounds fixed into the executable Plan.
-// Bytes and Window are applied only when the connected schema supplies the
-// corresponding inexpensive trait. Window is converted to stream-local ticks
-// during planning, never in the item loop. In M5 it also supplies the
-// fail-closed timestamp tolerance for zip fan-in; that semantic alignment
-// tolerance is scheduled to become a separate policy in M7.
+// QueuePolicy selects the per-edge physical bounds fixed into the executable
+// Plan. Bytes and Span are applied only when the connected schema supplies the
+// corresponding inexpensive trait. Span is converted to stream-local ticks
+// during planning, never in the item loop.
 type QueuePolicy struct {
-	Items  int
-	Bytes  resource.Bytes
-	Window time.Duration
+	Items int
+	Bytes resource.Bytes
+	Span  time.Duration
 }
 
 func (p QueuePolicy) Valid() bool {
-	return p.validItems() && p.validBytes() && p.validWindow()
+	return p.validItems() && p.validBytes() && p.validSpan()
 }
 
-func (p QueuePolicy) validItems() bool  { return p.Items > 0 }
-func (p QueuePolicy) validBytes() bool  { return uint64(p.Bytes) <= math.MaxInt64 }
-func (p QueuePolicy) validWindow() bool { return p.Window >= 0 }
+func (p QueuePolicy) validItems() bool { return p.Items > 0 }
+func (p QueuePolicy) validBytes() bool { return uint64(p.Bytes) <= math.MaxInt64 }
+func (p QueuePolicy) validSpan() bool  { return p.Span >= 0 }
 
-func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validSpool() }
+// AlignmentPolicy selects timestamp tolerance for Zip fan-in. A zero value
+// disables Zip alignment tolerance; other fan-in policies ignore it.
+type AlignmentPolicy struct {
+	Zip time.Duration
+}
+
+func (p AlignmentPolicy) Valid() bool { return p.Zip >= 0 }
+
+func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validScratch() && p.validSpool() }
+
+func (p ResourcePolicy) validScratch() bool {
+	return uint64(p.ScratchMaxBytes) <= math.MaxInt64
+}
 
 func (p ResourcePolicy) validSpool() bool {
 	if !p.AllowSpool {
 		return p.SpoolMaxBytes == 0 && p.SpoolStorage == 0
 	}
-	return p.SpoolMaxBytes > 0 && uint64(p.SpoolMaxBytes) <= math.MaxInt64 && p.SpoolStorage.Valid()
+	return p.SpoolMaxBytes > 0 && uint64(p.SpoolMaxBytes) <= math.MaxInt64 && p.SpoolStorage.Valid() && p.ScratchMaxBytes >= p.SpoolMaxBytes
 }
 
 // Policy is the expanded vector consumed by the planner. Preset is retained
@@ -150,6 +165,7 @@ type Policy struct {
 	Artifact       ArtifactPolicy
 	Implementation ImplementationPolicy
 	Continuity     ContinuityPolicy
+	Alignment      AlignmentPolicy
 	Resources      ResourcePolicy
 }
 
@@ -186,11 +202,17 @@ func (p Policy) diagnostics() (items []diagnostic.Item) {
 	if !queue.validBytes() {
 		items = append(items, policyDiagnostic("job.invalid-policy-queue-bytes", "queue byte limit exceeds the runtime range", "resources", "queue", "bytes"))
 	}
-	if !queue.validWindow() {
-		items = append(items, policyDiagnostic("job.invalid-policy-queue-window", "queue window must not be negative", "resources", "queue", "window"))
+	if !queue.validSpan() {
+		items = append(items, policyDiagnostic("job.invalid-policy-queue-span", "queue span must not be negative", "resources", "queue", "span"))
+	}
+	if !p.Alignment.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-alignment-zip", "zip alignment tolerance must not be negative", "alignment", "zip"))
 	}
 	if !p.Resources.validSpool() {
-		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, and neither when disabled", "resources", "spool"))
+		items = append(items, policyDiagnostic("job.invalid-policy-spool", "spool policy requires an explicit positive byte limit and storage when enabled, neither when disabled, and an aggregate scratch limit at least as large", "resources", "spool"))
+	}
+	if !p.Resources.validScratch() {
+		items = append(items, policyDiagnostic("job.invalid-policy-scratch", "aggregate scratch byte limit exceeds the runtime range", "resources", "scratch"))
 	}
 	return items
 }
@@ -210,7 +232,8 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Artifact:       ArtifactNone,
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
-		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}},
+		Alignment:      AlignmentPolicy{},
+		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}, ScratchMaxBytes: defaultScratchMaxBytes},
 	}
 	switch preset {
 	case Fast:
@@ -221,7 +244,9 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		policy.Implementation = ImplementationPolicy{PureGo: true}
 	case Realtime:
 		policy.Goal = LatencyGoal
-		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}
+		policy.Alignment = AlignmentPolicy{Zip: 250 * time.Millisecond}
+		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}
+		policy.Resources.ScratchMaxBytes = 0
 	default:
 		return Policy{}, false
 	}

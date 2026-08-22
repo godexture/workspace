@@ -2,6 +2,7 @@ package plan
 
 import (
 	"sort"
+	"time"
 
 	"github.com/godexture/godec/flow"
 )
@@ -28,10 +29,10 @@ func (r BufferReason) Has(value BufferReason) bool {
 type Limit struct {
 	Items int
 	Bytes int64
-	Time  int64
+	Span  time.Duration
 }
 
-func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Time >= 0 }
+func (l Limit) Valid() bool { return l.Items > 0 && l.Bytes >= 0 && l.Span >= 0 }
 
 // Island is one maximal synchronous execution region. Source and sink I/O
 // appear as single-node islands; adjacent Processor nodes share one island.
@@ -40,7 +41,8 @@ type Island struct {
 	Nodes []string
 }
 
-// Buffer projects one physical bounded edge into the public Plan.
+// Buffer projects the queue policy selected for one logical edge. A logical
+// edge can expand into several private runtime queues.
 type Buffer struct {
 	ID       string
 	FromNode string
@@ -51,20 +53,14 @@ type Buffer struct {
 	Reason   BufferReason
 }
 
-type Connection struct {
-	FromNode string
-	FromPort string
-}
-
-// FanIn records deterministic connection order, local buffering, and the
-// watermark selected for one many-input port.
+// FanIn records the policy and timestamp tolerance selected for one
+// many-input port. Its ordered inputs remain the node's port descriptors and
+// the logical graph edges.
 type FanIn struct {
-	Node        string
-	Port        string
-	Policy      flow.FanInPolicy
-	Connections []Connection
-	Limit       Limit
-	Watermark   int64
+	Node      string
+	Port      string
+	Policy    flow.FanInPolicy
+	Tolerance time.Duration
 }
 
 // Runtime is the inert projection of private Program specialization.
@@ -82,9 +78,6 @@ func cloneRuntime(value Runtime) Runtime {
 	}
 	value.Buffers = append([]Buffer(nil), value.Buffers...)
 	value.FanIns = append([]FanIn(nil), value.FanIns...)
-	for index := range value.FanIns {
-		value.FanIns[index].Connections = append([]Connection(nil), value.FanIns[index].Connections...)
-	}
 	return value
 }
 

@@ -16,6 +16,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -175,13 +176,13 @@ func lifecycleComponent(openFails bool) plugin.Component {
 	)
 	schema := lifecycleSchema()
 	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[lifecycleConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[lifecyclePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("lifecycle.input"))}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
 			}
@@ -212,7 +213,7 @@ func lifecycleComponent(openFails bool) plugin.Component {
 func lifecycleSinkComponent(phase host.Phase) plugin.Component {
 	shape := sinkShape()
 	spec := plugin.Spec[configuration, sinkPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[sinkPlan, stream.Descriptor], error) {
 			if _, ok := inputs.One("writes"); !ok {
 				return plugin.Compiled[sinkPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("writes", plugin.ConditionNeed[stream.Descriptor]("file.input"))}}, nil

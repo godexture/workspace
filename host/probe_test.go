@@ -447,7 +447,7 @@ func probeFormatComponentWithExtensions[ComponentMarker, FormatMarker any](probe
 		[]flow.Port{flow.Out("chunks", mediaformat.Chunks())},
 	)
 	spec := plugin.Spec[probeFixtureConfig, probeFixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[probeFixtureConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, probeFixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[probeFixturePlan, stream.Descriptor], error) {
 			return plugin.Compiled[probeFixturePlan, stream.Descriptor]{Plan: probeFixturePlan{shape: shape.Clone()}}, nil
 		},

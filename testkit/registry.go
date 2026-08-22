@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -101,6 +102,42 @@ func (c *Coverage) Uncovered() []UncoveredContract {
 func Track[I, O any](subject Subject[I, O], coverage *Coverage) Subject[I, O] {
 	subject.coverage = coverage
 	return subject
+}
+
+// Observe records the components a completed Plan executed. It is the coverage
+// source for a component the typed runner cannot model — a carrier-less reader,
+// or a port carrying repeated descriptors — and takes its evidence from the
+// Plan a Host actually ran rather than from the caller's assertion.
+func (c *Coverage) Observe(t testing.TB, value plan.Plan, set plugin.Set) {
+	t.Helper()
+	if err := c.observe(value, set); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (c *Coverage) observe(value plan.Plan, set plugin.Set) error {
+	if c == nil {
+		return fmt.Errorf("testkit typed coverage: registry is nil")
+	}
+	if !value.Valid() {
+		return fmt.Errorf("testkit typed coverage: observed Plan is invalid")
+	}
+	identities := make(map[string]plugin.Identity, len(set.Components()))
+	for _, component := range set.Components() {
+		identities[component.Identity().String()] = component.Identity()
+	}
+	nodes := value.Nodes()
+	if len(nodes) == 0 {
+		return fmt.Errorf("testkit typed coverage: observed Plan has no nodes")
+	}
+	for _, node := range nodes {
+		identity, known := identities[node.Component]
+		if !known {
+			return fmt.Errorf("testkit typed coverage: observed Plan node %s is outside the composition", node.Component)
+		}
+		c.record(identity)
+	}
+	return nil
 }
 
 func (c *Coverage) record(identity plugin.Identity) {

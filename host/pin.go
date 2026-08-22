@@ -29,7 +29,7 @@ func (h *Host) validatePinnedFormatSelectors(request job.Job, entries []bound.En
 		if !present {
 			continue
 		}
-		adjacent, err := bind.AdjacentBoundaryNode(projection, requested.Edges())
+		adjacent, err := bind.FormatNode(entry, requested.Edges())
 		if err != nil {
 			return err
 		}

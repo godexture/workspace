@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime/debug"
 
 	"github.com/godexture/godec/config"
@@ -29,6 +30,7 @@ type Compilation struct {
 	requirements   any
 	effects        []Effect
 	resources      resource.Request
+	scratch        resource.Bytes
 	estimate       resource.Estimate
 	finalization   Finalization
 	execution      drive.Binding
@@ -43,6 +45,7 @@ func (c Compilation) Component() Identity                   { return c.component
 func (c Compilation) ConfigFingerprint() config.Fingerprint { return c.config }
 func (c Compilation) Effects() []Effect                     { return append([]Effect(nil), c.effects...) }
 func (c Compilation) Resources() resource.Request           { return c.resources }
+func (c Compilation) Scratch() resource.Bytes               { return c.scratch }
 func (c Compilation) Estimate() resource.Estimate           { return c.estimate }
 func (c Compilation) Finalization() Finalization            { return c.finalization }
 
@@ -56,28 +59,15 @@ func RequirementsOf[D any](compilation Compilation) ([]Requirement[D], bool) {
 	return append([]Requirement[D](nil), values...), ok
 }
 
-// Shape resolves the component port topology from a validated config.
-func (c Component) Shape(ctx ShapeContext, resolved config.ResolvedView) (shape flow.Shape, err error) {
-	if c.implementation == nil || c.implementation.shape == nil {
+func (c Component) staticPorts() (flow.Shape, error) {
+	if c.implementation == nil {
 		return flow.Shape{}, ErrComponentSpec
 	}
-	if err := c.validateResolved(resolved); err != nil {
-		return flow.Shape{}, err
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = c.panicError("plugin.shape-panic", "component Shape panicked", recovered)
-			shape = flow.Shape{}
-		}
-	}()
-	shape, err = c.implementation.shape(ctx, resolved)
-	if err != nil {
-		return flow.Shape{}, c.phaseError("plugin.shape", "component Shape failed", err.Error())
-	}
+	shape := c.Ports()
 	if err := shape.Validate(); err != nil {
-		return flow.Shape{}, c.phaseError("plugin.port-shape", "component Shape returned invalid ports", err.Error())
+		return flow.Shape{}, c.phaseError("plugin.ports", "component Spec has invalid Ports", err.Error())
 	}
-	return shape.Clone(), nil
+	return shape, nil
 }
 
 // Compile invokes the component's pure semantic transformation. D remains
@@ -89,11 +79,11 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if err := component.validateResolved(resolved); err != nil {
 		return Compilation{}, err
 	}
-	shape, err := component.Shape(ShapeContext{}, resolved)
+	shape, err := component.staticPorts()
 	if err != nil {
 		return Compilation{}, err
 	}
-	if items := validateDescriptorPorts("input", shape.Inputs, inputs.Bindings()); len(items) != 0 {
+	if items := validateDescriptorPorts("plugin.compile", "input", shape.Inputs, inputs.Bindings()); len(items) != 0 {
 		return Compilation{}, diagnostic.NewError(prefixComponent(items, component.identity)...)
 	}
 
@@ -116,7 +106,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if !ok {
 		return Compilation{}, component.phaseError("plugin.compile-requirement", "component Compile returned the wrong requirement type", "")
 	}
-	items := validateDescriptorPorts("output", shape.Outputs, outputs.Bindings())
+	items := validateDescriptorPorts("plugin.compile", "output", shape.Outputs, outputs.Bindings())
 	inputCounts := descriptorCounts(inputs.Bindings())
 	requirementPorts := make(map[string]struct{}, len(requirements))
 	for _, requirement := range requirements {
@@ -152,6 +142,9 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if !compiled.estimate.Valid() {
 		items = append(items, diagnostic.NewItem("plugin.compile-estimate", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid resource estimate", nil))
 	}
+	if uint64(compiled.scratch) > math.MaxInt64 {
+		items = append(items, diagnostic.NewItem("plugin.compile-scratch", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned a scratch claim outside the runtime range", nil))
+	}
 	if !compiled.finalization.Valid() {
 		items = append(items, diagnostic.NewItem("plugin.compile-finalization", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid finalization requirement", nil))
 	}
@@ -171,6 +164,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		requirements:   append([]Requirement[D](nil), requirements...),
 		effects:        append([]Effect(nil), compiled.effects...),
 		resources:      compiled.resources,
+		scratch:        compiled.scratch,
 		estimate:       compiled.estimate,
 		finalization:   compiled.finalization,
 		execution:      component.execution,
@@ -180,13 +174,19 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 
 // Suggest returns validated, canonical config candidates. It never calls
 // Compile or Open; the planner evaluates each returned config with Compile.
-func Suggest[D any](component Component, ctx SuggestContext, input D, need Need[D]) (candidates []config.ResolvedView, err error) {
+func Suggest[D any](component Component, ctx SuggestContext, suggestion Suggestion[D]) (candidates []config.ResolvedView, err error) {
 	implementation := component.implementation
 	if implementation == nil || implementation.suggest == nil {
 		return nil, nil
 	}
-	if !need.Valid() {
-		return nil, component.phaseError("plugin.suggest-need", "component Suggest received an invalid need", "")
+	shape, err := component.staticPorts()
+	if err != nil {
+		return nil, err
+	}
+	items := validateDescriptorPorts("plugin.suggest", "input", shape.Inputs, suggestion.Inputs().Bindings())
+	items = append(items, validateSuggestionDemands(shape, suggestion.Demands())...)
+	if len(items) != 0 {
+		return nil, diagnostic.NewError(prefixComponent(items, component.identity)...)
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -194,7 +194,7 @@ func Suggest[D any](component Component, ctx SuggestContext, input D, need Need[
 			candidates = nil
 		}
 	}()
-	values, err := implementation.suggest(ctx, input, need)
+	values, err := implementation.suggest(ctx, cloneSuggestion(suggestion))
 	if err != nil {
 		return nil, component.phaseError("plugin.suggest", "component Suggest failed", err.Error())
 	}
@@ -238,7 +238,7 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 		return nil, c.phaseError("plugin.open", "component Open returned a nil operator", "")
 	}
 	if openedShape := operator.Ports(); !openedShape.Equal(compilation.shape) {
-		detail := "operator ports differ from the compiled Shape"
+		detail := "operator ports differ from the compiled Ports"
 		if closeErr := operator.Close(); closeErr != nil {
 			detail += ": close failed: " + closeErr.Error()
 		}
@@ -291,7 +291,7 @@ func (c Component) panicError(code, message string, recovered any) error {
 	))
 }
 
-func validateDescriptorPorts[D any](phase string, ports []flow.Port, bindings []flow.PortDescriptor[D]) []diagnostic.Item {
+func validateDescriptorPorts[D any](prefix, phase string, ports []flow.Port, bindings []flow.PortDescriptor[D]) []diagnostic.Item {
 	portByID := make(map[string]flow.Port, len(ports))
 	counts := make(map[string]int, len(ports))
 	for _, port := range ports {
@@ -301,12 +301,41 @@ func validateDescriptorPorts[D any](phase string, ports []flow.Port, bindings []
 	for _, binding := range bindings {
 		port, exists := portByID[binding.Port()]
 		if !binding.Valid() || !exists {
-			items = append(items, diagnostic.NewItem("plugin.compile-"+phase+"-port", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: binding.Port()}, "descriptor binding names an unknown or invalid "+phase+" port", nil))
+			items = append(items, diagnostic.NewItem(prefix+"-"+phase+"-port", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: binding.Port()}, "descriptor binding names an unknown or invalid "+phase+" port", nil))
 			continue
 		}
 		counts[binding.Port()]++
 		if counts[binding.Port()] > 1 && port.Multiplicity() != flow.ManyMultiplicity {
-			items = append(items, diagnostic.NewItem("plugin.compile-"+phase+"-multiplicity", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: binding.Port()}, "descriptor binding exceeds port multiplicity", nil))
+			items = append(items, diagnostic.NewItem(prefix+"-"+phase+"-multiplicity", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: binding.Port()}, "descriptor binding exceeds port multiplicity", nil))
+		}
+	}
+	return items
+}
+
+func validateSuggestionDemands[D any](shape flow.Shape, demands []Demand[D]) []diagnostic.Item {
+	portByDirection := map[flow.Direction]map[string]struct{}{
+		flow.InputDirection:  make(map[string]struct{}, len(shape.Inputs)),
+		flow.OutputDirection: make(map[string]struct{}, len(shape.Outputs)),
+	}
+	for _, port := range shape.Inputs {
+		portByDirection[flow.InputDirection][port.ID()] = struct{}{}
+	}
+	for _, port := range shape.Outputs {
+		portByDirection[flow.OutputDirection][port.ID()] = struct{}{}
+	}
+	var items []diagnostic.Item
+	for _, demand := range demands {
+		path := diagnostic.Path{Descriptor: demand.Port()}
+		if !demand.Need().Valid() {
+			items = append(items, diagnostic.NewItem("plugin.suggest-need", diagnostic.ErrorSeverity, path, "component Suggest received an invalid need", nil))
+			continue
+		}
+		if !demand.Valid() {
+			items = append(items, diagnostic.NewItem("plugin.suggest-demand", diagnostic.ErrorSeverity, path, "component Suggest received an invalid demand", nil))
+			continue
+		}
+		if _, exists := portByDirection[demand.Direction()][demand.Port()]; !exists {
+			items = append(items, diagnostic.NewItem("plugin.suggest-demand-port", diagnostic.ErrorSeverity, path, "component Suggest demand names an unknown or incompatible port", nil))
 		}
 	}
 	return items

@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/internal/journal"
 	"github.com/godexture/godec/internal/task"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -79,18 +80,28 @@ func (r *runner) openNode(index int) *Failure {
 	if err != nil {
 		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
 	}
+	source, err := r.sourceOpening(node.ID())
+	if err != nil {
+		return r.record(journal.WorkError, journal.Open, node.ID().String(), "", err)
+	}
 	lease := r.prepared.byNode[node.ID()]
 	// The component's own failure domain is created here and lives for the
 	// whole run, so a payload it retains past a call still reports somewhere
 	// the run collects from -- during Flush, during Close, or after both.
 	owner := r.ledger.Domain("node/"+node.ID().String(), node.ID().String())
 	r.owners[index] = owner
+	var scratchService plugin.Scratch
+	if journal := r.prepared.scratch[node.ID()]; journal != nil {
+		scratchService = journal
+	}
 	services := plugin.OpenServices{
 		Buffers:     lease.Buffers(),
 		Tasks:       task.NewStarter(r.plugins, lease.Grant().Workers),
 		Diagnostics: r.diag.sink(node.ID().String()),
 		Owner:       owner.At(node.ID().String()).Reporter(),
 		Boundary:    boundary,
+		Source:      source,
+		Scratch:     scratchService,
 	}
 	r.emitLifecycle(node.ID().String(), OpenPhase, "start")
 	operator, err := r.prepared.program.Open(plugin.NewOpenContext(r.ctx, services), node.ID())
@@ -115,12 +126,27 @@ func (r *runner) openNode(index int) *Failure {
 	return nil
 }
 
+func (r *runner) sourceOpening(node job.NodeID) (any, error) {
+	source, ok := r.prepared.sources[node]
+	if !ok {
+		return nil, nil
+	}
+	session, ok := r.prepared.bySession[source]
+	if !ok || !session.opening.Valid() || session.opening.Direction() != access.SourceDirection {
+		return nil, errors.New("prepared Format source opening is missing")
+	}
+	return session.opening, nil
+}
+
 func (r *runner) opening(node string) (any, error) {
 	entry, ok := r.boundary[node]
 	if !ok {
 		return nil, nil
 	}
 	projection := entry.Projection()
+	if entry.Anchor().Valid() {
+		return nil, nil
+	}
 	switch projection.Kind {
 	case plan.ProviderBoundary:
 		session, ok := r.prepared.bySession[node]

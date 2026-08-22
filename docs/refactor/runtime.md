@@ -34,7 +34,7 @@ planner は次の段階を明示する。
 3. **Prepare Inputs**: byte source session を acquire し、device/session endpoint capability を read-only inspect する。
 4. **Probe Sources**: bounded shared cached view で format 候補を採点する。
 5. **Inspect Topology**: 選択 format/endpoint が stream、program、metadata carrier を読み取る。
-6. **Shape Graph**: demux/mux/mixer 等の動的 port を確定する。
+6. **Shape Graph**: static `Spec.Ports` と ordered repeated descriptor bindings、必要な private route を確定する。
 7. **Compile Components**: 各 component の semantic output と requirement を得る。
 8. **Solve Gaps**: decoder、encoder、parser、converter、resampler、mapping、spool 等の bridge を挿入する。
 9. **Validate Graph**: 型、multiplicity、接続、cycle、reachability、finalization を検証する。
@@ -47,6 +47,13 @@ solver の tie-break は deterministic にする。catalog identity、component 
 bridge の自動挿入範囲、Effect と Host policy、探索 budget、default copy 優先の詳細は [planner の探索規則](planner.md) に定義する。
 
 これは完成時の pipeline である。M4/M5 が実装した現在の経路は宣言を Normalize/Bind した後の Shape/Compile/Solve/Validate/Describe/Build と runtime lifecycle で、段階 3〜5 と spool bridge の最初の実装は M6 の file/WAVE consumer が担当する。M6 以降の Prepare は input I/O を含むが、各 component の `Compile` は pure のままである。prepared session が Plan と input snapshot を所有し、Run まで同じ session を使う。output transaction は dry-run/Plan 時に開始しない。Access/Endpoint の詳細は [access と endpoint contract](access.md) に定義する。
+
+random-access Format が carrier bytes を消費せず static `Many` output から直接 emit する場合、explicit graph のその output を
+input boundary anchor とする。Boundary は provider identity/capability を保持するが、provider carrier node/edge は
+Plan/Program に生成しない。Prepare は provider session を一度だけ Acquire し、その Opening を Inspect と anchored reader、
+same-format inspection consumer へ共有する。anchored reader へ通常の `OpenServices.Boundary` を重ねず、Format の
+`SourceOpening` だけを渡す。automatic graph が Many terminal/mapping を構成できない段階では明示 diagnostic で失敗し、
+carrier path へ fallback しない。
 
 ## graph model
 
@@ -120,6 +127,23 @@ demux -> parse -> decode -> convert -> gain -> encode -> mux
 ```
 
 island 内は direct typed call とし、edge ごとの interface dispatch を compile 時に可能な限り消す。必要に応じて specialized SPSC/MPSC queue を内部実装として選ぶが、plugin contract に channel を露出しない。
+
+### typed flow routing
+
+public な `flow.Router[I, O]` は `flow.RoutedEmitter[O]` から ordinal を選び、各 emitted item を一つの
+route へ渡す。`Process`/`Flush` は複数 item を複数 route へ emit できる。Router は同じ item を fork せず、
+選択された route の downstream fan-out だけが runtime の `Fork` を使う。
+carrier input を必要としない source は `flow.RoutedReader[O]` で同じ table へ直接 emit する。一回の `Read` は
+複数 item/route を publish できるが、成功 call は一つ以上 emit しなければならない。item を emit した call と
+`io.EOF` を同時に返さず、最後の emitting call は `nil`、次の item-less call が `io.EOF` を返す。zero-item source は
+初回から `io.EOF` を返す。
+
+`flow.Item` の binding は slot に固定されるため、第三者 plugin が output item を再利用する場合も route ごとに
+一つを保持し、異なる route で同じ slot を使い回さない。
+
+runtime は compiled descriptor order から route ordinal と typed delivery を Open 時に解決し、
+`RoutedEmitter.Route` はその固定 table を参照する。item loop で port/stream lookup、reflection、`any`
+transport、mandatory allocation を行わない。
 
 ## ownership
 
@@ -357,7 +381,7 @@ process
 
 - plugin catalog、CPU feature、implementation policy は Host construction 時に snapshot 化する。
 - source/sink transaction、queue、temporary storage、memory budget は Job が所有する。
-- parser、codec、filter のstream stateとscratchはcomponent instanceまたはgranted worker slotが所有する。
+- parser、codec、filter のstream stateとscratchはcomponent instanceまたはgranted worker slotが所有する。offline preset の aggregate scratch 既定値は 64 MiB、`Realtime` は disabled (0) で、実際に claim した node-local journal だけを作成する。spool は明示 `AllowSpool` 時だけ利用し、`ScratchMaxBytes` は明示指定で上書きできる。
 - packet/frame payloadは一時的なleaseとしてowner間をmoveする。
 
 package-level mutable stateを暗黙のownerにしない。global registry/factory、WASM job map、書換可能なCPU feature、process-wide runtime pool、mutable default/config/descriptorは削除する。testがglobal function/feature flagを書き換える方式も使わず、Host snapshot、constructor dependency、明示variantを注入する。
@@ -404,13 +428,36 @@ queue policy は一つの「resource tracker」に全 item を報告させず、
 type Limit struct {
     Items int
     Bytes int64
-    Time  timing.Duration
+    Span  time.Duration
 }
 ```
 
-`job.ResourcePolicy.Queue` が per-edge policy を Plan/Program へ固定する。既定の Fast/Stable/Portable は 4 item の item-only queue、Realtime は 2 item、16 MiB、250 ms を既定とする。schema が安価な `Size` trait を提供する場合だけ byte limit を、`Time` trait と stream time base がある場合だけ time window を有効にする。wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない dimension は無視して item limit を必ず残す。
+`job.ResourcePolicy.Queue` が per-edge の physical policy を Plan/Program へ固定する。既定の Fast/Stable/Portable は
+4 item の item-only queue である。Realtime は 2 item、16 MiB、250 ms の physical `Span` を持ち、それとは
+独立して `job.Policy.Alignment.Zip` に 250 ms の semantic tolerance を持つ。schema が安価な `Size` trait を
+提供する場合だけ byte limit を、`Time` trait と stream time base がある場合だけ `Span` を有効にする。
+wall-clock duration は planning 時に stream-local tick へ変換し、item loop では変換しない。使えない physical
+dimension は無視して item limit を必ず残す。`SerialFanIn` は time base を要求せず、queue の available item
+を一つずつ callback の受理順に同期直列化する。これは ordering algorithm ではなく、複数 concurrent producer
+間の wall-clock 順や再現性を契約しない。
 
-fan-in は接続 edge の limit/time base が一致する場合だけ compile し、timestamp/zip policy に必要な watermark を同じ tick 単位で Plan に投影する。runtime queue は items/bytes/time と watermark を同じ policy snapshot から強制する。M5 では `QueuePolicy.Window` を edge queue の timestamp span 上限と zip fan-in の許容ずれの両方へ暫定利用し、超過を `ErrWatermark` で fail-closed にする。M7 の MP4/multi-stream consumer を入れる前に、物理的な buffering 上限と media semantics 上の alignment tolerance を別 policy へ分け、late input の待機、失敗、drop、conceal のどれを選ぶかを fan-in policy ごとに明示する。
+physical queue は `Items`、利用可能なら `Bytes` と stream-local tick の `Span` だけを強制する。一方 Plan は
+logical edge ごとに一つの `Buffer` だけを表示し、その `Limit.Span` と `FanIn.Tolerance` は user-facing な
+wall-clock duration のまま保持する。descriptor ごとの private queue、tick limit、private scheduling order は
+Plan に複製しない。logical route ordinal は graph contract として必要な場合だけ Plan に投影する。
+Zip alignment は別の `job.AlignmentPolicy.Zip` から private tick へ変換する。有効な `Span` または Zip tolerance
+を持つ Zip fan-in は接続 edge の time base が一致する場合だけ compile する。同一 graph に Zip と
+`SerialFanIn` が共存する場合も、非ゼロの job policy は Zip edge だけへ投影し、Serial edge の tolerance は 0 のままとする。
+`SerialFanIn` はこの条件と無関係で、cross-input availability、DTS、cross-track timestamp order を待たない。Serial 実行へ
+非ゼロ tolerance を直接適用するのは runtime/internal error である。callback の直列化順がそのまま ordering algorithm
+になるわけではなく、複数 concurrent producer の wall-clock 順や再現性は契約しない。
+Zip は各 input から一 item ずつ待ち、batch の timestamp spread が tolerance を超えれば `ErrTolerance` で
+fail-closed にする。physical queue は tolerance を強制せず、Zip は queue span を alignment として解釈しない。
+
+> **歴史的注記:** M5 完了時点では旧 `QueuePolicy.Window` を physical timestamp span と Zip tolerance の両方へ
+> 暫定利用し、`ErrWatermark` で失敗させていた。この契約は M7-1 で上記の `Span` / `Alignment.Zip` へ置き換え済みで、
+> 現行 API、Plan、runtime の説明ではない。M7-1 の `SerialFanIn` は Zip alignment や timestamp order を
+> 適用しない。late/drop/conceal policy は M9 の realtime consumer まで追加しない。
 
 resource manager は Open 時に codec workspace、worker 数、大きな ring 等の粗粒度 grant を与える。M6 で spool consumer を入れる時に temporary storage の quota と cleanup authority を同じ manager へ追加する。packet/frame ごとの acquire/release を中央 manager に送らない。
 
@@ -466,7 +513,13 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 
 ## multi-input と ordering
 
-現在の複数 input から先に届いた値を処理する方式は scheduler timing に結果が左右される。mixer、sidechain、subtitle overlay、A/V sync では欠落、ずれ、早い EOF の原因になる。
+複数 input の意味は component が選ぶ fan-in policy で決める。`SerialFanIn` は callback を同期直列化し、
+input ordinal を保持するだけで、timestamp order や wall-clock order を導出しない。Serial input buffer のない direct な
+single synchronous execution island で単一 routed producer が emit する場合だけ、その call 順が downstream の physical order
+になる。buffer/fan-out/concurrent producer がある場合の cross-track physical interleave、wall-clock 順、再現性は契約しない。
+これらの構成だけを理由に generic `SerialFanIn` を Compile で reject しない。
+mixer、sidechain、subtitle overlay、A/V sync が時刻順や lockstep を必要とする場合は、実 consumer と backpressure
+設計が揃った別 policy を使う。
 
 各 multi-input component は fan-in policy を宣言する。
 
@@ -474,10 +527,10 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 - zip/lockstep
 - latest side input
 - primary-driven
-- unordered merge
+- serial callback fan-in (`SerialFanIn`)
 - windowed aggregation
 
-host は policy に必要な buffering と watermark を plan に含める。「deterministic」は単に毎回同じ順序という意味ではなく、media semantics を保つ ordering rule が明示されていることを意味する。
+Host は physical buffering を `Limit`、policy 固有の semantic constraint を別 field として Plan に含める。現行 Zip の constraint は `Tolerance` であり、queue `Span` とは共有しない。`SerialFanIn` の callback 順は ordering algorithm ではなく、同期直列化の結果である。M7 MP4 の correctness/exact は track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table を基準とし、physical interleave の変更を semantic loss と扱わない。「deterministic」は単に毎回同じ順序という意味ではなく、media semantics を保つ ordering rule が明示されていることを意味する。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure を要求する。late/drop/conceal は realtime consumer が入る M9 まで policy に追加しない。
 
 ## execution policy
 
@@ -594,14 +647,18 @@ M5 は execution island、ownership、queue、cancel、Finalize、既に bound �
 - `flow.Item` pointer の linear 1 hop が allocation zero であることを test で固定する。所有権は `Move`、fan-out は `Fork`、release は `Drop` に統一し、double consume/use-after-consume の検査は conformance testkit と opt-in `VerifyOwnership` に置く。既定 build の hot path に検出用 tracker state を持たせない。
 - payload allocator が Host/Job の grant に属し、`sync.Pool` を resource manager や correctness の根拠にしない。`Overwrite` lease は Commit 前に read/publication できず、error/cancel で破棄される。
 - `resource.Request.Workers` が node-local task starter の同時実行上限として消費され、component が grant を超えて worker task を開始できない。consumer の無い temporary dimension を resource request/grant に残さない。
-- 実 queue が bounded で、`job.QueuePolicy` から Plan/Program に固定した `Limit` の items/bytes/time を扱う。byte/time は対応 trait がある edge だけで有効にし、window は planning 時に stream-local tick へ変換する。Fast の既定は item-only、Realtime は byte/time も有効にする。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
+- M5 時点の実 queue は bounded で、`job.QueuePolicy` から Plan/Program に固定した `Limit` の items/bytes/time を扱った。byte/time は対応 trait がある edge だけで有効にし、当時の window は planning 時に stream-local tick へ変換した。この完了記録の window は現行 API ではなく、上の「queue と backpressure」に記した physical `Span` と Zip `Alignment` に置き換え済みである。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
 - resource accounting が packet/frame ごとに中央 manager を呼ばない。局所 counter に蓄積し、metrics export 時に集約する。
 - job context cancel が source、queue、operator、sink、host task group へ伝播し、block 中の read/write を解除する。edge close が idempotent で、send-after-close と double-close を plugin の責任にしない。join できない task を「停止した」と偽らず diagnostic にする。
 - EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は `Finalize` の明示 contract で渡り、data packet に混ざらない。
 - Open が transaction として行われ、途中失敗で既に開いた component/Endpoint/resource/output transaction を逆順に閉じ、sink を Abort し、Open 中に作った goroutine を cancel/join する。
 - 成功時に Finalize → Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
 - primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、output rollback、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。M6 の temporary storage も同じ集約へ接続する。
-- multi-input component が fan-in policy を宣言し、goroutine の到着順で入力を選ばない（[F22](findings.md)）。必要な buffering と watermark が Plan に現れる。
+- **Historical status (superseded by M7):** M5 の multi-input contract は fan-in policy を宣言し、goroutine の
+  到着順だけで timestamp semantics を選ばないことを求めた（[F22](findings.md)）。M5 時点では必要な buffering と
+  暫定 watermark を Plan に投影したが、M7-1 で `SerialFanIn` を callback 同期直列化 + input ordinal として再定義した。
+  現行 Plan では physical `Limit` と Zip の semantic `Tolerance` を別々に投影し、SerialFanIn に timestamp order や
+  concurrent producer の wall-clock order/reproducibility を与えない。
 - panic recovery が execution island または長寿命 task の最上位に一度だけ置かれ、item loop に `defer` が入らない。plugin/component identity、plan node ID、phase、stack、primary/cancel status を記録する。
 - observation off で hot path に metric 用 atomic、clock read、size 計算が現れない。observation の各段階が同じ event model から集約される。
 - `Fast`/`Stable`/`Portable`/`Realtime` が Run の分岐にならず、Host が Compile 前に policy vector へ展開する。item loop が preset、CPU feature、catalog を参照しない。

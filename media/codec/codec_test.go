@@ -53,8 +53,8 @@ func TestCodecTagPropertyIsCanonicalAndDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := stream.MustDescriptor("stream", Packets().Identity(), timing.MustBase(1, 48_000), properties)
-	second := stream.MustDescriptor("stream", Packets().Identity(), timing.MustBase(1, 48_000), other)
+	first := stream.MustDescriptor("stream", Packets().Descriptor(), timing.MustBase(1, 48_000), properties)
+	second := stream.MustDescriptor("stream", Packets().Descriptor(), timing.MustBase(1, 48_000), other)
 	firstFingerprint, err := first.Fingerprint()
 	if err != nil {
 		t.Fatal(err)

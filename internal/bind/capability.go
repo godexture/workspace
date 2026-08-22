@@ -26,7 +26,7 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 			result[index] = entry
 			continue
 		}
-		adjacent, err := AdjacentBoundaryNode(projection, edges)
+		adjacent, err := FormatNode(entry, edges)
 		if err != nil {
 			return nil, err
 		}
@@ -85,9 +85,19 @@ func (r Registry) selectCapabilities(nodes []job.Node, edges []job.Edge, entries
 			return nil, unsatisfiedCapabilities(projection, node, formatIdentity, requirements)
 		}
 		projection.Selected = selection.Capabilities()
-		result[index] = bound.Source(projection, entry.Reference(), entry.SourceTrait())
+		result[index] = bound.ResolveSource(entry, projection)
 	}
 	return result, nil
+}
+
+// FormatNode returns the Format node selected for an Access boundary. An
+// anchored source already identifies that node; carrier boundaries discover
+// it from their one adjacent edge.
+func FormatNode(entry bound.Entry, edges []job.Edge) (job.NodeID, error) {
+	if anchor := entry.Anchor(); anchor.Valid() {
+		return anchor, nil
+	}
+	return AdjacentBoundaryNode(entry.Projection(), edges)
 }
 
 // FinalizeOutput selects the sink capabilities required by the Format chosen
@@ -164,6 +174,12 @@ func FinalizeInput(entry bound.Entry, node job.Node, component plugin.Component,
 		return bound.Entry{}, access.Selection{}, unsatisfiedCapabilities(projection, node, trait.Format().Identity(), trait.Requirements())
 	}
 	projection.Selected = selection.Capabilities()
+	shape := component.Ports()
+	if len(shape.Inputs) == 0 && len(shape.Outputs) == 1 {
+		projection.Node = node.ID().String()
+		projection.Port = shape.Outputs[0].ID()
+		return bound.AnchorSource(entry, projection, node.ID()), selection, nil
+	}
 	return bound.ResolveSource(entry, projection), selection, nil
 }
 

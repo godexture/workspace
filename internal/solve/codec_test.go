@@ -31,7 +31,7 @@ func solveTaggedSource(t testing.TB, tag format.Tag) plugin.Component {
 	}
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", solveSchemaA)})
 	return solveComponent[solveTaggedSourceID](shape, func(solveConfig, flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
-		output := stream.MustDescriptor("stream", solveSchemaA.Identity(), timing.MustBase(1, 48_000), properties)
+		output := stream.MustDescriptor("stream", solveSchemaA.Descriptor(), timing.MustBase(1, 48_000), properties)
 		return plugin.Compiled[solvePlan, stream.Descriptor]{Outputs: flow.NewDescriptors(flow.Describe("out", output))}
 	}, nil, 0, plugin.Contract{}, nil, nil)
 }

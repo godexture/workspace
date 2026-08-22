@@ -18,6 +18,7 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
@@ -193,6 +194,9 @@ func TestPositionedOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *tes
 				t.Fatal(err)
 			}
 			boundary := outputBoundary(t, prepared.Plan())
+			if got := prepared.Plan().Scratch(); got != (plan.Scratch{Limit: 1 << 20, Reserved: 1 << 20}) {
+				t.Fatalf("spooled scratch reservation = %#v", got)
+			}
 			if len(boundary.Available) != 1 || boundary.Available[0] != access.SequentialWrite ||
 				len(boundary.Effective) != 2 || boundary.Effective[0] != access.RandomWrite || boundary.Effective[1] != access.SequentialWrite ||
 				len(boundary.Selected) != 1 || boundary.Selected[0] != access.RandomWrite || !boundary.Spool.Valid() || boundary.Spool.Storage() != storage || !boundary.Spool.FinalCopy() {
@@ -321,7 +325,7 @@ func spoolFixture() plugin.Definition {
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[lifecycleConfig, lifecyclePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[lifecycleConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[lifecyclePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {
@@ -329,7 +333,7 @@ func spoolFixture() plugin.Definition {
 					plugin.Require("bytes", plugin.ConditionNeed[stream.Descriptor]("spool.input")),
 				}}, nil
 			}
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
 			}
@@ -370,6 +374,7 @@ func spoolPolicy(t *testing.T, storage access.SpoolStorage, maximum resource.Byt
 		t.Fatal("Fast policy is unavailable")
 	}
 	policy.Resources.AllowSpool = true
+	policy.Resources.ScratchMaxBytes = maximum
 	policy.Resources.SpoolMaxBytes = maximum
 	policy.Resources.SpoolStorage = storage
 	if !policy.Valid() {

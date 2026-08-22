@@ -8,7 +8,7 @@ import (
 )
 
 // Component is a heterogeneous component definition. Its typed Spec is erased
-// once by WithSpec and recovered only at Shape/Compile/Suggest/Open boundaries.
+// once by WithSpec and recovered only at Compile/Suggest/Open boundaries.
 type Component struct {
 	identity       Identity
 	plugin         Identity
@@ -18,7 +18,6 @@ type Component struct {
 	provenance     Provenance
 	problems       []diagnostic.Item
 	implementation *componentImplementation
-	defaultShape   flow.Shape
 	execution      drive.Binding
 	executionSet   bool
 	traits         traitStore
@@ -84,7 +83,11 @@ func NewComponent[Marker any, C any](descriptor Descriptor, schema config.Schema
 		}
 		seen[alias] = struct{}{}
 	}
-	result.initializeDefaultShape()
+	if result.executionSet && result.implementation != nil && len(result.implementation.problems) == 0 {
+		if err := result.execution.Validate(result.implementation.ports); err != nil {
+			result.problems = append(result.problems, diagnostic.NewItem("plugin.execution-ports", diagnostic.ErrorSeverity, diagnostic.Path{Component: result.identity.String()}, "component execution binding does not match its Ports", map[string]string{"cause": err.Error()}))
+		}
+	}
 	return result
 }
 
@@ -116,9 +119,13 @@ func (c Component) Provenance() Provenance { return c.provenance }
 // accessible only through the trait-owning package's typed accessor.
 func (c Component) Traits() []TraitDescriptor { return traitDescriptors(c.traits) }
 
-// Ports returns the shape resolved from the default config. Planning always
-// calls Shape again with the selected config.
-func (c Component) Ports() flow.Shape { return c.defaultShape.Clone() }
+// Ports returns the immutable static port shape declared by the component.
+func (c Component) Ports() flow.Shape {
+	if c.implementation == nil {
+		return flow.Shape{}
+	}
+	return c.implementation.ports.Clone()
+}
 
 // Diagnostics returns definition-time diagnostics without exposing mutable
 // storage. Schema and descriptor validation is performed here so a zero or
@@ -163,7 +170,6 @@ func (c Component) View() ComponentView {
 		Provenance:      c.provenance,
 		Ports:           c.Ports(),
 		HasSpec:         c.implementation != nil,
-		DynamicShape:    c.implementation != nil && c.implementation.dynamicShape,
 		HasSuggest:      c.implementation != nil && c.implementation.suggest != nil,
 		SuggestionLimit: c.suggestionLimit(),
 		Finalizes:       c.implementation != nil && c.implementation.finalizes,
@@ -187,7 +193,6 @@ func (c Component) withPlugin(identity Identity) Component {
 	c.plugin = identity
 	c.aliases = append([]string(nil), c.aliases...)
 	c.problems = cloneItems(c.problems)
-	c.defaultShape = c.defaultShape.Clone()
 	c.traits = cloneTraits(c.traits)
 	return c
 }
@@ -204,38 +209,12 @@ type ComponentView struct {
 	Provenance      Provenance
 	Ports           flow.Shape
 	HasSpec         bool
-	DynamicShape    bool
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
 	Executable      bool
 	Contract        Contract
 	Traits          []TraitDescriptor
-}
-
-func (c *Component) initializeDefaultShape() {
-	if c == nil || c.implementation == nil || len(c.implementation.problems) != 0 || !c.schema.Valid() {
-		return
-	}
-	resolved, err := c.schema.Resolve(config.NewPatch())
-	if err != nil {
-		return
-	}
-	shape, err := c.Shape(ShapeContext{}, resolved)
-	if err != nil {
-		if items := diagnostic.ItemsOf(err); len(items) != 0 {
-			c.problems = append(c.problems, items...)
-		} else {
-			c.problems = append(c.problems, diagnostic.NewItem("plugin.port-shape", diagnostic.ErrorSeverity, diagnostic.Path{Component: c.identity.String()}, err.Error(), nil))
-		}
-		return
-	}
-	c.defaultShape = shape.Clone()
-	if c.executionSet {
-		if err := c.execution.Validate(shape); err != nil {
-			c.problems = append(c.problems, diagnostic.NewItem("plugin.execution-shape", diagnostic.ErrorSeverity, diagnostic.Path{Component: c.identity.String()}, "component execution binding does not match its default Shape", map[string]string{"cause": err.Error()}))
-		}
-	}
 }
 
 func (c Component) suggestionLimit() int {

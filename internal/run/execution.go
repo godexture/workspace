@@ -61,7 +61,7 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 		}
 	}
 	result := &Execution{observer: observer}
-	edgeTargets := make([]drive.Link, len(t.edges))
+	edgeTargets := make([]drive.Link, len(t.connections))
 	fail := func(err error) (*Execution, error) {
 		result.Abort()
 		return nil, err
@@ -88,6 +88,26 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 				return fail(err)
 			}
 			edgeTargets[t.incoming[index][0]] = input
+		case drive.Router:
+			routes, err := t.routeLinks(ledger, index, edgeTargets, result)
+			if err != nil {
+				return fail(err)
+			}
+			input, err := value.binding.OpenRouterAt(operator, routes, node)
+			if err != nil {
+				return fail(err)
+			}
+			edgeTargets[t.incoming[index][0]] = input
+		case drive.RoutedSource:
+			routes, err := t.routeLinks(ledger, index, edgeTargets, result)
+			if err != nil {
+				return fail(err)
+			}
+			sourceTask, err := value.binding.OpenRoutedSource(operator, routes, ledger.Domain("source/"+node, node))
+			if err != nil {
+				return fail(err)
+			}
+			result.sources = append(result.sources, namedTask{task: sourceTask, done: make(chan error, 1)})
 		case drive.Joiner:
 			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
@@ -95,9 +115,9 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			}
 			incoming := append([]int(nil), t.incoming[index]...)
 			sort.Slice(incoming, func(left, right int) bool {
-				return t.edges[incoming[left]].value.From().String() < t.edges[incoming[right]].value.From().String()
+				return t.connections[incoming[left]].input < t.connections[incoming[right]].input
 			})
-			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.edges[incoming[0]].limit, output, ledger.Domain("join/"+node, node))
+			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.connections[incoming[0]].limit, value.toleranceTicks, output, ledger.Domain("join/"+node, node))
 			if err != nil {
 				return fail(err)
 			}
@@ -107,7 +127,11 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			for inputIndex, edgeIndex := range incoming {
 				edgeTargets[edgeIndex] = inputs[inputIndex]
 			}
-			result.edges = append(result.edges, namedTask{task: joinTask, chain: output})
+			if joinTask.Valid() {
+				result.edges = append(result.edges, namedTask{task: joinTask, chain: output})
+			} else if value.binding.FanIn() != flow.SerialFanIn {
+				return fail(ErrTopology)
+			}
 		case drive.Source:
 			output, err := t.outputLink(ledger, index, edgeTargets, result)
 			if err != nil {
@@ -135,35 +159,6 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 		}
 	}
 	return result, nil
-}
-
-func (t Template) outputLink(ledger *journal.Ledger, index int, targets []drive.Link, execution *Execution) (drive.Link, error) {
-	node := t.nodes[index].id.String()
-	links := make([]drive.Link, len(t.outgoing[index]))
-	for outputIndex, edgeIndex := range t.outgoing[index] {
-		edge := t.edges[edgeIndex]
-		link := targets[edgeIndex]
-		if !link.Valid() {
-			return drive.Link{}, ErrTopology
-		}
-		key := edgeKey(edge.value)
-		local := execution.observer.Local("", key)
-		observed, err := t.nodes[index].binding.Observe(link, local)
-		if err != nil {
-			return drive.Link{}, err
-		}
-		link = observed
-		if edge.reason != 0 && t.nodes[edge.to].kind != drive.Joiner {
-			buffered, bufferTask, err := t.nodes[index].binding.Buffer(edge.limit, link, ledger.Domain("buffer/"+key, key))
-			if err != nil {
-				return drive.Link{}, err
-			}
-			link = buffered
-			execution.edges = append(execution.edges, namedTask{task: bufferTask})
-		}
-		links[outputIndex] = link
-	}
-	return t.nodes[index].binding.Fanout(links, node)
 }
 
 // Start registers edge tasks before sources so bounded consumers are ready

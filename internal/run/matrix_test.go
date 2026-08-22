@@ -252,13 +252,14 @@ var matrixTopologies = []matrixTopology{
 		slots: "the source's own slot, a queue ring slot, and whatever the discard finds",
 		build: func(t testing.TB, typ schema.Type[int], ending matrixEnding, seen *atomic.Int32) (Template, []flow.Operator) {
 			sourceShape, _, _, sinkShape := matrixShapes(typ)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 				},
 				[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -274,7 +275,7 @@ var matrixTopologies = []matrixTopology{
 		slots: "an in-flight slot crossing a direct call between two fused stages",
 		build: func(t testing.TB, typ schema.Type[int], ending matrixEnding, seen *atomic.Int32) (Template, []flow.Operator) {
 			sourceShape, passShape, _, sinkShape := matrixShapes(typ)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "first", Shape: passShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -287,6 +288,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("second", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -304,7 +306,7 @@ var matrixTopologies = []matrixTopology{
 		slots: "a forked branch slot per extra consumer, released by the task that forked it",
 		build: func(t testing.TB, typ schema.Type[int], ending matrixEnding, seen *atomic.Int32) (Template, []flow.Operator) {
 			sourceShape, _, _, sinkShape := matrixShapes(typ)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "left", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
@@ -315,6 +317,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("source", "out"), job.At("right", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -332,7 +335,7 @@ var matrixTopologies = []matrixTopology{
 		build: func(t testing.TB, typ schema.Type[int], ending matrixEnding, seen *atomic.Int32) (Template, []flow.Operator) {
 			sourceShape, _, joinShape, sinkShape := matrixShapes(typ)
 			entered := make(chan struct{}, 1)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "a", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "b", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
@@ -345,6 +348,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("join", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -365,7 +369,7 @@ var matrixTopologies = []matrixTopology{
 		slots: "a component slot bound to its Owner and released one step later",
 		build: func(t testing.TB, typ schema.Type[int], ending matrixEnding, seen *atomic.Int32) (Template, []flow.Operator) {
 			sourceShape, passShape, _, sinkShape := matrixShapes(typ)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "keep", Shape: passShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -376,6 +380,7 @@ var matrixTopologies = []matrixTopology{
 					job.Connect(job.At("keep", "out"), job.At("sink", "in")),
 				},
 				job.QueuePolicy{Items: 2},
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)

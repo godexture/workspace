@@ -10,8 +10,10 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
+	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/standard"
@@ -27,8 +29,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 10 {
-		t.Fatalf("catalog components = %d, want 10", first.Catalog().Len())
+	if first.Catalog().Len() != 12 {
+		t.Fatalf("catalog components = %d, want 12", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -41,6 +43,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		linear.DecoderIdentity(),
 		linear.EncoderIdentity(),
 		linear.WriterIdentity(),
+		mp4.DemuxerIdentity(),
+		mp4.MuxerIdentity(),
 		wave.DemuxerIdentity(),
 		wave.MuxerIdentity(),
 		wave.InfoEncodingIdentity(),
@@ -165,6 +169,24 @@ func TestNewFileJobForwardsPolicyAndBudget(t *testing.T) {
 	}
 	if request.Policy() != policy || request.Budget() != budget {
 		t.Fatalf("file job policy/budget = %#v, %#v", request.Policy(), request.Budget())
+	}
+}
+
+func TestNewFileJobForwardsMappings(t *testing.T) {
+	values := []job.Mapping{job.MapStream(0, stream.ID("video"), 0)}
+	option := standard.WithMappings(values...)
+	values[0] = job.MapStream(0, stream.ID("changed"), 0)
+	request, err := standard.NewFileJob(
+		"input.mp4",
+		"output.mp4",
+		option,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := request.Mappings()
+	if len(mappings) != 1 || mappings[0].Stream() != stream.ID("video") {
+		t.Fatalf("file job mappings = %#v", mappings)
 	}
 }
 

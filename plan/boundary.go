@@ -24,8 +24,10 @@ const (
 
 func (k BoundaryKind) Valid() bool { return k >= ProviderBoundary && k <= DirectBoundary }
 
-// Boundary is an inert projection of one Job input/output binding. Reference
-// carries only a redacted display and a hash of its private canonical form.
+// Boundary is an inert projection of one Job input/output binding. Node and
+// Port identify the actual data anchor, while Component identifies its Access
+// provider or adaptor. Reference carries only a redacted display and a hash
+// of its private canonical form.
 type Boundary struct {
 	Direction            BoundaryDirection
 	Kind                 BoundaryKind

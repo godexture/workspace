@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,6 +126,61 @@ var (
 	templateQueue  = job.QueuePolicy{Items: 4}
 )
 
+func compileFixture(values []Node, edges []job.Edge, policy job.QueuePolicy, alignment job.AlignmentPolicy) (Template, error) {
+	return Compile(describeFixtureNodes(values, edges), edges, policy, alignment)
+}
+
+func describeFixtureNodes(values []Node, edges []job.Edge) []Node {
+	result := append([]Node(nil), values...)
+	byID := make(map[job.NodeID]int, len(result))
+	for index, value := range result {
+		byID[value.ID] = index
+	}
+	for _, edge := range edges {
+		index := byID[edge.From().Node()]
+		if len(result[index].Outputs.At(edge.From().ID())) != 0 {
+			continue
+		}
+		for _, port := range result[index].Shape.Outputs {
+			if port.ID() != edge.From().ID() {
+				continue
+			}
+			base := timing.Base{}
+			if port.Schema().HasTime() {
+				base = timing.MustBase(1, 1_000)
+			}
+			descriptor := stream.MustDescriptor(stream.ID(edge.From().String()), port.Schema(), base, property.New())
+			result[index].Outputs = flow.NewDescriptors(append(result[index].Outputs.Bindings(), flow.Describe(edge.From().ID(), descriptor))...)
+			break
+		}
+	}
+	byTarget := make(map[job.NodeID][]job.Edge, len(result))
+	for _, edge := range edges {
+		byTarget[edge.To().Node()] = append(byTarget[edge.To().Node()], edge)
+	}
+	for id, incoming := range byTarget {
+		sort.Slice(incoming, func(left, right int) bool {
+			if incoming[left].To().ID() != incoming[right].To().ID() {
+				return incoming[left].To().ID() < incoming[right].To().ID()
+			}
+			return incoming[left].From().String() < incoming[right].From().String()
+		})
+		index := byID[id]
+		bindings := result[index].Inputs.Bindings()
+		for _, edge := range incoming {
+			if len(result[index].Inputs.At(edge.To().ID())) != 0 {
+				continue
+			}
+			from := result[byID[edge.From().Node()]]
+			for _, descriptor := range from.Outputs.At(edge.From().ID()) {
+				bindings = append(bindings, flow.Describe(edge.To().ID(), descriptor))
+			}
+		}
+		result[index].Inputs = flow.NewDescriptors(bindings...)
+	}
+	return result
+}
+
 // island drives one execution the way Host does, over one ledger, and reads
 // the ledger afterwards. Everything a run produced is there, so a test asks the
 // ledger rather than collecting failures from several return values.
@@ -222,7 +278,7 @@ func TestCompileFusesMaximalLinearProcessorIsland(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,12 +307,12 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 		job.Connect(job.At("a", "out"), job.At("join", "in")),
 		job.Connect(job.At("join", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := template.Projection()
-	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Policy != flow.ZipFanIn || len(runtime.FanIns[0].Connections) != 2 || runtime.FanIns[0].Connections[0].FromNode != "a" || runtime.FanIns[0].Connections[1].FromNode != "b" {
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Node != "join" || runtime.FanIns[0].Port != "in" || runtime.FanIns[0].Policy != flow.ZipFanIn {
 		t.Fatalf("fan-in = %#v", runtime.FanIns)
 	}
 	if len(runtime.Buffers) != 3 || !runtime.Buffers[0].Reason.Has(plan.FanInBuffer) || !runtime.Buffers[1].Reason.Has(plan.FanInBuffer) {
@@ -264,14 +320,67 @@ func TestCompileProjectsFanoutAndCanonicalZip(t *testing.T) {
 	}
 }
 
-func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
+func TestCompileRejectsOwnedFanOutWithoutFork(t *testing.T) {
+	type ownedID struct{}
+	typ := schema.Define[ownedID](schema.Traits[int]{Drop: func(int) {}})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	_, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
+	if !errors.Is(err, drive.ErrForkTrait) || !errors.Is(err, ErrTopology) {
+		t.Fatalf("owned fan-out Compile error = %v", err)
+	}
+}
+
+func TestCompileAllowsUnownedOneFanOut(t *testing.T) {
+	type valueID struct{}
+	typ := schema.Define[valueID](schema.Traits[int]{})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ)}), Execution: drive.NewSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	if _, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{}); err != nil {
+		t.Fatalf("unowned One fan-out Compile = %v", err)
+	}
+}
+
+func TestCompileRejectsRoutedSourceFanOutWithoutFork(t *testing.T) {
+	type ownedRouteID struct{}
+	typ := schema.Define[ownedRouteID](schema.Traits[int]{Drop: func(int) {}})
+	nodes := []Node{
+		{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", typ, flow.Many())}), Execution: drive.NewRoutedSource("out", typ)},
+		{ID: "left", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+		{ID: "right", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("source", "out"), job.At("left", "in")),
+		job.Connect(job.At("source", "out"), job.At("right", "in")),
+	}
+	_, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
+	if !errors.Is(err, drive.ErrForkTrait) || !errors.Is(err, ErrTopology) {
+		t.Fatalf("owned routed-source fan-out Compile error = %v", err)
+	}
+}
+
+func TestCompileSelectsTraitAwareQueueLimitsAndFanInTolerance(t *testing.T) {
 	type timedID struct{}
 	typ := schema.Define[timedID](schema.Traits[int]{
 		Size: func(int) int { return 8 },
 		Time: func(value int) (int64, bool) { return int64(value), true },
 	})
 	base := timing.MustBase(1, 1_000)
-	descriptor := stream.MustDescriptor("timed", typ.Identity(), base, property.New())
+	descriptor := stream.MustDescriptor("timed", typ.Descriptor(), base, property.New())
 	joinShape := flow.NewShape(
 		[]flow.Port{flow.In("in", typ, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
 		[]flow.Port{flow.Out("out", typ)},
@@ -282,45 +391,90 @@ func TestCompileSelectsTraitAwareQueueLimitsAndFanInWatermark(t *testing.T) {
 		{ID: "join", Shape: joinShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Execution: drive.NewJoiner("in", typ, flow.ZipFanIn, "out", typ)},
 		{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", typ)}, nil), Execution: drive.NewSink("in", typ)},
 	}
-	template, err := Compile(nodes, []job.Edge{
+	edges := []job.Edge{
 		job.Connect(job.At("a", "out"), job.At("join", "in")),
 		job.Connect(job.At("b", "out"), job.At("join", "in")),
 		job.Connect(job.At("join", "out"), job.At("sink", "in")),
-	}, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Window: 250 * time.Millisecond})
+	}
+	template, err := compileFixture(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Span: 250 * time.Millisecond}, job.AlignmentPolicy{Zip: 250 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := template.Projection()
-	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Watermark != 250 {
-		t.Fatalf("fan-in watermark = %#v", runtime.FanIns)
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 250*time.Millisecond {
+		t.Fatalf("fan-in tolerance = %#v", runtime.FanIns)
 	}
 	for _, buffer := range runtime.Buffers {
-		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20, Time: 250}) {
+		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20, Span: 250 * time.Millisecond}) {
 			t.Fatalf("buffer limit = %#v", buffer.Limit)
 		}
+	}
+	template, err = compileFixture(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20}, job.AlignmentPolicy{Zip: 250 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime = template.Projection()
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 250*time.Millisecond {
+		t.Fatalf("fan-in tolerance without queue span = %#v", runtime.FanIns)
+	}
+	for _, buffer := range runtime.Buffers {
+		if buffer.Limit != (plan.Limit{Items: 2, Bytes: 1 << 20}) {
+			t.Fatalf("buffer limit without queue span = %#v", buffer.Limit)
+		}
+	}
+	template, err = compileFixture(nodes, edges, job.QueuePolicy{Items: 2, Bytes: 1 << 20, Span: 250 * time.Millisecond}, job.AlignmentPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime = template.Projection()
+	if len(runtime.FanIns) != 1 || runtime.FanIns[0].Tolerance != 0 {
+		t.Fatalf("fan-in tolerance without alignment policy = %#v", runtime.FanIns)
 	}
 }
 
 func TestCompileRejectsNodesOutsideTopologicalOrder(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)
-	_, err := Compile([]Node{
+	_, err := compileFixture([]Node{
 		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateInput)},
 		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
-	}, []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}, templateQueue)
+	}, []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}, templateQueue, job.AlignmentPolicy{})
 	if !errors.Is(err, ErrTopologyOrder) {
 		t.Fatalf("topological order error = %v", err)
 	}
 }
 
+func TestCompileRejectsNegativeAlignmentTolerance(t *testing.T) {
+	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)
+	nodes := []Node{
+		{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
+		{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", templateInput)},
+	}
+	edges := []job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))}
+	if _, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{}); err != nil {
+		t.Fatalf("valid alignment policy rejected valid graph: %v", err)
+	}
+	_, err := compileFixture(
+		nodes,
+		edges,
+		templateQueue,
+		job.AlignmentPolicy{Zip: -time.Nanosecond},
+	)
+	if !errors.Is(err, ErrTopology) {
+		t.Fatalf("negative alignment tolerance error = %v", err)
+	}
+}
+
 func TestCompileKeepsPlanningOnlyGraphNonExecutable(t *testing.T) {
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})},
 			{ID: "sink", Shape: flow.NewShape([]flow.Port{flow.In("in", templateInput)}, nil)},
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +500,7 @@ func TestBuildRunsSourceAndBoundaryTasksAroundFusedProcessors(t *testing.T) {
 		job.Connect(job.At("first", "out"), job.At("second", "in")),
 		job.Connect(job.At("second", "out"), job.At("sink", "in")),
 	}
-	template, err := Compile(nodes, edges, templateQueue)
+	template, err := compileFixture(nodes, edges, templateQueue, job.AlignmentPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +530,7 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "panic", Shape: processorShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -387,6 +541,7 @@ func TestTaskTopPanicIdentifiesNodeAndDropsActiveItem(t *testing.T) {
 			job.Connect(job.At("panic", "out"), job.At("sink", "in")),
 		},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -413,13 +568,14 @@ func TestFailureDropsEveryItemAcceptedFromSource(t *testing.T) {
 		typ := schema.Define[failureSchemaID](schema.Traits[int]{Drop: func(int) { dropped.Add(1) }})
 		sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 		sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-		template, err := Compile(
+		template, err := compileFixture(
 			[]Node{
 				{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 				{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 			},
 			[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 			templateQueue,
+			job.AlignmentPolicy{},
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -600,13 +756,14 @@ func TestObservationStrategiesDoNotEvaluateDetailedTraitsWhenOffOrBasic(t *testi
 	})
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -31,13 +31,12 @@ func TestBytesSchemaRetainsAndReleasesGrantBackedPayload(t *testing.T) {
 	}
 }
 
-func TestCarrierTimeBaseIsAValidCanonicalPlaceholder(t *testing.T) {
-	base := CarrierTimeBase()
-	if !base.Valid() || base.Numerator != 1 || base.Denominator != 1 {
-		t.Fatalf("carrier time base = %#v", base)
-	}
+func TestBytesSchemaHasNoTimeline(t *testing.T) {
 	if Bytes().Traits().Time != nil {
 		t.Fatal("byte carriers must not expose a media timeline")
+	}
+	if Bytes().Descriptor().HasTime() {
+		t.Fatal("byte carrier descriptor unexpectedly exposes a timeline")
 	}
 }
 

@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -88,3 +91,62 @@ func TestCoverageRejectsForeignSuggestIdentity(t *testing.T) {
 }
 
 type coverageForeignID struct{}
+
+// Observe takes its evidence from an executed Plan, so it must reject a Plan it
+// cannot attribute: nothing ran, or a node belongs to another composition.
+func TestCoverageObserveRejectsUnattributablePlans(t *testing.T) {
+	known := plugin.IdentityOf[runnerComponentID]().String()
+	set := plugin.NewSet(runnerDefinition())
+
+	if err := (*Coverage)(nil).observe(observedPlan(t, known), set); err == nil || !strings.Contains(err.Error(), "registry is nil") {
+		t.Fatalf("nil registry error = %v", err)
+	}
+	if err := NewCoverage().observe(plan.Plan{}, set); err == nil || !strings.Contains(err.Error(), "Plan is invalid") {
+		t.Fatalf("invalid Plan error = %v", err)
+	}
+	foreign := NewCoverage()
+	if err := foreign.observe(observedPlan(t, "acme.transform"), set); err == nil || !strings.Contains(err.Error(), "outside the composition") {
+		t.Fatalf("foreign node error = %v", err)
+	}
+	if len(foreign.executed) != 0 {
+		t.Fatalf("rejected Plan recorded coverage: %#v", foreign.executed)
+	}
+
+	coverage := NewCoverage()
+	if err := coverage.observe(observedPlan(t, known), set); err != nil {
+		t.Fatal(err)
+	}
+	if coverage.executed[plugin.IdentityOf[runnerComponentID]()] != 1 {
+		t.Fatalf("observed executions = %#v", coverage.executed)
+	}
+}
+
+func observedPlan(t *testing.T, component string) plan.Plan {
+	t.Helper()
+	subject, ok := componentOf(plugin.NewSet(runnerDefinition()), plugin.IdentityOf[runnerComponentID]())
+	if !ok {
+		t.Fatal("runner component is absent from its own definition")
+	}
+	resolved, err := subject.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := job.PolicyFor(job.Fast)
+	contract := plugin.DefaultContract()
+	value, err := plan.New(plan.Description{
+		RequestedPolicy:    policy,
+		EffectivePolicy:    policy,
+		Budget:             job.DefaultBudget(),
+		CatalogFingerprint: "catalog",
+		Platform:           plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"},
+		Nodes: []plan.Node{{
+			ID: "only", Origin: plan.Requested, Component: component, DisplayName: "Only",
+			Variant: component + "#default", Version: "1", Config: resolved.Summary(), Contract: contract,
+		}},
+		Scratch: plan.Scratch{Limit: policy.Resources.ScratchMaxBytes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}

@@ -14,6 +14,13 @@ func WithReader[T any](output string, typ schema.Type[T]) ComponentOption {
 	return withExecution(drive.NewSource(output, typ))
 }
 
+// WithRoutedReader binds a source component's many output to
+// flow.RoutedReader[T]. Route ordinals are assigned by the compiled output
+// descriptor order.
+func WithRoutedReader[T any](output string, typ schema.Type[T]) ComponentOption {
+	return withExecution(drive.NewRoutedSource(output, typ))
+}
+
 // WithProcessor binds a synchronous one-input/one-output component to
 // flow.Processor[I,O]. Adjacent compatible processors can be fused without
 // exposing an execution island or queue to the plugin.
@@ -21,9 +28,16 @@ func WithProcessor[I, O any](input string, in schema.Type[I], output string, out
 	return withExecution(drive.NewProcessor(input, in, output, out))
 }
 
-// WithJoiner binds a homogeneous many-input component. Zip is executable in
-// M5; other declared policies remain explicit planning facts until a real
-// component defines their semantics.
+// WithRouter binds a one-input, many-output component to flow.Router[I,O].
+// Route ordinals are assigned by the compiled output descriptor order.
+func WithRouter[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) ComponentOption {
+	return withExecution(drive.NewRouter(input, in, output, out))
+}
+
+// WithJoiner binds a homogeneous many-input component. Batch cells follow the
+// normal ownership rule: a Joiner consumes any cells it takes and the runtime
+// releases the rest. Zip and Serial policies are executable; other declared
+// policies remain unsupported until a component defines their semantics.
 func WithJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) ComponentOption {
 	return withExecution(drive.NewJoiner(input, in, policy, output, out))
 }

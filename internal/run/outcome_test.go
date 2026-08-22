@@ -37,13 +37,14 @@ func linearTemplate(t testing.TB, typ schema.Type[int], policy job.QueuePolicy) 
 	t.Helper()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 			{ID: "sink", Shape: sinkShape, Execution: drive.NewSink("in", typ)},
 		},
 		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
 		policy,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +217,7 @@ func TestARetainedPayloadReleasedAfterRunIsStillCollected(t *testing.T) {
 			sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 			processorShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, []flow.Port{flow.Out("out", typ)})
 			sinkShape := flow.NewShape([]flow.Port{flow.In("in", typ)}, nil)
-			template, err := Compile(
+			template, err := compileFixture(
 				[]Node{
 					{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", typ)},
 					{ID: "keep", Shape: processorShape, Execution: drive.NewProcessor("in", typ, "out", typ)},
@@ -227,6 +228,7 @@ func TestARetainedPayloadReleasedAfterRunIsStillCollected(t *testing.T) {
 					job.Connect(job.At("keep", "out"), job.At("sink", "in")),
 				},
 				templateQueue,
+				job.AlignmentPolicy{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -321,7 +323,7 @@ func TestABoundedEdgesOwnFlushFailureSurfacesUnderTheFlushOperation(t *testing.T
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", templateInput)})
 	processorShape := flow.NewShape([]flow.Port{flow.In("in", templateInput)}, []flow.Port{flow.Out("out", templateOutput)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", templateOutput)}, nil)
-	template, err := Compile(
+	template, err := compileFixture(
 		[]Node{
 			{ID: "source", Shape: sourceShape, Execution: drive.NewSource("out", templateInput)},
 			{ID: "proc", Shape: processorShape, Execution: drive.NewProcessor("in", templateInput, "out", templateOutput)},
@@ -332,6 +334,7 @@ func TestABoundedEdgesOwnFlushFailureSurfacesUnderTheFlushOperation(t *testing.T
 			job.Connect(job.At("proc", "out"), job.At("sink", "in")),
 		},
 		templateQueue,
+		job.AlignmentPolicy{},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -136,10 +136,17 @@ func validateFormatReadTrait(component plugin.Component, shape flow.Shape, trait
 	if !trait.Valid() {
 		items = append(items, traitItem("catalog.format-trait", component.Identity(), "Format read trait is invalid", map[string]string{"direction": "read", "format": trait.Format().Identity().String()}))
 	}
-	if len(shape.Inputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One {
-		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format read trait requires exactly one input port", map[string]string{"direction": "read"}))
-	} else if !canonicalBytes(shape.Inputs[0]) {
-		items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format read trait input must use access.Bytes", map[string]string{"direction": "read", "port": shape.Inputs[0].ID()}))
+	switch {
+	case len(shape.Inputs) == 0:
+	case len(shape.Inputs) == 1 && shape.Inputs[0].Multiplicity() == flow.One:
+		if !canonicalBytes(shape.Inputs[0]) {
+			items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format read trait input must use access.Bytes", map[string]string{"direction": "read", "port": shape.Inputs[0].ID()}))
+		}
+	default:
+		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format read trait requires zero direct inputs or one access.Bytes carrier input", map[string]string{"direction": "read"}))
+	}
+	if len(shape.Outputs) != 1 || !oneOrMany(shape.Outputs[0]) {
+		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format read trait requires exactly one One or Many output port", map[string]string{"direction": "read"}))
 	}
 	return items
 }
@@ -149,24 +156,28 @@ func validateFormatWriteTrait(component plugin.Component, shape flow.Shape, trai
 	if !trait.Valid() {
 		items = append(items, traitItem("catalog.format-trait", component.Identity(), "Format write trait is invalid", map[string]string{"direction": "write", "format": trait.Format().Identity().String()}))
 	}
-	if len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.One {
-		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format write trait requires exactly one output port", map[string]string{"direction": "write"}))
+	if len(shape.Inputs) != 1 || !oneOrMany(shape.Inputs[0]) || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.One {
+		items = append(items, traitItem("catalog.format-shape", component.Identity(), "Format write trait requires exactly one One or Many input and one One output port", map[string]string{"direction": "write"}))
 	} else if !canonicalWrites(shape.Outputs[0]) {
 		items = append(items, traitItem("catalog.format-schema", component.Identity(), "Format write trait output must use access.Writes", map[string]string{"direction": "write", "port": shape.Outputs[0].ID()}))
 	}
 	return items
 }
 
+func oneOrMany(port flow.Port) bool {
+	return port.Multiplicity() == flow.One || port.Multiplicity() == flow.ManyMultiplicity
+}
+
 func canonicalBytes(port flow.Port) bool {
 	want := access.Bytes().Descriptor()
 	got := port.Schema()
-	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
+	return got.Equal(want)
 }
 
 func canonicalWrites(port flow.Port) bool {
 	want := access.Writes().Descriptor()
 	got := port.Schema()
-	return got.Identity() == want.Identity() && got.Payload() == want.Payload()
+	return got.Equal(want)
 }
 
 func validateScheme(identity plugin.Identity, direction, scheme string, valid bool, seen map[accessScheme]plugin.Identity) []diagnostic.Item {

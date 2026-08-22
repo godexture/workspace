@@ -15,7 +15,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 |---|---|---|---|
 | F1 | `core` が `sdk` と公式 plugin に依存し、`sdk` も `core` と公式 plugin に依存する。調査時点で11 moduleが同じ requirement graph の強連結成分に入っており、独立 versioning できない。 | [architecture](architecture.md)、[inventory](inventory.md)。**完了（M5 cut）** | M1/M5 |
 | F2 | `core/registry`、`resolver`、`routing` が decoder/demuxer/filter 等を固定列挙するため、新しい component role の追加に core の型と switch の変更が必要になる。 | [plugins](plugins.md)、[media](media.md)。**完了（M5 cut）** | M2/M3 |
-| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | [media](media.md)、[surfaces](surfaces.md)。**完了（M5 cut）** | M3/M7 |
+| F3 | conversion/routing が単一の主 audio stream と固定 Packet/Frame 経路を前提にし、複数 input/output、video、subtitle、data、attachment、program を表現できない。 | foundation/cut は **完了（M5）**。static `Many` port、ordered repeated descriptors、typed Router、`SerialFanIn` の最初の production consumer と残る完了条件は [M7-0 contract](m7-0.md) の M7-C01〜M7-C12 で追跡する | M3/M7 |
 | F4 | `InputSet` と routing が `io.ReadSeeker`/`io.Writer` を live spec に保持し、Job、storage、session、device、mapping、policy の責務が混在している。 | [surfaces](surfaces.md)、[access](access.md)。**完了（M5 cut）** | M3/M4 |
 | F5 | `MediaAttributes` は audio を直接持ち、video は未実装である。stream kind/property を増やすたび core model の変更が必要になる。 | [media](media.md)。**完了（M5 cut）** | M3 |
 | F6 | 汎用 `Frame` は実質的に audio 型を隠し、`PacketKindStreamEnd` は data と lifecycle を混在させる。time/side data も不足し、audio filter ごとに byte↔float 変換を繰り返す。 | [media](media.md)、[audio](audio.md)、[runtime](runtime.md)。**完了（M5 cut）** | M3/M8 |
@@ -39,7 +39,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F19 | metadata key が core の閉じた method set に依存し、format plugin が ID3/Vorbis Comment 実装を直接 import するため、第三者規格の追加に既存 package の変更が必要になる。 | [media](media.md)。**完了（M5 cut）** | M3 |
 | F20 | format が codec tag、parameter、packetization を直接知る箇所があり、WAVE と MP3/PCM 等が直接依存する。container chunk と codec packet の境界も独立していない。 | [media](media.md)。**完了（M5 cut）** | M3/M6 |
 | F21 | item ごとに中央 resource accounting を行う設計へ拡張すると atomic/lock contention が hot path のボトルネックになる。現行 pool も resource owner/上限を表さない。 | [runtime](runtime.md)、[performance](performance.md)。**完了（M5）** | M5 |
-| F22 | multi-input filter が goroutine の到着順で入力を選ぶ経路を持ち、mixer、sidechain、A/V sync、EOF の意味が scheduler timing に依存し得る。 | [runtime](runtime.md)、[performance](performance.md)。**完了（M5）** | M5 |
+| F22 | multi-input filter が goroutine の到着順で入力を選ぶ経路を持ち、mixer、sidechain、A/V sync、EOF の意味が scheduler timing に依存し得る。 | [runtime](runtime.md)、[performance](performance.md)。M5 で generic fan-in の lifecycle/ownership を整理し、M7-1 で `SerialFanIn` の callback 同期直列化と input ordinal を確定した。Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ call 順を physical order として扱い、buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。MP4 correctness/exact は per-track の `Packet.Sequence`、PTS/DTS/duration、sample table を基準にし、physical interleave の変更を semantic loss としない。Stable/byte reproducibility は execution signature と別 ordered policy/backpressure を実 consumer とともに追加する。 | M5/M7 |
 | F23 | 全 plugin に Start/Close、goroutine/channel、手動 ownership を要求する一方、単一 item API だけでは codec/mixer/session を表現できない。 | [plugins](plugins.md)、[runtime](runtime.md)。**完了（M5）** | M3/M5 |
 | F24 | data packet、`io.EOF`、channel close、would-block、Flush、dynamic stream event、final parameters の状態が重なっている。 | [runtime](runtime.md)。**完了（M5）** | M5 |
 | F25 | Registry、manifest、descriptor、Plan の mutable/shallow copy により、構築後の変更、race、selection の非決定性が起こり得る。 | [architecture](architecture.md)、[runtime](runtime.md)。**完了（M5 cut）** | M2/M4 |
@@ -77,8 +77,13 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F52 | `sdk/bits` の独自 `production` tag が assertion semantics を変える一方、release/CIで同値性と使用条件が固定されていない。 | [performance](performance.md)、[quality](quality.md) | M8 |
 | F53 | global registry、mutable CPU feature、shallow-copy default、process-wide pool/WASM job map が Host/Job の owner、resource budget、test isolation を迂回する。 | [runtime](runtime.md)、[config](config.md)。**Host/Job owner と旧 global surface、`sdk/dsp` の exported mutable feature は完了（M5 review）**。process snapshot を新 item loop から参照せず、Plan/Program に direct variant を固定する責務は M8 | M2/M5/M8 |
 | F54 | node payload grant が下流 queue slot だけを数え、各 operator が処理中に保持する item を数えないため、zero-copy 段が producer の storage を保持したまま grant を使い切り、grant を超える入力の変換が途中で停止する。 | [runtime](runtime.md)。**完了（M6 review）**: `inFlightMultiplier` が reachable node 数と queue slot 数の和を返す。回帰は `standard` の grant 超過変換 test が固定する | M6 |
+| F55 | Format の Inspection や mux の sample-table preservation が opaque payload、sample 数に比例する配列、source handle を in-memory state へ保持すると、長時間/大容量 input の RAM が duration と raw payload length に比例し、Inspection の共有境界も壊れる。 | [M7-0 contract](m7-0.md)、[decisions C24](decisions.md)。M7 は shared immutable な format-owned source range/summary、Open 時の Host source Opening handoff、WAVE unknown chunk/trailer の range preservation、semantic metadata cap、quota 付き Host-owned disk table journal を採用し、constant-RAM gate を 1k/1M samples で固定する | M7 |
 
 ## 監査結果の利用規則
+
+### M7 ordering proposal history (superseded)
+
+以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これらは superseded な履歴であり、現行の finding や完了条件ではない。現行 contract は [decisions](decisions.md) の C22/C24/C26 と [M7-0](m7-0.md) の M7-C03/M7-C09 に従う。
 
 - finding を完了扱いにするのは、対応するロードマップのマイルストーンと詳細資料の完了条件を満たした時である。
 - 新経路で解消したが旧経路に同じ問題が残る状態を「完了」と書かない。M5 cut で旧経路が消えた項目は `完了（M5 cut）` へ更新済みである。複数の原因を含む F42、F47、F49、F53 は、完了した責務と後続 milestone の残件を同じ行で明示する。

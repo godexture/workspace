@@ -49,8 +49,11 @@ component の semantic transformation は `Compile` だけに実装する。
 ## Suggest は変換処理を持たない
 
 自動 bridge component は、必要条件に対する有限個の config 候補を提案できる。
-現行 API は `plugin.Suggest` が typed input descriptor と `Need[D]` を受け、schema で
-検証済みの canonical config snapshot を返す。
+`plugin.Suggest` は ordered `flow.Descriptors[D]` と方向・port・`Need[D]` を持つ
+`Suggestion[D]` を受け、schema で検証済みの canonical config snapshot を返す。bridge の
+到達条件は bridge output の demand、既存の automatic node の未解決 Compile requirement は
+その node input の demand とする。この区別により One は length 1 の descriptor sequence として
+Many と同じ経路を通り、固定 node の config-only 解決と route bridge を混同しない。
 
 各候補の output/effect/cost は必ず同じ `Compile` を呼んで求める。Suggest と Open/Run に変換規則を重複させない。
 
@@ -216,9 +219,11 @@ multi-input component の requirement は他 input に依存し得る。すべ�
 1. source inspect と explicit shape を確定
 2. compile 可能な explicit node を Compile
 3. `Unsatisfied{Port, Need}` を収集
-4. 各 edge に bridge path を挿入
-5. 影響 node だけ再 Compile
-6. output/mux requirement まで収束
+4. automatic かつ config 未指定の fixed node は、whole ordered inputs を再 Compile し、残る
+   input demand から Suggest した canonical config を node 自身へ適用する
+5. config だけで満たせない scalar route に bridge path を挿入する。Many route ごとの bridge は
+   consumer/mapping があるまで fail closed とする
+6. 影響 node を再 Compile し、output/mux requirement まで収束
 7. graph 全体を validation/optimization
 
 一つの input への bridge が別 input requirement を変える mixer 等では同じ Compile を再度呼ぶ。Transform と Start に別ロジックを置かない。

@@ -155,6 +155,37 @@ paired harness は旧 contract の最後の consumer であり、結果を確定
 go test ./host -run '^$' -bench '^BenchmarkPreparedRunLinear$' -benchmem
 ```
 
+## M7 multi-stream performance gate
+
+M7 の fast path は `MP4 demux → per-track copy or typed PCM path → SerialFanIn → MP4 mux` とする。同一
+process/fixture で Router/RoutedReader と SerialFanIn を含む unchanged remux、PCM-bound path を AB/BA で交互に測り、Open と
+steady-state Run を分けて `-benchmem` を取る。routed producer/SerialFanIn の orchestration は item ごとの mandatory
+allocation を 0 とする。route ordinal、callback、queue handoff に reflection、string lookup、`any` transport を
+持ち込まない。
+
+`buffer.Handle.Range` など payload slicing の control allocation はこの literal zero gate の対象外とする。user-visible
+time または無視できない `B/op`・`allocs/op` が同一条件で概ね 2 倍以上悪化した場合だけ、paired AB/BA の再測定と
+profile を行い、payload slicing を再設計する。小さな差や payload size に比例する copy 自体を gate failure にしない。
+Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ、
+その call 順を MP4 の physical order として correctness vector にする。buffer/fan-out/concurrent producer の cross-track
+physical interleave、wall-clock order、byte reproducibility は performance gate の前提にしない。MP4 correctness/exact は
+track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table で判定し、physical interleave の変更を semantic
+loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
+を要求する。
+
+M7 の constant-RAM/resource gate は、同じ topology、descriptor、queue、processing page、semantic metadata cap で
+1,000 samples と 1,000,000 samples を比較する。Inspect、Compile、Open の peak live heap と retained object 数は
+duration、sample 数、opaque raw payload 長に比例して増加させない。Inspection は shared immutable な format-owned
+source range/summary だけを保持し、source Opening/I/O handle、raw payload bytes、O(samples) 配列を保持しない。
+Host は Open 時に元の source Opening を inspected demux と same-format mux へ貸し出し、range は fixed-size page で読む。
+WAVE unknown chunk/trailer も同じ range gate を通し、semantic metadata は inline value の明示 cap 内に制限する。
+
+unfragmented transform mux が sample table/offset を蓄積する場合、増加分は Host-owned disk table journal の bytes として
+計上し、明示した aggregate quota を越える前に deterministic に失敗させる。これは output boundary の sequential sink を
+変換する spool ではない。1k/1M の処理時間が入力数に比例することは gate failure ではないが、heap の sample-count
+growth、opaque bytes の全量保持、journal quota 無視、または steady-state allocation/item の同一条件で概ね
+2 倍を超える回帰は failure とし、paired AB/BA と profile で確認する。boundary spool を table journal の代用にしない。
+
 ## 現行実装の監査結果
 
 現在の最適化は性質が異なるものを同じ build/runtime dispatch で扱っている。
@@ -216,7 +247,7 @@ performance preset に関係なく、次は非交渉条件である。
 - timestamp/time-base overflow と rounding rule
 - packet/frame/event の順序
 - frame/sample の欠落・重複
-- fan-in の alignment と watermark
+- declared fan-in semantics（Zip の alignment を含む。SerialFanIn は timestamp alignment を持たない）
 - EOF、Flush、Finalize
 - stream mapping と metadata loss report
 - buffer bounds、input validation、panic/error semantics

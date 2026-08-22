@@ -34,6 +34,10 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 		if projection.Kind != plan.ProviderBoundary || projection.Direction != direction {
 			continue
 		}
+		node := projection.Node
+		if anchor := entry.Anchor(); anchor.Valid() {
+			node = anchor.String()
+		}
 		selection, selectionErr := providerSelection(projection)
 		if selectionErr != nil {
 			return sessions, selectionErr
@@ -49,7 +53,7 @@ func acquireSessions(ctx context.Context, entries []bound.Entry, direction plan.
 			return acquireErr
 		})
 		if session != nil {
-			sessions = append(sessions, acquiredSession{node: projection.Node, value: session, selected: selection})
+			sessions = append(sessions, acquiredSession{node: node, value: session, selected: selection})
 		}
 		if failure != nil {
 			return sessions, failure

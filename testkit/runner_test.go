@@ -46,7 +46,7 @@ var (
 
 func TestCommonRunnerExecutesSuccessFailureAndCoverage(t *testing.T) {
 	definition := runnerDefinition()
-	descriptor := stream.MustDescriptor("fixture", runnerType.Identity(), timing.MustBase(1, 1), property.New())
+	descriptor := stream.MustDescriptor("fixture", runnerType.Descriptor(), timing.Base{}, property.New())
 	coverage := NewCoverage()
 	subject := Track(SubjectOf(definition, plugin.IdentityOf[runnerComponentID](), "in", runnerType, "out", runnerType), coverage)
 
@@ -121,7 +121,7 @@ func runnerDefinition() plugin.Definition {
 		Build()
 	shape := flow.NewShape([]flow.Port{flow.In("in", runnerType)}, []flow.Port{flow.Out("out", runnerType)})
 	spec := plugin.Spec[runnerConfig, runnerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[runnerConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, value runnerConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[runnerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {
@@ -172,7 +172,7 @@ func runnerFormatDefinition(inspections, probes *atomic.Int32) plugin.Definition
 		return mediaformat.NewInspection(formatValue, value[0]), nil
 	}
 	spec := plugin.Spec[runnerFormatConfig, runnerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[runnerFormatConfig](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ runnerFormatConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[runnerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {

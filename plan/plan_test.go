@@ -2,17 +2,22 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/endpoint"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type planConfigID struct{}
@@ -85,12 +90,90 @@ func TestPlanBoundaryIsImmutableAndCanonicalWithoutDisplayReference(t *testing.T
 	}
 }
 
+func TestPlanBoundaryUsesActualDirectionalDataAnchor(t *testing.T) {
+	description := testDescription(t)
+	description.Nodes[0].Outputs = append(description.Nodes[0].Outputs,
+		PortDescriptor{Port: "out", Descriptor: description.Nodes[0].Outputs[0].Descriptor},
+		PortDescriptor{Port: "alternate", Descriptor: description.Nodes[0].Outputs[0].Descriptor},
+	)
+	description.Boundaries = []Boundary{{
+		Direction:            InputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "source",
+		Port:                 "out",
+		Component:            "fixture.provider",
+		Scheme:               "memory",
+		Reference:            "memory:redacted",
+		ReferenceFingerprint: "anchor-reference",
+		Available:            []access.Capability{access.SequentialRead},
+		Effective:            []access.Capability{access.SequentialRead},
+		Selected:             []access.Capability{access.SequentialRead},
+	}}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Boundaries()[0].Component == description.Nodes[0].Component {
+		t.Fatal("fixture did not distinguish provider and data-anchor identities")
+	}
+
+	changed := description
+	changed.Boundaries = append([]Boundary(nil), description.Boundaries...)
+	changed.Boundaries[0].Port = "alternate"
+	second, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == second.ExecutionSignature() {
+		t.Fatal("boundary data anchor did not affect execution identity")
+	}
+
+	for name, boundary := range map[string]Boundary{
+		"input names an input": {
+			Direction:            InputBoundary,
+			Kind:                 ProviderBoundary,
+			Choice:               0,
+			Node:                 "sink",
+			Port:                 "in",
+			Component:            "fixture.provider",
+			Scheme:               "memory",
+			Reference:            "memory:redacted",
+			ReferenceFingerprint: "anchor-reference",
+			Available:            []access.Capability{access.SequentialRead},
+			Effective:            []access.Capability{access.SequentialRead},
+			Selected:             []access.Capability{access.SequentialRead},
+		},
+		"output names an output": {
+			Direction: OutputBoundary,
+			Kind:      EndpointBoundary,
+			Choice:    0,
+			Node:      "source",
+			Port:      "out",
+			Component: "fixture.endpoint",
+			Topology:  endpoint.FiniteStatic,
+			Mode:      endpoint.Offline,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := description
+			invalid.Boundaries = []Boundary{boundary}
+			if _, err := New(invalid); err == nil {
+				t.Fatal("boundary with wrong data-port direction was accepted")
+			}
+		})
+	}
+}
+
 func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	spool, err := access.NewSpoolSpec(4096, 0, access.MemorySpool, 0, true, access.AtomicReplace)
 	if err != nil {
 		t.Fatal(err)
 	}
 	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 4096
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 4096
+	description.Scratch = Scratch{Limit: 4096, Reserved: 4096}
 	description.Boundaries = []Boundary{{
 		Direction:            OutputBoundary,
 		Kind:                 ProviderBoundary,
@@ -112,6 +195,9 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	}
 	changed := testDescription(t)
 	changed.Boundaries = description.Boundaries
+	changed.RequestedPolicy.Resources.ScratchMaxBytes = 8192
+	changed.EffectivePolicy.Resources.ScratchMaxBytes = 8192
+	changed.Scratch = Scratch{Limit: 8192, Reserved: 8192}
 	changed.Boundaries[0].Spool, err = access.NewSpoolSpec(8192, 0, access.MemorySpool, 0, true, access.AtomicReplace)
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +211,72 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	}
 }
 
+func TestPlanScratchProjectionIsCanonicalAndValidated(t *testing.T) {
+	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 8
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 8
+	description.Nodes[0].Scratch = 2
+	description.Scratch = Scratch{Limit: 8, Reserved: 2}
+	first, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := first.Scratch(); got != (Scratch{Limit: 8, Reserved: 2}) {
+		t.Fatalf("scratch projection = %#v", got)
+	}
+	changed := description
+	changed.Nodes = append([]Node(nil), description.Nodes...)
+	changed.Nodes[0].Scratch = 3
+	changed.Scratch.Reserved = 3
+	second, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ExecutionSignature() == second.ExecutionSignature() {
+		t.Fatal("node scratch claim did not affect execution identity")
+	}
+	invalid := description
+	invalid.Scratch.Reserved = 1
+	if _, err := New(invalid); err == nil {
+		t.Fatal("mismatched scratch reservation was accepted")
+	}
+}
+
+func TestPlanScratchAggregatesNodeAndSpoolClaims(t *testing.T) {
+	spool, err := access.NewSpoolSpec(4, 0, access.MemorySpool, 0, true, access.AtomicReplace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := testDescription(t)
+	description.RequestedPolicy.Resources.ScratchMaxBytes = 6
+	description.EffectivePolicy.Resources.ScratchMaxBytes = 6
+	description.Nodes[0].Scratch = 2
+	description.Scratch = Scratch{Limit: 6, Reserved: 6}
+	description.Boundaries = []Boundary{{
+		Direction:            OutputBoundary,
+		Kind:                 ProviderBoundary,
+		Choice:               0,
+		Node:                 "sink",
+		Port:                 "in",
+		Component:            "fixture.sink",
+		Scheme:               "memory",
+		Reference:            "memory:redacted",
+		ReferenceFingerprint: "scratch-spool",
+		Available:            []access.Capability{access.SequentialWrite},
+		Effective:            []access.Capability{access.RandomWrite, access.SequentialWrite},
+		Selected:             []access.Capability{access.RandomWrite},
+		Spool:                spool,
+	}}
+	if _, err := New(description); err != nil {
+		t.Fatalf("node and spool aggregate = %v", err)
+	}
+	description.Nodes[0].Scratch = resource.Bytes(math.MaxInt64)
+	description.Scratch = Scratch{Limit: resource.Bytes(math.MaxInt64), Reserved: resource.Bytes(math.MaxInt64)}
+	if _, err := New(description); err == nil {
+		t.Fatal("node and spool reservation overflow was accepted")
+	}
+}
+
 func testDescription(t *testing.T) Description {
 	t.Helper()
 	configuration := planConfiguration()
@@ -132,8 +284,8 @@ func testDescription(t *testing.T) Description {
 	if err != nil {
 		t.Fatal(err)
 	}
-	typ := schema.Define[planSchemaID, planUnit](schema.Traits[planUnit]{})
-	descriptor, err := ProjectDescriptor(stream.MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), property.New()))
+	typ := schema.Define[planSchemaID, planUnit](schema.Traits[planUnit]{Time: func(planUnit) (int64, bool) { return 0, true }})
+	descriptor, err := ProjectDescriptor(stream.MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 48000), property.New()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +304,22 @@ func testDescription(t *testing.T) Description {
 			{ID: "sink", Origin: Requested, Component: "fixture.sink", DisplayName: "Sink", Variant: "fixture.sink#default", Version: "1", Config: resolved.Summary(), Inputs: []PortDescriptor{{Port: "in", Descriptor: descriptor}}, Contract: contract},
 		},
 		Edges:    []Edge{{FromNode: "source", FromPort: "out", ToNode: "sink", ToPort: "in", Origin: Requested}},
+		Scratch:  Scratch{Limit: policy.Resources.ScratchMaxBytes},
 		Warnings: []string{"display warning"},
+	}
+}
+
+func TestProjectDescriptorPreservesUntimedTimelineState(t *testing.T) {
+	type carrierID struct{}
+	type carrierValue struct{}
+	typ := schema.Define[carrierID, carrierValue](schema.Traits[carrierValue]{})
+	value := stream.MustDescriptor("bytes", typ.Descriptor(), timing.Base{}, property.New())
+	descriptor, err := ProjectDescriptor(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !descriptor.Valid() || descriptor.HasTimeline || descriptor.TimeBaseNumerator != 0 || descriptor.TimeBaseDenominator != 0 {
+		t.Fatalf("untimed plan descriptor = %#v", descriptor)
 	}
 }
 
@@ -179,6 +346,114 @@ func TestPlanIsInertImmutableAndRedacted(t *testing.T) {
 	platform.Features[0] = "changed"
 	if planned.Platform().Features[0] != "a" {
 		t.Fatal("Plan retained mutable platform storage")
+	}
+}
+
+func TestPlanMappingProjectionIsImmutableAndAffectsIdentity(t *testing.T) {
+	description := testDescription(t)
+	description.Boundaries = mappingBoundaries()
+	description.Mappings = []Mapping{
+		{Input: 0, Stream: "video", Output: 0},
+		{Input: 0, Stream: "audio", Output: 0},
+	}
+	planned, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := planned.Mappings()
+	if len(got) != 2 || got[0] != description.Mappings[0] || got[1] != description.Mappings[1] {
+		t.Fatalf("Plan mappings = %#v, want %#v", got, description.Mappings)
+	}
+	got[0].Stream = "changed"
+	if planned.Mappings()[0].Stream != "video" {
+		t.Fatal("Plan exposed mutable mapping storage")
+	}
+	description.Mappings[0].Stream = "caller changed"
+	if planned.Mappings()[0].Stream != "video" {
+		t.Fatal("New retained Description mapping storage")
+	}
+	description.Mappings[0].Stream = "video"
+	projected := planned.Description()
+	projected.Mappings[0].Stream = "description changed"
+	if planned.Mappings()[0].Stream != "video" {
+		t.Fatal("Description exposed Plan mapping storage")
+	}
+
+	changed := testDescription(t)
+	changed.Mappings = []Mapping{{Input: 0, Stream: "audio", Output: 0}}
+	changed.Boundaries = description.Boundaries
+	other, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.Fingerprint() == other.Fingerprint() || planned.ExecutionSignature() == other.ExecutionSignature() {
+		t.Fatal("mapping projection did not affect Plan identity")
+	}
+	swapped := testDescription(t)
+	swapped.Boundaries = description.Boundaries
+	swapped.Mappings = []Mapping{description.Mappings[1], description.Mappings[0]}
+	reordered, err := New(swapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.Fingerprint() == reordered.Fingerprint() || planned.ExecutionSignature() == reordered.ExecutionSignature() {
+		t.Fatal("mapping sequence order did not affect Plan identity")
+	}
+
+	missing := testDescription(t)
+	missing.Mappings = description.Mappings
+	missing.Boundaries = description.Boundaries[:1]
+	if _, err := New(missing); err == nil {
+		t.Fatal("mapping with a missing output boundary was accepted")
+	}
+}
+
+func mappingBoundaries() []Boundary {
+	return []Boundary{
+		{
+			Direction:            InputBoundary,
+			Kind:                 ProviderBoundary,
+			Choice:               0,
+			Node:                 "source",
+			Port:                 "out",
+			Component:            "fixture.provider",
+			Scheme:               "memory",
+			Reference:            "memory:redacted",
+			ReferenceFingerprint: "mapping-input",
+			Available:            []access.Capability{access.SequentialRead},
+			Effective:            []access.Capability{access.SequentialRead},
+			Selected:             []access.Capability{access.SequentialRead},
+		},
+		{
+			Direction: OutputBoundary,
+			Kind:      EndpointBoundary,
+			Choice:    0,
+			Node:      "sink",
+			Port:      "in",
+			Component: "fixture.endpoint",
+			Topology:  endpoint.FiniteStatic,
+			Mode:      endpoint.Offline,
+		},
+	}
+}
+
+func TestPlanRejectsInvalidAndDuplicateMappings(t *testing.T) {
+	for name, mappings := range map[string][]Mapping{
+		"invalid":   {{Input: 0, Stream: "", Output: 0}},
+		"duplicate": {{Input: 0, Stream: "audio", Output: 0}, {Input: 0, Stream: "audio", Output: 0}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			description := testDescription(t)
+			description.Mappings = mappings
+			description.Boundaries = mappingBoundaries()
+			_, err := New(description)
+			if err == nil {
+				t.Fatal("invalid mapping projection was accepted")
+			}
+			if name == "duplicate" && !strings.Contains(err.Error(), "duplicate mappings") {
+				t.Fatalf("duplicate mapping error = %v", err)
+			}
+		})
 	}
 }
 
@@ -279,6 +554,21 @@ func TestPlanRuntimeProjectionIsCanonicalImmutableAndExecutable(t *testing.T) {
 	}
 	if planned.ExecutionSignature() == other.ExecutionSignature() {
 		t.Fatal("runtime buffer change did not affect execution signature")
+	}
+}
+
+func TestPlanRuntimeFanInAllowsOneLogicalRepeatedEdge(t *testing.T) {
+	description := testDescription(t)
+	description.Runtime = Runtime{
+		Executable: true,
+		Islands: []Island{
+			{ID: "island-0", Nodes: []string{"source"}},
+			{ID: "island-1", Nodes: []string{"sink"}},
+		},
+		FanIns: []FanIn{{Node: "sink", Port: "in", Policy: flow.ZipFanIn, Tolerance: 250 * time.Millisecond}},
+	}
+	if _, err := New(description); err != nil {
+		t.Fatalf("one logical repeated fan-in edge rejected: %v", err)
 	}
 }
 

@@ -24,16 +24,16 @@ const (
 	ManyMultiplicity
 )
 
-// FanInPolicy defines the semantic ordering of a many-input port. A policy is
-// mandatory for many input ports and meaningless on outputs or one-input
-// ports.
+// FanInPolicy defines the combination and delivery semantics of a many-input
+// port. A policy is mandatory for many input ports and meaningless on outputs
+// or one-input ports.
 type FanInPolicy uint8
 
 const (
 	ZipFanIn FanInPolicy = iota + 1
 	LatestFanIn
 	PrimaryFanIn
-	MergeFanIn
+	SerialFanIn
 	WindowFanIn
 )
 
@@ -57,8 +57,9 @@ func Optional() PortOption {
 	return func(options *portOptions) { options.required = false }
 }
 
-// Many declares a port that may carry multiple connections. It may still be
-// required; Required and multiplicity are separate axes.
+// Many declares a port that may carry multiple ordered descriptors or routes.
+// Edge fan-out is independent of descriptor cardinality. A Many port may
+// still be required; Required and multiplicity are separate axes.
 func Many() PortOption {
 	return func(options *portOptions) { options.multiplicity = ManyMultiplicity }
 }
@@ -137,8 +138,7 @@ func equalPorts(left, right []Port) bool {
 	for index := range left {
 		if left[index].id != right[index].id ||
 			left[index].direction != right[index].direction ||
-			left[index].descriptor.Identity() != right[index].descriptor.Identity() ||
-			left[index].descriptor.Payload() != right[index].descriptor.Payload() ||
+			!left[index].descriptor.Equal(right[index].descriptor) ||
 			left[index].required != right[index].required ||
 			left[index].multiplicity != right[index].multiplicity ||
 			left[index].fanIn != right[index].fanIn {
@@ -199,6 +199,14 @@ type Reader[T any] interface {
 	Read(context.Context, *Item[T]) error
 }
 
+// RoutedReader publishes one or more items to statically declared output
+// routes during each Read call. It reports io.EOF only after a call that did
+// not emit an item. Route ordinals follow the compiled output descriptor
+// order, and every emitted Item follows the RoutedEmitter ownership rule.
+type RoutedReader[T any] interface {
+	Read(context.Context, RoutedEmitter[T]) error
+}
+
 // Writer accepts one item. Consuming the cell claims ownership; leaving it
 // alone returns the item to whoever passed the pointer.
 type Writer[T any] interface {
@@ -216,21 +224,49 @@ type Emitter[T any] interface {
 	Emit(context.Context, *Item[T]) error
 }
 
-// Batch is one deterministic fan-in group. Each cell follows the ordinary
-// ownership rule, so a Joiner may consume some, all, or none of them.
-type Batch[T any] struct{ items []*Item[T] }
+// Batch is one fan-in delivery. Each cell follows the ordinary ownership rule,
+// so a Joiner may consume some, all, or none of them.
+//
+// Zip batches carry an ordered slice. A selected batch represents one item
+// from a particular input without allocating that one-element slice.
+type Batch[T any] struct {
+	items    []*Item[T]
+	selected *Item[T]
+	input    int
+	hasInput bool
+}
 
 func NewBatch[T any](items []*Item[T]) Batch[T] { return Batch[T]{items: items} }
 
-func (b Batch[T]) Len() int { return len(b.items) }
+// NewSelectedBatch creates a one-item batch that retains its input ordinal.
+func NewSelectedBatch[T any](input int, item *Item[T]) Batch[T] {
+	return Batch[T]{selected: item, input: input, hasInput: true}
+}
+
+func (b Batch[T]) Len() int {
+	if b.hasInput {
+		return 1
+	}
+	return len(b.items)
+}
 
 // At returns the cell at index, or nil when the index is out of range.
 func (b Batch[T]) At(index int) *Item[T] {
+	if b.hasInput {
+		if index == 0 {
+			return b.selected
+		}
+		return nil
+	}
 	if index < 0 || index >= len(b.items) {
 		return nil
 	}
 	return b.items[index]
 }
+
+// Input reports the originating input for a selected batch. Zip batches do
+// not select one input and return false.
+func (b Batch[T]) Input() (int, bool) { return b.input, b.hasInput }
 
 func (b Batch[T]) Value(index int) (T, bool) {
 	item := b.At(index)
@@ -248,7 +284,23 @@ type Processor[I, O any] interface {
 	Flush(context.Context, Emitter[O]) error
 }
 
-// Joiner transforms deterministic groups from a homogeneous many-input port.
+// RoutedEmitter selects one statically declared output route. An unavailable
+// ordinal is refused before an Item can be bound to it. A reusable Item binds
+// to one route's reporter, so a Router or RoutedReader keeps one reusable Item
+// per route.
+type RoutedEmitter[T any] interface {
+	Route(ordinal int) (Emitter[T], bool)
+}
+
+// Router transforms one item and selects exactly one output route for every
+// emitted item. Routing itself never duplicates ownership; multiple logical
+// downstreams on one selected route are handled by the runtime's fan-out.
+type Router[I, O any] interface {
+	Process(context.Context, *Item[I], RoutedEmitter[O]) error
+	Flush(context.Context, RoutedEmitter[O]) error
+}
+
+// Joiner transforms deliveries from a homogeneous many-input port.
 type Joiner[I, O any] interface {
 	Process(context.Context, Batch[I], Emitter[O]) error
 	Flush(context.Context, Emitter[O]) error

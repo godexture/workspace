@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/job"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/schema"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -62,6 +63,46 @@ func TestResolveWriteFormatReportsOrderIndependentExtensionAmbiguity(t *testing.
 	}
 }
 
+func TestInsertOutputFormatPreservesJobMappings(t *testing.T) {
+	inputReference, _ := access.Parse("file:///input")
+	outputReference, _ := access.Parse("file:///output")
+	input, _ := job.InputFromReference(inputReference)
+	output, _ := job.OutputToReference(outputReference)
+	format := formatSelectionComponent[formatSelectionFirstID](mustFormat(formatSelectionFirst{}))
+	sink := formatSelectionComponent[formatSelectionSecondID](mustFormat(formatSelectionSecond{}))
+	graph, err := job.NewGraph(
+		[]job.Node{
+			job.NewNode("format-source", format.Identity(), config.NewPatch()),
+			job.NewNode("sink", sink.Identity(), config.NewPatch()),
+		},
+		[]job.Edge{job.Connect(job.At("format-source", "writes"), job.At("sink", "in"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := job.MapStream(0, stream.ID("boundary"), 0)
+	request, err := job.New([]job.Input{input}, []job.Output{output}, graph, job.WithMappings(mapping))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inserted, err := insertOutputFormat(request, plan.Boundary{Direction: plan.OutputBoundary, Node: "sink", Port: "in"}, format, config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := inserted.request.Mappings()
+	if len(got) != 1 || got[0] != mapping {
+		t.Fatalf("inserted Job mappings = %#v, want %#v", got, []job.Mapping{mapping})
+	}
+}
+
+func mustFormat[Marker any](marker Marker) mediaformat.Format {
+	value, err := mediaformat.Define[Marker](nil)
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
+
 func formatSelectionComponent[Marker any](value mediaformat.Format) plugin.Component {
 	typ := schema.Define[formatSelectionUnitID, formatSelectionUnit](schema.Traits[formatSelectionUnit]{})
 	shape := flow.NewShape(
@@ -69,7 +110,7 @@ func formatSelectionComponent[Marker any](value mediaformat.Format) plugin.Compo
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[formatSelectionConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[formatSelectionConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, formatSelectionConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("writes", 1))}, nil
 		},

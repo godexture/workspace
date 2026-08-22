@@ -9,13 +9,27 @@ import (
 )
 
 type muxHeader struct {
-	initial        []byte
-	afterData      []byte
-	trailer        []byte
+	initial   []byte
+	afterData []byte
+	trailer   []byte
+	// rangeMode is used by an Inspection handoff. The fixed header pieces are
+	// retained here; opaque source bytes are described by ranges and read only
+	// by the Open-to-Close mux operator.
+	rangeMode      bool
+	prefix         []byte
+	format         []byte
+	dataTag        []byte
+	ranges         sourceRanges
+	replacement    sourceReplacement
 	reserveOffset  int64
 	dataSizeOffset int64
 	dataOffset     int64
 	blockAlign     uint64
+}
+
+type sourceReplacement struct {
+	source  sourceRange
+	payload []byte
 }
 
 type headerPatch struct {
@@ -32,6 +46,44 @@ type finalizedHeader struct {
 
 func newMuxHeader(description sample.Description) (muxHeader, error) {
 	return newMuxHeaderWithChunks(description, muxChunks{})
+}
+
+func newRangeMuxHeader(description sample.Description, inspected header) (muxHeader, error) {
+	formatPayload, blockAlign, err := marshalFormat(description)
+	if err != nil {
+		return muxHeader{}, err
+	}
+	format := make([]byte, 8+len(formatPayload))
+	copy(format[0:4], tagFMT)
+	binary.LittleEndian.PutUint32(format[4:8], uint32(len(formatPayload)))
+	copy(format[8:], formatPayload)
+	prefix := make([]byte, reserveOffset)
+	copy(prefix[0:4], tagRIFF)
+	copy(prefix[8:12], tagWAVE)
+	dataTag := make([]byte, 8)
+	copy(dataTag, tagDATA)
+	beforeFormat := inspected.ranges.beforeFormat.length
+	beforeData := inspected.ranges.beforeData.length
+	dataOffset := uint64(len(prefix) + 8 + ds64PayloadSize + len(format) + len(dataTag))
+	if beforeFormat > math.MaxUint64-dataOffset || beforeData > math.MaxUint64-dataOffset-beforeFormat {
+		return muxHeader{}, fmt.Errorf("%w: WAVE source ranges exceed output offsets", ErrUnsupported)
+	}
+	dataOffset += beforeFormat + beforeData
+	if dataOffset > math.MaxInt64 {
+		return muxHeader{}, fmt.Errorf("%w: WAVE source ranges exceed runtime offsets", ErrUnsupported)
+	}
+	return muxHeader{
+		initial:        prefix,
+		rangeMode:      true,
+		prefix:         prefix,
+		format:         format,
+		dataTag:        dataTag,
+		ranges:         inspected.ranges,
+		reserveOffset:  reserveOffset,
+		dataSizeOffset: int64(dataOffset - 4),
+		dataOffset:     int64(dataOffset),
+		blockAlign:     uint64(blockAlign),
+	}, nil
 }
 
 func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (muxHeader, error) {
@@ -161,6 +213,9 @@ func (h muxHeader) finalize(dataSize uint64) (finalizedHeader, error) {
 }
 
 func (h muxHeader) outputSize(dataSize uint64) (int, uint64, error) {
+	if h.rangeMode {
+		return h.rangeOutputSize(dataSize)
+	}
 	if len(h.initial) == 0 || h.reserveOffset < 0 || h.dataSizeOffset < 0 || h.dataOffset != int64(len(h.initial)) || h.blockAlign == 0 {
 		return 0, 0, fmt.Errorf("%w: WAVE mux header layout is invalid", ErrMalformed)
 	}
@@ -182,5 +237,123 @@ func (h muxHeader) outputSize(dataSize uint64) (int, uint64, error) {
 // payloadBytes is the largest single buffer the muxer emits from its own
 // grant: the header, the region after the data chunk, or the trailing region.
 func (h muxHeader) payloadBytes() int {
+	if h.rangeMode {
+		return max(len(h.prefix), len(h.format), len(h.dataTag), 8+ds64PayloadSize)
+	}
 	return max(len(h.initial), len(h.afterData), len(h.trailer))
+}
+
+func (h muxHeader) sourceEnd() uint64 {
+	end := uint64(0)
+	for _, value := range []sourceRange{h.ranges.reservation, h.ranges.beforeFormat, h.ranges.beforeData, h.ranges.afterData, h.ranges.trailer} {
+		if valueEnd, ok := value.end(); ok && valueEnd > end {
+			end = valueEnd
+		}
+	}
+	return end
+}
+
+func (h muxHeader) rangeOutputSize(dataSize uint64) (int, uint64, error) {
+	if len(h.prefix) == 0 || len(h.format) == 0 || len(h.dataTag) != 8 || h.reserveOffset < 0 || h.dataSizeOffset < 0 || h.dataOffset < 0 || h.blockAlign == 0 {
+		return 0, 0, fmt.Errorf("%w: WAVE range mux header layout is invalid", ErrMalformed)
+	}
+	beforeFormat, beforeData, afterData, trailer, ok := h.outputRangeLengths()
+	if !ok {
+		return 0, 0, fmt.Errorf("%w: WAVE source range lengths overflow", ErrUnsupported)
+	}
+	base := uint64(len(h.prefix)) + uint64(8+ds64PayloadSize) + uint64(len(h.format)) + uint64(len(h.dataTag))
+	if beforeFormat > math.MaxUint64-base || beforeData > math.MaxUint64-base-beforeFormat {
+		return 0, 0, fmt.Errorf("%w: WAVE header size overflows", ErrUnsupported)
+	}
+	computedDataOffset := base + beforeFormat + beforeData
+	if computedDataOffset > math.MaxInt64 || int64(computedDataOffset) != h.dataOffset {
+		return 0, 0, fmt.Errorf("%w: WAVE range mux data offset changed unexpectedly", ErrMalformed)
+	}
+	padding := dataSize & 1
+	if dataSize > math.MaxUint64-padding || dataSize+padding > math.MaxUint64-afterData || computedDataOffset > math.MaxUint64-dataSize-padding-afterData {
+		return 0, 0, fmt.Errorf("%w: WAVE output size overflows", ErrUnsupported)
+	}
+	riffEnd := computedDataOffset + dataSize + padding + afterData
+	if riffEnd > math.MaxInt64 || riffEnd > math.MaxUint64-trailer || riffEnd+trailer > math.MaxInt64 {
+		return 0, 0, fmt.Errorf("%w: WAVE output exceeds runtime offsets", ErrUnsupported)
+	}
+	return int(padding), riffEnd, nil
+}
+
+func (h muxHeader) outputRangeLengths() (beforeFormat, beforeData, afterData, trailer uint64, ok bool) {
+	beforeFormat = h.ranges.beforeFormat.length
+	beforeData = h.ranges.beforeData.length
+	afterData = h.ranges.afterData.length
+	trailer = h.ranges.trailer.length
+	if !h.replacement.source.valid() {
+		return beforeFormat, beforeData, afterData, trailer, true
+	}
+	old := h.replacement.source.length
+	newLength := uint64(len(h.replacement.payload))
+	if old > newLength {
+		shrink := old - newLength
+		switch {
+		case h.replacement.source.offset >= h.ranges.beforeFormat.offset && h.replacement.source.offset < h.ranges.beforeFormat.offset+h.ranges.beforeFormat.length:
+			if shrink > beforeFormat {
+				return 0, 0, 0, 0, false
+			}
+			beforeFormat -= shrink
+		case h.replacement.source.offset >= h.ranges.beforeData.offset && h.replacement.source.offset < h.ranges.beforeData.offset+h.ranges.beforeData.length:
+			if shrink > beforeData {
+				return 0, 0, 0, 0, false
+			}
+			beforeData -= shrink
+		case h.replacement.source.offset >= h.ranges.afterData.offset && h.replacement.source.offset < h.ranges.afterData.offset+h.ranges.afterData.length:
+			if shrink > afterData {
+				return 0, 0, 0, 0, false
+			}
+			afterData -= shrink
+		default:
+			return 0, 0, 0, 0, false
+		}
+		return beforeFormat, beforeData, afterData, trailer, true
+	}
+	grow := newLength - old
+	switch {
+	case h.replacement.source.offset >= h.ranges.beforeFormat.offset && h.replacement.source.offset < h.ranges.beforeFormat.offset+h.ranges.beforeFormat.length:
+		if beforeFormat > math.MaxUint64-grow {
+			return 0, 0, 0, 0, false
+		}
+		beforeFormat += grow
+	case h.replacement.source.offset >= h.ranges.beforeData.offset && h.replacement.source.offset < h.ranges.beforeData.offset+h.ranges.beforeData.length:
+		if beforeData > math.MaxUint64-grow {
+			return 0, 0, 0, 0, false
+		}
+		beforeData += grow
+	case h.replacement.source.offset >= h.ranges.afterData.offset && h.replacement.source.offset < h.ranges.afterData.offset+h.ranges.afterData.length:
+		if afterData > math.MaxUint64-grow {
+			return 0, 0, 0, 0, false
+		}
+		afterData += grow
+	default:
+		return 0, 0, 0, 0, false
+	}
+	return beforeFormat, beforeData, afterData, trailer, true
+}
+
+func (h *muxHeader) applyReplacement(value sourceReplacement) error {
+	if h == nil || !h.rangeMode || !value.source.valid() {
+		return fmt.Errorf("%w: WAVE source replacement is invalid", ErrMalformed)
+	}
+	h.replacement = value
+	beforeFormat, beforeData, _, _, ok := h.outputRangeLengths()
+	if !ok {
+		return fmt.Errorf("%w: WAVE replacement length overflows", ErrUnsupported)
+	}
+	dataOffset := uint64(len(h.prefix)) + uint64(8+ds64PayloadSize) + uint64(len(h.format)) + uint64(len(h.dataTag))
+	if beforeFormat > math.MaxUint64-dataOffset || beforeData > math.MaxUint64-dataOffset-beforeFormat {
+		return fmt.Errorf("%w: WAVE replacement data offset overflows", ErrUnsupported)
+	}
+	dataOffset += beforeFormat + beforeData
+	if dataOffset > math.MaxInt64 {
+		return fmt.Errorf("%w: WAVE replacement data offset exceeds runtime offsets", ErrUnsupported)
+	}
+	h.dataOffset = int64(dataOffset)
+	h.dataSizeOffset = h.dataOffset - 4
+	return nil
 }

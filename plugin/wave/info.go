@@ -110,6 +110,142 @@ func parseInfo(ctx metadata.ParseContext) (metadata.Document, error) {
 	return builder.Build()
 }
 
+// parseInfoSemantic parses only the bounded semantic projection used by a
+// WAVE inspection. The carrier's opaque bytes stay in the inspected source
+// range; they must not become metadata.Blob values in the long-lived model.
+func parseInfoSemantic(value []byte) (metadata.Document, error) {
+	payload, err := infoPayload(value)
+	if err != nil {
+		return metadata.Document{}, err
+	}
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	for offset := 4; offset < len(payload); {
+		if len(payload)-offset < 8 {
+			return metadata.Document{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
+		}
+		native := string(payload[offset : offset+4])
+		size := uint64(binary.LittleEndian.Uint32(payload[offset+4 : offset+8]))
+		end, ok := infoChunkEnd(uint64(offset), size, uint64(len(payload)))
+		if !ok {
+			return metadata.Document{}, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
+		}
+		payloadEnd := uint64(offset+8) + size
+		mapping, known := infoMappingForNative(native)
+		if known {
+			text := string(bytes.TrimRight(payload[offset+8:int(payloadEnd)], "\x00"))
+			if _, ok := parseInfoValue(mapping, text); ok {
+				// Provenance points at an opaque source range, not a metadata
+				// block. Keeping it empty lets the document remain Blob-free.
+				_ = mapping.parse(builder, text, metadata.Origin{})
+			}
+		}
+		offset = int(end)
+	}
+	return builder.Build()
+}
+
+// rewriteInfoSource applies a bounded semantic edit to one source LIST/INFO
+// carrier. Unknown child records and their padding are copied from the
+// bounded source value. This is used only after Open has borrowed the source;
+// Inspection and Compile never read source bytes.
+func rewriteInfoSource(value []byte, document metadata.Document) ([]byte, error) {
+	carrier, err := parseInfoCarrier(value, "wave/rewrite")
+	if err != nil {
+		return nil, err
+	}
+	entries := document.Entries()
+	used := make([]bool, len(entries))
+	matched := make([]int, len(carrier.semantic))
+	for index := range matched {
+		matched[index] = -1
+	}
+	// Prefer an unchanged value, then retain the original key position for a
+	// changed value. This keeps unknown child records and known-field order.
+	for index, original := range carrier.semantic {
+		for pass := 0; pass < 2 && matched[index] < 0; pass++ {
+			for entryIndex, entry := range entries {
+				if used[entryIndex] || entry.Key() != original.key {
+					continue
+				}
+				if pass == 0 && !reflect.DeepEqual(entry.Value(), original.value) {
+					continue
+				}
+				matched[index] = entryIndex
+				used[entryIndex] = true
+				break
+			}
+		}
+	}
+	resultPayload := []byte(tagINFO)
+	consumedSemantic := make([]bool, len(carrier.semantic))
+	for _, subchunk := range carrier.subchunks {
+		if !subchunk.semantic {
+			resultPayload = append(resultPayload, subchunk.raw...)
+			continue
+		}
+		semanticIndex := -1
+		for candidateIndex, candidate := range carrier.semantic {
+			if consumedSemantic[candidateIndex] {
+				continue
+			}
+			if candidate.native == subchunk.native && candidate.raw != nil && bytes.Equal(candidate.raw, subchunk.raw) {
+				semanticIndex = candidateIndex
+				consumedSemantic[candidateIndex] = true
+				break
+			}
+		}
+		if semanticIndex < 0 {
+			for candidateIndex, candidate := range carrier.semantic {
+				if !consumedSemantic[candidateIndex] && candidate.native == subchunk.native {
+					semanticIndex = candidateIndex
+					consumedSemantic[candidateIndex] = true
+					break
+				}
+			}
+		}
+		entryIndex := -1
+		if semanticIndex >= 0 {
+			entryIndex = matched[semanticIndex]
+		}
+		if entryIndex < 0 || entryIndex >= len(entries) {
+			continue
+		}
+		if reflect.DeepEqual(entries[entryIndex].Value(), subchunk.value) {
+			resultPayload = append(resultPayload, subchunk.raw...)
+			continue
+		}
+		encoded, err := marshalInfoEntry(entries[entryIndex])
+		if err != nil {
+			return nil, err
+		}
+		resultPayload = append(resultPayload, encoded...)
+	}
+	for entryIndex, entry := range entries {
+		if used[entryIndex] {
+			continue
+		}
+		encoded, err := marshalInfoEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		resultPayload = append(resultPayload, encoded...)
+	}
+	return marshalInfoChunk(tagLIST, resultPayload)
+}
+
+func validateSemanticInfoDocument(document metadata.Document) error {
+	for _, entry := range document.Entries() {
+		mapping, ok := infoMappingForKey(entry.Key())
+		if !ok {
+			return fmt.Errorf("%w: metadata key %s has no RIFF INFO representation", ErrUnsupported, entry.Key())
+		}
+		if _, err := mapping.marshal(entry.Value()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, error) {
 	if original, ok := ctx.Document().Block(ctx.Block()); ok {
 		if original.Carrier() != ctx.Carrier() || original.Encoding() != ctx.Encoding() {

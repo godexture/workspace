@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/endpoint"
+	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/plan"
 )
 
@@ -19,10 +20,20 @@ type Entry struct {
 	close      func() error
 	automatic  bool
 	resolved   bool
+	anchor     job.NodeID
 }
 
 func Source(projection plan.Boundary, reference access.Reference, trait access.SourceTrait) Entry {
 	return Entry{projection: cloneProjection(projection), reference: reference, source: trait, resolved: true}
+}
+
+// AnchoredSource binds a provider to a reader which is already present in an
+// explicit graph. The anchor identifies the reader rather than introducing a
+// carrier node for the provider.
+func AnchoredSource(projection plan.Boundary, reference access.Reference, trait access.SourceTrait, anchor job.NodeID) Entry {
+	entry := Source(projection, reference, trait)
+	entry.anchor = anchor
+	return entry
 }
 
 // AutomaticSource is an input boundary narrowed only for Probe acquisition.
@@ -55,6 +66,12 @@ func ResolveSource(entry Entry, projection plan.Boundary) Entry {
 	return entry
 }
 
+func AnchorSource(entry Entry, projection plan.Boundary, anchor job.NodeID) Entry {
+	entry = ResolveSource(entry, projection)
+	entry.anchor = anchor
+	return entry
+}
+
 func (e Entry) Valid() bool {
 	if e.automatic && !e.resolved && e.projection.Direction == plan.OutputBoundary {
 		if !validPendingOutput(e.projection) {
@@ -65,6 +82,9 @@ func (e Entry) Valid() bool {
 	}
 	switch e.projection.Kind {
 	case plan.ProviderBoundary:
+		if e.anchor != "" && (!e.anchor.Valid() || e.projection.Direction != plan.InputBoundary || e.projection.Node != e.anchor.String()) {
+			return false
+		}
 		if !e.reference.Valid() || e.trait.Valid() || e.direct != nil || e.close != nil {
 			return false
 		}
@@ -96,6 +116,7 @@ func (e Entry) SourceTrait() access.SourceTrait { return e.source }
 func (e Entry) SinkTrait() access.SinkTrait     { return e.sink }
 func (e Entry) EndpointTrait() endpoint.Trait   { return e.trait }
 func (e Entry) DirectOpening() any              { return e.direct }
+func (e Entry) Anchor() job.NodeID              { return e.anchor }
 func (e Entry) Automatic() bool                 { return e.automatic }
 func (e Entry) Pending() bool                   { return e.automatic && !e.resolved }
 func (e Entry) Close() error {

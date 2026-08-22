@@ -56,7 +56,7 @@ func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", subject.input.schema)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", subject.output.schema)}, nil)
 	sourceSpec := plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](sourceShape),
+		Ports: sourceShape,
 		Compile: func(plugin.CompileContext, fixtureConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{
 				Plan:    fixturePlan{shape: sourceShape.Clone()},
@@ -69,7 +69,7 @@ func fixtureDefinition[I, O any](kind runnerKind, subject Subject[I, O], input *
 		},
 	}
 	sinkSpec := plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](sinkShape),
+		Ports: sinkShape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			if _, ok := inputs.One("in"); !ok {
 				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{
@@ -122,7 +122,7 @@ func rejectComponent[I, O any](subject Subject[I, O], reject *rejection) plugin.
 	schema := config.Struct[fixtureConfigID](func() fixtureConfig { return fixtureConfig{} }).Version("1").Build()
 	shape := flow.NewShape([]flow.Port{flow.In("in", subject.output.schema)}, []flow.Port{flow.Out("out", subject.output.schema)})
 	spec := plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[fixtureConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ fixtureConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[fixturePlan, stream.Descriptor], error) {
 			input, ok := inputs.One("in")
 			if !ok {

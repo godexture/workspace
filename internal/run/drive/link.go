@@ -84,3 +84,18 @@ func deliveryOf[T any](link Link) (delivery[T], error) {
 	}
 	return value, nil
 }
+
+func routeDeliveries[T any](routes []Link) ([]delivery[T], error) {
+	if len(routes) == 0 {
+		return nil, ErrBinding
+	}
+	outputs := make([]delivery[T], len(routes))
+	for index, route := range routes {
+		target, err := deliveryOf[T](route)
+		if err != nil {
+			return nil, err
+		}
+		outputs[index] = target
+	}
+	return outputs, nil
+}

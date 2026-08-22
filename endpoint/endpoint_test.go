@@ -27,7 +27,7 @@ func TestEndpointTraitLayersOverNormalTypedComponentWithoutOpeningIt(t *testing.
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	var opens atomic.Int32
 	spec := plugin.Spec[endpointConfig, struct{}, int]{
-		Shape: plugin.StaticShape[endpointConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, endpointConfig, flow.Descriptors[int]) (plugin.Compiled[struct{}, int], error) {
 			return plugin.Compiled[struct{}, int]{Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},

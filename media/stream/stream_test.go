@@ -16,13 +16,13 @@ type streamPropertyID struct{}
 type streamMetadataID struct{}
 
 func TestDescriptorKeepsStreamLocalPropertiesOutOfItems(t *testing.T) {
-	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
+	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{Time: func(streamPayload) (int64, bool) { return 0, true }})
 	rate := property.Define[streamPropertyID](property.Scalar[int]())
 	properties, err := rate.Set(property.New(), 48000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor, err := NewDescriptor("audio-0", typ.Identity(), timing.MustBase(1, 48000), properties)
+	descriptor, err := NewDescriptor("audio-0", typ.Descriptor(), timing.MustBase(1, 48000), properties)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,9 +34,37 @@ func TestDescriptorKeepsStreamLocalPropertiesOutOfItems(t *testing.T) {
 	}
 }
 
+func TestUntimedDescriptorRequiresZeroTimeBase(t *testing.T) {
+	type untimedID struct{}
+	type value struct{}
+	typ := schema.Define[untimedID, value](schema.Traits[value]{})
+	if _, err := NewDescriptor("bytes", typ.Descriptor(), timing.MustBase(1, 1), property.New()); err != ErrInvalidDescriptor {
+		t.Fatalf("nonzero untimed base error = %v", err)
+	}
+	descriptor, err := NewDescriptor("bytes", typ.Descriptor(), timing.Base{}, property.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !descriptor.Valid() || descriptor.HasTimeline() || descriptor.TimeBase() != (timing.Base{}) {
+		t.Fatalf("untimed descriptor = %#v", descriptor)
+	}
+}
+
+func TestDescriptorPresenceChecksDoNotAllocate(t *testing.T) {
+	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{Time: func(streamPayload) (int64, bool) { return 0, true }})
+	descriptor := MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 48_000), property.New())
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !descriptor.HasTimeline() || !descriptor.TimeBase().Valid() {
+			t.Fatal("timed descriptor changed during allocation check")
+		}
+	}); allocations != 0 {
+		t.Fatalf("descriptor presence check allocations = %v", allocations)
+	}
+}
+
 func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
-	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
-	descriptor, err := NewDescriptor("audio-0", typ.Identity(), timing.MustBase(1, 48000), property.New())
+	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{Time: func(streamPayload) (int64, bool) { return 0, true }})
+	descriptor, err := NewDescriptor("audio-0", typ.Descriptor(), timing.MustBase(1, 48000), property.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,10 +89,10 @@ func TestDescriptorFingerprintIncludesCanonicalPropertyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	rightProperties, _ := rate.Set(property.New(), 44100)
-	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{})
-	left := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), leftProperties)
-	same := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 48000), leftProperties)
-	right := MustDescriptor("audio", typ.Identity(), timing.MustBase(1, 44100), rightProperties)
+	typ := schema.Define[streamSchemaID, streamPayload](schema.Traits[streamPayload]{Time: func(streamPayload) (int64, bool) { return 0, true }})
+	left := MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 48000), leftProperties)
+	same := MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 48000), leftProperties)
+	right := MustDescriptor("audio", typ.Descriptor(), timing.MustBase(1, 44100), rightProperties)
 	leftFingerprint, err := left.Fingerprint()
 	if err != nil {
 		t.Fatal(err)
@@ -79,5 +107,46 @@ func TestDescriptorFingerprintIncludesCanonicalPropertyState(t *testing.T) {
 	}
 	if _, err := (Descriptor{}).Fingerprint(); err != ErrInvalidDescriptor {
 		t.Fatalf("invalid descriptor fingerprint error = %v", err)
+	}
+}
+
+func TestDescriptorFingerprintIncludesTimelinePresence(t *testing.T) {
+	type timelineID struct{}
+	type value struct{}
+	untimed := schema.Define[timelineID, value](schema.Traits[value]{})
+	timed := schema.Define[timelineID, value](schema.Traits[value]{Time: func(value) (int64, bool) { return 0, true }})
+	left := MustDescriptor("stream", untimed.Descriptor(), timing.Base{}, property.New())
+	right := MustDescriptor("stream", timed.Descriptor(), timing.MustBase(1, 1), property.New())
+	leftFingerprint, err := left.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightFingerprint, err := right.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftFingerprint == rightFingerprint || left.SameState(right) {
+		t.Fatal("timeline presence was omitted from descriptor state")
+	}
+}
+
+func TestDescriptorFingerprintIncludesPayloadType(t *testing.T) {
+	type payloadID struct{}
+	type firstValue struct{}
+	type secondValue struct{}
+	firstSchema := schema.Define[payloadID, firstValue](schema.Traits[firstValue]{})
+	secondSchema := schema.Define[payloadID, secondValue](schema.Traits[secondValue]{})
+	first := MustDescriptor("stream", firstSchema.Descriptor(), timing.Base{}, property.New())
+	second := MustDescriptor("stream", secondSchema.Descriptor(), timing.Base{}, property.New())
+	firstFingerprint, err := first.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := second.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstFingerprint == secondFingerprint || first.SameState(second) {
+		t.Fatal("same marker with different payload types was accepted as the same stream state")
 	}
 }

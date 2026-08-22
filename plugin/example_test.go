@@ -50,7 +50,7 @@ func Codec() plugin.Definition {
 	typ := mediaSchema.Define[exampleUnitID, exampleUnit](mediaSchema.Traits[exampleUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("output", typ)})
 	spec := plugin.Spec[exampleConfig, flow.Shape, int]{
-		Shape: plugin.StaticShape[exampleConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, value exampleConfig, _ flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 			return plugin.Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("output", value.Level))}, nil
 		},
@@ -112,7 +112,7 @@ func ExampleOpenContext_Tasks() {
 		plugin.Descriptor{DisplayName: "Worker example", Version: "1.0.0"},
 		schema,
 		plugin.WithSpec(plugin.Spec[exampleWorkerConfig, flow.Shape, int]{
-			Shape: plugin.StaticShape[exampleWorkerConfig](shape),
+			Ports: shape,
 			Compile: func(plugin.CompileContext, exampleWorkerConfig, flow.Descriptors[int]) (plugin.Compiled[flow.Shape, int], error) {
 				return plugin.Compiled[flow.Shape, int]{
 					Plan:      shape,

@@ -4,10 +4,10 @@ import (
 	"container/heap"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/graph"
-	"github.com/godexture/godec/job"
-	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -20,6 +20,19 @@ type state struct {
 	fingerprint stream.Fingerprint
 	rank        rank
 	path        []step
+	goal        searchResult
+	terminal    bool
+}
+
+type searchResult struct {
+	path      []step
+	config    config.ResolvedView
+	hasConfig bool
+	rank      rank
+}
+
+func (r searchResult) progress() bool {
+	return len(r.path) != 0 || r.hasConfig
 }
 
 type stateQueue []state
@@ -29,7 +42,13 @@ func (q stateQueue) Less(left, right int) bool {
 	if q[left].rank != q[right].rank {
 		return q[left].rank.less(q[right].rank)
 	}
-	return q[left].fingerprint.String() < q[right].fingerprint.String()
+	if q[left].fingerprint != q[right].fingerprint {
+		return q[left].fingerprint.String() < q[right].fingerprint.String()
+	}
+	// A zero-cost requested-node goal must win before this same descriptor is
+	// expanded into irrelevant bridges. Fixed automatic nodes have a positive
+	// terminal rank and remain comparable with every alternative path.
+	return q[left].terminal && !q[right].terminal
 }
 func (q stateQueue) Swap(left, right int) { q[left], q[right] = q[right], q[left] }
 func (q *stateQueue) Push(value any)      { *q = append(*q, value.(state)) }
@@ -73,18 +92,29 @@ func (v visits) current(candidate state) bool {
 	return false
 }
 
-func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
+func (p *planner) search(gap graph.Gap) (searchResult, rejections, error) {
 	rejected := make(rejections)
 	input, inputOK := gap.Input()
-	if _, edgeOK := gap.Edge(); !inputOK || !edgeOK {
-		return nil, rejected, rejectError{code: "gap-cardinality"}
+	_, edgeOK := gap.Edge()
+	if !inputOK || !edgeOK {
+		result, accepted, _, limited, err := p.resolveFixed(gap, gap.Inputs(), p.budget.SuggestionsPerNeed, rank{})
+		if err != nil {
+			return searchResult{}, rejected, err
+		}
+		if accepted {
+			if limited {
+				return searchResult{}, rejected, limitError{dimension: "suggestions"}
+			}
+			return result, rejected, nil
+		}
+		return searchResult{}, rejected, rejectError{code: "gap-cardinality"}
 	}
 	fingerprint, err := input.Fingerprint()
 	if err != nil {
-		return nil, rejected, rejectError{code: "descriptor"}
+		return searchResult{}, rejected, rejectError{code: "descriptor"}
 	}
 	if p.usage.States >= p.budget.States {
-		return nil, rejected, limitError{dimension: "states"}
+		return searchResult{}, rejected, limitError{dimension: "states"}
 	}
 	p.usage.States++
 	visited := make(visits)
@@ -94,45 +124,54 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 	stateLimit := false
 	suggestionLimit := false
 	suggestions := 0
-	terminal, constrained := p.terminals[jobPortKey(gap.Node(), gap.Port())]
-
 	for queue.Len() != 0 {
 		if err := p.checkContext(); err != nil {
-			return nil, rejected, err
+			return searchResult{}, rejected, err
 		}
 		current := heap.Pop(&queue).(state)
+		if current.terminal {
+			if stateLimit {
+				return searchResult{}, rejected, limitError{dimension: "states"}
+			}
+			if suggestionLimit {
+				return searchResult{}, rejected, limitError{dimension: "suggestions"}
+			}
+			return current.goal, rejected, nil
+		}
 		if !visited.current(current) {
 			continue
 		}
-		terminalSatisfied := !constrained || len(current.path) != 0 && current.path[len(current.path)-1].result.bridge.component.Identity() == terminal.component
-		if current.descriptor.Schema() == gap.ExpectedSchema() && terminalSatisfied {
-			if err := p.beforeCompile(); err != nil {
-				return nil, rejected, err
-			}
-			accepted, err := gap.Accepts(current.descriptor)
-			if err == nil && accepted {
-				if stateLimit {
-					return nil, rejected, limitError{dimension: "states"}
-				}
-				if suggestionLimit {
-					return nil, rejected, limitError{dimension: "suggestions"}
-				}
-				return current.path, rejected, nil
-			}
-			if err != nil {
-				rejected.add(rejectionCode(err))
+		if current.descriptor.SchemaDescriptor().Equal(gap.ExpectedDescriptor()) {
+			inputs, replaced := gap.WithCandidate(current.descriptor)
+			if !replaced {
+				rejected.add("gap-cardinality")
 			} else {
-				rejected.add("need")
+				result, accepted, suggested, limited, err := p.resolveFixed(gap, inputs, p.budget.SuggestionsPerNeed-suggestions, current.rank)
+				suggestions += suggested
+				if limited {
+					suggestionLimit = true
+				}
+				if err != nil {
+					if _, limited := err.(limitError); limited {
+						return searchResult{}, rejected, err
+					}
+					if _, canceled := err.(canceledError); canceled {
+						return searchResult{}, rejected, err
+					}
+					rejected.add(rejectionCode(err))
+				} else if accepted {
+					result.path = append([]step(nil), current.path...)
+					heap.Push(&queue, state{fingerprint: current.fingerprint, rank: result.rank, goal: result, terminal: true})
+					if result.rank == current.rank {
+						continue
+					}
+				} else {
+					rejected.add("need")
+				}
 			}
 		}
 
 		for _, candidate := range p.candidates[current.descriptor.Schema().String()] {
-			if constrained {
-				if _, isFormat := mediaformat.WriteOf(candidate.component); isFormat && candidate.component.Identity() != terminal.component {
-					rejected.add("terminal-format")
-					continue
-				}
-			}
 			if !codecCandidateMatches(p.index, candidate.component.Identity(), current.descriptor) {
 				rejected.add("codec-tag")
 				continue
@@ -141,50 +180,35 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 			if remaining < 0 {
 				remaining = 0
 			}
-			var fixed *config.Patch
-			prepared := plugin.CompileContext{}
-			preparedKey := ""
-			if constrained && candidate.component.Identity() == terminal.component {
-				prepared = terminal.context
-				preparedKey = jobPortKey(terminal.boundary.Node(), terminal.boundary.ID())
-				if terminal.configured {
-					patch := terminal.config.Clone()
-					fixed = &patch
-				}
-			}
-			configs, suggested, limited, err := p.configs(candidate, current.descriptor, gap.Need(), remaining, fixed)
+			configs, suggested, limited, err := p.bridgeConfigs(candidate, current.descriptor, gap.Need(), remaining)
 			suggestions += suggested
 			if limited {
 				suggestionLimit = true
 			}
 			if err != nil {
 				if _, limited := err.(limitError); limited {
-					return nil, rejected, err
+					return searchResult{}, rejected, err
 				}
 				if _, canceled := err.(canceledError); canceled {
-					return nil, rejected, err
+					return searchResult{}, rejected, err
 				}
 				rejected.add(rejectionCode(err))
 				continue
 			}
 			for _, resolved := range configs {
-				result, err := p.compileBridge(candidate, resolved, current.descriptor, prepared, preparedKey)
+				result, err := p.compileBridge(candidate, resolved, current.descriptor)
 				if err != nil {
 					if _, limited := err.(limitError); limited {
-						return nil, rejected, err
+						return searchResult{}, rejected, err
 					}
 					if _, canceled := err.(canceledError); canceled {
-						return nil, rejected, err
+						return searchResult{}, rejected, err
 					}
 					rejected.add(rejectionCode(err))
 					continue
 				}
 				if result.output.SameState(current.descriptor) {
 					rejected.add("non-progress")
-					continue
-				}
-				if constrained && result.output.Schema() == gap.ExpectedSchema() && candidate.component.Identity() != terminal.component {
-					rejected.add("terminal-format")
 					continue
 				}
 				outputFingerprint, err := result.output.Fingerprint()
@@ -211,14 +235,80 @@ func (p *planner) search(gap graph.Gap) ([]step, rejections, error) {
 		}
 	}
 	if stateLimit {
-		return nil, rejected, limitError{dimension: "states"}
+		return searchResult{}, rejected, limitError{dimension: "states"}
 	}
 	if suggestionLimit {
-		return nil, rejected, limitError{dimension: "suggestions"}
+		return searchResult{}, rejected, limitError{dimension: "suggestions"}
 	}
-	return nil, rejected, rejectError{code: "no-path"}
+	return searchResult{}, rejected, rejectError{code: "no-path"}
 }
 
-func jobPortKey(node job.NodeID, port string) string {
-	return job.At(node, port).String()
+// resolveFixed validates a candidate's complete downstream input sequence,
+// then lets only an automatic, unconfigured downstream node infer a config.
+func (p *planner) resolveFixed(gap graph.Gap, inputs flow.Descriptors[stream.Descriptor], remaining int, base rank) (searchResult, bool, int, bool, error) {
+	if err := p.beforeCompile(); err != nil {
+		return searchResult{}, false, 0, false, err
+	}
+	compilation, requirements, err := gap.Compile(gap.Config(), inputs)
+	if contextErr := p.checkContext(); contextErr != nil {
+		return searchResult{}, false, 0, false, contextErr
+	}
+	if err != nil {
+		return searchResult{}, false, 0, false, err
+	}
+	if len(requirements) == 0 {
+		if err := p.validateFixedCompilation(gap, compilation); err != nil {
+			return searchResult{}, false, 0, false, err
+		}
+		return p.fixedResult(gap, gap.Config(), compilation, base), true, 0, false, nil
+	}
+	metadata, allowed := p.nodes[gap.Node()]
+	if !allowed || !metadata.inferConfig {
+		return searchResult{}, false, 0, false, nil
+	}
+	configs, suggested, limited, err := p.fixedConfigs(gap.Component(), inputs, requirements, gap.Config(), remaining)
+	if err != nil {
+		return searchResult{}, false, suggested, limited, err
+	}
+	var best searchResult
+	found := false
+	for _, resolved := range configs {
+		if err := p.beforeCompile(); err != nil {
+			return searchResult{}, false, suggested, limited, err
+		}
+		compilation, remainingRequirements, compileErr := gap.Compile(resolved, inputs)
+		if contextErr := p.checkContext(); contextErr != nil {
+			return searchResult{}, false, suggested, limited, contextErr
+		}
+		if compileErr != nil || len(remainingRequirements) != 0 {
+			continue
+		}
+		if err := p.validateFixedCompilation(gap, compilation); err != nil {
+			continue
+		}
+		candidate := p.fixedResult(gap, resolved, compilation, base)
+		candidate.hasConfig = true
+		if !found || candidate.rank.less(best.rank) {
+			best = candidate
+			found = true
+		}
+	}
+	return best, found, suggested, limited, nil
+}
+
+func (p *planner) validateFixedCompilation(gap graph.Gap, compilation plugin.Compilation) error {
+	metadata, automatic := p.nodes[gap.Node()]
+	if !automatic || metadata.origin != plan.Automatic {
+		return nil
+	}
+	return validateAutomaticCompilation(gap.Component(), compilation, p.policy, p.platform)
+}
+
+func (p *planner) fixedResult(gap graph.Gap, resolved config.ResolvedView, compilation plugin.Compilation, base rank) searchResult {
+	result := searchResult{config: resolved, rank: base}
+	metadata, ok := p.nodes[gap.Node()]
+	if ok && metadata.origin == plan.Automatic {
+		result.rank = result.rank.addCompilation(gap.Component(), resolved, compilation, p.policy)
+	}
+	return result
 }

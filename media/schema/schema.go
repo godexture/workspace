@@ -39,6 +39,7 @@ func Define[IDMarker, T any](traits Traits[T]) Type[T] {
 	descriptor := Descriptor{
 		identity: identity,
 		payload:  reflect.TypeFor[T](),
+		hasTime:  traits.Time != nil,
 		problem:  errorText(problem),
 	}
 	return Type[T]{
@@ -68,10 +69,20 @@ func identityWithProblem[IDMarker any]() (ID, error) {
 	return ID{canonical: canonical}, nil
 }
 
-// WithTraits returns the same schema identity carrying different traits. A test
-// harness accounts for forks and releases with it without changing the identity
-// the component under test is compiled against.
+const timeTraitPresenceProblem = "schema time-trait presence cannot change with WithTraits"
+
+// WithTraits returns the same schema identity carrying different runtime
+// traits. Time-trait presence is part of the erased descriptor contract, so a
+// replacement that changes it is rejected instead of mutating the descriptor.
 func (t Type[T]) WithTraits(traits Traits[T]) Type[T] {
+	if t.descriptor.hasTime != (traits.Time != nil) {
+		if t.descriptor.problem == "" {
+			t.descriptor.problem = timeTraitPresenceProblem
+		} else {
+			t.descriptor.problem += "; " + timeTraitPresenceProblem
+		}
+		return t
+	}
 	t.traits = traits
 	return t
 }
@@ -125,6 +136,7 @@ type Descriptor struct {
 	_        noCompare
 	identity ID
 	payload  reflect.Type
+	hasTime  bool
 	problem  string
 }
 
@@ -134,6 +146,14 @@ func (d Descriptor) Valid() bool {
 
 func (d Descriptor) Identity() ID          { return d.identity }
 func (d Descriptor) Payload() reflect.Type { return d.payload }
+func (d Descriptor) HasTime() bool         { return d.hasTime }
+
+// Equal reports whether two erased schema declarations have the same typed
+// payload contract. Runtime trait functions and marker problems are not part
+// of the edge contract; identity, payload type, and time-trait presence are.
+func (d Descriptor) Equal(other Descriptor) bool {
+	return d.identity == other.identity && d.payload == other.payload && d.hasTime == other.hasTime
+}
 
 // Problem returns the schema construction problem, if any.
 func (d Descriptor) Problem() error {

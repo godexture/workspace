@@ -186,15 +186,12 @@ func TestDirectChoiceCarriesTypedResourceAndExplicitAdaptor(t *testing.T) {
 	}
 }
 
-func TestGraphRejectsDuplicateIdentityAndMapping(t *testing.T) {
+func TestGraphRejectsDuplicateIdentity(t *testing.T) {
 	source := NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch())
 	sink := NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch())
-	mapping := MapStream(0, stream.ID("audio"), 0)
 	_, err := NewGraph(
 		[]Node{source, source, sink},
 		[]Edge{Connect(At("source", "out"), At("sink", "in"))},
-		mapping,
-		mapping,
 	)
 	if err == nil {
 		t.Fatal("invalid graph was accepted")
@@ -203,8 +200,89 @@ func TestGraphRejectsDuplicateIdentityAndMapping(t *testing.T) {
 	for _, item := range diagnostic.ItemsOf(err) {
 		codes[item.Code] = true
 	}
-	if !codes["job.duplicate-node"] || !codes["job.duplicate-mapping"] {
+	if !codes["job.duplicate-node"] {
 		t.Fatalf("graph diagnostics = %v", err)
+	}
+}
+
+func TestJobCanonicalizesAndOwnsMappings(t *testing.T) {
+	inputReference, err := access.Parse("file:///input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputReference, err := access.Parse("file:///output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := InputFromReference(inputReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := OutputToReference(outputReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := []Mapping{
+		MapStream(1, stream.ID("z"), 0),
+		MapStream(0, stream.ID("b"), 1),
+		MapStream(0, stream.ID("a"), 0),
+	}
+	option := WithMappings(mappings...)
+	mappings[0] = MapStream(1, stream.ID("changed"), 0)
+	request, err := New([]Input{input, input}, []Output{output, output}, graph, option)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := request.Mappings()
+	want := []Mapping{
+		MapStream(0, stream.ID("a"), 0),
+		MapStream(0, stream.ID("b"), 1),
+		MapStream(1, stream.ID("z"), 0),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("mapping count = %d, want %d", len(got), len(want))
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("mapping[%d] = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+	got[0] = MapStream(0, stream.ID("changed"), 0)
+	if request.Mappings()[0] != want[0] {
+		t.Fatal("Job exposed mutable mapping storage")
+	}
+}
+
+func TestJobRejectsDuplicateAndOutOfRangeMappings(t *testing.T) {
+	inputReference, _ := access.Parse("file:///input")
+	outputReference, _ := access.Parse("file:///output")
+	input, _ := InputFromReference(inputReference)
+	output, _ := OutputToReference(outputReference)
+	graph, err := NewGraph([]Node{
+		NewNode("source", plugin.IdentityOf[jobSourceID](), config.NewPatch()),
+		NewNode("sink", plugin.IdentityOf[jobSinkID](), config.NewPatch()),
+	}, []Edge{Connect(At("source", "out"), At("sink", "in"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mappings := range map[string][]Mapping{
+		"duplicate":    {MapStream(0, stream.ID("audio"), 0), MapStream(0, stream.ID("audio"), 0)},
+		"input range":  {MapStream(1, stream.ID("audio"), 0)},
+		"output range": {MapStream(0, stream.ID("audio"), 1)},
+		"invalid":      {MapStream(0, stream.ID(""), 0)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New([]Input{input}, []Output{output}, graph, WithMappings(mappings...)); err == nil {
+				t.Fatal("invalid mappings were accepted")
+			}
+		})
 	}
 }
 
@@ -262,11 +340,14 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := request.Policy()
-	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) {
+	if policy.Preset != Fast || policy.Goal != ThroughputGoal || policy.Repeatability != Repeatable || policy.Artifact != ArtifactNone || !policy.Implementation.PureGo || !policy.Implementation.SIMD || policy.Continuity != PreserveContinuity || policy.Resources.Queue != (QueuePolicy{Items: 4}) || policy.Resources.ScratchMaxBytes != defaultScratchMaxBytes {
 		t.Fatalf("default policy = %#v", policy)
 	}
 	if request.Budget() != DefaultBudget() {
 		t.Fatalf("default budget = %#v", request.Budget())
+	}
+	if DefaultBudget().InspectMemory != 64<<20 {
+		t.Fatalf("default inspection memory = %d", DefaultBudget().InspectMemory)
 	}
 
 	portable, ok := PolicyFor(Portable)
@@ -274,10 +355,19 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 		t.Fatal("portable policy did not expand")
 	}
 	realtime, ok := PolicyFor(Realtime)
-	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Window: 250 * time.Millisecond}) {
+	if !ok || realtime.Resources.Queue != (QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}) || realtime.Alignment != (AlignmentPolicy{Zip: 250 * time.Millisecond}) || realtime.Resources.ScratchMaxBytes != 0 {
 		t.Fatalf("realtime queue policy = %#v, %v", realtime.Resources.Queue, ok)
 	}
-	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192}
+	for _, preset := range []Preset{Fast, Stable, Portable} {
+		policy, ok := PolicyFor(preset)
+		if !ok || !policy.Valid() || policy.Resources.ScratchMaxBytes != defaultScratchMaxBytes {
+			t.Fatalf("offline preset %s = %#v, ok=%v", preset, policy, ok)
+		}
+	}
+	if !realtime.Valid() {
+		t.Fatalf("realtime policy is invalid: %#v", realtime)
+	}
+	budget := Budget{States: 7, Compiles: 11, SuggestionsPerNeed: 2, FixpointIterations: 3, ProbeBytes: 4096, ProbeRounds: 5, InspectBytes: 8192, InspectMemory: 16384}
 	request, err = New(nil, nil, graph, WithPolicy(portable), WithBudget(budget))
 	if err != nil {
 		t.Fatal(err)
@@ -291,6 +381,11 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	if _, err := New(nil, nil, graph, WithBudget(Budget{})); err == nil {
 		t.Fatal("invalid budget was accepted")
 	}
+	invalidInspectMemory := DefaultBudget()
+	invalidInspectMemory.InspectMemory = 0
+	if _, err := New(nil, nil, graph, WithBudget(invalidInspectMemory)); err == nil {
+		t.Fatal("zero inspection memory budget was accepted")
+	}
 	invalidSpool := portable
 	invalidSpool.Resources.AllowSpool = true
 	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
@@ -300,6 +395,14 @@ func TestJobExpandsDefaultPolicyAndOwnsPlannerBudget(t *testing.T) {
 	invalidSpool.Resources.SpoolMaxBytes = 1024
 	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
 		t.Fatal("disabled spool with a quota was accepted")
+	}
+	invalidSpool = portable
+	invalidSpool.Resources.AllowSpool = true
+	invalidSpool.Resources.ScratchMaxBytes = 512
+	invalidSpool.Resources.SpoolMaxBytes = 1024
+	invalidSpool.Resources.SpoolStorage = access.MemorySpool
+	if _, err := New(nil, nil, graph, WithPolicy(invalidSpool)); err == nil {
+		t.Fatal("spool outside an aggregate scratch cap was accepted")
 	}
 }
 
@@ -313,7 +416,8 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 	}
 	policy := Policy{}
 	policy.Resources.Queue.Bytes = resource.Bytes(1 << 63)
-	policy.Resources.Queue.Window = -time.Nanosecond
+	policy.Resources.Queue.Span = -time.Nanosecond
+	policy.Alignment.Zip = -time.Nanosecond
 	_, err = New(nil, nil, graph, WithPolicy(policy))
 	if err == nil {
 		t.Fatal("invalid policy was accepted")
@@ -328,7 +432,8 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 		"job.invalid-policy-continuity":     "policy.continuity",
 		"job.invalid-policy-queue-items":    "policy.resources.queue.items",
 		"job.invalid-policy-queue-bytes":    "policy.resources.queue.bytes",
-		"job.invalid-policy-queue-window":   "policy.resources.queue.window",
+		"job.invalid-policy-queue-span":     "policy.resources.queue.span",
+		"job.invalid-policy-alignment-zip":  "policy.alignment.zip",
 	}
 	items := diagnostic.ItemsOf(err)
 	if len(items) != len(want) {

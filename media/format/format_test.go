@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -19,6 +20,7 @@ type fixtureReadComponentID struct{}
 type fixtureWriteComponentID struct{}
 type fixtureConfigID struct{}
 type fixtureUnit int
+type frozenInspection struct{ Values []int }
 
 type fixtureInspectSession struct{ capabilities access.Capabilities }
 
@@ -126,7 +128,7 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	if !ok || !trait.HasInspect() {
 		t.Fatalf("read trait = %#v/%v", trait, ok)
 	}
-	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 1<<20))
+	inspection, err := trait.Inspect(NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 1<<20, 2<<20))
 	if err != nil || called != 1 {
 		t.Fatalf("Inspect = %#v, %v; calls = %d", inspection, err, called)
 	}
@@ -144,6 +146,144 @@ func TestReadTraitTransportsTypedInspectionThroughCompileContext(t *testing.T) {
 	}
 	if _, ok := InspectionOf[prepared](compileContext, other); ok {
 		t.Fatal("inspection accepted a different Format")
+	}
+}
+
+func TestSelectionIsFormatBoundImmutableAndCanonical(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := Define[fixtureOtherFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []stream.ID{"video", "audio"}
+	selection, err := NewSelection(value, ids...)
+	if err != nil || !selection.Valid() {
+		t.Fatalf("selection = %#v, %v", selection, err)
+	}
+	ids[0] = "changed"
+	if got := selection.Streams(); !slices.Equal(got, []stream.ID{"audio", "video"}) {
+		t.Fatalf("canonical streams = %#v", got)
+	}
+	streams := selection.Streams()
+	streams[0] = "changed"
+	if selection.Streams()[0] != "audio" {
+		t.Fatal("Selection exposed mutable stream storage")
+	}
+	for name, ids := range map[string][]stream.ID{
+		"empty":     nil,
+		"zero":      {"audio", ""},
+		"duplicate": {"audio", "audio"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewSelection(value, ids...); err == nil {
+				t.Fatal("invalid selection was accepted")
+			}
+		})
+	}
+	if _, err := NewSelection(Format{}, stream.ID("audio")); err == nil {
+		t.Fatal("selection for invalid Format was accepted")
+	}
+	context, err := WithSelection(plugin.CompileContext{}, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := SelectionOf(context, value)
+	if !ok || !slices.Equal(got.Streams(), []stream.ID{"audio", "video"}) || got.Format().Identity() != value.Identity() {
+		t.Fatalf("selection context = %#v/%v", got, ok)
+	}
+	if _, ok := SelectionOf(context, other); ok {
+		t.Fatal("selection accepted a different Format")
+	}
+	if _, ok := SelectionOf(plugin.CompileContext{}, value); ok {
+		t.Fatal("missing selection did not retain preserve-all distinction")
+	}
+}
+
+func TestInspectContextSeparatesReadAndRetainedMemoryLimits(t *testing.T) {
+	_, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := access.NewCapabilities(access.RandomRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ok := access.Select(capabilities, access.NewRequirements(access.AllOf(access.RandomRead)))
+	if !ok {
+		t.Fatal("random read selection failed")
+	}
+	opening, err := access.NewOpening(access.SourceDirection, fixtureInspectSession{capabilities: capabilities}, selection, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 17, 53)
+	if !ctx.Valid() {
+		t.Fatal("InspectContext is invalid")
+	}
+	if ctx.Limit() != 17 || ctx.MemoryLimit() != 53 {
+		t.Fatalf("InspectContext limits = read %d, memory %d", ctx.Limit(), ctx.MemoryLimit())
+	}
+	if NewInspectContext(context.Background(), opening, plugin.CompileContext{}, 17, 0).Valid() {
+		t.Fatal("zero retained-memory limit accepted")
+	}
+}
+
+func TestInspectionSharesFrozenReferenceValue(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := frozenInspection{Values: []int{1}}
+	inspection := NewInspection(value, prepared)
+	if !inspection.Valid() {
+		t.Fatal("frozen reference-valued inspection is invalid")
+	}
+	ctx, err := WithInspection(plugin.CompileContext{}, inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := InspectionOf[frozenInspection](ctx, value)
+	if !ok || len(first.Values) != 1 {
+		t.Fatalf("first inspection = %#v/%v", first, ok)
+	}
+	second, ok := InspectionOf[frozenInspection](ctx, value)
+	if !ok || len(second.Values) != 1 {
+		t.Fatalf("second inspection = %#v/%v", second, ok)
+	}
+	if &prepared.Values[0] != &first.Values[0] || &first.Values[0] != &second.Values[0] {
+		t.Fatal("InspectionOf copied the frozen reference value")
+	}
+}
+
+func TestNewInspectionRejectsInvalidFormatAndNilValues(t *testing.T) {
+	value, err := Define[fixtureFormatID](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if NewInspection(Format{}, 1).Valid() {
+		t.Fatal("invalid Format produced a valid inspection")
+	}
+	if NewInspection[any](value, nil).Valid() {
+		t.Fatal("nil produced a valid inspection")
+	}
+	var pointer *int
+	var slice []int
+	var values map[string]int
+	var channel chan int
+	var function func()
+	for name, prepared := range map[string]any{
+		"pointer":  pointer,
+		"slice":    slice,
+		"map":      values,
+		"channel":  channel,
+		"function": function,
+	} {
+		if inspection := NewInspection(value, prepared); inspection.Valid() {
+			t.Fatalf("typed-nil %s produced a valid inspection", name)
+		}
 	}
 }
 

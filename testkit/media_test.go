@@ -12,7 +12,7 @@ import (
 )
 
 func TestExplicitMediaFixturesDoNotRequirePCMProperties(t *testing.T) {
-	chunksDescriptor := stream.MustDescriptor("chunks", mediaformat.Chunks().Identity(), timing.MustBase(1, 1), property.New())
+	chunksDescriptor := stream.MustDescriptor("chunks", mediaformat.Chunks().Descriptor(), timing.MustBase(1, 1), property.New())
 	chunks := ChunkInputFor(chunksDescriptor, []Chunk{{Bytes: []byte{1, 2}}})
 	if !chunks.valid() {
 		t.Fatal("explicit chunk fixture is invalid")
@@ -21,7 +21,7 @@ func TestExplicitMediaFixturesDoNotRequirePCMProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	packetsDescriptor := stream.MustDescriptor("packets", codec.Packets().Identity(), timing.MustBase(1, 1), property.New())
+	packetsDescriptor := stream.MustDescriptor("packets", codec.Packets().Descriptor(), timing.MustBase(1, 1), property.New())
 	packets := PacketInputFor(packetsDescriptor, []Packet{{Bytes: []byte{3, 4}}})
 	if !packets.valid() {
 		t.Fatal("explicit packet fixture is invalid")
@@ -30,7 +30,7 @@ func TestExplicitMediaFixturesDoNotRequirePCMProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrong := stream.MustDescriptor("bytes", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	wrong := stream.MustDescriptor("bytes", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	if ChunkInputFor(wrong, nil).valid() || PacketInputFor(wrong, nil).valid() {
 		t.Fatal("explicit media fixtures accepted the wrong schema")
 	}

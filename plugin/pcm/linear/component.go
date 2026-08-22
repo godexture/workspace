@@ -33,20 +33,33 @@ type componentPlan struct {
 func newComponent[Marker any](kind operation, name string) plugin.Component {
 	shape := operationShape(kind)
 	spec := plugin.Spec[configuration, componentPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, configuration configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[componentPlan, stream.Descriptor], error) {
 			return compileOperation(kind, shape, configuration, inputs)
 		},
-		Suggest: func(_ plugin.SuggestContext, input stream.Descriptor, need plugin.Need[stream.Descriptor]) []configuration {
+		Suggest: func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []configuration {
+			inputPort, outputPort := shape.Inputs[0], shape.Outputs[0]
+			input, ok := suggestion.Inputs().One(inputPort.ID())
+			if !ok {
+				return nil
+			}
 			current, err := sample.FromProperties(input.Properties())
 			if err != nil {
 				return nil
 			}
 			var desired *sample.Description
-			if target, ok := need.Desired(); ok {
+			for _, demand := range suggestion.Demands() {
+				if !wireSide(kind, demand.Port(), inputPort.ID(), outputPort.ID()) {
+					continue
+				}
+				target, ok := demand.Need().Desired()
+				if !ok {
+					continue
+				}
 				value, err := sample.FromProperties(target.Properties())
 				if err == nil {
 					desired = &value
+					break
 				}
 			}
 			value, ok := suggestConfiguration(current, desired)
@@ -114,7 +127,7 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 	if kind != readerOperation {
 		actual, err := sample.FromProperties(input.Properties())
 		if err != nil || actual != expected || input.TimeBase() != timing.MustBase(1, int64(expected.Rate)) {
-			desired, desiredErr := descriptorWith(input, inputPort.Schema().Identity(), expected)
+			desired, desiredErr := descriptorWith(input, inputPort.Schema(), expected)
 			if desiredErr != nil {
 				return plugin.Compiled[componentPlan, stream.Descriptor]{}, desiredErr
 			}
@@ -128,11 +141,11 @@ func compileOperation(kind operation, shape flow.Shape, configuration configurat
 	var err error
 	switch kind {
 	case readerOperation:
-		outputDescriptor, err = describedCarrier(input, outputPort.Schema().Identity(), output)
+		outputDescriptor, err = describedCarrier(input, outputPort.Schema(), output)
 	case writerOperation:
-		outputDescriptor, err = carrierDescriptor(input, outputPort.Schema().Identity())
+		outputDescriptor, err = carrierDescriptor(input, outputPort.Schema())
 	default:
-		outputDescriptor, err = descriptorWith(input, outputPort.Schema().Identity(), output)
+		outputDescriptor, err = descriptorWith(input, outputPort.Schema(), output)
 	}
 	if err != nil {
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
@@ -175,6 +188,21 @@ func operationDescriptions(kind operation, configuration configuration) (sample.
 	}
 }
 
+// wireSide reports whether a demand on this port describes the interleaved wire
+// samples this operation reads or writes. A decoder emits planar frames and an
+// encoder consumes them, so a demand on that side says nothing about the byte
+// order of the wire and must not configure it.
+func wireSide(kind operation, port, input, output string) bool {
+	switch kind {
+	case decoderOperation:
+		return port == input
+	case encoderOperation:
+		return port == output
+	default:
+		return port == input || port == output
+	}
+}
+
 func operationEffect(kind operation) plugin.Effect {
 	if kind == decoderOperation || kind == encoderOperation {
 		return plugin.Effect{Kind: plugin.RepresentationEffect, Loss: plugin.NoLoss, Detail: "pcm.s16-representation"}
@@ -182,32 +210,32 @@ func operationEffect(kind operation) plugin.Effect {
 	return plugin.Effect{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "pcm.framing"}
 }
 
-func descriptorWith(input stream.Descriptor, schemaID schema.ID, description sample.Description) (stream.Descriptor, error) {
+func descriptorWith(input stream.Descriptor, schemaDescriptor schema.Descriptor, description sample.Description) (stream.Descriptor, error) {
 	properties, err := description.Apply(input.Properties())
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
 	return result.WithMetadata(input.Metadata()), nil
 }
 
-func describedCarrier(input stream.Descriptor, schemaID schema.ID, description sample.Description) (stream.Descriptor, error) {
+func describedCarrier(input stream.Descriptor, schemaDescriptor schema.Descriptor, description sample.Description) (stream.Descriptor, error) {
 	properties, err := description.Properties()
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	result, err := stream.NewDescriptor(input.ID(), schemaID, timing.MustBase(1, int64(description.Rate)), properties)
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
 	return result.WithMetadata(input.Metadata()), nil
 }
 
-func carrierDescriptor(input stream.Descriptor, schemaID schema.ID) (stream.Descriptor, error) {
-	result, err := stream.NewDescriptor(input.ID(), schemaID, access.CarrierTimeBase(), property.New())
+func carrierDescriptor(input stream.Descriptor, schemaDescriptor schema.Descriptor) (stream.Descriptor, error) {
+	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.Base{}, property.New())
 	if err != nil {
 		return stream.Descriptor{}, err
 	}

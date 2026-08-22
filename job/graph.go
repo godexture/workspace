@@ -5,7 +5,6 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -56,32 +55,14 @@ func (e Edge) Valid() bool { return e.from.Valid() && e.to.Valid() }
 func (e Edge) From() Port  { return e.from }
 func (e Edge) To() Port    { return e.to }
 
-// Mapping is an exact inspected stream mapping. Selector expressions remain
-// deferred until M7's multi-stream format supplies their real consumer.
-type Mapping struct {
-	input  int
-	stream stream.ID
-	output int
-}
-
-func MapStream(input int, id stream.ID, output int) Mapping {
-	return Mapping{input: input, stream: id, output: output}
-}
-
-func (m Mapping) Valid() bool       { return m.input >= 0 && !m.stream.IsZero() && m.output >= 0 }
-func (m Mapping) Input() int        { return m.input }
-func (m Mapping) Stream() stream.ID { return m.stream }
-func (m Mapping) Output() int       { return m.output }
-
 // Graph is an immutable requested graph. It validates only caller-owned
 // identities here; component port semantics belong to internal/graph.
 type Graph struct {
-	nodes    []Node
-	edges    []Edge
-	mappings []Mapping
+	nodes []Node
+	edges []Edge
 }
 
-func NewGraph(nodes []Node, edges []Edge, mappings ...Mapping) (Graph, error) {
+func NewGraph(nodes []Node, edges []Edge) (Graph, error) {
 	var items []diagnostic.Item
 	seenNodes := make(map[NodeID]struct{}, len(nodes))
 	for _, node := range nodes {
@@ -115,31 +96,18 @@ func NewGraph(nodes []Node, edges []Edge, mappings ...Mapping) (Graph, error) {
 		}
 		seenEdges[key] = struct{}{}
 	}
-	seenMappings := make(map[Mapping]struct{}, len(mappings))
-	for _, mapping := range mappings {
-		if !mapping.Valid() {
-			items = append(items, diagnostic.NewItem("job.invalid-mapping", diagnostic.ErrorSeverity, diagnostic.Path{}, "stream mapping is invalid", nil))
-			continue
-		}
-		if _, exists := seenMappings[mapping]; exists {
-			items = append(items, diagnostic.NewItem("job.duplicate-mapping", diagnostic.ErrorSeverity, diagnostic.Path{}, "stream mapping is repeated", nil))
-		}
-		seenMappings[mapping] = struct{}{}
-	}
 	if hasErrors(items) {
 		return Graph{}, diagnostic.NewError(items...)
 	}
 	return Graph{
-		nodes:    append([]Node(nil), nodes...),
-		edges:    append([]Edge(nil), edges...),
-		mappings: append([]Mapping(nil), mappings...),
+		nodes: append([]Node(nil), nodes...),
+		edges: append([]Edge(nil), edges...),
 	}, nil
 }
 
-func (g Graph) Valid() bool         { return len(g.nodes) != 0 }
-func (g Graph) Nodes() []Node       { return append([]Node(nil), g.nodes...) }
-func (g Graph) Edges() []Edge       { return append([]Edge(nil), g.edges...) }
-func (g Graph) Mappings() []Mapping { return append([]Mapping(nil), g.mappings...) }
+func (g Graph) Valid() bool   { return len(g.nodes) != 0 }
+func (g Graph) Nodes() []Node { return append([]Node(nil), g.nodes...) }
+func (g Graph) Edges() []Edge { return append([]Edge(nil), g.edges...) }
 
 func hasErrors(items []diagnostic.Item) bool {
 	for _, item := range items {

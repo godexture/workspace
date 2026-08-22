@@ -76,6 +76,29 @@ func TestShapeValidatesTypedPorts(t *testing.T) {
 	}
 }
 
+func TestSelectedBatchKeepsItsInputWithoutChangingZipBatches(t *testing.T) {
+	typ := flowSchema()
+	item := NewItem(flowUnit{Value: 3}, typ, &testDomain)
+	defer item.Drop()
+	selected := NewSelectedBatch(4, &item)
+	if input, ok := selected.Input(); !ok || input != 4 {
+		t.Fatalf("selected input = %d, %v", input, ok)
+	}
+	if selected.Len() != 1 || selected.At(0) != &item || selected.At(1) != nil {
+		t.Fatalf("selected batch = len %d, first %p, second %p", selected.Len(), selected.At(0), selected.At(1))
+	}
+	if value, ok := selected.Value(0); !ok || value.Value != 3 {
+		t.Fatalf("selected value = %#v, %v", value, ok)
+	}
+	zip := NewBatch([]*Item[flowUnit]{&item})
+	if _, ok := zip.Input(); ok {
+		t.Fatal("zip batch unexpectedly selected an input")
+	}
+	if zip.Len() != 1 || zip.At(0) != &item {
+		t.Fatalf("zip batch changed = len %d, item %p", zip.Len(), zip.At(0))
+	}
+}
+
 func TestShapeReportsInvalidSchemaMarker(t *testing.T) {
 	invalid := schema.Define[struct{}](schema.Traits[int]{})
 	err := NewShape([]Port{In("invalid", invalid)}, nil).Validate()
@@ -95,6 +118,10 @@ func TestShapeEqualityUsesSchemaIdentityAndPayload(t *testing.T) {
 	}
 	if left.Equal(NewShape(nil, []Port{Out("out", otherPayload)})) {
 		t.Fatal("same schema marker with a different payload produced an equal shape")
+	}
+	timed := schema.Define[flowUnitID, flowUnit](schema.Traits[flowUnit]{Time: func(flowUnit) (int64, bool) { return 0, true }})
+	if left.Equal(NewShape(nil, []Port{Out("out", timed)})) {
+		t.Fatal("same schema marker with a different time-trait presence produced an equal shape")
 	}
 }
 

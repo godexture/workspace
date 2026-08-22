@@ -120,12 +120,12 @@ func newOwnershipScenario(ownership access.Ownership) (*scenarioCore, error) {
 
 func ownershipDefinition(state *lifecycleState, sourceHandle, sinkHandle *ownershipHandle, received *atomic.Int32) plugin.Definition {
 	configuration := config.Struct[ownershipConfigID](func() ownershipConfig { return ownershipConfig{} }).Version("1").Build()
-	descriptor := stream.MustDescriptor("testkit-direct", ownershipType.Identity(), timing.MustBase(1, 1), property.New())
+	descriptor := stream.MustDescriptor("testkit-direct", ownershipType.Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", ownershipType)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", ownershipType)}, nil)
 	source := plugin.NewComponent[ownershipSourceID](plugin.Descriptor{DisplayName: "testkit direct source"}, configuration,
 		plugin.WithSpec(plugin.Spec[ownershipConfig, ownershipPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[ownershipConfig](sourceShape),
+			Ports: sourceShape,
 			Compile: func(plugin.CompileContext, ownershipConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[ownershipPlan, stream.Descriptor], error) {
 				return plugin.Compiled[ownershipPlan, stream.Descriptor]{Plan: ownershipPlan{shape: sourceShape.Clone()}, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor))}, nil
 			},
@@ -142,7 +142,7 @@ func ownershipDefinition(state *lifecycleState, sourceHandle, sinkHandle *owners
 	)
 	sink := plugin.NewComponent[ownershipSinkID](plugin.Descriptor{DisplayName: "testkit direct sink"}, configuration,
 		plugin.WithSpec(plugin.Spec[ownershipConfig, ownershipPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[ownershipConfig](sinkShape),
+			Ports: sinkShape,
 			Compile: func(_ plugin.CompileContext, _ ownershipConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[ownershipPlan, stream.Descriptor], error) {
 				if _, ok := inputs.One("in"); !ok {
 					return plugin.Compiled[ownershipPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("testkit.direct.input"))}}, nil

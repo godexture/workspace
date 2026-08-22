@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/godexture/godec/access"
@@ -14,8 +12,17 @@ import (
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
-	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
+)
+
+const (
+	// A page is also the largest source read performed by the range-preserving
+	// mux. It is intentionally independent of the size of any source chunk.
+	wavePageSize = 64 << 10
+	// Semantic INFO values are useful control-plane data, while opaque source
+	// bytes remain ranges. This cap bounds the temporary parser and rewrite
+	// buffers even when the input has a very large LIST carrier.
+	waveSemanticCap = 64 << 10
 )
 
 func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
@@ -35,7 +42,7 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is negative", ErrMalformed)
 	}
 	resolver, _ := metadata.ResolverOf(ctx.Prepared())
-	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.Limit())
+	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.MemoryLimit())
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -47,23 +54,26 @@ func inspectHeader(ctx context.Context, reader access.Random) (header, error) {
 }
 
 func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolver metadata.Resolver) (header, error) {
-	return inspectHeaderWithSize(ctx, reader, 0, false, resolver, job.DefaultBudget().InspectBytes)
+	return inspectHeaderWithSize(ctx, reader, 0, false, resolver, job.DefaultBudget().InspectMemory)
 }
 
-func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, limit resource.Bytes) (header, error) {
-	budget := preserveBudget{remaining: uint64(limit)}
+func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, memoryLimit resource.Bytes) (header, error) {
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}
 	if !resolver.Valid() {
 		resolver, _ = metadata.NewResolver(nil)
 	}
+	semanticLimit := uint64(memoryLimit)
+	if semanticLimit > waveSemanticCap {
+		semanticLimit = waveSemanticCap
+	}
 	var root [12]byte
-	if err := readFullAt(ctx, reader, root[:], 0); err != nil {
+	if err := access.ReadFullAt(ctx, reader, root[:], 0); err != nil {
 		return header{}, fmt.Errorf("%w: RIFF header: %w", ErrMalformed, err)
 	}
 	rf64 := string(root[0:4]) == tagRF64
-	if string(root[0:4]) != tagRIFF && !rf64 || string(root[8:12]) != tagWAVE {
+	if (string(root[0:4]) != tagRIFF && !rf64) || string(root[8:12]) != tagWAVE {
 		return header{}, fmt.Errorf("%w: RIFF/WAVE signature is absent", ErrMalformed)
 	}
 	rootSize := uint64(binary.LittleEndian.Uint32(root[4:8]))
@@ -79,17 +89,28 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 
 	var result header
 	result.rf64 = rf64
+	result.rootEnd = rootEnd
+	result.sourceSize = sourceSize
 	result.codecTag = PCMTag()
 	document := metadata.NewBuilder(metadata.StreamScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
 	offset := uint64(12)
-	for chunks := 0; chunks < 1<<20; chunks++ {
-		if rootEnd != 0 {
-			if offset == rootEnd {
+	for {
+		if err := context.Cause(ctx); err != nil {
+			return header{}, err
+		}
+		// RF64's extended root end is unavailable until ds64 is seen. A
+		// stable source size is still a hard scan boundary for malformed input.
+		scanEnd := rootEnd
+		if scanEnd == 0 && sizeKnown {
+			scanEnd = sourceSize
+		}
+		if scanEnd != 0 {
+			if offset == scanEnd {
 				break
 			}
-			if offset > rootEnd || rootEnd-offset < 8 {
+			if offset > scanEnd || scanEnd-offset < 8 {
 				return header{}, fmt.Errorf("%w: chunk header exceeds RIFF size", ErrMalformed)
 			}
 		}
@@ -97,7 +118,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			return header{}, fmt.Errorf("%w: chunk offset exceeds runtime range", ErrUnsupported)
 		}
 		var chunk [8]byte
-		if err := readFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
+		if err := access.ReadFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
 			return header{}, fmt.Errorf("%w: chunk header at %d: %w", ErrMalformed, offset, err)
 		}
 		id := string(chunk[0:4])
@@ -112,12 +133,6 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		actualSize := declaredSize
 		anchor := chunkAnchorAt(formatFound, dataFound)
 		preserve := true
-
-		// A JUNK chunk of exactly ds64 size in the reservation slot is where an
-		// RF64 writer keeps room for a later ds64, and this writer recreates
-		// that slot. Its payload is still input-derived content and is legal
-		// non-zero, so it is preserved and written back into the same slot
-		// instead of being regenerated as zeros.
 		if id == tagJUNK && offset == reserveOffset && declaredSize == ds64PayloadSize {
 			anchor = chunkReservation
 		}
@@ -129,7 +144,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 				return header{}, fmt.Errorf("%w: invalid ds64 chunk", ErrMalformed)
 			}
 			var payload [28]byte
-			if err := readFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
+			if err := access.ReadFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
 				return header{}, fmt.Errorf("%w: ds64 chunk: %w", ErrMalformed, err)
 			}
 			riffSize := binary.LittleEndian.Uint64(payload[0:8])
@@ -139,6 +154,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			}
 			if rf64 {
 				rootEnd = 8 + riffSize
+				result.rootEnd = rootEnd
 				if err := validateSourceEnd(rootEnd, sourceSize, sizeKnown); err != nil {
 					return header{}, err
 				}
@@ -189,12 +205,18 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 				return header{}, fmt.Errorf("%w: chunk padding overflows", ErrMalformed)
 			}
 		}
-		if next <= offset || rootEnd != 0 && next > rootEnd {
+		if next <= offset || rootEnd != 0 && next > rootEnd || rootEnd == 0 && sizeKnown && next > sourceSize {
 			return header{}, fmt.Errorf("%w: chunk exceeds RIFF bounds", ErrMalformed)
 		}
 		if preserve {
-			if err := inspectPreservedChunk(ctx, reader, resolver, document, &budget, offset, next, declaredSize, id, anchor); err != nil {
-				return header{}, err
+			value := sourceRange{offset: offset, length: next - offset}
+			if err := result.ranges.add(anchor, value); err != nil {
+				return header{}, fmt.Errorf("%w: non-contiguous WAVE preservation range", err)
+			}
+			if id == tagLIST && declaredSize >= 4 && uint64(declaredSize)+8+(declaredSize&1) == value.length && uint64(declaredSize)+8 <= semanticLimit {
+				if err := inspectInfoSemantic(ctx, reader, resolver, document, &result.ranges, value, anchor); err != nil {
+					return header{}, err
+				}
 			}
 		}
 		offset = next
@@ -209,9 +231,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		return header{}, fmt.Errorf("%w: RIFF chunk scan did not reach the declared end", ErrMalformed)
 	}
 	if sizeKnown && sourceSize > rootEnd {
-		if err := inspectTrailer(ctx, reader, document, &budget, rootEnd, sourceSize); err != nil {
-			return header{}, err
-		}
+		result.ranges.trailer = sourceRange{offset: rootEnd, length: sourceSize - rootEnd}
 	}
 	parsed, err := document.Build()
 	if err != nil {
@@ -224,46 +244,49 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	return result, nil
 }
 
+func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, ranges *sourceRanges, value sourceRange, anchor chunkAnchor) error {
+	if value.length > uint64(math.MaxInt) || value.offset > math.MaxInt64 {
+		return fmt.Errorf("%w: LIST/INFO carrier exceeds runtime address space", ErrUnsupported)
+	}
+	raw := make([]byte, int(value.length))
+	if err := access.ReadFullAt(ctx, reader, raw, int64(value.offset)); err != nil {
+		return fmt.Errorf("%w: LIST/INFO carrier at %d: %w", ErrMalformed, value.offset, err)
+	}
+	// LIST is a generic RIFF carrier. Only its INFO subtype contributes
+	// semantic metadata; every other subtype remains an opaque source range.
+	if string(raw[8:12]) != tagINFO {
+		return nil
+	}
+	block := newChunkBlockID(value.offset, anchor, chunkInfo)
+	// Resolver.Parse is the binding/encoding validation boundary. Its result
+	// is deliberately discarded because it contains source-backed Blobs.
+	if _, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw)); err != nil {
+		return err
+	}
+	semantic, err := parseInfoSemantic(raw)
+	if err != nil {
+		return err
+	}
+	if ranges.infoCount < 2 {
+		ranges.infoCount++
+	}
+	if ranges.infoCount == 1 {
+		ranges.info = value
+	} else {
+		ranges.info = sourceRange{}
+	}
+	builder.Append(semantic)
+	return nil
+}
+
 // validateSourceEnd rejects a RIFF chunk that claims more than the source
 // holds. Bytes past the chunk are not an error: appended tags and encoder
-// padding are common, and the spec makes the size field the chunk boundary,
-// not the file boundary. Inspect preserves that region instead.
+// padding are common, and the size field is the chunk boundary.
 func validateSourceEnd(declared, actual uint64, known bool) error {
 	if !known || declared <= actual {
 		return nil
 	}
 	return fmt.Errorf("%w: RIFF ends at %d, source size is %d", ErrTruncatedData, declared, actual)
-}
-
-func inspectPreservedChunk(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, budget *preserveBudget, offset, next, declaredSize uint64, id string, anchor chunkAnchor) error {
-	length := next - offset
-	if length > uint64(^uint(0)>>1) {
-		return fmt.Errorf("%w: chunk %q exceeds control-plane address space", ErrUnsupported, id)
-	}
-	if err := budget.reserve(length, id); err != nil {
-		return err
-	}
-	raw := make([]byte, int(length))
-	if err := readFullAt(ctx, reader, raw, int64(offset)); err != nil {
-		return fmt.Errorf("%w: preserved chunk %q at %d: %w", ErrMalformed, id, offset, err)
-	}
-	if id == tagLIST && declaredSize >= 4 && len(raw) >= 12 && string(raw[8:12]) == tagINFO {
-		block := newChunkBlockID(offset, anchor, chunkInfo)
-		document, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw))
-		if err != nil {
-			return err
-		}
-		builder.Append(document)
-		return nil
-	}
-	block := metadata.NewRawBlock(
-		newChunkBlockID(offset, anchor, chunkRaw),
-		rawChunkCarrier(),
-		plugin.Identity{},
-		metadata.NewBlob("application/x-riff-chunk", raw),
-	)
-	builder.AddBlock(block)
-	return nil
 }
 
 func inspectFormat(ctx context.Context, reader access.Random, offset, size uint64) (sample.Description, int, error) {
@@ -275,7 +298,7 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 		readSize = 40
 	}
 	buffer := make([]byte, int(readSize))
-	if err := readFullAt(ctx, reader, buffer, int64(offset)); err != nil {
+	if err := access.ReadFullAt(ctx, reader, buffer, int64(offset)); err != nil {
 		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
 	}
 	audioFormat := binary.LittleEndian.Uint16(buffer[0:2])
@@ -331,79 +354,9 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	return description, int(blockAlign), nil
 }
 
-func readFullAt(ctx context.Context, reader access.Random, destination []byte, offset int64) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: negative read offset", ErrMalformed)
-	}
-	read := 0
-	for read < len(destination) {
-		if err := context.Cause(ctx); err != nil {
-			return err
-		}
-		count, err := reader.ReadAt(ctx, destination[read:], offset+int64(read))
-		if count < 0 || count > len(destination)-read {
-			return fmt.Errorf("%w: invalid random read count", ErrMalformed)
-		}
-		read += count
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				if read == 0 {
-					return io.EOF
-				}
-				return io.ErrUnexpectedEOF
-			}
-			return err
-		}
-		if count == 0 {
-			return io.ErrNoProgress
-		}
-	}
-	return nil
-}
-
 func checkedAdd(left, right uint64) (uint64, bool) {
 	if left > math.MaxUint64-right {
 		return 0, false
 	}
 	return left + right, true
-}
-
-// preserveBudget bounds what preserved chunks may allocate. A declared chunk
-// size is content the source controls, so the allocation is refused before it
-// is made rather than after a read fails.
-type preserveBudget struct{ remaining uint64 }
-
-func (b *preserveBudget) reserve(length uint64, id string) error {
-	if length > b.remaining {
-		return fmt.Errorf("%w: preserving chunk %q needs %d bytes and %d remain in the Inspect budget", ErrUnsupported, id, length, b.remaining)
-	}
-	b.remaining -= length
-	return nil
-}
-
-// inspectTrailer preserves the bytes past the RIFF chunk as one opaque block.
-// They are not a chunk, so they carry no header and are written back outside
-// the RIFF size.
-func inspectTrailer(ctx context.Context, reader access.Random, builder *metadata.Builder, budget *preserveBudget, start, end uint64) error {
-	length := end - start
-	if length > uint64(^uint(0)>>1) || start > math.MaxInt64 {
-		return fmt.Errorf("%w: trailing region exceeds control-plane address space", ErrUnsupported)
-	}
-	if err := budget.reserve(length, "trailer"); err != nil {
-		return err
-	}
-	raw := make([]byte, int(length))
-	if err := readFullAt(ctx, reader, raw, int64(start)); err != nil {
-		return fmt.Errorf("%w: trailing region at %d: %w", ErrMalformed, start, err)
-	}
-	builder.AddBlock(metadata.NewRawBlock(
-		newChunkBlockID(start, chunkAfterRIFF, chunkRaw),
-		rawChunkCarrier(),
-		plugin.Identity{},
-		metadata.NewBlob("application/octet-stream", raw),
-	))
-	return nil
 }

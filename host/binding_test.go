@@ -12,11 +12,13 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/internal/bind"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/buffer"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 )
@@ -92,6 +94,9 @@ func (s boundarySession) Capabilities() access.Capabilities {
 }
 func (boundarySession) Close() error { return nil }
 func (boundarySession) Read(context.Context, []byte) (int, error) {
+	return 0, io.EOF
+}
+func (boundarySession) ReadAt(context.Context, []byte, int64) (int, error) {
 	return 0, io.EOF
 }
 func (s boundarySession) Snapshot(context.Context) (access.Snapshot, error) {
@@ -185,6 +190,41 @@ func TestHostBindsProviderAndEndpointWithoutOpening(t *testing.T) {
 	}
 	if readPorts != 2 || writePorts != 2 {
 		t.Fatalf("directional carrier ports = read %d, write %d", readPorts, writePorts)
+	}
+}
+
+func TestNormalizePreservesJobMappingsDuringBoundaryRebuild(t *testing.T) {
+	sourceCapabilities := mustCapabilities(t, access.SequentialRead)
+	sinkCapabilities := mustCapabilities(t, access.SequentialWrite)
+	source, transform, sink, _ := boundaryComponentsWith(
+		nil,
+		[]plugin.ComponentOption{access.Source("memory", sourceCapabilities, boundaryAcquire(sourceCapabilities))},
+		[]plugin.ComponentOption{access.Sink("memory", sinkCapabilities, access.AtomicReplace, boundaryAcquire(sinkCapabilities))},
+	)
+	instance, err := New(Plugins(plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, transform, sink))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputReference, _ := access.Parse("memory:input")
+	outputReference, _ := access.Parse("memory:output")
+	input, _ := job.InputFromReference(inputReference)
+	output, _ := job.OutputToReference(outputReference)
+	graph, err := boundaryGraph(transform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := job.MapStream(0, stream.ID("boundary"), 0)
+	request, err := job.New([]job.Input{input}, []job.Output{output}, graph, job.WithMappings(mapping))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := bind.Normalize(instance.bindings, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := normalized.Request().Mappings()
+	if len(got) != 1 || got[0] != mapping {
+		t.Fatalf("normalized Job mappings = %#v, want %#v", got, []job.Mapping{mapping})
 	}
 }
 
@@ -425,26 +465,43 @@ func mustOutputRequest(t testing.TB, output job.Output, selector job.FormatSelec
 func TestHostReportsMissingProbeCandidatesAndUnsatisfiedFormatRequirements(t *testing.T) {
 	trait, _ := endpoint.NewTrait(endpoint.FiniteStatic, endpoint.Offline)
 	tests := map[string]struct {
-		capabilities access.Capabilities
-		sink         func() plugin.Component
-		code         string
+		components func() ([]plugin.Component, plugin.Component)
+		code       string
 	}{
 		"missing": {
-			capabilities: mustCapabilities(t, access.SequentialRead),
-			sink:         func() plugin.Component { return boundarySinkWithoutFormat(trait) },
-			code:         "prepare.probe-candidate",
+			components: func() ([]plugin.Component, plugin.Component) {
+				capabilities := mustCapabilities(t, access.SequentialRead)
+				source, _, _, _ := boundaryComponentsWith(nil, []plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))}, nil)
+				sink := boundarySinkWithoutFormat(trait)
+				return []plugin.Component{source, sink}, sink
+			},
+			code: "prepare.probe-candidate",
 		},
 		"unsatisfied": {
-			capabilities: mustCapabilities(t, access.StableSize),
-			sink:         func() plugin.Component { return boundaryReadSink(trait, true) },
-			code:         "bind.capability-unsatisfied",
+			components: func() ([]plugin.Component, plugin.Component) {
+				capabilities := mustCapabilities(t, access.RandomRead)
+				evidence, err := mediaformat.NewEvidence("fixture")
+				if err != nil {
+					t.Fatal(err)
+				}
+				source, transform, sink, _ := boundaryComponentsWithRequirements(
+					nil,
+					[]plugin.ComponentOption{access.Source("memory", capabilities, boundaryAcquire(capabilities))},
+					[]plugin.ComponentOption{endpoint.WithTrait(trait)},
+					access.NewRequirements(access.AllOf(access.RandomRead, access.StableSize)),
+					mediaformat.WithProbe(func(mediaformat.ProbeContext) (mediaformat.ProbeResult, error) {
+						return mediaformat.Match(evidence), nil
+					}),
+				)
+				return []plugin.Component{source, transform, sink}, sink
+			},
+			code: "bind.capability-unsatisfied",
 		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			source, _, _, _ := boundaryComponentsWith(nil, []plugin.ComponentOption{access.Source("memory", test.capabilities, boundaryAcquire(test.capabilities))}, nil)
-			sink := test.sink()
-			set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, source, sink))
+			components, sink := test.components()
+			set := plugin.NewSet(plugin.Define[boundaryPluginID](plugin.Descriptor{DisplayName: "boundary fixture", Version: "1"}, components...))
 			instance, err := New(Plugins(set))
 			if err != nil {
 				t.Fatal(err)
@@ -459,7 +516,7 @@ func TestHostReportsMissingProbeCandidatesAndUnsatisfiedFormatRequirements(t *te
 			if len(items) != 1 || items[0].Code != test.code || items[0].Detail["scheme"] != "memory" || items[0].Detail["direction"] != "read" {
 				t.Fatalf("diagnostic %s = %#v", test.code, items)
 			}
-			if name == "unsatisfied" && (items[0].Detail["available"] != "stable-size" || items[0].Detail["alternatives"] == "") {
+			if name == "unsatisfied" && (items[0].Detail["available"] != "random-read" || items[0].Detail["alternatives"] == "") {
 				t.Fatalf("capability detail = %#v", items[0].Detail)
 			}
 		})
@@ -491,13 +548,13 @@ func boundaryComponentsWith(opens *atomic.Int32, sourceTraits, sinkTraits []plug
 
 func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkTraits []plugin.ComponentOption, requirements access.Requirements, readOptions ...mediaformat.ReadOption) (plugin.Component, plugin.Component, plugin.Component, stream.Descriptor) {
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
-	descriptor := stream.MustDescriptor("boundary", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+	descriptor := stream.MustDescriptor("boundary", access.Bytes().Descriptor(), timing.Base{}, property.New())
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", access.Bytes())})
 	transformShape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, []flow.Port{flow.Out("out", access.Writes())})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", access.Writes())}, nil)
 	component := func(shape flow.Shape, compile plugin.CompileFunc[boundaryConfig, boundaryPlan, stream.Descriptor], operator func(flow.Shape) flow.Operator) plugin.ComponentOption {
 		return plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
-			Shape:   plugin.StaticShape[boundaryConfig](shape),
+			Ports:   shape,
 			Compile: compile,
 			Open: func(plugin.OpenContext, boundaryPlan) (flow.Operator, error) {
 				if opens != nil {
@@ -518,7 +575,7 @@ func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkT
 		if !ok {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("boundary.input"))}}, nil
 		}
-		output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+		output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 		if err != nil {
 			return plugin.Compiled[boundaryPlan, stream.Descriptor]{}, err
 		}
@@ -542,15 +599,11 @@ func boundaryComponentsWithRequirements(opens *atomic.Int32, sourceTraits, sinkT
 }
 
 func boundarySinkWithoutFormat(trait endpoint.Trait) plugin.Component {
-	return boundaryReadSink(trait, false)
-}
-
-func boundaryReadSink(trait endpoint.Trait, withFormat bool) plugin.Component {
 	configuration := config.Struct[boundaryConfigID](func() boundaryConfig { return boundaryConfig{} }).Version("1").Build()
 	shape := flow.NewShape([]flow.Port{flow.In("in", access.Bytes())}, nil)
 	options := []plugin.ComponentOption{
 		plugin.WithSpec(plugin.Spec[boundaryConfig, boundaryPlan, stream.Descriptor]{
-			Shape: plugin.StaticShape[boundaryConfig](shape),
+			Ports: shape,
 			Compile: func(plugin.CompileContext, boundaryConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[boundaryPlan, stream.Descriptor], error) {
 				return plugin.Compiled[boundaryPlan, stream.Descriptor]{Plan: boundaryPlan{shape: shape}, Outputs: flow.NewDescriptors[stream.Descriptor]()}, nil
 			},
@@ -560,9 +613,6 @@ func boundaryReadSink(trait endpoint.Trait, withFormat bool) plugin.Component {
 		}),
 		plugin.WithWriter("in", access.Bytes()),
 		endpoint.WithTrait(trait),
-	}
-	if withFormat {
-		options = append(options, mediaformat.Read(boundaryFormat(), access.NewRequirements(access.AllOf(access.SequentialRead), access.AllOf(access.RandomRead))))
 	}
 	return plugin.NewComponent[boundarySinkID](
 		plugin.Descriptor{DisplayName: "sink"},

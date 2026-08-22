@@ -49,19 +49,18 @@ func validateTopologyMode(nodes []shapedNode, edges []job.Edge, allowSchemaGaps 
 		if !fromPortOK || !toPortOK {
 			continue
 		}
-		if !allowSchemaGaps && (fromPort.Schema().Identity() != toPort.Schema().Identity() || fromPort.Schema().Payload() != toPort.Schema().Payload()) {
+		if !allowSchemaGaps && !fromPort.Schema().Equal(toPort.Schema()) {
 			items = append(items, graphItem("graph.schema-mismatch", edge.To(), "connected ports declare different schemas", map[string]string{
 				"source":        fromPort.Schema().Identity().String(),
 				"sourcePayload": gotype.Canonical(fromPort.Schema().Payload()),
+				"sourceHasTime": fmt.Sprintf("%t", fromPort.Schema().HasTime()),
 				"target":        toPort.Schema().Identity().String(),
 				"targetPayload": gotype.Canonical(toPort.Schema().Payload()),
+				"targetHasTime": fmt.Sprintf("%t", toPort.Schema().HasTime()),
 			}))
 		}
 		outputCounts[fromIndex][fromPort.ID()]++
 		inputCounts[toIndex][toPort.ID()]++
-		if outputCounts[fromIndex][fromPort.ID()] > 1 && fromPort.Multiplicity() != flow.ManyMultiplicity {
-			items = append(items, graphItem("graph.fan-out", edge.From(), "output port does not permit multiple connections", nil))
-		}
 		if inputCounts[toIndex][toPort.ID()] > 1 && toPort.Multiplicity() != flow.ManyMultiplicity {
 			items = append(items, graphItem("graph.fan-in", edge.To(), "input port does not permit multiple connections", nil))
 		}

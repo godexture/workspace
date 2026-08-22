@@ -121,7 +121,6 @@ type compileKey struct {
 	config      config.Fingerprint
 	input       stream.Fingerprint
 	environment string
-	prepared    string
 }
 
 type compileEntry struct {
@@ -132,19 +131,16 @@ type compileEntry struct {
 
 type compileCache map[compileKey][]compileEntry
 
-func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, input stream.Descriptor, prepared plugin.CompileContext, preparedKey string) (candidateResult, error) {
-	shape, err := candidate.component.Shape(plugin.ShapeContext{}, resolved)
-	if err != nil {
-		return candidateResult{}, rejectError{code: "shape"}
-	}
-	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.One || shape.Inputs[0].Schema().Identity() != input.Schema() {
+func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, input stream.Descriptor) (candidateResult, error) {
+	shape := candidate.component.Ports()
+	if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.One || !shape.Inputs[0].Schema().Equal(input.SchemaDescriptor()) {
 		return candidateResult{}, rejectError{code: "shape"}
 	}
 	fingerprint, err := input.Fingerprint()
 	if err != nil {
 		return candidateResult{}, rejectError{code: "descriptor"}
 	}
-	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint(), input: fingerprint, environment: p.environment, prepared: preparedKey}
+	key := compileKey{component: candidate.component.Identity(), config: resolved.Fingerprint(), input: fingerprint, environment: p.environment}
 	for _, entry := range p.cache[key] {
 		if entry.input.SameState(input) {
 			p.usage.CacheHits++
@@ -154,14 +150,14 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	if err := p.beforeCompile(); err != nil {
 		return candidateResult{}, err
 	}
-	compileContext := plugin.CompileContextWithContext(prepared, p.context)
+	compileContext := plugin.CompileContextWithContext(plugin.CompileContext{}, p.context)
 	compilation, compileErr := plugin.Compile(candidate.component, compileContext, resolved, flow.NewDescriptors(flow.Describe(shape.Inputs[0].ID(), input)))
 	if contextErr := p.checkContext(); contextErr != nil {
 		return candidateResult{}, contextErr
 	}
 	result := candidateResult{bridge: bridge{component: candidate.component, input: shape.Inputs[0], output: shape.Outputs[0]}, config: resolved, compilation: compilation}
 	if compileErr == nil {
-		result.output, compileErr = validateBridgeResult(compilation, shape.Outputs[0], input, p.policy)
+		result.output, compileErr = validateBridgeResult(candidate.component, compilation, shape.Outputs[0], input, p.policy, p.platform)
 	}
 	if compileErr != nil {
 		compileErr = rejectError{code: rejectionCode(compileErr)}
@@ -170,7 +166,7 @@ func (p *planner) compileBridge(candidate bridge, resolved config.ResolvedView, 
 	return result, compileErr
 }
 
-func validateBridgeResult(compilation plugin.Compilation, outputPort flow.Port, input stream.Descriptor, policy job.Policy) (stream.Descriptor, error) {
+func validateBridgeResult(component plugin.Component, compilation plugin.Compilation, outputPort flow.Port, input stream.Descriptor, policy job.Policy, platform plan.Platform) (stream.Descriptor, error) {
 	requirements, ok := plugin.RequirementsOf[stream.Descriptor](compilation)
 	if !ok || len(requirements) != 0 {
 		return stream.Descriptor{}, rejectError{code: "requirement"}
@@ -180,7 +176,7 @@ func validateBridgeResult(compilation plugin.Compilation, outputPort flow.Port, 
 		return stream.Descriptor{}, rejectError{code: "output-type"}
 	}
 	output, one := outputs.One(outputPort.ID())
-	if !one || !output.Valid() || output.Schema() != outputPort.Schema().Identity() {
+	if !one || !output.Valid() || !output.SchemaDescriptor().Equal(outputPort.Schema()) {
 		return stream.Descriptor{}, rejectError{code: "output"}
 	}
 	if output.ID() != input.ID() {
@@ -189,76 +185,36 @@ func validateBridgeResult(compilation plugin.Compilation, outputPort flow.Port, 
 	if output.Metadata().Scope() != input.Metadata().Scope() {
 		return stream.Descriptor{}, rejectError{code: "metadata-scope"}
 	}
+	if err := validateAutomaticCompilation(component, compilation, policy, platform); err != nil {
+		return stream.Descriptor{}, err
+	}
+	return output, nil
+}
+
+// validateAutomaticCompilation applies the policy facts that are meaningful
+// for every automatic node, whether it is an inserted bridge or a selected
+// fixed Format component. Carrier writers intentionally have no descriptor
+// identity to compare with their input, so that bridge-only check stays in
+// validateBridgeResult.
+func validateAutomaticCompilation(component plugin.Component, compilation plugin.Compilation, policy job.Policy, platform plan.Platform) error {
+	if !compatibleContract(component.Contract(), policy, platform) {
+		return rejectError{code: "policy"}
+	}
 	effects := compilation.Effects()
 	if len(effects) == 0 {
-		return stream.Descriptor{}, rejectError{code: "effect-missing"}
+		return rejectError{code: "effect-missing"}
 	}
 	for _, effect := range effects {
 		switch effect.Kind {
 		case plugin.StructuralEffect, plugin.RepresentationEffect, plugin.CompressionEffect:
 		default:
-			return stream.Descriptor{}, rejectError{code: "effect-forbidden"}
+			return rejectError{code: "effect-forbidden"}
 		}
 	}
 	if policy.Resources.Limited && !policy.Resources.Limit.Satisfies(compilation.Resources()) {
-		return stream.Descriptor{}, rejectError{code: "resource"}
+		return rejectError{code: "resource"}
 	}
-	return output, nil
-}
-
-func (p *planner) configs(candidate bridge, input stream.Descriptor, need plugin.Need[stream.Descriptor], remaining int, fixed *config.Patch) ([]config.ResolvedView, int, bool, error) {
-	values := make([]config.ResolvedView, 0, 1)
-	seen := make(map[config.Fingerprint]struct{})
-	patch := config.NewPatch()
-	if fixed != nil {
-		patch = fixed.Clone()
-	}
-	resolved, err := candidate.component.Resolve(patch)
-	if err == nil {
-		values = append(values, resolved)
-		seen[resolved.Fingerprint()] = struct{}{}
-	}
-	if fixed != nil {
-		if err != nil {
-			return nil, 0, false, rejectError{code: rejectionCode(err)}
-		}
-		return values, 0, false, nil
-	}
-	if err := p.checkContext(); err != nil {
-		return nil, 0, false, err
-	}
-	suggested, err := plugin.Suggest(candidate.component, plugin.SuggestContext{}, input, need)
-	if err != nil {
-		return values, 0, false, rejectError{code: rejectionCode(err)}
-	}
-	sort.Slice(suggested, func(left, right int) bool {
-		return suggested[left].Fingerprint().String() < suggested[right].Fingerprint().String()
-	})
-	limited := len(suggested) > remaining
-	if limited {
-		suggested = suggested[:remaining]
-	}
-	suggestionCount := len(suggested)
-	p.usage.Suggestions += suggestionCount
-	for _, value := range suggested {
-		patch, patchErr := candidate.component.Schema().Patch(value)
-		if patchErr != nil {
-			return nil, 0, false, rejectError{code: rejectionCode(patchErr)}
-		}
-		planned, resolveErr := candidate.component.Resolve(patch.Planned())
-		if resolveErr != nil {
-			return nil, 0, false, rejectError{code: rejectionCode(resolveErr)}
-		}
-		if _, exists := seen[planned.Fingerprint()]; exists {
-			continue
-		}
-		seen[planned.Fingerprint()] = struct{}{}
-		values = append(values, planned)
-	}
-	sort.Slice(values, func(left, right int) bool {
-		return values[left].Fingerprint().String() < values[right].Fingerprint().String()
-	})
-	return values, suggestionCount, limited, nil
+	return nil
 }
 
 func environmentFingerprint(policy job.Policy, platform plan.Platform) string {

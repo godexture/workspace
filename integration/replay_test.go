@@ -20,6 +20,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -167,6 +168,11 @@ func TestSequentialAutomaticRawFallbackReplaysProbePrefixEndToEnd(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer func() {
+				if closeErr := prepared.Close(); closeErr != nil {
+					t.Error(closeErr)
+				}
+			}()
 			if state.acquired.Load() != 1 || state.read.Load() != 12 || state.closed.Load() != 0 {
 				t.Fatalf("after Prepare: acquired=%d, read=%d, closed=%d", state.acquired.Load(), state.read.Load(), state.closed.Load())
 			}
@@ -321,9 +327,9 @@ func replaySourcePlugin(state *replaySourceState) plugin.Definition {
 	configuration := config.Struct[replayConfigID](func() replayConfig { return replayConfig{} }).Version("1").Build()
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("bytes", access.Bytes())})
 	spec := plugin.Spec[replayConfig, replayPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[replayConfig](shape),
+		Ports: shape,
 		Compile: func(plugin.CompileContext, replayConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[replayPlan, stream.Descriptor], error) {
-			descriptor, err := stream.NewDescriptor("sequence", access.Bytes().Identity(), access.CarrierTimeBase(), property.New())
+			descriptor, err := stream.NewDescriptor("sequence", access.Bytes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[replayPlan, stream.Descriptor]{}, err
 			}
@@ -376,13 +382,13 @@ func assertRawFallbackPlan(t *testing.T, value plan.Plan) {
 		if node.Origin != plan.Automatic || node.Reason != "format.fallback" {
 			t.Fatalf("raw fallback node = %#v", node)
 		}
-		planned := make(map[string]bool)
+		explicit := make(map[string]bool)
 		for _, field := range node.Config.Fields() {
-			planned[field.ID] = field.Source == config.SourcePlanner
+			explicit[field.ID] = field.Source == config.SourceExplicit
 		}
 		for _, field := range []string{"rate", "validBits", "layout", "endian"} {
-			if !planned[field] {
-				t.Fatalf("raw fallback config %q is not planner-derived: %#v", field, node.Config.Fields())
+			if !explicit[field] {
+				t.Fatalf("raw fallback config %q is not an explicit hint: %#v", field, node.Config.Fields())
 			}
 		}
 	}

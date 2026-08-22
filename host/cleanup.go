@@ -46,6 +46,9 @@ func (r *runner) cleanup() {
 	r.abortOutputs(cleanupContext)
 	r.closeOperators(cleanupContext)
 	r.ledger.EnterStage(journal.Resource)
+	for _, failure := range r.prepared.releaseScratch(cleanupContext) {
+		r.adopt(journal.CleanupError, failure)
+	}
 	for _, failure := range r.prepared.releaseResources(cleanupContext) {
 		r.adopt(journal.CleanupError, failure)
 	}

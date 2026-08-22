@@ -1,6 +1,9 @@
 package schema
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 type thirdPartyUnitID struct{}
 type alternatePayload struct{ Text string }
@@ -14,6 +17,9 @@ func TestMarkerIdentityIsIndependentFromPayload(t *testing.T) {
 	}
 	if first.Descriptor().Payload() == second.Descriptor().Payload() {
 		t.Fatal("payload types were not kept distinct")
+	}
+	if first.Descriptor().Equal(second.Descriptor()) {
+		t.Fatal("same marker with different payloads produced equal descriptors")
 	}
 }
 
@@ -50,6 +56,55 @@ func TestDescriptorRetainsIdentityAndPayloadWithoutRuntimeProducts(t *testing.T)
 	}
 	if descriptor.Payload() == nil || descriptor.Payload().Name() != "alternatePayload" {
 		t.Fatalf("payload = %v", descriptor.Payload())
+	}
+}
+
+func TestDescriptorTracksTimeTraitPresence(t *testing.T) {
+	type unit struct{ Value int }
+	typ := Define[thirdPartyUnitID](Traits[unit]{})
+	if typ.Descriptor().HasTime() {
+		t.Fatal("descriptor reports a time trait that was not declared")
+	}
+	patched := typ.WithTraits(Traits[unit]{Fork: func(value unit) unit { return value }, Drop: func(unit) {}, Size: func(unit) int { return 1 }})
+	if !patched.Valid() || patched.Descriptor().HasTime() || patched.Traits().Fork == nil || patched.Traits().Drop == nil || patched.Traits().Size == nil {
+		t.Fatalf("same-presence WithTraits changed descriptor = %#v", patched.Descriptor())
+	}
+	timed := Define[thirdPartyUnitID](Traits[unit]{Time: func(unit) (int64, bool) { return 0, true }})
+	if !timed.Descriptor().HasTime() || timed.Traits().Time == nil {
+		t.Fatal("Define did not publish time-trait presence")
+	}
+}
+
+func TestWithTraitsRejectsTimeTraitPresenceChange(t *testing.T) {
+	type unit struct{}
+	untimed := Define[thirdPartyUnitID](Traits[unit]{})
+	timedAttempt := untimed.WithTraits(Traits[unit]{Time: func(unit) (int64, bool) { return 0, true }})
+	if timedAttempt.Valid() || timedAttempt.Descriptor().HasTime() || timedAttempt.Problem() == nil {
+		t.Fatalf("untimed schema accepted a timed replacement: valid=%v hasTime=%v problem=%v", timedAttempt.Valid(), timedAttempt.Descriptor().HasTime(), timedAttempt.Problem())
+	}
+	if !strings.Contains(timedAttempt.Problem().Error(), "time-trait presence") {
+		t.Fatalf("time replacement problem = %v", timedAttempt.Problem())
+	}
+	if !untimed.Valid() || untimed.Descriptor().HasTime() {
+		t.Fatal("WithTraits mutated the original untimed schema")
+	}
+
+	timed := Define[thirdPartyUnitID](Traits[unit]{Time: func(unit) (int64, bool) { return 1, true }})
+	untimedAttempt := timed.WithTraits(Traits[unit]{Fork: func(value unit) unit { return value }})
+	if untimedAttempt.Valid() || !untimedAttempt.Descriptor().HasTime() || untimedAttempt.Problem() == nil {
+		t.Fatalf("timed schema accepted an untimed replacement: valid=%v hasTime=%v problem=%v", untimedAttempt.Valid(), untimedAttempt.Descriptor().HasTime(), untimedAttempt.Problem())
+	}
+}
+
+func TestDescriptorEqualIncludesTimeTraitPresence(t *testing.T) {
+	type unit struct{}
+	untimed := Define[thirdPartyUnitID](Traits[unit]{})
+	timed := Define[thirdPartyUnitID](Traits[unit]{Time: func(unit) (int64, bool) { return 0, true }})
+	if untimed.Descriptor().Equal(timed.Descriptor()) {
+		t.Fatal("time-trait presence was omitted from descriptor equality")
+	}
+	if !timed.Descriptor().Equal(timed.Descriptor()) {
+		t.Fatal("descriptor was not equal to itself")
 	}
 }
 

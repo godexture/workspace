@@ -20,7 +20,7 @@ func (r Registry) validatePinnedFormats(inputs []job.Input, outputs []job.Output
 		if !present {
 			continue
 		}
-		adjacent, err := AdjacentBoundaryNode(projection, edges)
+		adjacent, err := FormatNode(entry, edges)
 		if err != nil {
 			return err
 		}

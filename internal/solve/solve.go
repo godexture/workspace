@@ -18,9 +18,10 @@ import (
 )
 
 type annotation struct {
-	origin  plan.Origin
-	reason  string
-	summary config.Summary
+	origin      plan.Origin
+	reason      string
+	summary     config.Summary
+	inferConfig bool
 }
 
 type planner struct {
@@ -36,7 +37,7 @@ type planner struct {
 	environment string
 	nodes       map[job.NodeID]annotation
 	edges       map[string]annotation
-	terminals   map[string]terminalSelection
+	formats     map[formatBoundary]job.NodeID
 	bound       bound.State
 	contexts    graph.CompileContexts
 	warnings    []string
@@ -71,7 +72,7 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 	if !ok {
 		return program.Program{}, solveDiagnostic("solve.binding-unavailable", nil, plan.Usage{}, request.Budget(), "binding", nil)
 	}
-	if !selected.validFor(requested) {
+	if !selected.validFor(requested, boundaries.Projections()) {
 		return program.Program{}, solveDiagnostic("solve.invalid-request", nil, selected.usage, request.Budget(), "preselection", nil)
 	}
 	if err := validateRequestedContracts(index, requested, request.Policy(), platform); err != nil {
@@ -80,26 +81,29 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 	planningContext, cancel := planning.Start(ctx, request.Budget().Duration)
 	defer cancel()
 	p := &planner{
-		context:   planningContext,
-		index:     index,
-		request:   request,
-		policy:    request.Policy(),
-		budget:    request.Budget(),
-		platform:  platform,
-		cache:     make(compileCache),
-		nodes:     make(map[job.NodeID]annotation),
-		edges:     make(map[string]annotation),
-		terminals: selected.clone().terminals,
-		bound:     boundaries,
-		contexts:  contexts,
-		usage:     selected.usage,
-		warnings:  append([]string(nil), selected.warnings...),
+		context:  planningContext,
+		index:    index,
+		request:  request,
+		policy:   request.Policy(),
+		budget:   request.Budget(),
+		platform: platform,
+		cache:    make(compileCache),
+		nodes:    make(map[job.NodeID]annotation),
+		edges:    make(map[string]annotation),
+		formats:  make(map[formatBoundary]job.NodeID, len(selected.formats)),
+		bound:    boundaries,
+		contexts: contexts,
+		usage:    selected.usage,
+		warnings: append([]string(nil), selected.warnings...),
+	}
+	for boundary, node := range selected.formats {
+		p.formats[boundary] = node
 	}
 	p.environment = environmentFingerprint(p.policy, platform)
 	p.candidates = buildCandidateIndex(index, p.policy, platform)
 	for _, node := range requested.Nodes() {
-		if reason, automatic := selected.nodes[node.ID()]; automatic {
-			p.nodes[node.ID()] = annotation{origin: plan.Automatic, reason: reason}
+		if selectedNode, automatic := selected.nodes[node.ID()]; automatic {
+			p.nodes[node.ID()] = annotation{origin: plan.Automatic, reason: selectedNode.reason, inferConfig: selectedNode.inferConfig}
 		} else {
 			p.nodes[node.ID()] = annotation{origin: plan.Requested}
 		}
@@ -138,14 +142,14 @@ func resolveBound(ctx context.Context, index catalog.Index, request job.Job, pla
 		}
 		gap := gaps[0]
 		lastGap = &gap
-		path, rejections, err := p.search(gap)
+		result, rejections, err := p.search(gap)
 		if err != nil {
 			return program.Program{}, p.planningError(err, &gap, rejections)
 		}
-		if len(path) == 0 {
+		if !result.progress() {
 			return program.Program{}, solveDiagnostic("solve.nondeterministic", &gap, p.usage, p.budget, "zero-progress", rejections)
 		}
-		current, err = p.insert(current, gap, path)
+		current, err = p.insert(current, gap, result)
 		if err != nil {
 			return program.Program{}, err
 		}

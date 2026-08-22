@@ -22,7 +22,6 @@ type fingerprintComponent struct {
 	Provenance      plugin.Provenance
 	Ports           []fingerprintPort
 	HasSpec         bool
-	DynamicShape    bool
 	HasSuggest      bool
 	SuggestionLimit int
 	Finalizes       bool
@@ -35,6 +34,7 @@ type fingerprintPort struct {
 	Direction    flow.Direction
 	Schema       string
 	Payload      string
+	HasTime      bool
 	Required     bool
 	Multiplicity flow.Multiplicity
 }
@@ -47,7 +47,7 @@ type fingerprintDefinition struct {
 
 func catalogFingerprint(definitions []plugin.Definition, components []plugin.Component, declarations []plugin.Declaration) [32]byte {
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v5\x00"))
+	_, _ = hash.Write([]byte("godec/catalog/fingerprint/v6\x00"))
 	sort.Slice(definitions, func(left, right int) bool {
 		return definitions[left].Identity().String() < definitions[right].Identity().String()
 	})
@@ -71,7 +71,6 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 			Provenance:      component.Provenance(),
 			Ports:           fingerprintPorts(component.Ports()),
 			HasSpec:         component.View().HasSpec,
-			DynamicShape:    component.View().DynamicShape,
 			HasSuggest:      component.View().HasSuggest,
 			SuggestionLimit: component.View().SuggestionLimit,
 			Finalizes:       component.View().Finalizes,
@@ -100,7 +99,7 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 func fingerprintPorts(shape flow.Shape) []fingerprintPort {
 	ports := make([]fingerprintPort, 0, len(shape.Inputs)+len(shape.Outputs))
 	for _, port := range append(append([]flow.Port(nil), shape.Inputs...), shape.Outputs...) {
-		ports = append(ports, fingerprintPort{ID: port.ID(), Direction: port.Direction(), Schema: port.Schema().Identity().String(), Payload: gotype.Canonical(port.Schema().Payload()), Required: port.Required(), Multiplicity: port.Multiplicity()})
+		ports = append(ports, fingerprintPort{ID: port.ID(), Direction: port.Direction(), Schema: port.Schema().Identity().String(), Payload: gotype.Canonical(port.Schema().Payload()), HasTime: port.Schema().HasTime(), Required: port.Required(), Multiplicity: port.Multiplicity()})
 	}
 	sort.Slice(ports, func(left, right int) bool { return ports[left].ID < ports[right].ID })
 	return ports

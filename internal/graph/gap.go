@@ -12,8 +12,6 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
-var ErrGapCardinality = errors.New("input gap does not have exactly one edge and descriptor")
-
 // Gap retains the typed downstream requirement and the exact edge state that
 // a bridge must replace.
 type Gap struct {
@@ -23,7 +21,7 @@ type Gap struct {
 	hasEdge   bool
 	input     stream.Descriptor
 	hasInput  bool
-	expected  schema.ID
+	expected  schema.Descriptor
 	need      plugin.Need[stream.Descriptor]
 	component plugin.Component
 	config    config.ResolvedView
@@ -34,54 +32,56 @@ type Gap struct {
 func (g Gap) Node() job.NodeID                            { return g.node }
 func (g Gap) Port() string                                { return g.port }
 func (g Gap) Need() plugin.Need[stream.Descriptor]        { return g.need }
-func (g Gap) ExpectedSchema() schema.ID                   { return g.expected }
+func (g Gap) ExpectedDescriptor() schema.Descriptor       { return g.expected }
 func (g Gap) Component() plugin.Component                 { return g.component }
 func (g Gap) Config() config.ResolvedView                 { return g.config }
 func (g Gap) Inputs() flow.Descriptors[stream.Descriptor] { return copyDescriptors(g.inputs) }
 func (g Gap) Edge() (job.Edge, bool)                      { return g.edge, g.hasEdge }
 func (g Gap) Input() (stream.Descriptor, bool)            { return g.input, g.hasInput }
 
-// Accepts confirms a candidate with the same downstream Compile contract used
-// by final graph evaluation.
-func (g Gap) Accepts(candidate stream.Descriptor) (bool, error) {
-	if !g.hasEdge || !g.hasInput {
-		return false, ErrGapCardinality
-	}
-	if !candidate.Valid() || candidate.Schema() != g.expected {
-		return false, nil
+// WithCandidate replaces the sole descriptor feeding this gap's port. A
+// route bridge is deliberately unavailable when the port has more than one
+// descriptor; fixed-node config inference can still Compile its whole input
+// sequence through Compile.
+func (g Gap) WithCandidate(candidate stream.Descriptor) (flow.Descriptors[stream.Descriptor], bool) {
+	if !candidate.Valid() || !candidate.SchemaDescriptor().Equal(g.expected) {
+		return flow.Descriptors[stream.Descriptor]{}, false
 	}
 	bindings := g.inputs.Bindings()
 	replaced := 0
 	for index, binding := range bindings {
-		if binding.Port() == g.port {
-			bindings[index] = flow.Describe(g.port, candidate)
-			replaced++
+		if binding.Port() != g.port {
+			continue
 		}
+		bindings[index] = flow.Describe(g.port, candidate)
+		replaced++
 	}
 	if replaced != 1 {
-		return false, ErrGapCardinality
+		return flow.Descriptors[stream.Descriptor]{}, false
 	}
-	compilation, err := plugin.Compile(g.component, g.context, g.config, flow.NewDescriptors(bindings...))
+	return flow.NewDescriptors(bindings...), true
+}
+
+// Compile applies a candidate config to the complete ordered input sequence.
+// It is the same Compile contract graph evaluation uses, including inputs on
+// other ports and every descriptor of a many port.
+func (g Gap) Compile(configValue config.ResolvedView, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compilation, []plugin.Requirement[stream.Descriptor], error) {
+	compilation, err := plugin.Compile(g.component, g.context, configValue, inputs)
 	if err != nil {
-		return false, err
+		return plugin.Compilation{}, nil, err
 	}
 	requirements, ok := plugin.RequirementsOf[stream.Descriptor](compilation)
 	if !ok {
-		return false, errors.New("downstream compilation returned incompatible requirements")
+		return plugin.Compilation{}, nil, errors.New("downstream compilation returned incompatible requirements")
 	}
-	for _, requirement := range requirements {
-		if requirement.Port() == g.port {
-			return false, nil
-		}
-	}
-	return true, nil
+	return compilation, requirements, nil
 }
 
 func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, component plugin.Component, configValue config.ResolvedView, compileContext plugin.CompileContext, inputs flow.Descriptors[stream.Descriptor], need plugin.Need[stream.Descriptor], port string) Gap {
 	gap := Gap{
 		node:      node.request.ID(),
 		port:      port,
-		expected:  portSchema(node.shape.Inputs, port),
+		expected:  portDescriptor(node.shape.Inputs, port),
 		need:      need,
 		component: component,
 		config:    configValue,
@@ -107,12 +107,12 @@ func gapFor(node shapedNode, edges []job.Edge, compiled map[job.NodeID]Node, com
 	return gap
 }
 
-func portSchema(ports []flow.Port, id string) schema.ID {
+func portDescriptor(ports []flow.Port, id string) schema.Descriptor {
 	port, ok := findPort(ports, id)
 	if !ok {
-		return schema.ID{}
+		return schema.Descriptor{}
 	}
-	return port.Schema().Identity()
+	return port.Schema()
 }
 
 func sortGaps(gaps []Gap) {

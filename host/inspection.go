@@ -16,11 +16,11 @@ import (
 	"github.com/godexture/godec/resource"
 )
 
-func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bound.Entry, sessions []acquiredSession) (graph.CompileContexts, resource.Bytes, error) {
+func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bound.Entry, sessions []acquiredSession) (graph.CompileContexts, []inspectedFormat, resource.Bytes, error) {
 	var used resource.Bytes
 	requested, ok := request.Graph()
 	if !ok {
-		return graph.CompileContexts{}, used, errors.New("normalized Job has no graph to inspect")
+		return graph.CompileContexts{}, nil, used, errors.New("normalized Job has no graph to inspect")
 	}
 	nodes := make(map[job.NodeID]job.Node, len(requested.Nodes()))
 	for _, node := range requested.Nodes() {
@@ -32,37 +32,38 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 	}
 	contexts, err := h.formatCompileContexts(requested)
 	if err != nil {
-		return graph.CompileContexts{}, used, err
+		return graph.CompileContexts{}, nil, used, err
 	}
+	var inspected []inspectedFormat
 	for _, entry := range entries {
 		projection := entry.Projection()
 		if projection.Direction != plan.InputBoundary || projection.Kind == plan.EndpointBoundary {
 			continue
 		}
-		adjacent, err := bind.AdjacentBoundaryNode(projection, requested.Edges())
+		adjacent, err := bind.FormatNode(entry, requested.Edges())
 		if err != nil {
-			return graph.CompileContexts{}, used, err
+			return graph.CompileContexts{}, nil, used, err
 		}
 		node, ok := nodes[adjacent]
 		if !ok {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-node", projection, plugin.Identity{}, "Access input has no adjacent Format node", nil)
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-node", projection, plugin.Identity{}, "Access input has no adjacent Format node", nil)
 		}
 		component, ok := h.index.Lookup(node.Component())
 		if !ok {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-component", projection, node.Component(), "adjacent Format component is absent from the Host catalog", nil)
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-component", projection, node.Component(), "adjacent Format component is absent from the Host catalog", nil)
 		}
 		trait, present := mediaformat.ReadOf(component)
 		if !present || !trait.Valid() {
 			if projection.Kind == plan.DirectBoundary {
 				continue
 			}
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-trait", projection, component.Identity(), "Access input has no valid Format read trait", nil)
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-trait", projection, component.Identity(), "Access input has no valid Format read trait", nil)
 		}
 		if !trait.HasInspect() {
 			continue
 		}
 		if projection.Kind == plan.DirectBoundary {
-			return graph.CompileContexts{}, used, inspectDiagnostic(
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic(
 				"prepare.inspect-direct",
 				projection,
 				component.Identity(),
@@ -70,36 +71,44 @@ func (h *Host) inspectInputs(ctx context.Context, request job.Job, entries []bou
 				map[string]string{"milestone": "M9"},
 			)
 		}
-		opening, openingOK := openings[projection.Node]
-		if !openingOK || !opening.Valid() || opening.Direction() != access.SourceDirection {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires a selected Access source opening", nil)
+		boundary := projection.Node
+		if anchor := entry.Anchor(); anchor.Valid() {
+			boundary = anchor.String()
 		}
-		session, sessionOK := sessionOf(sessions, projection.Node)
+		opening, openingOK := openings[boundary]
+		if !openingOK || !opening.Valid() || opening.Direction() != access.SourceDirection {
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires a selected Access source opening", nil)
+		}
+		session, sessionOK := sessionOf(sessions, boundary)
 		if !sessionOK {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires an acquired Access source session", nil)
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Format Inspect requires an acquired Access source session", nil)
 		}
 		limit := newInspectLimit(session.value, request.Budget().InspectBytes)
 		limited, limitErr := access.NewOpening(access.SourceDirection, limit, session.selected, 0)
 		if limitErr != nil {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Access session cannot provide a budgeted Inspect view", map[string]string{"cause": limitErr.Error()})
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-opening", projection, component.Identity(), "Access session cannot provide a budgeted Inspect view", map[string]string{"cause": limitErr.Error()})
 		}
 		var inspection mediaformat.Inspection
 		failure := invoke(ctx, PreparePhase, adjacent.String(), "format/inspect", func(callContext context.Context) error {
 			var inspectErr error
-			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, limited, contexts[adjacent], limit.Remaining()))
+			inspection, inspectErr = trait.Inspect(mediaformat.NewInspectContext(callContext, limited, contexts[adjacent], limit.Remaining(), request.Budget().InspectMemory))
 			return inspectErr
 		})
 		used += limit.Used()
 		if failure != nil {
-			return graph.CompileContexts{}, used, *failure
+			return graph.CompileContexts{}, nil, used, *failure
 		}
 		compileContext, err := mediaformat.WithInspection(contexts[adjacent], inspection)
 		if err != nil {
-			return graph.CompileContexts{}, used, inspectDiagnostic("prepare.inspect-result", projection, component.Identity(), "Format returned an invalid or duplicate inspection", map[string]string{"cause": err.Error()})
+			return graph.CompileContexts{}, nil, used, inspectDiagnostic("prepare.inspect-result", projection, component.Identity(), "Format returned an invalid or duplicate inspection", map[string]string{"cause": err.Error()})
 		}
 		contexts[adjacent] = compileContext
+		inspected = append(inspected, inspectedFormat{source: adjacent, boundary: boundary, value: inspection})
 	}
-	return graph.NewCompileContexts(contexts), used, nil
+	if err := h.handoffInspections(requested, contexts, inspected); err != nil {
+		return graph.CompileContexts{}, nil, used, err
+	}
+	return graph.NewCompileContexts(contexts), append([]inspectedFormat(nil), inspected...), used, nil
 }
 
 func inspectDiagnostic(code string, boundary plan.Boundary, component plugin.Identity, message string, detail map[string]string) error {

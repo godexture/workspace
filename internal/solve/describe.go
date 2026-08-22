@@ -6,11 +6,17 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/graph"
 	"github.com/godexture/godec/internal/program"
+	"github.com/godexture/godec/internal/scratch"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
+	"github.com/godexture/godec/resource"
 )
 
 func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
+	mappings, err := p.projectMappings(compiled)
+	if err != nil {
+		return program.Program{}, err
+	}
 	description := plan.Description{
 		RequestedPolicy:    p.request.Policy(),
 		EffectivePolicy:    p.policy,
@@ -19,6 +25,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		CatalogFingerprint: catalogFingerprint(p.index),
 		Platform:           p.platform,
 		Boundaries:         p.bound.Projections(),
+		Mappings:           mappings,
 		Warnings:           append([]string(nil), p.warnings...),
 	}
 	for _, node := range compiled.Nodes() {
@@ -43,6 +50,11 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			return program.Program{}, err
 		}
 		compilation := node.Compilation()
+		if metadata.origin == plan.Automatic {
+			if err := validateAutomaticCompilation(component, compilation, p.policy, p.platform); err != nil {
+				return program.Program{}, p.planningError(err, nil, nil)
+			}
+		}
 		if p.policy.Resources.Limited && !p.policy.Resources.Limit.Satisfies(compilation.Resources()) {
 			return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "resource", nil)
 		}
@@ -60,6 +72,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			Effects:      compilation.Effects(),
 			Contract:     component.Contract(),
 			Resources:    compilation.Resources(),
+			Scratch:      compilation.Scratch(),
 			Estimate:     compilation.Estimate(),
 			Finalization: compilation.Finalization(),
 		})
@@ -83,6 +96,20 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 		return program.Program{}, err
 	}
 	description.Runtime = runtime
+	claims := make([]resource.Bytes, 0, len(description.Nodes)+len(description.Boundaries))
+	for _, node := range description.Nodes {
+		claims = append(claims, node.Scratch)
+	}
+	for _, boundary := range description.Boundaries {
+		if boundary.Spool.Valid() {
+			claims = append(claims, resource.Bytes(boundary.Spool.MaximumBytes()))
+		}
+	}
+	reserved, err := scratch.Reserve(p.policy.Resources.ScratchMaxBytes, claims...)
+	if err != nil {
+		return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "scratch", nil)
+	}
+	description.Scratch = plan.Scratch{Limit: reserved.Limit(), Reserved: reserved.Reserved()}
 	public, err := plan.New(description)
 	if err != nil {
 		return program.Program{}, err

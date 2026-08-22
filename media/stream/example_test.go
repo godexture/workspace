@@ -15,10 +15,10 @@ type streamExampleRateID struct{}
 // A descriptor keeps a stream identity, open unit schema, integer time base,
 // and immutable properties without a closed media-kind enum.
 func ExampleNewDescriptor() {
-	units := schema.Define[streamExampleUnitID, int](schema.Traits[int]{})
+	units := schema.Define[streamExampleUnitID, int](schema.Traits[int]{Time: func(int) (int64, bool) { return 0, true }})
 	rate := property.Define[streamExampleRateID, int](property.Scalar[int]())
 	properties, _ := property.Put(property.New(), rate, 48_000)
-	descriptor, err := stream.NewDescriptor("audio-1", units.Identity(), timing.MustBase(1, 48_000), properties)
+	descriptor, err := stream.NewDescriptor("audio-1", units.Descriptor(), timing.MustBase(1, 48_000), properties)
 	if err != nil {
 		panic(err)
 	}

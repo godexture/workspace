@@ -20,6 +20,7 @@ type inputPlan struct {
 	entries  []bound.Entry
 	sessions []acquiredSession
 	stores   []*probeStore
+	sources  formatSources
 }
 
 // Plan acquires and inspects input sessions before compilation, then closes
@@ -64,22 +65,36 @@ func (h *Host) resolveInputs(ctx context.Context, request job.Job) (inputPlan, e
 	selected.entries = selection.entries
 	selected.sessions = selection.sessions
 	selected.stores = selection.stores
-	selection, err = h.selectOutputFormats(selection)
-	if err != nil {
-		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
-	}
-	selected.entries = selection.entries
-	contexts, inspected, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
+	contexts, inspectedFormats, inspectedBytes, err := h.inspectInputs(planningContext, selection.request, selected.entries, selected.sessions)
 	if err != nil {
 		err = planningDurationError(planningContext, selection.request.Budget(), "inspect", err)
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	selection.preselection = selection.preselection.WithInspected(inspected)
+	selection.inspected = inspectedFormats
+	selection.contexts = contexts
+	selection.usage.InspectBytes += inspectedBytes
+	selection, err = h.selectOutputFormats(selection)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	selection, err = h.prepareMappings(selection)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	preselection, err := solve.NewPreselection(selection.nodes, selection.edges, selection.formats, selection.warnings, selection.usage)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	selected.entries = selection.entries
 	selected.stores, err = finishProbeStores(selected.stores)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}
-	selected.program, err = solve.ResolvePrepared(planningContext, h.index, selection.request, h.platform, bound.New(selected.entries...), contexts, selection.preselection)
+	selected.program, err = solve.ResolvePrepared(planningContext, h.index, selection.request, h.platform, bound.New(selected.entries...), selection.contexts, preselection)
+	if err != nil {
+		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
+	}
+	selected.sources, err = h.formatSourceBindings(selected.program, selected.entries, selection.inspected)
 	if err != nil {
 		return inputPlan{}, errors.Join(err, h.closeInputPlan(selected))
 	}

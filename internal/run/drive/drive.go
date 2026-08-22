@@ -22,7 +22,7 @@ var (
 	ErrReadWithItem = errors.New("reader returned an owned item together with an error")
 	ErrUnsupported  = errors.New("execution binding does not support this operation")
 	ErrForkTrait    = errors.New("owned fan-out requires a fork trait")
-	ErrWatermark    = errors.New("fan-in batch exceeds its timestamp watermark")
+	ErrTolerance    = errors.New("fan-in batch exceeds its timestamp tolerance")
 	ErrDomain       = errors.New("execution task requires the failure domain it and its slots report to")
 )
 
@@ -30,7 +30,9 @@ type Kind uint8
 
 const (
 	Source Kind = iota + 1
+	RoutedSource
 	Processor
+	Router
 	Joiner
 	Sink
 )
@@ -48,20 +50,23 @@ type Measures struct {
 }
 
 type Binding struct {
-	kind        Kind
-	input       port
-	output      port
-	inputStats  Measures
-	outputStats Measures
-	fanIn       flow.FanInPolicy
-	openSink    func(flow.Operator, string) (Link, error)
-	prepend     func(flow.Operator, Link, string) (Link, error)
-	openSource  func(flow.Operator, Link, *journal.Domain) (Task, error)
-	fanout      func([]Link, string) (Link, error)
-	buffer      func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
-	observe     func(Link, *observe.Local) (Link, error)
-	openJoiner  func(flow.Operator, int, queue.Limit, Link, *journal.Domain) ([]Link, Task, error)
-	validate    func(flow.Operator) error
+	kind             Kind
+	input            port
+	output           port
+	inputStats       Measures
+	outputStats      Measures
+	fanoutSafe       bool
+	fanIn            flow.FanInPolicy
+	openSink         func(flow.Operator, string) (Link, error)
+	prepend          func(flow.Operator, Link, string) (Link, error)
+	openRouter       func(flow.Operator, []Link, string) (Link, error)
+	openSource       func(flow.Operator, Link, *journal.Domain) (Task, error)
+	openRoutedSource func(flow.Operator, []Link, *journal.Domain) (Task, error)
+	fanout           func([]Link, string) (Link, error)
+	buffer           func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
+	observe          func(Link, *observe.Local) (Link, error)
+	openJoiner       func(flow.Operator, int, queue.Limit, int64, Link, *journal.Domain) ([]Link, Task, error)
+	validate         func(flow.Operator) error
 }
 
 func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) Binding {
@@ -73,8 +78,9 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 		output:      port{id: output, schema: out.Descriptor()},
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		fanIn:       policy,
-		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
+		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
 			if !ok {
 				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -83,10 +89,14 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			if err != nil {
 				return nil, Task{}, err
 			}
-			if policy != flow.ZipFanIn {
+			switch policy {
+			case flow.ZipFanIn:
+				return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
+			case flow.SerialFanIn:
+				return serialFanIn(joiner, inputs, tolerance, in, target, owner)
+			default:
 				return nil, Task{}, ErrUnsupported
 			}
-			return zipJoiner(joiner, inputs, limit, in, target, owner)
 		},
 		fanout:  fanoutFactory(out),
 		buffer:  bufferFactory(out),
@@ -106,6 +116,7 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 		kind:        Source,
 		output:      port{id: output, schema: typ.Descriptor()},
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		openSource: func(operator flow.Operator, next Link, owner *journal.Domain) (Task, error) {
 			reader, ok := operator.(flow.Reader[T])
 			if !ok {
@@ -129,6 +140,36 @@ func NewSource[T any](output string, typ schema.Type[T]) Binding {
 	}
 }
 
+func NewRoutedSource[T any](output string, typ schema.Type[T]) Binding {
+	traits := typ.Traits()
+	return Binding{
+		kind:        RoutedSource,
+		output:      port{id: output, schema: typ.Descriptor()},
+		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
+		openRoutedSource: func(operator flow.Operator, routes []Link, owner *journal.Domain) (Task, error) {
+			reader, ok := operator.(flow.RoutedReader[T])
+			if !ok {
+				return Task{}, fmt.Errorf("%w: want flow.RoutedReader[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
+			}
+			outputs, err := routeDeliveries[T](routes)
+			if err != nil {
+				return Task{}, err
+			}
+			return routedSourceTask(reader, outputs, owner), nil
+		},
+		fanout:  fanoutFactory(typ),
+		buffer:  bufferFactory(typ),
+		observe: observeFactory(typ),
+		validate: func(operator flow.Operator) error {
+			if _, ok := operator.(flow.RoutedReader[T]); !ok {
+				return fmt.Errorf("%w: want flow.RoutedReader[%s], got %T", ErrOperator, reflect.TypeFor[T](), operator)
+			}
+			return nil
+		},
+	}
+}
+
 func NewProcessor[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) Binding {
 	traits := out.Traits()
 	inputTraits := in.Traits()
@@ -138,6 +179,7 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 		output:      port{id: output, schema: out.Descriptor()},
 		inputStats:  measuresOf(inputTraits),
 		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		prepend: func(operator flow.Operator, next Link, node string) (Link, error) {
 			processor, ok := operator.(flow.Processor[I, O])
 			if !ok {
@@ -155,6 +197,39 @@ func NewProcessor[I, O any](input string, in schema.Type[I], output string, out 
 		validate: func(operator flow.Operator) error {
 			if _, ok := operator.(flow.Processor[I, O]); !ok {
 				return fmt.Errorf("%w: want flow.Processor[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			return nil
+		},
+	}
+}
+
+func NewRouter[I, O any](input string, in schema.Type[I], output string, out schema.Type[O]) Binding {
+	traits := out.Traits()
+	inputTraits := in.Traits()
+	return Binding{
+		kind:        Router,
+		input:       port{id: input, schema: in.Descriptor()},
+		output:      port{id: output, schema: out.Descriptor()},
+		inputStats:  measuresOf(inputTraits),
+		outputStats: measuresOf(traits),
+		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
+		openRouter: func(operator flow.Operator, routes []Link, node string) (Link, error) {
+			router, ok := operator.(flow.Router[I, O])
+			if !ok {
+				return Link{}, fmt.Errorf("%w: want flow.Router[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
+			}
+			outputs, err := routeDeliveries[O](routes)
+			if err != nil {
+				return Link{}, err
+			}
+			return linkOf[I](&routerDelivery[I, O]{router: router, routes: outputs, typ: in, node: node}), nil
+		},
+		fanout:  fanoutFactory(out),
+		buffer:  bufferFactory(out),
+		observe: observeFactory(out),
+		validate: func(operator flow.Operator) error {
+			if _, ok := operator.(flow.Router[I, O]); !ok {
+				return fmt.Errorf("%w: want flow.Router[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
 			}
 			return nil
 		},
@@ -190,8 +265,12 @@ func (b Binding) Valid() bool {
 	switch b.kind {
 	case Source:
 		return validPort(b.output) && b.openSource != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
+	case RoutedSource:
+		return validPort(b.output) && b.openRoutedSource != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Processor:
 		return validPort(b.input) && validPort(b.output) && b.prepend != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
+	case Router:
+		return validPort(b.input) && validPort(b.output) && b.openRouter != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Joiner:
 		return validPort(b.input) && validPort(b.output) && b.openJoiner != nil && b.fanout != nil && b.buffer != nil && b.observe != nil && b.validate != nil
 	case Sink:
@@ -216,11 +295,19 @@ func (b Binding) Validate(shape flow.Shape) error {
 	}
 	switch b.kind {
 	case Source:
-		if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || !matches(shape.Outputs[0], b.output) {
+		if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.One || !matches(shape.Outputs[0], b.output) {
+			return ErrBinding
+		}
+	case RoutedSource:
+		if len(shape.Inputs) != 0 || len(shape.Outputs) != 1 || shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity || !matches(shape.Outputs[0], b.output) {
 			return ErrBinding
 		}
 	case Processor:
 		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
+			return ErrBinding
+		}
+	case Router:
+		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.One || shape.Outputs[0].Multiplicity() != flow.ManyMultiplicity || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
 			return ErrBinding
 		}
 	case Joiner:
@@ -238,6 +325,7 @@ func (b Binding) Validate(shape flow.Shape) error {
 func (b Binding) Input() string            { return b.input.id }
 func (b Binding) Output() string           { return b.output.id }
 func (b Binding) FanIn() flow.FanInPolicy  { return b.fanIn }
+func (b Binding) FanoutSafe() bool         { return b.fanoutSafe }
 func (b Binding) InputMeasures() Measures  { return b.inputStats }
 func (b Binding) OutputMeasures() Measures { return b.outputStats }
 
@@ -267,6 +355,17 @@ func (b Binding) PrependAt(operator flow.Operator, next Link, node string) (Link
 	return b.prepend(operator, next, node)
 }
 
+func (b Binding) OpenRouterAt(operator flow.Operator, routes []Link, node string) (Link, error) {
+	if b.openRouter == nil {
+		return Link{}, ErrUnsupported
+	}
+	return b.openRouter(operator, routes, node)
+}
+
+func (b Binding) OpenRouter(operator flow.Operator, routes []Link) (Link, error) {
+	return b.OpenRouterAt(operator, routes, "")
+}
+
 // OpenSource, OpenJoiner and Buffer take the failure domain their task will
 // own and bind the whole chain below it before returning. The domain is a
 // construction argument rather than a second call beside the Task, and no
@@ -283,15 +382,31 @@ func (b Binding) OpenSource(operator flow.Operator, next Link, owner *journal.Do
 	return b.openSource(operator, next, owner)
 }
 
-func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, next Link, owner *journal.Domain) ([]Link, Task, error) {
+func (b Binding) OpenRoutedSource(operator flow.Operator, routes []Link, owner *journal.Domain) (Task, error) {
+	if b.openRoutedSource == nil {
+		return Task{}, ErrUnsupported
+	}
+	if owner == nil {
+		return Task{}, ErrDomain
+	}
+	for _, route := range routes {
+		route.bind(owner)
+	}
+	return b.openRoutedSource(operator, routes, owner)
+}
+
+func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 	if b.openJoiner == nil {
 		return nil, Task{}, ErrUnsupported
+	}
+	if tolerance < 0 || tolerance > 0 && !b.inputStats.Time {
+		return nil, Task{}, ErrBinding
 	}
 	if owner == nil {
 		return nil, Task{}, ErrDomain
 	}
 	next.bind(owner)
-	return b.openJoiner(operator, inputs, limit, next, owner)
+	return b.openJoiner(operator, inputs, limit, tolerance, next, owner)
 }
 
 // Fanout groups this node's outputs. The branch slots it retains belong to
@@ -330,6 +445,5 @@ func validPort(value port) bool { return value.id != "" && value.schema.Valid() 
 
 func matches(declared flow.Port, runtime port) bool {
 	return declared.ID() == runtime.id &&
-		declared.Schema().Identity() == runtime.schema.Identity() &&
-		declared.Schema().Payload() == runtime.schema.Payload()
+		declared.Schema().Equal(runtime.schema)
 }

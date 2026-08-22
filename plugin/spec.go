@@ -11,7 +11,6 @@ import (
 	"github.com/godexture/godec/resource"
 )
 
-type ShapeContext struct{}
 type CompileContext struct {
 	context context.Context
 	traits  traitStore
@@ -67,6 +66,12 @@ type OpenServices struct {
 	// Boundary is the one node-local Access/Endpoint binding selected by the
 	// planner. It is not a general service bag.
 	Boundary any
+	// Source is the optional read-only source view associated with prepared
+	// Format state. It is borrowed for this component's Open-to-Close lifetime.
+	Source any
+	// Scratch is the optional node-local temporary byte journal reserved by
+	// this component's Compile result. It is borrowed for Open-to-Close only.
+	Scratch Scratch
 }
 
 // NewOpenContext snapshots the narrow services granted to one component
@@ -83,6 +88,8 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 		diagnostics: services.Diagnostics,
 		owner:       services.Owner,
 		boundary:    services.Boundary,
+		source:      services.Source,
+		scratch:     services.Scratch,
 	}
 }
 
@@ -93,6 +100,8 @@ type OpenContext struct {
 	diagnostics diagnostic.Sink
 	owner       flow.Owner
 	boundary    any
+	source      any
+	scratch     Scratch
 }
 
 func (c OpenContext) Context() context.Context {
@@ -138,28 +147,31 @@ func Boundary[T any](c OpenContext) (T, bool) {
 	return value, ok
 }
 
-type ShapeFunc[C any] func(ShapeContext, C) (flow.Shape, error)
-type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
-type SuggestFunc[C, D any] func(SuggestContext, D, Need[D]) []C
-type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
-
-// StaticShape adapts a fixed shape to the same phase used by dynamic
-// components.
-func StaticShape[C any](shape flow.Shape) ShapeFunc[C] {
-	shape = shape.Clone()
-	return func(ShapeContext, C) (flow.Shape, error) { return shape.Clone(), nil }
+// Source recovers the optional typed read-only source view associated with
+// prepared component state. The Host owns its lifetime; an operator must not
+// use it after Close.
+func Source[T any](c OpenContext) (T, bool) {
+	value, ok := c.source.(T)
+	return value, ok
 }
+
+// Scratch returns the node-local, Host-owned temporary byte journal. It is nil
+// unless this component declared a positive scratch claim during Compile.
+func (c OpenContext) Scratch() Scratch { return c.scratch }
+
+type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
+type SuggestFunc[C, D any] func(SuggestContext, Suggestion[D]) []C
+type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
 
 // Spec is the complete semantic contract for one component implementation.
 // D is the control-plane descriptor type; normal media components use
 // stream.Descriptor without making flow or plugin import media/stream.
 type Spec[C, P, D any] struct {
-	Shape           ShapeFunc[C]
+	Ports           flow.Shape
 	Compile         CompileFunc[C, P, D]
 	Suggest         SuggestFunc[C, D]
 	Open            OpenFunc[P]
 	SuggestionLimit int
-	DynamicShape    bool
 	Finalizes       bool
 	Contract        Contract
 }
@@ -172,17 +184,17 @@ type Compiled[P, D any] struct {
 	Requirements []Requirement[D]
 	Effects      []Effect
 	Resources    resource.Request
+	Scratch      resource.Bytes
 	Estimate     resource.Estimate
 	Finalization Finalization
 }
 
 type componentImplementation struct {
-	shape           func(ShapeContext, config.ResolvedView) (flow.Shape, error)
+	ports           flow.Shape
 	compile         func(CompileContext, config.ResolvedView, any) (compiledErased, error)
-	suggest         func(SuggestContext, any, any) ([]any, error)
+	suggest         func(SuggestContext, any) ([]any, error)
 	open            func(OpenContext, any) (flow.Operator, error)
 	suggestionLimit int
-	dynamicShape    bool
 	finalizes       bool
 	contract        Contract
 	problems        []diagnostic.Item
@@ -194,6 +206,7 @@ type compiledErased struct {
 	requirements any
 	effects      []Effect
 	resources    resource.Request
+	scratch      resource.Bytes
 	estimate     resource.Estimate
 	finalization Finalization
 }
@@ -202,23 +215,15 @@ type compiledErased struct {
 func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 	implementation := &componentImplementation{
 		suggestionLimit: spec.SuggestionLimit,
-		dynamicShape:    spec.DynamicShape,
 		finalizes:       spec.Finalizes,
 		contract:        normalizeContract(spec.Contract),
+		ports:           spec.Ports.Clone(),
 	}
 	if !implementation.contract.Valid() {
 		implementation.problems = append(implementation.problems, specItem("plugin.contract", "component Spec has an invalid implementation contract"))
 	}
-	if spec.Shape == nil {
-		implementation.problems = append(implementation.problems, specItem("plugin.shape", "component Spec requires Shape"))
-	} else {
-		implementation.shape = func(ctx ShapeContext, resolved config.ResolvedView) (flow.Shape, error) {
-			value, err := typedConfig[C](resolved)
-			if err != nil {
-				return flow.Shape{}, err
-			}
-			return spec.Shape(ctx, value)
-		}
+	if err := spec.Ports.Validate(); err != nil {
+		implementation.problems = append(implementation.problems, specItem("plugin.ports", "component Spec requires valid Ports: "+err.Error()))
 	}
 	if spec.Compile == nil {
 		implementation.problems = append(implementation.problems, specItem("plugin.compile", "component Spec requires Compile"))
@@ -239,6 +244,7 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 				requirements: append([]Requirement[D](nil), compiled.Requirements...),
 				effects:      append([]Effect(nil), compiled.Effects...),
 				resources:    compiled.Resources,
+				scratch:      compiled.Scratch,
 				estimate:     compiled.Estimate,
 				finalization: compiled.Finalization,
 			}, err
@@ -263,16 +269,12 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 		if spec.SuggestionLimit <= 0 {
 			implementation.problems = append(implementation.problems, specItem("plugin.suggest", "Suggest requires a positive SuggestionLimit"))
 		}
-		implementation.suggest = func(ctx SuggestContext, input, need any) ([]any, error) {
-			typedInput, ok := input.(D)
+		implementation.suggest = func(ctx SuggestContext, suggestion any) ([]any, error) {
+			typedSuggestion, ok := suggestion.(Suggestion[D])
 			if !ok {
-				return nil, errors.New("input descriptor type does not match component Suggest")
+				return nil, errors.New("suggestion descriptor type does not match component Suggest")
 			}
-			typedNeed, ok := need.(Need[D])
-			if !ok {
-				return nil, errors.New("need descriptor type does not match component Suggest")
-			}
-			values := spec.Suggest(ctx, typedInput, typedNeed)
+			values := spec.Suggest(ctx, cloneSuggestion(typedSuggestion))
 			result := make([]any, len(values))
 			for index := range values {
 				result[index] = values[index]

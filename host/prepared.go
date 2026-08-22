@@ -40,7 +40,9 @@ type Prepared struct {
 	sessions       []acquiredSession
 	probeStores    []*probeStore
 	bySession      map[string]acquiredSession
+	sources        formatSources
 	direct         []bound.Entry
+	scratch        map[job.NodeID]scratchLease
 	cleanupTimeout time.Duration
 
 	mu              sync.Mutex
@@ -51,6 +53,8 @@ type Prepared struct {
 	closeErr        error
 	released        sync.Once
 	releaseFailures []Failure
+	scratchReleased sync.Once
+	scratchFailures []Failure
 }
 
 // Prepare acquires and inspects inputs, resolves the immutable Program,
@@ -89,11 +93,16 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		manager:        manager,
 		byNode:         make(map[job.NodeID]*memory.Lease),
 		bySession:      make(map[string]acquiredSession),
+		scratch:        make(map[job.NodeID]scratchLease),
+		sources:        make(formatSources, len(planning.sources)),
 		sessions:       append([]acquiredSession(nil), planning.sessions...),
 		probeStores:    append([]*probeStore(nil), planning.stores...),
 		cleanupTimeout: h.cleanupTimeout,
 		state:          preparedReady,
 		done:           make(chan struct{}),
+	}
+	for node, source := range planning.sources {
+		prepared.sources[node] = source
 	}
 	for _, entry := range entries {
 		if entry.Projection().Kind == plan.DirectBoundary {
@@ -107,7 +116,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		cleanupContext, cancel := context.WithTimeout(context.Background(), h.cleanupTimeout)
 		defer cancel()
 		failure := failureOf(phase, "", "", err)
-		failure.Err = errors.Join(failure.Err, joinFailures(prepared.releaseResources(cleanupContext)))
+		failure.Err = errors.Join(failure.Err, joinFailures(prepared.releaseScratch(cleanupContext)), joinFailures(prepared.releaseResources(cleanupContext)))
 		return nil, &failure
 	}
 	runtimeRequest, err := selected.RuntimeResources()
@@ -132,6 +141,10 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		}
 		prepared.reservations = append(prepared.reservations, reservation{name: node.ID().String(), lease: lease})
 		prepared.byNode[node.ID()] = lease
+	}
+	prepared.scratch, err = openScratch(selected)
+	if err != nil {
+		return fail(ResourcePhase, err)
 	}
 	outputSessions, acquireErr := acquireSessions(ctx, entries, plan.OutputBoundary)
 	prepared.sessions = append(prepared.sessions, outputSessions...)
@@ -172,7 +185,7 @@ func (p *Prepared) Close() error {
 		p.state = preparedClosing
 		p.mu.Unlock()
 		cleanupContext, cancel := context.WithTimeout(context.Background(), p.cleanupTimeout)
-		failures := p.releaseResources(cleanupContext)
+		failures := append(p.releaseScratch(cleanupContext), p.releaseResources(cleanupContext)...)
 		cancel()
 		err := joinFailures(failures)
 		p.complete(err)

@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -26,7 +27,7 @@ func writerComponent() plugin.Component {
 		[]flow.Port{flow.Out("writes", access.Writes())},
 	)
 	spec := plugin.Spec[configuration, writerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[writerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("values")
 			if !ok {
@@ -47,7 +48,7 @@ func writerComponent() plugin.Component {
 			copy(header[0:4], "ACM1")
 			header[4] = byte(len(labelBytes))
 			copy(header[5:], labelBytes)
-			output, err := stream.NewDescriptor(input.ID(), access.Writes().Identity(), access.CarrierTimeBase(), property.New())
+			output, err := stream.NewDescriptor(input.ID(), access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[writerPlan, stream.Descriptor]{}, err
 			}

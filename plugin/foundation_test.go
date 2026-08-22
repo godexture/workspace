@@ -54,7 +54,7 @@ func foundationComponent[Marker any](descriptor Descriptor, schemaValue config.S
 	typ := schema.Define[foundationUnitID, foundationUnit](schema.Traits[foundationUnit]{})
 	shape := flow.NewShape(nil, []flow.Port{flow.Out("out", typ)})
 	spec := Spec[pluginConfig, flow.Shape, int]{
-		Shape: StaticShape[pluginConfig](shape),
+		Ports: shape,
 		Compile: func(CompileContext, pluginConfig, flow.Descriptors[int]) (Compiled[flow.Shape, int], error) {
 			return Compiled[flow.Shape, int]{Plan: shape, Outputs: flow.NewDescriptors(flow.Describe("out", 1))}, nil
 		},

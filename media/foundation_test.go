@@ -64,20 +64,34 @@ var (
 	skeletonChunkSchema = schema.Define[skeletonChunkID, packet.Chunk](schema.Traits[packet.Chunk]{
 		Fork: func(value packet.Chunk) packet.Chunk { return value.Share() },
 		Drop: func(value packet.Chunk) { value.Release() },
+		Time: func(value packet.Chunk) (int64, bool) {
+			pts, ok := value.PTS().Get()
+			return pts.Int64(), ok
+		},
 	})
 	skeletonPacketSchema = schema.Define[skeletonPacketID, packet.Packet](schema.Traits[packet.Packet]{
 		Fork: func(value packet.Packet) packet.Packet { return value.Share() },
 		Drop: func(value packet.Packet) { value.Release() },
+		Time: func(value packet.Packet) (int64, bool) {
+			pts, ok := value.PTS().Get()
+			return pts.Int64(), ok
+		},
 	})
 	skeletonFrameSchema = schema.Define[skeletonFrameID, audio.Frame[int16]](schema.Traits[audio.Frame[int16]]{
 		Fork: func(value audio.Frame[int16]) audio.Frame[int16] { return value.Share() },
 		Drop: func(value audio.Frame[int16]) { value.Release() },
+		Time: func(value audio.Frame[int16]) (int64, bool) {
+			pts, ok := value.PTS().Get()
+			return pts.Int64(), ok
+		},
 	})
-	skeletonMetadataEventSchema = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{})
-	skeletonMetadataCarrier     = carrier.Define[skeletonMetadataCarrierID]()
-	skeletonSampleRate          = property.Define[skeletonSampleRateID](property.Scalar[int]())
-	skeletonDecodedTimeBase     = timing.MustBase(1, 48000)
-	skeletonEncodedTimeBase     = timing.MustBase(1, 1000)
+	skeletonMetadataEventSchema = schema.Define[skeletonMetadataEventID, skeletonMetadataEvent](schema.Traits[skeletonMetadataEvent]{
+		Time: func(value skeletonMetadataEvent) (int64, bool) { return value.At.Int64(), true },
+	})
+	skeletonMetadataCarrier = carrier.Define[skeletonMetadataCarrierID]()
+	skeletonSampleRate      = property.Define[skeletonSampleRateID](property.Scalar[int]())
+	skeletonDecodedTimeBase = timing.MustBase(1, 48000)
+	skeletonEncodedTimeBase = timing.MustBase(1, 1000)
 )
 
 type skeletonSourceOperator struct {
@@ -122,7 +136,9 @@ func (o *skeletonDemuxerOperator) Process(ctx context.Context, input *flow.Item[
 		if err != nil {
 			return err
 		}
-		chunk := packet.NewChunk(sequence, timing.SomePTS(timing.NewPTS(int64(sequence)*48)), payload)
+		pts := timing.SomePTS(timing.NewPTS(int64(sequence) * 48))
+		duration := timing.SomeDuration(timing.NewDuration(int64((end - offset) / 2)))
+		chunk := packet.NewChunk(sequence, pts, timing.SomeDTS(timing.NewDTS(int64(sequence)*48)), duration, payload)
 		item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 		if err := output.Emit(ctx, &item); err != nil {
 			item.Drop()
@@ -148,7 +164,7 @@ func (o *skeletonParserOperator) Process(ctx context.Context, input *flow.Item[p
 	}
 	chunk := input.Value()
 	payload := chunk.Payload().Share()
-	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), timing.UnknownDTS(), timing.SomeDuration(timing.NewDuration(int64(chunk.Bytes().Len()/2))), payload)
+	value := packet.NewPacket(chunk.Sequence(), chunk.PTS(), chunk.DTS(), chunk.Duration(), payload)
 	item := flow.NewItem(value, skeletonPacketSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
@@ -401,19 +417,19 @@ func newSkeletonDemuxedDescriptor(source stream.Descriptor) (stream.Descriptor, 
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	return newSkeletonDescriptor("audio-0", skeletonChunkSchema.Identity(), skeletonDecodedTimeBase, properties, document)
+	return newSkeletonDescriptor("audio-0", skeletonChunkSchema.Descriptor(), skeletonDecodedTimeBase, properties, document)
 }
 
-func newSkeletonDescriptor(id stream.ID, identity schema.ID, base timing.Base, properties property.Set, document metadata.Document) (stream.Descriptor, error) {
-	descriptor, err := stream.NewDescriptor(id, identity, base, properties)
+func newSkeletonDescriptor(id stream.ID, schemaDescriptor schema.Descriptor, base timing.Base, properties property.Set, document metadata.Document) (stream.Descriptor, error) {
+	descriptor, err := stream.NewDescriptor(id, schemaDescriptor, base, properties)
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
 	return descriptor.WithMetadata(document), nil
 }
 
-func deriveSkeletonDescriptor(input stream.Descriptor, identity schema.ID, base timing.Base) (stream.Descriptor, error) {
-	return newSkeletonDescriptor(input.ID(), identity, base, input.Properties(), input.Metadata())
+func deriveSkeletonDescriptor(input stream.Descriptor, schemaDescriptor schema.Descriptor, base timing.Base) (stream.Descriptor, error) {
+	return newSkeletonDescriptor(input.ID(), schemaDescriptor, base, input.Properties(), input.Metadata())
 }
 
 type skeletonMuxerOperator struct {
@@ -430,7 +446,7 @@ func (o *skeletonMuxerOperator) Process(ctx context.Context, input *flow.Item[pa
 	}
 	value := input.Value()
 	payload := value.Payload().Share()
-	chunk := packet.NewChunk(value.Sequence(), value.PTS(), payload)
+	chunk := packet.NewChunk(value.Sequence(), value.PTS(), value.DTS(), value.Duration(), payload)
 	item := flow.NewItem(chunk, skeletonChunkSchema, &testDomain)
 	if err := output.Emit(ctx, &item); err != nil {
 		item.Drop()
@@ -638,7 +654,7 @@ type skeletonPlanner func(flow.Descriptors[stream.Descriptor]) (skeletonPlan, fl
 
 func skeletonSpec(shape flow.Shape, effect plugin.Effect, plan skeletonPlanner, open plugin.OpenFunc[skeletonPlan]) plugin.Spec[skeletonConfig, skeletonPlan, stream.Descriptor] {
 	return plugin.Spec[skeletonConfig, skeletonPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[skeletonConfig](shape),
+		Ports: shape,
 		Compile: func(_ plugin.CompileContext, _ skeletonConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[skeletonPlan, stream.Descriptor], error) {
 			compiledPlan, outputs, requirements, err := plan(inputs)
 			compiledPlan.shape = shape.Clone()
@@ -690,9 +706,9 @@ func skeletonSinkPlanner(inputPort string) skeletonPlanner {
 	}
 }
 
-func skeletonTransform(identity schema.ID, base timing.Base) skeletonDescriptorTransform {
+func skeletonTransform(schemaDescriptor schema.Descriptor, base timing.Base) skeletonDescriptorTransform {
 	return func(input stream.Descriptor) (stream.Descriptor, skeletonPlan, error) {
-		output, err := deriveSkeletonDescriptor(input, identity, base)
+		output, err := deriveSkeletonDescriptor(input, schemaDescriptor, base)
 		return output, skeletonPlan{}, err
 	}
 }
@@ -716,7 +732,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 	}
 	return plugin.Define[skeletonPluginID](plugin.Descriptor{DisplayName: "foundation skeleton", Version: "1"},
 		plugin.NewComponent[skeletonSourceID](plugin.Descriptor{DisplayName: "source"}, configSchema, plugin.WithSpec(skeletonSpec(sourceShape, structural("source"), skeletonSourcePlanner("bytes", data, func() (stream.Descriptor, error) {
-			return newSkeletonDescriptor("source-0", skeletonBytesSchema.Identity(), timing.MustBase(1, 1), property.New(), metadata.Document{})
+			return newSkeletonDescriptor("source-0", skeletonBytesSchema.Descriptor(), timing.Base{}, property.New(), metadata.Document{})
 		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return &skeletonSourceOperator{shape: plan.shape, data: append([]byte(nil), plan.data...)}, nil
 		}))),
@@ -726,7 +742,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return &skeletonDemuxerOperator{shape: plan.shape}, nil
 		}))),
-		plugin.NewComponent[skeletonParserID](plugin.Descriptor{DisplayName: "parser"}, configSchema, plugin.WithSpec(skeletonSpec(parserShape, structural("parse"), skeletonTransformPlanner("chunks", "packets", skeletonTransform(skeletonPacketSchema.Identity(), skeletonDecodedTimeBase)), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
+		plugin.NewComponent[skeletonParserID](plugin.Descriptor{DisplayName: "parser"}, configSchema, plugin.WithSpec(skeletonSpec(parserShape, structural("parse"), skeletonTransformPlanner("chunks", "packets", skeletonTransform(skeletonPacketSchema.Descriptor(), skeletonDecodedTimeBase)), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return &skeletonParserOperator{shape: plan.shape}, nil
 		}))),
 		plugin.NewComponent[skeletonCodecID](plugin.Descriptor{DisplayName: "decoder"}, configSchema, plugin.WithSpec(skeletonSpec(decoderShape, plugin.Effect{Kind: plugin.CompressionEffect, Loss: plugin.NoLoss, Detail: "decode"}, skeletonTransformPlanner("packets", "frames", func(input stream.Descriptor) (stream.Descriptor, skeletonPlan, error) {
@@ -735,7 +751,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 			if err != nil {
 				return stream.Descriptor{}, skeletonPlan{}, err
 			}
-			output, err := deriveSkeletonDescriptor(input, skeletonFrameSchema.Identity(), timing.MustBase(1, int64(rate)))
+			output, err := deriveSkeletonDescriptor(input, skeletonFrameSchema.Descriptor(), timing.MustBase(1, int64(rate)))
 			return output, skeletonPlan{trace: trace, propertyReads: []key.ID{skeletonSampleRate.ID()}}, err
 		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			if plan.trace != nil {
@@ -746,13 +762,13 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 			return &skeletonCodecOperator{shape: plan.shape}, nil
 		}))),
 		plugin.NewComponent[skeletonEncoderID](plugin.Descriptor{DisplayName: "encoder"}, configSchema, plugin.WithSpec(skeletonSpec(encoderShape, plugin.Effect{Kind: plugin.CompressionEffect, Loss: plugin.Lossy, Detail: "encode"}, skeletonTransformPlanner("frames", "packets", func(input stream.Descriptor) (stream.Descriptor, skeletonPlan, error) {
-			output, err := deriveSkeletonDescriptor(input, skeletonPacketSchema.Identity(), skeletonEncodedTimeBase)
+			output, err := deriveSkeletonDescriptor(input, skeletonPacketSchema.Descriptor(), skeletonEncodedTimeBase)
 			return output, skeletonPlan{inputBase: skeletonDecodedTimeBase, outputBase: skeletonEncodedTimeBase}, err
 		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return &skeletonEncoderOperator{shape: plan.shape, inputBase: plan.inputBase, outputBase: plan.outputBase}, nil
 		}))),
 		plugin.NewComponent[skeletonMuxerID](plugin.Descriptor{DisplayName: "muxer"}, configSchema, plugin.WithSpec(skeletonSpec(muxerShape, structural("mux"), skeletonTransformPlanner("packets", "chunks", func(input stream.Descriptor) (stream.Descriptor, skeletonPlan, error) {
-			output, err := deriveSkeletonDescriptor(input, skeletonChunkSchema.Identity(), skeletonEncodedTimeBase)
+			output, err := deriveSkeletonDescriptor(input, skeletonChunkSchema.Descriptor(), skeletonEncodedTimeBase)
 			return output, skeletonPlan{trace: trace}, err
 		}), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return &skeletonMuxerOperator{shape: plan.shape, trace: plan.trace}, nil
@@ -1098,14 +1114,20 @@ func TestMetadataBindingUsesHostConflictAndTargetChecks(t *testing.T) {
 }
 
 func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
-	shape := flow.NewShape([]flow.Port{flow.In("metadata-events", skeletonMetadataEventSchema, flow.Many(), flow.WithFanIn(flow.MergeFanIn))}, nil)
+	shape := flow.NewShape([]flow.Port{flow.In("metadata-events", skeletonMetadataEventSchema, flow.Many(), flow.WithFanIn(flow.SerialFanIn))}, nil)
 	if err := shape.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if shape.Inputs[0].Schema().Identity() != skeletonMetadataEventSchema.Identity() {
 		t.Fatal("metadata event port lost its schema identity")
 	}
+	if !shape.Inputs[0].Schema().HasTime() {
+		t.Fatal("metadata event port lost its time trait")
+	}
 	event := skeletonMetadataEvent{At: timing.PTS(7), Key: tag.Title().ID(), Value: "live"}
+	if timestamp, ok := skeletonMetadataEventSchema.Time(event); !ok || timestamp != 7 {
+		t.Fatalf("metadata event timestamp = %d, valid = %v", timestamp, ok)
+	}
 	if event.At != 7 || event.Key != tag.Title().ID() || event.Value != "live" {
 		t.Fatalf("metadata event = %#v", event)
 	}

@@ -48,7 +48,7 @@ func readerComponent() plugin.Component {
 		[]flow.Port{flow.Out("packets", codec.Packets())},
 	)
 	spec := plugin.Spec[configuration, readerPlan, stream.Descriptor]{
-		Shape: plugin.StaticShape[configuration](shape),
+		Ports: shape,
 		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[readerPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("bytes")
 			if !ok {
@@ -64,7 +64,7 @@ func readerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
-			output, err := stream.NewDescriptor(input.ID(), codec.Packets().Identity(), timing.MustBase(1, 1), properties)
+			output, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, 1), properties)
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
