@@ -169,8 +169,9 @@ profile を行い、payload slicing を再設計する。小さな差や payload
 `flow.Direct` を宣言した port を単一 routed producer が駆動する direct island では、
 その call 順を MP4 の physical order として correctness vector にする。宣言のない generic Serial 構成の cross-track
 physical interleave、wall-clock order、byte reproducibility は performance gate の前提にしない。MP4 correctness/exact は
-track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table で判定し、physical interleave の変更を semantic
-loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
+track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table と、demux が sample offset の merge で作る
+格納順の保持で判定する。demux/mux が track ごとに cursor を持つ分の常駐は track 数に比例してよく、sample 数には
+比例しない。入力が持たない physical order を新規に組む consumer は execution signature と別 ordered policy/backpressure
 を要求する。
 
 M7 の constant-RAM/resource gate は、同じ topology、descriptor、queue、processing page、semantic metadata cap で

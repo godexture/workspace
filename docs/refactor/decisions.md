@@ -204,10 +204,11 @@ payload-heavy I/O gate は Prepare 後に計数をリセットし、read bytes �
 unchanged same-format remux だけがこの handoff で raw box/sample-entry/metadata carrier を source range
 から再利用できる。provenance は descriptor/item へ埋め込まず、複数 input から推測しない generic API も作らない。
 MP4 lossless exact は selected sample payload、track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table、
-track/mapping order、raw anchor の byte 列と anchor 内の相対順であり、file byte identity、cross-track physical interleave、
-再生成する既知 box の全体順、offset、global DTS interleave は含まない。physical interleave の変更は semantic loss と
-扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
-を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
+track/mapping order、選択 sample の格納順、raw anchor の byte 列と anchor 内の相対順である。demux は per-track cursor を
+sample offset で merge して格納順に emit するため、全 track を選択した remux は入力を byte 単位で再現する。subset remux は
+moov を縮めるため file byte identity を含まず、再生成する既知 box の全体順、offset、global DTS interleave も含まない。
+入力が持たない physical order（時刻順の interleave を新規に組む等）を必要とする consumer は、execution signature と
+別 ordered policy/backpressure を要求する。default preserve-all で保持不能なら、generic loss DTO を先行追加せず Planning error にする。
 
 unfragmented transform mux が sample table/offset を蓄積する場合は、Host-owned disk table journal を使う。
 `job.ResourcePolicy.ScratchMaxBytes` は固定 `Compiled.Scratch` node claim と selected output spool maxima の aggregate ceiling
@@ -231,7 +232,7 @@ M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip al
 
 ### Superseded M7 ordering proposals
 
-以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、`flow.Direct` を宣言した port を単一 routed producer が駆動する direct island の emit call 順を physical mdat 書きへ利用する。宣言のない generic Serial 構成の cross-track physical interleave は契約しない。
+以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、`flow.Direct` を宣言した port を単一 routed producer が駆動する direct island の emit call 順を physical mdat 書きへ利用する。その emit 順は MP4 demux が per-track cursor を sample offset で merge して作る格納順であり、cross-track の timestamp 比較を必要としない。宣言のない generic Serial 構成の cross-track physical interleave は契約しない。
 
 ## Deferred without blocking the first implementation
 
