@@ -6,6 +6,7 @@ import (
 	"math"
 	"unsafe"
 
+	mediasample "github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/resource"
 )
 
@@ -49,6 +50,8 @@ var (
 	typeSTCO = boxType{'s', 't', 'c', 'o'}
 	typeCO64 = boxType{'c', 'o', '6', '4'}
 	typeSTSS = boxType{'s', 't', 's', 's'}
+	typeSOWT = boxType{'s', 'o', 'w', 't'}
+	typeTWOS = boxType{'t', 'w', 'o', 's'}
 	typeEDTS = boxType{'e', 'd', 't', 's'}
 	typeELST = boxType{'e', 'l', 's', 't'}
 	typeTREF = boxType{'t', 'r', 'e', 'f'}
@@ -152,7 +155,10 @@ type track struct {
 	handler          boxType
 	codec            boxType
 	descriptionCount uint32
-	dataReferences   uint32
+	// audio is the linear PCM description of the sample entry, zero when this
+	// reader cannot express the entry as decodable PCM.
+	audio          mediasample.Description
+	dataReferences uint32
 
 	trak       box
 	media      box

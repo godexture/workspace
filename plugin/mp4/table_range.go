@@ -72,7 +72,7 @@ func parseSampleTable(ctx context.Context, reader access.Random, sourceEnd uint6
 	if !haveDescriptions || !haveTiming || !haveLayout || !haveSizes || !haveOffsets {
 		return fmt.Errorf("%w: stbl requires stsd, stts, stsc, stsz/stz2, and stco/co64", errMalformedMovie)
 	}
-	descriptionCount, codec, err := scanSampleDescriptions(ctx, reader, result.tables.description, dataReferences)
+	descriptions, err := scanSampleDescriptions(ctx, reader, result.tables.description, dataReferences)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,7 @@ func parseSampleTable(ctx context.Context, reader access.Random, sourceEnd uint6
 	if err != nil {
 		return err
 	}
-	if err := scanChunkLayout(ctx, reader, result.tables.layout, descriptionCount, offsetCount, sampleCount); err != nil {
+	if err := scanChunkLayout(ctx, reader, result.tables.layout, descriptions.count, offsetCount, sampleCount); err != nil {
 		return err
 	}
 	if result.tables.hasComposition {
@@ -108,8 +108,9 @@ func parseSampleTable(ctx context.Context, reader access.Random, sourceEnd uint6
 			return err
 		}
 	}
-	result.descriptionCount = descriptionCount
-	result.codec = codec
+	result.descriptionCount = descriptions.count
+	result.codec = descriptions.typeID
+	result.audio = descriptions.audio
 	result.sampleCount = sampleCount
 	result.chunkCount = offsetCount
 	result.duration = duration

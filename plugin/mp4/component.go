@@ -76,7 +76,7 @@ func compileDemux(shape flow.Shape, inspected movie, selection mediaformat.Selec
 	memory := resource.Bytes(1)
 	for _, selectedTrack := range tracks {
 		value := selectedTrack.value
-		properties, err := codec.WithTag(property.New(), SampleEntryTag(string(value.codec[:])))
+		properties, err := trackProperties(value)
 		if err != nil {
 			return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 		}
@@ -155,4 +155,19 @@ func validateDemuxTrack(value track) error {
 
 func trackStreamID(value uint32) stream.ID {
 	return stream.ID(strconv.FormatUint(uint64(value), 10))
+}
+
+// trackProperties carries the sample-entry tag a codec binding keys on, plus the
+// audio description of a linear PCM track. The description is published only
+// when the media timescale is the sample rate, so the packet time base a decoder
+// receives agrees with the description it reads.
+func trackProperties(value track) (property.Set, error) {
+	properties := property.New()
+	if value.audio.Valid() && uint64(value.audio.Rate) == uint64(value.timeScale) {
+		var err error
+		if properties, err = value.audio.Properties(); err != nil {
+			return property.Set{}, err
+		}
+	}
+	return codec.WithTag(properties, SampleEntryTag(string(value.codec[:])))
 }

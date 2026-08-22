@@ -7,71 +7,144 @@ import (
 	"math"
 
 	"github.com/godexture/godec/access"
+	mediasample "github.com/godexture/godec/media/sample"
 )
 
-func scanSampleDescriptions(ctx context.Context, reader access.Random, value box, dataReferences uint32) (uint32, boxType, error) {
+const (
+	// baseEntryBytes is the SampleEntry header every stsd entry starts with.
+	baseEntryBytes = 16
+	// audioEntryBytes additionally covers the channel count, sample size and
+	// sample rate an AudioSampleEntry places at fixed offsets.
+	audioEntryBytes = 36
+)
+
+// sampleEntry summarizes the stsd table: how many entries it holds and, for the
+// first one, its four-character code and the audio description it carries when
+// this reader can express it as linear PCM.
+type sampleEntry struct {
+	count  uint32
+	typeID boxType
+	audio  mediasample.Description
+}
+
+func scanSampleDescriptions(ctx context.Context, reader access.Random, value box, dataReferences uint32) (sampleEntry, error) {
 	if value.payloadSize < 8 {
-		return 0, boxType{}, fmt.Errorf("%w: stsd full-box header", errUnsupportedMovie)
+		return sampleEntry{}, fmt.Errorf("%w: stsd full-box header", errUnsupportedMovie)
 	}
 	var prefix [8]byte
 	if err := readBoxPrefix(ctx, reader, value, prefix[:], "stsd"); err != nil {
-		return 0, boxType{}, err
+		return sampleEntry{}, err
 	}
 	version, flags, err := fullBox(prefix[:4], "stsd")
 	if err != nil {
-		return 0, boxType{}, err
+		return sampleEntry{}, err
 	}
 	if version != 0 || flags != 0 {
-		return 0, boxType{}, fmt.Errorf("%w: stsd full-box header", errUnsupportedMovie)
+		return sampleEntry{}, fmt.Errorf("%w: stsd full-box header", errUnsupportedMovie)
 	}
-	count := binary.BigEndian.Uint32(prefix[4:])
-	if count == 0 {
-		return 0, boxType{}, fmt.Errorf("%w: stsd has no entries", errMalformedMovie)
+	result := sampleEntry{count: binary.BigEndian.Uint32(prefix[4:])}
+	if result.count == 0 {
+		return sampleEntry{}, fmt.Errorf("%w: stsd has no entries", errMalformedMovie)
 	}
 	offset := uint64(8)
 	payloadEnd, ok := payloadEnd(value)
 	if !ok {
-		return 0, boxType{}, fmt.Errorf("%w: stsd payload range", errMalformedMovie)
+		return sampleEntry{}, fmt.Errorf("%w: stsd payload range", errMalformedMovie)
 	}
 	entries := newTableRangeReader(reader, value.payloadOffset+offset, payloadEnd)
-	var codec boxType
-	for index := uint32(0); index < count; index++ {
-		var entry [16]byte
-		if offset > value.payloadSize || value.payloadSize-offset < uint64(len(entry)) {
-			return 0, boxType{}, fmt.Errorf("%w: stsd entry %d is truncated", errMalformedMovie, index+1)
+	for index := uint32(0); index < result.count; index++ {
+		var entry [audioEntryBytes]byte
+		if offset > value.payloadSize || value.payloadSize-offset < baseEntryBytes {
+			return sampleEntry{}, fmt.Errorf("%w: stsd entry %d is truncated", errMalformedMovie, index+1)
 		}
 		entryOffset, ok := checkedBoxAdd(value.payloadOffset, offset)
 		if !ok {
-			return 0, boxType{}, fmt.Errorf("%w: stsd entry %d range", errMalformedMovie, index+1)
+			return sampleEntry{}, fmt.Errorf("%w: stsd entry %d range", errMalformedMovie, index+1)
 		}
-		if err := entries.readAt(ctx, entryOffset, entry[:], "stsd"); err != nil {
-			return 0, boxType{}, err
+		if err := entries.readAt(ctx, entryOffset, entry[:baseEntryBytes], "stsd"); err != nil {
+			return sampleEntry{}, err
 		}
 		size := uint64(binary.BigEndian.Uint32(entry[:4]))
-		if size < uint64(len(entry)) || size > value.payloadSize-offset {
-			return 0, boxType{}, fmt.Errorf("%w: stsd entry %d size", errMalformedMovie, index+1)
+		if size < baseEntryBytes || size > value.payloadSize-offset {
+			return sampleEntry{}, fmt.Errorf("%w: stsd entry %d size", errMalformedMovie, index+1)
 		}
 		typeID := boxType(entry[4:8])
 		if typeID == typeENCV || typeID == typeENCA {
-			return 0, boxType{}, fmt.Errorf("%w: encrypted sample entry %q", errUnsupportedMovie, typeID)
+			return sampleEntry{}, fmt.Errorf("%w: encrypted sample entry %q", errUnsupportedMovie, typeID)
 		}
 		dataReference := binary.BigEndian.Uint16(entry[14:16])
 		if dataReference == 0 || uint32(dataReference) > dataReferences {
-			return 0, boxType{}, fmt.Errorf("%w: stsd entry %d data reference", errMalformedMovie, index+1)
+			return sampleEntry{}, fmt.Errorf("%w: stsd entry %d data reference", errMalformedMovie, index+1)
 		}
 		if index == 0 {
-			codec = typeID
+			result.typeID = typeID
+			if endian, linear := linearPCMEntry(typeID); linear {
+				if size < audioEntryBytes {
+					return sampleEntry{}, fmt.Errorf("%w: stsd entry %d omits its audio fields", errMalformedMovie, index+1)
+				}
+				if err := entries.readAt(ctx, entryOffset, entry[:], "stsd"); err != nil {
+					return sampleEntry{}, err
+				}
+				result.audio = parseAudioEntry(entry[:], endian)
+			}
 		}
 		next, ok := checkedBoxAdd(offset, size)
 		if !ok {
-			return 0, boxType{}, fmt.Errorf("%w: stsd entry %d range", errMalformedMovie, index+1)
+			return sampleEntry{}, fmt.Errorf("%w: stsd entry %d range", errMalformedMovie, index+1)
 		}
 		offset = next
 	}
 	if offset != value.payloadSize {
-		return 0, boxType{}, fmt.Errorf("%w: stsd has trailing bytes", errMalformedMovie)
+		return sampleEntry{}, fmt.Errorf("%w: stsd has trailing bytes", errMalformedMovie)
 	}
-	return count, codec, nil
+	return result, nil
+}
+
+// linearPCMEntry reports the byte order of the ISO BMFF sample entries this
+// reader describes as signed 16-bit linear PCM. Wider and floating-point entries
+// stay opaque and are copied rather than decoded.
+func linearPCMEntry(typeID boxType) (mediasample.Endian, bool) {
+	switch typeID {
+	case typeSOWT:
+		return mediasample.LittleEndian, true
+	case typeTWOS:
+		return mediasample.BigEndian, true
+	default:
+		return mediasample.NoEndian, false
+	}
+}
+
+// parseAudioEntry reads the channel count, sample size and 16.16 sample rate an
+// AudioSampleEntry places at the same offsets in its version 0 and version 1
+// layouts. A shape this decoder cannot express yields the zero description, so
+// the track is copied instead of decoded.
+func parseAudioEntry(data []byte, endian mediasample.Endian) mediasample.Description {
+	if len(data) < audioEntryBytes {
+		return mediasample.Description{}
+	}
+	var layout mediasample.Layout
+	switch binary.BigEndian.Uint16(data[24:26]) {
+	case 1:
+		layout = mediasample.Mono
+	case 2:
+		layout = mediasample.Stereo
+	default:
+		return mediasample.Description{}
+	}
+	if binary.BigEndian.Uint16(data[26:28]) != 16 {
+		return mediasample.Description{}
+	}
+	rate := binary.BigEndian.Uint32(data[32:36])
+	if rate>>16 == 0 || rate&0xffff != 0 {
+		return mediasample.Description{}
+	}
+	return mediasample.Description{
+		Format:    mediasample.S16Interleaved,
+		ValidBits: 16,
+		Rate:      int(rate >> 16),
+		Layout:    layout,
+		Endian:    endian,
+	}
 }
 
 func scanTimingTable(ctx context.Context, reader access.Random, value box) (uint64, uint64, error) {
