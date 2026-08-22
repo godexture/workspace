@@ -151,7 +151,7 @@ M3 はこの文書の capability matrix が要求する拡張点のうち、cont
 
 M5 の公開 export はすべて実行 consumer を持つ。`host.Prepare`/`Prepared.Plan`/`Prepared.Run`/`Prepared.Close`、`host.Run`、`Result`/`Failure`/output outcome/event、observation と cleanup timeout は `plugin/pcm/linear` の walking skeleton と `host` の lifecycle/failure matrix が使用する。M6 の `standard.Convert` と CLI はこの façade をそのまま利用し、private `Program`、queue、task group、resource manager を公開しない。
 
-`flow.FanInPolicy`/`Batch`/`Joiner` は private runtime の Zip と `SerialFanIn` consumer、`flow.Finalizer` は PCM skeleton と Host の `Finalize -> Flush` lifecycle consumerを持つ。`SerialFanIn` は ordering algorithm ではなく callback の同期直列化と input ordinal を提供する。Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ call 順を physical order と扱い、buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。generic Serial をこれらの構成だけで Compile から reject せず、将来の Stable/byte reproducibility は execution signature と別 ordered policy/backpressure の consumer として追加する。`plan.Runtime` の island/buffer/fan-in projection は `Prepared.Plan` と planner/runtime test が使用する inert snapshot で、実行 closure や resource handle を含まない。
+`flow.FanInPolicy`/`Batch`/`Joiner` は private runtime の Zip と `SerialFanIn` consumer、`flow.Finalizer` は PCM skeleton と Host の `Finalize -> Flush` lifecycle consumerを持つ。`SerialFanIn` は ordering algorithm ではなく callback の同期直列化と input ordinal を提供する。`flow.Direct` の consumer は MP4 mux の packets port で、runtime の topology gate と `plan.FanIn.Direct` 投影が受け取る。宣言した port は単一 routed producer が同じ island から駆動し、その call 順を physical order と扱う。MP4 では demux が sample offset の merge で作る格納順がその call 順になる。宣言のない generic Serial 構成の cross-track physical interleave は契約しない。generic Serial をこれらの構成だけで Compile から reject せず、将来の Stable/byte reproducibility は execution signature と別 ordered policy/backpressure の consumer として追加する。`plan.Runtime` の island/buffer/fan-in projection は `Prepared.Plan` と planner/runtime test が使用する inert snapshot で、実行 closure や resource handle を含まない。
 
 `access.Opening`、`endpoint.Opening`、`access.Direct` は Host が node-local boundary view として component へ渡し、provider/endpoint/direct fixture が「選択された capability 以外を見せない」ことを検査する。`access.Flusher`/`Syncer`/`Transaction` は success/rollback coordinator が実行する。`job.Adaptor` と direct input/output choice は resource と通常 component graph node の間を明示的に接続し、Host binding test と PCM の source/sink adaptor が使用する。raw resource の `Close` authority は component に渡さない。
 
@@ -232,3 +232,11 @@ M6 時点で foundation が定義する trait 種は Access（source/sink）、F
 - 初期未対応 capability が runtime panic ではなく Compile diagnostic になる。
 - video/subtitle/custom schema と live/device fixture が、同じ Host/planner/runtime へ参加できる。
 - decode 実装を持たない stream（MP4 の video/subtitle track など）が、raw carrier と structured diagnostic を通じて情報を失わずに copy される。
+
+## M7 の contract 分類
+
+`plugin.Scratch` の三 method はいずれも MP4 mux の chunk-offset journal を実 consumer に持つ。`Append` は Open 後に journal 全体を一度だけ確保し、`WriteAt` は到着した chunk の出力 offset をその track の region へ書き、`ReadAt` は Flush で region ごとに読み戻して `stco`/`co64` を patch する。positioned write が要るのは、demux が source の格納順に emit するために track の chunk が互いに割り込んで届くからであり、append-only の journal では track ごとの run を作れない。
+
+`flow.Direct` は MP4 mux の packets port を consumer に持つ。runtime の topology gate、`plan.FanIn.Direct` 投影、`plan.Buffer.Connections` はいずれもこの一つの宣言を説明するために存在する。
+
+`job.Mapping` の input/output index は M7 では 0 だけを受け付ける。複数 input/output を持つ surface が現れる M9 まで、この二つは「将来の値域を先に型へ置いた」のではなく、mapping が結び付ける両端を名前で指すための識別子として使う。M9 で rich selector を追加する時に、値域の拡張と duplication/並べ替えを同時に扱う。

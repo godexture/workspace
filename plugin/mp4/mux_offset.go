@@ -11,94 +11,70 @@ import (
 	"github.com/godexture/godec/media/buffer"
 )
 
-func (m *muxer) appendChunkOffset(ctx context.Context) error {
-	if m.scratch == nil || m.scratchWritten < 0 || m.scratchWritten > m.need || m.scratchPageUsed < 0 || m.scratchPageUsed > len(m.scratchPage)-8 {
-		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
-	}
-	remaining := m.need - m.scratchWritten - int64(m.scratchPageUsed)
-	if remaining < 8 {
-		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
-	}
-	position := m.scratchPageUsed
-	var previous [8]byte
-	copy(previous[:], m.scratchPage[position:position+8])
-	binary.BigEndian.PutUint64(m.scratchPage[position:position+8], m.outputOffset)
-	used := m.scratchPageUsed + 8
-	if used < len(m.scratchPage) {
-		m.scratchPageUsed = used
-		return nil
-	}
-	if err := m.appendScratchPage(ctx, used); err != nil {
-		copy(m.scratchPage[position:position+8], previous[:])
-		return err
-	}
-	return nil
-}
-
-func (m *muxer) flushScratchPage(ctx context.Context) error {
-	if m.scratchPageUsed == 0 {
-		return nil
-	}
-	if m.scratch == nil || m.scratchWritten < 0 || m.scratchWritten > m.need || m.scratchPageUsed < 0 || m.scratchPageUsed > len(m.scratchPage) {
-		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
-	}
-	return m.appendScratchPage(ctx, m.scratchPageUsed)
-}
-
-func (m *muxer) appendScratchPage(ctx context.Context, used int) error {
-	if used <= 0 || used > len(m.scratchPage) || int64(used) > m.need-m.scratchWritten {
-		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
-	}
-	offset, err := m.scratch.Append(ctx, m.scratchPage[:used])
-	if err != nil {
-		return err
-	}
-	if offset != m.scratchWritten {
-		return fmt.Errorf("%w: MP4 chunk-offset journal is not append-only", ErrMalformed)
-	}
-	m.scratchWritten += int64(used)
-	m.scratchPageUsed = 0
-	return nil
-}
-
-func (m *muxer) preflightOffsets(ctx context.Context) error {
-	if m.scratchWritten != m.need {
-		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
-	}
-	if m.need == 0 {
+// sizeJournal reserves the whole journal before any track records into it.
+// Tracks fill their own regions out of order, so the bytes have to exist first;
+// Append is the only call that grows the journal.
+func (m *muxer) sizeJournal(ctx context.Context) error {
+	if m.sized || m.need == 0 {
+		m.sized = true
 		return nil
 	}
 	if m.scratch == nil {
 		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
 	}
-	var position int64
-	for _, selected := range m.layout.tracks {
-		track := selected.value
-		for remaining := uint64(track.chunkCount); remaining != 0; {
-			count := min(remaining, uint64(muxJournalPageBytes/8))
-			bytes := int(count * 8)
-			if err := m.withScratchPage(bytes, func(values []byte) error {
-				if err := m.scratch.ReadAt(ctx, values, position); err != nil {
-					return err
-				}
-				if !track.tables.largeOffsets {
-					for index := 0; index < len(values); index += 8 {
-						if binary.BigEndian.Uint64(values[index:index+8]) > math.MaxUint32 {
-							return fmt.Errorf("%w: remuxed stco offset exceeds uint32", ErrUnsupported)
-						}
-					}
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			position += int64(bytes)
-			remaining -= count
+	var page [muxJournalPageBytes]byte
+	for written := int64(0); written < m.need; {
+		count := min(m.need-written, int64(len(page)))
+		offset, err := m.scratch.Append(ctx, page[:count])
+		if err != nil {
+			return err
 		}
+		if offset != written {
+			return fmt.Errorf("%w: MP4 chunk-offset journal is not append-only", ErrMalformed)
+		}
+		written += count
 	}
-	if position != m.need {
-		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
+	m.sized = true
+	return nil
+}
+
+// recordChunkOffset notes where this track's next chunk starts in the output.
+// Entries are held per track and written a page at a time, because a chunk of
+// another track usually arrives in between.
+func (m *muxer) recordChunkOffset(ctx context.Context, ordinal int) error {
+	if m.scratch == nil || !m.sized || ordinal < 0 || ordinal >= len(m.tracks) {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
 	}
+	track := &m.tracks[ordinal]
+	if track.recorded >= m.layout.tracks[ordinal].value.chunkCount || track.used < 0 || track.used > len(track.page)-8 {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	binary.BigEndian.PutUint64(track.page[track.used:track.used+8], m.outputOffset)
+	track.used += 8
+	track.recorded++
+	if track.used < len(track.page) {
+		return nil
+	}
+	return m.flushChunkOffsets(ctx, ordinal)
+}
+
+func (m *muxer) flushChunkOffsets(ctx context.Context, ordinal int) error {
+	track := &m.tracks[ordinal]
+	if track.used == 0 {
+		return nil
+	}
+	if m.scratch == nil || track.used%8 != 0 || uint64(track.used/8) > uint64(track.recorded) {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	position, ok := checkedBoxAdd(m.layout.tracks[ordinal].journal, (uint64(track.recorded)-uint64(track.used/8))*8)
+	end, endOK := checkedBoxAdd(position, uint64(track.used))
+	if !ok || !endOK || end > uint64(m.need) || position > math.MaxInt64 {
+		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
+	}
+	if err := m.scratch.WriteAt(ctx, track.page[:track.used], int64(position)); err != nil {
+		return err
+	}
+	track.used = 0
 	return nil
 }
 
@@ -106,28 +82,30 @@ func (m *muxer) patchOffsets(ctx context.Context, output flow.Emitter[access.Wri
 	if m.need == 0 {
 		return nil
 	}
-	var position int64
+	var covered uint64
 	for _, selected := range m.layout.tracks {
 		entrySize := 4
 		if selected.value.tables.largeOffsets {
 			entrySize = 8
 		}
 		patchOffset := selected.offsets
+		position := selected.journal
 		for remaining := uint64(selected.value.chunkCount); remaining != 0; {
 			count := min(remaining, uint64(muxJournalPageBytes/8))
 			nextPatch, ok := checkedBoxAdd(patchOffset, count*uint64(entrySize))
-			if !ok || nextPatch > math.MaxInt64 {
+			if !ok || nextPatch > math.MaxInt64 || position > math.MaxInt64 {
 				return fmt.Errorf("%w: MP4 chunk-offset patch range overflows", ErrMalformed)
 			}
-			if err := m.emitOffsetPatch(ctx, position, int64(patchOffset), count, entrySize, output); err != nil {
+			if err := m.emitOffsetPatch(ctx, int64(position), int64(patchOffset), count, entrySize, output); err != nil {
 				return err
 			}
 			patchOffset = nextPatch
-			position += int64(count * 8)
+			position += count * 8
+			covered += count * 8
 			remaining -= count
 		}
 	}
-	if position != m.need {
+	if covered != uint64(m.need) {
 		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
 	}
 	return nil
@@ -152,17 +130,6 @@ func (m *muxer) patchDuration(ctx context.Context, output flow.Emitter[access.Wr
 	}, func(payload buffer.Handle) (access.Write, error) {
 		return access.Patch(int64(patch.offset), payload)
 	}, output)
-}
-
-func (m *muxer) withScratchPage(size int, use func([]byte) error) error {
-	lease, err := m.buffers.Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{{Size: size}}})
-	if err != nil {
-		return err
-	}
-	defer lease.Discard()
-	return lease.Fill(func(storage buffer.Mutable) error {
-		return use(storage.Bytes())
-	})
 }
 
 func (m *muxer) emitOffsetPatch(ctx context.Context, journalOffset, patchOffset int64, count uint64, entrySize int, output flow.Emitter[access.Write]) error {

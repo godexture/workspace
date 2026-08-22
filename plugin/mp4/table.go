@@ -51,7 +51,7 @@ func scanSampleDescriptions(ctx context.Context, reader access.Random, value box
 	if !ok {
 		return sampleEntry{}, fmt.Errorf("%w: stsd payload range", errMalformedMovie)
 	}
-	entries := newTableRangeReader(reader, value.payloadOffset+offset, payloadEnd)
+	entries := newTableRangeReader(reader, payloadEnd)
 	for index := uint32(0); index < result.count; index++ {
 		var entry [audioEntryBytes]byte
 		if offset > value.payloadSize || value.payloadSize-offset < baseEntryBytes {

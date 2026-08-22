@@ -69,7 +69,9 @@ Tier 2 を要求する job だけが、data submoduleまたはmanifestが固定�
 
 **format family を新経路へ移す milestone の完了確認では、その family の Tier 2 を必ず実行する。** 正式 release 前は旧実装との出力一致を求めないため、新経路の正しさを示す根拠が仕様と conformance corpus しかない。M5 の切断後は旧実装を実行して比較することもできない。M6 は WAVE/PCM、M7 は MP4、M8 は MP3/FLAC が対象で、この時 unavailable を成功扱いにしない。
 
-MP4 は video/subtitle track を stream copy でしか扱わないため、corpus に必要なのは decode 可能な video ではなく、複数 track、per-track timescale、未知 box、edit list、fragmented/non-fragmented の両形式を含む小型 fixture である。conformance corpus 相当は仕様由来の手書き vector と procedural generator で構成でき、大容量の外部 corpus を必須にしない。
+MP4 は video/subtitle track を stream copy でしか扱わないため、corpus に必要なのは decode 可能な video ではなく、複数 track、per-track timescale、未知 box、edit list、**track ごとの複数 chunk と track を跨いだ interleave** を含む小型 fixture である。fragmented 形式は M9 が扱うため、M7 の corpus は unfragmented だけを対象とする。conformance corpus 相当は仕様由来の手書き vector と procedural generator で構成でき、大容量の外部 corpus を必須にしない。
+
+MP4 fixture は **track 数 × sample 数 × chunk 数** の三軸を持たせる。一軸ずつしか動かさない corpus は、実ファイルの形（複数 track が複数 chunk を交互に持つ）へ一度も到達しないまま全 gate が緑になる。[F56](findings.md) は track 数と sample 数が別々の fixture に分かれていたために隠れ、[F59](findings.md) は chunk 数が常に 1 だったために隠れた。
 
 ### Tier 3: benchmark/stress
 

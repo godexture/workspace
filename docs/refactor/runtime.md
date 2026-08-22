@@ -114,6 +114,15 @@ queue を置くのは次の境界だけである。
 - explicit buffer/delay
 - sink I/O
 
+この一覧には一つだけ例外がある。`SerialFanIn` input port の connection には、どの理由が当てはまっても queue を置かない。
+queue は producer を route ごとの drain task へ置き換えるため、その policy が唯一約束している「producer の callback 順を
+そのまま観測する」性質を壊す。source I/O の並行化を含め、これを上回る buffer 理由はない。
+
+さらに強い保証を必要とする component は port に `flow.Direct` を宣言する。宣言した port は、単一の typed routed producer
+（`Router` または `RoutedReader`）が同じ synchronous island から駆動しなければならず、複数 producer や buffer 付き edge を
+含む topology は Planning error になる。callback の直列化だけでは「どの input が先か」を決められないため、到着順を出力構造
+（container の payload 領域配置など）へ変換する component はこの宣言を持つ。Plan は確定した保証を `FanIn.Direct` として投影する。
+
 最適化前:
 
 ```text
@@ -514,9 +523,10 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 ## multi-input と ordering
 
 複数 input の意味は component が選ぶ fan-in policy で決める。`SerialFanIn` は callback を同期直列化し、
-input ordinal を保持するだけで、timestamp order や wall-clock order を導出しない。Serial input buffer のない direct な
-single synchronous execution island で単一 routed producer が emit する場合だけ、その call 順が downstream の physical order
-になる。buffer/fan-out/concurrent producer がある場合の cross-track physical interleave、wall-clock 順、再現性は契約しない。
+input ordinal を保持するだけで、timestamp order や wall-clock order を導出しない。runtime は `SerialFanIn` input を
+buffer しないため、単一 routed producer が emit する構成ではその call 順が downstream の physical order になる。
+その構成を要求する component は `flow.Direct` を宣言し、満たせない topology は Planning error になる。宣言しない
+generic な `SerialFanIn` は複数 producer を許し、その場合の cross-input 到着順、wall-clock 順、再現性は契約しない。
 これらの構成だけを理由に generic `SerialFanIn` を Compile で reject しない。
 mixer、sidechain、subtitle overlay、A/V sync が時刻順や lockstep を必要とする場合は、実 consumer と backpressure
 設計が揃った別 policy を使う。

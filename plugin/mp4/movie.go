@@ -221,5 +221,9 @@ func normalizeMovieError(err error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("%w: %w", errTruncatedMovie, err)
 	}
-	return fmt.Errorf("%w: %w", errMalformedMovie, err)
+	if errors.Is(err, errMalformedBox) {
+		return fmt.Errorf("%w: %w", errMalformedMovie, err)
+	}
+	// Anything else came from the source rather than from the bytes it holds.
+	return err
 }

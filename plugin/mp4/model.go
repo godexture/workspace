@@ -171,6 +171,11 @@ type track struct {
 	// references reports a tref child. Its target track IDs are not retained,
 	// so a track subset fails closed rather than leave a reference dangling.
 	references bool
+	// edits reports an edts child. Its entries map media time onto the
+	// presentation timeline, which a copied trak carries along unchanged but a
+	// decoded track would drop, so an edited track is never described as
+	// decodable PCM.
+	edits bool
 }
 
 type sampleTables struct {

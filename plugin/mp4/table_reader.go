@@ -33,7 +33,7 @@ type tableRangeReader struct {
 	page   [tablePageBytes]byte
 }
 
-func newTableRangeReader(reader access.Random, start, end uint64) tableRangeReader {
+func newTableRangeReader(reader access.Random, end uint64) tableRangeReader {
 	return tableRangeReader{reader: reader, end: end, start: end}
 }
 

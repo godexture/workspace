@@ -14,6 +14,9 @@ func (m *muxer) start(ctx context.Context, output flow.Emitter[access.Write]) er
 	if m.started {
 		return nil
 	}
+	if err := m.sizeJournal(ctx); err != nil {
+		return err
+	}
 	if err := m.emitPieces(ctx, m.layout.prefix(), output); err != nil {
 		return err
 	}

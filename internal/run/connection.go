@@ -162,6 +162,56 @@ func (t Template) alignmentTolerance(index int, policy job.AlignmentPolicy) (tim
 	return policy.Zip, ticks, nil
 }
 
+// ErrDirectIsland reports a port that declared flow.Direct in a topology which
+// cannot deliver one producer's emit order.
+var ErrDirectIsland = errors.New("direct many-input port requires one routed producer in the same synchronous island")
+
+// validateDirectInputs enforces flow.Direct. Serial fan-in already serializes
+// callbacks and placeBuffers already keeps its inputs unqueued; what a direct
+// port additionally needs is that the calls come from one producer, so their
+// order is that producer's own sequence rather than a race between tasks.
+func (t Template) validateDirectInputs() error {
+	for index, value := range t.nodes {
+		for _, port := range value.shape.Inputs {
+			if !port.Direct() {
+				continue
+			}
+			if err := t.validateDirectPort(index, port.ID()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t Template) validateDirectPort(index int, port string) error {
+	incoming := t.incoming[index]
+	if len(incoming) == 0 {
+		return errors.Join(ErrTopology, ErrDirectIsland)
+	}
+	producer := -1
+	for _, connectionIndex := range incoming {
+		connection := t.connections[connectionIndex]
+		if t.edges[connection.logical].value.To().ID() != port {
+			continue
+		}
+		if connection.reason != 0 {
+			return errors.Join(ErrTopology, ErrDirectIsland)
+		}
+		if producer >= 0 && producer != connection.from {
+			return errors.Join(ErrTopology, ErrDirectIsland)
+		}
+		producer = connection.from
+	}
+	if producer < 0 {
+		return errors.Join(ErrTopology, ErrDirectIsland)
+	}
+	if kind := t.nodes[producer].kind; kind != drive.Router && kind != drive.RoutedSource {
+		return errors.Join(ErrTopology, ErrDirectIsland)
+	}
+	return nil
+}
+
 func (t Template) validateFanOutSafety() error {
 	for index := range t.edges {
 		if !t.logicalFanOut(index) {
@@ -204,6 +254,13 @@ func (t *Template) placeBuffers() {
 		logical := &t.edges[connection.logical]
 		from := t.nodes[connection.from]
 		to := t.nodes[connection.to]
+		// A serial fan-in exists to observe the order its producer emits in.
+		// A queue on that connection replaces the producer with one drain task
+		// per route, so the ordinals arrive interleaved and the only thing the
+		// policy promised is gone. No reason to buffer outweighs that.
+		if to.kind == drive.Joiner && to.binding.FanIn() == flow.SerialFanIn {
+			continue
+		}
 		if from.kind == drive.Source || from.kind == drive.RoutedSource {
 			connection.reason |= plan.SourceBuffer
 		}
@@ -213,8 +270,7 @@ func (t *Template) placeBuffers() {
 		if t.logicalFanOut(connection.logical) {
 			connection.reason |= plan.FanOutBuffer
 		}
-		serialInput := to.kind == drive.Joiner && to.binding.FanIn() == flow.SerialFanIn
-		if !serialInput && (to.kind == drive.Joiner || t.logicalFanIn(connection.logical)) {
+		if to.kind == drive.Joiner || t.logicalFanIn(connection.logical) {
 			connection.reason |= plan.FanInBuffer
 		}
 		if from.kind == drive.Joiner {
