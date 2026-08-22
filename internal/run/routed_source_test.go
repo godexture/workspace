@@ -125,8 +125,14 @@ func TestRoutedSourceBuildsRepeatedDescriptorsInRouteOrder(t *testing.T) {
 		t.Fatalf("route descriptor order = %v", routes)
 	}
 	for _, buffer := range template.Projection().Buffers {
-		if buffer.FromNode == "source" && buffer.ToNode == "join" && !buffer.Reason.Has(plan.SourceBuffer) {
-			t.Fatalf("routed source buffer projection = %#v", buffer)
+		if buffer.FromNode != "source" || buffer.ToNode != "join" {
+			continue
+		}
+		// The Limit is what one private queue bounds. A reader that saw only
+		// the limit would understate this edge by the descriptor count, so the
+		// projection has to say how many of them the edge really opens.
+		if !buffer.Reason.Has(plan.SourceBuffer) || buffer.Connections != len(routes) {
+			t.Fatalf("routed source buffer projection = %#v, want %d private queues", buffer, len(routes))
 		}
 	}
 	reader := &routedTemplateReader{

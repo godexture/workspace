@@ -36,13 +36,14 @@ func (t Template) project() plan.Runtime {
 			continue
 		}
 		result.Buffers = append(result.Buffers, plan.Buffer{
-			ID:       edgeKey(edge.value),
-			FromNode: edge.value.From().Node().String(),
-			FromPort: edge.value.From().ID(),
-			ToNode:   edge.value.To().Node().String(),
-			ToPort:   edge.value.To().ID(),
-			Limit:    edge.limit,
-			Reason:   edge.reason,
+			ID:          edgeKey(edge.value),
+			FromNode:    edge.value.From().Node().String(),
+			FromPort:    edge.value.From().ID(),
+			ToNode:      edge.value.To().Node().String(),
+			ToPort:      edge.value.To().ID(),
+			Limit:       edge.limit,
+			Connections: len(edge.connections),
+			Reason:      edge.reason,
 		})
 	}
 	for _, value := range t.nodes {
