@@ -200,3 +200,49 @@ func mp4FixtureU32(value uint32) []byte {
 	binary.BigEndian.PutUint32(result, value)
 	return result
 }
+
+// mp4ManySampleFixture is one track of count single-byte samples in a single
+// chunk. Every sample table stays a fixed size, so anything that grows with the
+// sample count is the reader's own state rather than the file's.
+func mp4ManySampleFixture(count uint32) []byte {
+	track := mp4FixtureTrack{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1"}
+	build := func(offset uint32) []byte {
+		stbl := mp4FixtureContainer("stbl",
+			mp4FixtureSTSD(track),
+			mp4FixtureBox("stts", mp4FixtureTable(mp4FixtureU32(count), mp4FixtureU32(1))),
+			mp4FixtureBox("stsc", mp4FixtureTable(mp4FixtureU32(1), mp4FixtureU32(count), mp4FixtureU32(1))),
+			mp4FixtureBox("stsz", append(mp4FixtureFullBox(0, 0, mp4FixtureU32(1)), mp4FixtureU32(count)...)),
+			mp4FixtureBox("stco", mp4FixtureTable(mp4FixtureU32(offset))),
+		)
+		tkhd := make([]byte, 84)
+		binary.BigEndian.PutUint32(tkhd[12:16], track.id)
+		mdhd := make([]byte, 24)
+		binary.BigEndian.PutUint32(mdhd[12:16], track.timeScale)
+		hdlr := make([]byte, 24)
+		copy(hdlr[8:12], track.handler)
+		trak := mp4FixtureContainer("trak",
+			mp4FixtureBox("tkhd", tkhd),
+			mp4FixtureContainer("mdia",
+				mp4FixtureBox("mdhd", mdhd),
+				mp4FixtureBox("hdlr", hdlr),
+				mp4FixtureContainer("minf", mp4FixtureBox("vmhd", make([]byte, 12)), mp4FixtureDINF(), stbl),
+			),
+		)
+		return mp4FixtureContainer("moov", mp4FixtureMVHD(), trak)
+	}
+	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
+	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
+	fileType := mp4FixtureBox("ftyp", fileTypePayload)
+	moov := build(0)
+	moov = build(uint32(len(fileType) + len(moov) + 8))
+	return append(append(fileType, moov...), mp4FixtureBox("mdat", make([]byte, int(count)))...)
+}
+
+// mp4FixtureTable writes a full box holding one entry count and its rows.
+func mp4FixtureTable(rows ...[]byte) []byte {
+	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(1))
+	for _, row := range rows {
+		payload = append(payload, row...)
+	}
+	return payload
+}
