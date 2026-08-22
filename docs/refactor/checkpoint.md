@@ -1,6 +1,6 @@
 # Roadmap checkpoint
 
-> 実装進捗: **7 / 12 マイルストーン完了（M0〜M6）**。M6 の再完了と最終 verification は 2026-08-17 に記録済み。M7 は M7-0〜M7-3 を実装・レビュー済みで、M7-4 の完了検証に入っている。
+> 実装進捗: **8 / 12 マイルストーン完了（M0〜M7）**。M6 の再完了は 2026-08-17、M7 の完了検証は 2026-08-22 に記録済み。
 
 この文書を M0〜M11 の状態、直近の成果、次の作業、blocker の正本とする。目標と完了条件は [refactor.md](../refactor.md#実装ロードマップ)、各領域の contract はリンク先の設計資料を正本とする。完了までの個別修正や監査の時系列は Git 履歴で追跡し、ここへ再掲しない。
 
@@ -22,7 +22,7 @@
 | M4 | 完了 | typed Compile/Suggest、bounded solver、public Plan/private Program、binding、実 linear PCM を完成した。 |
 | M5 | 完了 | typed runtime、ownership/COW、bounded queue、cancel、Finalize、transactional lifecycle を完成し、旧 contract を切断した。 |
 | M6 | 完了 | file/WAVE/PCM、probe/inspect/spool/transaction、standard/testkit/CLI の実経路と R-17 の final contract を repository-wide verification まで確認した（2026-08-17）。 |
-| M7 | 進行中 | M7-0〜M7-3 は完了。static `Spec.Ports` と typed Router/RoutedReader、input ordinal を保つ `SerialFanIn`、単一 `mdat` の unfragmented MP4 direct reader/writer、aggregate `ScratchMaxBytes` と node-local journal、preserve-all/exact `MapStream`、選択 track subset を一つの `muxLayout` で書く remux、必要時だけ選ぶ MP4 PCM binding までを実装・レビュー済み。M7-4 は conformance を実行 Plan から採取する `testkit.Coverage.Observe`、direct island の emit 順を physical order とする vector、Prepare/Run 別の benchmark、1k/1M の resource gate を追加した。残りは M7-C01〜M7-C12 の traceability 最終確認である。 |
+| M7 | 完了 | static `Spec.Ports` と typed Router/RoutedReader、input ordinal を保つ `SerialFanIn`、単一 `mdat` の unfragmented MP4 direct reader/writer、aggregate `ScratchMaxBytes` と node-local journal、preserve-all/exact `MapStream`、選択 track subset を一つの `muxLayout` で書く remux、必要時だけ選ぶ MP4 PCM binding を完成し、M7-C01〜M7-C12 の negative gate、direct island の physical order、1k/1M resource gate、公式 composition 全体の conformance を確認した（2026-08-22）。 |
 | M8 | 未着手 | 公式 family 移行とともに `ilst`/generic loss/strictness、finite seek を実 consumer から確定し、`_legacy/` を削除する。 |
 | M9 | 未着手 | stdin/stdout、WASM、demo、rich selector、pure fragmented/sequential MP4、output boundary spool、device/session Endpoint を扱う。 |
 | M10 | 未着手 | milestone と並行できる品質・配布基盤を扱う。 |
@@ -36,3 +36,4 @@
 - M7-3 の実装で確定した二つの product 判断を記録する。(1) `sidx`/`ssix`/`mfra`/`tfra`/`iloc` のように sample table の外へ byte offset を記録する box を持つ movie は、track subset だけでなく全 track の remux も拒否する。remux は常に mdat payload を track 順で書き直すため、preserve-all でもこれらの offset は stale になり得る。(2) `tref` の target track ID は inspection に保持しない。track model を slice 無しで保つ代わりに、`tref` を持つ track を含む subset は fail closed とする。全 track を保つ remux は `trak` を verbatim に複製するため影響しない。
 - MP4 の PCM Binding の実 consumer は MP4 → WAVE である。MP4 の mux は preserving remuxer なので MP4 出力は常に copy になり、binding が観測できるのは出力 format が別の wire 表現を要求する場合だけである。little-endian `sowt` は copy、big-endian `twos` は decode/encode を経由する。
 - M7-4 で conformance の採取経路を変えた。typed runner は一 stream を一 input port で駆動するため、carrier を持たない MP4 reader と repeated descriptors を受ける mux を `Subject` として表せない。両者は Set を狭めて gate から外れていたので、実行した `plan.Plan` から component を採取する `testkit.Coverage.Observe` を追加し、公式 composition 全体を verify するようにした。MP4 専用の private path は作っていない。
+- M7 完了判定で一つだけ寛容に読んだ条件を明記する。「Plan が per-track sample-table reconstruction を示す」は専用 field ではなく、mux node の chunk-offset journal claim（`Node.Scratch` と `Plan.Scratch()`）と `mp4-remux` structural effect で示している。sample table の再生成に必要な state は journal そのものなので、claim が投影されていれば Plan から読み取れると判断した。専用の投影が必要になった場合は M9 の surface 作業で追加する。
