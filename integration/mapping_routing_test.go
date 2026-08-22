@@ -1,7 +1,8 @@
 package integration_test
 
 import (
-	"errors"
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +32,7 @@ func TestMP4PlanProjectsPreserveAllMappingsInInspectionOrder(t *testing.T) {
 	}
 }
 
-func TestMP4SubsetSelectionFailsDuringPlanningUntilMuxSupportsSubset(t *testing.T) {
+func TestMP4SubsetSelectionPlansAndRuns(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.mp4")
 	outputPath := filepath.Join(directory, "output.mp4")
@@ -46,10 +47,42 @@ func TestMP4SubsetSelectionFailsDuringPlanningUntilMuxSupportsSubset(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := instance.Plan(t.Context(), request); err == nil {
-		t.Fatal("MP4 subset unexpectedly planned before mux subset support")
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(outputPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("subset planning failure acquired output: %v", err)
+	if mappings := prepared.Plan().Mappings(); len(mappings) != 1 || mappings[0].Input != 0 || mappings[0].Stream != "2" || mappings[0].Output != 0 {
+		t.Fatalf("MP4 subset effective mappings = %#v", mappings)
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("MP4 subset Run = %#v, %v", result, runErr)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outputBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := mp4FixtureTopLevel(outputBytes)
+	if len(top) != 3 || top[0].typeID != "ftyp" || top[1].typeID != "moov" || top[2].typeID != "mdat" || !bytes.Equal(top[2].payload, []byte{0xca, 0xfe, 0xba}) {
+		t.Fatalf("MP4 subset output top-level = %#v", top)
+	}
+	var trackCount int
+	var trackID uint32
+	for _, child := range mp4FixtureChildren(top[1].payload, 0, len(top[1].payload)) {
+		if child.typeID != "trak" {
+			continue
+		}
+		trackCount++
+		tkhd, ok := mp4FixtureChild(child, "tkhd")
+		if !ok || len(tkhd.payload) < 16 {
+			t.Fatalf("MP4 subset track header = %#v", tkhd)
+		}
+		trackID = binary.BigEndian.Uint32(tkhd.payload[12:16])
+	}
+	if trackCount != 1 || trackID != 2 {
+		t.Fatalf("MP4 subset tracks = %d/%d", trackCount, trackID)
 	}
 }

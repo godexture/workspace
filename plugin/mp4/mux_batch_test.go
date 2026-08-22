@@ -45,11 +45,22 @@ func (s *muxBatchScratchSpy) WriteAt(_ context.Context, value []byte, offset int
 	return nil
 }
 
+// journalOnlyMuxer drives the chunk-offset journal without a movie. Finalize
+// only reads the payload size and the selected track count, so an empty payload
+// layout with no selected track is enough.
+func journalOnlyMuxer(journal plugin.Scratch, need int64) *muxer {
+	return &muxer{
+		layout:  muxLayout{pieces: []muxPiece{{kind: muxCopy}, {kind: muxPayload}}, payload: 1},
+		scratch: journal,
+		need:    need,
+	}
+}
+
 func TestMP4MuxBatchesChunkOffsetScratchAppends(t *testing.T) {
 	const chunks = 10_000
 	const recordBytes = 8
 	spy := &muxBatchScratchSpy{}
-	mux := &muxer{movie: movie{}, scratch: spy, need: chunks * recordBytes}
+	mux := journalOnlyMuxer(spy, chunks*recordBytes)
 
 	for index := 0; index < chunks; index++ {
 		mux.outputOffset = uint64(index * 1024)
@@ -116,7 +127,7 @@ func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
 
 	t.Run("finalize cancellation", func(t *testing.T) {
 		spy := &muxBatchScratchSpy{}
-		mux := &muxer{movie: movie{}, scratch: spy, need: 8}
+		mux := journalOnlyMuxer(spy, 8)
 		if err := mux.appendChunkOffset(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +145,7 @@ func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
 func TestMP4MuxChunkOffsetCardinalityAndEmptyJournal(t *testing.T) {
 	t.Run("cardinality", func(t *testing.T) {
 		spy := &muxBatchScratchSpy{}
-		mux := &muxer{movie: movie{}, scratch: spy, need: 16}
+		mux := journalOnlyMuxer(spy, 16)
 		if err := mux.appendChunkOffset(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +158,7 @@ func TestMP4MuxChunkOffsetCardinalityAndEmptyJournal(t *testing.T) {
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		mux := &muxer{movie: movie{}, need: 0}
+		mux := journalOnlyMuxer(nil, 0)
 		if err := mux.Finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +177,7 @@ func BenchmarkMP4MuxChunkOffsetScratchBatch(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		spy.data = spy.data[:0]
 		spy.appendSizes = spy.appendSizes[:0]
-		mux := &muxer{movie: movie{}, scratch: spy, need: chunks * recordBytes}
+		mux := journalOnlyMuxer(spy, chunks*recordBytes)
 		for chunk := 0; chunk < chunks; chunk++ {
 			mux.outputOffset = uint64(chunk * 1024)
 			if err := mux.appendChunkOffset(context.Background()); err != nil {

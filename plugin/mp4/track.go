@@ -8,21 +8,20 @@ import (
 	"github.com/godexture/godec/access"
 )
 
-func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) ([]track, box, error) {
-	var movieHead box
-	var haveHeader bool
+func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, value box, budget *movieBudget) ([]track, movieHeader, error) {
+	var header movieHeader
 	var trackCount uint64
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
 		switch child.typeID {
 		case typeMVHD:
-			if haveHeader {
+			if header.box.typeID == typeMVHD {
 				return fmt.Errorf("%w: mvhd is repeated", errMalformedMovie)
 			}
-			if err := validateMovieHeader(ctx, reader, child); err != nil {
+			parsed, err := readMovieHeader(ctx, reader, child)
+			if err != nil {
 				return err
 			}
-			movieHead = child
-			haveHeader = true
+			header = parsed
 		case typeTRAK:
 			if trackCount == ^uint64(0) {
 				return fmt.Errorf("%w: track count overflows", errMalformedMovie)
@@ -36,16 +35,16 @@ func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, valu
 		return nil
 	})
 	if err != nil {
-		return nil, box{}, err
+		return nil, movieHeader{}, err
 	}
-	if !haveHeader || trackCount == 0 {
-		return nil, box{}, fmt.Errorf("%w: moov requires mvhd and one trak", errMalformedMovie)
+	if header.box.typeID != typeMVHD || trackCount == 0 {
+		return nil, movieHeader{}, fmt.Errorf("%w: moov requires mvhd and one trak", errMalformedMovie)
 	}
 	if trackCount > uint64(^uint(0)>>1) {
-		return nil, box{}, fmt.Errorf("%w: track count exceeds runtime range", errUnsupportedMovie)
+		return nil, movieHeader{}, fmt.Errorf("%w: track count exceeds runtime range", errUnsupportedMovie)
 	}
 	if err := budget.reserveTracks(trackCount); err != nil {
-		return nil, box{}, err
+		return nil, movieHeader{}, err
 	}
 	tracks := make([]track, 0, int(trackCount))
 	trackIDs := make(map[uint32]struct{}, trackCount)
@@ -65,9 +64,9 @@ func parseMoov(ctx context.Context, reader access.Random, sourceEnd uint64, valu
 		return nil
 	})
 	if err != nil {
-		return nil, box{}, err
+		return nil, movieHeader{}, err
 	}
-	return tracks, movieHead, nil
+	return tracks, header, nil
 }
 
 func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (track, error) {
@@ -79,12 +78,12 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 			if haveHeader {
 				return fmt.Errorf("%w: tkhd is repeated", errMalformedMovie)
 			}
-			id, err := readTrackID(ctx, reader, child)
+			header, err := readTrackHeader(ctx, reader, child)
 			if err != nil {
 				return err
 			}
-			result.id = id
-			result.trackHead = child
+			result.id = header.id
+			result.movieDuration = header.duration
 			haveHeader = true
 		case typeMDIA:
 			if haveMedia {
@@ -94,9 +93,13 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 				return err
 			}
 			haveMedia = true
-		case typeEDTS:
 		case typeELST:
 			return fmt.Errorf("%w: elst outside edts", errUnsupportedMovie)
+		case typeTREF:
+			if result.references {
+				return fmt.Errorf("%w: tref is repeated", errMalformedMovie)
+			}
+			result.references = true
 		}
 		return nil
 	})
@@ -109,47 +112,55 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 	return result, nil
 }
 
-func readTrackID(ctx context.Context, reader access.Random, value box) (uint32, error) {
+func readTrackHeader(ctx context.Context, reader access.Random, value box) (trackHeader, error) {
 	var prefix [96]byte
 	if err := readBoxPrefix(ctx, reader, value, prefix[:1], "tkhd"); err != nil {
-		return 0, err
+		return trackHeader{}, err
 	}
 	length := 84
 	if prefix[0] == 1 {
 		length = 96
 	}
 	if err := readBoxPrefix(ctx, reader, value, prefix[:length], "tkhd"); err != nil {
-		return 0, err
+		return trackHeader{}, err
 	}
-	return parseTrackID(prefix[:length])
+	return parseTrackHeader(prefix[:length], value)
 }
 
-func parseTrackID(data []byte) (uint32, error) {
+func parseTrackHeader(data []byte, value box) (trackHeader, error) {
 	if len(data) == 0 {
-		return 0, fmt.Errorf("%w: tkhd has no version", errMalformedMovie)
+		return trackHeader{}, fmt.Errorf("%w: tkhd has no version", errMalformedMovie)
 	}
+	var result trackHeader
+	var durationOffset uint64
 	switch data[0] {
 	case 0:
 		if len(data) < 84 {
-			return 0, fmt.Errorf("%w: tkhd version zero is shorter than 84 bytes", errMalformedMovie)
+			return trackHeader{}, fmt.Errorf("%w: tkhd version zero is shorter than 84 bytes", errMalformedMovie)
 		}
-		id := binary.BigEndian.Uint32(data[12:16])
-		if id == 0 {
-			return 0, fmt.Errorf("%w: tkhd track ID is zero", errMalformedMovie)
-		}
-		return id, nil
+		result.id = binary.BigEndian.Uint32(data[12:16])
+		result.duration.value = uint64(binary.BigEndian.Uint32(data[20:24]))
+		durationOffset = 20
 	case 1:
 		if len(data) < 96 {
-			return 0, fmt.Errorf("%w: tkhd version one is shorter than 96 bytes", errMalformedMovie)
+			return trackHeader{}, fmt.Errorf("%w: tkhd version one is shorter than 96 bytes", errMalformedMovie)
 		}
-		id := binary.BigEndian.Uint32(data[20:24])
-		if id == 0 {
-			return 0, fmt.Errorf("%w: tkhd track ID is zero", errMalformedMovie)
-		}
-		return id, nil
+		result.id = binary.BigEndian.Uint32(data[20:24])
+		result.duration.value = binary.BigEndian.Uint64(data[28:36])
+		result.duration.wide = true
+		durationOffset = 28
 	default:
-		return 0, fmt.Errorf("%w: tkhd version %d", errUnsupportedMovie, data[0])
+		return trackHeader{}, fmt.Errorf("%w: tkhd version %d", errUnsupportedMovie, data[0])
 	}
+	if result.id == 0 {
+		return trackHeader{}, fmt.Errorf("%w: tkhd track ID is zero", errMalformedMovie)
+	}
+	location, ok := checkedBoxAdd(value.payloadOffset, durationOffset)
+	if !ok {
+		return trackHeader{}, fmt.Errorf("%w: tkhd duration offset overflows", errMalformedMovie)
+	}
+	result.duration.offset = location
+	return result, nil
 }
 
 func parseMedia(ctx context.Context, reader access.Random, sourceEnd uint64, value box, result *track) error {

@@ -14,12 +14,49 @@ func (m *muxer) start(ctx context.Context, output flow.Emitter[access.Write]) er
 	if m.started {
 		return nil
 	}
-	if err := m.emitSourceSpan(ctx, 0, m.movie.media.payloadOffset, output); err != nil {
+	if err := m.emitPieces(ctx, m.layout.prefix(), output); err != nil {
 		return err
 	}
-	m.outputOffset = m.movie.media.payloadOffset
+	m.outputOffset = m.layout.payloadOffset()
 	m.started = true
 	return nil
+}
+
+func (m *muxer) emitPieces(ctx context.Context, pieces []muxPiece, output flow.Emitter[access.Write]) error {
+	for _, piece := range pieces {
+		end, ok := checkedBoxAdd(piece.source, piece.size)
+		if !ok {
+			return fmt.Errorf("%w: MP4 output piece range overflows", ErrMalformed)
+		}
+		switch piece.kind {
+		case muxCopy:
+			if err := m.emitSourceSpan(ctx, piece.source, end, output); err != nil {
+				return err
+			}
+		case muxHeader:
+			if piece.size > uint64(len(piece.header)) {
+				return fmt.Errorf("%w: MP4 output header piece is oversized", ErrMalformed)
+			}
+			if err := m.emitBytes(ctx, piece.header[:piece.size], output); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%w: MP4 output payload is written from packets", ErrMalformed)
+		}
+	}
+	return nil
+}
+
+func (m *muxer) emitBytes(ctx context.Context, value []byte, output flow.Emitter[access.Write]) error {
+	if len(value) == 0 {
+		return nil
+	}
+	return m.emitFill(ctx, len(value), func(storage buffer.Mutable) error {
+		copy(storage.Bytes(), value)
+		return nil
+	}, func(payload buffer.Handle) (access.Write, error) {
+		return access.Append(payload)
+	}, output)
 }
 
 func (m *muxer) emitSourceSpan(ctx context.Context, start, end uint64, output flow.Emitter[access.Write]) error {

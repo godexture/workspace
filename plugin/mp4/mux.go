@@ -18,6 +18,7 @@ type muxer struct {
 	out     flow.Item[access.Write]
 	shape   flow.Shape
 	movie   movie
+	layout  muxLayout
 	reader  access.Random
 	buffers *buffer.Allocator
 	scratch plugin.Scratch
@@ -39,10 +40,10 @@ type muxer struct {
 }
 
 func openMuxer(ctx plugin.OpenContext, plan muxPlan) (*muxer, error) {
-	if !plan.shape.Equal(muxerShape()) || validateMuxMovie(plan.movie) != nil {
+	if !plan.shape.Equal(muxerShape()) || validateMuxLayout(plan.movie, plan.layout) != nil {
 		return nil, fmt.Errorf("%w: MP4 mux plan is invalid", ErrMalformed)
 	}
-	need, err := muxScratchBytes(plan.movie)
+	need, err := plan.layout.journalBytes()
 	if err != nil || need != plan.scratch || uint64(need) > math.MaxInt64 {
 		return nil, fmt.Errorf("%w: MP4 mux scratch plan is invalid", ErrMalformed)
 	}
@@ -74,6 +75,7 @@ func openMuxer(ctx plugin.OpenContext, plan muxPlan) (*muxer, error) {
 	return &muxer{
 		shape:   plan.shape.Clone(),
 		movie:   plan.movie,
+		layout:  plan.layout,
 		reader:  reader,
 		buffers: ctx.Buffers(),
 		scratch: ctx.Scratch(),
@@ -124,7 +126,7 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	}
 	outputOffset := m.outputOffset
 	if !m.started {
-		outputOffset = m.movie.media.payloadOffset
+		outputOffset = m.layout.payloadOffset()
 	}
 	if uint64(expected.size) > math.MaxUint64-m.payloadBytes || uint64(expected.size) > math.MaxUint64-outputOffset {
 		return m.fail(fmt.Errorf("%w: MP4 output offset overflows", ErrUnsupported))
@@ -166,10 +168,10 @@ func (m *muxer) Finalize(ctx context.Context) error {
 		return m.fail(err)
 	}
 	m.skipEmptyTracks()
-	if m.hasCursor || m.track != len(m.movie.tracks) {
+	if m.hasCursor || m.track != len(m.layout.tracks) {
 		return m.fail(fmt.Errorf("%w: MP4 muxer did not receive every inspected sample", ErrUnsupported))
 	}
-	if m.payloadBytes != m.movie.media.payloadSize {
+	if m.payloadBytes != m.layout.payloadSize() {
 		return m.fail(fmt.Errorf("%w: MP4 muxer payload does not cover mdat", ErrUnsupported))
 	}
 	if err := m.flushScratchPage(ctx); err != nil {
@@ -201,14 +203,13 @@ func (m *muxer) Flush(ctx context.Context, output flow.Emitter[access.Write]) er
 	if err := m.preflightOffsets(ctx); err != nil {
 		return m.fail(err)
 	}
-	mediaEnd, ok := payloadEnd(m.movie.media)
-	if !ok {
-		return m.fail(fmt.Errorf("%w: MP4 mdat payload range overflows", ErrMalformed))
-	}
-	if err := m.emitSourceSpan(ctx, mediaEnd, m.movie.sourceEnd, output); err != nil {
+	if err := m.emitPieces(ctx, m.layout.suffix(), output); err != nil {
 		return m.fail(err)
 	}
 	if err := m.patchOffsets(ctx, output); err != nil {
+		return m.fail(err)
+	}
+	if err := m.patchDuration(ctx, output); err != nil {
 		return m.fail(err)
 	}
 	m.flushed = true
@@ -224,13 +225,13 @@ func (m *muxer) fail(err error) error {
 
 func (m *muxer) selectTrack(ctx context.Context, ordinal int) error {
 	m.skipEmptyTracks()
-	if ordinal != m.track || ordinal < 0 || ordinal >= len(m.movie.tracks) {
-		return fmt.Errorf("%w: MP4 packet input %d is not the next inspected track", ErrUnsupported, ordinal)
+	if ordinal != m.track || ordinal < 0 || ordinal >= len(m.layout.tracks) {
+		return fmt.Errorf("%w: MP4 packet input %d is not the next selected track", ErrUnsupported, ordinal)
 	}
 	if m.hasCursor {
 		return nil
 	}
-	cursor, err := newSampleCursor(ctx, m.reader, m.movie.tracks[ordinal])
+	cursor, err := newSampleCursor(ctx, m.reader, m.layout.tracks[ordinal].value)
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,7 @@ func (m *muxer) selectTrack(ctx context.Context, ordinal int) error {
 }
 
 func (m *muxer) skipEmptyTracks() {
-	for !m.hasCursor && m.track < len(m.movie.tracks) && m.movie.tracks[m.track].sampleCount == 0 {
+	for !m.hasCursor && m.track < len(m.layout.tracks) && m.layout.tracks[m.track].value.sampleCount == 0 {
 		m.track++
 	}
 }

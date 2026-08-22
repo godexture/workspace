@@ -72,7 +72,8 @@ func (m *muxer) preflightOffsets(ctx context.Context) error {
 		return fmt.Errorf("%w: MP4 chunk-offset journal is unavailable", ErrMalformed)
 	}
 	var position int64
-	for _, track := range m.movie.tracks {
+	for _, selected := range m.layout.tracks {
+		track := selected.value
 		for remaining := uint64(track.chunkCount); remaining != 0; {
 			count := min(remaining, uint64(muxJournalPageBytes/8))
 			bytes := int(count * 8)
@@ -106,20 +107,15 @@ func (m *muxer) patchOffsets(ctx context.Context, output flow.Emitter[access.Wri
 		return nil
 	}
 	var position int64
-	for _, track := range m.movie.tracks {
+	for _, selected := range m.layout.tracks {
 		entrySize := 4
-		if track.tables.largeOffsets {
+		if selected.value.tables.largeOffsets {
 			entrySize = 8
 		}
-		patchOffset, ok := checkedBoxAdd(track.tables.offsets.payloadOffset, 8)
-		if !ok || patchOffset > math.MaxInt64 {
-			return fmt.Errorf("%w: MP4 chunk-offset table lies outside runtime offsets", ErrMalformed)
-		}
-		for remaining := uint64(track.chunkCount); remaining != 0; {
+		patchOffset := selected.offsets
+		for remaining := uint64(selected.value.chunkCount); remaining != 0; {
 			count := min(remaining, uint64(muxJournalPageBytes/8))
-			journalBytes := int(count * 8)
-			patchBytes := int(count) * entrySize
-			nextPatch, ok := checkedBoxAdd(patchOffset, uint64(patchBytes))
+			nextPatch, ok := checkedBoxAdd(patchOffset, count*uint64(entrySize))
 			if !ok || nextPatch > math.MaxInt64 {
 				return fmt.Errorf("%w: MP4 chunk-offset patch range overflows", ErrMalformed)
 			}
@@ -127,7 +123,7 @@ func (m *muxer) patchOffsets(ctx context.Context, output flow.Emitter[access.Wri
 				return err
 			}
 			patchOffset = nextPatch
-			position += int64(journalBytes)
+			position += int64(count * 8)
 			remaining -= count
 		}
 	}
@@ -135,6 +131,27 @@ func (m *muxer) patchOffsets(ctx context.Context, output flow.Emitter[access.Wri
 		return fmt.Errorf("%w: MP4 chunk-offset journal cardinality differs", ErrMalformed)
 	}
 	return nil
+}
+
+// patchDuration rewrites the mvhd duration when the selection drops a track.
+func (m *muxer) patchDuration(ctx context.Context, output flow.Emitter[access.Write]) error {
+	patch := m.layout.duration
+	if patch.width == 0 {
+		return nil
+	}
+	if patch.offset > math.MaxInt64 || (patch.width != 4 && patch.width != 8) || (patch.width == 4 && patch.value > math.MaxUint32) {
+		return fmt.Errorf("%w: MP4 movie duration patch is invalid", ErrMalformed)
+	}
+	return m.emitFill(ctx, int(patch.width), func(storage buffer.Mutable) error {
+		if patch.width == 4 {
+			binary.BigEndian.PutUint32(storage.Bytes(), uint32(patch.value))
+		} else {
+			binary.BigEndian.PutUint64(storage.Bytes(), patch.value)
+		}
+		return nil
+	}, func(payload buffer.Handle) (access.Write, error) {
+		return access.Patch(int64(patch.offset), payload)
+	}, output)
 }
 
 func (m *muxer) withScratchPage(size int, use func([]byte) error) error {

@@ -37,13 +37,16 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 			if haveMovie {
 				return fmt.Errorf("%w: moov is repeated", errMalformedMovie)
 			}
-			tracks, movieHead, err := parseMoov(ctx, inspection, sourceEnd, value, &budget)
+			tracks, header, err := parseMoov(ctx, inspection, sourceEnd, value, &budget)
 			if err != nil {
 				return err
 			}
 			result.tracks = tracks
 			result.moov = value
-			result.movieHead = movieHead
+			result.header = header
+			if moovRecordsOffsets(ctx, inspection, sourceEnd, value) {
+				result.offsetIndex = true
+			}
 			haveMovie = true
 		case typeMDAT:
 			if haveMedia {
@@ -51,6 +54,12 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 			}
 			result.media = value
 			haveMedia = true
+		case typeSIDX, typeSSIX, typeMFRA, typeTFRA, typeILOC:
+			result.offsetIndex = true
+		case typeMETA:
+			if metaRecordsOffsets(ctx, inspection, sourceEnd, value) {
+				result.offsetIndex = true
+			}
 		case typeMOOF:
 			return fmt.Errorf("%w: fragmented moof is not supported", errUnsupportedMovie)
 		}
@@ -68,6 +77,7 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 			return movie{}, normalizeMovieError(err)
 		}
 		var ok bool
+		result.tracks[index].sampleBytes = total
 		result.totalSampleBytes, ok = checkedBoxAdd(result.totalSampleBytes, total)
 		if !ok {
 			return movie{}, fmt.Errorf("%w: movie sample payload total overflows", errMalformedMovie)
@@ -76,44 +86,89 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 	return result, nil
 }
 
-func parseMovieHeader(data []byte) error {
-	if len(data) < 4 {
-		return fmt.Errorf("%w: mvhd has no full-box header", errMalformedMovie)
-	}
-	var timeScale uint32
-	switch data[0] {
-	case 0:
-		if len(data) < 100 {
-			return fmt.Errorf("%w: mvhd version zero is shorter than 100 bytes", errMalformedMovie)
+// moovRecordsOffsets reports an iloc item index directly under moov. Deeper
+// nesting is not searched: iloc lives at moov or file level, while the meta box
+// under udta holds vocabulary metadata and follows the QuickTime layout in some
+// writers, so scanning it would fail closed on ordinary files.
+func moovRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) bool {
+	found := false
+	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
+		if child.typeID == typeMETA && metaRecordsOffsets(ctx, reader, sourceEnd, child) {
+			found = true
 		}
-		timeScale = binary.BigEndian.Uint32(data[12:16])
-	case 1:
-		if len(data) < 112 {
-			return fmt.Errorf("%w: mvhd version one is shorter than 112 bytes", errMalformedMovie)
-		}
-		timeScale = binary.BigEndian.Uint32(data[20:24])
-	default:
-		return fmt.Errorf("%w: mvhd version %d", errUnsupportedMovie, data[0])
-	}
-	if timeScale == 0 {
-		return fmt.Errorf("%w: mvhd timescale is zero", errMalformedMovie)
-	}
-	return nil
+		return nil
+	})
+	return found || err != nil
 }
 
-func validateMovieHeader(ctx context.Context, reader access.Random, value box) error {
+// metaRecordsOffsets reports whether a meta box may carry an iloc item index.
+// meta is a FullBox in ISO BMFF but not in the QuickTime variant, so a meta
+// whose children cannot be scanned counts as an index and fails closed.
+func metaRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) bool {
+	start, ok := checkedBoxAdd(value.payloadOffset, 4)
+	end, endOK := payloadEnd(value)
+	if !ok || !endOK || start > end {
+		return true
+	}
+	found := false
+	err := scanBoxes(ctx, reader, boxScope{sourceEnd: sourceEnd, start: start, end: end}, func(child box) error {
+		if child.typeID == typeILOC {
+			found = true
+		}
+		return nil
+	})
+	return found || err != nil
+}
+
+func readMovieHeader(ctx context.Context, reader access.Random, value box) (movieHeader, error) {
 	var prefix [112]byte
 	if err := readBoxPrefix(ctx, reader, value, prefix[:4], "mvhd"); err != nil {
-		return err
+		return movieHeader{}, err
 	}
 	length := 100
 	if prefix[0] == 1 {
 		length = 112
 	}
 	if err := readBoxPrefix(ctx, reader, value, prefix[:length], "mvhd"); err != nil {
-		return err
+		return movieHeader{}, err
 	}
-	return parseMovieHeader(prefix[:length])
+	return parseMovieHeader(prefix[:length], value)
+}
+
+func parseMovieHeader(data []byte, value box) (movieHeader, error) {
+	if len(data) < 4 {
+		return movieHeader{}, fmt.Errorf("%w: mvhd has no full-box header", errMalformedMovie)
+	}
+	result := movieHeader{box: value}
+	var durationOffset uint64
+	switch data[0] {
+	case 0:
+		if len(data) < 100 {
+			return movieHeader{}, fmt.Errorf("%w: mvhd version zero is shorter than 100 bytes", errMalformedMovie)
+		}
+		result.timeScale = binary.BigEndian.Uint32(data[12:16])
+		result.duration.value = uint64(binary.BigEndian.Uint32(data[16:20]))
+		durationOffset = 16
+	case 1:
+		if len(data) < 112 {
+			return movieHeader{}, fmt.Errorf("%w: mvhd version one is shorter than 112 bytes", errMalformedMovie)
+		}
+		result.timeScale = binary.BigEndian.Uint32(data[20:24])
+		result.duration.value = binary.BigEndian.Uint64(data[24:32])
+		result.duration.wide = true
+		durationOffset = 24
+	default:
+		return movieHeader{}, fmt.Errorf("%w: mvhd version %d", errUnsupportedMovie, data[0])
+	}
+	if result.timeScale == 0 {
+		return movieHeader{}, fmt.Errorf("%w: mvhd timescale is zero", errMalformedMovie)
+	}
+	location, ok := checkedBoxAdd(value.payloadOffset, durationOffset)
+	if !ok {
+		return movieHeader{}, fmt.Errorf("%w: mvhd duration offset overflows", errMalformedMovie)
+	}
+	result.duration.offset = location
+	return result, nil
 }
 
 func parseFileType(ctx context.Context, reader access.Random, value box) (fileType, error) {

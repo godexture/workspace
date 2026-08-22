@@ -114,21 +114,25 @@ func TestHeaderFieldMinima(t *testing.T) {
 	mvhd := make([]byte, 112)
 	mvhd[0] = 1
 	binary.BigEndian.PutUint32(mvhd[20:24], 1000)
-	if err := parseMovieHeader(mvhd); err != nil {
-		t.Fatal(err)
+	binary.BigEndian.PutUint64(mvhd[24:32], 4000)
+	header, err := parseMovieHeader(mvhd, box{payloadOffset: 40})
+	if err != nil || header.timeScale != 1000 || header.duration != (durationField{offset: 64, value: 4000, wide: true}) {
+		t.Fatalf("parseMovieHeader() = %#v, %v", header, err)
 	}
-	if err := parseMovieHeader(mvhd[:111]); !errors.Is(err, errMalformedMovie) {
+	if _, err := parseMovieHeader(mvhd[:111], box{}); !errors.Is(err, errMalformedMovie) {
 		t.Fatalf("parseMovieHeader() error = %v, want malformed", err)
 	}
 
 	tkhd := make([]byte, 96)
 	tkhd[0] = 1
 	binary.BigEndian.PutUint32(tkhd[20:24], 1)
-	if id, err := parseTrackID(tkhd); err != nil || id != 1 {
-		t.Fatalf("parseTrackID() = %d, %v", id, err)
+	binary.BigEndian.PutUint64(tkhd[28:36], 2000)
+	track, err := parseTrackHeader(tkhd, box{payloadOffset: 40})
+	if err != nil || track.id != 1 || track.duration != (durationField{offset: 68, value: 2000, wide: true}) {
+		t.Fatalf("parseTrackHeader() = %#v, %v", track, err)
 	}
-	if _, err := parseTrackID(tkhd[:95]); !errors.Is(err, errMalformedMovie) {
-		t.Fatalf("parseTrackID() error = %v, want malformed", err)
+	if _, err := parseTrackHeader(tkhd[:95], box{}); !errors.Is(err, errMalformedMovie) {
+		t.Fatalf("parseTrackHeader() error = %v, want malformed", err)
 	}
 
 	mdhd := make([]byte, 36)

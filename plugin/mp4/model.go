@@ -51,6 +51,13 @@ var (
 	typeSTSS = boxType{'s', 't', 's', 's'}
 	typeEDTS = boxType{'e', 'd', 't', 's'}
 	typeELST = boxType{'e', 'l', 's', 't'}
+	typeTREF = boxType{'t', 'r', 'e', 'f'}
+	typeSIDX = boxType{'s', 'i', 'd', 'x'}
+	typeSSIX = boxType{'s', 's', 'i', 'x'}
+	typeMFRA = boxType{'m', 'f', 'r', 'a'}
+	typeTFRA = boxType{'t', 'f', 'r', 'a'}
+	typeMETA = boxType{'m', 'e', 't', 'a'}
+	typeILOC = boxType{'i', 'l', 'o', 'c'}
 	typeENCV = boxType{'e', 'n', 'c', 'v'}
 	typeENCA = boxType{'e', 'n', 'c', 'a'}
 	typeURL  = boxType{'u', 'r', 'l', ' '}
@@ -69,13 +76,59 @@ type movie struct {
 	fileType  fileType
 	fileBox   box
 	moov      box
-	movieHead box
+	header    movieHeader
 	media     box
 	tracks    []track
+	// offsetIndex marks a known box that records byte offsets a rebuilt mdat
+	// would invalidate.
+	offsetIndex bool
 	// totalSampleBytes is the checked sum of every inspected sample payload.
 	// A preserving remux can reuse the mdat header only when this covers the
 	// complete mdat payload.
 	totalSampleBytes uint64
+}
+
+// movieHeader is the parsed mvhd: its source range, the movie timescale and the
+// duration a rewritten movie patches in place.
+type movieHeader struct {
+	box       box
+	timeScale uint32
+	duration  durationField
+}
+
+// trackHeader is the parsed tkhd: the track ID and the track duration measured
+// in movie timescale units.
+type trackHeader struct {
+	id       uint32
+	duration durationField
+}
+
+// durationField locates a duration inside its header box so a rewritten movie
+// can patch the value without re-reading the source, and records its width.
+type durationField struct {
+	offset uint64
+	value  uint64
+	wide   bool
+}
+
+func (d durationField) width() uint64 {
+	if d.wide {
+		return 8
+	}
+	return 4
+}
+
+// unknown reports the all-ones value ISO BMFF writes when a duration cannot be
+// determined. A rewritten movie cannot derive a shorter duration from it.
+func (d durationField) unknown() bool {
+	if d.wide {
+		return d.value == math.MaxUint64
+	}
+	return d.value == math.MaxUint32
+}
+
+func (d durationField) fits(value uint64) bool {
+	return d.wide || value <= math.MaxUint32
 }
 
 type fileType struct {
@@ -87,9 +140,12 @@ type fileType struct {
 // Unknown boxes are deliberately not indexed: a preserving mux rescans the
 // enclosing known range from the borrowed source.
 type track struct {
-	id               uint32
-	timeScale        uint32
-	duration         uint64
+	id          uint32
+	timeScale   uint32
+	duration    uint64
+	sampleBytes uint64
+	// movieDuration is the tkhd duration, in movie timescale units.
+	movieDuration    durationField
 	sampleCount      uint64
 	chunkCount       uint32
 	maxSampleSize    uint32
@@ -99,7 +155,6 @@ type track struct {
 	dataReferences   uint32
 
 	trak       box
-	trackHead  box
 	media      box
 	mediaHead  box
 	handlerBox box
@@ -107,6 +162,9 @@ type track struct {
 	dataInfo   box
 	sampleBox  box
 	tables     sampleTables
+	// references reports a tref child. Its target track IDs are not retained,
+	// so a track subset fails closed rather than leave a reference dangling.
+	references bool
 }
 
 type sampleTables struct {
@@ -143,7 +201,7 @@ type movieBudget struct {
 }
 
 func (m movie) valid() bool {
-	if m.sourceEnd == 0 || m.fileBox.typeID != typeFTYP || m.moov.typeID != typeMOOV || m.movieHead.typeID != typeMVHD || m.media.typeID != typeMDAT || len(m.tracks) == 0 {
+	if m.sourceEnd == 0 || m.fileBox.typeID != typeFTYP || m.moov.typeID != typeMOOV || m.header.box.typeID != typeMVHD || m.media.typeID != typeMDAT || len(m.tracks) == 0 {
 		return false
 	}
 	for _, track := range m.tracks {

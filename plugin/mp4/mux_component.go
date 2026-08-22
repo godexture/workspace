@@ -2,7 +2,6 @@ package mp4
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
@@ -22,6 +21,7 @@ const muxJournalPageBytes = 8 * 1024
 type muxPlan struct {
 	shape   flow.Shape
 	movie   movie
+	layout  muxLayout
 	scratch resource.Bytes
 }
 
@@ -49,7 +49,11 @@ func muxerComponent() plugin.Component {
 					"mp4.inspection", diagnostic.ErrorSeverity, diagnostic.Path{}, "MP4 muxer requires a prepared movie inspection", nil,
 				))
 			}
-			scratch, err := compileMux(shape, packets, inspected)
+			layout, err := compileMux(packets, inspected)
+			if err != nil {
+				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+			}
+			scratch, err := layout.journalBytes()
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
@@ -58,7 +62,7 @@ func muxerComponent() plugin.Component {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
-				Plan:         muxPlan{shape: shape.Clone(), movie: inspected, scratch: scratch},
+				Plan:         muxPlan{shape: shape.Clone(), movie: inspected, layout: layout, scratch: scratch},
 				Outputs:      flow.NewDescriptors(flow.Describe("writes", output)),
 				Effects:      []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-remux"}},
 				Resources:    resource.Request{Memory: muxPageBytes},
@@ -78,27 +82,34 @@ func muxerComponent() plugin.Component {
 	)
 }
 
-func compileMux(shape flow.Shape, inputs []stream.Descriptor, inspected movie) (resource.Bytes, error) {
-	if err := validateMuxMovie(inspected); err != nil {
-		return 0, err
+// validateMuxLayout re-checks at Open that the compiled layout still describes
+// the inspection it was planned against.
+func validateMuxLayout(value movie, layout muxLayout) error {
+	if err := validateMuxMovie(value); err != nil {
+		return err
 	}
-	if len(inputs) != len(inspected.tracks) {
-		return 0, fmt.Errorf("%w: MP4 mux requires %d packet inputs in inspection order, got %d", ErrUnsupported, len(inspected.tracks), len(inputs))
+	if !layout.valid() || layout.size == 0 {
+		return fmt.Errorf("%w: MP4 output layout is incomplete", ErrMalformed)
 	}
-	for index, input := range inputs {
-		track := inspected.tracks[index]
-		if !input.Valid() || !input.SchemaDescriptor().Equal(codec.Packets().Descriptor()) || input.ID() != trackStreamID(track.id) || input.TimeBase() != timing.MustBase(1, int64(track.timeScale)) {
-			return 0, fmt.Errorf("%w: packet input %d does not match inspected track %d", ErrUnsupported, index, track.id)
+	previous := -1
+	var payload uint64
+	for _, selected := range layout.tracks {
+		if selected.source <= previous || selected.source >= len(value.tracks) {
+			return fmt.Errorf("%w: MP4 selected track order is invalid", ErrMalformed)
 		}
-		tag, ok := codec.TagOf(input.Properties())
-		if !ok || tag != SampleEntryTag(string(track.codec[:])) {
-			return 0, fmt.Errorf("%w: packet input %d changes track %d sample entry", ErrUnsupported, index, track.id)
+		if selected.value.id != value.tracks[selected.source].id || selected.value.trak != value.tracks[selected.source].trak {
+			return fmt.Errorf("%w: MP4 selected track %d no longer matches the inspection", ErrMalformed, selected.value.id)
 		}
-		if input.Metadata().Len() != 0 || len(input.Metadata().Blocks()) != 0 {
-			return 0, fmt.Errorf("%w: packet input %d changes MP4 metadata", ErrUnsupported, index)
+		var ok bool
+		if payload, ok = checkedBoxAdd(payload, selected.value.sampleBytes); !ok {
+			return fmt.Errorf("%w: MP4 selected sample bytes overflow", ErrMalformed)
 		}
+		previous = selected.source
 	}
-	return muxScratchBytes(inspected)
+	if payload != layout.payloadSize() {
+		return fmt.Errorf("%w: MP4 output payload does not cover the selected samples", ErrMalformed)
+	}
+	return nil
 }
 
 func validateMuxMovie(value movie) error {
@@ -114,16 +125,4 @@ func validateMuxMovie(value movie) error {
 		return fmt.Errorf("%w: mdat payload %d does not exactly match %d referenced sample bytes", ErrUnsupported, value.media.payloadSize, value.totalSampleBytes)
 	}
 	return nil
-}
-
-func muxScratchBytes(value movie) (resource.Bytes, error) {
-	var total uint64
-	for _, track := range value.tracks {
-		chunks := uint64(track.chunkCount)
-		if chunks > (uint64(math.MaxInt64)-total)/8 {
-			return 0, fmt.Errorf("%w: MP4 chunk offset journal exceeds runtime range", ErrUnsupported)
-		}
-		total += chunks * 8
-	}
-	return resource.Bytes(total), nil
 }

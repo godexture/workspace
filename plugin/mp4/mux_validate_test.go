@@ -202,7 +202,7 @@ func TestMP4MuxPreflightsSTCOOverflowBeforeAppendingSuffix(t *testing.T) {
 	journal := &muxMemoryScratch{data: make([]byte, 8)}
 	binary.BigEndian.PutUint64(journal.data, uint64(^uint32(0))+1)
 	mux := &muxer{
-		movie:          movie{tracks: []track{{chunkCount: 1}}},
+		layout:         muxLayout{tracks: []muxTrack{{value: track{chunkCount: 1}}}},
 		buffers:        mustMP4Allocator(t, muxJournalPageBytes),
 		scratch:        journal,
 		need:           8,
