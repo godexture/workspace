@@ -173,7 +173,7 @@ media 領域を `media/` 配下へ置き、それ以外は root に置く。単�
 
 stream identity は ordered repeated `stream.Descriptor` と private compiled connection が持つ control-plane state とする。`packet.Chunk` と `packet.Packet` に stream ID、format 名、selector を加えず、data plane から stream metadata/topology package への依存を逆流させない。
 
-Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router/RoutedReader が ordinal で一つへ dispatch する。`SerialFanIn` は input ordinal を保持して callback を同期直列化する汎用 fan-in policy とし、ordering algorithm とはしない。Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ call 順を physical order として扱う。buffer/fan-out/concurrent producer の cross-track physical interleave、wall-clock 順、再現性は契約せず、これらを理由に generic `SerialFanIn` を Compile で reject しない。public time-ordered merger や cross-track timestamp policy は作らない。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
+Component topology は static `Spec.Ports` だけで宣言し、track cardinality のために Inspect 後の dynamic port/Shape を作らない。logical `Many` port を descriptor ごとの private connection へ展開し、typed Router/RoutedReader が ordinal で一つへ dispatch する。`SerialFanIn` は input ordinal を保持して callback を同期直列化する汎用 fan-in policy とし、ordering algorithm とはしない。runtime はその input connection を buffer しない。到着順を出力構造へ変換する component は port へ `flow.Direct` を宣言し、単一 typed routed producer が同じ synchronous island から駆動する構成を要求する。満たせない topology は Planning error とし、確定した保証は `plan.FanIn.Direct` へ投影する。宣言のない generic Serial 構成の cross-track physical interleave、wall-clock 順、再現性は契約せず、これらを理由に generic `SerialFanIn` を Compile で reject しない。public time-ordered merger や cross-track timestamp policy は作らない。item ごとの reflection、port string lookup、`any` multiplexing は導入しない。
 
 ### C23. mapping は Inspect 後に解決し、保存を既定にする
 
@@ -231,7 +231,7 @@ M5 の旧 `QueuePolicy.Window` が兼ねていた physical queue span と Zip al
 
 ### Superseded M7 ordering proposals
 
-以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、Serial input buffer のない direct な single synchronous execution island にある単一 routed producer の emit call 順を physical mdat 書きへ利用する。buffer/fan-out/concurrent producer の cross-track physical interleave は契約しない。
+以前の #13 `Order` trait / `timing.Compare`、#14 全 input head の DTS ordered Merge、および旧称 `MergeFanIn` は、bounded per-route queue で合法 MP4 に現実的な deadlock を起こし得るため close/延期した。これは superseded な履歴であり現行 contract ではない。現行は上記 C22/C24/C26 と [M7-0 contract](m7-0.md) の C03/C09 に従い、core の `SerialFanIn` と、`flow.Direct` を宣言した port を単一 routed producer が駆動する direct island の emit call 順を physical mdat 書きへ利用する。宣言のない generic Serial 構成の cross-track physical interleave は契約しない。
 
 ## Deferred without blocking the first implementation
 

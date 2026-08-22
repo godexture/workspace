@@ -166,8 +166,8 @@ allocation を 0 とする。route ordinal、callback、queue handoff に reflec
 `buffer.Handle.Range` など payload slicing の control allocation はこの literal zero gate の対象外とする。user-visible
 time または無視できない `B/op`・`allocs/op` が同一条件で概ね 2 倍以上悪化した場合だけ、paired AB/BA の再測定と
 profile を行い、payload slicing を再設計する。小さな差や payload size に比例する copy 自体を gate failure にしない。
-Serial input buffer のない direct な single synchronous execution island で単一 routed producer が emit する場合だけ、
-その call 順を MP4 の physical order として correctness vector にする。buffer/fan-out/concurrent producer の cross-track
+`flow.Direct` を宣言した port を単一 routed producer が駆動する direct island では、
+その call 順を MP4 の physical order として correctness vector にする。宣言のない generic Serial 構成の cross-track
 physical interleave、wall-clock order、byte reproducibility は performance gate の前提にしない。MP4 correctness/exact は
 track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table で判定し、physical interleave の変更を semantic
 loss と扱わない。将来 `Stable`/byte reproducibility が必要な consumer は execution signature と別 ordered policy/backpressure
