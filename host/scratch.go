@@ -1,7 +1,6 @@
 package host
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -66,7 +65,7 @@ func openScratchClaims(claims []scratchClaim, open func(resource.Bytes) (scratch
 	return result, nil
 }
 
-func (p *Prepared) releaseScratch(ctx context.Context) []Failure {
+func (p *Prepared) releaseScratch() []Failure {
 	p.scratchReleased.Do(func() {
 		var failures []Failure
 		for _, node := range p.program.Nodes() {
