@@ -129,6 +129,54 @@ func TestMP4MuxAcceptsAnyTrackFirstAndRejectsUnknownOrdinals(t *testing.T) {
 	})
 }
 
+// TestMP4MuxRejectsAMovedSampleInAMovieWithExternalOffsets is the runtime half
+// of accepting sidx and friends. The layout decides that the output can
+// reproduce the source; only the arrival order decides whether it does. Here a
+// track stores its second chunk before its first, so the reader -- which keeps
+// each track's samples in sequence -- cannot reproduce the stored order, and
+// the movie has to fail rather than come out with offsets pointing at bytes
+// that moved.
+func TestMP4MuxRejectsAMovedSampleInAMovieWithExternalOffsets(t *testing.T) {
+	data := externalOffsetReversedChunkMovie()
+	inspected := inspectMovie(t, data)
+	if !inspected.offsetIndex {
+		t.Fatal("fixture does not record byte offsets outside the sample tables")
+	}
+	component, compiled := compileMP4Mux(t, inspected)
+	journal, err := scratch.Open(compiled.Scratch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), mustMP4Allocator(t, 1<<20), journal)
+	packets := mustMP4Allocator(t, 8)
+	input := muxSample(t, data, movieSamples(t, data, inspected, 0)[0], packets)
+	err = mux.Process(t.Context(), flow.NewSelectedBatch(0, &input), &muxWriteCollector{})
+	if !errors.Is(err, ErrUnsupported) || input.Valid() || packets.Used() != 0 {
+		t.Fatalf("moved sample Process = %v input=%t used=%d", err, input.Valid(), packets.Used())
+	}
+}
+
+// externalOffsetReversedChunkMovie carries a sidx and stores its two chunks in
+// reverse, so reproducing the source would need the samples out of sequence.
+func externalOffsetReversedChunkMovie() []byte {
+	build := func(offsets []uint64) []byte {
+		stbl := fixtureContainer("stbl",
+			fixtureSTSD("avc1", 1),
+			fixtureSTTS([]fixtureTiming{{count: 2, duration: 10}}),
+			fixtureSTSC([]fixtureChunk{{first: 1, samples: 1, description: 1}}),
+			fixtureSTSZCount(2, 2),
+			fixtureSTCOValues(offsets),
+		)
+		moov := fixtureContainer("moov", fixtureMVHD(), fixtureTrackWithTable(1, 1_000, "vide", stbl))
+		result := append(fixtureFileType("isom", "iso2"), fixtureBox("sidx", nil)...)
+		result = append(result, moov...)
+		return append(result, fixtureBox("mdat", []byte{1, 2, 3, 4})...)
+	}
+	payload := uint64(len(build([]uint64{0, 0})) - 4)
+	return build([]uint64{payload + 2, payload})
+}
+
 func TestMP4MuxRejectsPacketMutationAndTrackReturn(t *testing.T) {
 	data := twoTrackMovie(false, "isom", "iso2")
 	inspected := inspectMovie(t, data)

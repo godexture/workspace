@@ -71,6 +71,49 @@ func TestMP4RemuxRebuildsInterleavedChunkTables(t *testing.T) {
 	}
 }
 
+// TestMP4RemuxKeepsAMovieWithExternalByteOffsets covers the movies a preserving
+// remux used to refuse outright: those carrying a sidx, iloc or tfra, which
+// record byte offsets the sample tables know nothing about. Rebuilding mdat in
+// some other order would leave those offsets pointing at bytes that moved, but
+// a remux that reproduces the source moves nothing, so the movie round-trips
+// instead of being rejected.
+func TestMP4RemuxKeepsAMovieWithExternalByteOffsets(t *testing.T) {
+	stored := mp4ExternalOffsetFixture(4, 3)
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "indexed.mp4")
+	outputPath := filepath.Join(directory, "indexed-out.mp4")
+	if err := os.WriteFile(inputPath, stored, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(inputPath, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("indexed MP4 remux Run = %#v, %v", result, runErr)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, stored) {
+		t.Fatal("a movie whose external offsets must not move was not reproduced exactly")
+	}
+	assertMP4ChunkTablesTileTheMedia(t, encoded, [][]byte{{0xde, 0xad}, {0xca, 0xfe, 0xba}})
+}
+
 // assertMP4ChunksAlternate fails unless the stored chunks of the two tracks
 // really do take turns. Without it an interleaved vector could silently degrade
 // into the track-major shape it exists to avoid.

@@ -76,6 +76,17 @@ func mp4Fixture(tracks []mp4FixtureTrack) []byte {
 	return mp4FixtureStored(tracks, mp4FixtureTrackMajor(tracks, nil))
 }
 
+// mp4ExternalOffsetFixture carries a top-level sidx, which records byte offsets
+// the sample tables know nothing about. Such a movie survives only a remux that
+// puts every byte back where it was.
+func mp4ExternalOffsetFixture(chunks, samplesPerChunk uint32) []byte {
+	tracks := []mp4FixtureTrack{
+		{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 40, payload: []byte{0xde, 0xad}, samples: chunks * samplesPerChunk, chunks: chunks},
+		{id: 2, timeScale: 48_000, handler: "soun", entry: "zzzz", duration: 1024, payload: []byte{0xca, 0xfe, 0xba}, samples: chunks * samplesPerChunk, chunks: chunks},
+	}
+	return mp4FixtureStored(tracks, mp4FixtureInterleave(tracks), mp4FixtureBox("sidx", make([]byte, 12)))
+}
+
 // mp4FixtureOrdered stores whole tracks one after another in the given track
 // order. A nil order is track order; any other permutation makes the stored
 // order disagree with the order the tracks are described in.
@@ -88,6 +99,10 @@ func mp4FixtureOrdered(tracks []mp4FixtureTrack, order []int) []byte {
 // hand. Track-major storage is the shape a fixture reaches by accident; this is
 // the shape files arrive in.
 func mp4FixtureInterleaved(tracks []mp4FixtureTrack) []byte {
+	return mp4FixtureStored(tracks, mp4FixtureInterleave(tracks))
+}
+
+func mp4FixtureInterleave(tracks []mp4FixtureTrack) []mp4FixtureChunk {
 	var longest uint32
 	for _, track := range tracks {
 		longest = max(longest, track.chunkCount())
@@ -100,7 +115,7 @@ func mp4FixtureInterleaved(tracks []mp4FixtureTrack) []byte {
 			}
 		}
 	}
-	return mp4FixtureStored(tracks, placement)
+	return placement
 }
 
 func mp4FixtureTrackMajor(tracks []mp4FixtureTrack, order []int) []mp4FixtureChunk {
@@ -122,13 +137,16 @@ func mp4FixtureTrackMajor(tracks []mp4FixtureTrack, order []int) []mp4FixtureChu
 // mp4FixtureStored writes the movie with its chunks laid out in placement
 // order. The chunk-offset tables are sized before the layout runs so that
 // filling them in does not move the media.
-func mp4FixtureStored(tracks []mp4FixtureTrack, placement []mp4FixtureChunk) []byte {
+func mp4FixtureStored(tracks []mp4FixtureTrack, placement []mp4FixtureChunk, topLevel ...[]byte) []byte {
 	for index := range tracks {
 		tracks[index].offsets = make([]uint32, tracks[index].chunkCount())
 	}
 	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
 	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
 	fileType := mp4FixtureBox("ftyp", fileTypePayload)
+	for _, box := range topLevel {
+		fileType = append(fileType, box...)
+	}
 	moov := mp4FixtureMoov(tracks)
 	mediaStart := uint64(len(fileType) + len(moov) + 8)
 	position := mediaStart

@@ -113,6 +113,9 @@ func validateMuxLayout(value movie, layout muxLayout) error {
 	if payload != layout.payloadSize() {
 		return fmt.Errorf("%w: MP4 output payload does not cover the selected samples", ErrMalformed)
 	}
+	if layout.verbatim != value.offsetIndex || value.offsetIndex && !layout.reproduces(value) {
+		return fmt.Errorf("%w: MP4 output layout no longer reproduces a movie that records external byte offsets", ErrMalformed)
+	}
 	return nil
 }
 

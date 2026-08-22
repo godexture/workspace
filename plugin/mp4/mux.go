@@ -143,6 +143,13 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	if uint64(expected.size) > math.MaxUint64-m.payloadBytes || uint64(expected.size) > math.MaxUint64-outputOffset {
 		return m.fail(fmt.Errorf("%w: MP4 output offset overflows", ErrUnsupported))
 	}
+	// A movie carrying byte offsets outside the sample tables was accepted on
+	// the promise that nothing moves. The layout placed the payload; the
+	// arrival order decides the rest, so it is checked here rather than assumed
+	// from the topology that produced it.
+	if m.layout.verbatim && expected.offset != outputOffset {
+		return m.fail(fmt.Errorf("%w: MP4 sample %d moved from %d to %d, and this movie records byte offsets that would go stale", ErrUnsupported, expected.sequence, expected.offset, outputOffset))
+	}
 	if err := m.start(ctx, output); err != nil {
 		return m.fail(err)
 	}

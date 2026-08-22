@@ -24,6 +24,10 @@ type muxLayout struct {
 	// journal is the total size of the chunk-offset journal, which is the sum
 	// of the per-track regions placeJournal hands out.
 	journal uint64
+	// verbatim marks a layout that must reproduce the source byte for byte. It
+	// is set for a movie that records byte offsets outside the sample tables,
+	// where the only safe remux is one that moves nothing.
+	verbatim bool
 	// duration rewrites the mvhd duration when the selection drops a track.
 	duration muxPatch
 }
@@ -138,11 +142,6 @@ func validateMuxInput(input stream.Descriptor, value track, route int) error {
 func buildMuxLayout(value movie, selected []int) (muxLayout, error) {
 	if err := validateMuxMovie(value); err != nil {
 		return muxLayout{}, err
-	}
-	// Every remux rewrites the mdat payload in track order, so a byte offset
-	// recorded outside the chunk-offset tables would point at stale bytes.
-	if value.offsetIndex {
-		return muxLayout{}, fmt.Errorf("%w: MP4 records byte offsets outside the sample tables this mux rewrites", ErrUnsupported)
 	}
 	if err := validateMuxRanges(value); err != nil {
 		return muxLayout{}, err
@@ -346,7 +345,25 @@ func (b *muxLayoutBuilder) build() (muxLayout, error) {
 	if err := b.locateDuration(&result); err != nil {
 		return muxLayout{}, err
 	}
+	if b.movie.offsetIndex && !result.reproduces(b.movie) {
+		return muxLayout{}, fmt.Errorf("%w: MP4 records byte offsets outside the sample tables, and this selection does not reproduce the source", ErrUnsupported)
+	}
+	result.verbatim = b.movie.offsetIndex
 	return result, nil
+}
+
+// reproduces reports whether this layout puts every byte of the output where
+// the source had it. A movie that records byte offsets outside the sample
+// tables -- sidx, iloc, tfra -- stays consistent only under such a layout, so
+// it is the one selection worth accepting rather than rejecting the movie
+// outright. The muxer still checks each sample lands where it was read from,
+// because arrival order is what decides that and this only decides position.
+func (l muxLayout) reproduces(value movie) bool {
+	return len(l.tracks) == len(value.tracks) &&
+		l.duration.width == 0 &&
+		l.size == value.sourceEnd &&
+		l.payloadOffset() == value.media.payloadOffset &&
+		l.payloadSize() == value.media.payloadSize
 }
 
 // placeJournal gives each track a region of the chunk-offset journal, in track
