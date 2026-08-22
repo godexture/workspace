@@ -9,14 +9,20 @@ type mp4FixtureTrack struct {
 	entry       string
 	duration    uint32
 	composition int32
-	offset      int32
 	payload     []byte
 	// channels is non-zero for a sample entry that carries the AudioSampleEntry
 	// fields, so the track describes 16-bit linear PCM at timeScale.
 	channels uint16
-	// samples repeats payload that many times in one chunk. Zero means one
-	// sample, so a track that only needs a single payload says nothing.
+	// samples repeats payload that many times. Zero means one sample, so a
+	// track that only needs a single payload says nothing.
 	samples uint32
+	// chunks splits those samples into that many equal chunks. Zero means one
+	// chunk. A movie an encoder actually produced stores several chunks per
+	// track and interleaves them, so a table that describes one chunk per track
+	// never reaches the geometry a player reads.
+	chunks uint32
+	// offsets holds the stored position of each chunk, filled in during layout.
+	offsets []uint32
 }
 
 func (t mp4FixtureTrack) sampleCount() uint32 {
@@ -24,6 +30,21 @@ func (t mp4FixtureTrack) sampleCount() uint32 {
 		return 1
 	}
 	return t.samples
+}
+
+func (t mp4FixtureTrack) chunkCount() uint32 {
+	if t.chunks == 0 {
+		return 1
+	}
+	return t.chunks
+}
+
+func (t mp4FixtureTrack) samplesPerChunk() uint32 {
+	return t.sampleCount() / t.chunkCount()
+}
+
+func (t mp4FixtureTrack) chunkBytes() uint64 {
+	return uint64(t.samplesPerChunk()) * uint64(len(t.payload))
 }
 
 func (t mp4FixtureTrack) mediaBytes() uint64 {
@@ -45,19 +66,65 @@ func mp4PCMFixture(entry string, payload []byte) []byte {
 	})
 }
 
-func mp4Fixture(tracks []mp4FixtureTrack) []byte {
-	return mp4FixtureOrdered(tracks, nil)
+// mp4FixtureChunk names one chunk of one track in stored order.
+type mp4FixtureChunk struct {
+	track int
+	index uint32
 }
 
-// mp4FixtureOrdered lays the sample payloads out in mdat order. A nil order is
-// track order; any other permutation makes the stored order disagree with the
-// order a remux emits its routes in.
+func mp4Fixture(tracks []mp4FixtureTrack) []byte {
+	return mp4FixtureStored(tracks, mp4FixtureTrackMajor(tracks, nil))
+}
+
+// mp4FixtureOrdered stores whole tracks one after another in the given track
+// order. A nil order is track order; any other permutation makes the stored
+// order disagree with the order the tracks are described in.
 func mp4FixtureOrdered(tracks []mp4FixtureTrack, order []int) []byte {
+	return mp4FixtureStored(tracks, mp4FixtureTrackMajor(tracks, order))
+}
+
+// mp4FixtureInterleaved stores one chunk from each track in turn, which is how
+// an encoder lays a movie out so a player reading forward has both tracks to
+// hand. Track-major storage is the shape a fixture reaches by accident; this is
+// the shape files arrive in.
+func mp4FixtureInterleaved(tracks []mp4FixtureTrack) []byte {
+	var longest uint32
+	for _, track := range tracks {
+		longest = max(longest, track.chunkCount())
+	}
+	var placement []mp4FixtureChunk
+	for index := uint32(0); index < longest; index++ {
+		for position, track := range tracks {
+			if index < track.chunkCount() {
+				placement = append(placement, mp4FixtureChunk{track: position, index: index})
+			}
+		}
+	}
+	return mp4FixtureStored(tracks, placement)
+}
+
+func mp4FixtureTrackMajor(tracks []mp4FixtureTrack, order []int) []mp4FixtureChunk {
 	if order == nil {
 		order = make([]int, len(tracks))
 		for index := range tracks {
 			order[index] = index
 		}
+	}
+	var placement []mp4FixtureChunk
+	for _, position := range order {
+		for index := range tracks[position].chunkCount() {
+			placement = append(placement, mp4FixtureChunk{track: position, index: index})
+		}
+	}
+	return placement
+}
+
+// mp4FixtureStored writes the movie with its chunks laid out in placement
+// order. The chunk-offset tables are sized before the layout runs so that
+// filling them in does not move the media.
+func mp4FixtureStored(tracks []mp4FixtureTrack, placement []mp4FixtureChunk) []byte {
+	for index := range tracks {
+		tracks[index].offsets = make([]uint32, tracks[index].chunkCount())
 	}
 	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
 	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
@@ -65,27 +132,36 @@ func mp4FixtureOrdered(tracks []mp4FixtureTrack, order []int) []byte {
 	moov := mp4FixtureMoov(tracks)
 	mediaStart := uint64(len(fileType) + len(moov) + 8)
 	position := mediaStart
-	for _, index := range order {
-		tracks[index].offset = int32(position)
-		position += tracks[index].mediaBytes()
+	for _, chunk := range placement {
+		tracks[chunk.track].offsets[chunk.index] = uint32(position)
+		position += tracks[chunk.track].chunkBytes()
 	}
 	moov = mp4FixtureMoov(tracks)
 	media := make([]byte, 0, position-mediaStart)
-	for _, index := range order {
-		for range tracks[index].sampleCount() {
-			media = append(media, tracks[index].payload...)
+	for _, chunk := range placement {
+		for range tracks[chunk.track].samplesPerChunk() {
+			media = append(media, tracks[chunk.track].payload...)
 		}
 	}
 	return append(append(fileType, moov...), mp4FixtureBox("mdat", media)...)
 }
 
 // mp4StoredOutOfOrderFixture stores the second track's sample before the first,
-// so every sample moves when a remux writes them in route order.
+// so a remux that follows the described track order has to move every sample.
 func mp4StoredOutOfOrderFixture() []byte {
 	return mp4FixtureOrdered([]mp4FixtureTrack{
 		{id: 1, timeScale: 48_000, handler: "soun", entry: "zzzz", duration: 1024, payload: []byte{0xde, 0xad}},
 		{id: 2, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 40, composition: 3, payload: []byte{0xca, 0xfe, 0xba}},
 	}, []int{1, 0})
+}
+
+// mp4InterleavedFixture is the geometry a real movie has: two tracks, several
+// samples each, split into chunks that alternate through mdat.
+func mp4InterleavedFixture(chunks, samplesPerChunk uint32) []byte {
+	return mp4FixtureInterleaved([]mp4FixtureTrack{
+		{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 40, payload: []byte{0xde, 0xad}, samples: chunks * samplesPerChunk, chunks: chunks},
+		{id: 2, timeScale: 48_000, handler: "soun", entry: "zzzz", duration: 1024, payload: []byte{0xca, 0xfe, 0xba}, samples: chunks * samplesPerChunk, chunks: chunks},
+	})
 }
 
 func mp4FixtureMoov(tracks []mp4FixtureTrack) []byte {
@@ -121,9 +197,9 @@ func mp4FixtureTrackBox(track mp4FixtureTrack) []byte {
 			mp4FixtureContainer("minf", mediaHeader, mp4FixtureDINF(), mp4FixtureContainer("stbl",
 				mp4FixtureSTSD(track),
 				mp4FixtureSTTS(track.duration, track.sampleCount()),
-				mp4FixtureSTSC(track.sampleCount()),
+				mp4FixtureSTSC(track.samplesPerChunk()),
 				mp4FixtureSTSZ(uint32(len(track.payload)), track.sampleCount()),
-				mp4FixtureSTCO(uint32(track.offset)),
+				mp4FixtureSTCO(track.offsets),
 				mp4FixtureCTTS(track.composition, track.sampleCount()),
 			)),
 		),
@@ -152,19 +228,23 @@ func mp4FixtureSTSD(track mp4FixtureTrack) []byte {
 }
 
 func mp4FixtureSTTS(duration, samples uint32) []byte {
-	return mp4FixtureBox("stts", mp4FixtureTable(mp4FixtureU32(samples), mp4FixtureU32(duration)))
+	return mp4FixtureBox("stts", mp4FixtureTable(1, mp4FixtureU32(samples), mp4FixtureU32(duration)))
 }
 
-func mp4FixtureSTSC(samples uint32) []byte {
-	return mp4FixtureBox("stsc", mp4FixtureTable(mp4FixtureU32(1), mp4FixtureU32(samples), mp4FixtureU32(1)))
+func mp4FixtureSTSC(samplesPerChunk uint32) []byte {
+	return mp4FixtureBox("stsc", mp4FixtureTable(1, mp4FixtureU32(1), mp4FixtureU32(samplesPerChunk), mp4FixtureU32(1)))
 }
 
 func mp4FixtureSTSZ(size, samples uint32) []byte {
 	return mp4FixtureBox("stsz", append(mp4FixtureFullBox(0, 0, mp4FixtureU32(size)), mp4FixtureU32(samples)...))
 }
 
-func mp4FixtureSTCO(offset uint32) []byte {
-	return mp4FixtureBox("stco", mp4FixtureTable(mp4FixtureU32(offset)))
+func mp4FixtureSTCO(offsets []uint32) []byte {
+	rows := make([][]byte, len(offsets))
+	for index, offset := range offsets {
+		rows[index] = mp4FixtureU32(offset)
+	}
+	return mp4FixtureBox("stco", mp4FixtureTable(uint32(len(offsets)), rows...))
 }
 
 func mp4FixtureCTTS(offset int32, samples uint32) []byte {
@@ -215,6 +295,15 @@ func mp4ManySampleFixture(count uint32) []byte {
 	})
 }
 
+// mp4ManyChunkFixture gives every sample its own chunk, so the chunk-offset
+// table -- and the journal that rebuilds it -- grows with the movie while every
+// in-memory table stays the same size.
+func mp4ManyChunkFixture(chunks uint32) []byte {
+	return mp4Fixture([]mp4FixtureTrack{
+		{id: 1, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 1, payload: []byte{0}, samples: chunks, chunks: chunks},
+	})
+}
+
 // mp4ManySampleTwoTrackFixture is the ordinary shape of a real movie: more than
 // one track, and more than one sample in each. A remux only stays correct here
 // while every sample of a track reaches the muxer before the next track starts,
@@ -226,9 +315,9 @@ func mp4ManySampleTwoTrackFixture(count uint32) []byte {
 	})
 }
 
-// mp4FixtureTable writes a full box holding one entry count and its rows.
-func mp4FixtureTable(rows ...[]byte) []byte {
-	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(1))
+// mp4FixtureTable writes a full box holding an entry count and its rows.
+func mp4FixtureTable(entries uint32, rows ...[]byte) []byte {
+	payload := mp4FixtureFullBox(0, 0, mp4FixtureU32(entries))
 	for _, row := range rows {
 		payload = append(payload, row...)
 	}

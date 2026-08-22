@@ -38,6 +38,34 @@ func TestMP4RemuxResourcesDoNotScaleWithSamples(t *testing.T) {
 	}
 }
 
+// TestMP4RemuxJournalGrowsOnDiskNotInMemory is the other half of the M7-C12
+// gate. Sample count is the axis a single-chunk fixture can vary; chunk count
+// is the one a real movie varies, because an encoder starts a new chunk every
+// so often. The journal is the state that is allowed to grow with it, and it
+// grows on disk under the quota while the memory grant stays put.
+//
+// 1,024 entries is exactly one journal page, so the small case also pins the
+// boundary where the page is flushed on the entry that fills it.
+func TestMP4RemuxJournalGrowsOnDiskNotInMemory(t *testing.T) {
+	const page, many = 1_024, 200_000
+	small := mp4RemuxReservationOf(t, mp4ManyChunkFixture(page))
+	large := mp4RemuxReservationOf(t, mp4ManyChunkFixture(many))
+	if small.memory != large.memory {
+		t.Fatalf("buffer grant = %d for %d chunks, %d for %d", small.memory, page, large.memory, many)
+	}
+	for _, value := range []struct {
+		reservation mp4Reservation
+		chunks      int64
+	}{{small, page}, {large, many}} {
+		if want := resource.Bytes(value.chunks * 8); value.reservation.scratch.Reserved != want {
+			t.Fatalf("%d chunks reserved %d journal bytes, want %d", value.chunks, value.reservation.scratch.Reserved, want)
+		}
+		if value.reservation.scratch.Reserved > value.reservation.scratch.Limit {
+			t.Fatalf("%d chunks reserved %d journal bytes past the %d limit", value.chunks, value.reservation.scratch.Reserved, value.reservation.scratch.Limit)
+		}
+	}
+}
+
 // TestMP4RemuxFailsWhenTheJournalHasNoQuota keeps the journal claim honest. A
 // preset with scratch disabled cannot satisfy the mux, and that has to be a
 // planning failure rather than a remux that quietly skips patching offsets.
@@ -86,10 +114,14 @@ type mp4Reservation struct {
 
 func mp4RemuxReservation(t *testing.T, samples uint32) mp4Reservation {
 	t.Helper()
+	return mp4RemuxReservationOf(t, mp4ManySampleFixture(samples))
+}
+
+func mp4RemuxReservationOf(t *testing.T, source []byte) mp4Reservation {
+	t.Helper()
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "samples.mp4")
 	outputPath := filepath.Join(directory, "samples-out.mp4")
-	source := mp4ManySampleFixture(samples)
 	if err := os.WriteFile(inputPath, source, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +140,7 @@ func mp4RemuxReservation(t *testing.T, samples uint32) mp4Reservation {
 	executed := prepared.Plan()
 	result, runErr := prepared.Run(t.Context())
 	if runErr != nil || !result.Succeeded() {
-		t.Fatalf("%d-sample remux Run = %#v, %v", samples, result, runErr)
+		t.Fatalf("%d-byte remux Run = %#v, %v", len(source), result, runErr)
 	}
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
@@ -118,7 +150,7 @@ func mp4RemuxReservation(t *testing.T, samples uint32) mp4Reservation {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(encoded, source) {
-		t.Fatalf("%d-sample remux changed the source bytes", samples)
+		t.Fatalf("%d-byte remux changed the source bytes", len(source))
 	}
 	var memory int64
 	var claims resource.Bytes

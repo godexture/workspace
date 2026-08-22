@@ -2,7 +2,6 @@ package integration_test
 
 import (
 	"bytes"
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,41 +95,12 @@ func mp4MediaPayloadOffset(t testing.TB, value []byte) uint64 {
 	return uint64(mp4MediaBox(t, value).start + 8)
 }
 
-// mp4TrackChunkOffset reads the first stco or co64 entry of one track, in the
-// order the tracks appear in moov.
+// mp4TrackChunkOffset reads the first chunk-offset entry of one track.
 func mp4TrackChunkOffset(t testing.TB, value []byte, index int) uint64 {
 	t.Helper()
-	var tracks []mp4FixtureBoxView
-	for _, box := range mp4FixtureTopLevel(value) {
-		if box.typeID != "moov" {
-			continue
-		}
-		for _, child := range mp4FixtureChildren(box.payload, 0, len(box.payload)) {
-			if child.typeID == "trak" {
-				tracks = append(tracks, child)
-			}
-		}
+	offsets := mp4TrackChunkOffsets(t, value, index)
+	if len(offsets) == 0 {
+		t.Fatalf("track %d has no chunk-offset entries", index)
 	}
-	if index < 0 || index >= len(tracks) {
-		t.Fatalf("MP4 output has %d tracks, wanted track %d", len(tracks), index)
-	}
-	table := tracks[index]
-	for _, step := range []string{"mdia", "minf", "stbl"} {
-		child, ok := mp4FixtureChild(table, step)
-		if !ok {
-			t.Fatalf("track %d has no %s", index, step)
-		}
-		table = child
-	}
-	if entries, ok := mp4FixtureChild(table, "stco"); ok {
-		if len(entries.payload) < 12 {
-			t.Fatalf("track %d stco is truncated", index)
-		}
-		return uint64(binary.BigEndian.Uint32(entries.payload[8:12]))
-	}
-	entries, ok := mp4FixtureChild(table, "co64")
-	if !ok || len(entries.payload) < 16 {
-		t.Fatalf("track %d has no readable chunk-offset table", index)
-	}
-	return binary.BigEndian.Uint64(entries.payload[8:16])
+	return offsets[0]
 }

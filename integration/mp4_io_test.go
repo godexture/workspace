@@ -237,12 +237,5 @@ func mp4PayloadHeavyFixture(payloadBytes int) []byte {
 	for index := range payload {
 		payload[index] = byte(index*31 + 7)
 	}
-	tracks := []mp4FixtureTrack{{id: 1, timeScale: 90_000, handler: "vide", entry: "zzzz", duration: 3_000, payload: payload}}
-	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
-	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
-	fileType := mp4FixtureBox("ftyp", fileTypePayload)
-	moov := mp4FixtureMoov(tracks)
-	tracks[0].offset = int32(len(fileType) + len(moov) + 8)
-	moov = mp4FixtureMoov(tracks)
-	return append(append(fileType, moov...), mp4FixtureBox("mdat", payload)...)
+	return mp4Fixture([]mp4FixtureTrack{{id: 1, timeScale: 90_000, handler: "vide", entry: "zzzz", duration: 3_000, payload: payload}})
 }
