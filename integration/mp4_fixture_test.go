@@ -32,22 +32,44 @@ func mp4PCMFixture(entry string, payload []byte) []byte {
 }
 
 func mp4Fixture(tracks []mp4FixtureTrack) []byte {
+	return mp4FixtureOrdered(tracks, nil)
+}
+
+// mp4FixtureOrdered lays the sample payloads out in mdat order. A nil order is
+// track order; any other permutation makes the stored order disagree with the
+// order a remux emits its routes in.
+func mp4FixtureOrdered(tracks []mp4FixtureTrack, order []int) []byte {
+	if order == nil {
+		order = make([]int, len(tracks))
+		for index := range tracks {
+			order[index] = index
+		}
+	}
 	fileTypePayload := append([]byte("isom"), mp4FixtureU32(0)...)
 	fileTypePayload = append(fileTypePayload, []byte("iso2")...)
 	fileType := mp4FixtureBox("ftyp", fileTypePayload)
 	moov := mp4FixtureMoov(tracks)
 	mediaStart := uint64(len(fileType) + len(moov) + 8)
 	position := mediaStart
-	for index := range tracks {
+	for _, index := range order {
 		tracks[index].offset = int32(position)
 		position += uint64(len(tracks[index].payload))
 	}
 	moov = mp4FixtureMoov(tracks)
 	media := make([]byte, 0, position-mediaStart)
-	for _, track := range tracks {
-		media = append(media, track.payload...)
+	for _, index := range order {
+		media = append(media, tracks[index].payload...)
 	}
 	return append(append(fileType, moov...), mp4FixtureBox("mdat", media)...)
+}
+
+// mp4StoredOutOfOrderFixture stores the second track's sample before the first,
+// so every sample moves when a remux writes them in route order.
+func mp4StoredOutOfOrderFixture() []byte {
+	return mp4FixtureOrdered([]mp4FixtureTrack{
+		{id: 1, timeScale: 48_000, handler: "soun", entry: "zzzz", duration: 1024, payload: []byte{0xde, 0xad}},
+		{id: 2, timeScale: 1_000, handler: "vide", entry: "avc1", duration: 40, composition: 3, payload: []byte{0xca, 0xfe, 0xba}},
+	}, []int{1, 0})
 }
 
 func mp4FixtureMoov(tracks []mp4FixtureTrack) []byte {
