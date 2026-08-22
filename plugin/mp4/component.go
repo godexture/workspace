@@ -161,9 +161,14 @@ func trackStreamID(value uint32) stream.ID {
 // audio description of a linear PCM track. The description is published only
 // when the media timescale is the sample rate, so the packet time base a decoder
 // receives agrees with the description it reads.
+//
+// An edited track is never described: its edts maps media time onto the
+// presentation timeline, and a decoder that only sees samples would silently
+// produce the unedited media. Copying the track keeps the edts, so the track
+// still passes through -- it just cannot be decoded.
 func trackProperties(value track) (property.Set, error) {
 	properties := property.New()
-	if value.audio.Valid() && uint64(value.audio.Rate) == uint64(value.timeScale) {
+	if value.audio.Valid() && !value.edits && uint64(value.audio.Rate) == uint64(value.timeScale) {
 		var err error
 		if properties, err = value.audio.Properties(); err != nil {
 			return property.Set{}, err

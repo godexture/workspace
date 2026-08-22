@@ -93,6 +93,8 @@ func parseTrack(ctx context.Context, reader access.Random, sourceEnd uint64, val
 				return err
 			}
 			haveMedia = true
+		case typeEDTS:
+			result.edits = true
 		case typeELST:
 			return fmt.Errorf("%w: elst outside edts", errUnsupportedMovie)
 		case typeTREF:

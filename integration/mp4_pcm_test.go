@@ -80,3 +80,57 @@ func TestMP4PCMBindsOnlyWhenTheOutputNeedsIt(t *testing.T) {
 		})
 	}
 }
+
+// TestMP4EditedTrackIsCopiedButNeverDecoded keeps an edit list from being lost
+// in silence. An edts maps media time onto the presentation timeline, so a
+// decoder that only receives samples would produce the unedited media. Copying
+// the track carries the edts along, so an MP4 remux still succeeds; converting
+// to WAVE would have to drop it, and fails while planning instead.
+func TestMP4EditedTrackIsCopiedButNeverDecoded(t *testing.T) {
+	samples := make([]byte, 16)
+	for index := range samples {
+		samples[index] = byte(index)
+	}
+	edited := mp4EditedPCMFixture(samples)
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "edited.mp4")
+	if err := os.WriteFile(inputPath, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remuxPath := filepath.Join(directory, "edited-out.mp4")
+	request, err := standard.NewFileJob(inputPath, remuxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatalf("edited track remux Prepare: %v", err)
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("edited track remux Run = %#v, %v", result, runErr)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(remuxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, edited) {
+		t.Fatal("remux changed a movie whose only extra box is an edit list")
+	}
+
+	convert, err := standard.NewFileJob(inputPath, filepath.Join(directory, "edited.wav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.Plan(t.Context(), convert); err == nil {
+		t.Fatal("an edited track was planned for decoding, which would drop its edit list")
+	}
+}

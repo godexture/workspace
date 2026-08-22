@@ -234,3 +234,72 @@ func mp4FixtureTable(rows ...[]byte) []byte {
 	}
 	return payload
 }
+
+// mp4EditedPCMFixture is a decodable little-endian PCM track that also carries
+// an empty edts. Nothing else about the movie changes, so a test that fails on
+// it is reacting to the edit list alone.
+func mp4EditedPCMFixture(payload []byte) []byte {
+	value := mp4PCMFixture("sowt", payload)
+	edts := mp4FixtureContainer("edts", mp4FixtureBox("elst", mp4FixtureFullBox(0, 0, mp4FixtureU32(0))))
+	return mp4FixtureInsertIntoTrack(value, edts)
+}
+
+// mp4FixtureInsertIntoTrack appends a box to the end of the first trak and
+// repairs every enclosing box length. Offsets inside mdat move by the same
+// amount, so the chunk-offset table is patched too.
+func mp4FixtureInsertIntoTrack(value, box []byte) []byte {
+	top := mp4FixtureTopLevel(value)
+	var moov, trak mp4FixtureBoxView
+	for _, candidate := range top {
+		if candidate.typeID == "moov" {
+			moov = candidate
+		}
+	}
+	for _, child := range mp4FixtureChildren(moov.payload, 0, len(moov.payload)) {
+		if child.typeID == "trak" {
+			trak = child
+			break
+		}
+	}
+	trakEnd := moov.start + 8 + trak.start + 8 + len(trak.payload)
+	result := make([]byte, 0, len(value)+len(box))
+	result = append(result, value[:trakEnd]...)
+	result = append(result, box...)
+	result = append(result, value[trakEnd:]...)
+
+	grow := uint32(len(box))
+	mp4FixtureGrowBox(result, moov.start, grow)
+	mp4FixtureGrowBox(result, moov.start+8+trak.start, grow)
+	for _, offset := range mp4FixtureChunkOffsetFields(result) {
+		binary.BigEndian.PutUint32(result[offset:], binary.BigEndian.Uint32(result[offset:])+grow)
+	}
+	return result
+}
+
+func mp4FixtureGrowBox(value []byte, start int, grow uint32) {
+	binary.BigEndian.PutUint32(value[start:], binary.BigEndian.Uint32(value[start:])+grow)
+}
+
+// mp4FixtureChunkOffsetFields locates every stco entry in the file so a fixture
+// that shifts mdat can keep the tables consistent.
+func mp4FixtureChunkOffsetFields(value []byte) []int {
+	var result []int
+	var walk func(payload []byte, base int)
+	walk = func(payload []byte, base int) {
+		for _, child := range mp4FixtureChildren(payload, 0, len(payload)) {
+			start := base + child.start
+			if child.typeID == "stco" {
+				for index := 8; index+4 <= len(child.payload); index += 4 {
+					result = append(result, start+8+index)
+				}
+				continue
+			}
+			switch child.typeID {
+			case "moov", "trak", "mdia", "minf", "stbl", "edts":
+				walk(child.payload, start+8)
+			}
+		}
+	}
+	walk(value, 0)
+	return result
+}
