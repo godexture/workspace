@@ -12,17 +12,18 @@ import (
 	"github.com/godexture/godec/standard"
 )
 
-// TestMP4RemuxKeepsTrackOrderAcrossManySamples is the ordinary shape of a real
+// TestMP4RemuxKeepsSampleOrderAcrossManySamples is the ordinary shape of a real
 // movie, which the single-sample fixtures never reach: with more than one
-// sample per track the demuxer is still emitting one track's samples while the
-// next track's route already has work to hand over. Anything that decouples the
-// routes from the reader delivers them interleaved, and the muxer -- which lays
-// out one mdat region in arrival order -- refuses the movie.
+// sample per track, several routes always have work to hand over at once.
+// Anything that decouples the routes from the reader delivers them in an order
+// no one chose, and the muxer -- which lays out one mdat region in arrival
+// order -- would write a movie whose payload order depends on the scheduler.
 //
-// GOMAXPROCS=1 is the configuration that fails most reliably, so the regression
-// runs there as well as on the default scheduler.
-func TestMP4RemuxKeepsTrackOrderAcrossManySamples(t *testing.T) {
-	stored := mp4ManySampleTwoTrackFixture(400)
+// GOMAXPROCS=1 is the configuration that failed most reliably before the direct
+// island was enforced, so the regression runs there as well as on the default
+// scheduler.
+func TestMP4RemuxKeepsSampleOrderAcrossManySamples(t *testing.T) {
+	stored := mp4InterleavedFixture(40, 10)
 	previous := runtime.GOMAXPROCS(1)
 	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
 
@@ -57,7 +58,7 @@ func TestMP4RemuxKeepsTrackOrderAcrossManySamples(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(encoded, stored) {
-			t.Fatalf("attempt %d changed a movie whose samples are already in track order", attempt)
+			t.Fatalf("attempt %d changed an interleaved movie it kept every part of", attempt)
 		}
 	}
 }

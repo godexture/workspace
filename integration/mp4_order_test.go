@@ -9,12 +9,14 @@ import (
 	"github.com/godexture/godec/standard"
 )
 
-// TestMP4RemuxWritesSamplesInEmitOrder is the M7-C11 physical-order vector. In a
-// direct single synchronous execution island the routed reader's emit calls are
-// the only thing deciding where a sample lands, so a source whose mdat is not in
-// track order comes out in track order with its chunk offsets patched to follow.
-// The bytes move; the track order, sample payloads and per-track tables do not.
-func TestMP4RemuxWritesSamplesInEmitOrder(t *testing.T) {
+// TestMP4RemuxKeepsTheStoredSampleOrder is the M7-C11 physical-order vector.
+// The reader emits samples in the order the source stored them, and a direct
+// single synchronous execution island is what carries that order through to the
+// muxer unchanged, so the rebuilt mdat holds the same bytes in the same places.
+// Storage order is a property of the movie a player reads; a remux that
+// preserves everything else has no reason to be the one thing that rearranges
+// it.
+func TestMP4RemuxKeepsTheStoredSampleOrder(t *testing.T) {
 	stored := mp4StoredOutOfOrderFixture()
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "stored-out-of-order.mp4")
@@ -22,7 +24,7 @@ func TestMP4RemuxWritesSamplesInEmitOrder(t *testing.T) {
 	if err := os.WriteFile(inputPath, stored, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The fixture must actually disagree with route order, or the vector proves
+	// The fixture must actually disagree with track order, or the vector proves
 	// nothing about which one the output follows.
 	if got := mp4MediaPayload(t, stored); !bytes.Equal(got, []byte{0xca, 0xfe, 0xba, 0xde, 0xad}) {
 		t.Fatalf("stored mdat payload = %x, want the second track first", got)
@@ -52,16 +54,18 @@ func TestMP4RemuxWritesSamplesInEmitOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if bytes.Equal(encoded, stored) {
-		t.Fatal("remux reproduced the stored sample order instead of the emit order")
+	if got := mp4MediaPayload(t, encoded); !bytes.Equal(got, []byte{0xca, 0xfe, 0xba, 0xde, 0xad}) {
+		t.Fatalf("remuxed mdat payload = %x, want the stored order", got)
 	}
-	if got := mp4MediaPayload(t, encoded); !bytes.Equal(got, []byte{0xde, 0xad, 0xca, 0xfe, 0xba}) {
-		t.Fatalf("remuxed mdat payload = %x, want route order", got)
+	// Keeping every track means keeping every box, so preserving the payload
+	// order leaves nothing left to differ.
+	if !bytes.Equal(encoded, stored) {
+		t.Fatal("preserve-all remux changed a movie it kept every part of")
 	}
 	assertMP4FixtureSemantics(t, encoded)
 
 	// Each rebuilt chunk offset must address that track's own bytes, otherwise
-	// the moved payload would be silently mislabeled rather than remuxed.
+	// the payload would be silently mislabeled rather than remuxed.
 	base := mp4MediaPayloadOffset(t, encoded)
 	for index, want := range [][]byte{{0xde, 0xad}, {0xca, 0xfe, 0xba}} {
 		offset := mp4TrackChunkOffset(t, encoded, index)

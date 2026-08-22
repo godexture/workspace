@@ -54,6 +54,13 @@ func TestMP4RemuxRebuildsInterleavedChunkTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMP4ChunkTablesTileTheMedia(t, encoded, [][]byte{{0xde, 0xad}, {0xca, 0xfe, 0xba}})
+	// The interleave is what a player reads the movie through: a remux that
+	// grouped each track's chunks together would still describe the samples
+	// correctly while making progressive playback seek across the whole file.
+	assertMP4ChunksAlternate(t, encoded)
+	if !bytes.Equal(encoded, stored) {
+		t.Fatal("preserve-all remux changed an interleaved movie it kept every part of")
+	}
 	for track := range 2 {
 		if got := mp4TrackChunkOffsets(t, encoded, track); len(got) != chunks {
 			t.Fatalf("track %d kept %d chunks, want %d", track, len(got), chunks)

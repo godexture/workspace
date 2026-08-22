@@ -18,6 +18,10 @@ import (
 const muxPageBytes = 64 * 1024
 const muxJournalPageBytes = 8 * 1024
 
+// muxJournalTrackPageBytes is held once per selected track, so it stays well
+// under the page the patch phase reads back through the buffer grant.
+const muxJournalTrackPageBytes = 1024
+
 type muxPlan struct {
 	shape   flow.Shape
 	movie   movie
@@ -56,10 +60,7 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
-			scratch, err := layout.journalBytes()
-			if err != nil {
-				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
-			}
+			scratch := layout.journalBytes()
 			output, err := stream.NewDescriptor("mp4", access.Writes().Descriptor(), timing.Base{}, property.New())
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err

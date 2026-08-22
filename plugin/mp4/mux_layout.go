@@ -21,6 +21,9 @@ type muxLayout struct {
 	// payload indexes the rebuilt mdat payload within pieces.
 	payload int
 	size    uint64
+	// journal is the total size of the chunk-offset journal, which is the sum
+	// of the per-track regions placeJournal hands out.
+	journal uint64
 	// duration rewrites the mvhd duration when the selection drops a track.
 	duration muxPatch
 }
@@ -31,6 +34,10 @@ type muxTrack struct {
 	value  track
 	// offsets is the output offset of the first chunk-offset table entry.
 	offsets uint64
+	// journal is where this track's region of the chunk-offset journal starts.
+	// Tracks record their chunks as the interleaved payload reaches them, so
+	// each one writes into its own region rather than appending in turn.
+	journal uint64
 }
 
 // muxPatch rewrites one fixed-width big-endian field in the finished output.
@@ -74,17 +81,7 @@ func (l muxLayout) payloadSize() uint64 { return l.pieces[l.payload].size }
 
 // journalBytes is the chunk-offset journal this layout needs while it writes.
 // Each chunk contributes one 64-bit output offset.
-func (l muxLayout) journalBytes() (resource.Bytes, error) {
-	var total uint64
-	for _, value := range l.tracks {
-		chunks := uint64(value.value.chunkCount)
-		if chunks > (uint64(math.MaxInt64)-total)/8 {
-			return 0, fmt.Errorf("%w: MP4 chunk-offset journal exceeds runtime range", ErrUnsupported)
-		}
-		total += chunks * 8
-	}
-	return resource.Bytes(total), nil
-}
+func (l muxLayout) journalBytes() resource.Bytes { return resource.Bytes(l.journal) }
 
 // compileMux resolves the packet inputs against the inspection and plans the
 // output bytes. Inputs name inspected tracks in inspection order; a shorter
@@ -340,10 +337,52 @@ func (b *muxLayoutBuilder) build() (muxLayout, error) {
 	if !result.valid() || len(result.tracks) != len(b.order) {
 		return muxLayout{}, fmt.Errorf("%w: MP4 output layout is incomplete", ErrMalformed)
 	}
+	if err := result.placeJournal(); err != nil {
+		return muxLayout{}, err
+	}
+	if err := result.checkOffsetWidth(); err != nil {
+		return muxLayout{}, err
+	}
 	if err := b.locateDuration(&result); err != nil {
 		return muxLayout{}, err
 	}
 	return result, nil
+}
+
+// placeJournal gives each track a region of the chunk-offset journal, in track
+// order, so patching can read one track's entries as a run.
+func (l *muxLayout) placeJournal() error {
+	l.journal = 0
+	for index := range l.tracks {
+		l.tracks[index].journal = l.journal
+		chunks := uint64(l.tracks[index].value.chunkCount)
+		if chunks > (uint64(math.MaxInt64)-l.journal)/8 {
+			return fmt.Errorf("%w: MP4 chunk-offset journal exceeds runtime range", ErrUnsupported)
+		}
+		l.journal += chunks * 8
+	}
+	return nil
+}
+
+// checkOffsetWidth rejects a movie whose rebuilt payload could push a 32-bit
+// stco entry past its field, while the layout is still the only thing that has
+// been decided. Every chunk lands inside the payload, so the payload end is the
+// bound. Deciding it per entry would mean rewriting the whole mdat first and
+// failing on the patch.
+func (l muxLayout) checkOffsetWidth() error {
+	end, ok := checkedBoxAdd(l.payloadOffset(), l.payloadSize())
+	if !ok {
+		return fmt.Errorf("%w: MP4 output payload range overflows", ErrUnsupported)
+	}
+	for _, selected := range l.tracks {
+		if selected.value.tables.largeOffsets || selected.value.chunkCount == 0 {
+			continue
+		}
+		if end > math.MaxUint32 {
+			return fmt.Errorf("%w: MP4 track %d keeps 32-bit chunk offsets but the output payload ends at %d", ErrUnsupported, selected.value.id, end)
+		}
+	}
+	return nil
 }
 
 func (b *muxLayoutBuilder) writeBox(value box) error {

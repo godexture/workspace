@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/godexture/godec/config"
@@ -83,23 +84,49 @@ func TestMP4MuxCompileAndOpenRequireFrozenInspectionAndSource(t *testing.T) {
 	}
 }
 
-func TestMP4MuxRejectsOutOfOrderPacketsAndDropsOwnership(t *testing.T) {
+// TestMP4MuxAcceptsAnyTrackFirstAndRejectsUnknownOrdinals fixes what the
+// arrival order does and does not have to be. Tracks reach the muxer in the
+// order the source stored their samples, so any selected track may be the first
+// to arrive; what stays fixed is that each track's own samples arrive in
+// sequence, and that an ordinal outside the selection is a failure that drops
+// the packet it came with.
+func TestMP4MuxAcceptsAnyTrackFirstAndRejectsUnknownOrdinals(t *testing.T) {
 	data := twoTrackMovie(false, "isom", "iso2")
 	inspected := inspectMovie(t, data)
 	component, compiled := compileMP4Mux(t, inspected)
 	buffers := mustMP4Allocator(t, 1<<20)
-	packets := mustMP4Allocator(t, 3)
-	journal, err := scratch.Open(compiled.Scratch())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer journal.Close()
-	mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), buffers, journal)
-	input := muxSample(t, data, movieSamples(t, data, inspected, 1)[0], packets)
-	err = mux.Process(t.Context(), flow.NewSelectedBatch(1, &input), &muxWriteCollector{})
-	if !errors.Is(err, ErrUnsupported) || input.Valid() || packets.Used() != 0 {
-		t.Fatalf("out-of-order Process = %v input=%t used=%d", err, input.Valid(), packets.Used())
-	}
+	packets := mustMP4Allocator(t, 8)
+
+	t.Run("later track first", func(t *testing.T) {
+		journal, err := scratch.Open(compiled.Scratch())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer journal.Close()
+		mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), buffers, journal)
+		collector := &muxWriteCollector{}
+		input := muxSample(t, data, movieSamples(t, data, inspected, 1)[0], packets)
+		if err := mux.Process(t.Context(), flow.NewSelectedBatch(1, &input), collector); err != nil {
+			t.Fatalf("second track first = %v", err)
+		}
+		for _, item := range collector.items {
+			item.Drop()
+		}
+	})
+
+	t.Run("unknown ordinal", func(t *testing.T) {
+		journal, err := scratch.Open(compiled.Scratch())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer journal.Close()
+		mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), buffers, journal)
+		input := muxSample(t, data, movieSamples(t, data, inspected, 1)[0], packets)
+		err = mux.Process(t.Context(), flow.NewSelectedBatch(len(inspected.tracks), &input), &muxWriteCollector{})
+		if !errors.Is(err, ErrUnsupported) || input.Valid() || packets.Used() != 0 {
+			t.Fatalf("unknown ordinal Process = %v input=%t used=%d", err, input.Valid(), packets.Used())
+		}
+	})
 }
 
 func TestMP4MuxRejectsPacketMutationAndTrackReturn(t *testing.T) {
@@ -198,18 +225,22 @@ func TestMP4MuxFlushFailsClosedForTruncatedAndCanceledSource(t *testing.T) {
 	})
 }
 
-func TestMP4MuxPreflightsSTCOOverflowBeforeAppendingSuffix(t *testing.T) {
-	journal := &muxMemoryScratch{data: make([]byte, 8)}
-	binary.BigEndian.PutUint64(journal.data, uint64(^uint32(0))+1)
-	mux := &muxer{
-		layout:         muxLayout{tracks: []muxTrack{{value: track{chunkCount: 1}}}},
-		buffers:        mustMP4Allocator(t, muxJournalPageBytes),
-		scratch:        journal,
-		need:           8,
-		scratchWritten: 8,
+// TestMP4MuxLayoutRejects32BitOffsetsBeyondTheOutputPayload keeps the decision
+// where the evidence is. Every chunk lands inside the rebuilt payload, so
+// whether a 32-bit stco can still address them is settled by the layout. Left
+// to the patch phase it would mean rewriting the whole mdat and failing after.
+func TestMP4MuxLayoutRejects32BitOffsetsBeyondTheOutputPayload(t *testing.T) {
+	layout := muxLayout{
+		pieces:  []muxPiece{{kind: muxCopy}, {kind: muxPayload, output: math.MaxUint32 - 8, size: 32}},
+		payload: 1,
+		tracks:  []muxTrack{{value: track{id: 1, chunkCount: 1}}},
 	}
-	if err := mux.preflightOffsets(t.Context()); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("stco preflight = %v", err)
+	if err := layout.checkOffsetWidth(); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("32-bit chunk offsets past the payload = %v", err)
+	}
+	layout.tracks[0].value.tables.largeOffsets = true
+	if err := layout.checkOffsetWidth(); err != nil {
+		t.Fatalf("co64 has room for the same payload: %v", err)
 	}
 }
 
@@ -219,18 +250,18 @@ func TestMP4MuxFailsClosedForJournalFailure(t *testing.T) {
 	component, compiled := compileMP4Mux(t, inspected)
 	packets := mustMP4Allocator(t, 8)
 
-	t.Run("append cancellation", func(t *testing.T) {
+	// Sizing the journal is the first thing the muxer does with the scratch, so
+	// a journal it cannot reserve stops the remux before any output byte.
+	t.Run("sizing cancellation", func(t *testing.T) {
 		journal := &muxMemoryScratch{appendErr: context.Canceled}
 		mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), mustMP4Allocator(t, 1<<20), journal)
 		collector := &muxWriteCollector{}
-		for ordinal := range inspected.tracks {
-			input := muxSample(t, data, movieSamples(t, data, inspected, ordinal)[0], packets)
-			if err := mux.Process(t.Context(), flow.NewSelectedBatch(ordinal, &input), collector); err != nil {
-				t.Fatalf("journal append Process = %v", err)
-			}
+		input := muxSample(t, data, movieSamples(t, data, inspected, 0)[0], packets)
+		if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &input), collector); !errors.Is(err, context.Canceled) {
+			t.Fatalf("journal sizing Process = %v", err)
 		}
-		if err := mux.Finalize(t.Context()); !errors.Is(err, context.Canceled) {
-			t.Fatalf("journal append Finalize = %v", err)
+		if len(collector.items) != 0 {
+			t.Fatalf("journal sizing failure still emitted %d writes", len(collector.items))
 		}
 		for _, item := range collector.items {
 			item.Drop()
@@ -293,7 +324,7 @@ func TestMP4MuxCloseDropsBorrowedSourceAndScratch(t *testing.T) {
 	if err := mux.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if mux.reader != nil || mux.buffers != nil || mux.scratch != nil || mux.cursor.reader != nil {
+	if mux.reader != nil || mux.buffers != nil || mux.scratch != nil || mux.tracks != nil {
 		t.Fatal("MP4 mux Close retained a borrowed dependency")
 	}
 }
