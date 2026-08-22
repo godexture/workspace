@@ -78,10 +78,10 @@ func scanSampleDescriptions(ctx context.Context, reader access.Random, value box
 		}
 		if index == 0 {
 			result.typeID = typeID
-			if endian, linear := linearPCMEntry(typeID); linear {
-				if size < audioEntryBytes {
-					return sampleEntry{}, fmt.Errorf("%w: stsd entry %d omits its audio fields", errMalformedMovie, index+1)
-				}
+			// An entry too short to carry the audio fields stays opaque, like
+			// any other shape parseAudioEntry cannot express: the track is
+			// copied rather than decoded, and the movie remains usable.
+			if endian, linear := linearPCMEntry(typeID); linear && size >= audioEntryBytes {
 				if err := entries.readAt(ctx, entryOffset, entry[:], "stsd"); err != nil {
 					return sampleEntry{}, err
 				}

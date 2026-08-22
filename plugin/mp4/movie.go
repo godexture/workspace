@@ -44,9 +44,11 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 			result.tracks = tracks
 			result.moov = value
 			result.header = header
-			if moovRecordsOffsets(ctx, inspection, sourceEnd, value) {
-				result.offsetIndex = true
+			records, err := moovRecordsOffsets(ctx, inspection, sourceEnd, value)
+			if err != nil {
+				return err
 			}
+			result.offsetIndex = result.offsetIndex || records
 			haveMovie = true
 		case typeMDAT:
 			if haveMedia {
@@ -57,9 +59,11 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 		case typeSIDX, typeSSIX, typeMFRA, typeTFRA, typeILOC:
 			result.offsetIndex = true
 		case typeMETA:
-			if metaRecordsOffsets(ctx, inspection, sourceEnd, value) {
-				result.offsetIndex = true
+			records, err := metaRecordsOffsets(ctx, inspection, sourceEnd, value)
+			if err != nil {
+				return err
 			}
+			result.offsetIndex = result.offsetIndex || records
 		case typeMOOF:
 			return fmt.Errorf("%w: fragmented moof is not supported", errUnsupportedMovie)
 		}
@@ -90,25 +94,30 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 // nesting is not searched: iloc lives at moov or file level, while the meta box
 // under udta holds vocabulary metadata and follows the QuickTime layout in some
 // writers, so scanning it would fail closed on ordinary files.
-func moovRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) bool {
+func moovRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (bool, error) {
 	found := false
 	err := scanChildBoxes(ctx, reader, sourceEnd, value, func(child box) error {
-		if child.typeID == typeMETA && metaRecordsOffsets(ctx, reader, sourceEnd, child) {
-			found = true
+		if child.typeID != typeMETA {
+			return nil
 		}
+		records, err := metaRecordsOffsets(ctx, reader, sourceEnd, child)
+		if err != nil {
+			return err
+		}
+		found = found || records
 		return nil
 	})
-	return found || err != nil
+	return found, err
 }
 
 // metaRecordsOffsets reports whether a meta box may carry an iloc item index.
-// meta is a FullBox in ISO BMFF but not in the QuickTime variant, so a meta
-// whose children cannot be scanned counts as an index and fails closed.
-func metaRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) bool {
+// meta is a FullBox in ISO BMFF but not in the QuickTime variant, so a child
+// list this reader cannot walk counts as an index and fails closed.
+func metaRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uint64, value box) (bool, error) {
 	start, ok := checkedBoxAdd(value.payloadOffset, 4)
 	end, endOK := payloadEnd(value)
 	if !ok || !endOK || start > end {
-		return true
+		return true, nil
 	}
 	found := false
 	err := scanBoxes(ctx, reader, boxScope{sourceEnd: sourceEnd, start: start, end: end}, func(child box) error {
@@ -117,7 +126,17 @@ func metaRecordsOffsets(ctx context.Context, reader access.Random, sourceEnd uin
 		}
 		return nil
 	})
-	return found || err != nil
+	if err != nil && unwalkableBox(err) {
+		return true, nil
+	}
+	return found, err
+}
+
+// unwalkableBox separates a box structure this reader cannot follow from a
+// budget, cancellation or I/O failure. Only the former classifies content; the
+// latter says nothing about it and must reach the caller.
+func unwalkableBox(err error) bool {
+	return errors.Is(err, errMalformedBox) && !errors.Is(err, errUnsupportedMovie) && !errors.Is(err, errTruncatedMovie)
 }
 
 func readMovieHeader(ctx context.Context, reader access.Random, value box) (movieHeader, error) {

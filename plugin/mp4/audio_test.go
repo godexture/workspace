@@ -2,8 +2,10 @@ package mp4
 
 import (
 	"encoding/binary"
+	"errors"
 	"testing"
 
+	"github.com/godexture/godec/access"
 	mediasample "github.com/godexture/godec/media/sample"
 )
 
@@ -86,5 +88,64 @@ func TestTrackPropertiesPublishAudioOnlyWithAMatchingTimescale(t *testing.T) {
 	}
 	if _, err := mediasample.FromProperties(mismatched); err == nil {
 		t.Fatal("a track whose timescale is not its sample rate published an audio description")
+	}
+}
+
+// TestShortPCMEntryStaysOpaque keeps a nonconforming sowt entry inspectable.
+// The audio fields are what this reader cannot express, not the movie, so the
+// track must remain copyable instead of failing the whole file.
+func TestShortPCMEntryStaysOpaque(t *testing.T) {
+	tracks := []fixtureTrack{{
+		id: 1, timeScale: 48_000, handler: "soun", entryType: "sowt", size: 2,
+		sttsExtra: []fixtureTiming{{count: 1, duration: 1}},
+	}}
+	parsed := inspectMovie(t, fixtureMovie(false, "isom", []string{"iso2"}, tracks, nil, nil))
+	if len(parsed.tracks) != 1 || parsed.tracks[0].codec != typeSOWT {
+		t.Fatalf("inspected tracks = %#v", parsed.tracks)
+	}
+	if parsed.tracks[0].audio != (mediasample.Description{}) {
+		t.Fatalf("short sowt entry described audio: %#v", parsed.tracks[0].audio)
+	}
+	properties, err := trackProperties(parsed.tracks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mediasample.FromProperties(properties); err == nil {
+		t.Fatal("short sowt entry published a sample description")
+	}
+}
+
+// TestMetaOffsetScanSeparatesStructureFromBudget keeps the iloc classification
+// honest. A child list this reader cannot walk fails closed, but running out of
+// Inspect budget says nothing about the content and must reach the caller
+// instead of being reported as an offset index.
+func TestMetaOffsetScanSeparatesStructureFromBudget(t *testing.T) {
+	scan := func(t testing.TB, payload []byte, reader func([]byte) access.Random) (bool, error) {
+		t.Helper()
+		data := fixtureBox("meta", payload)
+		value := box{
+			typeID: typeMETA, size: uint64(len(data)), headerSize: 8,
+			payloadOffset: 8, payloadSize: uint64(len(payload)),
+		}
+		return metaRecordsOffsets(t.Context(), reader(data), uint64(len(data)), value)
+	}
+	plain := func(data []byte) access.Random { return memoryRandom(data) }
+
+	indexed := append(fixtureFullBox(0, 0, nil), fixtureBox("iloc", nil)...)
+	if records, err := scan(t, indexed, plain); err != nil || !records {
+		t.Fatalf("iloc meta = %t, %v", records, err)
+	}
+	tagged := append(fixtureFullBox(0, 0, nil), fixtureBox("hdlr", make([]byte, 20))...)
+	if records, err := scan(t, tagged, plain); err != nil || records {
+		t.Fatalf("vocabulary meta = %t, %v", records, err)
+	}
+	// A QuickTime meta has no version and flags, so skipping four bytes lands
+	// inside a child header and the list cannot be walked.
+	if records, err := scan(t, fixtureBox("hdlr", make([]byte, 20)), plain); err != nil || !records {
+		t.Fatalf("unwalkable meta = %t, %v", records, err)
+	}
+	budgeted := func(data []byte) access.Random { return newInspectReader(memoryRandom(data), 4) }
+	if _, err := scan(t, indexed, budgeted); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("exhausted Inspect budget = %v, want unsupported", err)
 	}
 }
