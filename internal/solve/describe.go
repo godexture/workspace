@@ -73,6 +73,7 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			Contract:    component.Contract(),
 			Resources:   compilation.Resources(),
 			Scratch:     compilation.Scratch(),
+			Temporary:   compilation.Temporary(),
 			Estimate:    compilation.Estimate(),
 		})
 	}
@@ -108,7 +109,17 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 	if err != nil {
 		return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "scratch", nil)
 	}
-	description.Scratch = plan.Scratch{Limit: reserved.Limit(), Reserved: reserved.Reserved()}
+	var claimed resource.Bytes
+	for _, node := range description.Nodes {
+		claimed += node.Temporary
+	}
+	description.Scratch = plan.Scratch{
+		Limit:              reserved.Limit(),
+		Reserved:           reserved.Reserved(),
+		TemporaryLimit:     p.policy.Resources.TemporaryMaxBytes,
+		TemporaryClaimed:   claimed,
+		TemporaryUnlimited: p.policy.Resources.TemporaryUnlimited,
+	}
 	public, err := plan.New(description)
 	if err != nil {
 		return program.Program{}, err

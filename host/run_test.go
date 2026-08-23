@@ -59,6 +59,8 @@ type lifecycleState struct {
 	sinkHandle      *lifecycleHandle
 	scratchClaims   map[string]resource.Bytes
 	scratchSeen     map[string]plugin.Scratch
+	temporaryClaims map[string]resource.Bytes
+	temporarySeen   map[string]plugin.Scratch
 }
 
 type lifecycleHandle struct{ closed atomic.Int32 }
@@ -93,6 +95,21 @@ func (s *lifecycleState) rememberScratch(node string, value plugin.Scratch) {
 		s.scratchSeen = make(map[string]plugin.Scratch)
 	}
 	s.scratchSeen[node] = value
+}
+
+func (s *lifecycleState) rememberTemporary(node string, value plugin.Scratch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.temporarySeen == nil {
+		s.temporarySeen = make(map[string]plugin.Scratch)
+	}
+	s.temporarySeen[node] = value
+}
+
+func (s *lifecycleState) temporary(node string) resource.Bytes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.temporaryClaims[node]
 }
 
 func (s *lifecycleState) scratch(node string) resource.Bytes {
@@ -269,7 +286,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 				if state.task != nil {
 					resources.Workers = 1
 				}
-				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Resources: resources, Scratch: state.scratch("source")}, nil
+				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sourceShape, Outputs: flow.NewDescriptors(flow.Describe("out", descriptor)), Resources: resources, Scratch: state.scratch("source"), Temporary: state.temporary("source")}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/source")
@@ -291,6 +308,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 					}
 				}
 				state.rememberScratch("source", ctx.Scratch())
+				state.rememberTemporary("source", ctx.Temporary())
 				if state.task != nil {
 					if err := ctx.Tasks().Start("fixture/background", state.task); err != nil {
 						return nil, err
@@ -310,9 +328,10 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 			Compile: func(_ plugin.CompileContext, _ lifecycleConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
 				input, _ := inputs.One("in")
 				return plugin.Compiled[flow.Shape, stream.Descriptor]{
-					Plan:    processorShape,
-					Outputs: flow.NewDescriptors(flow.Describe("out", input)),
-					Scratch: state.scratch("processor"),
+					Plan:      processorShape,
+					Outputs:   flow.NewDescriptors(flow.Describe("out", input)),
+					Scratch:   state.scratch("processor"),
+					Temporary: state.temporary("processor"),
 				}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
@@ -322,6 +341,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 					return nil, err
 				}
 				state.rememberScratch("processor", ctx.Scratch())
+				state.rememberTemporary("processor", ctx.Temporary())
 				return &lifecycleProcessor{lifecycleBase: &lifecycleBase{shape: shape, name: "processor", state: state}}, nil
 			},
 		}),
@@ -331,7 +351,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 		return plugin.WithSpec(plugin.Spec[lifecycleConfig, flow.Shape, stream.Descriptor]{
 			Ports: sinkShape,
 			Compile: func(plugin.CompileContext, lifecycleConfig, flow.Descriptors[stream.Descriptor]) (plugin.Compiled[flow.Shape, stream.Descriptor], error) {
-				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor](), Scratch: state.scratch(name)}, nil
+				return plugin.Compiled[flow.Shape, stream.Descriptor]{Plan: sinkShape, Outputs: flow.NewDescriptors[stream.Descriptor](), Scratch: state.scratch(name), Temporary: state.temporary(name)}, nil
 			},
 			Open: func(ctx plugin.OpenContext, shape flow.Shape) (flow.Operator, error) {
 				state.add("open/" + name)
@@ -353,6 +373,7 @@ func lifecycleFixture(t *testing.T, state *lifecycleState, options ...Option) (*
 					}
 				}
 				state.rememberScratch(name, ctx.Scratch())
+				state.rememberTemporary(name, ctx.Temporary())
 				sink := &lifecycleSink{lifecycleBase: &lifecycleBase{shape: shape, name: name, state: state}}
 				if state.retain {
 					sink.held.Bind(lifecycleType, ctx.Owner())
@@ -494,7 +515,8 @@ func TestPreparedRunGrantsScratchOnlyToClaimingNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := prepared.Plan().Scratch(); got != (plan.Scratch{Limit: 8, Reserved: 8}) {
+	if want := (plan.Scratch{Limit: 8, Reserved: 8, TemporaryLimit: prepared.Plan().EffectivePolicy().Resources.TemporaryMaxBytes}); prepared.Plan().Scratch() != want {
+		got := prepared.Plan().Scratch()
 		t.Fatalf("scratch plan = %#v", got)
 	}
 	result, err := prepared.Run(t.Context())
@@ -938,4 +960,66 @@ func indexOf(values []string, target string) int {
 		}
 	}
 	return -1
+}
+
+// A store that grows reserves nothing, so what a node claims is a ceiling it
+// promises not to pass rather than an amount now unavailable to anyone else.
+// Only the node that claimed one receives it.
+func TestPreparedRunGrantsAGrowingTemporaryOnlyToClaimingNode(t *testing.T) {
+	state := &lifecycleState{temporaryClaims: map[string]resource.Bytes{"processor": 64}}
+	instance, request := lifecycleFixture(t, state)
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := prepared.Plan().Scratch()
+	if projection.Reserved != 0 {
+		t.Fatalf("a growing claim reserved %d bytes", projection.Reserved)
+	}
+	if projection.TemporaryClaimed != 64 || projection.TemporaryUnlimited {
+		t.Fatalf("temporary projection = %#v", projection)
+	}
+	result, err := prepared.Run(t.Context())
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("result = %#v, %v", result, err)
+	}
+	state.mu.Lock()
+	granted := state.temporarySeen["processor"]
+	others := []plugin.Scratch{state.temporarySeen["source"], state.temporarySeen["sink"]}
+	state.mu.Unlock()
+	if granted == nil {
+		t.Fatal("the claiming node received no temporary store")
+	}
+	for index, value := range others {
+		if value != nil {
+			t.Fatalf("node %d received a temporary store it never claimed", index)
+		}
+	}
+	// The store is borrowed for as long as the component is open and no
+	// longer, so the run ending is what closes it rather than the component
+	// remembering to.
+	if _, err := granted.Append(t.Context(), []byte("held")); err == nil {
+		t.Fatal("the temporary store outlived the run that lent it")
+	}
+}
+
+// The ceiling a job sets is what a growing store is charged against, so a node
+// whose claim the job cannot honour is refused rather than allowed to write
+// past it.
+func TestPreparedRunRefusesAGrowingTemporaryTheJobDisabled(t *testing.T) {
+	state := &lifecycleState{temporaryClaims: map[string]resource.Bytes{"processor": 64}}
+	instance, request := lifecycleFixture(t, state)
+	policy := request.Policy()
+	policy.Resources.TemporaryMaxBytes = 0
+	graph, ok := request.Graph()
+	if !ok {
+		t.Fatal("fixture graph is missing")
+	}
+	request, err := job.New(nil, nil, graph, job.WithPolicy(policy), job.WithBudget(request.Budget()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.Prepare(t.Context(), request); err == nil {
+		t.Fatal("a disabled job accepted a growing temporary claim")
+	}
 }

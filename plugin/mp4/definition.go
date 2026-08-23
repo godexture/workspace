@@ -4,6 +4,7 @@ import (
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	mediasample "github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -47,7 +48,7 @@ func Plugin() plugin.Definition {
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
 	}, demuxerComponent(), muxerComponent())
-	return definition.WithDeclarations(codec.Declarations()...)
+	return definition.WithDeclarations(append(codec.Declarations(), stream.Declarations()...)...)
 }
 
 // Set returns the self-contained MP4 composition.

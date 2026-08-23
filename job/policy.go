@@ -19,7 +19,14 @@ const (
 	Realtime
 )
 
-const defaultScratchMaxBytes resource.Bytes = 64 << 20
+const (
+	defaultScratchMaxBytes resource.Bytes = 64 << 20
+	// defaultTemporaryMaxBytes is generous because it sets nothing aside: an
+	// offline conversion that has to hold a stream to find its end should not
+	// fail on an ordinary recording, and the ceiling is here to stop a runaway
+	// job rather than to ration ordinary ones.
+	defaultTemporaryMaxBytes resource.Bytes = 4 << 30
+)
 
 func (p Preset) Valid() bool { return p >= Fast && p <= Realtime }
 
@@ -111,9 +118,17 @@ type ResourcePolicy struct {
 	// ScratchMaxBytes is the aggregate fixed ceiling shared by node-local
 	// scratch journals and selected output spools. Zero disables both.
 	ScratchMaxBytes resource.Bytes
-	AllowSpool      bool
-	SpoolMaxBytes   resource.Bytes
-	SpoolStorage    access.SpoolStorage
+	// TemporaryMaxBytes bounds what node-local stores that grow rather than
+	// reserve may use altogether. It sets nothing aside: a node that cannot
+	// state its size in advance is charged as it writes. Zero disables them.
+	TemporaryMaxBytes resource.Bytes
+	// TemporaryUnlimited lifts that ceiling, leaving the storage itself as the
+	// only bound. It is a choice a job makes rather than one a component can
+	// make for it.
+	TemporaryUnlimited bool
+	AllowSpool         bool
+	SpoolMaxBytes      resource.Bytes
+	SpoolStorage       access.SpoolStorage
 }
 
 // QueuePolicy selects the per-edge physical bounds fixed into the executable
@@ -142,10 +157,16 @@ type AlignmentPolicy struct {
 
 func (p AlignmentPolicy) Valid() bool { return p.Zip >= 0 }
 
-func (p ResourcePolicy) Valid() bool { return p.Queue.Valid() && p.validScratch() && p.validSpool() }
+func (p ResourcePolicy) Valid() bool {
+	return p.Queue.Valid() && p.validScratch() && p.validTemporary() && p.validSpool()
+}
 
 func (p ResourcePolicy) validScratch() bool {
 	return uint64(p.ScratchMaxBytes) <= math.MaxInt64
+}
+
+func (p ResourcePolicy) validTemporary() bool {
+	return uint64(p.TemporaryMaxBytes) <= math.MaxInt64
 }
 
 func (p ResourcePolicy) validSpool() bool {
@@ -233,7 +254,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
 		Alignment:      AlignmentPolicy{},
-		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}, ScratchMaxBytes: defaultScratchMaxBytes},
+		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}, ScratchMaxBytes: defaultScratchMaxBytes, TemporaryMaxBytes: defaultTemporaryMaxBytes},
 	}
 	switch preset {
 	case Fast:
@@ -247,6 +268,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		policy.Alignment = AlignmentPolicy{Zip: 250 * time.Millisecond}
 		policy.Resources.Queue = QueuePolicy{Items: 2, Bytes: 16 << 20, Span: 250 * time.Millisecond}
 		policy.Resources.ScratchMaxBytes = 0
+		policy.Resources.TemporaryMaxBytes = 0
 	default:
 		return Policy{}, false
 	}

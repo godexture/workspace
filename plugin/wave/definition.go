@@ -6,6 +6,7 @@ import (
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
@@ -45,6 +46,7 @@ func Plugin() plugin.Definition {
 	declarations := []plugin.Declaration{InfoBinding()}
 	declarations = append(declarations, tag.Declarations()...)
 	declarations = append(declarations, sample.Declarations()...)
+	declarations = append(declarations, stream.Declarations()...)
 	return definition.WithDeclarations(declarations...)
 }
 

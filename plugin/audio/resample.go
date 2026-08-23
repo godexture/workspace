@@ -88,6 +88,16 @@ func retimed(shape flow.Shape, input stream.Descriptor, signal sample.Signal, pl
 	if err != nil {
 		return plugin.Compiled[resamplePlan, stream.Descriptor]{}, err
 	}
+	// Interpolating leaves a different number of samples covering the same
+	// instants, so a length the input stated is restated rather than carried
+	// over. Relabelling moves no samples, so its length in samples is the one
+	// it arrived with.
+	if length, stated := stream.DurationOf(properties); stated && plan.inputRate != plan.targetRate {
+		scaled := rescale(length.Value().Int64(), plan.inputRate, plan.targetRate)
+		if properties, err = stream.WithDuration(properties, timing.NewDuration(scaled)); err != nil {
+			return plugin.Compiled[resamplePlan, stream.Descriptor]{}, err
+		}
+	}
 	output, err := stream.NewDescriptor(input.ID(), shape.Outputs[0].Schema(), timing.MustBase(1, int64(counted)), properties)
 	if err != nil {
 		return plugin.Compiled[resamplePlan, stream.Descriptor]{}, err

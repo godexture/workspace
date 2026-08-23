@@ -209,6 +209,32 @@ func validateScratch(description Description) error {
 	if total > description.Scratch.Limit || total != 0 && description.Scratch.Limit == 0 {
 		return errors.New("plan scratch reservation exceeds its limit")
 	}
+	return validateTemporary(description)
+}
+
+// validateTemporary checks the projection of the stores that grow. Their
+// ceilings are not a reservation, so the sum may pass the job ceiling without
+// that being an error: what is enforced is the running total while they are
+// written. What would be wrong is a node claiming one at all when the job left
+// no ceiling and did not lift it.
+func validateTemporary(description Description) error {
+	policy := description.EffectivePolicy.Resources
+	if description.Scratch.TemporaryLimit != policy.TemporaryMaxBytes || description.Scratch.TemporaryUnlimited != policy.TemporaryUnlimited {
+		return errors.New("plan temporary ceiling differs from effective policy")
+	}
+	var total resource.Bytes
+	for _, node := range description.Nodes {
+		if uint64(node.Temporary) > math.MaxInt64 || uint64(total) > math.MaxInt64-uint64(node.Temporary) {
+			return errors.New("plan temporary claims overflow")
+		}
+		total += node.Temporary
+	}
+	if total != description.Scratch.TemporaryClaimed {
+		return errors.New("plan temporary claims do not match the nodes")
+	}
+	if total != 0 && !description.Scratch.TemporaryUnlimited && description.Scratch.TemporaryLimit == 0 {
+		return errors.New("a node claimed temporary storage the job disabled")
+	}
 	return nil
 }
 
@@ -234,6 +260,7 @@ type canonicalNode struct {
 	Contract  plugin.Contract
 	Resources resource.Request
 	Scratch   resource.Bytes
+	Temporary resource.Bytes
 	Estimate  resource.Estimate
 }
 
@@ -304,6 +331,7 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Contract:  node.Contract,
 			Resources: node.Resources,
 			Scratch:   node.Scratch,
+			Temporary: node.Temporary,
 			Estimate:  node.Estimate,
 		}
 	}

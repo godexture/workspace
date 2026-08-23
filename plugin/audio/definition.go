@@ -8,6 +8,7 @@ package audio
 import (
 	mediaaudio "github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -168,7 +169,7 @@ func Plugin() plugin.Definition {
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
 	}, components...)
-	return definition.WithDeclarations(sample.Declarations()...)
+	return definition.WithDeclarations(append(sample.Declarations(), stream.Declarations()...)...)
 }
 
 // Set returns the self-contained composition.
