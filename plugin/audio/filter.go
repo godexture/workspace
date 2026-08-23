@@ -103,29 +103,9 @@ func newFilter[Marker, C any](spec filterSpec[C]) plugin.Component {
 // wanted, so the planner reaches for a converter instead of the filter
 // refusing a stream it could have been given.
 func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[filterPlan[C], stream.Descriptor], error) {
-	input, ok := inputs.One("frames")
-	if !ok {
-		return plugin.Compiled[filterPlan[C], stream.Descriptor]{
-			Requirements: []plugin.Requirement[stream.Descriptor]{
-				plugin.Require("frames", plugin.ConditionNeed[stream.Descriptor]("audio.filter-input")),
-			},
-		}, nil
-	}
-	signal, err := sample.SignalOf(input.Properties())
-	if err != nil {
-		return plugin.Compiled[filterPlan[C], stream.Descriptor]{}, err
-	}
-	description, err := sample.FromProperties(input.Properties())
-	if err != nil || description != processed(signal) || input.TimeBase() != timing.MustBase(1, int64(signal.Rate)) {
-		desired, desiredErr := describeProcessed(input, shape.Inputs[0].Schema(), signal)
-		if desiredErr != nil {
-			return plugin.Compiled[filterPlan[C], stream.Descriptor]{}, desiredErr
-		}
-		return plugin.Compiled[filterPlan[C], stream.Descriptor]{
-			Requirements: []plugin.Requirement[stream.Descriptor]{
-				plugin.Require("frames", plugin.DescriptorNeed("audio.filter-samples", desired)),
-			},
-		}, nil
+	input, signal, incomplete, ready, err := processedInput[filterPlan[C]](shape, inputs)
+	if !ready || err != nil {
+		return incomplete, err
 	}
 	if spec.check != nil {
 		if err := spec.check(configuration, signal); err != nil {
@@ -150,6 +130,38 @@ func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C,
 		Effects:   []plugin.Effect{{Kind: plugin.ContentEffect, Loss: plugin.Lossy, Detail: spec.detail}},
 		Resources: resource.Request{Memory: resource.Bytes(planeBytes[float32](*spec.samples(&configuration), channels))},
 	}, nil
+}
+
+// processedInput is the check every processor makes before anything else: it
+// reads planar float32, or it states the descriptor it wanted so the planner
+// bridges the stream rather than the processor refusing it. ready is false
+// when the returned Compiled is the answer.
+func processedInput[P any](shape flow.Shape, inputs flow.Descriptors[stream.Descriptor]) (stream.Descriptor, sample.Signal, plugin.Compiled[P, stream.Descriptor], bool, error) {
+	input, ok := inputs.One(shape.Inputs[0].ID())
+	if !ok {
+		return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{
+			Requirements: []plugin.Requirement[stream.Descriptor]{
+				plugin.Require(shape.Inputs[0].ID(), plugin.ConditionNeed[stream.Descriptor]("audio.filter-input")),
+			},
+		}, false, nil
+	}
+	signal, err := sample.SignalOf(input.Properties())
+	if err != nil {
+		return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{}, false, err
+	}
+	description, err := sample.FromProperties(input.Properties())
+	if err == nil && description == processed(signal) && input.TimeBase() == timing.MustBase(1, int64(signal.Rate)) {
+		return input, signal, plugin.Compiled[P, stream.Descriptor]{}, true, nil
+	}
+	desired, err := describeProcessed(input, shape.Inputs[0].Schema(), signal)
+	if err != nil {
+		return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{}, false, err
+	}
+	return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{
+		Requirements: []plugin.Requirement[stream.Descriptor]{
+			plugin.Require(shape.Inputs[0].ID(), plugin.DescriptorNeed("audio.filter-samples", desired)),
+		},
+	}, false, nil
 }
 
 // processed is the one representation every filter reads. Float samples carry

@@ -44,6 +44,10 @@ type (
 	reverbConfigID     struct{}
 	remixID            struct{}
 	remixConfigID      struct{}
+	resampleID         struct{}
+	resampleConfigID   struct{}
+	retimeID           struct{}
+	retimeConfigID     struct{}
 )
 
 type conversion struct {
@@ -105,6 +109,8 @@ const (
 	Delay      Processor = "delay"
 	Reverb     Processor = "reverb"
 	Remix      Processor = "remix"
+	Resample   Processor = "resample"
+	Retime     Processor = "retime"
 )
 
 type entry struct {
@@ -123,6 +129,8 @@ var processors = []entry{
 	{name: Delay, component: newDelay()},
 	{name: Reverb, component: newReverb()},
 	{name: Remix, component: newRemix()},
+	{name: Resample, component: newResample()},
+	{name: Retime, component: newRetime()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An

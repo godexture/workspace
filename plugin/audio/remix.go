@@ -8,7 +8,6 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
-	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/resource"
 )
@@ -88,29 +87,9 @@ type producerPlan struct {
 }
 
 func compileRemix(shape flow.Shape, configuration remixConfig, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[producerPlan, stream.Descriptor], error) {
-	input, ok := inputs.One("frames")
-	if !ok {
-		return plugin.Compiled[producerPlan, stream.Descriptor]{
-			Requirements: []plugin.Requirement[stream.Descriptor]{
-				plugin.Require("frames", plugin.ConditionNeed[stream.Descriptor]("audio.filter-input")),
-			},
-		}, nil
-	}
-	signal, err := sample.SignalOf(input.Properties())
-	if err != nil {
-		return plugin.Compiled[producerPlan, stream.Descriptor]{}, err
-	}
-	description, err := sample.FromProperties(input.Properties())
-	if err != nil || description != processed(signal) || input.TimeBase() != timing.MustBase(1, int64(signal.Rate)) {
-		desired, desiredErr := describeProcessed(input, shape.Inputs[0].Schema(), signal)
-		if desiredErr != nil {
-			return plugin.Compiled[producerPlan, stream.Descriptor]{}, desiredErr
-		}
-		return plugin.Compiled[producerPlan, stream.Descriptor]{
-			Requirements: []plugin.Requirement[stream.Descriptor]{
-				plugin.Require("frames", plugin.DescriptorNeed("audio.filter-samples", desired)),
-			},
-		}, nil
+	input, signal, incomplete, ready, err := processedInput[producerPlan](shape, inputs)
+	if !ready || err != nil {
+		return incomplete, err
 	}
 	if !configuration.Layout.Valid() {
 		return plugin.Compiled[producerPlan, stream.Descriptor]{}, errors.New("remix needs the channels to state the stream across")
