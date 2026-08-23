@@ -780,8 +780,12 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 	)
 }
 
-func skeletonBinding() codec.Binding {
-	return codec.Bind(format.NewTag("fixture", "bytes"), codec.Define[skeletonCodecID](), codec.DefineParser[skeletonParserID]())
+func skeletonBindings() []codec.Binding {
+	tag := format.NewTag("fixture", "bytes")
+	return []codec.Binding{
+		codec.BindDecoder(tag, codec.Define[skeletonCodecID]()),
+		codec.BindParser(tag, codec.DefineParser[skeletonParserID]()),
+	}
 }
 
 func skeletonMetadataBinding() metadata.Binding {
@@ -829,7 +833,7 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if err != nil || !trivialFormat.Valid() {
 		t.Fatalf("trivial format = %#v, %v", trivialFormat, err)
 	}
-	index, err := skeletonCatalog(plugin.NewSet(definition).AddDeclaration(skeletonBinding()).AddDeclaration(skeletonMetadataBinding()))
+	index, err := skeletonCatalog(withBindings(plugin.NewSet(definition), skeletonBindings()...).AddDeclaration(skeletonMetadataBinding()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1134,8 +1138,8 @@ func TestTimedMetadataUsesTypedEventSchema(t *testing.T) {
 }
 
 func TestWalkingSkeletonRejectsConflictingBindingInHostBuild(t *testing.T) {
-	base := plugin.NewSet(skeletonComponents(nil, nil)).AddDeclaration(skeletonBinding())
-	conflict := codec.BindWithoutParser(format.NewTag("fixture", "bytes"), codec.New(plugin.IdentityOf[skeletonDemuxerID]()))
+	base := withBindings(plugin.NewSet(skeletonComponents(nil, nil)), skeletonBindings()...)
+	conflict := codec.BindDecoder(format.NewTag("fixture", "bytes"), codec.New(plugin.IdentityOf[skeletonDemuxerID]()))
 	if _, err := host.New(host.Plugins(base.AddDeclaration(conflict))); err == nil {
 		t.Fatal("host accepted conflicting codec declaration")
 	}
@@ -1179,4 +1183,11 @@ func processCell[I, O any](ctx context.Context, cell *flow.Item[I], output flow.
 		return fmt.Errorf("collected item was already consumed")
 	}
 	return process(ctx, cell, output)
+}
+
+func withBindings(set plugin.Set, bindings ...codec.Binding) plugin.Set {
+	for _, binding := range bindings {
+		set = set.AddDeclaration(binding)
+	}
+	return set
 }

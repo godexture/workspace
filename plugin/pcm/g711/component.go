@@ -43,8 +43,7 @@ type configID struct{}
 type configuration struct {
 	ChunkSamples int
 	// Tag is the codec tag the output carries. A coder does not know what its
-	// container calls it, so the container states it in the stream it asks for
-	// and the coder agrees to be named that.
+	// container calls it, so the container states it in the stream it asks for.
 	Tag string
 }
 
@@ -95,7 +94,7 @@ func newCodec[Marker any](law Law, kind operation, name string) plugin.Component
 			return compileCodec(law, kind, shape, configuration, inputs)
 		},
 		Suggest: func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []configuration {
-			return []configuration{{ChunkSamples: 1024, Tag: demandedTag(suggestion)}}
+			return []configuration{{ChunkSamples: 1024, Tag: codec.DemandedTag(suggestion).String()}}
 		},
 		SuggestionLimit: 1,
 		Open: func(ctx plugin.OpenContext, plan componentPlan) (flow.Operator, error) {
@@ -207,20 +206,4 @@ func codecEffect(kind operation) plugin.Effect {
 		return plugin.Effect{Kind: plugin.RepresentationEffect, Loss: plugin.NoLoss, Detail: "g711.expand"}
 	}
 	return plugin.Effect{Kind: plugin.CompressionEffect, Loss: plugin.Lossy, Detail: "g711.compand"}
-}
-
-// demandedTag reads the codec tag the container asked for. A coder does not
-// know what its container calls it, so it takes the name from the stream the
-// container said it wanted.
-func demandedTag(suggestion plugin.Suggestion[stream.Descriptor]) string {
-	for _, demand := range suggestion.Demands() {
-		target, ok := demand.Need().Desired()
-		if !ok {
-			continue
-		}
-		if tag, tagged := codec.TagOf(target.Properties()); tagged {
-			return tag.String()
-		}
-	}
-	return ""
 }

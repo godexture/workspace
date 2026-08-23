@@ -266,7 +266,7 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			var decoyCompiles atomic.Int32
 			decoy := waveDecoyParser(&decoyCompiles)
 			set := standard.Set().Add(plugin.Define[waveDecoyPluginID](plugin.Descriptor{DisplayName: "other codec", Version: "1"}, decoy)).
-				AddDeclaration(codec.Bind(mediaformat.NewTag("fixture", "other"), codec.New(linear.DecoderIdentity(sample.S16)), codec.NewParser(decoy.Identity())))
+				AddDeclaration(codec.BindParser(mediaformat.NewTag("fixture", "other"), codec.NewParser(decoy.Identity())))
 			instance, err := host.New(
 				host.Plugins(set),
 				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),

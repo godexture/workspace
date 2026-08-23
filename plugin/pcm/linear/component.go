@@ -114,6 +114,7 @@ func suggestOperation(kind operation, shape flow.Shape, stores func(sample.Codin
 	if !ok || (stores != nil && !stores(value.Coding)) {
 		return nil
 	}
+	value.Tag = codec.DemandedTag(suggestion).String()
 	return []configuration{value}
 }
 
@@ -192,6 +193,16 @@ func compileOperation(kind operation, shape flow.Shape, stores func(sample.Codin
 	}
 	if err != nil {
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
+	}
+	if kind == encoderOperation && configuration.Tag != "" {
+		properties, tagErr := codec.WithTag(outputDescriptor.Properties(), format.Tag(configuration.Tag))
+		if tagErr != nil {
+			return plugin.Compiled[componentPlan, stream.Descriptor]{}, tagErr
+		}
+		if outputDescriptor, err = stream.NewDescriptor(outputDescriptor.ID(), outputPort.Schema(), outputDescriptor.TimeBase(), properties); err != nil {
+			return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
+		}
+		outputDescriptor = outputDescriptor.WithMetadata(input.Metadata())
 	}
 	plan := componentPlan{operation: kind, shape: shape.Clone(), config: configuration, wire: configuration.wire()}
 	switch kind {
@@ -283,6 +294,11 @@ func descriptorWith(input stream.Descriptor, schemaDescriptor schema.Descriptor,
 	properties, err := description.Apply(input.Properties())
 	if err != nil {
 		return stream.Descriptor{}, err
+	}
+	if description.Packing == sample.Planar {
+		// A decoded stream is no longer the coded one, so it stops carrying the
+		// tag that named the codec.
+		properties = codec.WithoutTag(properties)
 	}
 	result, err := stream.NewDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {

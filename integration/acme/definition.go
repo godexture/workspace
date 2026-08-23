@@ -41,7 +41,7 @@ func Plugin() plugin.Definition {
 		Build:       plugin.BuildModePureGo,
 	}, sourceComponent(), readerComponent(), decoderComponent(), writerComponent(), encodingComponent())
 	declarations := []plugin.Declaration{
-		codec.BindWithoutParser(CodecTag(), codec.New(DecoderIdentity())),
+		codec.BindDecoder(CodecTag(), codec.New(DecoderIdentity())),
 		metadata.Bind(LabelCarrier(), EncodingIdentity()),
 		plugin.DeclareKey(Label()),
 	}

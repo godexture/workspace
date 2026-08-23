@@ -12,24 +12,43 @@ import (
 
 type fixtureCodecID struct{}
 type fixtureParserID struct{}
+type secondCodecID struct{}
 
-func TestBindingKeepsParserIndependentFromFormat(t *testing.T) {
-	parser := DefineParser[fixtureParserID]()
-	binding := Bind(format.NewTag("fixture", "tag"), Define[fixtureCodecID](), parser)
-	targets := binding.Targets()
-	if !binding.Valid() || len(targets) != 2 {
-		t.Fatalf("binding = %#v", binding)
+// A codec tag names a codec, not a direction, so each role is its own
+// declaration. That is also what lets one tag name several components without
+// them colliding: the four decoders of one wire coding are one declaration.
+func TestBindingNamesEachRoleSeparately(t *testing.T) {
+	tag := format.NewTag("fixture", "tag")
+	decoders := BindDecoder(tag, Define[fixtureCodecID](), Define[secondCodecID]())
+	encoder := BindEncoder(tag, Define[fixtureCodecID]())
+	parser := BindParser(tag, DefineParser[fixtureParserID]())
+	if !decoders.Valid() || !encoder.Valid() || !parser.Valid() {
+		t.Fatalf("bindings = %#v %#v %#v", decoders, encoder, parser)
 	}
-	codec, codecTarget := targets[0].Component()
-	if !codecTarget || codec != plugin.IdentityOf[fixtureCodecID]() {
-		t.Fatalf("codec target = %#v", targets)
+	if decoders.Key() == encoder.Key() || decoders.Key() == parser.Key() || encoder.Key() == parser.Key() {
+		t.Fatal("two roles of one tag share a declaration key")
 	}
-	parserIdentity, parserTarget := targets[1].Component()
-	if !parserTarget || parserIdentity != plugin.IdentityOf[fixtureParserID]() {
-		t.Fatalf("parser target = %#v", targets)
+	if len(decoders.Targets()) != 2 {
+		t.Fatalf("one tag could not name two decoders: %#v", decoders.Targets())
 	}
-	if got, ok := BindingTag(binding.Key()); !ok || got != format.NewTag("fixture", "tag") || BindingKey(got) != binding.Key() || !IsBindingKey(binding.Key()) {
-		t.Fatalf("binding key = %q/%v", got, ok)
+	first, ok := decoders.Targets()[0].Component()
+	if !ok || first != plugin.IdentityOf[fixtureCodecID]() {
+		t.Fatalf("decoder target = %#v", decoders.Targets())
+	}
+	for _, testCase := range []struct {
+		binding Binding
+		role    Role
+	}{{decoders, DecoderRole}, {encoder, EncoderRole}, {parser, ParserRole}} {
+		got, role, ok := BindingTag(testCase.binding.Key())
+		if !ok || got != tag || role != testCase.role {
+			t.Fatalf("binding key = %q/%v/%v", got, role, ok)
+		}
+	}
+	if DecoderKey(tag) != decoders.Key() || EncoderKey(tag) != encoder.Key() || ParserKey(tag) != parser.Key() {
+		t.Fatal("a role key did not name the declaration its constructor produces")
+	}
+	if _, _, ok := BindingTag(plugin.Declare[fixtureCodecID]("other", plugin.IdentityOf[fixtureCodecID]()).Key()); ok {
+		t.Fatal("a declaration outside the codec namespaces was read as a binding")
 	}
 }
 

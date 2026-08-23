@@ -14,6 +14,9 @@ type configuration struct {
 	Layout       sample.Layout
 	ValidBits    int
 	ChunkSamples int
+	// Tag is the codec tag the output carries. A coder does not know what its
+	// container calls it, so the container states it in the stream it asks for.
+	Tag string
 }
 
 func defaultConfiguration() configuration {
@@ -35,6 +38,7 @@ func configurationSchema() config.Schema[configuration] {
 		AddField(config.Field("layout", func(value *configuration) *sample.Layout { return &value.Layout }, sample.LayoutCodec())).
 		AddField(config.Field("validBits", func(value *configuration) *int { return &value.ValidBits }, config.Int().Range(0, 64).Help("bits carrying information, or 0 for the coding's full width"))).
 		AddField(config.Field("chunkSamples", func(value *configuration) *int { return &value.ChunkSamples }, config.Int().Range(1, 1<<20))).
+		AddField(config.Field("tag", func(value *configuration) *string { return &value.Tag }, config.String())).
 		Build()
 }
 

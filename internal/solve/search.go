@@ -182,7 +182,7 @@ func (p *planner) search(gap graph.Gap) (searchResult, rejections, error) {
 		}
 
 		for _, candidate := range p.candidates[current.descriptor.Schema().String()] {
-			if !codecCandidateMatches(p.index, candidate.component.Identity(), current.descriptor) {
+			if !codecCandidateMatches(p.index, candidate.component.Identity(), current.descriptor, need) {
 				rejected.add("codec-tag")
 				continue
 			}

@@ -32,6 +32,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	runCompandedCases(t, set, coverage)
 	runADPCMCases(t, set, coverage)
 	runCompandedSuggestions(t, set, coverage)
+	runADPCMCoderCases(t, set, coverage)
 	runWAVECases(t, set, coverage)
 	runRIFFInfoCases(t, set, coverage)
 

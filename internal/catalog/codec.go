@@ -8,20 +8,15 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
-type CodecBindingRole uint8
-
-const (
-	CodecRole CodecBindingRole = iota + 1
-	ParserRole
-)
-
+// CodecBinding is one tag a component implements, and the side of the codec it
+// implements it on.
 type CodecBinding struct {
 	tag  format.Tag
-	role CodecBindingRole
+	role codec.Role
 }
 
-func (b CodecBinding) Tag() format.Tag        { return b.tag }
-func (b CodecBinding) Role() CodecBindingRole { return b.role }
+func (b CodecBinding) Tag() format.Tag  { return b.tag }
+func (b CodecBinding) Role() codec.Role { return b.role }
 
 func (i Index) CodecBindings(identity plugin.Identity) []CodecBinding {
 	return append([]CodecBinding(nil), i.codecBindings[identity]...)
@@ -30,18 +25,14 @@ func (i Index) CodecBindings(identity plugin.Identity) []CodecBinding {
 func indexCodecBindings(declarations []plugin.Declaration) map[plugin.Identity][]CodecBinding {
 	result := make(map[plugin.Identity][]CodecBinding)
 	for _, declaration := range declarations {
-		tag, ok := codec.BindingTag(declaration.Key())
+		tag, role, ok := codec.BindingTag(declaration.Key())
 		if !ok {
 			continue
 		}
-		for index, target := range declaration.Targets() {
+		for _, target := range declaration.Targets() {
 			identity, ok := target.Component()
 			if !ok {
 				continue
-			}
-			role := CodecRole
-			if index == 1 {
-				role = ParserRole
 			}
 			result[identity] = append(result[identity], CodecBinding{tag: tag, role: role})
 		}

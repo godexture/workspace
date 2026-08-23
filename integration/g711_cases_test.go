@@ -9,7 +9,6 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
-	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	mediaschema "github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -109,7 +108,11 @@ func runCompandedSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Cov
 		Packing: sample.Planar,
 		Endian:  sample.NoEndian,
 	}
-	named, err := codec.WithTag(mustProperties(t, signal), wave.ULawTag())
+	properties, err := signal.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := codec.WithTag(properties, wave.ULawTag())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +136,4 @@ func runCompandedSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Cov
 				Want:    []testkit.Candidate{{"chunkSamples": "1024", "tag": wave.ULawTag().String()}},
 			})
 	}
-}
-
-func mustProperties(t *testing.T, signal sample.Signal) property.Set {
-	t.Helper()
-	properties, err := signal.Properties()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return properties
 }

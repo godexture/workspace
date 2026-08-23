@@ -136,7 +136,7 @@ func TestThirdPartyFormatExtensionJoinsFileConvenienceThroughSetAdd(t *testing.T
 func assertACMEDeclarations(t testing.TB, declarations []plugin.Declaration, owner plugin.Identity) {
 	t.Helper()
 	want := map[plugin.DeclarationKey]plugin.Identity{
-		codec.BindingKey(acme.CodecTag()):        acme.DecoderIdentity(),
+		codec.DecoderKey(acme.CodecTag()):        acme.DecoderIdentity(),
 		metadata.BindingKey(acme.LabelCarrier()): acme.EncodingIdentity(),
 	}
 	for _, declaration := range declarations {

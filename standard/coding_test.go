@@ -253,20 +253,85 @@ func TestConvertExpandsAnADPCMStream(t *testing.T) {
 	}
 }
 
-func TestDebugMuLawEncode(t *testing.T) {
+// Coding into a container the codec has never heard of is the other direction
+// of the same problem. The container names the codec it wants in the stream it
+// asks for; a composition binding is what keeps any other coder from answering
+// to that name, which is what lets the header and the payload agree.
+func TestConvertCompandsLinearPCMIntoMuLaw(t *testing.T) {
 	payload := []byte{0x84, 0x82, 0x7c, 0x7d, 0x00, 0x00}
-	source := waveFile(waveShape{channels: 1, bits: 16}, payload)
+	converted := convertWith(t, waveFile(waveShape{channels: 1, bits: 16}, payload), "ulaw")
+	// The extremes companded back to the codes they expanded from, and silence
+	// to the positive zero mu-law writes.
+	if !bytes.Contains(converted, []byte{0x00, 0x80, 0xff}) {
+		t.Fatalf("converted payload = %x", converted)
+	}
+	if !bytes.Contains(converted, waveFormat(waveShape{channels: 1, bits: 8, formatTag: 7}, 1)) {
+		t.Fatalf("converted header does not declare mu-law: %x", converted)
+	}
+}
+
+// convertWith runs one conversion that asks for an output codec.
+func convertWith(t *testing.T, source []byte, name string) []byte {
+	t.Helper()
 	directory := t.TempDir()
 	input := filepath.Join(directory, "input.wav")
+	output := filepath.Join(directory, "output.wav")
 	if err := os.WriteFile(input, source, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	instance, _ := standard.NewHost()
-	extension, _ := format.ParseExtension("wav")
-	selector, _ := job.SelectFormatExtension(extension)
-	request, _ := standard.NewFileJob(input, filepath.Join(directory, "o.wav"),
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "ulaw"))))
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	extension, err := format.ParseExtension("wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := job.SelectFormatExtension(extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(input, output,
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", name))))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := instance.Run(context.Background(), request); err != nil {
 		t.Fatal(err)
+	}
+	converted, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return converted
+}
+
+// A coder that groups samples into blocks has a partial block left when its
+// input ends. Emitting it is the last thing it says, and the muxer below it
+// states its own totals only after hearing it, which is what one ordered pass
+// makes possible.
+func TestConvertCodesLinearPCMIntoADPCM(t *testing.T) {
+	payload := make([]byte, 2048)
+	for index := 0; index+1 < len(payload); index += 2 {
+		binary.LittleEndian.PutUint16(payload[index:], uint16(int16(index*8)))
+	}
+	converted := convertWith(t, waveFile(waveShape{channels: 1, bits: 16}, payload), "ms-adpcm")
+	if !bytes.Contains(converted, []byte("fact")) {
+		t.Fatalf("coded output carries no sample-count chunk: %x", converted[:min(len(converted), 96)])
+	}
+	// The header states Microsoft ADPCM, the block size the coder chose, and
+	// the coefficient extension its blocks index.
+	header := bytes.Index(converted, []byte("fmt "))
+	if header < 0 || binary.LittleEndian.Uint16(converted[header+8:]) != 2 {
+		t.Fatalf("converted header does not declare Microsoft ADPCM: %x", converted[:min(len(converted), 96)])
+	}
+	if extension := binary.LittleEndian.Uint16(converted[header+24:]); extension != 4+7*4 {
+		t.Fatalf("codec extension = %d bytes", extension)
+	}
+	// The payload is whole blocks, and the last one is padded rather than cut.
+	align := int(binary.LittleEndian.Uint16(converted[header+20:]))
+	data := bytes.Index(converted, []byte("data"))
+	if size := int(binary.LittleEndian.Uint32(converted[data+4:])); size == 0 || size%align != 0 {
+		t.Fatalf("coded payload = %d bytes, block align %d", size, align)
 	}
 }

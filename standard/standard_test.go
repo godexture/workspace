@@ -30,8 +30,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 39 {
-		t.Fatalf("catalog components = %d, want 39", first.Catalog().Len())
+	if first.Catalog().Len() != 41 {
+		t.Fatalf("catalog components = %d, want 41", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -72,7 +72,7 @@ func TestNewHostAddsDefinitionThroughTheSameComposition(t *testing.T) {
 		Build:       plugin.BuildModePureGo,
 	}, plugin.NewComponent[extraComponentID](plugin.Descriptor{DisplayName: "Extra trait"}, schema,
 		plugin.WithTrait(plugin.TraitKeyOf[extraTraitKey](), "extra=true", plugin.PortShapeOptional, struct{}{}),
-	)).WithDeclarations(codec.BindWithoutParser(tag, codec.New(linear.DecoderIdentity(sample.S16))))
+	)).WithDeclarations(codec.BindDecoder(tag, codec.New(linear.DecoderIdentity(sample.S16))))
 
 	instance, err := standard.NewHost(extra)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestNewHostAddsDefinitionThroughTheSameComposition(t *testing.T) {
 	}
 	foundBinding := false
 	for _, declaration := range instance.Catalog().Declarations() {
-		if declaration.Key() == codec.BindingKey(tag) {
+		if declaration.Key() == codec.DecoderKey(tag) {
 			foundBinding = declaration.Owner() == extra.Identity()
 		}
 	}

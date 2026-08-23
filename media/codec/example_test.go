@@ -8,23 +8,25 @@ import (
 )
 
 type codecExampleDecoderID struct{}
+type codecExampleEncoderID struct{}
 type codecExampleParserID struct{}
 
-// A binding joins a format tag to codec and parser component identities at
-// composition time; neither implementation imports the format.
-func ExampleBind() {
-	binding := codec.Bind(
-		format.NewTag("wave", "0x0055"),
-		codec.Define[codecExampleDecoderID](),
-		codec.DefineParser[codecExampleParserID](),
-	)
-	targets := binding.Targets()
-	decoder, _ := targets[0].Component()
-	parser, _ := targets[1].Component()
+// A binding joins a format tag to the components that implement it at
+// composition time; neither implementation imports the format. A tag names a
+// codec rather than a direction, so each role is stated as what it is.
+func ExampleBindDecoder() {
+	tag := format.NewTag("wave", "0x0055")
+	decoder := codec.BindDecoder(tag, codec.Define[codecExampleDecoderID]())
+	encoder := codec.BindEncoder(tag, codec.Define[codecExampleEncoderID]())
+	parser := codec.BindParser(tag, codec.DefineParser[codecExampleParserID]())
 
-	fmt.Println(binding.Valid(), binding.Key().Name())
-	fmt.Println(decoder.Name(), parser.Name())
+	for _, binding := range []codec.Binding{decoder, encoder, parser} {
+		named, role, _ := codec.BindingTag(binding.Key())
+		component, _ := binding.Targets()[0].Component()
+		fmt.Println(named, role, component.Name())
+	}
 	// Output:
-	// true wave:0x0055
-	// codecExampleDecoderID codecExampleParserID
+	// wave:0x0055 decoder codecExampleDecoderID
+	// wave:0x0055 encoder codecExampleEncoderID
+	// wave:0x0055 parser codecExampleParserID
 }
