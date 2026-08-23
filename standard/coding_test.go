@@ -46,7 +46,7 @@ func TestConvertToARequestedCodingCrossesFrameRepresentations(t *testing.T) {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(input, output,
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestConvertRewritesACompandedStreamIntoLinearPCM(t *testing.T) {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(input, output,
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +192,63 @@ func TestConvertRewritesACompandedStreamIntoLinearPCM(t *testing.T) {
 	}
 	if !bytes.Contains(converted, waveFormat(waveShape{channels: 1, bits: 16}, 2)) {
 		t.Fatalf("converted header does not declare 16-bit PCM: %x", converted)
+	}
+}
+
+// An ADPCM block states the predictor state it starts from, and the file
+// states the coefficient table those blocks index. The container carries that
+// table without reading it, so a stream whose codec is configured this way
+// only decodes when the parameters travel with it.
+func TestConvertExpandsAnADPCMStream(t *testing.T) {
+	blockAlign, samplesPerBlock := 256, (256-7)*2+2
+	extension := make([]byte, 4+7*4)
+	binary.LittleEndian.PutUint16(extension[0:2], uint16(samplesPerBlock))
+	binary.LittleEndian.PutUint16(extension[2:4], 7)
+	for index, pair := range [][2]int16{{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}} {
+		binary.LittleEndian.PutUint16(extension[4+index*4:], uint16(pair[0]))
+		binary.LittleEndian.PutUint16(extension[6+index*4:], uint16(pair[1]))
+	}
+	block := make([]byte, blockAlign)
+	block[0] = 0
+	binary.LittleEndian.PutUint16(block[1:3], 16)
+	binary.LittleEndian.PutUint16(block[3:5], uint16(int16(1000)))
+	binary.LittleEndian.PutUint16(block[5:7], uint16(int16(500)))
+
+	source := waveFile(waveShape{channels: 1, bits: 4, formatTag: 2, blockAlign: blockAlign, extension: extension}, block)
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input.wav")
+	output := filepath.Join(directory, "output.wav")
+	if err := os.WriteFile(input, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	extensionName, err := format.ParseExtension("wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := job.SelectFormatExtension(extensionName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(input, output,
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	converted, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block header states the two samples a block starts from, oldest
+	// first, so those are the first two the output carries.
+	want := []byte{0xf4, 0x01, 0xe8, 0x03}
+	if !bytes.Contains(converted, want) {
+		t.Fatalf("converted payload = %x, want it to carry %x", converted, want)
 	}
 }

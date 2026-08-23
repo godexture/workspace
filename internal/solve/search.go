@@ -29,6 +29,10 @@ type searchResult struct {
 	config    config.ResolvedView
 	hasConfig bool
 	rank      rank
+	// need is what the consumer asked for when it declined a candidate. A
+	// bridge is configured against it, so a component that can only be
+	// configured by its consumer is reachable.
+	need plugin.Need[stream.Descriptor]
 }
 
 func (r searchResult) progress() bool {
@@ -117,6 +121,9 @@ func (p *planner) search(gap graph.Gap) (searchResult, rejections, error) {
 		return searchResult{}, rejected, limitError{dimension: "states"}
 	}
 	p.usage.States++
+	// need starts as the reason the gap exists and becomes whatever the
+	// consumer last asked for, which is more specific than a schema mismatch.
+	need := gap.Need()
 	visited := make(visits)
 	visited.admit(input, fingerprint, rank{})
 	queue := stateQueue{{descriptor: input, fingerprint: fingerprint}}
@@ -166,6 +173,9 @@ func (p *planner) search(gap graph.Gap) (searchResult, rejections, error) {
 						continue
 					}
 				} else {
+					if _, stated := result.need.Desired(); stated {
+						need = result.need
+					}
 					rejected.add("need")
 				}
 			}
@@ -180,7 +190,7 @@ func (p *planner) search(gap graph.Gap) (searchResult, rejections, error) {
 			if remaining < 0 {
 				remaining = 0
 			}
-			configs, suggested, limited, err := p.bridgeConfigs(candidate, current.descriptor, gap.Need(), remaining)
+			configs, suggested, limited, err := p.bridgeConfigs(candidate, current.descriptor, need, remaining)
 			suggestions += suggested
 			if limited {
 				suggestionLimit = true
@@ -262,15 +272,16 @@ func (p *planner) resolveFixed(gap graph.Gap, inputs flow.Descriptors[stream.Des
 		}
 		return p.fixedResult(gap, gap.Config(), compilation, base), true, 0, false, nil
 	}
+	learned := searchResult{need: descriptorNeed(requirements)}
 	metadata, allowed := p.nodes[gap.Node()]
 	if !allowed || !metadata.inferConfig {
-		return searchResult{}, false, 0, false, nil
+		return learned, false, 0, false, nil
 	}
 	configs, suggested, limited, err := p.fixedConfigs(gap.Component(), inputs, requirements, gap.Config(), remaining)
 	if err != nil {
 		return searchResult{}, false, suggested, limited, err
 	}
-	var best searchResult
+	best := learned
 	found := false
 	for _, resolved := range configs {
 		if err := p.beforeCompile(); err != nil {
@@ -311,4 +322,16 @@ func (p *planner) fixedResult(gap graph.Gap, resolved config.ResolvedView, compi
 		result.rank = result.rank.addCompilation(gap.Component(), resolved, compilation, p.policy)
 	}
 	return result
+}
+
+// descriptorNeed returns the first requirement that names the stream a
+// consumer wants. A consumer that only states a condition leaves the search
+// with the need the gap already had.
+func descriptorNeed(requirements []plugin.Requirement[stream.Descriptor]) plugin.Need[stream.Descriptor] {
+	for _, requirement := range requirements {
+		if _, ok := requirement.Need().Desired(); ok {
+			return requirement.Need()
+		}
+	}
+	return plugin.Need[stream.Descriptor]{}
 }

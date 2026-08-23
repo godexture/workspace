@@ -39,25 +39,25 @@ func TestFormatHeaderRoundTripsEveryCodec(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s is not a WAVE codec", testCase.codec)
 			}
-			payload, blockAlign, err := marshalFormat(entry, testCase.signal)
+			payload, blockAlign, err := marshalFormat(entry, testCase.signal, blockGeometry{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			signal, description, got, err := inspectFormat(context.Background(), memoryRandom(payload), 0, uint64(len(payload)))
+			parsed, err := inspectFormat(context.Background(), memoryRandom(payload), 0, uint64(len(payload)))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.name != testCase.codec {
-				t.Fatalf("codec = %s, want %s", got.name, testCase.codec)
+			if parsed.codec.name != testCase.codec {
+				t.Fatalf("codec = %s, want %s", parsed.codec.name, testCase.codec)
 			}
-			if signal != testCase.signal {
-				t.Fatalf("signal = %#v, want %#v", signal, testCase.signal)
+			if parsed.signal != testCase.signal {
+				t.Fatalf("signal = %#v, want %#v", parsed.signal, testCase.signal)
 			}
-			if want := testCase.signal.Layout.Count() * ((entry.bits + 7) / 8); blockAlign != want {
-				t.Fatalf("block align = %d, want %d", blockAlign, want)
+			if parsed.blockAlign != blockAlign {
+				t.Fatalf("block align = %d, want %d", parsed.blockAlign, blockAlign)
 			}
-			if description.Valid() != (entry.coding != "") {
-				t.Fatalf("%s described a storage representation = %v", testCase.codec, description.Valid())
+			if parsed.description.Valid() != (entry.coding != "") {
+				t.Fatalf("%s described a storage representation = %v", testCase.codec, parsed.description.Valid())
 			}
 		})
 	}
@@ -82,7 +82,7 @@ func TestExtensibleHeaderIsWrittenOnlyWhenItAddsSomething(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s is not a WAVE codec", testCase.codec)
 		}
-		payload, _, err := marshalFormat(entry, testCase.signal)
+		payload, _, err := marshalFormat(entry, testCase.signal, blockGeometry{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,11 +101,11 @@ func TestFormatHeaderRejectsStreamsWAVECannotState(t *testing.T) {
 		"no layout": {Rate: 48_000, ValidBits: 16},
 		"no rate":   {Layout: sample.Mono(), ValidBits: 16},
 	} {
-		if _, _, err := marshalFormat(entry, signal); err == nil {
+		if _, _, err := marshalFormat(entry, signal, blockGeometry{}); err == nil {
 			t.Errorf("%s was written into a WAVE header", name)
 		}
 	}
-	if _, _, err := marshalFormat(waveCodec{}, sample.Signal{Rate: 48_000, Layout: sample.Mono()}); err == nil {
+	if _, _, err := marshalFormat(waveCodec{}, sample.Signal{Rate: 48_000, Layout: sample.Mono()}, blockGeometry{}); err == nil {
 		t.Error("a header was written for a codec WAVE cannot name")
 	}
 	if _, ok := codecForCoding(sample.S8); ok {
@@ -120,7 +120,7 @@ func newLinearMuxHeader(description sample.Description) (muxHeader, error) {
 	if !ok {
 		return muxHeader{}, ErrUnsupported
 	}
-	return newMuxHeader(entry, description.Signal)
+	return newMuxHeader(entry, description.Signal, blockGeometry{})
 }
 
 func newLinearRangeMuxHeader(description sample.Description, inspected header) (muxHeader, error) {
@@ -128,7 +128,7 @@ func newLinearRangeMuxHeader(description sample.Description, inspected header) (
 	if !ok {
 		return muxHeader{}, ErrUnsupported
 	}
-	return newRangeMuxHeader(entry, description.Signal, false, inspected)
+	return newRangeMuxHeader(entry, description.Signal, blockGeometry{}, false, inspected)
 }
 
 func newLinearMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (muxHeader, error) {
@@ -136,5 +136,5 @@ func newLinearMuxHeaderWithChunks(description sample.Description, chunks muxChun
 	if !ok {
 		return muxHeader{}, ErrUnsupported
 	}
-	return newMuxHeaderWithChunks(entry, description.Signal, false, chunks)
+	return newMuxHeaderWithChunks(entry, description.Signal, blockGeometry{}, false, chunks)
 }

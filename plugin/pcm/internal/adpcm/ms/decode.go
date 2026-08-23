@@ -5,118 +5,100 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/godexture/godec/plugin/pcm/internal/adpcm/bits"
 	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
 )
 
-func Decode(block []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder) ([]byte, error) {
+var ErrBlockSize = errors.New("MS ADPCM block size mismatch")
+
+// Decode expands one block into per-channel planes. The planes are the
+// destination a decoded frame already owns, so a block never allocates.
+func Decode(planes [][]int16, block []byte, params param.Parameters) error {
+	channels := len(planes)
 	if err := params.Validate(param.Microsoft, channels); err != nil {
-		return nil, err
+		return err
 	}
 	if len(block) != int(params.BlockAlign) {
-		return nil, fmt.Errorf("MS ADPCM block size mismatch: got %d, want %d", len(block), params.BlockAlign)
+		return fmt.Errorf("%w: got %d, want %d", ErrBlockSize, len(block), params.BlockAlign)
 	}
-
+	for _, plane := range planes {
+		if len(plane) < int(params.SamplesPerBlock) {
+			return fmt.Errorf("%w: plane holds %d of %d samples", ErrBlockSize, len(plane), params.SamplesPerBlock)
+		}
+	}
 	if channels == 1 {
-		if len(block) < 7 {
-			return nil, errors.New("MS ADPCM mono block too small")
-		}
-
-		return decodeMono(block, params.Coefficients, byteOrder)
-	} else {
-		if len(block) < 14 {
-			return nil, errors.New("MS ADPCM stereo block too small")
-		}
-
-		return decodeStereo(block, params.Coefficients, byteOrder)
+		return decodeMono(planes[0], block, params.Coefficients)
 	}
+	return decodeStereo(planes, block, params.Coefficients)
 }
 
-func decodeMono(block []byte, coefficients []param.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
-	predictor := int(block[0])
-	if predictor >= len(coefficients) {
-		return nil, fmt.Errorf("MS ADPCM predictor index out of range: %d", predictor)
+// predictor reads one channel's coefficient choice. Each block restates it, so
+// a decoder can start on any block.
+func predictor(index byte, coefficients []param.Coefficient) (int32, int32, error) {
+	if int(index) >= len(coefficients) {
+		return 0, 0, fmt.Errorf("MS ADPCM predictor index out of range: %d", index)
 	}
+	return int32(coefficients[index].Coeff1), int32(coefficients[index].Coeff2), nil
+}
 
+func decodeMono(plane []int16, block []byte, coefficients []param.Coefficient) error {
+	if len(block) < 7 {
+		return fmt.Errorf("%w: mono block is too small", ErrBlockSize)
+	}
+	coeff1, coeff2, err := predictor(block[0], coefficients)
+	if err != nil {
+		return err
+	}
 	delta := int32(int16(binary.LittleEndian.Uint16(block[1:3])))
 	sample1 := int32(int16(binary.LittleEndian.Uint16(block[3:5])))
 	sample2 := int32(int16(binary.LittleEndian.Uint16(block[5:7])))
 
-	samplesPerBlock := (len(block)-7)*2 + 2
-	out := make([]byte, samplesPerBlock*2)
-
-	bits.WriteS16(out, 0, int16(sample2), byteOrder)
-	bits.WriteS16(out, 2, int16(sample1), byteOrder)
-
-	coeff1 := int32(coefficients[predictor].Coeff1)
-	coeff2 := int32(coefficients[predictor].Coeff2)
-
-	outIdx := 4
-	for _, b := range block[7:] {
-		nybbles := [2]uint8{(b >> 4) & 0x0F, b & 0x0F}
-		for _, nybble := range nybbles {
+	plane[0], plane[1] = int16(sample2), int16(sample1)
+	index := 2
+	for _, value := range block[7:] {
+		for _, nybble := range [2]uint8{(value >> 4) & 0x0F, value & 0x0F} {
 			var sample int32
 			sample, delta = decodeStep(nybble, coeff1, coeff2, delta, sample1, sample2)
-			bits.WriteS16(out, outIdx, int16(sample), byteOrder)
-			outIdx += 2
-
-			sample2 = sample1
-			sample1 = sample
+			plane[index] = int16(sample)
+			index++
+			sample2, sample1 = sample1, sample
 		}
 	}
-
-	return out, nil
+	return nil
 }
 
-func decodeStereo(block []byte, coefficients []param.Coefficient, byteOrder binary.ByteOrder) ([]byte, error) {
-	predL := int(block[0])
-	predR := int(block[1])
-
-	if predL >= len(coefficients) || predR >= len(coefficients) {
-		return nil, fmt.Errorf("MS ADPCM predictor index out of range: %d, %d", predL, predR)
+func decodeStereo(planes [][]int16, block []byte, coefficients []param.Coefficient) error {
+	if len(block) < 14 {
+		return fmt.Errorf("%w: stereo block is too small", ErrBlockSize)
 	}
-
-	deltaL := int32(int16(binary.LittleEndian.Uint16(block[2:4])))
-	deltaR := int32(int16(binary.LittleEndian.Uint16(block[4:6])))
-	sample1L := int32(int16(binary.LittleEndian.Uint16(block[6:8])))
-	sample1R := int32(int16(binary.LittleEndian.Uint16(block[8:10])))
-	sample2L := int32(int16(binary.LittleEndian.Uint16(block[10:12])))
-	sample2R := int32(int16(binary.LittleEndian.Uint16(block[12:14])))
-
-	totalSamples := (len(block)-14)*2 + 4
-	out := make([]byte, totalSamples*2)
-
-	bits.WriteS16(out, 0, int16(sample2L), byteOrder)
-	bits.WriteS16(out, 2, int16(sample2R), byteOrder)
-	bits.WriteS16(out, 4, int16(sample1L), byteOrder)
-	bits.WriteS16(out, 6, int16(sample1R), byteOrder)
-
-	coeff1L, coeff2L := int32(coefficients[predL].Coeff1), int32(coefficients[predL].Coeff2)
-	coeff1R, coeff2R := int32(coefficients[predR].Coeff1), int32(coefficients[predR].Coeff2)
-
-	outIdx := 8
-	for _, b := range block[14:] {
-		nybbleL := (b >> 4) & 0x0F
-		nybbleR := b & 0x0F
-
-		var sampleL int32
-		sampleL, deltaL = decodeStep(nybbleL, coeff1L, coeff2L, deltaL, sample1L, sample2L)
-
-		var sampleR int32
-		sampleR, deltaR = decodeStep(nybbleR, coeff1R, coeff2R, deltaR, sample1R, sample2R)
-
-		bits.WriteS16(out, outIdx, int16(sampleL), byteOrder)
-		bits.WriteS16(out, outIdx+2, int16(sampleR), byteOrder)
-		outIdx += 4
-
-		sample2L = sample1L
-		sample1L = sampleL
-
-		sample2R = sample1R
-		sample1R = sampleR
+	leftCoeff1, leftCoeff2, err := predictor(block[0], coefficients)
+	if err != nil {
+		return err
 	}
+	rightCoeff1, rightCoeff2, err := predictor(block[1], coefficients)
+	if err != nil {
+		return err
+	}
+	leftDelta := int32(int16(binary.LittleEndian.Uint16(block[2:4])))
+	rightDelta := int32(int16(binary.LittleEndian.Uint16(block[4:6])))
+	leftSample1 := int32(int16(binary.LittleEndian.Uint16(block[6:8])))
+	rightSample1 := int32(int16(binary.LittleEndian.Uint16(block[8:10])))
+	leftSample2 := int32(int16(binary.LittleEndian.Uint16(block[10:12])))
+	rightSample2 := int32(int16(binary.LittleEndian.Uint16(block[12:14])))
 
-	return out, nil
+	planes[0][0], planes[1][0] = int16(leftSample2), int16(rightSample2)
+	planes[0][1], planes[1][1] = int16(leftSample1), int16(rightSample1)
+
+	index := 2
+	for _, value := range block[14:] {
+		var left, right int32
+		left, leftDelta = decodeStep((value>>4)&0x0F, leftCoeff1, leftCoeff2, leftDelta, leftSample1, leftSample2)
+		right, rightDelta = decodeStep(value&0x0F, rightCoeff1, rightCoeff2, rightDelta, rightSample1, rightSample2)
+		planes[0][index], planes[1][index] = int16(left), int16(right)
+		index++
+		leftSample2, leftSample1 = leftSample1, left
+		rightSample2, rightSample1 = rightSample1, right
+	}
+	return nil
 }
 
 func decodeStep(nybble uint8, coeff1, coeff2, delta, sample1, sample2 int32) (int32, int32) {

@@ -41,35 +41,49 @@ func TestADPCMRoundtrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var encoded []byte
-			if tt.kind == param.Microsoft {
-				encoded, err = msadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian)
-			} else {
-				state := &imaadpcm.EncodeState{}
-				encoded, err = imaadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian, state)
-			}
-			if err != nil {
-				t.Fatalf("Encode error = %v", err)
+			perBlock := int(params.SamplesPerBlock) * tt.channels
+			source := bits.BytesToS16(pcm, binary.LittleEndian)
+			state := &imaadpcm.EncodeState{}
+			chunk := make([]int16, perBlock)
+			encoded := make([]byte, 0, len(source)/perBlock*int(params.BlockAlign))
+			block := make([]byte, params.BlockAlign)
+			for offset := 0; offset+perBlock <= len(source); offset += perBlock {
+				copy(chunk, source[offset:offset+perBlock])
+				if tt.kind == param.Microsoft {
+					err = msadpcm.EncodeBlock(block, chunk, params, tt.channels)
+				} else {
+					err = imaadpcm.EncodeBlock(block, chunk, params, tt.channels, state)
+				}
+				if err != nil {
+					t.Fatalf("Encode error = %v", err)
+				}
+				encoded = append(encoded, block...)
 			}
 
 			blockAlign := int(params.BlockAlign)
-			var decoded []byte
+			planes := make([][]int16, tt.channels)
+			for index := range planes {
+				planes[index] = make([]int16, params.SamplesPerBlock)
+			}
+			var decSamples []int16
 			for offset := 0; offset+blockAlign <= len(encoded); offset += blockAlign {
 				block := encoded[offset : offset+blockAlign]
-				var decBlock []byte
 				if tt.kind == param.Microsoft {
-					decBlock, err = msadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
+					err = msadpcm.Decode(planes, block, params)
 				} else {
-					decBlock, err = imaadpcm.Decode(block, tt.channels, params, binary.LittleEndian)
+					err = imaadpcm.Decode(planes, block, params)
 				}
 				if err != nil {
 					t.Fatalf("Decode error = %v at offset %d", err, offset)
 				}
-				decoded = append(decoded, decBlock...)
+				for position := range int(params.SamplesPerBlock) {
+					for _, plane := range planes {
+						decSamples = append(decSamples, plane[position])
+					}
+				}
 			}
 
-			origSamples := bits.BytesToS16(pcm, binary.LittleEndian)
-			decSamples := bits.BytesToS16(decoded, binary.LittleEndian)
+			origSamples := source
 
 			minLen := len(origSamples)
 			if len(decSamples) < minLen {
@@ -105,11 +119,10 @@ func TestMSADPCMDecodeUsesConfiguredCoefficients(t *testing.T) {
 	adpcm.Coefficients = []param.Coefficient{{Coeff1: 0, Coeff2: 0}}
 	block := []byte{0, 16, 0, 10, 0, 20, 0, 0}
 
-	decoded, err := msadpcm.Decode(block, 1, adpcm, binary.LittleEndian)
-	if err != nil {
+	samples := make([]int16, adpcm.SamplesPerBlock)
+	if err := msadpcm.Decode([][]int16{samples}, block, adpcm); err != nil {
 		t.Fatal(err)
 	}
-	samples := bits.BytesToS16(decoded, binary.LittleEndian)
 	if samples[2] != 0 {
 		t.Fatalf("sample decoded with configured coefficients = %d, want 0", samples[2])
 	}

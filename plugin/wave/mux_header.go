@@ -47,12 +47,12 @@ type finalizedHeader struct {
 	rf64     bool
 }
 
-func newMuxHeader(codec waveCodec, signal sample.Signal) (muxHeader, error) {
-	return newMuxHeaderWithChunks(codec, signal, false, muxChunks{})
+func newMuxHeader(codec waveCodec, signal sample.Signal, geometry blockGeometry) (muxHeader, error) {
+	return newMuxHeaderWithChunks(codec, signal, geometry, false, muxChunks{})
 }
 
-func newRangeMuxHeader(codec waveCodec, signal sample.Signal, fact bool, inspected header) (muxHeader, error) {
-	formatPayload, blockAlign, err := marshalFormat(codec, signal)
+func newRangeMuxHeader(codec waveCodec, signal sample.Signal, geometry blockGeometry, fact bool, inspected header) (muxHeader, error) {
+	formatPayload, blockAlign, err := marshalFormat(codec, signal, geometry)
 	if err != nil {
 		return muxHeader{}, err
 	}
@@ -103,8 +103,8 @@ func factSlot(present bool, chunk int64) int64 {
 	return chunk + 8
 }
 
-func newMuxHeaderWithChunks(codec waveCodec, signal sample.Signal, fact bool, chunks muxChunks) (muxHeader, error) {
-	formatPayload, blockAlign, err := marshalFormat(codec, signal)
+func newMuxHeaderWithChunks(codec waveCodec, signal sample.Signal, geometry blockGeometry, fact bool, chunks muxChunks) (muxHeader, error) {
+	formatPayload, blockAlign, err := marshalFormat(codec, signal, geometry)
 	if err != nil {
 		return muxHeader{}, err
 	}
@@ -165,9 +165,15 @@ func reserveChunkOf(chunks muxChunks) []byte {
 // marshalFormat writes the fmt chunk for one codec and signal. A companded
 // codec states the width of the byte that holds a sample; the signal it
 // carries is wider, and the header has no field for it.
-func marshalFormat(codec waveCodec, signal sample.Signal) ([]byte, int, error) {
+func marshalFormat(codec waveCodec, signal sample.Signal, geometry blockGeometry) ([]byte, int, error) {
 	if !signal.Valid() || codec.name == "" {
 		return nil, 0, fmt.Errorf("%w: WAVE header needs a codec and a usable signal", ErrUnsupported)
+	}
+	if codec.blocked != geometry.stated() {
+		return nil, 0, fmt.Errorf("%w: %s states a block geometry only a block-coded stream has", ErrUnsupported, codec.name)
+	}
+	if codec.blocked {
+		return marshalBlockFormat(codec, signal, geometry)
 	}
 	channels := signal.Layout.Count()
 	if channels < 1 || channels > math.MaxUint16 || signal.Rate > math.MaxUint32 {
@@ -407,4 +413,28 @@ func (h *muxHeader) applyReplacement(value sourceReplacement) error {
 	h.dataOffset = int64(dataOffset)
 	h.dataSizeOffset = h.dataOffset - 4
 	return nil
+}
+
+// marshalBlockFormat writes the header of a stream whose samples are coded in
+// groups. How many samples a block holds is the codec to know, so the block
+// size, byte rate and extension are reproduced rather than derived.
+func marshalBlockFormat(codec waveCodec, signal sample.Signal, geometry blockGeometry) ([]byte, int, error) {
+	channels := signal.Layout.Count()
+	if channels < 1 || channels > math.MaxUint16 || signal.Rate > math.MaxUint32 || geometry.align > math.MaxUint16 {
+		return nil, 0, fmt.Errorf("%w: WAVE channel layout, sample rate or block size is unsupported", ErrUnsupported)
+	}
+	extension := geometry.parameters.AppendTo(nil)
+	if len(extension) > math.MaxUint16 {
+		return nil, 0, fmt.Errorf("%w: WAVE codec extension exceeds its header field", ErrUnsupported)
+	}
+	value := make([]byte, 18+len(extension))
+	binary.LittleEndian.PutUint16(value[0:2], codec.formatTag)
+	binary.LittleEndian.PutUint16(value[2:4], uint16(channels))
+	binary.LittleEndian.PutUint32(value[4:8], uint32(signal.Rate))
+	binary.LittleEndian.PutUint32(value[8:12], geometry.byteRate)
+	binary.LittleEndian.PutUint16(value[12:14], uint16(geometry.align))
+	binary.LittleEndian.PutUint16(value[14:16], uint16(codec.bits))
+	binary.LittleEndian.PutUint16(value[16:18], uint16(len(extension)))
+	copy(value[18:], extension)
+	return value, geometry.align, nil
 }

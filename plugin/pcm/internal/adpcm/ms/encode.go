@@ -17,59 +17,26 @@ func BytesPerPCMBlock(channels int, blockAlign int) int {
 	return samplesPerBlock * channels * 2
 }
 
-func Encode(linear []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder) ([]byte, error) {
+// EncodeBlock codes one block from interleaved samples. The caller owns the
+// block and the sample buffer, so coding a stream allocates nothing per block.
+// samples must hold SamplesPerBlock frames; a short final block is the caller
+// to pad, because only it knows the stream ended.
+func EncodeBlock(block []byte, samples []int16, params param.Parameters, channels int) error {
 	if err := params.Validate(param.Microsoft, channels); err != nil {
-		return nil, err
+		return err
 	}
-
-	numSamples := len(linear) / 2
-	if numSamples == 0 {
-		return nil, nil
+	if len(block) != int(params.BlockAlign) {
+		return fmt.Errorf("%w: got %d, want %d", ErrBlockSize, len(block), params.BlockAlign)
 	}
-
-	blockAlign := int(params.BlockAlign)
-	var samplesPerBlock int
+	if len(samples) != int(params.SamplesPerBlock)*channels {
+		return fmt.Errorf("%w: block holds %d of %d samples", ErrBlockSize, len(samples), int(params.SamplesPerBlock)*channels)
+	}
 	if channels == 1 {
-		samplesPerBlock = (blockAlign-7)*2 + 2
+		encodeMono(block, int(params.SamplesPerBlock), samples, params.Coefficients)
 	} else {
-		samplesPerBlock = (blockAlign-14)*1 + 2
+		encodeStereo(block, int(params.SamplesPerBlock), samples, params.Coefficients)
 	}
-	if samplesPerBlock != int(params.SamplesPerBlock) {
-		return nil, fmt.Errorf("MS ADPCM samples per block mismatch: got %d, want %d", params.SamplesPerBlock, samplesPerBlock)
-	}
-
-	blockSize := samplesPerBlock * channels
-
-	numBlocks := (numSamples + blockSize - 1) / blockSize
-	out := make([]byte, numBlocks*blockAlign)
-
-	chunkSamples := make([]int16, blockSize)
-
-	outIdx := 0
-	for i := 0; i < numSamples; i += blockSize {
-		toCopy := blockSize
-		if numSamples-i < toCopy {
-			toCopy = numSamples - i
-		}
-
-		for j := 0; j < toCopy; j++ {
-			idx := (i + j) * 2
-			chunkSamples[j] = int16(byteOrder.Uint16(linear[idx : idx+2]))
-		}
-		for j := toCopy; j < len(chunkSamples); j++ {
-			chunkSamples[j] = 0
-		}
-
-		block := out[outIdx : outIdx+blockAlign]
-		if channels == 1 {
-			encodeMono(block, samplesPerBlock, chunkSamples, params.Coefficients)
-		} else {
-			encodeStereo(block, samplesPerBlock, chunkSamples, params.Coefficients)
-		}
-
-		outIdx += blockAlign
-	}
-	return out, nil
+	return nil
 }
 
 func encodeMono(block []byte, samplesPerBlock int, chunkSamples []int16, coefficients []param.Coefficient) {

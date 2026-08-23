@@ -2,6 +2,7 @@ package imaadpcm
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/godexture/godec/plugin/pcm/internal/adpcm/param"
@@ -18,74 +19,38 @@ type EncodeState struct {
 	NotFirstBlock bool
 }
 
-func Encode(linear []byte, channels int, params param.Parameters, byteOrder binary.ByteOrder, state *EncodeState) ([]byte, error) {
+// EncodeBlock codes one block from interleaved samples. Each block restates
+// the predictor a decoder starts from, but the step index carries across
+// blocks, which is what state holds. The caller owns the block and the sample
+// buffer, so coding a stream allocates nothing per block.
+func EncodeBlock(block []byte, samples []int16, params param.Parameters, channels int, state *EncodeState) error {
 	if err := params.Validate(param.IMA, channels); err != nil {
-		return nil, err
+		return err
 	}
 	if state == nil {
-		state = &EncodeState{}
+		return errors.New("IMA ADPCM encoding needs its step index state")
 	}
-	numSamples := len(linear) / 2
-	if numSamples == 0 {
-		return nil, nil
+	if len(block) != int(params.BlockAlign) {
+		return fmt.Errorf("%w: got %d, want %d", ErrBlockSize, len(block), params.BlockAlign)
 	}
-
-	blockAlign := int(params.BlockAlign)
-	var samplesPerBlock int
+	perBlock := int(params.SamplesPerBlock)
+	if len(samples) != perBlock*channels {
+		return fmt.Errorf("%w: block holds %d of %d samples", ErrBlockSize, len(samples), perBlock*channels)
+	}
 	if channels == 1 {
-		samplesPerBlock = (blockAlign-4)*2 + 1
+		if !state.NotFirstBlock && perBlock > 1 {
+			state.StepIndexL = guessStepIndex(int32(samples[1]) - int32(samples[0]))
+		}
+		state.StepIndexL = encodeMono(block, perBlock, samples, state.StepIndexL)
 	} else {
-		samplesPerBlock = (blockAlign-8)*1 + 1
+		if !state.NotFirstBlock && perBlock > 1 {
+			state.StepIndexL = guessStepIndex(int32(samples[2]) - int32(samples[0]))
+			state.StepIndexR = guessStepIndex(int32(samples[3]) - int32(samples[1]))
+		}
+		state.StepIndexL, state.StepIndexR = encodeStereo(block, perBlock, samples, state.StepIndexL, state.StepIndexR)
 	}
-	if samplesPerBlock != int(params.SamplesPerBlock) {
-		return nil, fmt.Errorf("IMA ADPCM samples per block mismatch: got %d, want %d", params.SamplesPerBlock, samplesPerBlock)
-	}
-
-	blockSize := samplesPerBlock * channels
-
-	numBlocks := (numSamples + blockSize - 1) / blockSize
-	out := make([]byte, numBlocks*blockAlign)
-
-	chunkSamples := make([]int16, blockSize)
-
-	outIdx := 0
-	for i := 0; i < numSamples; i += blockSize {
-		toCopy := blockSize
-		if numSamples-i < toCopy {
-			toCopy = numSamples - i
-		}
-
-		for j := 0; j < toCopy; j++ {
-			idx := (i + j) * 2
-			chunkSamples[j] = int16(byteOrder.Uint16(linear[idx : idx+2]))
-		}
-		for j := toCopy; j < len(chunkSamples); j++ {
-			chunkSamples[j] = 0
-		}
-
-		block := out[outIdx : outIdx+blockAlign]
-
-		if channels == 1 {
-			if !state.NotFirstBlock && samplesPerBlock > 1 {
-				diff := int32(chunkSamples[1]) - int32(chunkSamples[0])
-				state.StepIndexL = guessStepIndex(diff)
-			}
-			state.StepIndexL = encodeMono(block, samplesPerBlock, chunkSamples, state.StepIndexL)
-		} else {
-			if !state.NotFirstBlock && samplesPerBlock > 1 {
-				diffL := int32(chunkSamples[2]) - int32(chunkSamples[0])
-				diffR := int32(chunkSamples[3]) - int32(chunkSamples[1])
-				state.StepIndexL = guessStepIndex(diffL)
-				state.StepIndexR = guessStepIndex(diffR)
-			}
-			state.StepIndexL, state.StepIndexR = encodeStereo(block, samplesPerBlock, chunkSamples, state.StepIndexL, state.StepIndexR)
-		}
-		state.NotFirstBlock = true
-
-		outIdx += blockAlign
-	}
-
-	return out, nil
+	state.NotFirstBlock = true
+	return nil
 }
 
 func encodeMono(block []byte, samplesPerBlock int, samples []int16, stepIndex int32) int32 {
