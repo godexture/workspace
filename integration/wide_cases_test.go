@@ -41,8 +41,10 @@ func runWideCodingCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage
 func runCodingCase[S audio.Sample](t *testing.T, set plugin.Set, coverage *testkit.Coverage, coding sample.Coding, endian sample.Endian, encoded []byte, planes [][]S) {
 	t.Helper()
 	wire := sample.Description{
-		Coding: coding, Packing: sample.Interleaved, Endian: endian,
-		Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits(),
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits()},
+		Coding:  coding,
+		Packing: sample.Interleaved,
+		Endian:  endian,
 	}
 	planar := wire.Decoded()
 	patch := linearPatch(wire, len(planes[0]))
@@ -80,8 +82,10 @@ func runCodingCase[S audio.Sample](t *testing.T, set plugin.Set, coverage *testk
 func runWideSuggestions[S audio.Sample](t *testing.T, set plugin.Set, coverage *testkit.Coverage, coding sample.Coding, endian sample.Endian) {
 	t.Helper()
 	wire := sample.Description{
-		Coding: coding, Packing: sample.Interleaved, Endian: endian,
-		Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits(),
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits()},
+		Coding:  coding,
+		Packing: sample.Interleaved,
+		Endian:  endian,
 	}
 	want := []testkit.Candidate{{
 		"rate": "48000", "coding": string(coding), "validBits": strconv.Itoa(coding.Bits()),

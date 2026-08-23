@@ -417,7 +417,7 @@ func TestMuxRestoresANonZeroReservationSlot(t *testing.T) {
 func TestRF64PromotionReplacesThePreservedReservation(t *testing.T) {
 	reservationPayload := bytes.Repeat([]byte{0x5a}, ds64PayloadSize)
 	chunks := muxChunks{reservation: waveTestChunk(t, tagJUNK, reservationPayload, 0)}
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	header, err := newMuxHeaderWithChunks(description, chunks)
 	if err != nil {
 		t.Fatal(err)

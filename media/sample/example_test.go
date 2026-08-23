@@ -11,12 +11,10 @@ import (
 // wire representation adds one value to one axis instead of a combination.
 func ExampleDescription() {
 	wire := sample.Description{
-		Coding:    sample.S24,
-		Packing:   sample.Interleaved,
-		Endian:    sample.LittleEndian,
-		Rate:      48_000,
-		Layout:    sample.Stereo(),
-		ValidBits: 24,
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 24},
+		Coding:  sample.S24,
+		Packing: sample.Interleaved,
+		Endian:  sample.LittleEndian,
 	}
 	properties, _ := wire.Properties()
 	decoded, _ := sample.FromProperties(properties)

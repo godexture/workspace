@@ -28,23 +28,23 @@ func TestParseAudioEntryDescribesLinearPCM(t *testing.T) {
 	}{
 		{
 			name: "stereo little endian", channels: 2, size: 16, rate: 48_000 << 16, entry: typeSOWT,
-			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian, Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16},
+			want: mediasample.Description{Signal: mediasample.Signal{Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16}, Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian},
 		},
 		{
 			name: "mono big endian", channels: 1, size: 16, rate: 44_100 << 16, entry: typeTWOS,
-			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 44_100, Layout: mediasample.Mono(), ValidBits: 16},
+			want: mediasample.Description{Signal: mediasample.Signal{Rate: 44_100, Layout: mediasample.Mono(), ValidBits: 16}, Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian},
 		},
 		{
 			name: "unsigned eight bit", channels: 1, size: 8, rate: 8_000 << 16, entry: typeRAW,
-			want: mediasample.Description{Coding: mediasample.U8, Packing: mediasample.Interleaved, Endian: mediasample.NoEndian, Rate: 8_000, Layout: mediasample.Mono(), ValidBits: 8},
+			want: mediasample.Description{Signal: mediasample.Signal{Rate: 8_000, Layout: mediasample.Mono(), ValidBits: 8}, Coding: mediasample.U8, Packing: mediasample.Interleaved, Endian: mediasample.NoEndian},
 		},
 		{
 			name: "twenty four bit", channels: 2, size: 24, rate: 44_100 << 16, entry: typeIN24,
-			want: mediasample.Description{Coding: mediasample.S24, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 44_100, Layout: mediasample.Stereo(), ValidBits: 24},
+			want: mediasample.Description{Signal: mediasample.Signal{Rate: 44_100, Layout: mediasample.Stereo(), ValidBits: 24}, Coding: mediasample.S24, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian},
 		},
 		{
 			name: "double precision surround", channels: 6, size: 64, rate: 48_000 << 16, entry: typeFL64,
-			want: mediasample.Description{Coding: mediasample.F64, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 48_000, Layout: mediasample.Channels(6), ValidBits: 64},
+			want: mediasample.Description{Signal: mediasample.Signal{Rate: 48_000, Layout: mediasample.Channels(6), ValidBits: 64}, Coding: mediasample.F64, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian},
 		},
 		{name: "sample size contradicts the entry", channels: 2, size: 24, rate: 48_000 << 16, entry: typeSOWT},
 		{name: "fractional rate", channels: 2, size: 16, rate: 48_000<<16 | 1, entry: typeSOWT},
@@ -96,7 +96,7 @@ func TestLinearPCMEntryCoversTheDecodableSampleEntries(t *testing.T) {
 // time base and the published sample rate in agreement, so a decoder never sees
 // a description its input contradicts.
 func TestTrackPropertiesPublishAudioOnlyWithAMatchingTimescale(t *testing.T) {
-	description := mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian, Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16}
+	description := mediasample.Description{Signal: mediasample.Signal{Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16}, Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian}
 	matching, err := trackProperties(track{codec: typeSOWT, timeScale: 48_000, audio: description})
 	if err != nil {
 		t.Fatal(err)

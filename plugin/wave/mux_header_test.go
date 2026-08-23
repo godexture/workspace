@@ -16,12 +16,12 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 	}{
 		{
 			name:        "pcm",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16},
+			description: sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
 			headerSize:  80,
 		},
 		{
 			name:        "extensible valid bits",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12},
+			description: sample.Description{Signal: sample.Signal{Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
 			headerSize:  104,
 		},
 	}
@@ -48,7 +48,7 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 }
 
 func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	header, err := newMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
 }
 
 func TestMuxHeaderAccountsOddDataPadding(t *testing.T) {
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	header, err := newMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)

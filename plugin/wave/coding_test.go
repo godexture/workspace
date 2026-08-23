@@ -73,11 +73,11 @@ func TestExtensibleHeaderIsWrittenOnlyWhenItAddsSomething(t *testing.T) {
 func TestFormatHeaderRejectsRepresentationsWAVECannotState(t *testing.T) {
 	for name, description := range map[string]sample.Description{
 		"signed 8 bit":  waveDescription(sample.S8, sample.Mono(), 8),
-		"big endian":    {Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16},
+		"big endian":    {Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian},
 		"planar":        waveDescription(sample.S16, sample.Mono(), 16).Decoded(),
-		"no layout":     {Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, ValidBits: 16},
-		"unknown rate":  {Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Layout: sample.Mono(), ValidBits: 16},
-		"unknown codec": {Coding: "s20", Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 20},
+		"no layout":     {Signal: sample.Signal{Rate: 48_000, ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
+		"unknown rate":  {Signal: sample.Signal{Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
+		"unknown codec": {Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 20}, Coding: "s20", Packing: sample.Interleaved, Endian: sample.LittleEndian},
 	} {
 		if _, _, err := marshalFormat(description); err == nil {
 			t.Errorf("%s was written into a WAVE header", name)
@@ -91,7 +91,9 @@ func waveDescription(coding sample.Coding, layout sample.Layout, validBits int) 
 		endian = sample.NoEndian
 	}
 	return sample.Description{
-		Coding: coding, Packing: sample.Interleaved, Endian: endian,
-		Rate: 48_000, Layout: layout, ValidBits: validBits,
+		Signal:  sample.Signal{Rate: 48_000, Layout: layout, ValidBits: validBits},
+		Coding:  coding,
+		Packing: sample.Interleaved,
+		Endian:  endian,
 	}
 }

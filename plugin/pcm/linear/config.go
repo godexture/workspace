@@ -51,12 +51,10 @@ func (c configuration) wire() sample.Description {
 		bits = c.Coding.Bits()
 	}
 	return sample.Description{
-		Coding:    c.Coding,
-		Packing:   sample.Interleaved,
-		Endian:    endian,
-		Rate:      c.Rate,
-		Layout:    c.Layout,
-		ValidBits: bits,
+		Signal:  sample.Signal{Rate: c.Rate, Layout: c.Layout, ValidBits: bits},
+		Coding:  c.Coding,
+		Packing: sample.Interleaved,
+		Endian:  endian,
 	}
 }
 

@@ -335,12 +335,10 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 		return sample.Description{}, 0, fmt.Errorf("%w: PCM byte rate or block alignment is inconsistent", ErrMalformed)
 	}
 	description := sample.Description{
-		Coding:    coding,
-		Packing:   sample.Interleaved,
-		Endian:    sample.LittleEndian,
-		Rate:      int(rate),
-		Layout:    layout,
-		ValidBits: int(validBits),
+		Signal:  sample.Signal{Rate: int(rate), Layout: layout, ValidBits: int(validBits)},
+		Coding:  coding,
+		Packing: sample.Interleaved,
+		Endian:  sample.LittleEndian,
 	}
 	if coding.Bytes() == 1 {
 		description.Endian = sample.NoEndian

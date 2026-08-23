@@ -16,7 +16,7 @@ import (
 // the failure path. WAVE stores interleaved little-endian samples, so anything
 // else becomes a requirement the planner can satisfy with a codec bridge.
 func TestMuxRequestsTheDescriptionItCanWrite(t *testing.T) {
-	writable := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}
+	writable := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	for _, testCase := range []struct {
 		name        string
 		description sample.Description
@@ -25,12 +25,12 @@ func TestMuxRequestsTheDescriptionItCanWrite(t *testing.T) {
 		{name: "little endian is written", description: writable},
 		{
 			name:        "big endian is requested as little endian",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16},
+			description: sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian},
 			requires:    true,
 		},
 		{
 			name:        "planar is requested as interleaved",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Planar, Endian: sample.NoEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16},
+			description: sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Planar, Endian: sample.NoEndian},
 			requires:    true,
 		},
 	} {
