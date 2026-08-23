@@ -15,8 +15,12 @@ import (
 // Set returns the immutable official composition for file-backed MP4/WAVE and
 // linear PCM processing.
 func Set() plugin.Set {
-	result := plugin.NewSet(file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin()).
-		AddDeclaration(codec.Bind(wave.PCMTag(), codec.New(linear.DecoderIdentity(sample.S16)), codec.NewParser(linear.ParserIdentity())))
+	result := plugin.NewSet(file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
+	// A WAVE header names a coding but not the component that reads it, and the
+	// two families do not import each other, so the composition connects them.
+	for _, coding := range wave.Codings() {
+		result = result.AddDeclaration(codec.Bind(wave.CodecTag(coding), codec.New(linear.DecoderIdentity(coding)), codec.NewParser(linear.ParserIdentity())))
+	}
 	// MP4 carries linear PCM in already packetized sample entries, so these
 	// bind the decoder without a parser. A planner only reaches for them when
 	// copying the packets cannot satisfy the output.

@@ -103,7 +103,7 @@ func TestInspectHeaderRejectsMalformedAndUnsupportedStreams(t *testing.T) {
 	badSignature := append([]byte(nil), valid...)
 	copy(badSignature[0:4], "NOPE")
 	partialBlock := testWAVE([]byte{1, 2, 3}, 1, 48_000)
-	unsupported := testWAVEWithFormat([]byte{1, 2, 3}, pcmFormat(1, 48_000, 24))
+	unsupported := testWAVEWithFormat([]byte{1, 2, 3}, pcmFormat(1, 48_000, 20))
 	tests := []struct {
 		name string
 		data []byte
@@ -156,7 +156,7 @@ func TestDemuxCompileUsesInspectionInsteadOfCarrierProperties(t *testing.T) {
 	if err != nil || description != inspected.description {
 		t.Fatalf("WAVE properties = %#v, %v", description, err)
 	}
-	if tag, ok := codec.TagOf(output.Properties()); !ok || tag != PCMTag() {
+	if tag, ok := codec.TagOf(output.Properties()); !ok || tag != CodecTag(sample.S16) {
 		t.Fatalf("WAVE codec tag = %q/%v", tag, ok)
 	}
 	if compiled.Resources().Memory != 2 {

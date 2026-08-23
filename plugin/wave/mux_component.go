@@ -177,13 +177,23 @@ func muxerComponent() plugin.Component {
 	)
 }
 
-// muxDescription is the closest description this muxer can write for the one it
-// received. An unrepresentable rate or channel layout is left unchanged so the
-// header marshaller reports it.
+// muxDescription is the closest description this muxer can write for the one
+// it received. WAVE stores interleaved little-endian samples, and a coding it
+// has no format tag for falls back to signed 16-bit. An unrepresentable rate
+// or channel layout is left unchanged so the header marshaller reports it.
 func muxDescription(value sample.Description) sample.Description {
 	result := value
-	result.Coding, result.Packing = sample.S16, sample.Interleaved
-	result.Endian = sample.LittleEndian
+	result.Packing = sample.Interleaved
+	if result.Coding.Bytes() > 1 {
+		result.Endian = sample.LittleEndian
+	} else {
+		result.Endian = sample.NoEndian
+	}
+	if _, ok := formatTagOf(result.Coding); !ok {
+		result.Coding = sample.S16
+		result.Endian = sample.LittleEndian
+		result.ValidBits = min(value.ValidBits, result.Coding.Bits())
+	}
 	if !result.Valid() {
 		return value
 	}

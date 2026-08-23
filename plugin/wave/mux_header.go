@@ -136,42 +136,40 @@ func reserveChunkOf(chunks muxChunks) []byte {
 }
 
 func marshalFormat(description sample.Description) ([]byte, int, error) {
-	if !description.Valid() || description.Coding != sample.S16 || description.Packing != sample.Interleaved || description.Endian != sample.LittleEndian {
-		return nil, 0, fmt.Errorf("%w: WAVE mux requires interleaved little-endian signed 16-bit PCM", ErrUnsupported)
+	formatTag, known := formatTagOf(description.Coding)
+	if !description.Valid() || description.Packing != sample.Interleaved || !known ||
+		(description.Coding.Bytes() > 1 && description.Endian != sample.LittleEndian) {
+		return nil, 0, fmt.Errorf("%w: WAVE stores little-endian interleaved linear PCM", ErrUnsupported)
 	}
 	channels := description.Layout.Count()
-	if channels < 1 || channels > 2 || description.Rate > math.MaxUint32 {
+	if channels < 1 || channels > math.MaxUint16 || description.Rate > math.MaxUint32 {
 		return nil, 0, fmt.Errorf("%w: WAVE channel layout or sample rate is unsupported", ErrUnsupported)
 	}
-	blockAlign := channels * 2
+	blockAlign := channels * description.Coding.Bytes()
 	byteRate := uint64(description.Rate) * uint64(blockAlign)
-	if byteRate > math.MaxUint32 {
-		return nil, 0, fmt.Errorf("%w: WAVE byte rate exceeds 32 bits", ErrUnsupported)
+	if blockAlign > math.MaxUint16 || byteRate > math.MaxUint32 {
+		return nil, 0, fmt.Errorf("%w: WAVE block alignment or byte rate exceeds its header field", ErrUnsupported)
 	}
 	size := 16
-	if description.ValidBits != 16 {
+	if !plainHeader(description) {
 		size = 40
 	}
 	value := make([]byte, size)
-	formatTag := formatPCM
+	headerTag := formatTag
 	if size == 40 {
-		formatTag = formatExtensible
+		headerTag = formatExtensible
 	}
-	binary.LittleEndian.PutUint16(value[0:2], formatTag)
+	binary.LittleEndian.PutUint16(value[0:2], headerTag)
 	binary.LittleEndian.PutUint16(value[2:4], uint16(channels))
 	binary.LittleEndian.PutUint32(value[4:8], uint32(description.Rate))
 	binary.LittleEndian.PutUint32(value[8:12], uint32(byteRate))
 	binary.LittleEndian.PutUint16(value[12:14], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(value[14:16], 16)
+	binary.LittleEndian.PutUint16(value[14:16], uint16(description.Coding.Bits()))
 	if size == 40 {
 		binary.LittleEndian.PutUint16(value[16:18], 22)
 		binary.LittleEndian.PutUint16(value[18:20], uint16(description.ValidBits))
-		mask := uint32(0x4)
-		if description.Layout == sample.Stereo() {
-			mask = 0x3
-		}
-		binary.LittleEndian.PutUint32(value[20:24], mask)
-		binary.LittleEndian.PutUint16(value[24:26], formatPCM)
+		binary.LittleEndian.PutUint32(value[20:24], description.Layout.Mask())
+		binary.LittleEndian.PutUint16(value[24:26], formatTag)
 		copy(value[28:40], extensibleBase[:])
 	}
 	return value, blockAlign, nil

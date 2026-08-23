@@ -26,9 +26,6 @@ func InfoEncodingIdentity() plugin.Identity { return plugin.IdentityOf[infoID]()
 // RIFFInfo identifies a LIST/INFO metadata carrier inside WAVE.
 func RIFFInfo() carrier.ID { return carrier.Define[infoSlot]() }
 
-// PCMTag identifies the PCM codec tag carried by WAVE format headers.
-func PCMTag() format.Tag { return format.NewTag("wave", "0001") }
-
 func WAVE() format.Format {
 	value, err := format.Define[waveID]([]carrier.ID{RIFFInfo()}, format.WithExtensions("wav", "wave"))
 	if err != nil {
