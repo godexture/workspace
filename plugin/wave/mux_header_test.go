@@ -27,7 +27,7 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			header, err := newMuxHeader(test.description)
+			header, err := newLinearMuxHeader(test.description)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 
 func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
-	header, err := newMuxHeader(description)
+	header, err := newLinearMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
 
 func TestMuxHeaderAccountsOddDataPadding(t *testing.T) {
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
-	header, err := newMuxHeader(description)
+	header, err := newLinearMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,7 @@ func Set() plugin.Set {
 	// A WAVE header names a coding but not the component that reads it, and the
 	// two families do not import each other, so the composition connects them.
 	for _, coding := range wave.Codings() {
-		result = result.AddDeclaration(codec.Bind(wave.CodecTag(coding), codec.New(linear.DecoderIdentity(coding)), codec.NewParser(linear.ParserIdentity())))
+		result = result.AddDeclaration(codec.Bind(wave.CodecTag(string(coding)), codec.New(linear.DecoderIdentity(coding)), codec.NewParser(linear.ParserIdentity())))
 	}
 	// MP4 carries linear PCM in already packetized sample entries, so these
 	// bind the decoder without a parser. A planner only reaches for them when

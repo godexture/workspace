@@ -44,15 +44,22 @@ func demuxerComponent() plugin.Component {
 					"wave.inspection", diagnostic.ErrorSeverity, diagnostic.Path{}, "WAVE demuxer requires a prepared header inspection", nil,
 				))
 			}
-			properties, err := inspected.description.Properties()
+			// Every stream states its signal. One stored one scalar each also
+			// states how, which is what lets a sample-level consumer read it.
+			properties, err := inspected.signal.Properties()
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+			}
+			if inspected.linear() {
+				if properties, err = inspected.description.Apply(properties); err != nil {
+					return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+				}
 			}
 			properties, err = codec.WithTag(properties, inspected.codecTag)
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties)
+			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Descriptor(), timing.MustBase(1, int64(inspected.signal.Rate)), properties)
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}

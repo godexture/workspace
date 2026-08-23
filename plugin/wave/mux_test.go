@@ -41,7 +41,7 @@ func (c *writeCollector) Emit(_ context.Context, input *flow.Item[access.Write])
 
 func TestMuxEmitsHeaderPayloadAndFinalPatchesWithOwnedStorage(t *testing.T) {
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
-	header, err := newMuxHeader(description)
+	header, err := newLinearMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestMuxEmitsHeaderPayloadAndFinalPatchesWithOwnedStorage(t *testing.T) {
 
 func TestMuxEmissionFailureReleasesEveryPayloadItAccepted(t *testing.T) {
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
-	header, err := newMuxHeader(description)
+	header, err := newLinearMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
 	}

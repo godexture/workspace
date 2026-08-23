@@ -24,7 +24,10 @@ type muxHeader struct {
 	reserveOffset  int64
 	dataSizeOffset int64
 	dataOffset     int64
-	blockAlign     uint64
+	// factOffset is where the sample count goes, or zero when the output has
+	// no sample-count chunk.
+	factOffset int64
+	blockAlign uint64
 }
 
 type sourceReplacement struct {
@@ -44,12 +47,12 @@ type finalizedHeader struct {
 	rf64     bool
 }
 
-func newMuxHeader(description sample.Description) (muxHeader, error) {
-	return newMuxHeaderWithChunks(description, muxChunks{})
+func newMuxHeader(codec waveCodec, signal sample.Signal) (muxHeader, error) {
+	return newMuxHeaderWithChunks(codec, signal, false, muxChunks{})
 }
 
-func newRangeMuxHeader(description sample.Description, inspected header) (muxHeader, error) {
-	formatPayload, blockAlign, err := marshalFormat(description)
+func newRangeMuxHeader(codec waveCodec, signal sample.Signal, fact bool, inspected header) (muxHeader, error) {
+	formatPayload, blockAlign, err := marshalFormat(codec, signal)
 	if err != nil {
 		return muxHeader{}, err
 	}
@@ -62,6 +65,9 @@ func newRangeMuxHeader(description sample.Description, inspected header) (muxHea
 	copy(prefix[8:12], tagWAVE)
 	dataTag := make([]byte, 8)
 	copy(dataTag, tagDATA)
+	if fact {
+		dataTag = append(marshalFact(), dataTag...)
+	}
 	beforeFormat := inspected.ranges.beforeFormat.length
 	beforeData := inspected.ranges.beforeData.length
 	dataOffset := uint64(len(prefix) + 8 + ds64PayloadSize + len(format) + len(dataTag))
@@ -82,19 +88,34 @@ func newRangeMuxHeader(description sample.Description, inspected header) (muxHea
 		reserveOffset:  reserveOffset,
 		dataSizeOffset: int64(dataOffset - 4),
 		dataOffset:     int64(dataOffset),
+		factOffset:     factSlot(fact, int64(dataOffset)-int64(len(dataTag))),
 		blockAlign:     uint64(blockAlign),
 	}, nil
 }
 
-func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (muxHeader, error) {
-	formatPayload, blockAlign, err := marshalFormat(description)
+// factSlot is where the sample count is patched at finalize, or zero when the
+// output carries no sample-count chunk. Offset zero holds the RIFF signature,
+// so it can never be a real slot.
+func factSlot(present bool, chunk int64) int64 {
+	if !present {
+		return 0
+	}
+	return chunk + 8
+}
+
+func newMuxHeaderWithChunks(codec waveCodec, signal sample.Signal, fact bool, chunks muxChunks) (muxHeader, error) {
+	formatPayload, blockAlign, err := marshalFormat(codec, signal)
 	if err != nil {
 		return muxHeader{}, err
 	}
 	if len(chunks.beforeFormat) > math.MaxInt-80-len(formatPayload) || len(chunks.beforeData) > math.MaxInt-80-len(formatPayload)-len(chunks.beforeFormat) {
 		return muxHeader{}, fmt.Errorf("%w: WAVE metadata header exceeds runtime address space", ErrUnsupported)
 	}
-	headerSize := reserveOffset + 8 + ds64PayloadSize + len(chunks.beforeFormat) + 8 + len(formatPayload) + len(chunks.beforeData) + 8
+	factSize := 0
+	if fact {
+		factSize = len(marshalFact())
+	}
+	headerSize := reserveOffset + 8 + ds64PayloadSize + len(chunks.beforeFormat) + 8 + len(formatPayload) + len(chunks.beforeData) + factSize + 8
 	value := make([]byte, headerSize)
 	copy(value[0:4], tagRIFF)
 	copy(value[8:12], tagWAVE)
@@ -108,6 +129,11 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 	dataOffset := formatOffset + 8 + len(formatPayload)
 	copy(value[dataOffset:], chunks.beforeData)
 	dataOffset += len(chunks.beforeData)
+	factChunk := dataOffset
+	if fact {
+		copy(value[dataOffset:], marshalFact())
+		dataOffset += factSize
+	}
 	copy(value[dataOffset:dataOffset+4], tagDATA)
 	return muxHeader{
 		initial:        value,
@@ -116,6 +142,7 @@ func newMuxHeaderWithChunks(description sample.Description, chunks muxChunks) (m
 		reserveOffset:  int64(reserveOffset),
 		dataSizeOffset: int64(dataOffset + 4),
 		dataOffset:     int64(headerSize),
+		factOffset:     factSlot(fact, int64(factChunk)),
 		blockAlign:     uint64(blockAlign),
 	}, nil
 }
@@ -135,44 +162,55 @@ func reserveChunkOf(chunks muxChunks) []byte {
 	return value
 }
 
-func marshalFormat(description sample.Description) ([]byte, int, error) {
-	formatTag, known := formatTagOf(description.Coding)
-	if !description.Valid() || description.Packing != sample.Interleaved || !known ||
-		(description.Coding.Bytes() > 1 && description.Endian != sample.LittleEndian) {
-		return nil, 0, fmt.Errorf("%w: WAVE stores little-endian interleaved linear PCM", ErrUnsupported)
+// marshalFormat writes the fmt chunk for one codec and signal. A companded
+// codec states the width of the byte that holds a sample; the signal it
+// carries is wider, and the header has no field for it.
+func marshalFormat(codec waveCodec, signal sample.Signal) ([]byte, int, error) {
+	if !signal.Valid() || codec.name == "" {
+		return nil, 0, fmt.Errorf("%w: WAVE header needs a codec and a usable signal", ErrUnsupported)
 	}
-	channels := description.Layout.Count()
-	if channels < 1 || channels > math.MaxUint16 || description.Rate > math.MaxUint32 {
+	channels := signal.Layout.Count()
+	if channels < 1 || channels > math.MaxUint16 || signal.Rate > math.MaxUint32 {
 		return nil, 0, fmt.Errorf("%w: WAVE channel layout or sample rate is unsupported", ErrUnsupported)
 	}
-	blockAlign := channels * description.Coding.Bytes()
-	byteRate := uint64(description.Rate) * uint64(blockAlign)
+	blockAlign := channels * ((codec.bits + 7) / 8)
+	byteRate := uint64(signal.Rate) * uint64(blockAlign)
 	if blockAlign > math.MaxUint16 || byteRate > math.MaxUint32 {
 		return nil, 0, fmt.Errorf("%w: WAVE block alignment or byte rate exceeds its header field", ErrUnsupported)
 	}
 	size := 16
-	if !plainHeader(description) {
+	if !plainHeader(codec, signal) {
 		size = 40
 	}
 	value := make([]byte, size)
-	headerTag := formatTag
+	headerTag := codec.formatTag
 	if size == 40 {
 		headerTag = formatExtensible
 	}
 	binary.LittleEndian.PutUint16(value[0:2], headerTag)
 	binary.LittleEndian.PutUint16(value[2:4], uint16(channels))
-	binary.LittleEndian.PutUint32(value[4:8], uint32(description.Rate))
+	binary.LittleEndian.PutUint32(value[4:8], uint32(signal.Rate))
 	binary.LittleEndian.PutUint32(value[8:12], uint32(byteRate))
 	binary.LittleEndian.PutUint16(value[12:14], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(value[14:16], uint16(description.Coding.Bits()))
+	binary.LittleEndian.PutUint16(value[14:16], uint16(codec.bits))
 	if size == 40 {
 		binary.LittleEndian.PutUint16(value[16:18], 22)
-		binary.LittleEndian.PutUint16(value[18:20], uint16(description.ValidBits))
-		binary.LittleEndian.PutUint32(value[20:24], description.Layout.Mask())
-		binary.LittleEndian.PutUint16(value[24:26], formatTag)
+		binary.LittleEndian.PutUint16(value[18:20], uint16(signal.ValidBits))
+		binary.LittleEndian.PutUint32(value[20:24], signal.Layout.Mask())
+		binary.LittleEndian.PutUint16(value[24:26], codec.formatTag)
 		copy(value[28:40], extensibleBase[:])
 	}
 	return value, blockAlign, nil
+}
+
+// marshalFact writes the sample-count chunk RIFF requires of a stream that is
+// not plain PCM. The count follows the payload, so the value is patched at
+// finalize and only its slot is reserved here.
+func marshalFact() []byte {
+	value := make([]byte, 12)
+	copy(value[0:4], tagFACT)
+	binary.LittleEndian.PutUint32(value[4:8], 4)
+	return value
 }
 
 func (h muxHeader) finalize(dataSize uint64) (finalizedHeader, error) {
@@ -188,7 +226,7 @@ func (h muxHeader) finalize(dataSize uint64) (finalizedHeader, error) {
 		binary.LittleEndian.PutUint32(root, uint32(riffSize))
 		data := make([]byte, 4)
 		binary.LittleEndian.PutUint32(data, uint32(dataSize))
-		result.patches = []headerPatch{{offset: 4, payload: root}, {offset: h.dataSizeOffset, payload: data}}
+		result.patches = h.withFact([]headerPatch{{offset: 4, payload: root}, {offset: h.dataSizeOffset, payload: data}}, dataSize)
 		return result, nil
 	}
 	root := make([]byte, 8)
@@ -202,12 +240,27 @@ func (h muxHeader) finalize(dataSize uint64) (finalizedHeader, error) {
 	binary.LittleEndian.PutUint64(ds64[24:32], dataSize/h.blockAlign)
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, math.MaxUint32)
-	result.patches = []headerPatch{
+	result.patches = h.withFact([]headerPatch{
 		{offset: 0, payload: root},
 		{offset: h.reserveOffset, payload: ds64},
 		{offset: h.dataSizeOffset, payload: data},
-	}
+	}, dataSize)
 	return result, nil
+}
+
+// withFact appends the sample count once the payload size is known. RIFF states
+// it per channel, so it is the number of blocks the data chunk holds.
+func (h muxHeader) withFact(patches []headerPatch, dataSize uint64) []headerPatch {
+	if h.factOffset == 0 || h.blockAlign == 0 {
+		return patches
+	}
+	samples := dataSize / h.blockAlign
+	if samples > math.MaxUint32 {
+		samples = math.MaxUint32
+	}
+	value := make([]byte, 4)
+	binary.LittleEndian.PutUint32(value, uint32(samples))
+	return append(patches, headerPatch{offset: h.factOffset, payload: value})
 }
 
 func (h muxHeader) outputSize(dataSize uint64) (int, uint64, error) {
