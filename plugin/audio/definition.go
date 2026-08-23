@@ -55,6 +55,8 @@ type (
 	fadeConfigID       struct{}
 	trimID             struct{}
 	trimConfigID       struct{}
+	convolverID        struct{}
+	convolverConfigID  struct{}
 	mixerID            struct{}
 	mixerConfigID      struct{}
 )
@@ -124,6 +126,7 @@ const (
 	Fade       Processor = "fade"
 	Trim       Processor = "trim"
 	Mixer      Processor = "mixer"
+	Convolver  Processor = "convolver"
 )
 
 type entry struct {
@@ -148,6 +151,7 @@ var processors = []entry{
 	{name: Fade, component: newFade()},
 	{name: Trim, component: newTrim()},
 	{name: Mixer, component: newMixer()},
+	{name: Convolver, component: newConvolverComponent()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An

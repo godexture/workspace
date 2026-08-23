@@ -148,11 +148,17 @@ func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C,
 // bridges the stream rather than the processor refusing it. ready is false
 // when the returned Compiled is the answer.
 func processedInput[P any](shape flow.Shape, inputs flow.Descriptors[stream.Descriptor]) (stream.Descriptor, sample.Signal, plugin.Compiled[P, stream.Descriptor], bool, error) {
-	input, ok := inputs.One(shape.Inputs[0].ID())
+	return processedPort[P](shape, shape.Inputs[0], inputs)
+}
+
+// processedPort is the same check for one named port of a component that reads
+// more than one.
+func processedPort[P any](shape flow.Shape, declared flow.Port, inputs flow.Descriptors[stream.Descriptor]) (stream.Descriptor, sample.Signal, plugin.Compiled[P, stream.Descriptor], bool, error) {
+	input, ok := inputs.One(declared.ID())
 	if !ok {
 		return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{
 			Requirements: []plugin.Requirement[stream.Descriptor]{
-				plugin.Require(shape.Inputs[0].ID(), plugin.ConditionNeed[stream.Descriptor]("audio.filter-input")),
+				plugin.Require(declared.ID(), plugin.ConditionNeed[stream.Descriptor]("audio.filter-input")),
 			},
 		}, false, nil
 	}
@@ -164,13 +170,13 @@ func processedInput[P any](shape flow.Shape, inputs flow.Descriptors[stream.Desc
 	if err == nil && description == processed(signal) && input.TimeBase() == timing.MustBase(1, int64(signal.Rate)) {
 		return input, signal, plugin.Compiled[P, stream.Descriptor]{}, true, nil
 	}
-	desired, err := describeProcessed(input, shape.Inputs[0].Schema(), signal)
+	desired, err := describeProcessed(input, declared.Schema(), signal)
 	if err != nil {
 		return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{}, false, err
 	}
 	return stream.Descriptor{}, sample.Signal{}, plugin.Compiled[P, stream.Descriptor]{
 		Requirements: []plugin.Requirement[stream.Descriptor]{
-			plugin.Require(shape.Inputs[0].ID(), plugin.DescriptorNeed("audio.filter-samples", desired)),
+			plugin.Require(declared.ID(), plugin.DescriptorNeed("audio.filter-samples", desired)),
 		},
 	}, false, nil
 }
