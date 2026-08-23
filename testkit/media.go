@@ -2,13 +2,11 @@ package testkit
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/godexture/godec/access"
-	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -54,12 +52,6 @@ type Packet struct {
 	DTS      timing.OptionalDTS
 	Duration timing.OptionalDuration
 	Bytes    []byte
-}
-
-// Frame is the logical signed-16 planar frame representation.
-type Frame struct {
-	PTS    timing.OptionalPTS
-	Planes [][]int16
 }
 
 // Write is the logical positioned-write representation.
@@ -151,31 +143,6 @@ func PacketInputFor(descriptor stream.Descriptor, values []Packet) Fixture[packe
 	return result
 }
 
-// FrameInput builds signed-16 planar frames. description must describe S16P.
-func FrameInput(description sample.Description, values []Frame, options ...StreamOption) Fixture[audio.Frame[int16]] {
-	descriptor, err := mediaDescriptor(sample.S16().Descriptor(), description, options...)
-	if err != nil || description.Format != sample.S16Planar || description.Endian != sample.NoEndian {
-		return Fixture[audio.Frame[int16]]{}
-	}
-	allocator, err := buffer.NewAllocator(framePayloadLimit(values))
-	if err != nil {
-		return Fixture[audio.Frame[int16]]{}
-	}
-	items := make([]audio.Frame[int16], 0, len(values))
-	for _, value := range values {
-		frame, allocationErr := allocateFrame(allocator, value)
-		if allocationErr != nil {
-			releaseFrames(items)
-			return Fixture[audio.Frame[int16]]{}
-		}
-		items = append(items, frame)
-	}
-	result := Values(descriptor, sample.S16(), items...)
-	releaseFrames(items)
-	result.verify = allocatorVerifier(allocator)
-	return result
-}
-
 // WantBytes compares each emitted byte handle after copying its payload.
 func WantBytes(parts ...[]byte) Expectation[buffer.Handle] {
 	want := cloneByteSlices(parts)
@@ -203,11 +170,6 @@ func WantChunks(want ...Chunk) Expectation[packet.Chunk] {
 // WantPackets compares logical packet fields and payloads in order.
 func WantPackets(want ...Packet) Expectation[packet.Packet] {
 	return WantValues(clonePackets(want), snapshotPacket)
-}
-
-// WantFrames compares signed-16 planar samples and timestamps in order.
-func WantFrames(want ...Frame) Expectation[audio.Frame[int16]] {
-	return WantValues(cloneFrames(want), snapshotFrame)
 }
 
 // WantWrites compares positioned writes and payloads in order.
@@ -309,62 +271,6 @@ func packetPayloads(values []Packet) [][]byte {
 	return result
 }
 
-func framePayloadLimit(values []Frame) int64 {
-	var total int64
-	for _, value := range values {
-		for _, plane := range value.Planes {
-			total += int64(len(plane) * 2)
-		}
-	}
-	if total == 0 {
-		return 1
-	}
-	return total + int64(len(values))*32
-}
-
-func allocateFrame(allocator *buffer.Allocator, value Frame) (audio.Frame[int16], error) {
-	if len(value.Planes) == 0 {
-		return audio.Frame[int16]{}, errors.New("frame fixture has no planes")
-	}
-	samples := len(value.Planes[0])
-	planes := make([]buffer.PlaneSpec, len(value.Planes))
-	for index, values := range value.Planes {
-		if len(values) != samples {
-			return audio.Frame[int16]{}, errors.New("frame fixture planes have different sample counts")
-		}
-		planes[index].Size = len(values) * 2
-	}
-	lease, err := allocator.Overwrite(buffer.Spec{Alignment: 16, Planes: planes})
-	if err != nil {
-		return audio.Frame[int16]{}, err
-	}
-	defer lease.Discard()
-	if err := lease.Fill(func(storage buffer.Mutable) error {
-		for planeIndex, values := range value.Planes {
-			plane, planeErr := storage.Plane(planeIndex)
-			if planeErr != nil {
-				return planeErr
-			}
-			for index, sampleValue := range values {
-				binary.NativeEndian.PutUint16(plane[index*2:], uint16(sampleValue))
-			}
-		}
-		return nil
-	}); err != nil {
-		return audio.Frame[int16]{}, err
-	}
-	handle, err := lease.Commit()
-	if err != nil {
-		return audio.Frame[int16]{}, err
-	}
-	frame, err := audio.NewFrame[int16](value.PTS, samples, handle)
-	if err != nil {
-		handle.Release()
-		return audio.Frame[int16]{}, err
-	}
-	return frame, nil
-}
-
 func snapshotChunk(value packet.Chunk) (Chunk, error) {
 	if !value.Valid() {
 		return Chunk{}, errors.New("invalid chunk")
@@ -380,22 +286,6 @@ func snapshotPacket(value packet.Packet) (Packet, error) {
 		Sequence: value.Sequence(), PTS: value.PTS(), DTS: value.DTS(), Duration: value.Duration(),
 		Bytes: value.Bytes().AppendTo(nil),
 	}, nil
-}
-
-func snapshotFrame(value audio.Frame[int16]) (Frame, error) {
-	if !value.Valid() {
-		return Frame{}, errors.New("invalid frame")
-	}
-	planes := value.Planes().Layout().Planes
-	result := Frame{PTS: value.PTS(), Planes: make([][]int16, len(planes))}
-	for index := range planes {
-		values, err := value.PlaneSamples(index)
-		if err != nil {
-			return Frame{}, err
-		}
-		result.Planes[index] = values.AppendTo(nil)
-	}
-	return result, nil
 }
 
 func snapshotWrite(value access.Write) (Write, error) {
@@ -512,17 +402,6 @@ func clonePackets(values []Packet) []Packet {
 	return result
 }
 
-func cloneFrames(values []Frame) []Frame {
-	result := append([]Frame(nil), values...)
-	for index := range result {
-		result[index].Planes = make([][]int16, len(values[index].Planes))
-		for plane := range result[index].Planes {
-			result[index].Planes[plane] = append([]int16(nil), values[index].Planes[plane]...)
-		}
-	}
-	return result
-}
-
 func cloneWrites(values []Write) []Write {
 	result := append([]Write(nil), values...)
 	for index := range result {
@@ -544,12 +423,6 @@ func releaseChunks(values []packet.Chunk) {
 }
 
 func releasePackets(values []packet.Packet) {
-	for _, value := range values {
-		value.Release()
-	}
-}
-
-func releaseFrames(values []audio.Frame[int16]) {
 	for _, value := range values {
 		value.Release()
 	}

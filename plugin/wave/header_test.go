@@ -65,7 +65,7 @@ func TestInspectHeaderReadsRIFFAndRF64PCM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian}
+	want := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}
 	if value.description != want || value.dataOffset != 54 || value.dataSize != uint64(len(data)) || value.blockAlign != 4 || value.rf64 {
 		t.Fatalf("RIFF inspection = %#v", value)
 	}

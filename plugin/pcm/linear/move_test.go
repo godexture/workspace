@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/timing"
 )
 
@@ -43,7 +44,7 @@ func (s *writeSink) Emit(_ context.Context, item *flow.Item[access.Write]) error
 // Retaining instead would allocate one lease per item per hop, which the
 // hot-path contract forbids for a linear ownership transfer.
 func TestPayloadRewrappingHopsAllocateNothing(t *testing.T) {
-	configuration := configuration{Layout: "stereo", ValidBits: 16, Rate: 48_000, Endian: "little", ChunkSamples: 4}
+	configuration := configuration{Layout: sample.Stereo(), ValidBits: 16, Rate: 48_000, Endian: "little", ChunkSamples: 4}
 
 	t.Run("parser", func(t *testing.T) {
 		allocator, err := buffer.NewAllocator(1 << 20)

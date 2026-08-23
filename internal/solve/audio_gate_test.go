@@ -51,8 +51,8 @@ func TestCompatibleAudioFilterRegionUsesOnlyBoundaryConverters(t *testing.T) {
 				}
 				if node.Component == plugin.IdentityOf[audioGateFilterID]().String() {
 					if len(node.Inputs) != 1 || len(node.Outputs) != 1 ||
-						node.Inputs[0].Descriptor.Schema != sample.F32().Identity().String() ||
-						node.Outputs[0].Descriptor.Schema != sample.F32().Identity().String() {
+						node.Inputs[0].Descriptor.Schema != sample.Frames[float32]().Identity().String() ||
+						node.Outputs[0].Descriptor.Schema != sample.Frames[float32]().Identity().String() {
 						t.Fatalf("filter selected schema = %#v -> %#v", node.Inputs, node.Outputs)
 					}
 				}
@@ -66,14 +66,14 @@ func TestCompatibleAudioFilterRegionUsesOnlyBoundaryConverters(t *testing.T) {
 
 func audioGateIndex(t testing.TB) catalog.Index {
 	t.Helper()
-	s16 := sample.S16()
-	f32 := sample.F32()
+	s16 := sample.Frames[int16]()
+	f32 := sample.Frames[float32]()
 	sourceShape := flow.NewShape(nil, []flow.Port{flow.Out("out", s16)})
 	filterShape := flow.NewShape([]flow.Port{flow.In("in", f32)}, []flow.Port{flow.Out("out", f32)})
 	sinkShape := flow.NewShape([]flow.Port{flow.In("in", s16)}, nil)
 	toFloatShape := flow.NewShape([]flow.Port{flow.In("in", s16)}, []flow.Port{flow.Out("out", f32)})
 	toIntegerShape := flow.NewShape([]flow.Port{flow.In("in", f32)}, []flow.Port{flow.Out("out", s16)})
-	sourceDescriptor := audioGateDescriptor(t, sample.S16Planar)
+	sourceDescriptor := audioGateDescriptor(t, sample.S16)
 
 	source := solveComponent[audioGateSourceID](sourceShape, func(solveConfig, flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
 		return plugin.Compiled[solvePlan, stream.Descriptor]{Outputs: flow.NewDescriptors(flow.Describe("out", sourceDescriptor))}
@@ -94,18 +94,20 @@ func audioGateIndex(t testing.TB) catalog.Index {
 		}
 		return plugin.Compiled[solvePlan, stream.Descriptor]{Outputs: flow.NewDescriptors[stream.Descriptor]()}
 	}, nil, 0, plugin.Contract{}, nil, nil)
-	toFloat := audioGateConverter[audioGateToFloatID](toFloatShape, sample.F32Planar)
-	toInteger := audioGateConverter[audioGateToIntegerID](toIntegerShape, sample.S16Planar)
+	toFloat := audioGateConverter[audioGateToFloatID](toFloatShape, sample.F32)
+	toInteger := audioGateConverter[audioGateToIntegerID](toIntegerShape, sample.S16)
 	return solveIndex(t, source, filter, sink, toFloat, toInteger)
 }
 
-func audioGateConverter[Marker any](shape flow.Shape, target sample.Format) plugin.Component {
+func audioGateConverter[Marker any](shape flow.Shape, target sample.Coding) plugin.Component {
 	return solveComponent[Marker](shape, func(_ solveConfig, inputs flow.Descriptors[stream.Descriptor]) plugin.Compiled[solvePlan, stream.Descriptor] {
 		input, ok := inputs.One("in")
 		if !ok {
 			return plugin.Compiled[solvePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("audio.converter-input"))}}
 		}
-		output := audioGateDescriptorFrom(timing.MustBase(1, 48_000), input, target)
+		properties, _ := audioGateDescription(target).Apply(input.Properties())
+		schemaDescriptor, _ := sample.Schema(target)
+		output := stream.MustDescriptor(input.ID(), schemaDescriptor, timing.MustBase(1, 48_000), properties).WithMetadata(input.Metadata())
 		return plugin.Compiled[solvePlan, stream.Descriptor]{
 			Outputs: flow.NewDescriptors(flow.Describe("out", output)),
 			Effects: []plugin.Effect{{Kind: plugin.RepresentationEffect, Loss: plugin.NoLoss, Detail: "audio.sample-conversion"}},
@@ -137,30 +139,22 @@ func audioGateRequest(t testing.TB, filters int) job.Job {
 	return request
 }
 
-func audioGateDescriptor(t testing.TB, format sample.Format) stream.Descriptor {
-	t.Helper()
-	description := sample.Description{Format: format, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.NoEndian}
-	if format == sample.F32Planar {
-		description.ValidBits = 32
+func audioGateDescription(coding sample.Coding) sample.Description {
+	return sample.Description{
+		Coding: coding, Packing: sample.Planar, Endian: sample.NoEndian,
+		Rate: 48_000, Layout: sample.Stereo(), ValidBits: coding.Bits(),
 	}
-	properties, err := description.Properties()
+}
+
+func audioGateDescriptor(t testing.TB, coding sample.Coding) stream.Descriptor {
+	t.Helper()
+	properties, err := audioGateDescription(coding).Properties()
 	if err != nil {
 		t.Fatal(err)
 	}
-	schemaDescriptor := sample.S16().Descriptor()
-	if format == sample.F32Planar {
-		schemaDescriptor = sample.F32().Descriptor()
+	schemaDescriptor, ok := sample.Schema(coding)
+	if !ok {
+		t.Fatalf("%s has no canonical frame schema", coding)
 	}
 	return stream.MustDescriptor("audio", schemaDescriptor, timing.MustBase(1, 48_000), properties)
-}
-
-func audioGateDescriptorFrom(base timing.Base, input stream.Descriptor, format sample.Format) stream.Descriptor {
-	description := sample.Description{Format: format, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.NoEndian}
-	schemaDescriptor := sample.S16().Descriptor()
-	if format == sample.F32Planar {
-		description.ValidBits = 32
-		schemaDescriptor = sample.F32().Descriptor()
-	}
-	properties, _ := description.Apply(input.Properties())
-	return stream.MustDescriptor(input.ID(), schemaDescriptor, base, properties).WithMetadata(input.Metadata())
 }

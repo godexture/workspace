@@ -24,12 +24,10 @@ import (
 func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	t.Helper()
 	wire := sample.Description{
-		Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-		Layout: sample.Mono, Endian: sample.LittleEndian,
+		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
+		Layout: sample.Mono(), Endian: sample.LittleEndian,
 	}
-	planar := wire
-	planar.Format = sample.S16Planar
-	planar.Endian = sample.NoEndian
+	planar := wire.Decoded()
 	patch := linearPatch(wire, 2)
 	raw := []byte{0xf0, 0xff, 0x10, 0x00, 0x00, 0x80, 0xf0, 0x7f}
 	first := []byte{0xf0, 0xff, 0x10, 0x00}
@@ -83,25 +81,25 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		},
 	)
 	testkit.Codec(t,
-		testkit.Track(testkit.SubjectIn(set, linear.DecoderIdentity(), "packets", codec.Packets(), "frames", sample.S16()), coverage),
+		testkit.Track(testkit.SubjectIn(set, linear.DecoderIdentity(), "packets", codec.Packets(), "frames", sample.Frames[int16]()), coverage),
 		testkit.Case[packet.Packet, audio.Frame[int16]]{
 			Name:   "twelve-bit-left-justified",
 			Config: patch,
 			Input: testkit.PacketInput(wire, []testkit.Packet{{
 				Sequence: 3, PTS: timing.SomePTS(timing.NewPTS(9)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(4)), Bytes: raw,
 			}}),
-			Want: testkit.WantFrames(testkit.Frame{
+			Want: testkit.WantFrames(testkit.Frame[int16]{
 				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-1, 1, -2048, 2047}},
 			}),
 		},
 		decoderBigEndianCase(),
 	)
 	testkit.Codec(t,
-		testkit.Track(testkit.SubjectIn(set, linear.EncoderIdentity(), "frames", sample.S16(), "packets", codec.Packets()), coverage),
+		testkit.Track(testkit.SubjectIn(set, linear.EncoderIdentity(), "frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
 		testkit.Case[audio.Frame[int16], packet.Packet]{
 			Name:   "twelve-bit-left-justify",
 			Config: patch,
-			Input: testkit.FrameInput(planar, []testkit.Frame{{
+			Input: testkit.FrameInput(planar, []testkit.Frame[int16]{{
 				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-1, 1, -2048, 2047}},
 			}}),
 			Want: testkit.WantPackets(testkit.Packet{
@@ -111,7 +109,7 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		testkit.Case[audio.Frame[int16], packet.Packet]{
 			Name:   "unknown-pts-keeps-unknown-dts",
 			Config: patch,
-			Input: testkit.FrameInput(planar, []testkit.Frame{{
+			Input: testkit.FrameInput(planar, []testkit.Frame[int16]{{
 				PTS: timing.UnknownPTS(), Planes: [][]int16{{0, 0}},
 			}}),
 			Want: testkit.WantPackets(testkit.Packet{
@@ -135,8 +133,8 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 
 func decoderBigEndianCase() testkit.Case[packet.Packet, audio.Frame[int16]] {
 	wire := sample.Description{
-		Format: sample.S16Interleaved, ValidBits: 16, Rate: 44_100,
-		Layout: sample.Stereo, Endian: sample.BigEndian,
+		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 16, Rate: 44_100,
+		Layout: sample.Stereo(), Endian: sample.BigEndian,
 	}
 	return testkit.Case[packet.Packet, audio.Frame[int16]]{
 		Name:   "sixteen-bit-big-endian-stereo",
@@ -145,7 +143,7 @@ func decoderBigEndianCase() testkit.Case[packet.Packet, audio.Frame[int16]] {
 			Sequence: 4, PTS: timing.SomePTS(timing.NewPTS(2)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(2)),
 			Bytes: []byte{0x80, 0x00, 0x7f, 0xff, 0x00, 0x00, 0xff, 0xff},
 		}}),
-		Want: testkit.WantFrames(testkit.Frame{
+		Want: testkit.WantFrames(testkit.Frame[int16]{
 			PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]int16{{-32768, 0}, {32767, -1}},
 		}),
 	}
@@ -153,16 +151,14 @@ func decoderBigEndianCase() testkit.Case[packet.Packet, audio.Frame[int16]] {
 
 func encoderBigEndianCase() testkit.Case[audio.Frame[int16], packet.Packet] {
 	wire := sample.Description{
-		Format: sample.S16Interleaved, ValidBits: 16, Rate: 44_100,
-		Layout: sample.Stereo, Endian: sample.BigEndian,
+		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 16, Rate: 44_100,
+		Layout: sample.Stereo(), Endian: sample.BigEndian,
 	}
-	planar := wire
-	planar.Format = sample.S16Planar
-	planar.Endian = sample.NoEndian
+	planar := wire.Decoded()
 	return testkit.Case[audio.Frame[int16], packet.Packet]{
 		Name:   "sixteen-bit-big-endian-stereo",
 		Config: linearPatch(wire, 3),
-		Input: testkit.FrameInput(planar, []testkit.Frame{{
+		Input: testkit.FrameInput(planar, []testkit.Frame[int16]{{
 			PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]int16{{-32768, 0}, {32767, -1}},
 		}}),
 		Want: testkit.WantPackets(testkit.Packet{
@@ -176,7 +172,7 @@ func linearPatch(description sample.Description, chunkSamples int) config.Patch 
 	return config.NewPatch().
 		SetText("rate", strconv.Itoa(description.Rate)).
 		SetText("validBits", strconv.Itoa(description.ValidBits)).
-		SetText("layout", string(description.Layout)).
+		SetText("layout", description.Layout.String()).
 		SetText("endian", string(description.Endian)).
 		SetText("chunkSamples", strconv.Itoa(chunkSamples))
 }
@@ -188,8 +184,8 @@ func linearPatch(description sample.Description, chunkSamples int) config.Patch 
 func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	t.Helper()
 	input := sample.Description{
-		Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-		Layout: sample.Stereo, Endian: sample.BigEndian,
+		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
+		Layout: sample.Stereo(), Endian: sample.BigEndian,
 	}
 
 	for _, subject := range []struct {
@@ -234,8 +230,8 @@ func linearSuggestionCases(t *testing.T, inputPort, outputPort string, wireIsInp
 			Demands: []plugin.Demand[stream.Descriptor]{wireDemand(plugin.DescriptorNeed(
 				"linear.config",
 				linearDescriptor(t, sample.Description{
-					Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000,
-					Layout: sample.Stereo, Endian: sample.LittleEndian,
+					Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
+					Layout: sample.Stereo(), Endian: sample.LittleEndian,
 				}),
 			))},
 			Want: []testkit.Candidate{{
@@ -259,11 +255,11 @@ func suggestChunksToPackets(t *testing.T, set plugin.Set, identity plugin.Identi
 }
 
 func suggestPacketsToFrames(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
-	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "packets", codec.Packets(), "frames", sample.S16()), coverage), suggestions...)
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "packets", codec.Packets(), "frames", sample.Frames[int16]()), coverage), suggestions...)
 }
 
 func suggestFramesToPackets(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {
-	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "frames", sample.S16(), "packets", codec.Packets()), coverage), suggestions...)
+	testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, identity, "frames", sample.Frames[int16](), "packets", codec.Packets()), coverage), suggestions...)
 }
 
 func suggestPacketsToWrites(t *testing.T, set plugin.Set, identity plugin.Identity, coverage *testkit.Coverage, suggestions []testkit.Suggestion) {

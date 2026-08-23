@@ -16,12 +16,12 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 	}{
 		{
 			name:        "pcm",
-			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian},
+			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16},
 			headerSize:  80,
 		},
 		{
 			name:        "extensible valid bits",
-			description: sample.Description{Format: sample.S16Interleaved, ValidBits: 12, Rate: 32_000, Layout: sample.Mono, Endian: sample.LittleEndian},
+			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12},
 			headerSize:  104,
 		},
 	}
@@ -48,7 +48,7 @@ func TestMuxHeaderProducesFixedLengthRIFFAndExtensiblePCM(t *testing.T) {
 }
 
 func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Stereo, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Stereo(), ValidBits: 16}
 	header, err := newMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestMuxHeaderSwitchesReservedChunkAtRIFFBoundary(t *testing.T) {
 }
 
 func TestMuxHeaderAccountsOddDataPadding(t *testing.T) {
-	description := sample.Description{Format: sample.S16Interleaved, ValidBits: 16, Rate: 48_000, Layout: sample.Mono, Endian: sample.LittleEndian}
+	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
 	header, err := newMuxHeader(description)
 	if err != nil {
 		t.Fatal(err)

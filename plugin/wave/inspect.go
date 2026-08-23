@@ -324,20 +324,16 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	if audioFormat != formatPCM || bits != 16 || validBits == 0 || validBits > bits || rate == 0 {
 		return sample.Description{}, 0, fmt.Errorf("%w: only 16-bit integer PCM is supported", ErrUnsupported)
 	}
-	var layout sample.Layout
-	switch channels {
-	case 1:
-		layout = sample.Mono
-		if channelMask != 0 && channelMask != 0x4 {
-			return sample.Description{}, 0, fmt.Errorf("%w: mono channel mask is unsupported", ErrUnsupported)
+	layout, ok := sample.FromMask(channelMask, int(channels))
+	if !ok || layout.Count() > 2 {
+		return sample.Description{}, 0, fmt.Errorf("%w: channel layout %d/%#x is unsupported", ErrUnsupported, channels, channelMask)
+	}
+	if channelMask == 0 {
+		if layout.Count() == 1 {
+			layout = sample.Mono()
+		} else {
+			layout = sample.Stereo()
 		}
-	case 2:
-		layout = sample.Stereo
-		if channelMask != 0 && channelMask != 0x3 {
-			return sample.Description{}, 0, fmt.Errorf("%w: stereo channel mask is unsupported", ErrUnsupported)
-		}
-	default:
-		return sample.Description{}, 0, fmt.Errorf("%w: channel count %d is unsupported", ErrUnsupported, channels)
 	}
 	expectedAlign := uint64(channels) * 2
 	expectedRate := uint64(rate) * expectedAlign
@@ -345,11 +341,12 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 		return sample.Description{}, 0, fmt.Errorf("%w: PCM byte rate or block alignment is inconsistent", ErrMalformed)
 	}
 	description := sample.Description{
-		Format:    sample.S16Interleaved,
-		ValidBits: int(validBits),
+		Coding:    sample.S16,
+		Packing:   sample.Interleaved,
+		Endian:    sample.LittleEndian,
 		Rate:      int(rate),
 		Layout:    layout,
-		Endian:    sample.LittleEndian,
+		ValidBits: int(validBits),
 	}
 	return description, int(blockAlign), nil
 }
