@@ -126,7 +126,7 @@ CLI layer に planner、registry、plugin factory を持たせない。
 
 ### transactional output
 
-file output は target と同じ filesystem 上の temporary file に書き、Finalize、flush、sync、close がすべて成功した後に rename/replace する。ただし temporary object、replace、commit/abort の実装は CLI ではなく file Access Provider が所有する。CLI は確認 UX と Job policy だけを担当する。
+file output は target と同じ filesystem 上の temporary file に書き、flush、sync、close がすべて成功した後に rename/replace する。ただし temporary object、replace、commit/abort の実装は CLI ではなく file Access Provider が所有する。CLI は確認 UX と Job policy だけを担当する。
 
 - overwrite policy を事前に固定
 - Windows の replace semantics を扱う（`os.Rename` が `MoveFileEx` の replace に写る。ACL/attribute は継承しない）

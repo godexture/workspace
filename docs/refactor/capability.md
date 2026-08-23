@@ -21,8 +21,8 @@
 | WAVE/PCM の 16 bit・mono/stereo | 16 bit container、valid bits 1〜16、little/big endian | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の 12/16 valid bits、little/big endian、mono/stereo decode/encode exact と Fast/Realtime file roundtrip |
 | WAVE/PCM の 8/24/32 bit と float | 旧経路は S8/S16/S24/S32/F32 を扱った | 維持 | M8 | 確認済み (M8-1): `sample.Coding` が u8/s8/s16/s24/s32/f32/f64 を持ち、`linear` の decoder/encoder と WAVE の fmt header が全 coding を往復する。`plugin/wave.TestFormatHeaderRoundTripsEveryCoding`、`linear.TestDecodeAndEncodeCoverEveryCoding`、`standard.TestConvertKeepsEveryWAVEShapeItCanRead` |
 | WAVE/PCM の 3 channel 以上 | 旧経路は multichannel layout を扱った | 維持 | M8 | 確認済み (M8-1): `sample.Layout` が位置集合と channel 数の両方を表し、WAVE の `dwChannelMask` と往復する。`sample.TestLayoutRoundTripsAChannelMask`、`linear.TestDecodeAndEncodeCoverMoreThanTwoChannels`、`standard.TestConvertKeepsEveryWAVEShapeItCanRead` |
-| ADPCM (IMA, MS) | encode/decode | 維持 | M8 | 仕様 vector + roundtrip |
-| G.711 (A-law, μ-law) | encode/decode | 維持 | M8 | 仕様 table 照合 |
+| ADPCM (IMA, MS) | encode/decode | 維持 | M8 | 確認済み (M8-2): block ごとに predictor state を読み直す decode/encode を planar 経路へ移し、係数表は container が読まずに運ぶ `codec.Parameters` として届く。`adpcm.TestADPCMRoundtrip`、`integration` の block 展開/符号化 case、`standard.TestConvertExpandsAnADPCMStream`、`TestConvertCodesLinearPCMIntoADPCM` |
+| G.711 (A-law, μ-law) | encode/decode | 維持 | M8 | 確認済み (M8-2): 表を internal に残し、interleave/deinterleave は component 側に置いた。`integration` の両曲線 case（ゼロを二通りに綴ることを含む）、`standard.TestConvertCopiesACompandedStream`、`TestConvertRewritesACompandedStreamIntoLinearPCM`、`TestConvertCompandsLinearPCMIntoMuLaw` |
 | MP3 format | elementary stream、Xing/VBRI header、scan | 維持 | M8 | 仕様 vector |
 | MP3 decode | layer I/II/III | 維持 | M8 | conformance vector + PCM tolerance |
 | FLAC format | native stream、STREAMINFO、seektable | 維持 | M8 | conformance corpus |
