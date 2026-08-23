@@ -46,6 +46,7 @@ type portOptions struct {
 	multiplicity Multiplicity
 	fanIn        FanInPolicy
 	direct       bool
+	prior        bool
 }
 
 // Required and Optional control whether a port must be connected. They are
@@ -91,6 +92,23 @@ func Direct() PortOption {
 	return func(options *portOptions) { options.direct = true }
 }
 
+// Prior declares that this input is consumed to completion before the node's
+// other inputs are read at all.
+//
+// Some components need one of their inputs whole before the rest mean
+// anything: a convolver cannot filter a sample until it has the entire impulse
+// response, because every partition of it contributes. Reading both at once
+// would make the component hold the signal until the response ended, so the
+// runtime does not start the others -- their queues fill and their producers
+// wait, which is what bounds it.
+//
+// That only works while the two branches are independent, so a topology where
+// a prior branch shares a node with the rest is a planning error rather than a
+// run that stalls.
+func Prior() PortOption {
+	return func(options *portOptions) { options.prior = true }
+}
+
 // Port is an erased static port declaration. The schema descriptor retains
 // marker identity and payload type; typed runtime operations remain on the
 // schema.Type captured by execution binding constructors.
@@ -102,6 +120,7 @@ type Port struct {
 	multiplicity Multiplicity
 	fanIn        FanInPolicy
 	direct       bool
+	prior        bool
 }
 
 func In[T any](id string, typ schema.Type[T], options ...PortOption) Port {
@@ -119,7 +138,7 @@ func newPort(id string, direction Direction, descriptor schema.Descriptor, optio
 			option(&state)
 		}
 	}
-	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity, fanIn: state.fanIn, direct: state.direct}
+	return Port{id: id, direction: direction, descriptor: descriptor, required: state.required, multiplicity: state.multiplicity, fanIn: state.fanIn, direct: state.direct, prior: state.prior}
 }
 
 func (p Port) ID() string                 { return p.id }
@@ -132,6 +151,10 @@ func (p Port) FanIn() FanInPolicy         { return p.fanIn }
 // Direct reports whether this port requires one routed producer inside its own
 // synchronous execution island. See the Direct option for what that promises.
 func (p Port) Direct() bool { return p.direct }
+
+// Prior reports whether this input is consumed to completion before the node's
+// others. See the Prior option for what that promises.
+func (p Port) Prior() bool { return p.prior }
 
 // Shape is a static set of input and output ports. Dynamic topology is a
 // planner phase and is intentionally absent here.
@@ -165,7 +188,8 @@ func equalPorts(left, right []Port) bool {
 			left[index].required != right[index].required ||
 			left[index].multiplicity != right[index].multiplicity ||
 			left[index].fanIn != right[index].fanIn ||
-			left[index].direct != right[index].direct {
+			left[index].direct != right[index].direct ||
+			left[index].prior != right[index].prior {
 			return false
 		}
 	}
@@ -205,12 +229,22 @@ func (s Shape) Validate() error {
 			if port.direct && port.fanIn != SerialFanIn {
 				return fmt.Errorf("port %q requires a direct producer without serial fan-in", port.id)
 			}
+			if port.prior && (port.direction != InputDirection || port.multiplicity != One) {
+				return fmt.Errorf("port %q is prior without being a single input", port.id)
+			}
 		}
 	}
+	prior := 0
 	for _, port := range s.Inputs {
 		if port.direction != InputDirection {
 			return fmt.Errorf("port %q is not an input", port.id)
 		}
+		if port.prior {
+			prior++
+		}
+	}
+	if prior != 0 && prior == len(s.Inputs) {
+		return errors.New("every input of a shape is prior, so none of them is")
 	}
 	for _, port := range s.Outputs {
 		if port.direction != OutputDirection {

@@ -15,7 +15,7 @@ import (
 	"github.com/godexture/godec/media/schema"
 )
 
-func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit, tolerance int64, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
+func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, prior []bool, limit queue.Limit, tolerance int64, typ schema.Type[I], next delivery[O], owner *journal.Domain) ([]Link, Task, error) {
 	if count < 2 || tolerance < 0 {
 		return nil, Task{}, ErrBinding
 	}
@@ -34,7 +34,19 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ, node: owner.Home()})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), popped: make([]bool, count), ended: make([]bool, count), live: count, next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
+	// A fan-in over one many port declares no order between its branches, so
+	// the flags arrive empty and every input is read from the start.
+	ordering := make([]bool, count)
+	waiting := 0
+	if len(prior) == count {
+		copy(ordering, prior)
+		for _, value := range ordering {
+			if value {
+				waiting++
+			}
+		}
+	}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), popped: make([]bool, count), ended: make([]bool, count), prior: ordering, waiting: waiting, live: count, next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 		state.items[index].Bind(typ, site.Reporter())
@@ -62,7 +74,14 @@ type zipState[I, O any] struct {
 	popped []bool
 	// ended marks the inputs that have finished. They stop contributing a cell
 	// and stop being read; the join ends when none is left.
-	ended      []bool
+	ended []bool
+	// prior marks the inputs read to completion before the rest, and waiting
+	// counts how many of them have not finished yet. While any has not, the
+	// others are left alone: their queues fill and their producers wait, which
+	// is what keeps a component that needs one input whole from holding the
+	// others in memory to get it.
+	prior      []bool
+	waiting    int
 	live       int
 	next       delivery[O]
 	time       func(I) (int64, bool)
@@ -110,7 +129,7 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 	defer s.release()
 	for {
 		for index, edge := range s.edges {
-			if s.ended[index] {
+			if s.ended[index] || s.waiting != 0 && !s.prior[index] {
 				continue
 			}
 			err := edge.Pop(ctx, &s.items[index])
@@ -122,6 +141,9 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 				// has been waiting for it.
 				s.ended[index] = true
 				s.live--
+				if s.prior[index] {
+					s.waiting--
+				}
 				continue
 			}
 			if errorx.Is(err, queue.ErrAbandoned) {
@@ -133,7 +155,7 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 			}
 			s.popped[index] = true
 		}
-		if s.live == 0 {
+		if s.live == 0 && s.waiting == 0 {
 			// Every input has finished, which is the only end this join can
 			// quiesce from. The cleanup on the way out still has to succeed.
 			s.reachedEOF = true

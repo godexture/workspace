@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 
@@ -113,8 +114,21 @@ func (t Template) BuildObserved(ledger *journal.Ledger, operators []flow.Operato
 			if err != nil {
 				return fail(err)
 			}
+			// A fan-in over several ports orders its inputs by the port the
+			// shape declares first, then by the edges within it, so the ordinal
+			// a joiner reads is the one its ports were written in.
 			incoming := append([]int(nil), t.incoming[index]...)
+			ports := value.binding.Inputs()
+			rank := func(connection int) int {
+				if len(ports) == 0 {
+					return 0
+				}
+				return slices.Index(ports, t.edges[t.connections[connection].logical].value.To().ID())
+			}
 			sort.Slice(incoming, func(left, right int) bool {
+				if first, second := rank(incoming[left]), rank(incoming[right]); first != second {
+					return first < second
+				}
 				return t.connections[incoming[left]].input < t.connections[incoming[right]].input
 			})
 			inputs, joinTask, err := value.binding.OpenJoiner(operator, len(incoming), t.connections[incoming[0]].limit, value.toleranceTicks, output, ledger.Domain("join/"+node, node))
