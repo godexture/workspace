@@ -54,23 +54,37 @@ func budget[C any](accessor func(*C) *int) config.FieldSpec[C] {
 
 const defaultFilterSamples = 8192
 
+// filterSpec is what one filter contributes: how it is named, how it is
+// configured, and how a configuration plus the stream it will run on becomes
+// arithmetic. check is what a filter says about a configuration it can only
+// judge once it knows the stream, so that judgement lands in planning rather
+// than halfway through opening a graph.
+type filterSpec[C any] struct {
+	name    string
+	detail  string
+	schema  config.Schema[C]
+	samples func(*C) *int
+	check   func(C, sample.Signal) error
+	build   func(C, sample.Signal) (filter, error)
+}
+
 // newFilter builds the component for one in-place filter. Everything that is
 // the same for all of them lives here -- the ports, the samples they insist
 // on, the descriptor the stream keeps, the exclusive-or-copy edit -- so a
 // filter's own file holds its configuration and its arithmetic and nothing
 // else.
-func newFilter[Marker, C any](name, detail string, schema config.Schema[C], samples func(*C) *int, build func(C, sample.Signal) (filter, error)) plugin.Component {
+func newFilter[Marker, C any](spec filterSpec[C]) plugin.Component {
 	shape := filterShape()
-	spec := plugin.Spec[C, filterPlan[C], stream.Descriptor]{
+	component := plugin.Spec[C, filterPlan[C], stream.Descriptor]{
 		Ports: shape,
 		Compile: func(_ plugin.CompileContext, configuration C, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[filterPlan[C], stream.Descriptor], error) {
-			return compileFilter(shape, detail, configuration, *samples(&configuration), inputs)
+			return compileFilter(shape, spec, configuration, inputs)
 		},
 		Open: func(ctx plugin.OpenContext, plan filterPlan[C]) (flow.Operator, error) {
 			if ctx.Buffers() == nil {
 				return nil, fmt.Errorf("%w: a filter requires a payload buffer grant", ErrUnsupported)
 			}
-			kernel, err := build(plan.config, plan.signal)
+			kernel, err := spec.build(plan.config, plan.signal)
 			if err != nil {
 				return nil, err
 			}
@@ -78,8 +92,8 @@ func newFilter[Marker, C any](name, detail string, schema config.Schema[C], samp
 		},
 	}
 	frames := sample.Frames[float32]()
-	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, schema,
-		plugin.WithSpec(spec),
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: spec.name}, spec.schema,
+		plugin.WithSpec(component),
 		plugin.WithProcessor("frames", frames, "filtered", frames),
 	)
 }
@@ -88,7 +102,7 @@ func newFilter[Marker, C any](name, detail string, schema config.Schema[C], samp
 // can read as float32 planes. Anything else is stated as the descriptor it
 // wanted, so the planner reaches for a converter instead of the filter
 // refusing a stream it could have been given.
-func compileFilter[C any](shape flow.Shape, detail string, configuration C, samples int, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[filterPlan[C], stream.Descriptor], error) {
+func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[filterPlan[C], stream.Descriptor], error) {
 	input, ok := inputs.One("frames")
 	if !ok {
 		return plugin.Compiled[filterPlan[C], stream.Descriptor]{
@@ -113,6 +127,11 @@ func compileFilter[C any](shape flow.Shape, detail string, configuration C, samp
 			},
 		}, nil
 	}
+	if spec.check != nil {
+		if err := spec.check(configuration, signal); err != nil {
+			return plugin.Compiled[filterPlan[C], stream.Descriptor]{}, err
+		}
+	}
 	output, err := stream.NewDescriptor(input.ID(), shape.Outputs[0].Schema(), input.TimeBase(), input.Properties())
 	if err != nil {
 		return plugin.Compiled[filterPlan[C], stream.Descriptor]{}, err
@@ -123,13 +142,13 @@ func compileFilter[C any](shape flow.Shape, detail string, configuration C, samp
 			shape:    shape.Clone(),
 			config:   configuration,
 			signal:   signal,
-			samples:  samples,
-			detail:   detail,
+			samples:  *spec.samples(&configuration),
+			detail:   spec.detail,
 			channels: channels,
 		},
 		Outputs:   flow.NewDescriptors(flow.Describe("filtered", output.WithMetadata(input.Metadata()))),
-		Effects:   []plugin.Effect{{Kind: plugin.ContentEffect, Loss: plugin.Lossy, Detail: detail}},
-		Resources: resource.Request{Memory: resource.Bytes(planeBytes[float32](samples, channels))},
+		Effects:   []plugin.Effect{{Kind: plugin.ContentEffect, Loss: plugin.Lossy, Detail: spec.detail}},
+		Resources: resource.Request{Memory: resource.Bytes(planeBytes[float32](*spec.samples(&configuration), channels))},
 	}, nil
 }
 

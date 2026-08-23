@@ -27,10 +27,17 @@ type (
 	f64ToS32ID struct{}
 	f64ToF32ID struct{}
 
-	gainID           struct{}
-	gainConfigID     struct{}
-	dcOffsetID       struct{}
-	dcOffsetConfigID struct{}
+	gainID             struct{}
+	gainConfigID       struct{}
+	dcOffsetID         struct{}
+	dcOffsetConfigID   struct{}
+	compressorID       struct{}
+	compressorConfigID struct{}
+	gateID             struct{}
+	gateConfigID       struct{}
+	equalizerID        struct{}
+	equalizerConfigID  struct{}
+	equalizerBandID    struct{}
 )
 
 type conversion struct {
@@ -84,8 +91,11 @@ func ConverterIdentity(from, to sample.Coding) plugin.Identity {
 type Processor string
 
 const (
-	Gain     Processor = "gain"
-	DCOffset Processor = "dc-offset"
+	Gain       Processor = "gain"
+	DCOffset   Processor = "dc-offset"
+	Compressor Processor = "compressor"
+	Gate       Processor = "gate"
+	Equalizer  Processor = "equalizer"
 )
 
 type entry struct {
@@ -98,6 +108,9 @@ type entry struct {
 var processors = []entry{
 	{name: Gain, component: newGain()},
 	{name: DCOffset, component: newDCOffset()},
+	{name: Compressor, component: newCompressor()},
+	{name: Gate, component: newGate()},
+	{name: Equalizer, component: newEqualizer()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An
