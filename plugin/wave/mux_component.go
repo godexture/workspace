@@ -250,16 +250,14 @@ func muxCodec(input stream.Descriptor, signal sample.Signal, requested string) (
 
 	switch {
 	case named && target.coding == "":
-		// A coded output has to come from the coder that writes it, which the
-		// tag names. Everything else about the stream is the coder to choose.
+		// A coded output has to come from the coder that writes it. Nothing
+		// names which coder that is yet -- a codec binding states the component
+		// that reads a tag, not the one that writes it -- so the only coded
+		// output this header can state is the one it read.
 		if tagged && current.name == target.name {
 			return target, sample.Description{}, none, nil
 		}
-		desired, err := codedPackets(input, signal, target)
-		if err != nil {
-			return waveCodec{}, sample.Description{}, none, err
-		}
-		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.DescriptorNeed("wave.codec", desired)), nil
+		return waveCodec{}, sample.Description{}, none, fmt.Errorf("%w: %s can only be written back from the stream it was read as", ErrUnsupported, target.name)
 	case linearErr == nil:
 		want := muxDescription(description, target.coding)
 		if want != description {
@@ -284,24 +282,6 @@ func muxCodec(input stream.Descriptor, signal sample.Signal, requested string) (
 	default:
 		return current, sample.Description{}, none, nil
 	}
-}
-
-// codedPackets is the stream a coder has to produce for this header: the same
-// signal, carrying the tag that names the codec. What the coder states about
-// its blocks is not named here, because only the coder knows it.
-func codedPackets(input stream.Descriptor, signal sample.Signal, target waveCodec) (stream.Descriptor, error) {
-	properties, err := sample.Signal{Rate: signal.Rate, Layout: signal.Layout}.Properties()
-	if err != nil {
-		return stream.Descriptor{}, err
-	}
-	if properties, err = codec.WithTag(properties, CodecTag(target.name)); err != nil {
-		return stream.Descriptor{}, err
-	}
-	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, int64(signal.Rate)), properties)
-	if err != nil {
-		return stream.Descriptor{}, err
-	}
-	return result.WithMetadata(input.Metadata()), nil
 }
 
 func unsupportedCodec(name string) error {

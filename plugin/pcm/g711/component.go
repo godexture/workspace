@@ -42,17 +42,12 @@ type configID struct{}
 // from the stream, so the one setting left is how much a frame may hold.
 type configuration struct {
 	ChunkSamples int
-	// Tag is the codec tag the output carries. A coder does not know what its
-	// container calls it, so the container states it in the stream it asks for
-	// and the coder agrees to be named that.
-	Tag string
 }
 
 func configurationSchema() config.Schema[configuration] {
 	return config.Struct[configID](func() configuration { return configuration{ChunkSamples: 1024} }).
 		Version("1").
 		AddField(config.Field("chunkSamples", func(value *configuration) *int { return &value.ChunkSamples }, config.Int().Range(1, 1<<20))).
-		AddField(config.Field("tag", func(value *configuration) *string { return &value.Tag }, config.String())).
 		Build()
 }
 
@@ -94,10 +89,6 @@ func newCodec[Marker any](law Law, kind operation, name string) plugin.Component
 		Compile: func(_ plugin.CompileContext, configuration configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[componentPlan, stream.Descriptor], error) {
 			return compileCodec(law, kind, shape, configuration, inputs)
 		},
-		Suggest: func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []configuration {
-			return []configuration{{ChunkSamples: 1024, Tag: demandedTag(suggestion)}}
-		},
-		SuggestionLimit: 1,
 		Open: func(ctx plugin.OpenContext, plan componentPlan) (flow.Operator, error) {
 			if ctx.Buffers() == nil {
 				return nil, errors.New("G.711 requires a payload buffer grant")
@@ -154,9 +145,6 @@ func compileCodec(law Law, kind operation, shape flow.Shape, configuration confi
 	channels := signal.Layout.Count()
 	plan := componentPlan{operation: kind, shape: shape.Clone(), law: law, channels: channels, samples: configuration.ChunkSamples}
 	properties, memory, err := codecOutput(kind, input, signal, channels, configuration.ChunkSamples)
-	if err == nil && kind == encoderOperation && configuration.Tag != "" {
-		properties, err = codec.WithTag(properties, mediaformat.Tag(configuration.Tag))
-	}
 	if err != nil {
 		return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
 	}
@@ -207,20 +195,4 @@ func codecEffect(kind operation) plugin.Effect {
 		return plugin.Effect{Kind: plugin.RepresentationEffect, Loss: plugin.NoLoss, Detail: "g711.expand"}
 	}
 	return plugin.Effect{Kind: plugin.CompressionEffect, Loss: plugin.Lossy, Detail: "g711.compand"}
-}
-
-// demandedTag reads the codec tag the container asked for. A coder does not
-// know what its container calls it, so it takes the name from the stream the
-// container said it wanted.
-func demandedTag(suggestion plugin.Suggestion[stream.Descriptor]) string {
-	for _, demand := range suggestion.Demands() {
-		target, ok := demand.Need().Desired()
-		if !ok {
-			continue
-		}
-		if tag, tagged := codec.TagOf(target.Properties()); tagged {
-			return tag.String()
-		}
-	}
-	return ""
 }
