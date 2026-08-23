@@ -254,8 +254,15 @@ type Emitter[T any] interface {
 // Batch is one fan-in delivery. Each cell follows the ordinary ownership rule,
 // so a Joiner may consume some, all, or none of them.
 //
-// Zip batches carry an ordered slice. A selected batch represents one item
-// from a particular input without allocating that one-element slice.
+// Zip batches carry one cell per input, in input order, and a cell is empty
+// where that input has ended. The join carries on until every input has, so
+// what an absent cell means is the Joiner's to decide: a mixer takes it for
+// silence and outlasts its shortest input, while a stage that was waiting for
+// that input can say so instead. Test a cell with Value or Item.Valid rather
+// than assuming a full batch.
+//
+// A selected batch represents one item from a particular input without
+// allocating that one-element slice.
 type Batch[T any] struct {
 	items    []*Item[T]
 	selected *Item[T]

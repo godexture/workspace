@@ -34,7 +34,7 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 		edges[index] = edge
 		links[index] = linkOf[I](&bufferDelivery[I]{queue: edge, typ: typ, node: owner.Home()})
 	}
-	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
+	state := &zipState[I, O]{joiner: joiner, edges: edges, typ: typ, items: make([]flow.Item[I], count), batch: make([]*flow.Item[I], count), popped: make([]bool, count), ended: make([]bool, count), live: count, next: next, time: traits.Time, tolerance: tolerance, done: make(chan struct{}), site: site}
 	for index := range state.items {
 		state.batch[index] = &state.items[index]
 		state.items[index].Bind(typ, site.Reporter())
@@ -52,12 +52,18 @@ func zipJoiner[I, O any](joiner flow.Joiner[I, O], count int, limit queue.Limit,
 }
 
 type zipState[I, O any] struct {
-	joiner     flow.Joiner[I, O]
-	edges      []*queue.Queue[I]
-	typ        schema.Type[I]
-	items      []flow.Item[I]
-	batch      []*flow.Item[I]
-	read       int
+	joiner flow.Joiner[I, O]
+	edges  []*queue.Queue[I]
+	typ    schema.Type[I]
+	items  []flow.Item[I]
+	batch  []*flow.Item[I]
+	// popped marks the inputs this round took a slot from, so the slots go
+	// back to exactly those queues however many cells the joiner consumed.
+	popped []bool
+	// ended marks the inputs that have finished. They stop contributing a cell
+	// and stop being read; the join ends when none is left.
+	ended      []bool
+	live       int
 	next       delivery[O]
 	time       func(I) (int64, bool)
 	tolerance  int64
@@ -103,15 +109,20 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 	}()
 	defer s.release()
 	for {
-		s.read = 0
 		for index, edge := range s.edges {
+			if s.ended[index] {
+				continue
+			}
 			err := edge.Pop(ctx, &s.items[index])
 			if errorx.Is(err, io.EOF) {
-				// An input reaching EOF ends the stream for all of them. It is
-				// the only end this join can quiesce from, but the cleanup on
-				// the way out still has to succeed.
-				s.reachedEOF = true
-				return nil
+				// An input that has finished stops contributing a cell and
+				// stops being read. The others carry on: what a joiner makes
+				// of an absent input is its own business, and a mixer that
+				// took it for silence has a different answer from a stage that
+				// has been waiting for it.
+				s.ended[index] = true
+				s.live--
+				continue
 			}
 			if errorx.Is(err, queue.ErrAbandoned) {
 				s.stopped = true
@@ -120,12 +131,18 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 			if err != nil {
 				return err
 			}
-			s.read++
+			s.popped[index] = true
+		}
+		if s.live == 0 {
+			// Every input has finished, which is the only end this join can
+			// quiesce from. The cleanup on the way out still has to succeed.
+			s.reachedEOF = true
+			return nil
 		}
 		if !s.withinTolerance() {
 			return ErrTolerance
 		}
-		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch[:s.read]), s.next); err != nil {
+		if err := s.joiner.Process(ctx, flow.NewBatch(s.batch), s.next); err != nil {
 			if isAbandoned(err) {
 				s.stopped = true
 				return nil
@@ -141,22 +158,30 @@ func (s *zipState[I, O]) run(ctx context.Context, span *journal.Span) (err error
 	}
 }
 
+// withinTolerance measures only the inputs that contributed a cell. An input
+// that has finished has no instant to be far from, and holding the join to one
+// would end every stream at the first of them to run out.
 func (s *zipState[I, O]) withinTolerance() bool {
 	if s.tolerance == 0 {
 		return true
 	}
 	minimum, maximum := int64(0), int64(0)
-	for index := 0; index < s.read; index++ {
+	seen := false
+	for index := range s.items {
+		if !s.popped[index] {
+			continue
+		}
 		value, ok := s.time(s.items[index].Value())
 		if !ok {
 			return false
 		}
-		if index == 0 || value < minimum {
+		if !seen || value < minimum {
 			minimum = value
 		}
-		if index == 0 || value > maximum {
+		if !seen || value > maximum {
 			maximum = value
 		}
+		seen = true
 	}
 	return uint64(maximum)-uint64(minimum) <= uint64(s.tolerance)
 }
@@ -169,17 +194,18 @@ func (s *zipState[I, O]) withinTolerance() bool {
 // every remaining payload is released before the failure is reported.
 //
 // The slots go back with Complete on every path, including the ones a bounded
-// edge would Abandon. A join ends holding an unjoined batch even when it ends
-// well, because one input reaching EOF ends the stream for all of them, so an
-// input's active count can never express a fan-in's quiescence. That is what
-// quiesced is for, and this call is only capacity.
+// edge would Abandon. A join can end holding an unjoined batch, so an input's
+// active count can never express a fan-in's quiescence. That is what quiesced
+// is for, and this call is only capacity.
 func (s *zipState[I, O]) release() {
-	read := s.read
-	s.read = 0
-	for index := 0; index < read; index++ {
+	for index := range s.edges {
+		if !s.popped[index] {
+			continue
+		}
+		s.popped[index] = false
 		s.edges[index].Complete()
 	}
-	release.All(s.items[:read])
+	release.All(s.items)
 }
 
 // sealed is task.Group's sealed hook: it runs after this task's Run span has

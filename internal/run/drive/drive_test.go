@@ -1039,3 +1039,101 @@ func TestJoinerRejectsPolicyMismatchAndUnsupportedExecution(t *testing.T) {
 		t.Fatalf("unsupported policy = %v", err)
 	}
 }
+
+// tolerantJoiner sums whatever cells the batch has, treating an input that has
+// finished as nothing rather than as a reason to stop. It is what a mixer
+// does: the stream carries on until the last of them runs out.
+type tolerantJoiner struct {
+	operatorBase
+	output schema.Type[owned]
+	rounds atomic.Int32
+}
+
+func (j *tolerantJoiner) Process(ctx context.Context, batch flow.Batch[owned], output flow.Emitter[owned]) error {
+	j.rounds.Add(1)
+	total := 0
+	for index := range batch.Len() {
+		if value, ok := batch.Value(index); ok {
+			total += value.value
+		}
+	}
+	item := flow.NewItem(owned{value: total}, j.output, &testDomain)
+	if err := output.Emit(ctx, &item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (*tolerantJoiner) Flush(context.Context, flow.Emitter[owned]) error { return nil }
+
+// An input running out is not the end of the stream, only the end of that
+// input. The join carries on with the rest and ends when none is left, which
+// is what lets a mixer outlast its shortest input rather than truncating every
+// other one to it.
+func TestZipJoinerOutlastsAnInputThatEnds(t *testing.T) {
+	inputOwners := &ownership{}
+	outputOwners := &ownership{}
+	in := ownedSchema[driveInputID](inputOwners)
+	out := ownedSchema[driveOutputID](outputOwners)
+	joinShape := flow.NewShape(
+		[]flow.Port{flow.In("in", in, flow.Many(), flow.WithFanIn(flow.ZipFanIn))},
+		[]flow.Port{flow.Out("out", out)},
+	)
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &tolerantJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
+	sinkLink, err := NewSink("in", out).OpenSink(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, owner := testOwner("join")
+	inputs, task, err := NewJoiner("in", in, flow.ZipFanIn, "out", out).
+		OpenJoiner(joiner, 2, queue.Limit{Items: 4}, 0, sinkLink, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producerEnd(inputs...)
+	left, _ := deliveryOf[owned](inputs[0])
+	right, _ := deliveryOf[owned](inputs[1])
+	result := make(chan error, 1)
+	go func() { result <- perform(context.Background(), task) }()
+
+	send := func(target delivery[owned], value int) {
+		t.Helper()
+		item := flow.NewItem(owned{value: value}, in, &testDomain)
+		if err := target.Emit(context.Background(), &item); err != nil {
+			t.Fatal(err)
+		}
+		item.Drop()
+	}
+	// The short input contributes once and then ends; the long one keeps going.
+	send(left, 1)
+	send(right, 10)
+	if err := right.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	send(left, 2)
+	send(left, 3)
+	if err := left.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	quiesce, giveUp := context.WithTimeout(context.Background(), time.Second)
+	defer giveUp()
+	if err := task.Barrier(quiesce); err != nil {
+		t.Fatalf("barrier after a drained join = %v", err)
+	}
+	if err := task.Finish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := sink.Values(); len(got) != 3 || got[0] != 11 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("zip values = %v, want the long input to outlast the short one", got)
+	}
+	if inputOwners.drops.Load() != 4 || outputOwners.drops.Load() != 3 {
+		t.Fatalf("ownership = inputs drops %d, outputs drops %d", inputOwners.drops.Load(), outputOwners.drops.Load())
+	}
+	requireNoFailures(t, ledger)
+}

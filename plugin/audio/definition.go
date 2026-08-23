@@ -55,6 +55,8 @@ type (
 	fadeConfigID       struct{}
 	trimID             struct{}
 	trimConfigID       struct{}
+	mixerID            struct{}
+	mixerConfigID      struct{}
 )
 
 type conversion struct {
@@ -121,6 +123,7 @@ const (
 	Normalize  Processor = "normalize"
 	Fade       Processor = "fade"
 	Trim       Processor = "trim"
+	Mixer      Processor = "mixer"
 )
 
 type entry struct {
@@ -144,6 +147,7 @@ var processors = []entry{
 	{name: Normalize, component: newNormalize()},
 	{name: Fade, component: newFade()},
 	{name: Trim, component: newTrim()},
+	{name: Mixer, component: newMixer()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An
