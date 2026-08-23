@@ -1,36 +1,16 @@
 //go:generate go run generate.go
+
+// Package g711 holds the G.711 companding tables. Expanding a byte and
+// companding a sample are both table lookups, so the tables are what this
+// package exposes: the caller keeps its own loop and never pays a call or a
+// branch per sample.
 package g711
 
-import "encoding/binary"
+// Expansion tables turn one companded byte into a linear sample at the full
+// scale of its 16-bit container.
+func ALawExpansion() *[256]uint16 { return &aLawToLinearTable }
+func ULawExpansion() *[256]uint16 { return &uLawToLinearTable }
 
-func DecodePCMU(data []byte, order binary.ByteOrder) []byte {
-	out := make([]byte, len(data)<<1)
-	for i := 0; i < len(data); i++ {
-		order.PutUint16(out[i<<1:], uLawToLinearTable[data[i]])
-	}
-	return out
-}
-
-func DecodePCMA(data []byte, order binary.ByteOrder) []byte {
-	out := make([]byte, len(data)<<1)
-	for i := 0; i < len(data); i++ {
-		order.PutUint16(out[i<<1:], aLawToLinearTable[data[i]])
-	}
-	return out
-}
-
-func EncodePCMU(data []byte, order binary.ByteOrder) []byte {
-	out := make([]byte, len(data)>>1)
-	for i := 0; i < len(out); i++ {
-		out[i] = linearToULawTable[order.Uint16(data[i<<1:])]
-	}
-	return out
-}
-
-func EncodePCMA(data []byte, order binary.ByteOrder) []byte {
-	out := make([]byte, len(data)>>1)
-	for i := 0; i < len(out); i++ {
-		out[i] = linearToALawTable[order.Uint16(data[i<<1:])]
-	}
-	return out
-}
+// Companding tables turn one linear sample into a companded byte.
+func ALawCompanding() *[65536]byte { return &linearToALawTable }
+func ULawCompanding() *[65536]byte { return &linearToULawTable }

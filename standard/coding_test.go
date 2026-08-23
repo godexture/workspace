@@ -86,3 +86,48 @@ func TestConvertToARequestedCodingCrossesFrameRepresentations(t *testing.T) {
 		t.Fatalf("converted header does not declare 16-bit PCM: %x", converted)
 	}
 }
+
+// A companded stream states a signal and no storage representation, so nothing
+// in the graph can read its samples yet. Copying it has to work anyway: the
+// default is to keep what the input carried, and a stream whose samples are
+// opaque here is exactly the one that must not be rewritten.
+func TestConvertCopiesACompandedStream(t *testing.T) {
+	for name, shape := range map[string]waveShape{
+		"mu-law mono":  {channels: 1, bits: 8, formatTag: 7},
+		"a-law stereo": {channels: 2, bits: 8, formatTag: 6},
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := make([]byte, 64*shape.channels)
+			for index := range payload {
+				payload[index] = byte(index * 7)
+			}
+			source := waveFile(shape, payload)
+			directory := t.TempDir()
+			input := filepath.Join(directory, "input.wav")
+			output := filepath.Join(directory, "output.wav")
+			if err := os.WriteFile(input, source, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := standard.Convert(context.Background(), input, output); err != nil {
+				t.Fatal(err)
+			}
+			converted, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(converted, payload) {
+				t.Fatalf("converted %d bytes do not carry the input payload", len(converted))
+			}
+			format := waveFormat(shape, shape.channels*shape.bits/8)
+			chunk := append(append([]byte("fmt "), sizeOf(len(format))...), format...)
+			if !bytes.Contains(converted, chunk) {
+				t.Fatalf("converted format header does not match the source:\n got %x\nwant %x", converted, chunk)
+			}
+			// RIFF states a sample count for every stream that is not plain
+			// PCM, and a newly built header has to carry one.
+			if !bytes.Contains(converted, []byte("fact")) {
+				t.Fatalf("companded output carries no sample-count chunk: %x", converted)
+			}
+		})
+	}
+}

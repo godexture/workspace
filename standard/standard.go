@@ -8,6 +8,8 @@ import (
 	"github.com/godexture/godec/plugin/audio"
 	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/mp4"
+	"github.com/godexture/godec/plugin/pcm/g711"
+
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
 )
@@ -15,11 +17,17 @@ import (
 // Set returns the immutable official composition for file-backed MP4/WAVE and
 // linear PCM processing.
 func Set() plugin.Set {
-	result := plugin.NewSet(audio.Plugin(), file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
+	result := plugin.NewSet(audio.Plugin(), file.Plugin(), g711.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
 	// A WAVE header names a coding but not the component that reads it, and the
 	// two families do not import each other, so the composition connects them.
 	for _, coding := range wave.Codings() {
 		result = result.AddDeclaration(codec.Bind(wave.CodecTag(string(coding)), codec.New(linear.DecoderIdentity(coding)), codec.NewParser(linear.ParserIdentity())))
+	}
+	// A companded stream states no representation a linear component could
+	// read, so its tag binds to the codec that expands it instead.
+	for _, law := range []g711.Law{g711.ALaw, g711.ULaw} {
+		result = result.AddDeclaration(codec.Bind(wave.CodecTag(law.String()),
+			codec.New(g711.DecoderIdentity(law)), codec.NewParser(g711.ParserIdentity())))
 	}
 	// MP4 carries linear PCM in already packetized sample entries, so these
 	// bind the decoder without a parser. A planner only reaches for them when
