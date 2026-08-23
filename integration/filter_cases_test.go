@@ -106,4 +106,38 @@ func runFilterCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			}),
 		},
 	)
+
+	// A delay of exactly one sample at this rate puts the repeat in the next
+	// position, so the whole filter is visible in eight samples.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Delay),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name: "delay-repeats-a-sample",
+			Config: config.NewPatch().
+				SetText("time", "62.5us").
+				SetText("feedback", "0").
+				SetText("wet", "1").
+				SetText("dry", "1"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, 0, 0, 0, 0, 0}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{1, 0, 0, 1, 0, 0}},
+			}),
+		},
+	)
+
+	// With no wet level a reverb is only its dry level, which is the one part
+	// of a network of twelve delay lines that stays exact.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Reverb),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "reverb-without-wet-signal-only-scales",
+			Config: config.NewPatch().SetText("wet", "0").SetText("dry", "0.5"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, -0.5, 0.25}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{0.5, -0.25, 0.125}},
+			}),
+		},
+	)
 }
