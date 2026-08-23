@@ -140,4 +140,22 @@ func runFilterCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			}),
 		},
 	)
+
+	// A centre channel the target does not have is spread over its front pair,
+	// and the stream comes out stated across two channels rather than one.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Remix),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name: "remix-folds-a-centre-into-a-pair",
+			Config: config.NewPatch().
+				SetText("layout", "stereo").
+				SetText("center", "0").
+				SetText("normalize", "false"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, -0.5, 0.25}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{1, -0.5, 0.25}, {1, -0.5, 0.25}},
+			}),
+		},
+	)
 }
