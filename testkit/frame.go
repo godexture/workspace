@@ -62,18 +62,26 @@ func frameDescription(description sample.Description, identity string) bool {
 	return ok && canonical.Identity().String() == identity
 }
 
+// framePlaneAlignment is what allocateFrame asks of every plane below.
+const framePlaneAlignment = 16
+
+// framePayloadLimit is what the fixture's own allocator has to hold. Every
+// plane starts on framePlaneAlignment, so a frame of several short planes
+// charges the grant for more than the samples it carries, and a limit counting
+// only samples turns a multichannel fixture into an invalid one.
 func framePayloadLimit[S audio.Sample](values []Frame[S]) int64 {
 	size := int64(sampleBytes[S]())
 	var total int64
 	for _, value := range values {
 		for _, plane := range value.Planes {
-			total += int64(len(plane)) * size
+			extent := int64(len(plane)) * size
+			total += (extent + framePlaneAlignment - 1) &^ (framePlaneAlignment - 1)
 		}
 	}
 	if total == 0 {
 		return 1
 	}
-	return total + int64(len(values))*32
+	return total
 }
 
 func allocateFrame[S audio.Sample](allocator *buffer.Allocator, value Frame[S]) (audio.Frame[S], error) {
@@ -89,7 +97,7 @@ func allocateFrame[S audio.Sample](allocator *buffer.Allocator, value Frame[S]) 
 		}
 		planes[index].Size = len(values) * size
 	}
-	lease, err := allocator.Overwrite(buffer.Spec{Alignment: 16, Planes: planes})
+	lease, err := allocator.Overwrite(buffer.Spec{Alignment: framePlaneAlignment, Planes: planes})
 	if err != nil {
 		return audio.Frame[S]{}, err
 	}
