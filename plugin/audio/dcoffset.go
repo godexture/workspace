@@ -24,16 +24,20 @@ func dcOffsetSchema() config.Schema[dcOffsetConfig] {
 }
 
 func newDCOffset() plugin.Component {
-	return newFilter[dcOffsetID]("DC offset removal", "audio.dc-offset", dcOffsetSchema(),
-		func(value *dcOffsetConfig) *int { return &value.MaxSamples },
-		func(value dcOffsetConfig, signal sample.Signal) (filter, error) {
+	return newFilter[dcOffsetID](filterSpec[dcOffsetConfig]{
+		name:    "DC offset removal",
+		detail:  "audio.dc-offset",
+		schema:  dcOffsetSchema(),
+		samples: func(value *dcOffsetConfig) *int { return &value.MaxSamples },
+		build: func(value dcOffsetConfig, signal sample.Signal) (filter, error) {
 			channels := signal.Layout.Count()
 			return &dcOffset{
 				pole:  float32(value.Pole),
 				lastX: make([]float32, channels),
 				lastY: make([]float32, channels),
 			}, nil
-		})
+		},
+	})
 }
 
 // dcOffset is the standard one-pole DC blocker, y[n] = x[n] - x[n-1] + p*y[n-1].

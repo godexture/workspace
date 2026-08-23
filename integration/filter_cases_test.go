@@ -58,4 +58,52 @@ func runFilterCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			}),
 		},
 	)
+
+	// Below the threshold a compressor is only its makeup gain, which is the
+	// one part of the chain that stays exact whatever the detector is doing.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Compressor),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name: "compressor-passes-quiet-signals",
+			Config: config.NewPatch().
+				SetText("threshold", "-6.020599913279624").
+				SetText("makeupGain", "-6.020599913279624").
+				SetText("knee", "0"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{0.25, -0.125, 0.0625}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{0.125, -0.0625, 0.03125}},
+			}),
+		},
+	)
+
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Gate),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "gate-silences-below-its-threshold",
+			Config: config.NewPatch().SetText("threshold", "-6.020599913279624"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, 0.25, -0.5}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{1, 0, -0.5}},
+			}),
+		},
+	)
+
+	// A band asking for no level change has to be exactly transparent: the
+	// numerator and denominator of the section are the same polynomial, and
+	// only a correctly normalised cascade shows that as identical samples.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Equalizer),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name: "equalizer-with-no-gain-is-transparent",
+			Config: config.NewPatch().SetText("bands",
+				`[{"type":"peaking","frequency":1000,"gain":0,"q":1},{"type":"lowshelf","frequency":200,"gain":0,"q":0.7}]`),
+			Input: testkit.FrameInput(processedDescription(sample.Stereo()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, -0.5, 0.25}, {0, 0.75, -1}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{1, -0.5, 0.25}, {0, 0.75, -1}},
+			}),
+		},
+	)
 }

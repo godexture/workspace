@@ -1,8 +1,6 @@
 package audio
 
 import (
-	"math"
-
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
@@ -23,11 +21,15 @@ func gainSchema() config.Schema[gainConfig] {
 }
 
 func newGain() plugin.Component {
-	return newFilter[gainID]("Gain", "audio.gain", gainSchema(),
-		func(value *gainConfig) *int { return &value.MaxSamples },
-		func(value gainConfig, _ sample.Signal) (filter, error) {
-			return gain{factor: float32(math.Pow(10, float64(value.Decibels)/20))}, nil
-		})
+	return newFilter[gainID](filterSpec[gainConfig]{
+		name:    "Gain",
+		detail:  "audio.gain",
+		schema:  gainSchema(),
+		samples: func(value *gainConfig) *int { return &value.MaxSamples },
+		build: func(value gainConfig, _ sample.Signal) (filter, error) {
+			return gain{factor: amplitude(float64(value.Decibels))}, nil
+		},
+	})
 }
 
 type gain struct{ factor float32 }
