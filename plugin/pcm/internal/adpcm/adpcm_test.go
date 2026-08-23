@@ -41,15 +41,23 @@ func TestADPCMRoundtrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var encoded []byte
-			if tt.kind == param.Microsoft {
-				encoded, err = msadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian)
-			} else {
-				state := &imaadpcm.EncodeState{}
-				encoded, err = imaadpcm.Encode(pcm, tt.channels, params, binary.LittleEndian, state)
-			}
-			if err != nil {
-				t.Fatalf("Encode error = %v", err)
+			perBlock := int(params.SamplesPerBlock) * tt.channels
+			source := bits.BytesToS16(pcm, binary.LittleEndian)
+			state := &imaadpcm.EncodeState{}
+			chunk := make([]int16, perBlock)
+			encoded := make([]byte, 0, len(source)/perBlock*int(params.BlockAlign))
+			block := make([]byte, params.BlockAlign)
+			for offset := 0; offset+perBlock <= len(source); offset += perBlock {
+				copy(chunk, source[offset:offset+perBlock])
+				if tt.kind == param.Microsoft {
+					err = msadpcm.EncodeBlock(block, chunk, params, tt.channels)
+				} else {
+					err = imaadpcm.EncodeBlock(block, chunk, params, tt.channels, state)
+				}
+				if err != nil {
+					t.Fatalf("Encode error = %v", err)
+				}
+				encoded = append(encoded, block...)
 			}
 
 			blockAlign := int(params.BlockAlign)
@@ -75,7 +83,7 @@ func TestADPCMRoundtrip(t *testing.T) {
 				}
 			}
 
-			origSamples := bits.BytesToS16(pcm, binary.LittleEndian)
+			origSamples := source
 
 			minLen := len(origSamples)
 			if len(decSamples) < minLen {

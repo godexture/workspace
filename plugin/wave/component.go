@@ -61,6 +61,11 @@ func demuxerComponent() plugin.Component {
 			}
 			// The codec extension travels with the stream: this reader never
 			// read it, and the codec that does is on the far side of the graph.
+			if inspected.geometry.stated() {
+				if properties, err = codec.WithBlock(properties, codec.Block{Bytes: inspected.geometry.align}); err != nil {
+					return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+				}
+			}
 			if inspected.geometry.parameters.Valid() {
 				if properties, err = codec.WithParameters(properties, inspected.geometry.parameters); err != nil {
 					return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err

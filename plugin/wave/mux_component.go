@@ -3,6 +3,7 @@ package wave
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
@@ -55,7 +56,7 @@ func muxerComponent() plugin.Component {
 					"wave.signal", diagnostic.ErrorSeverity, diagnostic.Path{}, "WAVE muxer requires a sample rate and channel layout", nil,
 				))
 			}
-			outputCodec, description, requirement, err := muxCodec(input, signal, configuration.Coding)
+			outputCodec, description, requirement, err := muxCodec(input, signal, configuration.Codec)
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
@@ -81,7 +82,7 @@ func muxerComponent() plugin.Component {
 				if len(input.Metadata().Blocks()) != 0 {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux metadata contains source blobs without a range inspection handoff", ErrUnsupported)
 				}
-				geometry, err := muxGeometry(outputCodec, inspected)
+				geometry, err := muxGeometry(outputCodec, signal, input, inspected)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
@@ -116,10 +117,11 @@ func muxerComponent() plugin.Component {
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
-				if outputCodec.blocked {
-					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: %s needs the block geometry a source inspection carries", ErrUnsupported, outputCodec.name)
+				geometry, err := muxGeometry(outputCodec, signal, input, header{})
+				if err != nil {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
-				muxHeaderValue, err = newMuxHeaderWithChunks(outputCodec, signal, blockGeometry{}, outputCodec.coding == "", chunks)
+				muxHeaderValue, err = newMuxHeaderWithChunks(outputCodec, signal, geometry, outputCodec.coding == "", chunks)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
@@ -232,16 +234,36 @@ func describedPackets(input stream.Descriptor, description sample.Description) (
 
 // muxCodec decides which codec the output header declares.
 //
-// A stream stored one scalar each can be written under any linear codec WAVE
-// names, so a representation this muxer cannot write becomes a requirement the
-// planner satisfies with a converter. A companded stream is written back under
-// the codec tag it arrived with: its samples are opaque here, so the only
-// faithful output is the one that reproduces them.
-func muxCodec(input stream.Descriptor, signal sample.Signal, requested sample.Coding) (waveCodec, sample.Description, plugin.Requirement[stream.Descriptor], error) {
+// With no request the input codec is kept, which is what makes the default a
+// copy. A request that only changes the linear representation becomes a
+// descriptor the planner converts to. A request that crosses into or out of a
+// coded representation names the codec and lets the planner find a path: the
+// depth an expansion recovers, and the block geometry a coder chooses, belong
+// to the codec rather than to this header, so neither can be stated up front.
+func muxCodec(input stream.Descriptor, signal sample.Signal, requested string) (waveCodec, sample.Description, plugin.Requirement[stream.Descriptor], error) {
 	var none plugin.Requirement[stream.Descriptor]
 	description, linearErr := sample.FromProperties(input.Properties())
-	if linearErr == nil {
-		want := muxDescription(description, requested)
+	target, named := codecNamed(requested)
+	if requested != "" && !named {
+		return waveCodec{}, sample.Description{}, none, unsupportedCodec(requested)
+	}
+	tag, tagged := codec.TagOf(input.Properties())
+	current, known := codecOfTag(tag)
+
+	switch {
+	case named && target.coding == "":
+		// A coded output has to come from the coder that writes it, which the
+		// tag names. Everything else about the stream is the coder to choose.
+		if tagged && current.name == target.name {
+			return target, sample.Description{}, none, nil
+		}
+		desired, err := codedPackets(input, signal, target)
+		if err != nil {
+			return waveCodec{}, sample.Description{}, none, err
+		}
+		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.DescriptorNeed("wave.codec", desired)), nil
+	case linearErr == nil:
+		want := muxDescription(description, target.coding)
 		if want != description {
 			desired, err := describedPackets(input, want)
 			if err != nil {
@@ -254,21 +276,34 @@ func muxCodec(input stream.Descriptor, signal sample.Signal, requested sample.Co
 			return waveCodec{}, sample.Description{}, none, unsupportedCodec(string(description.Coding))
 		}
 		return entry, description, none, nil
-	}
-	tag, tagged := codec.TagOf(input.Properties())
-	entry, known := codecOfTag(tag)
-	if !tagged || !known {
+	case !tagged || !known:
 		return waveCodec{}, sample.Description{}, none, unsupportedCodec(tag.String())
-	}
-	if requested.Valid() {
-		// Rewriting companded samples into a linear coding means decoding them,
-		// and the depth decoding recovers is the codec to state, not this
-		// header. So state the condition rather than a descriptor: a gap is
-		// closed when this Compile stops asking for anything, not when an
-		// input matches a descriptor named in advance.
+	case named:
+		// Rewriting coded samples into a linear representation means decoding
+		// them. A gap closes when this Compile stops asking for anything, so
+		// the condition is enough and no descriptor has to be named.
 		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.ConditionNeed[stream.Descriptor]("wave.linear-samples")), nil
+	default:
+		return current, sample.Description{}, none, nil
 	}
-	return entry, sample.Description{}, none, nil
+}
+
+// codedPackets is the stream a coder has to produce for this header: the same
+// signal, carrying the tag that names the codec. What the coder states about
+// its blocks is not named here, because only the coder knows it.
+func codedPackets(input stream.Descriptor, signal sample.Signal, target waveCodec) (stream.Descriptor, error) {
+	properties, err := sample.Signal{Rate: signal.Rate, Layout: signal.Layout}.Properties()
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	if properties, err = codec.WithTag(properties, CodecTag(target.name)); err != nil {
+		return stream.Descriptor{}, err
+	}
+	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, int64(signal.Rate)), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
 }
 
 func unsupportedCodec(name string) error {
@@ -281,12 +316,24 @@ func unsupportedCodec(name string) error {
 // muxGeometry is the block geometry the output header states. A block-coded
 // stream is reproduced rather than rebuilt, so it can only be written back
 // under the codec it was read as.
-func muxGeometry(outputCodec waveCodec, inspected header) (blockGeometry, error) {
+func muxGeometry(outputCodec waveCodec, signal sample.Signal, input stream.Descriptor, inspected header) (blockGeometry, error) {
 	if !outputCodec.blocked {
 		return blockGeometry{}, nil
 	}
-	if inspected.codecTag != CodecTag(outputCodec.name) || !inspected.geometry.stated() {
-		return blockGeometry{}, fmt.Errorf("%w: %s can only be written back from the stream it was read as", ErrUnsupported, outputCodec.name)
+	// A stream that was read as this codec is written back as it was read. One
+	// that was coded for this output states its own geometry, because the
+	// coder chose it.
+	if inspected.codecTag == CodecTag(outputCodec.name) && inspected.geometry.stated() {
+		return inspected.geometry, nil
 	}
-	return inspected.geometry, nil
+	block, blocked := codec.BlockOf(input.Properties())
+	parameters, stated := codec.ParametersOf(input.Properties())
+	if !blocked || !stated || block.Samples <= 0 {
+		return blockGeometry{}, fmt.Errorf("%w: %s states no block geometry", ErrUnsupported, outputCodec.name)
+	}
+	rate := uint64(signal.Rate) * uint64(block.Bytes) / uint64(block.Samples)
+	if rate > math.MaxUint32 {
+		return blockGeometry{}, fmt.Errorf("%w: WAVE byte rate exceeds its header field", ErrUnsupported)
+	}
+	return blockGeometry{align: block.Bytes, byteRate: uint32(rate), parameters: parameters}, nil
 }

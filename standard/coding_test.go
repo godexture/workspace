@@ -46,7 +46,7 @@ func TestConvertToARequestedCodingCrossesFrameRepresentations(t *testing.T) {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(input, output,
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestConvertRewritesACompandedStreamIntoLinearPCM(t *testing.T) {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(input, output,
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestConvertExpandsAnADPCMStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	request, err := standard.NewFileJob(input, output,
-		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "s16"))))
 	if err != nil {
 		t.Fatal(err)
 	}

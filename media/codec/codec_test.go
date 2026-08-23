@@ -46,7 +46,7 @@ func TestCodecTagPropertyIsCanonicalAndDeclared(t *testing.T) {
 		t.Fatal("empty codec tag was accepted")
 	}
 	declarations := Declarations()
-	if len(declarations) != 2 {
+	if len(declarations) != 3 {
 		t.Fatalf("codec declarations = %d", len(declarations))
 	}
 	for _, declaration := range declarations {

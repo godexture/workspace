@@ -103,5 +103,8 @@ func adpcmDescriptor(t *testing.T, signal sample.Signal, variant adpcm.Variant, 
 	if properties, err = codec.WithParameters(properties, codec.NewParameters(extension)); err != nil {
 		t.Fatal(err)
 	}
+	if properties, err = codec.WithBlock(properties, codec.Block{Bytes: 8, Samples: samples}); err != nil {
+		t.Fatal(err)
+	}
 	return stream.MustDescriptor("coded", schema, timing.MustBase(1, int64(signal.Rate)), properties)
 }

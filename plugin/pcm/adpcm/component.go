@@ -35,6 +35,7 @@ type operation uint8
 const (
 	parserOperation operation = iota + 1
 	decoderOperation
+	encoderOperation
 )
 
 type configID struct{}
@@ -44,12 +45,17 @@ type configID struct{}
 // and this family reads them.
 type configuration struct {
 	ChunkBlocks int
+	// Tag is the codec tag the output carries. A coder does not know what its
+	// container calls it, so the container states it in the stream it asks
+	// for and the coder agrees to be named that.
+	Tag string
 }
 
 func configurationSchema() config.Schema[configuration] {
 	return config.Struct[configID](func() configuration { return configuration{ChunkBlocks: 16} }).
 		Version("1").
 		AddField(config.Field("chunkBlocks", func(value *configuration) *int { return &value.ChunkBlocks }, config.Int().Range(1, 1<<16))).
+		AddField(config.Field("tag", func(value *configuration) *string { return &value.Tag }, config.String())).
 		Build()
 }
 
@@ -66,7 +72,14 @@ func parametersOf(variant Variant, input stream.Descriptor, channels int) (param
 	if len(extension) < 2 {
 		return param.Parameters{}, fmt.Errorf("%w: extension holds %d bytes", ErrParameters, len(extension))
 	}
-	result := param.Parameters{SamplesPerBlock: binary.LittleEndian.Uint16(extension[0:2])}
+	geometry, blocked := codec.BlockOf(input.Properties())
+	if !blocked {
+		return param.Parameters{}, fmt.Errorf("%w: the stream states no block size", ErrParameters)
+	}
+	result := param.Parameters{
+		SamplesPerBlock: binary.LittleEndian.Uint16(extension[0:2]),
+		BlockAlign:      uint16(geometry.Bytes),
+	}
 	if variant == Microsoft {
 		if len(extension) < 4 {
 			return param.Parameters{}, fmt.Errorf("%w: no coefficient count", ErrParameters)
@@ -84,34 +97,10 @@ func parametersOf(variant Variant, input stream.Descriptor, channels int) (param
 			}
 		}
 	}
-	align, err := blockAlign(variant, channels, int(result.SamplesPerBlock))
-	if err != nil {
-		return param.Parameters{}, err
-	}
-	result.BlockAlign = uint16(align)
 	if err := result.Validate(variant.kind(), channels); err != nil {
 		return param.Parameters{}, fmt.Errorf("%w: %w", ErrParameters, err)
 	}
 	return result, nil
-}
-
-// blockAlign inverts the samples-per-block rule each layout states, which is
-// how a decoder recovers the block size from the parameters alone.
-func blockAlign(variant Variant, channels, samples int) (int, error) {
-	switch {
-	case samples <= 0:
-		return 0, fmt.Errorf("%w: a block holds %d samples", ErrParameters, samples)
-	case variant == Microsoft && channels == 1:
-		return (samples-2)/2 + 7, nil
-	case variant == Microsoft && channels == 2:
-		return samples + 12, nil
-	case variant == IMA && channels == 1:
-		return (samples-1)/2 + 4, nil
-	case variant == IMA && channels == 2:
-		return samples + 7, nil
-	default:
-		return 0, fmt.Errorf("%w: %s does not describe %d channels", ErrParameters, variant, channels)
-	}
 }
 
 func newParser[Marker any](variant Variant, name string) plugin.Component {
@@ -232,4 +221,20 @@ func incomplete(shape flow.Shape, err error) (plugin.Compiled[componentPlan, str
 			plugin.Require(shape.Inputs[0].ID(), plugin.ConditionNeed[stream.Descriptor]("adpcm.input")),
 		},
 	}, nil
+}
+
+// demandedTag reads the codec tag the container asked for. A coder does not
+// know what its container calls it, so it takes the name from the stream the
+// container said it wanted.
+func demandedTag(suggestion plugin.Suggestion[stream.Descriptor]) string {
+	for _, demand := range suggestion.Demands() {
+		target, ok := demand.Need().Desired()
+		if !ok {
+			continue
+		}
+		if tag, tagged := codec.TagOf(target.Properties()); tagged {
+			return tag.String()
+		}
+	}
+	return ""
 }

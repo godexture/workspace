@@ -14,6 +14,7 @@ type waveCodec struct {
 	formatTag uint16
 	bits      int
 	name      string
+	label     string
 	// coding is empty when the samples are not stored one scalar each. Such a
 	// stream states a signal and leaves its representation to its codec.
 	coding sample.Coding
@@ -27,16 +28,16 @@ type waveCodec struct {
 // signed above it, IEEE float has its own tag, and the companded codecs carry
 // a signal wider than the byte that holds it.
 var waveCodecs = []waveCodec{
-	{formatPCM, 8, "u8", sample.U8, false},
-	{formatPCM, 16, "s16", sample.S16, false},
-	{formatPCM, 24, "s24", sample.S24, false},
-	{formatPCM, 32, "s32", sample.S32, false},
-	{formatFloat, 32, "f32", sample.F32, false},
-	{formatFloat, 64, "f64", sample.F64, false},
-	{formatALaw, 8, "alaw", "", false},
-	{formatULaw, 8, "ulaw", "", false},
-	{formatMSADPCM, 4, "ms-adpcm", "", true},
-	{formatIMAADPCM, 4, "ima-adpcm", "", true},
+	{formatPCM, 8, "u8", "Unsigned 8-bit", sample.U8, false},
+	{formatPCM, 16, "s16", "Signed 16-bit", sample.S16, false},
+	{formatPCM, 24, "s24", "Signed 24-bit", sample.S24, false},
+	{formatPCM, 32, "s32", "Signed 32-bit", sample.S32, false},
+	{formatFloat, 32, "f32", "32-bit float", sample.F32, false},
+	{formatFloat, 64, "f64", "64-bit float", sample.F64, false},
+	{formatALaw, 8, "alaw", "A-law", "", false},
+	{formatULaw, 8, "ulaw", "mu-law", "", false},
+	{formatMSADPCM, 4, "ms-adpcm", "Microsoft ADPCM", "", true},
+	{formatIMAADPCM, 4, "ima-adpcm", "IMA ADPCM", "", true},
 }
 
 // codecOf reports the codec a format header declares. A tag and width this

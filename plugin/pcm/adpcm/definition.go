@@ -64,9 +64,12 @@ func DecoderIdentity(variant Variant) plugin.Identity {
 	return plugin.IdentityOf[imaID]()
 }
 
-// Plugin returns the pure-Go ADPCM family. Encoding is not here yet: a newly
-// built container has to state a block size before anything has coded a block,
-// and nothing carries that number across a container boundary today.
+// Plugin returns the pure-Go ADPCM family.
+//
+// Coding is not here. A coder that groups samples into blocks has a partial
+// block left when its input ends, and the only place to emit it is Flush,
+// which the runtime runs after a muxer has finalized. Until that ordering is
+// settled the components would be unreachable.
 func Plugin() plugin.Definition {
 	definition := plugin.Define[pluginID](plugin.Descriptor{
 		DisplayName: "ADPCM",
