@@ -35,6 +35,7 @@ func newDepot(budget Budget) *depot {
 // allows. The second result reports whether the stack is retained: a false
 // with a non-empty input is a stack the budget dropped.
 func (d *depot) intern(stack []byte) (StackID, bool) {
+	stack = callSite(stack)
 	if len(stack) == 0 {
 		return NoStack, true
 	}
@@ -87,3 +88,27 @@ func fingerprint(value []byte) uint64 {
 	}
 	return digest
 }
+
+// callSite drops the goroutine header a captured stack begins with.
+//
+// It names neither the call site nor anything a reader can act on: the number
+// is fresh every run, and the bracketed status is whatever the scheduler
+// happened to be doing. A stack captured while the collector is scanning that
+// goroutine reads "running (scan)" where the same call site otherwise reads
+// "running", so keeping the header would split one call site into two classes
+// depending on when the collector ran -- and a storm that splits into enough
+// classes crowds the failure that explains the run out of the ledger.
+//
+// The frames are what identify a call site, and they are the same whichever
+// goroutine reached it.
+func callSite(stack []byte) []byte {
+	if !bytes.HasPrefix(stack, goroutineHeader) {
+		return stack
+	}
+	if index := bytes.IndexByte(stack, '\n'); index >= 0 {
+		return stack[index+1:]
+	}
+	return stack
+}
+
+var goroutineHeader = []byte("goroutine ")

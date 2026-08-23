@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -111,8 +112,8 @@ func TestOneCallSiteIsStoredOnce(t *testing.T) {
 			t.Fatal("two failures from one call site kept separate copies of the stack")
 		}
 	}
-	if ledger.depot.bytes != len(failure.stack) {
-		t.Fatalf("depot holds %d bytes, want one copy of %d", ledger.depot.bytes, len(failure.stack))
+	if want := len(callSite(failure.stack)); ledger.depot.bytes != want {
+		t.Fatalf("depot holds %d bytes, want one copy of %d", ledger.depot.bytes, want)
 	}
 }
 
@@ -413,4 +414,57 @@ func BenchmarkCleanupStormRecording(b *testing.B) {
 	// What the run keeps must not grow with what happened to it.
 	b.ReportMetric(float64(len(ledger.Events())), "retained")
 	b.ReportMetric(float64(ledger.depot.bytes), "stack-bytes")
+}
+
+// A stack identifies where a failure happened, and the goroutine header a
+// capture begins with says nothing about that: the number is fresh every run,
+// and the collector rewrites the status to "running (scan)" while it is
+// scanning that goroutine. Two captures of one call site have to be one class
+// however the runtime was occupied, because a storm that splits into classes
+// crowds the failure that explains the run out of a bounded ledger.
+func TestOneCallSiteIsOneClassWhateverTheRuntimeWasDoing(t *testing.T) {
+	frames := "runtime/debug.Stack()\n\tstack.go:26 +0x5e\nkeeper.release()\n\trelease.go:12 +0x2a\n"
+	ledger := NewBoundedLedger(Budget{Events: 2, GroupSamples: 1, Groups: 4, Stacks: 4, StackBytes: 1 << 20})
+	domain := ledger.Domain("keeper", "node")
+	site := domain.At("node")
+	stopped := errors.New("what stopped the work")
+	domain.Perform(Flush, func(*Span) error {
+		for _, header := range []string{
+			"goroutine 7 [running]:\n",
+			"goroutine 7 [running (scan)]:\n",
+			"goroutine 41 [running]:\n",
+		} {
+			site.Cleanup(&PanicError{Name: "keeper", Summary: "released", Stack: []byte(header + frames)})
+		}
+		return stopped
+	})
+
+	classes := 0
+	for _, group := range ledger.Groups() {
+		if group.Class.Kind.Cleanup() {
+			classes++
+			if group.Count != 3 {
+				t.Fatalf("one call site counted %d of its three failures", group.Count)
+			}
+		}
+	}
+	if classes != 1 {
+		t.Fatalf("cleanup classes = %d, want the one call site they share", classes)
+	}
+	// The room that leaves is what the failure explaining the run needs.
+	work := 0
+	for _, event := range ledger.Events() {
+		if !event.Kind.Cleanup() {
+			work++
+			if !errors.Is(event.Err, stopped) {
+				t.Fatalf("work failure = %v", event.Err)
+			}
+		}
+		if bytes.HasPrefix(event.Stack, []byte("goroutine ")) {
+			t.Fatalf("a retained stack kept its goroutine header: %q", event.Stack)
+		}
+	}
+	if work != 1 {
+		t.Fatalf("work failures kept = %d, want the one that stopped the run", work)
+	}
 }
