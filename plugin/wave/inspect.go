@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
@@ -165,14 +166,15 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			if formatFound {
 				return header{}, fmt.Errorf("%w: fmt chunk is repeated", ErrMalformed)
 			}
-			signal, description, codec, err := inspectFormat(ctx, reader, payloadOffset, declaredSize)
+			parsed, err := inspectFormat(ctx, reader, payloadOffset, declaredSize)
 			if err != nil {
 				return header{}, err
 			}
-			result.signal = signal
-			result.description = description
-			result.blockAlign = signal.Layout.Count() * ((codec.bits + 7) / 8)
-			result.codecTag = CodecTag(codec.name)
+			result.signal = parsed.signal
+			result.description = parsed.description
+			result.blockAlign = parsed.blockAlign
+			result.geometry = parsed.geometry
+			result.codecTag = CodecTag(parsed.codec.name)
 			formatFound = true
 		case tagDATA:
 			preserve = false
@@ -293,13 +295,13 @@ func validateSourceEnd(declared, actual uint64, known bool) error {
 
 // inspectFormat reads the fmt chunk. Every WAVE stream states a signal; only
 // one whose samples are stored one scalar each also states a description.
-func inspectFormat(ctx context.Context, reader access.Random, offset, size uint64) (sample.Signal, sample.Description, waveCodec, error) {
+func inspectFormat(ctx context.Context, reader access.Random, offset, size uint64) (formatChunk, error) {
 	if size < 16 {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: fmt chunk is shorter than 16 bytes", ErrMalformed)
+		return formatChunk{}, fmt.Errorf("%w: fmt chunk is shorter than 16 bytes", ErrMalformed)
 	}
-	buffer := make([]byte, int(min(size, 40)))
+	buffer := make([]byte, int(min(size, formatChunkCap)))
 	if err := access.ReadFullAt(ctx, reader, buffer, int64(offset)); err != nil {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
+		return formatChunk{}, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
 	}
 	audioFormat := binary.LittleEndian.Uint16(buffer[0:2])
 	channels := binary.LittleEndian.Uint16(buffer[2:4])
@@ -311,60 +313,81 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	channelMask := uint32(0)
 	if audioFormat == formatExtensible {
 		if size < 40 || len(buffer) < 40 || binary.LittleEndian.Uint16(buffer[16:18]) < 22 {
-			return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: extensible fmt chunk is incomplete", ErrMalformed)
+			return formatChunk{}, fmt.Errorf("%w: extensible fmt chunk is incomplete", ErrMalformed)
 		}
 		stated = binary.LittleEndian.Uint16(buffer[18:20])
 		channelMask = binary.LittleEndian.Uint32(buffer[20:24])
 		subFormat := buffer[24:40]
 		if subFormat[2] != 0 || subFormat[3] != 0 || !bytes.Equal(subFormat[4:], extensibleBase[:]) {
-			return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: extensible subformat is not a known WAVE GUID", ErrUnsupported)
+			return formatChunk{}, fmt.Errorf("%w: extensible subformat is not a known WAVE GUID", ErrUnsupported)
 		}
 		audioFormat = binary.LittleEndian.Uint16(subFormat[0:2])
 	}
-	codec, known := codecOf(audioFormat, int(bits))
+	entry, known := codecOf(audioFormat, int(bits))
 	if !known || rate == 0 || stated > bits {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: format %#04x at %d bits is not a codec this reader can name", ErrUnsupported, audioFormat, bits)
+		return formatChunk{}, fmt.Errorf("%w: format %#04x at %d bits is not a codec this reader can name", ErrUnsupported, audioFormat, bits)
+	}
+	// A codec whose extension WAVE does not define keeps that extension as
+	// parameters: the file states them, the codec reads them, and this reader
+	// only has to reproduce them.
+	var geometry blockGeometry
+	if entry.blocked {
+		geometry = blockGeometry{align: int(blockAlign), byteRate: byteRate}
+		if size > 18 && len(buffer) > 18 {
+			declared := int(binary.LittleEndian.Uint16(buffer[16:18]))
+			if declared > len(buffer)-18 {
+				return formatChunk{}, fmt.Errorf("%w: fmt extension states %d bytes it does not carry", ErrMalformed, declared)
+			}
+			geometry.parameters = codec.NewParameters(buffer[18 : 18+declared])
+		}
 	}
 	layout, ok := sample.FromMask(channelMask, int(channels))
 	if !ok {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: channel mask %#x does not describe %d channels", ErrUnsupported, channelMask, channels)
+		return formatChunk{}, fmt.Errorf("%w: channel mask %#x does not describe %d channels", ErrUnsupported, channelMask, channels)
 	}
 	if channelMask == 0 {
 		layout = conventionalLayout(int(channels))
 	}
-	expectedAlign := uint64(channels) * uint64((bits+7)/8)
-	expectedRate := uint64(rate) * expectedAlign
-	if uint64(blockAlign) != expectedAlign || expectedRate > math.MaxUint32 || uint64(byteRate) != expectedRate {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: byte rate or block alignment is inconsistent", ErrMalformed)
+	// A block-coded stream states its block size, because the size does not
+	// follow from a sample width. Its byte rate follows from how many samples
+	// a block holds, which only its codec knows.
+	if !entry.blocked {
+		expectedAlign := uint64(channels) * uint64((bits+7)/8)
+		expectedRate := uint64(rate) * expectedAlign
+		if uint64(blockAlign) != expectedAlign || expectedRate > math.MaxUint32 || uint64(byteRate) != expectedRate {
+			return formatChunk{}, fmt.Errorf("%w: byte rate or block alignment is inconsistent", ErrMalformed)
+		}
+	} else if blockAlign == 0 {
+		return formatChunk{}, fmt.Errorf("%w: a block-coded stream states no block size", ErrMalformed)
 	}
 	signal := sample.Signal{Rate: int(rate), Layout: layout, ValidBits: int(stated)}
-	if codec.coding == "" {
+	if entry.coding == "" {
 		// A companded stream states the width of the byte that holds a sample,
 		// not the depth of the signal in it. Only its codec knows the second.
 		if !signal.Valid() {
-			return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: fmt chunk does not describe a usable stream", ErrUnsupported)
+			return formatChunk{}, fmt.Errorf("%w: fmt chunk does not describe a usable stream", ErrUnsupported)
 		}
-		return signal, sample.Description{}, codec, nil
+		return formatChunk{signal: signal, codec: entry, blockAlign: int(blockAlign), geometry: geometry}, nil
 	}
 	if signal.ValidBits == 0 {
-		signal.ValidBits = codec.bits
+		signal.ValidBits = entry.bits
 	}
 	description := sample.Description{
 		Signal:  signal,
-		Coding:  codec.coding,
+		Coding:  entry.coding,
 		Packing: sample.Interleaved,
 		Endian:  sample.LittleEndian,
 	}
-	if codec.coding.Bytes() == 1 {
+	if entry.coding.Bytes() == 1 {
 		description.Endian = sample.NoEndian
 	}
-	if codec.coding.Float() {
-		description.ValidBits = codec.coding.Bits()
+	if entry.coding.Float() {
+		description.ValidBits = entry.coding.Bits()
 	}
 	if !description.Valid() {
-		return sample.Signal{}, sample.Description{}, waveCodec{}, fmt.Errorf("%w: fmt chunk does not describe a usable stream", ErrUnsupported)
+		return formatChunk{}, fmt.Errorf("%w: fmt chunk does not describe a usable stream", ErrUnsupported)
 	}
-	return description.Signal, description, codec, nil
+	return formatChunk{signal: description.Signal, description: description, codec: entry, blockAlign: int(blockAlign), geometry: geometry}, nil
 }
 
 func checkedAdd(left, right uint64) (uint64, bool) {

@@ -84,17 +84,22 @@ func TestConvertKeepsEveryWAVEShapeItCanRead(t *testing.T) {
 }
 
 type waveShape struct {
-	channels  int
-	bits      int
-	float     bool
-	mask      uint32
-	formatTag uint16
+	channels   int
+	bits       int
+	float      bool
+	mask       uint32
+	formatTag  uint16
+	blockAlign int
+	extension  []byte
 }
 
 // linearWave builds a 48 kHz WAVE of the requested shape whose payload is a
 // distinct byte pattern, and returns the file and that payload.
 func linearWave(frames int, shape waveShape) (file, payload []byte) {
-	blockAlign := shape.channels * shape.bits / 8
+	blockAlign := shape.blockAlign
+	if blockAlign == 0 {
+		blockAlign = shape.channels * shape.bits / 8
+	}
 	payload = make([]byte, frames*blockAlign)
 	for index := range payload {
 		payload[index] = byte(index * 7)
@@ -119,6 +124,9 @@ func waveFormat(shape waveShape, blockAlign int) []byte {
 		if shape.float {
 			formatTag = 3
 		}
+	}
+	if len(shape.extension) != 0 {
+		return blockFormat(shape, formatTag)
 	}
 	size := 16
 	if shape.mask != 0 {
@@ -161,4 +169,19 @@ func waveFile(shape waveShape, payload []byte) []byte {
 	body = append(body, sizeOf(len(payload))...)
 	body = append(body, payload...)
 	return append(append([]byte("RIFF"), sizeOf(len(body))...), body...)
+}
+
+// blockFormat writes the header of a stream whose samples are coded in groups:
+// a stated block size and the codec extension the container does not read.
+func blockFormat(shape waveShape, formatTag uint16) []byte {
+	value := make([]byte, 18+len(shape.extension))
+	binary.LittleEndian.PutUint16(value[0:2], formatTag)
+	binary.LittleEndian.PutUint16(value[2:4], uint16(shape.channels))
+	binary.LittleEndian.PutUint32(value[4:8], 48_000)
+	binary.LittleEndian.PutUint32(value[8:12], 48_000)
+	binary.LittleEndian.PutUint16(value[12:14], uint16(shape.blockAlign))
+	binary.LittleEndian.PutUint16(value[14:16], uint16(shape.bits))
+	binary.LittleEndian.PutUint16(value[16:18], uint16(len(shape.extension)))
+	copy(value[18:], shape.extension)
+	return value
 }

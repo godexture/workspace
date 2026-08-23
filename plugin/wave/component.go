@@ -59,6 +59,13 @@ func demuxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
+			// The codec extension travels with the stream: this reader never
+			// read it, and the codec that does is on the far side of the graph.
+			if inspected.geometry.parameters.Valid() {
+				if properties, err = codec.WithParameters(properties, inspected.geometry.parameters); err != nil {
+					return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+				}
+			}
 			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Descriptor(), timing.MustBase(1, int64(inspected.signal.Rate)), properties)
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err

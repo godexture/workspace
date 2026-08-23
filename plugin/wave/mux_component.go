@@ -81,7 +81,11 @@ func muxerComponent() plugin.Component {
 				if len(input.Metadata().Blocks()) != 0 {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux metadata contains source blobs without a range inspection handoff", ErrUnsupported)
 				}
-				muxHeaderValue, err = newRangeMuxHeader(outputCodec, signal, !inspected.ranges.any() && outputCodec.coding == "", inspected)
+				geometry, err := muxGeometry(outputCodec, inspected)
+				if err != nil {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+				}
+				muxHeaderValue, err = newRangeMuxHeader(outputCodec, signal, geometry, !inspected.ranges.any() && outputCodec.coding == "", inspected)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
@@ -112,7 +116,10 @@ func muxerComponent() plugin.Component {
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
-				muxHeaderValue, err = newMuxHeaderWithChunks(outputCodec, signal, outputCodec.coding == "", chunks)
+				if outputCodec.blocked {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: %s needs the block geometry a source inspection carries", ErrUnsupported, outputCodec.name)
+				}
+				muxHeaderValue, err = newMuxHeaderWithChunks(outputCodec, signal, blockGeometry{}, outputCodec.coding == "", chunks)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
@@ -269,4 +276,17 @@ func unsupportedCodec(name string) error {
 		"wave.codec", diagnostic.ErrorSeverity, diagnostic.Path{},
 		"WAVE muxer cannot write a stream it has no format tag for: "+name, nil,
 	))
+}
+
+// muxGeometry is the block geometry the output header states. A block-coded
+// stream is reproduced rather than rebuilt, so it can only be written back
+// under the codec it was read as.
+func muxGeometry(outputCodec waveCodec, inspected header) (blockGeometry, error) {
+	if !outputCodec.blocked {
+		return blockGeometry{}, nil
+	}
+	if inspected.codecTag != CodecTag(outputCodec.name) || !inspected.geometry.stated() {
+		return blockGeometry{}, fmt.Errorf("%w: %s can only be written back from the stream it was read as", ErrUnsupported, outputCodec.name)
+	}
+	return inspected.geometry, nil
 }

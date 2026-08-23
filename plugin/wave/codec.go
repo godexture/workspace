@@ -17,20 +17,26 @@ type waveCodec struct {
 	// coding is empty when the samples are not stored one scalar each. Such a
 	// stream states a signal and leaves its representation to its codec.
 	coding sample.Coding
+	// blocked marks a codec whose samples are coded in groups. Its block size
+	// is a header field rather than a product of width and channel count, and
+	// its byte rate follows from how many samples a block holds.
+	blocked bool
 }
 
 // WAVE stores samples little-endian. Integer PCM is unsigned at 8 bits and
 // signed above it, IEEE float has its own tag, and the companded codecs carry
 // a signal wider than the byte that holds it.
 var waveCodecs = []waveCodec{
-	{formatPCM, 8, "u8", sample.U8},
-	{formatPCM, 16, "s16", sample.S16},
-	{formatPCM, 24, "s24", sample.S24},
-	{formatPCM, 32, "s32", sample.S32},
-	{formatFloat, 32, "f32", sample.F32},
-	{formatFloat, 64, "f64", sample.F64},
-	{formatALaw, 8, "alaw", ""},
-	{formatULaw, 8, "ulaw", ""},
+	{formatPCM, 8, "u8", sample.U8, false},
+	{formatPCM, 16, "s16", sample.S16, false},
+	{formatPCM, 24, "s24", sample.S24, false},
+	{formatPCM, 32, "s32", sample.S32, false},
+	{formatFloat, 32, "f32", sample.F32, false},
+	{formatFloat, 64, "f64", sample.F64, false},
+	{formatALaw, 8, "alaw", "", false},
+	{formatULaw, 8, "ulaw", "", false},
+	{formatMSADPCM, 4, "ms-adpcm", "", true},
+	{formatIMAADPCM, 4, "ima-adpcm", "", true},
 }
 
 // codecOf reports the codec a format header declares. A tag and width this
@@ -69,11 +75,15 @@ func codecForCoding(coding sample.Coding) (waveCodec, bool) {
 // what a composition binds a decoder and parser to.
 func CodecTag(name string) format.Tag { return format.NewTag("wave", name) }
 
-// ALawTag and ULawTag name the companded codecs a WAVE header can declare.
+// The tags below name the codecs a WAVE header can declare whose samples are
+// not stored one scalar each. A composition binds them to the codec that reads
+// them rather than to a linear representation.
 // Their samples are one byte wide and their signal is not, so a composition
 // binds them to a codec rather than to a linear representation.
-func ALawTag() format.Tag { return CodecTag("alaw") }
-func ULawTag() format.Tag { return CodecTag("ulaw") }
+func ALawTag() format.Tag     { return CodecTag("alaw") }
+func ULawTag() format.Tag     { return CodecTag("ulaw") }
+func MSADPCMTag() format.Tag  { return CodecTag("ms-adpcm") }
+func IMAADPCMTag() format.Tag { return CodecTag("ima-adpcm") }
 
 // Codings lists the sample codings WAVE headers declare for streams stored one
 // scalar each, so a composition can bind every one without restating the table.
