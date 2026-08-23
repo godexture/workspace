@@ -341,7 +341,7 @@ planning benchmark は wall time だけでなく、Compile 回数、expanded sta
 
 ## M4 完了条件
 
-M4 は `Compile`、solver、graph validation、public `Plan`、private `Program` を新設する milestone である。実行、ownership、queue、cancel、Finalize は M5、実 Format/Codec は M6 の担当であり、M4 には要求しない。runtime 側の条件は [runtime](runtime.md#m5-完了条件) を参照する。
+M4 は `Compile`、solver、graph validation、public `Plan`、private `Program` を新設する milestone である。実行、ownership、queue、cancel、終端は M5、実 Format/Codec は M6 の担当であり、M4 には要求しない。runtime 側の条件は [runtime](runtime.md#m5-完了条件) を参照する。
 
 ### 作業単位
 
@@ -411,7 +411,7 @@ M4-1 は新しい contract を作らず、M3 の成果に対する構造是正�
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
 - 上記を unit/property test で検査する。公式 plugin を import しない。determinism は map iteration、catalog insertion、候補評価の完了順を意図的に乱して検査する。
 
-M4 では次を未完了事項として残す。Provider session の acquire、共有 probe、Format inspect、実 capability の再検証、spool insertion と実 container/Format/Codec の駆動は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、Finalize/Commit、observability は M5。multi-stream の mapping と selector 解決は M7 が MP4 を consumer として確定する。variant selection の実装は M8 の family 移行に乗せる。
+M4 では次を未完了事項として残す。Provider session の acquire、共有 probe、Format inspect、実 capability の再検証、spool insertion と実 container/Format/Codec の駆動は M6。execution island、ownership の実行、queue と backpressure、cancel 伝播、終端と Commit、observability は M5。multi-stream の mapping と selector 解決は M7 が MP4 を consumer として確定する。variant selection の実装は M8 の family 移行に乗せる。
 
 ## 文書全体の完了条件
 

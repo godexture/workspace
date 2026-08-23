@@ -37,7 +37,7 @@ test-only CGO、FFmpeg、native reference implementation は production purity �
 
 1. WAVE/PCM、MP3、FLAC の decode/encode/roundtrip。
 2. input metadata の output への伝播と、現行 stream 経路。現行実装に stream copy がなければ、decoder/encoder を開く事実を baseline として記録する。
-3. cancel、invalid input、Finalize/Close failure。
+3. cancel、invalid input、Flush/Close failure。
 4. 1/4/16段の軽量 audio filter chain。
 5. observation off/on の allocation、CPU、block/goroutine profile。
 6. scalar/SIMD build 間と worker 1/N の意味上の差。
@@ -48,7 +48,7 @@ M0 では入力仕様・digest、実行 command、toolchain、correctness summar
 
 - WAVE/PCM、MP3、FLAC の代表 decode/encode/roundtrip が small hermetic fixture で再現できる。
 - metadata の既知項目と opaque/raw 項目について、現行の伝播・欠落挙動を検査する。stream copy 自体の実装は M7 の完了条件とする。
-- cancel、invalid/truncated input、Finalize/Close と primary+cleanup failure の集約を、代表 pipeline と format lifecycle で検査する。
+- cancel、invalid/truncated input、Flush/Close と primary+cleanup failure の集約を、代表 pipeline と format lifecycle で検査する。
 - 1/4/16段 filter chain は実 pipeline と同じ workload shape の sequential direct-call 経路を分け、cold construction と steady-state processing を分けて測る。並行実行条件が異なるため、direct-call を厳密な overhead 下限とはみなさない。
 - observation off/on の allocation と CPU/block/goroutine profileについて、再現 command、入力、correctness counter、要約を保存する。
 - 同一入力に対する scalar/SIMD 実装間の semantic output と、worker 1/N の output/order/count を、対象 package ごとの differential test で検査する。repository 全体を横断する単一 gate は要求しない（実行コストが高く、実用的な baseline/CI gate にならないため）。
@@ -78,7 +78,7 @@ small hermetic fixture、cross-plugin fixture、full conformance corpus、benchm
 - planner の canonical ordering、budget、same-input Plan fingerprint
 - ownership move、fan-out sibling isolation、immutable read view、write failure、drop、cancel drain
 - allocator の zeroed/overwrite lease と Job 終了時の解放
-- transactional Open、reverse rollback、Finalize/Commit outcome
+- transactional Open、reverse rollback、Flush/Commit outcome
 - primary failure と cleanup failure の集約
 - metadata raw preservation、Mapping、loss report
 - codec/metadata Binding conflict
@@ -109,7 +109,7 @@ typed case 層は `Component`、`Format`、`Codec`、`Metadata Encoding`、`Acce
 - identity、descriptor、config schema
 - `Compile` purity/repeatability と bounded `Suggest`
 - selected component だけを `Open` する lifecycle
-- cancel、EOF、Flush、Finalize、Close
+- cancel、EOF、Flush、Close
 - active cancellation: callback が実際に Run へ入り context cancel を観測してから停止し、idle/未実行の shortcut を通らないこと
 - ownership leak、double drop、declared schema と実 item
 - `host.VerifyOwnership()` を opt-in した success、expected failure、rejected emit、active cancellation の全 Run 経路で live/overrelease が 0 に戻ること
@@ -241,7 +241,7 @@ M6 は public testkit と `integration` module が最小形で成立する miles
 
 - **公式 plugin が第三者と同じ入口で検証される。** 公式 WAVE/PCM/file plugin が構造層と typed case 層の両方を通る。公式 plugin だけが使う内部 test helper を別に持たない。fixture を production の `plugin.Definition` に持たせず、型消去された test hook も公開しない。
 - **構造層だけの通過を conformance と誤認させない。** 構造層は definition から決まる整合性しか見ないため、その範囲を godoc と失敗 message に明示する。あわせて `integration` が、**実行可能な公式 component すべてに typed case が存在すること**を検査する。公式 family に対しては覆い漏れを機械的に検出できるようにし、構造層の通過が「一応 test した」で止まらないようにする。
-- 共通 contract の最小形が実装される。identity/descriptor/config schema、`Compile` の purity と repeatability、bounded `Suggest`、selected component だけの `Open`、cancel/EOF/Flush/Finalize/Close、ownership leak と double drop、宣言 schema と実 item の一致、panic/error boundary、empty/truncated/oversized input を含む。
+- 共通 contract の最小形が実装される。identity/descriptor/config schema、`Compile` の purity と repeatability、bounded `Suggest`、selected component だけの `Open`、cancel/EOF/Flush/Close、ownership leak と double drop、宣言 schema と実 item の一致、panic/error boundary、empty/truncated/oversized input を含む。
 - 専門 testkit のうち Format、Codec/Parser、Access Provider を M6 に含める。ただし**実装と consumer を持つ contract だけを対象にする**。Access Provider は capability 選択、`Own`/`Borrow`、commit/abort に加え、`StableSize` を伴う `Snapshotter` の存在と有効な unchanged identity を Host 経由で検査する。local file の Prepare と Run の間の mutation は Host/integration が phase 間照合で拒否する。retry/reopen、並行 range、blocked I/O cancellation は実 operation を持つ後続 Provider milestone まで導入しない。Metadata Encoding は RIFF INFO が扱う範囲（parse/marshal、重複と順序、未知 raw）に限り、Mapping と loss は M7、Endpoint は M9 に残す。`StableSize` の検査は自動 Probe、WeakSnapshot、範囲外 probe の EOF と replay の capability/size/identity 同期も含め、宣言だけを成功としない。
 - **未 cover の専門 contract を coverage registry へ担当付きで記録する。** 「helper が無いから検査されていない」状態を、「担当 milestone 付きで未 cover」と読める形にする。M10 の testkit 完成時に取りこぼしを機械的に判定できるようにするためであり、この一覧が [quality](#public-plugin-testkit) の表と最終状態の差分になる。
 - `integration` module が dependency graph の最上位にあり、foundation と公式 plugin が test のために互いを import しない。end-to-end 変換、拡張性 gate、identity 検査はここに置く。

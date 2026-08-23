@@ -149,7 +149,7 @@ go test ./plugin/pcm/linear -run '^$' -bench '^BenchmarkPCMReadViews$' -benchmem
 
 file sink も payload 全体を `AppendTo(nil)` せず、計上済み 64 KiB scratch を再利用して immutable view を drain する。copy 自体は payload size に比例する 1 pass が増えるが、これは syscall に対して無視できる。比例しないのは allocation であり、それを test で 0 に固定する。absolute timing は将来 machine との比較に使わない。
 
-paired harness は旧 contract の最後の consumer であり、結果を確定した M5 cut 時点の一回限りの比較記録である。`_legacy/` は移植参照 algorithm だけに限定するため、旧 package の削除後に build できない harness source は current tree に残さない。継続 gate は `Execution` の test-only shortcut ではなく、resource reservation、Open、Finalize、output transaction、cleanup を含む production の `Prepared.Run` 経路を測る。
+paired harness は旧 contract の最後の consumer であり、結果を確定した M5 cut 時点の一回限りの比較記録である。`_legacy/` は移植参照 algorithm だけに限定するため、旧 package の削除後に build できない harness source は current tree に残さない。継続 gate は `Execution` の test-only shortcut ではなく、resource reservation、Open、Flush、output transaction、cleanup を含む production の `Prepared.Run` 経路を測る。
 
 ```bash
 go test ./host -run '^$' -bench '^BenchmarkPreparedRunLinear$' -benchmem
@@ -249,7 +249,7 @@ performance preset に関係なく、次は非交渉条件である。
 - packet/frame/event の順序
 - frame/sample の欠落・重複
 - declared fan-in semantics（Zip の alignment を含む。SerialFanIn は timestamp alignment を持たない）
-- EOF、Flush、Finalize
+- EOF、Flush
 - stream mapping と metadata loss report
 - buffer bounds、input validation、panic/error semantics
 - lossless decoder の logical sample/data exactness

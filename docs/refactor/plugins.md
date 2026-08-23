@@ -138,8 +138,8 @@ Register
   -> Begin Output Transactions
   -> Open Operators/Endpoints
   -> Run
-  -> Finalize
-  -> Flush/PrepareCommit/Commit
+  -> Flush
+  -> Sync/PrepareCommit/Commit
   -> Close
 ```
 
@@ -173,11 +173,11 @@ solver は bridge 候補を挿入して再度同じ `Compile` を呼ぶ。
 
 Open は scope 内で transaction として行う。途中で失敗したら、既に開いた component、Endpoint、resource、output transaction を逆順に閉じ、sink を Abort する。
 
-### Run、Finalize、Close
+### Run、Flush、Close
 
-Run は compile 済み規則を再計算しない。Finalize は encoder の遅延 packet、muxer index/header patch、metadata flush 等を処理する。その後に sink Flush/Sync/PrepareCommit/Commit を行う。Close は resource release だけを担当し、出力成功を意味しない。
+Run は compile 済み規則を再計算しない。`Flush` は encoder の遅延 packet、muxer index/header patch、metadata flush 等を依存順の一つの pass で処理する。node が `Flush` を求められるのは上流がすべて `Flush` を終えた後なので、その時点で自分の入力は確定している。その後に sink Sync/PrepareCommit/Commit を行う。Close は resource release だけを担当し、出力成功を意味しない。
 
-EOF は edge close で表し、`PacketKindStreamEnd` のような data packet sentinel に最終 codec parameters を混ぜない。最終値は `Finalize` の明示 contract で渡す。
+EOF は edge close で表し、`PacketKindStreamEnd` のような data packet sentinel に最終 codec parameters を混ぜない。最終値は descriptor が運ぶ。
 
 ## plugin authoring API
 
@@ -210,7 +210,7 @@ in-process plugin は host と同じ権限を持つ。host は次を行うが、
 - `Run`/execution island の入口で panic を recover し、diagnostic と job failure に変換する。
 - host task group で開始された task の cancel/join を追跡する。
 - resource grant と queue limit を適用する。
-- `Open`/`Finalize`/`Close` の error を集約する。
+- `Open`/`Flush`/`Close` の error を集約する。
 
 plugin が独自に作った goroutine の panic、無限 loop、`unsafe` による memory corruption、process exit は封じ込められない。強い隔離が必要な場合は別 process adaptor を使う。
 

@@ -50,7 +50,7 @@ application / CLI / WASM
 | M2 | identity・catalog・config contract | marker identity、immutable `Set`/Catalog、typed config schema、構造化 diagnostic | [plugins](refactor/plugins.md)、[config](refactor/config.md) |
 | M3 | media・metadata・I/O contract と walking skeleton | open schema、typed port、stream/time/packet、Binding、Access Provider、Endpoint。test 用の trivial な schema/format/codec で bytes → packet → frame → packet → bytes が新 contract だけで通る | [media](refactor/media.md)、[access](refactor/access.md)、[scope](refactor/scope.md) |
 | M4 | planner と Program | pure `Compile`、bounded solver、graph validation、説明可能な `Plan`、private `Program`。walking skeleton を planner 経由で通す。あわせて container を持たない実 PCM を最初の実 codec として通し、trivial component が自分で作った要求にしか答えない状態を抜ける | [planner](refactor/planner.md)、[runtime](refactor/runtime.md)、[media](refactor/media.md) |
-| M5 | runtime と ownership、旧 contract 層の切断 | execution island、move/fan-out/COW、cancel、queue、Finalize、transactional Open/Close。walking skeleton を新 runtime で通し、旧/新 runtime を同一 harness で比較する paired benchmark を取る。その直後に旧 contract 層を一括削除し、未移植の algorithm を `_legacy/` へ隔離する | [runtime](refactor/runtime.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md) |
+| M5 | runtime と ownership、旧 contract 層の切断 | execution island、move/fan-out/COW、cancel、queue、終端、transactional Open/Close。walking skeleton を新 runtime で通し、旧/新 runtime を同一 harness で比較する paired benchmark を取る。その直後に旧 contract 層を一括削除し、未移植の algorithm を `_legacy/` へ隔離する | [runtime](refactor/runtime.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md) |
 | M6 | 最初の実 container 経路と最短 surface | M4 の実 PCM へ WAVE container と file Provider/session を足し、acquire → shared probe → inspect → demux → decode → encode → mux が新設計だけで動く。capability 不足時の明示 spool、temporary quota/cleanup、`standard` composition、`integration` module、public testkit の最小形、`standard.Convert` と `cmd/godec` の最短経路を含む。out-of-tree 相当 plugin による拡張性 gate を最初に通す | [media](refactor/media.md)、[access](refactor/access.md)、[plugins](refactor/plugins.md)、[quality](refactor/quality.md)、[capability](refactor/capability.md)、[experience](refactor/experience.md) |
 | M7 | multi-stream・保存優先の既定動作 | unfragmented MP4 (ISO BMFF) を実 consumer として、static `Many` port と ordered repeated descriptors、typed Router、既存 `flow.Joiner` の `SerialFanIn`、default preserve-all、exact `MapStream`、raw preservation を RandomRead+StableSize/RandomWrite file-to-file 経路で通す。Inspection は shared immutable な source range/summary に限定し、duration/sample 数/opaque raw payload 長に依存しない constant-RAM、WAVE unknown chunk/trailer の range preservation、quota 付き Host-owned table journal も M7 の契約に含める。`flow.Direct` を宣言した port を単一 routed producer が駆動する direct island では、その call 順を physical mdat order として扱い、宣言のない generic Serial 構成の cross-track physical interleave は契約しない。MP4 correctness/exact は track ordinal、`Packet.Sequence`、PTS/DTS/duration、per-track sample table で判定する。音声は必要時だけ PCM を bind し、video/subtitle/data track は stream copy する | [M7-0 contract](refactor/m7-0.md)、[planner](refactor/planner.md)、[surfaces](refactor/surfaces.md)、[media](refactor/media.md)、[scope](refactor/scope.md) |
 | M8 | 公式 plugin contract の移行 | M1 で固定した family path 上で、PCM の全 sample 表現、ADPCM/G.711、audio processor 17 種、ID3、Vorbis Comment、MP3、FLAC が Parser/Binding/variant/typed audio contract を使い、公式 plugin 間の直接依存を composition の Binding へ移す。sample vocabulary を coding/packing/endian の直交軸へ分け、decoded frame の canonical schema を四つに固定する。移行した metadata encoding を consumer として `ilst` mapping・多重度・generic loss/strictness を、MP4 と MP3/FLAC の index を consumer として graph seek を確定し、`_legacy/` を削除する | [M8-0 contract](refactor/m8-0.md)、[audio](refactor/audio.md)、[performance](refactor/performance.md)、[inventory](refactor/inventory.md)、[capability](refactor/capability.md) |
@@ -103,7 +103,7 @@ milestone ID は追加・再採番しない。粒度と担当の調整は次の�
 | object I/O、non-seekable input、transaction、live/device endpoint | [access.md](refactor/access.md) |
 | FFmpeg 代替に必要な拡張点の全体像 | [scope.md](refactor/scope.md) |
 | bridge 探索、自動挿入、cost/effect、default copy | [planner.md](refactor/planner.md) |
-| graph 実行、ownership、queue、cancel、Finalize、observability | [runtime.md](refactor/runtime.md) |
+| graph 実行、ownership、queue、cancel、終端、observability | [runtime.md](refactor/runtime.md) |
 | Fast/Stable/Portable、variant、再現性、性能回帰防止 | [performance.md](refactor/performance.md) |
 | Job、mapping、catalog、CLI、WASM、demo HTTP | [surfaces.md](refactor/surfaces.md) |
 | JavaScript wire、WASM lifecycle、catalog-driven editor | [web.md](refactor/web.md) |
@@ -153,7 +153,7 @@ M0〜M11 に加え、少なくとも次をすべて満たした時にリファ�
 - 通常利用者は `standard.NewHost()` 相当の短い経路で利用でき、custom composition も通常の Go コードだけで完結する。
 - planner は候補 runtime を生成せず、同じ入力 snapshot から決定的で説明可能な Plan を作る。
 - linear data path は reflection、hop ごとの allocation/refcount、node ごとの goroutine/channel、観測用 atomic を必須にしない。
-- cancel、panic、partial Open、fan-out、Finalize/Commit failure で item、goroutine、resource、temporary output を leak しない。
+- cancel、panic、partial Open、fan-out、Flush/Commit failure で item、goroutine、resource、temporary output を leak しない。
 - 無指定出力は copy/remux と情報保持を優先し、metadata/stream loss を黙って発生させない。
 - 複数 stream を持つ実 container で default/exact mapping と stream copy が動作し、decode 実装を持たない video/subtitle/data stream も情報を失わずに通過できる。
 - 公式 standard distribution は CGO なしで build でき、性能・再現性 contract を対象別 differential test と代表 benchmark で検証できる。

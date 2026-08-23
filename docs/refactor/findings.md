@@ -63,7 +63,7 @@ ID は議論・実装・レビューで参照するため維持する。優先�
 | F38 | test runner が `bufio.Scanner` の既定64 KiB上限と不十分な `scanner.Err()` 処理に依存し、長い失敗出力を欠落させ得る。 | [quality](quality.md) | M10 |
 | F39 | 多数の module/artifact を順次 publish する release tool は、途中失敗時の状態、dependency order、resume を十分に表さない。 | [supply](supply.md)、[quality](quality.md) | M10 |
 | F40 | JS/WASM artifact と Go/TinyGo/Bun/bindgen、source commit、dependency、license、digest の対応が一つの release manifest に固定されていない。 | [supply](supply.md)、[web](web.md) | M10 |
-| F41 | output transaction が CLI の temporary file/rename に閉じ、mux Finalize、Flush/Sync、Windows replace、object-store commit、multi-output partial failure と分離している。 | [access](access.md)。**contract 完了（M5）、local file transaction 完了（M6）**。object store と multi-output は実 consumer の milestone | M5/M6 |
+| F41 | output transaction が CLI の temporary file/rename に閉じ、mux の終端、Flush/Sync、Windows replace、object-store commit、multi-output partial failure と分離している。 | [access](access.md)。**contract 完了（M5）、local file transaction 完了（M6）**。object store と multi-output は実 consumer の milestone | M5/M6 |
 | F42 | pipeline、CLI progress、runtime metrics、WASM/HTTP reporting が別々の状態計算を持ち、意味と観測 overhead が重複する。 | [runtime](runtime.md)、[surfaces](surfaces.md)。**runtime event model 完了（M5）、bounded CLI projection 完了（M6）**。WASM/HTTP projection は M9 | M5/M6/M9 |
 | F43 | Go unit test だけでは browser event loop、AbortSignal、worker/main thread、page unload、JS exception、WASM memory を検証できない。 | [web](web.md)、[quality](quality.md) | M10 |
 | F44 | example web は production product ではないが、job retention、TTL、concurrency、temporary cleanup、bounded shutdown が不足し、demo process/resource が残り得る。 | [surfaces](surfaces.md)、[web](web.md) | M9 |
