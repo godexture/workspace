@@ -30,8 +30,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 51 {
-		t.Fatalf("catalog components = %d, want 51", first.Catalog().Len())
+	if first.Catalog().Len() != 54 {
+		t.Fatalf("catalog components = %d, want 54", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")

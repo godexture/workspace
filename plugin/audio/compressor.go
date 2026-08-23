@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -52,7 +51,7 @@ func newCompressor() plugin.Component {
 		detail:  "audio.compressor",
 		schema:  compressorSchema(),
 		samples: func(value *compressorConfig) *int { return &value.MaxSamples },
-		build: func(value compressorConfig, signal sample.Signal) (filter, error) {
+		build: func(value compressorConfig, signal filterStream) (filter, error) {
 			return &compressor{
 				threshold: float64(value.Threshold),
 				ratio:     float64(value.Ratio),

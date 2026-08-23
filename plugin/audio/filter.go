@@ -23,12 +23,21 @@ type filter interface {
 	Apply(planes [][]float32)
 }
 
+// filterStream is what a filter is told about the stream it was compiled for:
+// what the stream is, and how long it lasts where anything said so. A filter
+// that needs the end and was told nothing is one that has to say so at
+// Compile rather than discover it halfway through a run.
+type filterStream struct {
+	sample.Signal
+	Length timing.OptionalDuration
+}
+
 // filterPlan is what Compile settled: the configuration the filter is built
 // from, the stream it was built for, and the largest frame it will copy.
 type filterPlan[C any] struct {
 	shape    flow.Shape
 	config   C
-	signal   sample.Signal
+	stream   filterStream
 	samples  int
 	detail   string
 	channels int
@@ -64,8 +73,8 @@ type filterSpec[C any] struct {
 	detail  string
 	schema  config.Schema[C]
 	samples func(*C) *int
-	check   func(C, sample.Signal) error
-	build   func(C, sample.Signal) (filter, error)
+	check   func(C, filterStream) error
+	build   func(C, filterStream) (filter, error)
 }
 
 // newFilter builds the component for one in-place filter. Everything that is
@@ -84,7 +93,7 @@ func newFilter[Marker, C any](spec filterSpec[C]) plugin.Component {
 			if ctx.Buffers() == nil {
 				return nil, fmt.Errorf("%w: a filter requires a payload buffer grant", ErrUnsupported)
 			}
-			kernel, err := spec.build(plan.config, plan.signal)
+			kernel, err := spec.build(plan.config, plan.stream)
 			if err != nil {
 				return nil, err
 			}
@@ -107,8 +116,10 @@ func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C,
 	if !ready || err != nil {
 		return incomplete, err
 	}
+	length, _ := stream.DurationOf(input.Properties())
+	described := filterStream{Signal: signal, Length: length}
 	if spec.check != nil {
-		if err := spec.check(configuration, signal); err != nil {
+		if err := spec.check(configuration, described); err != nil {
 			return plugin.Compiled[filterPlan[C], stream.Descriptor]{}, err
 		}
 	}
@@ -121,7 +132,7 @@ func compileFilter[C any](shape flow.Shape, spec filterSpec[C], configuration C,
 		Plan: filterPlan[C]{
 			shape:    shape.Clone(),
 			config:   configuration,
-			signal:   signal,
+			stream:   described,
 			samples:  *spec.samples(&configuration),
 			detail:   spec.detail,
 			channels: channels,

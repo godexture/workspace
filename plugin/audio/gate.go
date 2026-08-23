@@ -6,7 +6,6 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -84,7 +83,7 @@ func newGate() plugin.Component {
 		detail:  "audio.gate",
 		schema:  gateSchema(),
 		samples: func(value *gateConfig) *int { return &value.MaxSamples },
-		build: func(value gateConfig, signal sample.Signal) (filter, error) {
+		build: func(value gateConfig, signal filterStream) (filter, error) {
 			if value.Mode == lowpassGating {
 				return &lowpassGate{
 					threshold: float64(value.Threshold),

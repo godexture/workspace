@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -68,7 +67,7 @@ func newReverb() plugin.Component {
 		detail:  "audio.reverb",
 		schema:  reverbSchema(),
 		samples: func(value *reverbConfig) *int { return &value.MaxSamples },
-		build: func(value reverbConfig, signal sample.Signal) (filter, error) {
+		build: func(value reverbConfig, signal filterStream) (filter, error) {
 			damping := float32(float64(value.Damping) * dampScale)
 			result := &reverb{
 				wet:      float32(value.Wet),

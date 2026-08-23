@@ -22,6 +22,7 @@ import (
 type streamOptions struct {
 	id       stream.ID
 	metadata metadata.Document
+	length   timing.OptionalDuration
 }
 
 // StreamOption changes descriptor identity or metadata carried by a fixture.
@@ -33,6 +34,14 @@ func WithStreamID(id stream.ID) StreamOption { return func(options *streamOption
 // WithMetadata attaches immutable stream metadata to the fixture descriptor.
 func WithMetadata(document metadata.Document) StreamOption {
 	return func(options *streamOptions) { options.metadata = document }
+}
+
+// WithDuration states how long the fixture stream lasts, counted in its own
+// time base. A component that needs the end of a stream is one that behaves
+// differently depending on whether anything said where it is, so a fixture has
+// to be able to say it and to leave it unsaid.
+func WithDuration(value timing.Duration) StreamOption {
+	return func(options *streamOptions) { options.length = timing.SomeDuration(value) }
 }
 
 // Chunk is the logical, ownership-free representation of packet.Chunk used
@@ -220,6 +229,11 @@ func mediaDescriptor(schemaDescriptor schema.Descriptor, description sample.Desc
 		return stream.Descriptor{}, err
 	}
 	state := applyStreamOptions(options)
+	if length, ok := state.length.Get(); ok {
+		if properties, err = stream.WithDuration(properties, length); err != nil {
+			return stream.Descriptor{}, err
+		}
+	}
 	descriptor, err := stream.NewDescriptor(state.id, schemaDescriptor, timing.MustBase(1, int64(description.Rate)), properties)
 	if err != nil {
 		return stream.Descriptor{}, err

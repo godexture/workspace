@@ -147,3 +147,64 @@ func reshaped(signal sample.Signal, layout sample.Layout) sample.Description {
 	signal.Layout = layout
 	return processed(signal)
 }
+
+func errFrameTooLarge(samples, maximum int) error {
+	return fmt.Errorf("%w: a frame of %d samples is past the %d this filter reserved", ErrUnsupported, samples, maximum)
+}
+
+// frameLease builds one output frame and lets fill write its planes. Every
+// stage that produces a frame rather than editing the one it read goes through
+// here, so the ownership steps between leasing and emitting are written once.
+type frameLease struct {
+	buffers  *buffer.Allocator
+	channels int
+	planes   []buffer.PlaneSpec
+	written  [][]float32
+}
+
+func newFrameLease(buffers *buffer.Allocator, channels int) *frameLease {
+	return &frameLease{
+		buffers:  buffers,
+		channels: channels,
+		planes:   make([]buffer.PlaneSpec, channels),
+		written:  make([][]float32, channels),
+	}
+}
+
+func (l *frameLease) build(samples int, pts timing.OptionalPTS, fill func([][]float32) error) (mediaaudio.Frame[float32], error) {
+	var zero mediaaudio.Frame[float32]
+	for index := range l.planes {
+		l.planes[index].Size = samples * 4
+	}
+	lease, err := l.buffers.Overwrite(buffer.Spec{Alignment: 16, Planes: l.planes})
+	if err != nil {
+		return zero, err
+	}
+	defer lease.Discard()
+	if err := lease.Fill(func(storage buffer.Mutable) error {
+		for channel := range l.channels {
+			plane, planeErr := storage.Plane(channel)
+			if planeErr != nil {
+				return planeErr
+			}
+			values, castErr := mediaaudio.Plane[float32](plane, samples)
+			if castErr != nil {
+				return castErr
+			}
+			l.written[channel] = values
+		}
+		return fill(l.written)
+	}); err != nil {
+		return zero, err
+	}
+	storage, err := lease.Commit()
+	if err != nil {
+		return zero, err
+	}
+	frame, err := mediaaudio.NewFrame[float32](pts, samples, storage)
+	if err != nil {
+		storage.Release()
+		return zero, err
+	}
+	return frame, nil
+}

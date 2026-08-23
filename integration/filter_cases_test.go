@@ -188,4 +188,54 @@ func runFilterCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			}),
 		},
 	)
+
+	// Normalize emits nothing until the stream has ended, because the level it
+	// applies is a fact about the loudest sample anywhere in it.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Normalize),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "normalize-brings-the-peak-to-the-target",
+			Config: config.NewPatch().SetText("target", "0"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{
+				{PTS: pts, Planes: [][]float32{{0.25, -0.5}}},
+				{PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]float32{{0.125, 0}}},
+			}),
+			Want: testkit.WantFrames(
+				testkit.Frame[float32]{PTS: pts, Planes: [][]float32{{0.5, -1}}},
+				testkit.Frame[float32]{PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]float32{{0.25, 0}}},
+			),
+		},
+	)
+
+	// A fade-out needs the end of the stream, so the fixture states one; a
+	// fade-in never does, because the start is where it already is.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Fade),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "fade-rises-from-silence-and-falls-back",
+			Config: config.NewPatch().SetText("in", "83334ns").SetText("out", "83334ns"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{1, 1, 1, 1, 1, 1, 1, 1}},
+			}}, testkit.WithDuration(timing.NewDuration(8))),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25}},
+			}),
+		},
+	)
+
+	// A quiet run is the end of the stream until something else arrives, so
+	// the gap in the middle survives and the run at the end does not.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Trim),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "trim-drops-the-silence-at-both-ends",
+			Config: config.NewPatch().SetText("threshold", "-6.020599913279624"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{
+				{PTS: pts, Planes: [][]float32{{0, 1, 0, 0}}},
+				{PTS: timing.SomePTS(timing.NewPTS(4)), Planes: [][]float32{{0, 0, 1, 0}}},
+			}),
+			Want: testkit.WantFrames(
+				testkit.Frame[float32]{PTS: timing.SomePTS(timing.NewPTS(1)), Planes: [][]float32{{1}}},
+				testkit.Frame[float32]{PTS: timing.SomePTS(timing.NewPTS(2)), Planes: [][]float32{{0, 0}}},
+				testkit.Frame[float32]{PTS: timing.SomePTS(timing.NewPTS(4)), Planes: [][]float32{{0, 0, 1}}},
+			),
+		},
+	)
 }

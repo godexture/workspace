@@ -2,7 +2,6 @@ package audio
 
 import (
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -29,7 +28,7 @@ func newDCOffset() plugin.Component {
 		detail:  "audio.dc-offset",
 		schema:  dcOffsetSchema(),
 		samples: func(value *dcOffsetConfig) *int { return &value.MaxSamples },
-		build: func(value dcOffsetConfig, signal sample.Signal) (filter, error) {
+		build: func(value dcOffsetConfig, signal filterStream) (filter, error) {
 			channels := signal.Layout.Count()
 			return &dcOffset{
 				pole:  float32(value.Pole),

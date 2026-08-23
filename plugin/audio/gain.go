@@ -2,7 +2,6 @@ package audio
 
 import (
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -26,7 +25,7 @@ func newGain() plugin.Component {
 		detail:  "audio.gain",
 		schema:  gainSchema(),
 		samples: func(value *gainConfig) *int { return &value.MaxSamples },
-		build: func(value gainConfig, _ sample.Signal) (filter, error) {
+		build: func(value gainConfig, _ filterStream) (filter, error) {
 			return gain{factor: amplitude(float64(value.Decibels))}, nil
 		},
 	})
