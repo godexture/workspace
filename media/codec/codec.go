@@ -32,7 +32,7 @@ func TagOf(properties property.Set) (format.Tag, bool) {
 }
 
 func Declarations() []plugin.Declaration {
-	return []plugin.Declaration{plugin.DeclareKey(tagProperty)}
+	return []plugin.Declaration{plugin.DeclareKey(tagProperty), plugin.DeclareKey(parameterProperty)}
 }
 
 // Codec is a component identity for a media codec. The implementation is
