@@ -1,5 +1,8 @@
-// Package audio implements the sample-representation components a planner puts
-// between stages that agree on a stream but not on how its samples are stored.
+// Package audio implements the two things that happen to decoded audio: the
+// converters a planner puts between stages that agree on a stream but not on
+// how its samples are stored, and the processors that change the signal
+// itself. Both work on canonical planar frames, which is what keeps the
+// conversion at the edge of a chain of processors rather than inside each one.
 package audio
 
 import (
@@ -23,6 +26,11 @@ type (
 	f64ToS16ID struct{}
 	f64ToS32ID struct{}
 	f64ToF32ID struct{}
+
+	gainID           struct{}
+	gainConfigID     struct{}
+	dcOffsetID       struct{}
+	dcOffsetConfigID struct{}
 )
 
 type conversion struct {
@@ -70,14 +78,59 @@ func ConverterIdentity(from, to sample.Coding) plugin.Identity {
 	return plugin.Identity{}
 }
 
-// Plugin returns the pure-Go sample-representation family.
+// Processor names one signal processor. The name is the stable spelling a
+// surface uses to ask for it, so it is part of this family's contract rather
+// than a display string.
+type Processor string
+
+const (
+	Gain     Processor = "gain"
+	DCOffset Processor = "dc-offset"
+)
+
+type entry struct {
+	name      Processor
+	component plugin.Component
+}
+
+// processors is ordered so the family always presents its components in the
+// same sequence, which a map could not promise.
+var processors = []entry{
+	{name: Gain, component: newGain()},
+	{name: DCOffset, component: newDCOffset()},
+}
+
+// ProcessorIdentity returns the component implementing one processor. An
+// unknown name yields the zero identity.
+func ProcessorIdentity(name Processor) plugin.Identity {
+	for _, value := range processors {
+		if value.name == name {
+			return value.component.Identity()
+		}
+	}
+	return plugin.Identity{}
+}
+
+// Processors returns every processor name this family provides, in order.
+func Processors() []Processor {
+	result := make([]Processor, 0, len(processors))
+	for _, value := range processors {
+		result = append(result, value.name)
+	}
+	return result
+}
+
+// Plugin returns the pure-Go audio data plane family.
 func Plugin() plugin.Definition {
-	components := make([]plugin.Component, 0, len(conversions))
+	components := make([]plugin.Component, 0, len(conversions)+len(processors))
 	for _, value := range conversions {
 		components = append(components, value.component)
 	}
+	for _, value := range processors {
+		components = append(components, value.component)
+	}
 	definition := plugin.Define[pluginID](plugin.Descriptor{
-		DisplayName: "Audio sample conversion",
+		DisplayName: "Audio",
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,

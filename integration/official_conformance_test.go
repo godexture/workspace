@@ -29,6 +29,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	runLinearSuggestions(t, set, coverage)
 	runWideCodingCases(t, set, coverage)
 	runConversionCases(t, set, coverage)
+	runFilterCases(t, set, coverage)
 	runCompandedCases(t, set, coverage)
 	runADPCMCases(t, set, coverage)
 	runCompandedSuggestions(t, set, coverage)
