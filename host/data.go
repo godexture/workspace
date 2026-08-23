@@ -3,9 +3,7 @@ package host
 import (
 	"context"
 
-	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/journal"
-	"github.com/godexture/godec/plugin"
 )
 
 func (r *runner) runData() *Failure {
@@ -23,12 +21,14 @@ func (r *runner) runData() *Failure {
 	if failure := r.invoke(RunPhase, "", "runtime/quiesce", execution.Quiesce); failure != nil {
 		return failure
 	}
-	if failure := r.finalize(); failure != nil {
-		return failure
-	}
-	// Flushing is the run's own lifecycle step from here, so a release a
+	// Flushing is the run own lifecycle step from here, so a release a
 	// component performs on something it retained lands under Flush even when
 	// nothing in the runtime is holding a span for it.
+	//
+	// It is also where a node states what only the whole of its input decides:
+	// a coder emits the block it was still filling, and the muxer downstream of
+	// it patches sizes that block just changed. One ordered pass carries both,
+	// because a node flushes only after every node above it has.
 	r.ledger.EnterStage(journal.Flush)
 	if err := context.Cause(r.phase); err != nil {
 		return r.record(journal.WorkError, journal.Flush, "", "runtime/finish", err)
@@ -71,21 +71,5 @@ func (r *runner) runData() *Failure {
 	// delivered. It is still released in the domain of the edge that owned it.
 	execution.Discard()
 	r.ledger.EnterStage(journal.Commit)
-	return nil
-}
-
-func (r *runner) finalize() *Failure {
-	r.ledger.EnterStage(journal.Finalize)
-	for index, node := range r.nodes {
-		if node.Compilation().Finalization() != plugin.RequiresFinalization {
-			continue
-		}
-		finalizer := r.operators[index].(flow.Finalizer)
-		r.emitLifecycle(node.ID().String(), FinalizePhase, "start")
-		if failure := r.invoke(FinalizePhase, node.ID().String(), "", finalizer.Finalize); failure != nil {
-			return failure
-		}
-		r.emitLifecycle(node.ID().String(), FinalizePhase, "complete")
-	}
 	return nil
 }

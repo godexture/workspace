@@ -91,7 +91,7 @@ func validate(description Description) error {
 	seen := make(map[string]struct{}, len(description.Nodes))
 	ports := make(map[string]struct{}, len(description.Nodes))
 	for _, node := range description.Nodes {
-		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || !node.Finalization.Valid() || uint64(node.Scratch) > math.MaxInt64 || node.Origin == Automatic && node.Reason == "" {
+		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || uint64(node.Scratch) > math.MaxInt64 || node.Origin == Automatic && node.Reason == "" {
 			return errors.New("plan contains an invalid node")
 		}
 		if _, exists := seen[node.ID]; exists {
@@ -223,19 +223,18 @@ type canonicalConfig struct {
 }
 
 type canonicalNode struct {
-	ID           string
-	Component    string
-	Variant      string
-	Version      string
-	Config       canonicalConfig
-	Inputs       []PortDescriptor
-	Outputs      []PortDescriptor
-	Effects      []plugin.Effect
-	Contract     plugin.Contract
-	Resources    resource.Request
-	Scratch      resource.Bytes
-	Estimate     resource.Estimate
-	Finalization plugin.Finalization
+	ID        string
+	Component string
+	Variant   string
+	Version   string
+	Config    canonicalConfig
+	Inputs    []PortDescriptor
+	Outputs   []PortDescriptor
+	Effects   []plugin.Effect
+	Contract  plugin.Contract
+	Resources resource.Request
+	Scratch   resource.Bytes
+	Estimate  resource.Estimate
 }
 
 type canonicalExecution struct {
@@ -294,19 +293,18 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 	nodes := make([]canonicalNode, len(description.Nodes))
 	for index, node := range description.Nodes {
 		nodes[index] = canonicalNode{
-			ID:           node.ID,
-			Component:    node.Component,
-			Variant:      node.Variant,
-			Version:      node.Version,
-			Config:       canonicalConfig{Schema: node.Config.Schema(), Version: node.Config.Version(), Fingerprint: node.Config.Fingerprint().String()},
-			Inputs:       append([]PortDescriptor(nil), node.Inputs...),
-			Outputs:      append([]PortDescriptor(nil), node.Outputs...),
-			Effects:      append([]plugin.Effect(nil), node.Effects...),
-			Contract:     node.Contract,
-			Resources:    node.Resources,
-			Scratch:      node.Scratch,
-			Estimate:     node.Estimate,
-			Finalization: node.Finalization,
+			ID:        node.ID,
+			Component: node.Component,
+			Variant:   node.Variant,
+			Version:   node.Version,
+			Config:    canonicalConfig{Schema: node.Config.Schema(), Version: node.Config.Version(), Fingerprint: node.Config.Fingerprint().String()},
+			Inputs:    append([]PortDescriptor(nil), node.Inputs...),
+			Outputs:   append([]PortDescriptor(nil), node.Outputs...),
+			Effects:   append([]plugin.Effect(nil), node.Effects...),
+			Contract:  node.Contract,
+			Resources: node.Resources,
+			Scratch:   node.Scratch,
+			Estimate:  node.Estimate,
 		}
 	}
 	edges := append([]Edge(nil), description.Edges...)

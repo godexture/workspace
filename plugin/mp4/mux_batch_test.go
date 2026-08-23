@@ -106,7 +106,7 @@ func TestMP4MuxBatchesChunkOffsetScratchWrites(t *testing.T) {
 		t.Fatalf("partial page used = %d, want %d", mux.tracks[0].used, (chunks%perPage)*recordBytes)
 	}
 
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if mux.tracks[0].used != 0 || mux.tracks[0].recorded != chunks {
@@ -139,7 +139,7 @@ func TestMP4MuxKeepsInterleavedChunkOffsetsInTrackRegions(t *testing.T) {
 			}
 		}
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for ordinal := range 2 {
@@ -220,7 +220,7 @@ func TestMP4MuxChunkOffsetPageFailureDoesNotAdvanceState(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		if err := mux.Finalize(ctx); !errors.Is(err, context.Canceled) {
+		if err := mux.finalize(ctx); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled Finalize = %v", err)
 		}
 		if mux.tracks[0].used != 8 || len(spy.writeSizes) != 0 {
@@ -239,7 +239,7 @@ func TestMP4MuxChunkOffsetCardinalityAndEmptyJournal(t *testing.T) {
 		if err := mux.recordChunkOffset(t.Context(), 0); err != nil {
 			t.Fatal(err)
 		}
-		if err := mux.Finalize(t.Context()); !errors.Is(err, ErrMalformed) {
+		if err := mux.finalize(t.Context()); !errors.Is(err, ErrMalformed) {
 			t.Fatalf("incomplete journal Finalize = %v", err)
 		}
 	})
@@ -263,7 +263,7 @@ func TestMP4MuxChunkOffsetCardinalityAndEmptyJournal(t *testing.T) {
 		if err := mux.sizeJournal(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := mux.Finalize(t.Context()); err != nil {
+		if err := mux.finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -292,7 +292,7 @@ func BenchmarkMP4MuxChunkOffsetScratchBatch(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		if err := mux.Finalize(context.Background()); err != nil {
+		if err := mux.finalize(context.Background()); err != nil {
 			b.Fatal(err)
 		}
 	}

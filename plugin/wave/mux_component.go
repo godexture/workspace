@@ -140,7 +140,6 @@ func muxerComponent() plugin.Component {
 					}
 					return muxHeaderValue.payloadBytes()
 				}())},
-				Finalization: plugin.RequiresFinalization,
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan muxPlan) (flow.Operator, error) {
@@ -181,7 +180,6 @@ func muxerComponent() plugin.Component {
 			}
 			return operator, nil
 		},
-		Finalizes: true,
 	}
 	return plugin.NewComponent[muxerID](plugin.Descriptor{DisplayName: "WAVE muxer"}, muxConfigurationSchema(),
 		plugin.WithSpec(spec),

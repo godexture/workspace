@@ -172,7 +172,6 @@ type Spec[C, P, D any] struct {
 	Suggest         SuggestFunc[C, D]
 	Open            OpenFunc[P]
 	SuggestionLimit int
-	Finalizes       bool
 	Contract        Contract
 }
 
@@ -186,7 +185,6 @@ type Compiled[P, D any] struct {
 	Resources    resource.Request
 	Scratch      resource.Bytes
 	Estimate     resource.Estimate
-	Finalization Finalization
 }
 
 type componentImplementation struct {
@@ -208,14 +206,12 @@ type compiledErased struct {
 	resources    resource.Request
 	scratch      resource.Bytes
 	estimate     resource.Estimate
-	finalization Finalization
 }
 
 // WithSpec type-erases one typed Spec at component construction time.
 func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 	implementation := &componentImplementation{
 		suggestionLimit: spec.SuggestionLimit,
-		finalizes:       spec.Finalizes,
 		contract:        normalizeContract(spec.Contract),
 		ports:           spec.Ports.Clone(),
 	}
@@ -246,7 +242,6 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 				resources:    compiled.Resources,
 				scratch:      compiled.Scratch,
 				estimate:     compiled.Estimate,
-				finalization: compiled.Finalization,
 			}, err
 		}
 	}

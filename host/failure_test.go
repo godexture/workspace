@@ -331,8 +331,8 @@ func TestOmittedCauseEchoKeepsOriginalAttributionForHostProjection(t *testing.T)
 }
 
 func TestLifecyclePhaseOperationMappingIsBidirectional(t *testing.T) {
-	if len(phaseOperations) != 14 {
-		t.Fatalf("mapping entries = %d, want all 14 lifecycle operations", len(phaseOperations))
+	if len(phaseOperations) != 13 {
+		t.Fatalf("mapping entries = %d, want all 13 lifecycle operations", len(phaseOperations))
 	}
 	for _, pair := range phaseOperations {
 		if got := phaseOf(pair.operation); got != pair.phase {

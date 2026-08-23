@@ -60,7 +60,7 @@ func TestMP4MuxPreservesSourceRangesAndPatchesChunkOffsets(t *testing.T) {
 					}
 				}
 			}
-			if err := mux.Finalize(t.Context()); err != nil {
+			if err := mux.finalize(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if err := mux.Flush(t.Context(), collector); err != nil {
@@ -98,7 +98,7 @@ func TestMP4MuxPreservesUnknownSampleEntryAsRawPackets(t *testing.T) {
 	if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &input), collector); err != nil {
 		t.Fatal(err)
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {
@@ -131,7 +131,7 @@ func TestMP4MuxPatchesOffsetsForTrackMajorOutput(t *testing.T) {
 			}
 		}
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {
@@ -152,7 +152,7 @@ func TestMP4MuxZeroSampleTrackNeedsNoJournal(t *testing.T) {
 	buffers := mustMP4Allocator(t, 1<<20)
 	mux := openMP4Mux(t, component, compiled, movieSourceOpening(t, data), buffers, nil)
 	collector := &muxWriteCollector{}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {

@@ -32,7 +32,6 @@ type Compilation struct {
 	resources      resource.Request
 	scratch        resource.Bytes
 	estimate       resource.Estimate
-	finalization   Finalization
 	execution      drive.Binding
 	executionSet   bool
 }
@@ -47,7 +46,6 @@ func (c Compilation) Effects() []Effect                     { return append([]Ef
 func (c Compilation) Resources() resource.Request           { return c.resources }
 func (c Compilation) Scratch() resource.Bytes               { return c.scratch }
 func (c Compilation) Estimate() resource.Estimate           { return c.estimate }
-func (c Compilation) Finalization() Finalization            { return c.finalization }
 
 func OutputsOf[D any](compilation Compilation) (flow.Descriptors[D], bool) {
 	value, ok := compilation.outputs.(flow.Descriptors[D])
@@ -145,12 +143,6 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if uint64(compiled.scratch) > math.MaxInt64 {
 		items = append(items, diagnostic.NewItem("plugin.compile-scratch", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned a scratch claim outside the runtime range", nil))
 	}
-	if !compiled.finalization.Valid() {
-		items = append(items, diagnostic.NewItem("plugin.compile-finalization", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid finalization requirement", nil))
-	}
-	if compiled.finalization == RequiresFinalization && !component.implementation.finalizes {
-		items = append(items, diagnostic.NewItem("plugin.finalizer", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile requires finalization but Spec has no finalizer capability", nil))
-	}
 	if len(items) != 0 {
 		return Compilation{}, diagnostic.NewError(prefixComponent(items, component.identity)...)
 	}
@@ -166,7 +158,6 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		resources:      compiled.resources,
 		scratch:        compiled.scratch,
 		estimate:       compiled.estimate,
-		finalization:   compiled.finalization,
 		execution:      component.execution,
 		executionSet:   component.executionSet,
 	}, nil
@@ -251,15 +242,6 @@ func (c Component) Open(ctx OpenContext, compilation Compilation) (operator flow
 				detail += ": close failed: " + closeErr.Error()
 			}
 			return nil, c.phaseError("plugin.open-execution", "component Open returned an incompatible typed operator", detail)
-		}
-	}
-	if compilation.finalization == RequiresFinalization {
-		if _, ok := operator.(flow.Finalizer); !ok {
-			detail := "operator does not implement flow.Finalizer"
-			if closeErr := operator.Close(); closeErr != nil {
-				detail += ": close failed: " + closeErr.Error()
-			}
-			return nil, c.phaseError("plugin.open-finalizer", "component Open returned an operator without its declared finalizer", detail)
 		}
 	}
 	return operator, nil

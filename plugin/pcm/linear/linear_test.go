@@ -136,11 +136,6 @@ func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Fr
 	return nil
 }
 
-func (o *fixtureObserver) Finalize(context.Context) error {
-	o.state.add("finalize")
-	return nil
-}
-
 func (o *fixtureObserver) Flush(context.Context, flow.Emitter[audio.Frame[int16]]) error {
 	o.state.add("flow-flush")
 	return nil
@@ -359,7 +354,7 @@ func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
 	}
 	_, _, _, events := fixture.state.snapshot()
 	for _, event := range events {
-		if event == "finalize" || event == "flow-flush" || event == "sink-flush" {
+		if event == "flow-flush" || event == "sink-flush" {
 			t.Fatalf("canceled Run performed successful finalization: %v", events)
 		}
 	}
@@ -558,7 +553,7 @@ func runPCMProgram(t *testing.T, fixture pcmFixture, input []byte) ([]byte, [][]
 		t.Fatalf("PCM Run result = %#v, err = %v", result, err)
 	}
 	output, observed, timestamps, events := fixture.state.snapshot()
-	assertEventOrder(t, events, "eof", "finalize", "flow-flush", "sink-flush")
+	assertEventOrder(t, events, "eof", "flow-flush", "sink-flush")
 	return output, observed, timestamps
 }
 
@@ -588,15 +583,13 @@ func fixtureDefinition(descriptor stream.Descriptor, state *fixtureState) plugin
 				return plugin.Compiled[fixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("pcm.fixture-frame"))}}, nil
 			}
 			return plugin.Compiled[fixturePlan, stream.Descriptor]{
-				Plan:         fixturePlan{shape: observeShape},
-				Outputs:      flow.NewDescriptors(flow.Describe("out", input)),
-				Finalization: plugin.RequiresFinalization,
+				Plan:    fixturePlan{shape: observeShape},
+				Outputs: flow.NewDescriptors(flow.Describe("out", input)),
 			}, nil
 		},
 		Open: func(plugin.OpenContext, fixturePlan) (flow.Operator, error) {
 			return &fixtureObserver{fixtureOperator: fixtureOperator{shape: observeShape}, state: state}, nil
 		},
-		Finalizes: true,
 	}), plugin.WithProcessor("in", sample.Frames[int16](), "out", sample.Frames[int16]()))
 	sink := plugin.NewComponent[fixtureSinkID](plugin.Descriptor{DisplayName: "PCM fixture sink"}, schema, plugin.WithSpec(plugin.Spec[fixtureConfig, fixturePlan, stream.Descriptor]{
 		Ports: sinkShape,

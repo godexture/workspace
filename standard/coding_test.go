@@ -252,3 +252,21 @@ func TestConvertExpandsAnADPCMStream(t *testing.T) {
 		t.Fatalf("converted payload = %x, want it to carry %x", converted, want)
 	}
 }
+
+func TestDebugMuLawEncode(t *testing.T) {
+	payload := []byte{0x84, 0x82, 0x7c, 0x7d, 0x00, 0x00}
+	source := waveFile(waveShape{channels: 1, bits: 16}, payload)
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input.wav")
+	if err := os.WriteFile(input, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := standard.NewHost()
+	extension, _ := format.ParseExtension("wav")
+	selector, _ := job.SelectFormatExtension(extension)
+	request, _ := standard.NewFileJob(input, filepath.Join(directory, "o.wav"),
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("codec", "ulaw"))))
+	if _, err := instance.Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+}

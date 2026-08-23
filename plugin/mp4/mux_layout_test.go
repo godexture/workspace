@@ -50,7 +50,7 @@ func TestMP4MuxSubsetFailuresAreSticky(t *testing.T) {
 		if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &item), collector); err != nil {
 			t.Fatal(err)
 		}
-		if err := mux.Finalize(t.Context()); err != nil {
+		if err := mux.finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		flushErr := mux.Flush(t.Context(), collector)
@@ -71,7 +71,7 @@ func TestMP4MuxSubsetFailuresAreSticky(t *testing.T) {
 		if processErr == nil {
 			t.Fatal("a journal the muxer could not reserve still accepted a packet")
 		}
-		if mux.Finalize(t.Context()) != processErr {
+		if mux.finalize(t.Context()) != processErr {
 			t.Fatalf("subset scratch sticky failure = %v", processErr)
 		}
 		for _, output := range collector.items {

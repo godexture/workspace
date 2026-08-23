@@ -93,9 +93,9 @@ func (m *muxer) Process(ctx context.Context, input *flow.Item[packet.Packet], ou
 	return nil
 }
 
-func (m *muxer) Finalize(context.Context) error {
+func (m *muxer) finalize() error {
 	if m.finalized {
-		return errors.New("WAVE muxer was finalized more than once")
+		return nil
 	}
 	if m.dataSize%m.header.blockAlign != 0 {
 		return ErrPartialBlock
@@ -104,9 +104,12 @@ func (m *muxer) Finalize(context.Context) error {
 	return nil
 }
 
+// Flush states what only the whole of the input decides. It runs after every
+// node above it has flushed, so the payload size it patches into the header is
+// final even when a coder upstream emitted its last block during its own.
 func (m *muxer) Flush(ctx context.Context, output flow.Emitter[access.Write]) error {
-	if !m.finalized {
-		return errors.New("WAVE muxer must be finalized before flush")
+	if err := m.finalize(); err != nil {
+		return err
 	}
 	if m.flushed {
 		return nil

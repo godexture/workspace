@@ -66,18 +66,16 @@ func muxerComponent() plugin.Component {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
-				Plan:         muxPlan{shape: shape.Clone(), movie: inspected, layout: layout, scratch: scratch},
-				Outputs:      flow.NewDescriptors(flow.Describe("writes", output)),
-				Effects:      []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-remux"}},
-				Resources:    resource.Request{Memory: muxPageBytes},
-				Scratch:      scratch,
-				Finalization: plugin.RequiresFinalization,
+				Plan:      muxPlan{shape: shape.Clone(), movie: inspected, layout: layout, scratch: scratch},
+				Outputs:   flow.NewDescriptors(flow.Describe("writes", output)),
+				Effects:   []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-remux"}},
+				Resources: resource.Request{Memory: muxPageBytes},
+				Scratch:   scratch,
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan muxPlan) (flow.Operator, error) {
 			return openMuxer(ctx, plan)
 		},
-		Finalizes: true,
 	}
 	return plugin.NewComponent[muxerID](plugin.Descriptor{DisplayName: "MP4 muxer"}, configurationSchema(),
 		plugin.WithSpec(spec),

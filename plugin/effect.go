@@ -42,14 +42,3 @@ type Effect struct {
 func (e Effect) Valid() bool {
 	return e.Kind.Valid() && e.Loss.Valid() && strings.TrimSpace(e.Detail) != ""
 }
-
-// Finalization records whether successful output requires the node's explicit
-// finalizer capability. Execution of that capability starts in M5.
-type Finalization uint8
-
-const (
-	NoFinalization Finalization = iota
-	RequiresFinalization
-)
-
-func (f Finalization) Valid() bool { return f <= RequiresFinalization }

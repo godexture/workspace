@@ -24,7 +24,6 @@ type fingerprintComponent struct {
 	HasSpec         bool
 	HasSuggest      bool
 	SuggestionLimit int
-	Finalizes       bool
 	Contract        plugin.Contract
 	Traits          []plugin.TraitDescriptor
 }
@@ -75,7 +74,6 @@ func catalogFingerprint(definitions []plugin.Definition, components []plugin.Com
 			HasSpec:         component.View().HasSpec,
 			HasSuggest:      component.View().HasSuggest,
 			SuggestionLimit: component.View().SuggestionLimit,
-			Finalizes:       component.View().Finalizes,
 			Contract:        component.Contract(),
 			Traits:          component.Traits(),
 		}

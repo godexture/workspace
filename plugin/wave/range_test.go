@@ -100,7 +100,7 @@ func TestRangeMuxReadsOpaqueAnchorsInFixedPages(t *testing.T) {
 	if err := operator.Process(t.Context(), &input, collector); err != nil {
 		t.Fatal(err)
 	}
-	if err := operator.Finalize(t.Context()); err != nil {
+	if err := operator.finalize(); err != nil {
 		t.Fatal(err)
 	}
 	if err := operator.Flush(t.Context(), collector); err != nil {

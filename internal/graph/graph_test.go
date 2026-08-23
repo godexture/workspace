@@ -65,7 +65,6 @@ func fixtureComponent[Marker any](shape flow.Shape, compile graphCompile, opened
 			}
 			return graphOperator{shape: plan.shape.Clone()}, nil
 		},
-		Finalizes: finalizes,
 	}))
 }
 
@@ -476,25 +475,6 @@ func TestCompileRejectsSemanticComponentFailures(t *testing.T) {
 			assertCodes(t, err, test.code)
 		})
 	}
-}
-
-func TestCompileRejectsMissingFinalizerCapability(t *testing.T) {
-	requiresFinalizer := func(flow.Descriptors[stream.Descriptor]) plugin.Compiled[graphPlan, stream.Descriptor] {
-		return plugin.Compiled[graphPlan, stream.Descriptor]{
-			Outputs:      flow.NewDescriptors(flow.Describe("out", fixtureDescriptor("stream", graphSchemaA))),
-			Finalization: plugin.RequiresFinalization,
-		}
-	}
-	index := fixtureCatalog(t,
-		fixtureComponent[graphSourceID](sourceShape(graphSchemaA), requiresFinalizer, nil, false),
-		fixtureComponent[graphSinkID](sinkShape(graphSchemaA), sinkCompile, nil, false),
-	)
-	request := fixtureRequest(t,
-		[]job.Node{fixtureNode[graphSourceID]("source"), fixtureNode[graphSinkID]("sink")},
-		[]job.Edge{job.Connect(job.At("source", "out"), job.At("sink", "in"))},
-	)
-	_, err := Compile(index, request)
-	assertCodes(t, err, "plugin.finalizer")
 }
 
 func TestTopologyDiagnosticsAreCanonical(t *testing.T) {
