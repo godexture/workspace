@@ -5,6 +5,7 @@ import (
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/plugin/audio"
 	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -14,7 +15,7 @@ import (
 // Set returns the immutable official composition for file-backed MP4/WAVE and
 // linear PCM processing.
 func Set() plugin.Set {
-	result := plugin.NewSet(file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
+	result := plugin.NewSet(audio.Plugin(), file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
 	// A WAVE header names a coding but not the component that reads it, and the
 	// two families do not import each other, so the composition connects them.
 	for _, coding := range wave.Codings() {

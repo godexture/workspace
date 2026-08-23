@@ -146,3 +146,15 @@ func sizeOf(value int) []byte {
 	binary.LittleEndian.PutUint32(result, uint32(value))
 	return result
 }
+
+// waveFile wraps an explicit payload in the header its shape describes.
+func waveFile(shape waveShape, payload []byte) []byte {
+	format := waveFormat(shape, shape.channels*shape.bits/8)
+	body := append([]byte("WAVE"), []byte("fmt ")...)
+	body = append(body, sizeOf(len(format))...)
+	body = append(body, format...)
+	body = append(body, []byte("data")...)
+	body = append(body, sizeOf(len(payload))...)
+	body = append(body, payload...)
+	return append(append([]byte("RIFF"), sizeOf(len(body))...), body...)
+}

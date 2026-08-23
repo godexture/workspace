@@ -37,9 +37,9 @@ func muxerShape() flow.Shape {
 
 func muxerComponent() plugin.Component {
 	shape := muxerShape()
-	spec := plugin.Spec[configuration, muxPlan, stream.Descriptor]{
+	spec := plugin.Spec[muxConfiguration, muxPlan, stream.Descriptor]{
 		Ports: shape,
-		Compile: func(ctx plugin.CompileContext, _ configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[muxPlan, stream.Descriptor], error) {
+		Compile: func(ctx plugin.CompileContext, configuration muxConfiguration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[muxPlan, stream.Descriptor], error) {
 			input, ok := inputs.One("packets")
 			if !ok {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{
@@ -54,7 +54,7 @@ func muxerComponent() plugin.Component {
 			}
 			// WAVE stores interleaved little-endian samples. Ask the planner to
 			// convert anything else rather than refusing the stream outright.
-			if want := muxDescription(description); want != description {
+			if want := muxDescription(description, configuration.Coding); want != description {
 				desired, err := describedPackets(input, want)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
@@ -170,7 +170,7 @@ func muxerComponent() plugin.Component {
 		},
 		Finalizes: true,
 	}
-	return plugin.NewComponent[muxerID](plugin.Descriptor{DisplayName: "WAVE muxer"}, configurationSchema(),
+	return plugin.NewComponent[muxerID](plugin.Descriptor{DisplayName: "WAVE muxer"}, muxConfigurationSchema(),
 		plugin.WithSpec(spec),
 		plugin.WithProcessor("packets", codec.Packets(), "writes", access.Writes()),
 		mediaformat.Write(WAVE(), access.NewRequirements(access.AllOf(access.RandomWrite))),
@@ -181,9 +181,16 @@ func muxerComponent() plugin.Component {
 // it received. WAVE stores interleaved little-endian samples, and a coding it
 // has no format tag for falls back to signed 16-bit. An unrepresentable rate
 // or channel layout is left unchanged so the header marshaller reports it.
-func muxDescription(value sample.Description) sample.Description {
+func muxDescription(value sample.Description, requested sample.Coding) sample.Description {
 	result := value
 	result.Packing = sample.Interleaved
+	if requested.Valid() {
+		result.Coding = requested
+		result.ValidBits = min(value.ValidBits, requested.Bits())
+		if requested.Float() {
+			result.ValidBits = requested.Bits()
+		}
+	}
 	if result.Coding.Bytes() > 1 {
 		result.Endian = sample.LittleEndian
 	} else {

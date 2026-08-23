@@ -1,0 +1,89 @@
+// Package audio implements the sample-representation components a planner puts
+// between stages that agree on a stream but not on how its samples are stored.
+package audio
+
+import (
+	mediaaudio "github.com/godexture/godec/media/audio"
+	"github.com/godexture/godec/media/sample"
+	"github.com/godexture/godec/plugin"
+)
+
+type (
+	pluginID struct{}
+
+	s16ToS32ID struct{}
+	s16ToF32ID struct{}
+	s16ToF64ID struct{}
+	s32ToS16ID struct{}
+	s32ToF32ID struct{}
+	s32ToF64ID struct{}
+	f32ToS16ID struct{}
+	f32ToS32ID struct{}
+	f32ToF64ID struct{}
+	f64ToS16ID struct{}
+	f64ToS32ID struct{}
+	f64ToF32ID struct{}
+)
+
+type conversion struct {
+	from, to  sample.Coding
+	identity  plugin.Identity
+	component plugin.Component
+}
+
+// conversions covers every ordered pair of canonical decoded codings. A port
+// schema is static, so a converter exists per pair rather than one component
+// that reshapes itself.
+var conversions = []conversion{
+	newConverter[s16ToS32ID, int16, int32](),
+	newConverter[s16ToF32ID, int16, float32](),
+	newConverter[s16ToF64ID, int16, float64](),
+	newConverter[s32ToS16ID, int32, int16](),
+	newConverter[s32ToF32ID, int32, float32](),
+	newConverter[s32ToF64ID, int32, float64](),
+	newConverter[f32ToS16ID, float32, int16](),
+	newConverter[f32ToS32ID, float32, int32](),
+	newConverter[f32ToF64ID, float32, float64](),
+	newConverter[f64ToS16ID, float64, int16](),
+	newConverter[f64ToS32ID, float64, int32](),
+	newConverter[f64ToF32ID, float64, float32](),
+}
+
+func newConverter[Marker any, From, To mediaaudio.Sample]() conversion {
+	return conversion{
+		from:      sample.CodingOf[From](),
+		to:        sample.CodingOf[To](),
+		identity:  plugin.IdentityOf[Marker](),
+		component: newComponent[Marker, From, To](),
+	}
+}
+
+// ConverterIdentity returns the component that restores a stream stored as one
+// canonical coding into another. Codings that are equal, or that no canonical
+// frame stores, have no converter.
+func ConverterIdentity(from, to sample.Coding) plugin.Identity {
+	for _, value := range conversions {
+		if value.from == from && value.to == to {
+			return value.identity
+		}
+	}
+	return plugin.Identity{}
+}
+
+// Plugin returns the pure-Go sample-representation family.
+func Plugin() plugin.Definition {
+	components := make([]plugin.Component, 0, len(conversions))
+	for _, value := range conversions {
+		components = append(components, value.component)
+	}
+	definition := plugin.Define[pluginID](plugin.Descriptor{
+		DisplayName: "Audio sample conversion",
+		Version:     "0.1.0",
+		License:     "MIT",
+		Build:       plugin.BuildModePureGo,
+	}, components...)
+	return definition.WithDeclarations(sample.Declarations()...)
+}
+
+// Set returns the self-contained composition.
+func Set() plugin.Set { return plugin.NewSet(Plugin()) }
