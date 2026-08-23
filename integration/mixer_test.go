@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/godexture/godec/config"
@@ -170,4 +171,186 @@ func pcmSamples(t *testing.T, produced []byte) []int16 {
 		result[index] = int16(binary.LittleEndian.Uint16(payload[index*2:]))
 	}
 	return result
+}
+
+// Two files, two branches, one mixer. Each boundary names the port it feeds,
+// because which recording arrives at which branch is a fact about the job
+// rather than something to be recovered from the order the node names sort in.
+//
+// The two are different lengths on purpose: what the shorter one stops
+// contributing is silence, so the result is as long as the longer one.
+func TestMixerOutlastsItsShorterInput(t *testing.T) {
+	directory := t.TempDir()
+	long := filepath.Join(directory, "long.wav")
+	short := filepath.Join(directory, "short.wav")
+	outputPath := filepath.Join(directory, "mixed.wav")
+	if err := os.WriteFile(long, riffWAVE(pcmRamp(8, 0x0800), 1, 48_000, 16), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(short, riffWAVE(pcmRamp(4, 0x0100), 1, 48_000, 16), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	graph := twoBranchMixerGraph(t)
+	inputs := make([]job.Input, 0, 2)
+	for index, path := range []string{long, short} {
+		reference, referenceErr := file.Reference(path)
+		if referenceErr != nil {
+			t.Fatal(referenceErr)
+		}
+		input, inputErr := job.InputFromReference(reference)
+		if inputErr != nil {
+			t.Fatal(inputErr)
+		}
+		named, portErr := input.WithPort(job.At(job.NodeID([]string{"a", "b"}[index]+"-demux"), "bytes"))
+		if portErr != nil {
+			t.Fatal(portErr)
+		}
+		inputs = append(inputs, named)
+	}
+	outputReference, err := file.Reference(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := job.OutputToReference(outputReference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := job.New(inputs, []job.Output{output}, graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := instance.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := prepared.Run(t.Context())
+	if runErr != nil || !result.Succeeded() {
+		t.Fatalf("mixer Run = %#v, %v", result, runErr)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	samples := pcmSamples(t, mustRead(t, outputPath))
+	if len(samples) != 8 {
+		t.Fatalf("mixed %d samples, want the length of the longer input", len(samples))
+	}
+	for index, got := range samples {
+		want := int16(0x0800 * (index + 1))
+		if index < 4 {
+			want += int16(0x0100 * (index + 1))
+		}
+		if got != want {
+			t.Fatalf("sample %d = %d, want %d (got %v)", index, got, want, samples)
+		}
+	}
+}
+
+// A job that names its boundaries can name them wrongly, and each way of doing
+// so has to say which way it was rather than failing as one thing.
+func TestSeveralBoundariesMustEachNameOneOpenPort(t *testing.T) {
+	directory := t.TempDir()
+	first := filepath.Join(directory, "first.wav")
+	second := filepath.Join(directory, "second.wav")
+	outputPath := filepath.Join(directory, "mixed.wav")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, riffWAVE(pcmRamp(4, 0x0100), 1, 48_000, 16), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		name  string
+		ports []string
+		code  string
+	}{
+		{name: "unnamed", ports: []string{"a-demux", ""}, code: "bind.unnamed-boundary"},
+		{name: "repeated", ports: []string{"a-demux", "a-demux"}, code: "bind.repeated-boundary"},
+		{name: "unknown", ports: []string{"a-demux", "c-demux"}, code: "bind.unknown-boundary"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			graph := twoBranchMixerGraph(t)
+			inputs := make([]job.Input, 0, 2)
+			for index, path := range []string{first, second} {
+				reference, referenceErr := file.Reference(path)
+				if referenceErr != nil {
+					t.Fatal(referenceErr)
+				}
+				input, inputErr := job.InputFromReference(reference)
+				if inputErr != nil {
+					t.Fatal(inputErr)
+				}
+				if name := test.ports[index]; name != "" {
+					named, portErr := input.WithPort(job.At(job.NodeID(name), "bytes"))
+					if portErr != nil {
+						t.Fatal(portErr)
+					}
+					input = named
+				}
+				inputs = append(inputs, input)
+			}
+			outputReference, err := file.Reference(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := job.OutputToReference(outputReference)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := job.New(inputs, []job.Output{output}, graph)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance, err := standard.NewHost()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = instance.Prepare(t.Context(), request)
+			if err == nil {
+				t.Fatal("a job with mismatched boundary names was accepted")
+			}
+			if !strings.Contains(err.Error(), test.code) {
+				t.Fatalf("diagnostic = %v, want %s", err, test.code)
+			}
+		})
+	}
+}
+
+// twoBranchMixerGraph is one mixer fed by two independent branches, each
+// leaving its reader's byte port open for a boundary to attach to.
+func twoBranchMixerGraph(t *testing.T) job.Graph {
+	t.Helper()
+	nodes := []job.Node{
+		job.NewNode("mix", pluginaudio.ProcessorIdentity(pluginaudio.Mixer), config.NewPatch()),
+		job.NewNode("narrow", pluginaudio.ConverterIdentity(sample.F32, sample.S16), config.NewPatch()),
+		job.NewNode("encode", linear.EncoderIdentity(sample.S16), config.NewPatch()),
+		job.NewNode("mux", wave.MuxerIdentity(), config.NewPatch()),
+	}
+	edges := []job.Edge{
+		job.Connect(job.At("mix", "mixed"), job.At("narrow", "frames")),
+		job.Connect(job.At("narrow", "converted"), job.At("encode", "frames")),
+		job.Connect(job.At("encode", "packets"), job.At("mux", "packets")),
+	}
+	for _, prefix := range []string{"a", "b"} {
+		nodes = append(nodes,
+			job.NewNode(job.NodeID(prefix+"-demux"), wave.DemuxerIdentity(), config.NewPatch()),
+			job.NewNode(job.NodeID(prefix+"-parse"), linear.ParserIdentity(), config.NewPatch()),
+			job.NewNode(job.NodeID(prefix+"-decode"), linear.DecoderIdentity(sample.S16), config.NewPatch()),
+			job.NewNode(job.NodeID(prefix+"-widen"), pluginaudio.ConverterIdentity(sample.S16, sample.F32), config.NewPatch()),
+		)
+		edges = append(edges,
+			job.Connect(job.At(job.NodeID(prefix+"-demux"), "chunks"), job.At(job.NodeID(prefix+"-parse"), "chunks")),
+			job.Connect(job.At(job.NodeID(prefix+"-parse"), "packets"), job.At(job.NodeID(prefix+"-decode"), "packets")),
+			job.Connect(job.At(job.NodeID(prefix+"-decode"), "frames"), job.At(job.NodeID(prefix+"-widen"), "frames")),
+			job.Connect(job.At(job.NodeID(prefix+"-widen"), "converted"), job.At("mix", "inputs")),
+		)
+	}
+	graph, err := job.NewGraph(nodes, edges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return graph
 }

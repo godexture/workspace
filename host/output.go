@@ -64,10 +64,10 @@ func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, err
 				map[string]string{"boundary": projection.Node, "cause": err.Error()},
 			))
 		}
-		values := upstreamInspections(job.NodeID(projection.Node), match.Format(), upstream, inspectedByNode)
-		switch len(values) {
-		case 0:
-		case 1:
+		// One inspected input of this format is the one this writer reads
+		// through; several are none, because the output is no longer any one
+		// of them and has nothing of theirs left to carry through.
+		if values := upstreamInspections(job.NodeID(projection.Node), match.Format(), upstream, inspectedByNode); len(values) == 1 {
 			prepared, err = mediaformat.WithInspection(prepared, values[0].value)
 			if err != nil {
 				return inputSelection{}, inspectHandoffDiagnostic(match.Component().Identity(), map[string]string{
@@ -77,8 +77,6 @@ func (h *Host) selectOutputFormats(selected inputSelection) (inputSelection, err
 					"cause":     err.Error(),
 				}, "writable Format CompileContext already contains a different inspection")
 			}
-		default:
-			return inputSelection{}, ambiguousInspection(writeFormatNode{id: job.NodeID(projection.Node), component: match.Component(), format: match.Format()}, values)
 		}
 		insertion, err := insertOutputFormat(result.request, projection, match.Component(), patch)
 		if err != nil {

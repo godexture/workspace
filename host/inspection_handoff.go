@@ -3,8 +3,6 @@ package host
 import (
 	"errors"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/internal/bound"
@@ -55,16 +53,17 @@ func (h *Host) handoffInspections(requested job.Graph, contexts map[job.NodeID]p
 	upstream := reverseNodeAdjacency(requested.Edges())
 	candidates := make(map[job.NodeID][]inspectedFormat, len(writers))
 	for _, writer := range writers {
-		values := upstreamInspections(writer.id, writer.format, upstream, inspectedByNode)
-		candidates[writer.id] = values
-		if len(values) < 2 {
-			continue
-		}
-		return ambiguousInspection(writer, values)
+		candidates[writer.id] = upstreamInspections(writer.id, writer.format, upstream, inspectedByNode)
 	}
 
 	for _, writer := range writers {
 		values := candidates[writer.id]
+		// A writer inherits an inspection so it can carry through what only the
+		// original bytes say -- the chunks nobody interpreted, the ranges the
+		// description does not reach. Several inputs of the same format make
+		// that meaningless rather than ambiguous: the output is not any one of
+		// them any more, so there is nothing of theirs to carry through and the
+		// writer builds the whole file from what it was told instead.
 		if len(values) != 1 {
 			continue
 		}
@@ -123,14 +122,10 @@ func (h *Host) formatSourceBindings(selected program.Program, entries []bound.En
 	upstream := reverseNodeAdjacency(selected.Edges())
 	for _, writer := range writers {
 		values := upstreamInspections(writer.id, writer.format, upstream, inspectedByNode)
-		switch len(values) {
-		case 0:
-		case 1:
-			if values[0].boundary != "" {
-				sources[writer.id] = values[0].boundary
-			}
-		default:
-			return nil, ambiguousInspection(writer, values)
+		// One inspected input is the source this writer reads through; several
+		// are none, for the same reason the handoff above skips them.
+		if len(values) == 1 && values[0].boundary != "" {
+			sources[writer.id] = values[0].boundary
 		}
 	}
 	return sources, nil
@@ -142,20 +137,6 @@ func indexInspections(values []inspectedFormat) map[job.NodeID]inspectedFormat {
 		result[value.source] = value
 	}
 	return result
-}
-
-func ambiguousInspection(writer writeFormatNode, values []inspectedFormat) error {
-	sources := make([]string, len(values))
-	for index, value := range values {
-		sources[index] = value.source.String()
-	}
-	sort.Strings(sources)
-	return inspectHandoffDiagnostic(writer.component.Identity(), map[string]string{
-		"format":      writer.format.Identity().String(),
-		"sources":     strings.Join(sources, ","),
-		"writeNode":   writer.id.String(),
-		"sourceCount": strconv.Itoa(len(values)),
-	}, "multiple inspected inputs cannot be handed off to one writable Format")
 }
 
 func reverseNodeAdjacency(edges []job.Edge) map[job.NodeID][]job.NodeID {

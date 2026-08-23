@@ -94,6 +94,7 @@ type Input struct {
 	direct    any
 	endpoint  EndpointRequest
 	format    FormatSelector
+	port      Port
 }
 
 func InputFromReference(reference access.Reference) (Input, error) {
@@ -147,6 +148,22 @@ func (i Input) FormatHint() (FormatSelector, bool) {
 	return i.format.clone(), i.format.Valid()
 }
 
+// WithPort names the open graph port this input feeds. A job with one input
+// does not need it: there is one open port and one thing to put in it. A job
+// with several does, because which file arrives at which branch is a fact
+// about the job rather than something to be recovered from the order the
+// ports happen to sort in.
+func (i Input) WithPort(value Port) (Input, error) {
+	if !i.Valid() || !value.Valid() {
+		return Input{}, errors.New("job input port is invalid")
+	}
+	result := i
+	result.port = value
+	return result, nil
+}
+
+func (i Input) Port() (Port, bool) { return i.port, i.port.Valid() }
+
 type OutputKind uint8
 
 const (
@@ -165,6 +182,7 @@ type Output struct {
 	direct    any
 	endpoint  EndpointRequest
 	format    FormatSelector
+	port      Port
 }
 
 func OutputToReference(reference access.Reference) (Output, error) {
@@ -216,3 +234,16 @@ func (o Output) WithFormatRequest(selector FormatSelector) (Output, error) {
 func (o Output) FormatRequest() (FormatSelector, bool) {
 	return o.format.clone(), o.format.Valid()
 }
+
+// WithPort names the open graph port this output is fed from, for the same
+// reason an input names the one it feeds.
+func (o Output) WithPort(value Port) (Output, error) {
+	if !o.Valid() || !value.Valid() {
+		return Output{}, errors.New("job output port is invalid")
+	}
+	result := o
+	result.port = value
+	return result, nil
+}
+
+func (o Output) Port() (Port, bool) { return o.port, o.port.Valid() }
