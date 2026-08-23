@@ -46,6 +46,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	// express a mixer either. Its two-input Host run is the semantic gate, and
 	// the Plan it ran is the coverage evidence.
 	coverage.Observe(t, mixerConformancePlan(t), set)
+	coverage.Observe(t, convolverConformancePlan(t), set)
 	coverage.VerifyExecutable(t, set)
 	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity())
 	for _, assignment := range []struct {
