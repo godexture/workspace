@@ -45,3 +45,17 @@ func linkedPeak(planes [][]float32, index int) float32 {
 	}
 	return result
 }
+
+// peakOf is the loudest sample in one plane.
+func peakOf(samples []float32) float32 {
+	var result float32
+	for _, value := range samples {
+		if value < 0 {
+			value = -value
+		}
+		if value > result {
+			result = value
+		}
+	}
+	return result
+}

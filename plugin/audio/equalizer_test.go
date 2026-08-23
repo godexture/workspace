@@ -118,16 +118,3 @@ func tone(frequency float64, rate, samples int) []float32 {
 	}
 	return result
 }
-
-func peakOf(samples []float32) float32 {
-	var result float32
-	for _, value := range samples {
-		if value < 0 {
-			value = -value
-		}
-		if value > result {
-			result = value
-		}
-	}
-	return result
-}

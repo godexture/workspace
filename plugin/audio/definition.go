@@ -42,6 +42,8 @@ type (
 	delayConfigID      struct{}
 	reverbID           struct{}
 	reverbConfigID     struct{}
+	remixID            struct{}
+	remixConfigID      struct{}
 )
 
 type conversion struct {
@@ -102,6 +104,7 @@ const (
 	Equalizer  Processor = "equalizer"
 	Delay      Processor = "delay"
 	Reverb     Processor = "reverb"
+	Remix      Processor = "remix"
 )
 
 type entry struct {
@@ -119,6 +122,7 @@ var processors = []entry{
 	{name: Equalizer, component: newEqualizer()},
 	{name: Delay, component: newDelay()},
 	{name: Reverb, component: newReverb()},
+	{name: Remix, component: newRemix()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An

@@ -118,6 +118,15 @@ func (l Layout) Has(value Position) bool {
 	return value.Valid() && l.mask&value.bit() != 0
 }
 
+// Index returns where one position sits among this layout's channels, or -1
+// when the layout does not carry it. It is the inverse of At.
+func (l Layout) Index(value Position) int {
+	if !l.Has(value) {
+		return -1
+	}
+	return bits.OnesCount32(l.mask & (value.bit() - 1))
+}
+
 // At returns the position of one channel in mask order, which is the order
 // interleaved samples are stored in.
 func (l Layout) At(index int) (Position, bool) {
