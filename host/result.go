@@ -29,7 +29,6 @@ const (
 	OpenPhase          Phase = "open"
 	RunPhase           Phase = "run"
 	ObservationPhase   Phase = "observation"
-	FinalizePhase      Phase = "finalize"
 	FlushPhase         Phase = "flush"
 	SyncPhase          Phase = "sync"
 	PrepareCommitPhase Phase = "prepare-commit"

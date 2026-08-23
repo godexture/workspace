@@ -223,18 +223,18 @@ func TestDelayedObservationFailureCancelsPhaseBeforeFinish(t *testing.T) {
 func TestDelayedObservationFailureAfterQuiesceSkipsFlush(t *testing.T) {
 	want := errors.New("delayed observation failure")
 	state := &lifecycleState{
-		finalizeStarted:  make(chan struct{}),
-		finalizeRelease:  make(chan struct{}),
-		finalizeCanceled: make(chan struct{}),
+		flushStarted:  make(chan struct{}),
+		flushRelease:  make(chan struct{}),
+		flushCanceled: make(chan struct{}),
 	}
 	instance, request := lifecycleFixture(t, state)
 	sink := EventSinkFunc(func(context.Context, Event) error {
 		select {
-		case <-state.finalizeStarted:
+		case <-state.flushStarted:
 			return want
 		default:
 		}
-		<-state.finalizeStarted
+		<-state.flushStarted
 		return want
 	})
 	runDone := make(chan struct {
@@ -249,11 +249,11 @@ func TestDelayedObservationFailureAfterQuiesceSkipsFlush(t *testing.T) {
 		}{result: result, err: err}
 	}()
 	select {
-	case <-state.finalizeCanceled:
+	case <-state.flushCanceled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("observation failure did not cancel before Finalize was released")
 	}
-	close(state.finalizeRelease)
+	close(state.flushRelease)
 	select {
 	case value := <-runDone:
 		if value.err == nil || value.result.Primary == nil || !errors.Is(value.result.Primary, want) {
@@ -263,13 +263,13 @@ func TestDelayedObservationFailureAfterQuiesceSkipsFlush(t *testing.T) {
 		t.Fatal("run did not stop after the delayed observation failure")
 	}
 	entries, _ := state.snapshot()
-	if contains(entries, "flow-flush/processor") || contains(entries, "flush/sink") {
-		t.Fatalf("delayed observation failure allowed Flush after Quiesce: %v", entries)
+	if contains(entries, "flush/sink") {
+		t.Fatalf("delayed observation failure allowed a downstream flush: %v", entries)
 	}
 }
 
 func structureObservationEvent() observe.Event {
-	return observe.Event{Kind: observe.Lifecycle, Phase: string(FinalizePhase), Message: "complete"}
+	return observe.Event{Kind: observe.Lifecycle, Phase: string(FlushPhase), Message: "complete"}
 }
 
 func TestEventSinkJoinUsesCleanupBound(t *testing.T) {

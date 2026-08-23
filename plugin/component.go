@@ -172,7 +172,6 @@ func (c Component) View() ComponentView {
 		HasSpec:         c.implementation != nil,
 		HasSuggest:      c.implementation != nil && c.implementation.suggest != nil,
 		SuggestionLimit: c.suggestionLimit(),
-		Finalizes:       c.implementation != nil && c.implementation.finalizes,
 		Executable:      c.executionSet && c.execution.Valid(),
 		Contract:        c.Contract(),
 		Traits:          c.Traits(),
@@ -211,7 +210,6 @@ type ComponentView struct {
 	HasSpec         bool
 	HasSuggest      bool
 	SuggestionLimit int
-	Finalizes       bool
 	Executable      bool
 	Contract        Contract
 	Traits          []TraitDescriptor

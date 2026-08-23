@@ -52,15 +52,7 @@ func (o *spoolOperator) Process(ctx context.Context, input *flow.Item[buffer.Han
 	return output.Emit(ctx, &item)
 }
 
-func (o *spoolOperator) Finalize(context.Context) error {
-	o.finalized = true
-	return nil
-}
-
 func (o *spoolOperator) Flush(ctx context.Context, output flow.Emitter[access.Write]) error {
-	if !o.finalized {
-		return errors.New("positioned fixture must be finalized before flush")
-	}
 	if o.flushed {
 		return nil
 	}
@@ -338,10 +330,9 @@ func spoolFixture() plugin.Definition {
 				return plugin.Compiled[lifecyclePlan, stream.Descriptor]{}, err
 			}
 			return plugin.Compiled[lifecyclePlan, stream.Descriptor]{
-				Plan:         lifecyclePlan{shape: shape.Clone()},
-				Outputs:      flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
-				Resources:    resource.Request{Memory: resource.Bytes(len(spoolPatch))},
-				Finalization: plugin.RequiresFinalization,
+				Plan:      lifecyclePlan{shape: shape.Clone()},
+				Outputs:   flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
+				Resources: resource.Request{Memory: resource.Bytes(len(spoolPatch))},
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, _ lifecyclePlan) (flow.Operator, error) {
@@ -350,7 +341,6 @@ func spoolFixture() plugin.Definition {
 			}
 			return &spoolOperator{shape: shape.Clone(), buffers: ctx.Buffers()}, nil
 		},
-		Finalizes: true,
 	}
 	formatValue, err := mediaformat.Define[spoolFormatID](nil)
 	if err != nil {

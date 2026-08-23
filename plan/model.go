@@ -27,16 +27,15 @@ type Node struct {
 	Version     string
 	// Config includes display provenance; canonical Plan identity uses only its
 	// schema, version, and value fingerprint.
-	Config       config.Summary
-	Inputs       []PortDescriptor
-	Outputs      []PortDescriptor
-	Reason       string
-	Effects      []plugin.Effect
-	Contract     plugin.Contract
-	Resources    resource.Request
-	Scratch      resource.Bytes
-	Estimate     resource.Estimate
-	Finalization plugin.Finalization
+	Config    config.Summary
+	Inputs    []PortDescriptor
+	Outputs   []PortDescriptor
+	Reason    string
+	Effects   []plugin.Effect
+	Contract  plugin.Contract
+	Resources resource.Request
+	Scratch   resource.Bytes
+	Estimate  resource.Estimate
 }
 
 // Scratch projects the fixed aggregate temporary-byte reservation. Limit comes

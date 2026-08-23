@@ -244,7 +244,7 @@ func TestMP4MuxFlushFailsClosedForTruncatedAndCanceledSource(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := mux.Finalize(t.Context()); err != nil {
+		if err := mux.finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := mux.Flush(t.Context(), collector); !errors.Is(err, ErrTruncated) {
@@ -326,7 +326,7 @@ func TestMP4MuxFailsClosedForJournalFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := mux.Finalize(t.Context()); err != nil {
+		if err := mux.finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := mux.Flush(t.Context(), collector); !errors.Is(err, journal.readErr) {
@@ -347,7 +347,7 @@ func TestMP4MuxFailsClosedForJournalFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := mux.Finalize(t.Context()); err != nil {
+		if err := mux.finalize(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := mux.Flush(t.Context(), collector); !errors.Is(err, io.ErrUnexpectedEOF) {

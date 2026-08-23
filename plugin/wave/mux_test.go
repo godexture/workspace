@@ -65,7 +65,7 @@ func TestMuxEmitsHeaderPayloadAndFinalPatchesWithOwnedStorage(t *testing.T) {
 	if err := operator.Process(context.Background(), &packetItem, collector); err != nil {
 		t.Fatal(err)
 	}
-	if err := operator.Finalize(context.Background()); err != nil {
+	if err := operator.finalize(); err != nil {
 		t.Fatal(err)
 	}
 	if err := operator.Flush(context.Background(), collector); err != nil {

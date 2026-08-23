@@ -333,12 +333,6 @@ type Joiner[I, O any] interface {
 	Flush(context.Context, Emitter[O]) error
 }
 
-// Finalizer prepares successful end-of-stream state before Processor Flush is
-// propagated. It is never called during failure or cancellation cleanup.
-type Finalizer interface {
-	Finalize(context.Context) error
-}
-
 // Operator is the erased lifecycle value returned by component Open. Typed
 // Reader/Writer or Processor implementations are checked once by the caller
 // at Open time; items never pass through any.

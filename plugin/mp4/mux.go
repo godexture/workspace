@@ -172,12 +172,12 @@ func (m *muxer) Process(ctx context.Context, batch flow.Batch[packet.Packet], ou
 	return nil
 }
 
-func (m *muxer) Finalize(ctx context.Context) error {
+func (m *muxer) finalize(ctx context.Context) error {
 	if m.failure != nil {
 		return m.failure
 	}
 	if m.finalized {
-		return errors.New("MP4 muxer was finalized more than once")
+		return nil
 	}
 	if err := context.Cause(ctx); err != nil {
 		return m.fail(err)
@@ -200,12 +200,12 @@ func (m *muxer) Finalize(ctx context.Context) error {
 	return nil
 }
 
+// Flush states what only the whole of the input decides. It runs after every
+// node above it has flushed, so the sample tables it rebuilds are complete
+// even when a coder upstream emitted its last packet during its own.
 func (m *muxer) Flush(ctx context.Context, output flow.Emitter[access.Write]) error {
-	if m.failure != nil {
-		return m.failure
-	}
-	if !m.finalized {
-		return errors.New("MP4 muxer must be finalized before flush")
+	if err := m.finalize(ctx); err != nil {
+		return err
 	}
 	if m.flushed {
 		return nil

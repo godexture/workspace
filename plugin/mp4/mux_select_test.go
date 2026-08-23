@@ -57,7 +57,7 @@ func TestMP4MuxKeepsSelectedTrackOnly(t *testing.T) {
 			if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &inputItem), collector); err != nil {
 				t.Fatal(err)
 			}
-			if err := mux.Finalize(t.Context()); err != nil {
+			if err := mux.finalize(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if err := mux.Flush(t.Context(), collector); err != nil {
@@ -136,7 +136,7 @@ func TestMP4MuxPatchesMovieDurationOnSubset(t *testing.T) {
 	if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &item), collector); err != nil {
 		t.Fatal(err)
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {
@@ -205,7 +205,7 @@ func TestMP4MuxKeepsTrackReferencesAndEditsForAllTracks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {
@@ -250,7 +250,7 @@ func runSubsetMux(t testing.TB, data []byte, selectedIndex int) []byte {
 	if err := mux.Process(t.Context(), flow.NewSelectedBatch(0, &item), collector); err != nil {
 		t.Fatal(err)
 	}
-	if err := mux.Finalize(t.Context()); err != nil {
+	if err := mux.finalize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mux.Flush(t.Context(), collector); err != nil {

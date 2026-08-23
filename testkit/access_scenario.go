@@ -235,16 +235,14 @@ func accessReadFixture(requirements access.Requirements, output recorder[buffer.
 					return plugin.Compiled[accessFixturePlan, stream.Descriptor]{Requirements: []plugin.Requirement[stream.Descriptor]{plugin.Require("in", plugin.ConditionNeed[stream.Descriptor]("testkit.access.input"))}}, nil
 				}
 				return plugin.Compiled[accessFixturePlan, stream.Descriptor]{
-					Plan:         accessFixturePlan{shape: passShape.Clone()},
-					Outputs:      flow.NewDescriptors(flow.Describe("out", input)),
-					Finalization: plugin.RequiresFinalization,
+					Plan:    accessFixturePlan{shape: passShape.Clone()},
+					Outputs: flow.NewDescriptors(flow.Describe("out", input)),
 				}, nil
 			},
 			Open: func(plugin.OpenContext, accessFixturePlan) (flow.Operator, error) {
 				state.sourceOpen.Add(1)
 				return &accessReadPassOperator{shape: passShape.Clone(), state: state}, nil
 			},
-			Finalizes: true,
 		}),
 		plugin.WithProcessor("in", access.Bytes(), "out", access.Bytes()),
 		mediaformat.Read(accessFixtureFormat(), requirements),
@@ -333,11 +331,11 @@ func (o *accessReadPassOperator) Process(ctx context.Context, input *flow.Item[b
 	o.state.active.mark()
 	return output.Emit(ctx, input)
 }
-func (*accessReadPassOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error { return nil }
-func (o *accessReadPassOperator) Finalize(context.Context) error {
-	o.state.eof.Add(1)
+func (o *accessReadPassOperator) Flush(context.Context, flow.Emitter[buffer.Handle]) error {
+	o.drain()
 	return nil
 }
+func (o *accessReadPassOperator) drain() { o.state.eof.Add(1) }
 func (o *accessReadPassOperator) Close() error {
 	if !o.closed {
 		o.closed = true

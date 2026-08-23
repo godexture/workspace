@@ -59,22 +59,21 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			return program.Program{}, solveDiagnostic("solve.unsupported", nil, p.usage, p.budget, "resource", nil)
 		}
 		description.Nodes = append(description.Nodes, plan.Node{
-			ID:           node.ID().String(),
-			Origin:       metadata.origin,
-			Component:    component.Identity().String(),
-			DisplayName:  component.Descriptor().DisplayName,
-			Variant:      component.Identity().String() + "#default",
-			Version:      component.Descriptor().Version,
-			Config:       summary,
-			Inputs:       inputs,
-			Outputs:      outputs,
-			Reason:       metadata.reason,
-			Effects:      compilation.Effects(),
-			Contract:     component.Contract(),
-			Resources:    compilation.Resources(),
-			Scratch:      compilation.Scratch(),
-			Estimate:     compilation.Estimate(),
-			Finalization: compilation.Finalization(),
+			ID:          node.ID().String(),
+			Origin:      metadata.origin,
+			Component:   component.Identity().String(),
+			DisplayName: component.Descriptor().DisplayName,
+			Variant:     component.Identity().String() + "#default",
+			Version:     component.Descriptor().Version,
+			Config:      summary,
+			Inputs:      inputs,
+			Outputs:     outputs,
+			Reason:      metadata.reason,
+			Effects:     compilation.Effects(),
+			Contract:    component.Contract(),
+			Resources:   compilation.Resources(),
+			Scratch:     compilation.Scratch(),
+			Estimate:    compilation.Estimate(),
 		})
 	}
 	for _, edge := range compiled.Edges() {

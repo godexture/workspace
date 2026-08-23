@@ -305,7 +305,6 @@ var phaseOperations = [...]phaseOperation{
 	{operation: journal.Open, phase: OpenPhase},
 	{operation: journal.Run, phase: RunPhase},
 	{operation: journal.Observation, phase: ObservationPhase},
-	{operation: journal.Finalize, phase: FinalizePhase},
 	{operation: journal.Flush, phase: FlushPhase},
 	{operation: journal.Sync, phase: SyncPhase},
 	{operation: journal.PrepareCommit, phase: PrepareCommitPhase},

@@ -68,7 +68,6 @@ const (
 	Open
 	Run
 	Observation
-	Finalize
 	Flush
 	Sync
 	PrepareCommit
@@ -90,8 +89,6 @@ func (o Operation) String() string {
 		return "run"
 	case Observation:
 		return "observation"
-	case Finalize:
-		return "finalize"
 	case Flush:
 		return "flush"
 	case Sync:
