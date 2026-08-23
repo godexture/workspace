@@ -84,10 +84,11 @@ func TestConvertKeepsEveryWAVEShapeItCanRead(t *testing.T) {
 }
 
 type waveShape struct {
-	channels int
-	bits     int
-	float    bool
-	mask     uint32
+	channels  int
+	bits      int
+	float     bool
+	mask      uint32
+	formatTag uint16
 }
 
 // linearWave builds a 48 kHz WAVE of the requested shape whose payload is a
@@ -112,9 +113,12 @@ func linearWave(frames int, shape waveShape) (file, payload []byte) {
 }
 
 func waveFormat(shape waveShape, blockAlign int) []byte {
-	formatTag := uint16(1)
-	if shape.float {
-		formatTag = 3
+	formatTag := shape.formatTag
+	if formatTag == 0 {
+		formatTag = 1
+		if shape.float {
+			formatTag = 3
+		}
 	}
 	size := 16
 	if shape.mask != 0 {

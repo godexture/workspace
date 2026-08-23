@@ -305,7 +305,7 @@ func (h muxHeader) sourceEnd() uint64 {
 }
 
 func (h muxHeader) rangeOutputSize(dataSize uint64) (int, uint64, error) {
-	if len(h.prefix) == 0 || len(h.format) == 0 || len(h.dataTag) != 8 || h.reserveOffset < 0 || h.dataSizeOffset < 0 || h.dataOffset < 0 || h.blockAlign == 0 {
+	if len(h.prefix) == 0 || len(h.format) == 0 || len(h.dataTag) < 8 || h.reserveOffset < 0 || h.dataSizeOffset < 0 || h.dataOffset < 0 || h.blockAlign == 0 {
 		return 0, 0, fmt.Errorf("%w: WAVE range mux header layout is invalid", ErrMalformed)
 	}
 	beforeFormat, beforeData, afterData, trailer, ok := h.outputRangeLengths()
