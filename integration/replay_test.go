@@ -19,6 +19,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plan"
@@ -284,7 +285,7 @@ func automaticPCMRequest(t *testing.T, preset job.Preset, input job.Input, outpu
 	t.Helper()
 	patch := config.NewPatch().
 		SetText("rate", strconv.Itoa(48_000)).
-		SetText("validBits", "16").
+		SetText("coding", "s16").
 		SetText("layout", "mono").
 		SetText("endian", "little").
 		SetText("chunkSamples", "1024")
@@ -386,7 +387,7 @@ func assertRawFallbackPlan(t *testing.T, value plan.Plan) {
 		for _, field := range node.Config.Fields() {
 			explicit[field.ID] = field.Source == config.SourceExplicit
 		}
-		for _, field := range []string{"rate", "validBits", "layout", "endian"} {
+		for _, field := range []string{"rate", "coding", "layout", "endian"} {
 			if !explicit[field] {
 				t.Fatalf("raw fallback config %q is not an explicit hint: %#v", field, node.Config.Fields())
 			}

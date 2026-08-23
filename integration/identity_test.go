@@ -3,6 +3,7 @@ package integration_test
 import (
 	"testing"
 
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/pcm/linear"
@@ -19,8 +20,10 @@ func TestOfficialComponentMarkerIdentities(t *testing.T) {
 		{file.SinkIdentity(), "github.com/godexture/godec/plugin/file", "sinkID"},
 		{linear.ReaderIdentity(), "github.com/godexture/godec/plugin/pcm/linear", "readerID"},
 		{linear.ParserIdentity(), "github.com/godexture/godec/plugin/pcm/linear", "parserID"},
-		{linear.DecoderIdentity(sample.S16), "github.com/godexture/godec/plugin/pcm/linear", "decoderID"},
-		{linear.EncoderIdentity(sample.S16), "github.com/godexture/godec/plugin/pcm/linear", "encoderID"},
+		{linear.DecoderIdentity(sample.S16), "github.com/godexture/godec/plugin/pcm/linear", "decoderS16ID"},
+		{linear.DecoderIdentity(sample.S24), "github.com/godexture/godec/plugin/pcm/linear", "decoderS32ID"},
+		{linear.EncoderIdentity(sample.S16), "github.com/godexture/godec/plugin/pcm/linear", "encoderS16ID"},
+		{linear.EncoderIdentity(sample.F64), "github.com/godexture/godec/plugin/pcm/linear", "encoderF64ID"},
 		{linear.WriterIdentity(), "github.com/godexture/godec/plugin/pcm/linear", "writerID"},
 		{wave.DemuxerIdentity(), "github.com/godexture/godec/plugin/wave", "demuxerID"},
 		{wave.MuxerIdentity(), "github.com/godexture/godec/plugin/wave", "muxerID"},
