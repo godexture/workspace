@@ -46,7 +46,11 @@ func TestHandoffInspectionsSkipsDifferentFormatWriter(t *testing.T) {
 	}
 }
 
-func TestHandoffInspectionsDiagnosesMultipleSourcesDeterministically(t *testing.T) {
+// A writer inherits an inspection so it can carry through what only the
+// original bytes say. Several inputs of the same format leave it nothing of
+// theirs to carry: the output is not any one of them any more, so it builds
+// the whole file from what it was told instead of picking a source to imitate.
+func TestHandoffInspectionsLeavesAWriterFedBySeveralSourcesUninspected(t *testing.T) {
 	source, _, _, _ := boundaryComponentsWith(nil, nil, nil)
 	writer := manyFormatSelectionComponent[inspectHandoffWriterID](boundaryFormat())
 	host := newInspectionHandoffHost(t, writer, source)
@@ -70,17 +74,11 @@ func TestHandoffInspectionsDiagnosesMultipleSourcesDeterministically(t *testing.
 		{source: "z-source", boundary: "z-input", value: inspection},
 		{source: "a-source", boundary: "a-input", value: inspection},
 	}
-	err = host.handoffInspections(requested, contexts, inspected)
-	if err == nil {
-		t.Fatal("multiple inspected sources were accepted for one writer")
+	if err := host.handoffInspections(requested, contexts, inspected); err != nil {
+		t.Fatal(err)
 	}
-	items := Diagnostics(err)
-	if len(items) != 1 || items[0].Code != "prepare.inspect-handoff" {
-		t.Fatalf("handoff diagnostics = %#v", items)
-	}
-	detail := items[0].Detail
-	if detail["sourceCount"] != "2" || detail["sources"] != "a-source,z-source" || detail["writeNode"] != "writer" {
-		t.Fatalf("handoff detail = %#v", detail)
+	if _, ok := mediaformat.InspectionOf[int](contexts["writer"], boundaryFormat()); ok {
+		t.Fatal("a writer fed by two sources inherited one of them")
 	}
 }
 

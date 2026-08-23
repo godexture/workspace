@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"strings"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/config"
@@ -36,11 +37,6 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 	}
 	inputs := request.Inputs()
 	outputs := request.Outputs()
-	if len(inputs) > 1 || len(outputs) > 1 {
-		return Result{}, diagnostic.NewError(bindItem("bind.mapping-required", plugin.Identity{}, "multiple Job boundaries require explicit stream mapping", map[string]string{
-			"inputs": strconv.Itoa(len(inputs)), "outputs": strconv.Itoa(len(outputs)),
-		}))
-	}
 
 	graph, hasGraph := request.Graph()
 	nodes := graph.Nodes()
@@ -59,6 +55,17 @@ func Normalize(registry Registry, request job.Job) (Result, error) {
 		if len(outputs) != len(openOutputs) {
 			return Result{}, boundaryCountError(plan.OutputBoundary, len(outputs), len(openOutputs))
 		}
+		if openInputs, err = orderInputs(inputs, openInputs); err != nil {
+			return Result{}, err
+		}
+		if openOutputs, err = orderOutputs(outputs, openOutputs); err != nil {
+			return Result{}, err
+		}
+	} else if len(inputs) > 1 || len(outputs) > 1 {
+		return Result{}, diagnostic.NewError(bindItem("bind.graph-required", plugin.Identity{},
+			"a Job with more than one boundary needs an explicit graph to attach them to", map[string]string{
+				"inputs": strconv.Itoa(len(inputs)), "outputs": strconv.Itoa(len(outputs)),
+			}))
 	}
 	used := make(map[job.NodeID]struct{}, len(nodes)+len(inputs)+len(outputs))
 	for _, node := range nodes {
@@ -364,4 +371,112 @@ func boundaryCountError(direction plan.BoundaryDirection, choices, ports int) er
 	return diagnostic.NewError(bindItem("bind.ambiguous-boundary", plugin.Identity{}, "Job choices do not match the explicit graph's open boundary ports", map[string]string{
 		"direction": strconv.Itoa(int(direction)), "choices": strconv.Itoa(choices), "ports": strconv.Itoa(ports),
 	}))
+}
+
+// orderInputs puts the open ports in the order the boundaries name them. One
+// boundary needs no name because there is one port to attach it to; several
+// must each say which, since the order the ports sort in is an accident of
+// what the nodes were called rather than anything the caller decided.
+func orderInputs(inputs []job.Input, open []openInput) ([]openInput, error) {
+	if len(inputs) < 2 {
+		return open, nil
+	}
+	named := make([]job.Port, len(inputs))
+	for index, input := range inputs {
+		port, ok := input.Port()
+		if !ok {
+			return nil, unnamedBoundaryError(plan.InputBoundary, index, open)
+		}
+		named[index] = port
+	}
+	result := make([]openInput, len(inputs))
+	taken := make(map[string]struct{}, len(open))
+	for index, port := range named {
+		found := false
+		for _, candidate := range open {
+			if candidate.port != port {
+				continue
+			}
+			if _, exists := taken[port.String()]; exists {
+				return nil, repeatedBoundaryError(plan.InputBoundary, port)
+			}
+			taken[port.String()] = struct{}{}
+			result[index] = candidate
+			found = true
+			break
+		}
+		if !found {
+			return nil, unknownBoundaryError(plan.InputBoundary, port, open)
+		}
+	}
+	return result, nil
+}
+
+func orderOutputs(outputs []job.Output, open []job.Port) ([]job.Port, error) {
+	if len(outputs) < 2 {
+		return open, nil
+	}
+	result := make([]job.Port, len(outputs))
+	taken := make(map[string]struct{}, len(open))
+	for index, output := range outputs {
+		port, ok := output.Port()
+		if !ok {
+			return nil, unnamedBoundaryError(plan.OutputBoundary, index, nil)
+		}
+		found := false
+		for _, candidate := range open {
+			if candidate != port {
+				continue
+			}
+			if _, exists := taken[port.String()]; exists {
+				return nil, repeatedBoundaryError(plan.OutputBoundary, port)
+			}
+			taken[port.String()] = struct{}{}
+			result[index] = candidate
+			found = true
+			break
+		}
+		if !found {
+			return nil, unknownBoundaryError(plan.OutputBoundary, port, nil)
+		}
+	}
+	return result, nil
+}
+
+func unnamedBoundaryError(direction plan.BoundaryDirection, index int, open []openInput) error {
+	detail := map[string]string{"boundary": strconv.Itoa(index)}
+	if len(open) != 0 {
+		detail["open"] = openInputNames(open)
+	}
+	return diagnostic.NewError(bindItem("bind.unnamed-boundary", plugin.Identity{},
+		"a Job with more than one "+boundaryNoun(direction)+" needs each of them to name the graph port it attaches to", detail))
+}
+
+func unknownBoundaryError(direction plan.BoundaryDirection, port job.Port, open []openInput) error {
+	detail := map[string]string{"port": port.String()}
+	if len(open) != 0 {
+		detail["open"] = openInputNames(open)
+	}
+	return diagnostic.NewError(bindItem("bind.unknown-boundary", plugin.Identity{},
+		"a Job "+boundaryNoun(direction)+" names a port the graph does not leave open", detail))
+}
+
+func repeatedBoundaryError(direction plan.BoundaryDirection, port job.Port) error {
+	return diagnostic.NewError(bindItem("bind.repeated-boundary", plugin.Identity{},
+		"two Job "+boundaryNoun(direction)+"s name the same graph port", map[string]string{"port": port.String()}))
+}
+
+func boundaryNoun(direction plan.BoundaryDirection) string {
+	if direction == plan.InputBoundary {
+		return "input"
+	}
+	return "output"
+}
+
+func openInputNames(open []openInput) string {
+	names := make([]string, len(open))
+	for index, value := range open {
+		names[index] = value.port.String()
+	}
+	return strings.Join(names, ",")
 }
