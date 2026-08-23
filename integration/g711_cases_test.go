@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -14,6 +15,7 @@ import (
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/g711"
+	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/testkit"
 )
 
@@ -92,4 +94,46 @@ func signalDescriptor(t *testing.T, signal sample.Signal, schema mediaschema.Des
 		t.Fatal(err)
 	}
 	return stream.MustDescriptor("companded", schema, timing.MustBase(1, int64(signal.Rate)), properties)
+}
+
+// A coder cannot know what its container calls it, so it takes the name from
+// the stream the container asked for. Nothing else in its configuration comes
+// from the graph, which is what keeps the law a property of the component.
+func runCompandedSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
+	t.Helper()
+	signal := sample.Signal{Rate: 8_000, Layout: sample.Stereo()}
+	decoded := sample.Description{
+		Signal:  sample.Signal{Rate: 8_000, Layout: sample.Stereo(), ValidBits: 16},
+		Coding:  sample.S16,
+		Packing: sample.Planar,
+		Endian:  sample.NoEndian,
+	}
+	properties, err := signal.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := codec.WithTag(properties, wave.ULawTag())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := stream.MustDescriptor("companded", codec.Packets().Descriptor(), timing.MustBase(1, 8_000), named)
+
+	for _, law := range []g711.Law{g711.ALaw, g711.ULaw} {
+		testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, g711.DecoderIdentity(law),
+			"packets", codec.Packets(), "frames", sample.Frames[int16]()), coverage),
+			testkit.Suggestion{
+				Name:    "expansion-takes-nothing-from-the-graph",
+				Inputs:  flow.NewDescriptors(flow.Describe("packets", signalDescriptor(t, signal, codec.Packets().Descriptor()))),
+				Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand("frames", plugin.ConditionNeed[stream.Descriptor]("g711.config"))},
+				Want:    []testkit.Candidate{{"chunkSamples": "1024", "tag": ""}},
+			})
+		testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, g711.EncoderIdentity(law),
+			"frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
+			testkit.Suggestion{
+				Name:    "companding-is-named-by-its-container",
+				Inputs:  flow.NewDescriptors(flow.Describe("frames", linearFrameDescriptor[int16](t, decoded))),
+				Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand("packets", plugin.DescriptorNeed("wave.codec", wanted))},
+				Want:    []testkit.Candidate{{"chunkSamples": "1024", "tag": wave.ULawTag().String()}},
+			})
+	}
 }

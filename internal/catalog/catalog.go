@@ -146,8 +146,8 @@ func Build(set plugin.Set) (Index, error) {
 				}
 			}
 		}
-		if codec.IsBindingKey(key) && len(declaration.Targets()) > 2 {
-			items = append(items, diagnostic.NewItem("catalog.codec-binding", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "codec binding must name a codec and at most one parser", nil))
+		if _, role, ok := codec.BindingTag(key); ok && role == codec.ParserRole && len(declaration.Targets()) != 1 {
+			items = append(items, diagnostic.NewItem("catalog.codec-binding", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: key.String()}, "a codec tag is framed one way, so its parser binding names one component", nil))
 		}
 		if exists {
 			continue

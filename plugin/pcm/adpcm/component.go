@@ -238,3 +238,84 @@ func demandedTag(suggestion plugin.Suggestion[stream.Descriptor]) string {
 	}
 	return ""
 }
+
+func newEncoder[Marker any](variant Variant, name string) plugin.Component {
+	shape := flow.NewShape(
+		[]flow.Port{flow.In("frames", sample.Frames[int16]())},
+		[]flow.Port{flow.Out("packets", codec.Packets())},
+	)
+	spec := plugin.Spec[configuration, componentPlan, stream.Descriptor]{
+		Ports: shape,
+		Compile: func(_ plugin.CompileContext, configuration configuration, inputs flow.Descriptors[stream.Descriptor]) (plugin.Compiled[componentPlan, stream.Descriptor], error) {
+			input, ok := inputs.One("frames")
+			if !ok {
+				return incomplete(shape, nil)
+			}
+			description, err := sample.FromProperties(input.Properties())
+			if err != nil || description.Coding != sample.S16 || description.Packing != sample.Planar {
+				return plugin.Compiled[componentPlan, stream.Descriptor]{}, errors.New("ADPCM codes signed 16-bit planar frames")
+			}
+			channels := description.Layout.Count()
+			parameters, err := param.Default(variant.kind(), channels)
+			if err != nil {
+				return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
+			}
+			output, err := codedStream(input, description, configuration.Tag, variant, parameters)
+			if err != nil {
+				return plugin.Compiled[componentPlan, stream.Descriptor]{}, err
+			}
+			return plugin.Compiled[componentPlan, stream.Descriptor]{
+				Plan: componentPlan{
+					operation: encoderOperation, shape: shape.Clone(), variant: variant,
+					parameters: parameters, channels: channels, blocks: configuration.ChunkBlocks,
+				},
+				Outputs:   flow.NewDescriptors(flow.Describe("packets", output)),
+				Effects:   []plugin.Effect{{Kind: plugin.CompressionEffect, Loss: plugin.Lossy, Detail: "adpcm.code"}},
+				Resources: resource.Request{Memory: resource.Bytes(parameters.BlockAlign)},
+			}, nil
+		},
+		Suggest: func(_ plugin.SuggestContext, suggestion plugin.Suggestion[stream.Descriptor]) []configuration {
+			return []configuration{{ChunkBlocks: 16, Tag: codec.DemandedTag(suggestion).String()}}
+		},
+		SuggestionLimit: 1,
+		Open: func(ctx plugin.OpenContext, plan componentPlan) (flow.Operator, error) {
+			if ctx.Buffers() == nil {
+				return nil, errors.New("ADPCM requires a payload buffer grant")
+			}
+			return newEncoderOperator(plan, ctx.Buffers()), nil
+		},
+	}
+	return plugin.NewComponent[Marker](plugin.Descriptor{DisplayName: name}, configurationSchema(),
+		plugin.WithSpec(spec),
+		plugin.WithProcessor("frames", sample.Frames[int16](), "packets", codec.Packets()))
+}
+
+// codedStream describes what a coder produces: the signal it was given, the
+// geometry it chose for its blocks, the extension a container carries for it,
+// and the name the container asked it to answer to.
+func codedStream(input stream.Descriptor, description sample.Description, tag string, variant Variant, parameters param.Parameters) (stream.Descriptor, error) {
+	properties, err := sample.Signal{Rate: description.Rate, Layout: description.Layout}.Properties()
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	properties, err = codec.WithBlock(properties, codec.Block{
+		Bytes: int(parameters.BlockAlign), Samples: int(parameters.SamplesPerBlock),
+	})
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	properties, err = codec.WithParameters(properties, codec.NewParameters(marshalParameters(variant, parameters)))
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	if tag != "" {
+		if properties, err = codec.WithTag(properties, mediaformat.Tag(tag)); err != nil {
+			return stream.Descriptor{}, err
+		}
+	}
+	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), input.TimeBase(), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
+}

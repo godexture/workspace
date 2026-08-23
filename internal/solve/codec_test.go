@@ -51,8 +51,10 @@ func TestTaggedInputExcludesOnlyOtherCodecTargets(t *testing.T) {
 	otherParser := solveBridge[solveOtherParserID](solveSchemaA, solveSchemaB, structural("other-parser"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, &otherParserCompiles)
 	unbound := solveBridge[solveUnboundBridgeID](solveSchemaA, solveSchemaB, structural("unbound"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, &unboundCompiles)
 	declarations := codecDeclarations(
-		codec.Bind(matchingTag, codec.New(matchingCodec.Identity()), codec.NewParser(matchingParser.Identity())),
-		codec.Bind(otherTag, codec.New(matchingCodec.Identity()), codec.NewParser(otherParser.Identity())),
+		codec.BindDecoder(matchingTag, codec.New(matchingCodec.Identity())),
+		codec.BindParser(matchingTag, codec.NewParser(matchingParser.Identity())),
+		codec.BindDecoder(otherTag, codec.New(matchingCodec.Identity())),
+		codec.BindParser(otherTag, codec.NewParser(otherParser.Identity())),
 	)
 	index := solveIndexWithDeclarations(t, declarations, source, sink, matchingCodec, matchingParser, otherParser, unbound)
 
@@ -80,7 +82,7 @@ func TestCodecTagMismatchAppearsInPlanningDiagnostic(t *testing.T) {
 	sink := solveSink(solveSchemaB, false, nil)
 	var compiles atomic.Int32
 	other := solveBridge[solveOtherParserID](solveSchemaA, solveSchemaB, structural("other"), schemaTransform(solveSchemaB), nil, 0, plugin.Contract{}, nil, &compiles)
-	index := solveIndexWithDeclarations(t, codecDeclarations(codec.BindWithoutParser(otherTag, codec.New(other.Identity()))), source, sink, other)
+	index := solveIndexWithDeclarations(t, codecDeclarations(codec.BindDecoder(otherTag, codec.New(other.Identity()))), source, sink, other)
 
 	_, err := Resolve(context.Background(), index, solveRequest(t, source, sink, job.DefaultBudget()), solvePlatform())
 	if compiles.Load() != 0 {

@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/internal/catalog"
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
@@ -92,21 +93,49 @@ func compatibleContract(contract plugin.Contract, policy job.Policy, platform pl
 	return true
 }
 
-func codecCandidateMatches(index catalog.Index, candidate plugin.Identity, input stream.Descriptor) bool {
-	tag, tagged := codec.TagOf(input.Properties())
-	if !tagged {
-		return true
-	}
+// codecCandidateMatches narrows a bridge to the components a composition says
+// implement the codecs at either end of the gap, and it does so per role.
+//
+// A tag on the input names the codec that has to be read, so a component that
+// reads any tag has to read that one. A tag on what the consumer asked for
+// names the codec that has to be written, so a component that writes any tag
+// has to write that one. Checking the two separately is what stops a coder
+// bound to one tag from being reached to produce another: a stream carries the
+// name its coder was asked for, and this is what makes the name true.
+//
+// A component with no codec binding at all is unconstrained: it implements no
+// container codec, so no tag can disqualify it.
+func codecCandidateMatches(index catalog.Index, candidate plugin.Identity, input stream.Descriptor, need plugin.Need[stream.Descriptor]) bool {
 	bindings := index.CodecBindings(candidate)
 	if len(bindings) == 0 {
 		return true
 	}
+	read, _ := codec.TagOf(input.Properties())
+	var write format.Tag
+	if desired, ok := need.Desired(); ok {
+		write, _ = codec.TagOf(desired.Properties())
+	}
+	return boundFor(bindings, read, codec.DecoderRole, codec.ParserRole) &&
+		boundFor(bindings, write, codec.EncoderRole)
+}
+
+// boundFor reports whether a component may act in one of these roles on this
+// tag. A component that never acts in them is unconstrained by the tag, and so
+// is one asked about a stream that names no codec.
+func boundFor(bindings []catalog.CodecBinding, tag format.Tag, roles ...codec.Role) bool {
+	acts := false
 	for _, binding := range bindings {
-		if binding.Tag() == tag {
-			return true
+		for _, role := range roles {
+			if binding.Role() != role {
+				continue
+			}
+			acts = true
+			if binding.Tag() == tag {
+				return true
+			}
 		}
 	}
-	return false
+	return !acts || !tag.Valid()
 }
 
 type candidateResult struct {

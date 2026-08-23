@@ -218,9 +218,15 @@ func muxDescription(value sample.Description, requested sample.Coding) sample.De
 	return result
 }
 
-func describedPackets(input stream.Descriptor, description sample.Description) (stream.Descriptor, error) {
+func describedPackets(input stream.Descriptor, description sample.Description, target waveCodec) (stream.Descriptor, error) {
 	properties, err := description.Apply(input.Properties())
 	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	// The tag names the codec that writes this stream, which is not the one
+	// that wrote the input when the caller asked for a different codec.
+	properties = codec.WithoutBlock(codec.WithoutParameters(properties))
+	if properties, err = codec.WithTag(properties, CodecTag(target.name)); err != nil {
 		return stream.Descriptor{}, err
 	}
 	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, int64(description.Rate)), properties)
@@ -233,11 +239,15 @@ func describedPackets(input stream.Descriptor, description sample.Description) (
 // muxCodec decides which codec the output header declares.
 //
 // With no request the input codec is kept, which is what makes the default a
-// copy. A request that only changes the linear representation becomes a
-// descriptor the planner converts to. A request that crosses into or out of a
-// coded representation names the codec and lets the planner find a path: the
-// depth an expansion recovers, and the block geometry a coder chooses, belong
-// to the codec rather than to this header, so neither can be stated up front.
+// copy. Otherwise the muxer names the codec it wants in the stream it asks
+// for. Naming it is what reaches the component that writes it: a composition
+// binds a tag to the coder for it, and a planner narrows candidates to that
+// binding, so no other coder can answer to the name.
+//
+// What the muxer does not state is everything the coder decides -- the depth an
+// expansion recovers, the geometry a coder chooses for its blocks. It does not
+// have to: a gap closes when this Compile stops asking for anything, not when
+// an input matches a descriptor named in advance.
 func muxCodec(input stream.Descriptor, signal sample.Signal, requested string) (waveCodec, sample.Description, plugin.Requirement[stream.Descriptor], error) {
 	var none plugin.Requirement[stream.Descriptor]
 	description, linearErr := sample.FromProperties(input.Properties())
@@ -248,40 +258,66 @@ func muxCodec(input stream.Descriptor, signal sample.Signal, requested string) (
 	tag, tagged := codec.TagOf(input.Properties())
 	current, known := codecOfTag(tag)
 
-	switch {
-	case named && target.coding == "":
-		// A coded output has to come from the coder that writes it. Nothing
-		// names which coder that is yet -- a codec binding states the component
-		// that reads a tag, not the one that writes it -- so the only coded
-		// output this header can state is the one it read.
+	if !named {
+		if linearErr == nil {
+			target, named = codecForCoding(description.Coding)
+		} else {
+			target, named = current, known
+		}
+		if !named {
+			return waveCodec{}, sample.Description{}, none, unsupportedCodec(tag.String())
+		}
+	}
+	if target.coding == "" {
 		if tagged && current.name == target.name {
 			return target, sample.Description{}, none, nil
 		}
-		return waveCodec{}, sample.Description{}, none, fmt.Errorf("%w: %s can only be written back from the stream it was read as", ErrUnsupported, target.name)
-	case linearErr == nil:
-		want := muxDescription(description, target.coding)
-		if want != description {
-			desired, err := describedPackets(input, want)
-			if err != nil {
-				return waveCodec{}, sample.Description{}, none, err
-			}
-			return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.DescriptorNeed("wave.sample-description", desired)), nil
+		desired, err := codedPackets(input, signal, target)
+		if err != nil {
+			return waveCodec{}, sample.Description{}, none, err
 		}
-		entry, ok := codecForCoding(description.Coding)
-		if !ok {
-			return waveCodec{}, sample.Description{}, none, unsupportedCodec(string(description.Coding))
-		}
-		return entry, description, none, nil
-	case !tagged || !known:
-		return waveCodec{}, sample.Description{}, none, unsupportedCodec(tag.String())
-	case named:
-		// Rewriting coded samples into a linear representation means decoding
-		// them. A gap closes when this Compile stops asking for anything, so
-		// the condition is enough and no descriptor has to be named.
-		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.ConditionNeed[stream.Descriptor]("wave.linear-samples")), nil
-	default:
-		return current, sample.Description{}, none, nil
+		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.DescriptorNeed("wave.codec", desired)), nil
 	}
+	// A stream stored one scalar each names its codec in its own description,
+	// so the tag adds nothing a header needs. A coded one has only the tag.
+	want := muxDescription(description, target.coding)
+	if linearErr == nil && want == description {
+		return target, description, none, nil
+	}
+	if linearErr != nil {
+		want = sample.Description{
+			Signal: signal, Coding: target.coding, Packing: sample.Interleaved, Endian: sample.LittleEndian,
+		}
+		if want.ValidBits == 0 {
+			want.ValidBits = target.coding.Bits()
+		}
+		if target.coding.Bytes() == 1 {
+			want.Endian = sample.NoEndian
+		}
+	}
+	desired, err := describedPackets(input, want, target)
+	if err != nil {
+		return waveCodec{}, sample.Description{}, none, err
+	}
+	return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.DescriptorNeed("wave.sample-description", desired)), nil
+}
+
+// codedPackets is the stream a coder has to produce for this header: the same
+// signal, carrying the tag that names the codec. What the coder states about
+// its blocks is not named here, because only the coder knows it.
+func codedPackets(input stream.Descriptor, signal sample.Signal, target waveCodec) (stream.Descriptor, error) {
+	properties, err := sample.Signal{Rate: signal.Rate, Layout: signal.Layout}.Properties()
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	if properties, err = codec.WithTag(properties, CodecTag(target.name)); err != nil {
+		return stream.Descriptor{}, err
+	}
+	result, err := stream.NewDescriptor(input.ID(), codec.Packets().Descriptor(), timing.MustBase(1, int64(signal.Rate)), properties)
+	if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return result.WithMetadata(input.Metadata()), nil
 }
 
 func unsupportedCodec(name string) error {

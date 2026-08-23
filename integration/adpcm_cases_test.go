@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/audio"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
@@ -15,6 +16,7 @@ import (
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/pcm/adpcm"
+	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/testkit"
 )
 
@@ -107,4 +109,54 @@ func adpcmDescriptor(t *testing.T, signal sample.Signal, variant adpcm.Variant, 
 		t.Fatal(err)
 	}
 	return stream.MustDescriptor("coded", schema, timing.MustBase(1, int64(signal.Rate)), properties)
+}
+
+// A coder chooses the geometry of its blocks and states it, because a
+// container has no field that decides how many samples a block holds. It takes
+// the name it answers to from the stream the container asked for.
+func runADPCMCoderCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
+	t.Helper()
+	decoded := sample.Description{
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16},
+		Coding:  sample.S16,
+		Packing: sample.Planar,
+		Endian:  sample.NoEndian,
+	}
+	for _, variant := range []adpcm.Variant{adpcm.Microsoft, adpcm.IMA} {
+		tag := wave.CodecTag(variant.String())
+		properties, err := sample.Signal{Rate: 48_000, Layout: sample.Mono()}.Properties()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if properties, err = codec.WithTag(properties, tag); err != nil {
+			t.Fatal(err)
+		}
+		wanted := stream.MustDescriptor("coded", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties)
+		testkit.Suggests(t, testkit.Track(testkit.SubjectIn(set, adpcm.EncoderIdentity(variant),
+			"frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
+			testkit.Suggestion{
+				Name:    variant.String() + "-is-named-by-its-container",
+				Inputs:  flow.NewDescriptors(flow.Describe("frames", linearFrameDescriptor[int16](t, decoded))),
+				Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand("packets", plugin.DescriptorNeed("wave.codec", wanted))},
+				Want:    []testkit.Candidate{{"chunkBlocks": "16", "tag": tag.String()}},
+			})
+
+		// A frame shorter than a block leaves the coder holding samples, and
+		// the block it emits at the end of the input is padded to full length.
+		samples := 4
+		testkit.Codec(t,
+			testkit.Track(testkit.SubjectIn(set, adpcm.EncoderIdentity(variant),
+				"frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
+			testkit.Case[audio.Frame[int16], packet.Packet]{
+				Name:   variant.String() + "-pads-the-block-its-input-ended-inside",
+				Config: config.NewPatch(),
+				Input: testkit.FrameInput(decoded, []testkit.Frame[int16]{{
+					PTS: timing.SomePTS(timing.NewPTS(0)), Planes: [][]int16{make([]int16, samples)},
+				}}),
+				Want: testkit.WantValues([]int{256}, func(value packet.Packet) (int, error) {
+					return value.Bytes().Len(), nil
+				}),
+			},
+		)
+	}
 }

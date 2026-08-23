@@ -10,11 +10,13 @@ import (
 )
 
 type (
-	pluginID          struct{}
-	microsoftParserID struct{}
-	imaParserID       struct{}
-	microsoftID       struct{}
-	imaID             struct{}
+	pluginID           struct{}
+	microsoftParserID  struct{}
+	imaParserID        struct{}
+	microsoftID        struct{}
+	imaID              struct{}
+	microsoftEncoderID struct{}
+	imaEncoderID       struct{}
 )
 
 // Variant names one of the two block layouts. It belongs to the component
@@ -64,12 +66,15 @@ func DecoderIdentity(variant Variant) plugin.Identity {
 	return plugin.IdentityOf[imaID]()
 }
 
+// EncoderIdentity returns the component that codes samples into one variant.
+func EncoderIdentity(variant Variant) plugin.Identity {
+	if variant == Microsoft {
+		return plugin.IdentityOf[microsoftEncoderID]()
+	}
+	return plugin.IdentityOf[imaEncoderID]()
+}
+
 // Plugin returns the pure-Go ADPCM family.
-//
-// Coding is not here. A coder that groups samples into blocks has a partial
-// block left when its input ends, and the only place to emit it is Flush,
-// which the runtime runs after a muxer has finalized. Until that ordering is
-// settled the components would be unreachable.
 func Plugin() plugin.Definition {
 	definition := plugin.Define[pluginID](plugin.Descriptor{
 		DisplayName: "ADPCM",
@@ -81,6 +86,8 @@ func Plugin() plugin.Definition {
 		newParser[imaParserID](IMA, "IMA ADPCM parser"),
 		newDecoder[microsoftID](Microsoft, "Microsoft ADPCM decoder"),
 		newDecoder[imaID](IMA, "IMA ADPCM decoder"),
+		newEncoder[microsoftEncoderID](Microsoft, "Microsoft ADPCM encoder"),
+		newEncoder[imaEncoderID](IMA, "IMA ADPCM encoder"),
 	)
 	return definition.WithDeclarations(sample.Declarations()...)
 }
