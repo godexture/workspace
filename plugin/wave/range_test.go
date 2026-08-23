@@ -81,7 +81,7 @@ func TestRangeMuxReadsOpaqueAnchorsInFixedPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header, err := newRangeMuxHeader(inspected.description, inspected)
+	header, err := newLinearRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestRangeMuxStopsBeforeReadingACanceledSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header, err := newRangeMuxHeader(inspected.description, inspected)
+	header, err := newLinearRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}

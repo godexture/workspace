@@ -129,7 +129,7 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header, err := newRangeMuxHeader(inspected.description, inspected)
+	header, err := newLinearRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestMuxRestoresANonZeroReservationSlot(t *testing.T) {
 		if got := sourceRangeBytes(t, encoded, inspected.ranges.reservation); !bytes.Equal(got, reservation) {
 			t.Fatalf("pass %d reservation range = %x, want %x", pass, got, reservation)
 		}
-		header, err := newRangeMuxHeader(inspected.description, inspected)
+		header, err := newLinearRangeMuxHeader(inspected.description, inspected)
 		if err != nil {
 			t.Fatalf("pass %d header failed: %v", pass, err)
 		}
@@ -418,7 +418,7 @@ func TestRF64PromotionReplacesThePreservedReservation(t *testing.T) {
 	reservationPayload := bytes.Repeat([]byte{0x5a}, ds64PayloadSize)
 	chunks := muxChunks{reservation: waveTestChunk(t, tagJUNK, reservationPayload, 0)}
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
-	header, err := newMuxHeaderWithChunks(description, chunks)
+	header, err := newLinearMuxHeaderWithChunks(description, chunks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,13 +461,13 @@ func TestInspectPreservesBytesPastTheRIFFChunk(t *testing.T) {
 		t.Fatalf("preserved trailer range = %q, want %q", got, trailer)
 	}
 
-	header, err := newRangeMuxHeader(inspected.description, inspected)
+	header, err := newLinearRangeMuxHeader(inspected.description, inspected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The trailing region sits past the RIFF chunk, so it must not change the
 	// size the header declares.
-	plain, err := newMuxHeaderWithChunks(inspected.description, muxChunks{})
+	plain, err := newLinearMuxHeaderWithChunks(inspected.description, muxChunks{})
 	if err != nil {
 		t.Fatal(err)
 	}

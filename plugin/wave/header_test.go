@@ -156,7 +156,7 @@ func TestDemuxCompileUsesInspectionInsteadOfCarrierProperties(t *testing.T) {
 	if err != nil || description != inspected.description {
 		t.Fatalf("WAVE properties = %#v, %v", description, err)
 	}
-	if tag, ok := codec.TagOf(output.Properties()); !ok || tag != CodecTag(sample.S16) {
+	if tag, ok := codec.TagOf(output.Properties()); !ok || tag != CodecTag("s16") {
 		t.Fatalf("WAVE codec tag = %q/%v", tag, ok)
 	}
 	if compiled.Resources().Memory != 2 {

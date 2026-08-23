@@ -16,6 +16,7 @@ const (
 	tagJUNK = "JUNK"
 	tagFMT  = "fmt "
 	tagDATA = "data"
+	tagFACT = "fact"
 
 	// reserveOffset is where a writer places the ds64 placeholder: the first
 	// chunk position, immediately after the RIFF/WAVE signature.
@@ -24,6 +25,8 @@ const (
 
 	formatPCM        = uint16(1)
 	formatFloat      = uint16(3)
+	formatALaw       = uint16(6)
+	formatULaw       = uint16(7)
 	formatExtensible = uint16(0xfffe)
 )
 
@@ -37,6 +40,9 @@ var (
 var extensibleBase = [12]byte{0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 
 type header struct {
+	// signal is what the stream is; description adds how its samples are
+	// stored and is the zero value for a companded or compressed stream.
+	signal      sample.Signal
 	description sample.Description
 	dataOffset  int64
 	dataSize    uint64
@@ -50,5 +56,9 @@ type header struct {
 }
 
 func (h header) valid() bool {
-	return h.description.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid()
+	return h.signal.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid()
 }
+
+// linear reports whether the stream stores its samples one scalar each, which
+// is the only shape this reader can hand to a sample-level consumer.
+func (h header) linear() bool { return h.description.Valid() }
