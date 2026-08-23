@@ -158,4 +158,34 @@ func runFilterCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			}),
 		},
 	)
+
+	// Halving the rate reads a ramp at every other position, so eight samples
+	// come back as the four the new rate falls on.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Resample),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "resample-halves-the-rate",
+			Config: config.NewPatch().SetText("rate", "24000"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: pts, Planes: [][]float32{{0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: pts, Planes: [][]float32{{0, 0.25, 0.5, 0.75}},
+			}),
+		},
+	)
+
+	// Relabelling keeps every sample and only says they pass sooner, so it is
+	// the one way of retiming that is exact.
+	testkit.Codec(t, filterSubject(set, coverage, pluginaudio.Retime),
+		testkit.Case[audio.Frame[float32], audio.Frame[float32]]{
+			Name:   "retime-relabels-without-touching-samples",
+			Config: config.NewPatch().SetText("factor", "2").SetText("mode", "relabel"),
+			Input: testkit.FrameInput(processedDescription(sample.Mono()), []testkit.Frame[float32]{{
+				PTS: timing.SomePTS(timing.NewPTS(8)), Planes: [][]float32{{1, -0.5, 0.25}},
+			}}),
+			Want: testkit.WantFrames(testkit.Frame[float32]{
+				PTS: timing.SomePTS(timing.NewPTS(16)), Planes: [][]float32{{1, -0.5, 0.25}},
+			}),
+		},
+	)
 }

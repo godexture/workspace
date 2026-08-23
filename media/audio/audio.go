@@ -128,6 +128,12 @@ func (f Frame[S]) SideData() side.Data     { return f.sideData }
 // WithSideData returns a copy carrying immutable side data.
 func (f Frame[S]) WithSideData(value side.Data) Frame[S] { f.sideData = value; return f }
 
+// WithPTS returns a copy presented at another instant. The samples are the
+// same ones, so a stage that only recounts the timeline -- playing a stream at
+// another rate without touching what it plays -- moves the frame rather than
+// building a new one around the same planes.
+func (f Frame[S]) WithPTS(value timing.OptionalPTS) Frame[S] { f.pts = value; return f }
+
 // Planes returns a borrowed view valid until the frame owner is released.
 // Call View.Share when the planes must outlive this frame.
 func (f Frame[S]) Planes() buffer.View                   { return f.planes.Borrow() }
