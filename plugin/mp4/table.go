@@ -81,11 +81,11 @@ func scanSampleDescriptions(ctx context.Context, reader access.Random, value box
 			// An entry too short to carry the audio fields stays opaque, like
 			// any other shape parseAudioEntry cannot express: the track is
 			// copied rather than decoded, and the movie remains usable.
-			if endian, linear := linearPCMEntry(typeID); linear && size >= audioEntryBytes {
+			if coding, linear := linearPCMEntry(typeID); linear && size >= audioEntryBytes {
 				if err := entries.readAt(ctx, entryOffset, entry[:], "stsd"); err != nil {
 					return sampleEntry{}, err
 				}
-				result.audio = parseAudioEntry(entry[:], endian)
+				result.audio = parseAudioEntry(entry[:], coding)
 			}
 		}
 		next, ok := checkedBoxAdd(offset, size)
@@ -100,52 +100,60 @@ func scanSampleDescriptions(ctx context.Context, reader access.Random, value box
 	return result, nil
 }
 
-// linearPCMEntry reports the byte order of the ISO BMFF sample entries this
-// reader describes as signed 16-bit linear PCM. Wider and floating-point entries
-// stay opaque and are copied rather than decoded.
-func linearPCMEntry(typeID boxType) (mediasample.Endian, bool) {
-	switch typeID {
-	case typeSOWT:
-		return mediasample.LittleEndian, true
-	case typeTWOS:
-		return mediasample.BigEndian, true
-	default:
-		return mediasample.NoEndian, false
-	}
+// linearPCMEntries maps the ISO BMFF and QuickTime sample entries this reader
+// can describe as linear PCM onto the coding they store. Entries that carry
+// their representation in a child box instead of their type, such as lpcm and
+// ipcm, stay opaque: the track is copied rather than decoded.
+var linearPCMEntries = map[boxType]mediasample.Description{
+	typeRAW:  {Coding: mediasample.U8, Endian: mediasample.NoEndian},
+	typeSOWT: {Coding: mediasample.S16, Endian: mediasample.LittleEndian},
+	typeTWOS: {Coding: mediasample.S16, Endian: mediasample.BigEndian},
+	typeIN24: {Coding: mediasample.S24, Endian: mediasample.BigEndian},
+	typeIN32: {Coding: mediasample.S32, Endian: mediasample.BigEndian},
+	typeFL32: {Coding: mediasample.F32, Endian: mediasample.BigEndian},
+	typeFL64: {Coding: mediasample.F64, Endian: mediasample.BigEndian},
+}
+
+func linearPCMEntry(typeID boxType) (mediasample.Description, bool) {
+	value, ok := linearPCMEntries[typeID]
+	return value, ok
 }
 
 // parseAudioEntry reads the channel count, sample size and 16.16 sample rate an
 // AudioSampleEntry places at the same offsets in its version 0 and version 1
 // layouts. A shape this decoder cannot express yields the zero description, so
 // the track is copied instead of decoded.
-func parseAudioEntry(data []byte, endian mediasample.Endian) mediasample.Description {
-	if len(data) < audioEntryBytes {
-		return mediasample.Description{}
+func parseAudioEntry(data []byte, coding mediasample.Description) mediasample.Description {
+	channels := 0
+	if len(data) >= audioEntryBytes {
+		channels = int(binary.BigEndian.Uint16(data[24:26]))
 	}
-	var layout mediasample.Layout
-	switch binary.BigEndian.Uint16(data[24:26]) {
+	layout := mediasample.Channels(channels)
+	switch channels {
 	case 1:
 		layout = mediasample.Mono()
 	case 2:
 		layout = mediasample.Stereo()
-	default:
-		return mediasample.Description{}
 	}
-	if binary.BigEndian.Uint16(data[26:28]) != 16 {
+	if !layout.Valid() || int(binary.BigEndian.Uint16(data[26:28])) != coding.Coding.Bits() {
 		return mediasample.Description{}
 	}
 	rate := binary.BigEndian.Uint32(data[32:36])
 	if rate>>16 == 0 || rate&0xffff != 0 {
 		return mediasample.Description{}
 	}
-	return mediasample.Description{
-		Coding:    mediasample.S16,
+	result := mediasample.Description{
+		Coding:    coding.Coding,
 		Packing:   mediasample.Interleaved,
-		Endian:    endian,
+		Endian:    coding.Endian,
 		Rate:      int(rate >> 16),
 		Layout:    layout,
-		ValidBits: 16,
+		ValidBits: coding.Coding.Bits(),
 	}
+	if !result.Valid() {
+		return mediasample.Description{}
+	}
+	return result
 }
 
 func scanTimingTable(ctx context.Context, reader access.Random, value box) (uint64, uint64, error) {

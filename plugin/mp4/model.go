@@ -52,6 +52,11 @@ var (
 	typeSTSS = boxType{'s', 't', 's', 's'}
 	typeSOWT = boxType{'s', 'o', 'w', 't'}
 	typeTWOS = boxType{'t', 'w', 'o', 's'}
+	typeRAW  = boxType{'r', 'a', 'w', ' '}
+	typeIN24 = boxType{'i', 'n', '2', '4'}
+	typeIN32 = boxType{'i', 'n', '3', '2'}
+	typeFL32 = boxType{'f', 'l', '3', '2'}
+	typeFL64 = boxType{'f', 'l', '6', '4'}
 	typeEDTS = boxType{'e', 'd', 't', 's'}
 	typeELST = boxType{'e', 'l', 's', 't'}
 	typeTREF = boxType{'t', 'r', 'e', 'f'}

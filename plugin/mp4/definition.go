@@ -3,6 +3,7 @@ package mp4
 import (
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	mediasample "github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -51,3 +52,14 @@ func Plugin() plugin.Definition {
 
 // Set returns the self-contained MP4 composition.
 func Set() plugin.Set { return plugin.NewSet(Plugin()) }
+
+// SampleEntryCodings lists the sample entries this reader describes as linear
+// PCM, with the coding each one stores. A composition binds them to the codec
+// components that read those codings; the two families never import each other.
+func SampleEntryCodings() map[string]mediasample.Coding {
+	result := make(map[string]mediasample.Coding, len(linearPCMEntries))
+	for entry, description := range linearPCMEntries {
+		result[string(entry[:])] = description.Coding
+	}
+	return result
+}
