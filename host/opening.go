@@ -94,6 +94,10 @@ func (r *runner) openNode(index int) *Failure {
 	if journal := r.prepared.scratch[node.ID()]; journal != nil {
 		scratchService = journal
 	}
+	var temporaryService plugin.Scratch
+	if journal := r.prepared.temporary[node.ID()]; journal != nil {
+		temporaryService = journal
+	}
 	services := plugin.OpenServices{
 		Buffers:     lease.Buffers(),
 		Tasks:       task.NewStarter(r.plugins, lease.Grant().Workers),
@@ -102,6 +106,7 @@ func (r *runner) openNode(index int) *Failure {
 		Boundary:    boundary,
 		Source:      source,
 		Scratch:     scratchService,
+		Temporary:   temporaryService,
 	}
 	r.emitLifecycle(node.ID().String(), OpenPhase, "start")
 	operator, err := r.prepared.program.Open(plugin.NewOpenContext(r.ctx, services), node.ID())

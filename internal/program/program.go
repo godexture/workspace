@@ -153,3 +153,26 @@ func compileRuntime(compiled graph.Graph, policy job.Policy) (run.Template, erro
 	}
 	return run.Compile(values, compiled.Edges(), policy.Resources.Queue, policy.Alignment)
 }
+
+// TemporaryClaims returns the ceilings of the node-local stores that grow
+// rather than reserve. Nothing has been set aside for them; the Host charges
+// what they write against the ceiling the job shares between them.
+func (p Program) TemporaryClaims() (map[job.NodeID]resource.Bytes, error) {
+	if !p.Valid() {
+		return nil, errors.New("program is invalid")
+	}
+	claims := make(map[job.NodeID]resource.Bytes)
+	for _, node := range p.nodes {
+		if claim := node.Compilation().Temporary(); claim != 0 {
+			claims[node.ID()] = claim
+		}
+	}
+	return claims, nil
+}
+
+// TemporaryBudget is the ceiling those stores share, taken from the effective
+// policy the Plan was built with.
+func (p Program) TemporaryBudget() *scratch.Budget {
+	resources := p.plan.EffectivePolicy().Resources
+	return scratch.NewBudget(resources.TemporaryMaxBytes, resources.TemporaryUnlimited)
+}

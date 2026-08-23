@@ -143,7 +143,7 @@ func observedPlan(t *testing.T, component string) plan.Plan {
 			ID: "only", Origin: plan.Requested, Component: component, DisplayName: "Only",
 			Variant: component + "#default", Version: "1", Config: resolved.Summary(), Contract: contract,
 		}},
-		Scratch: plan.Scratch{Limit: policy.Resources.ScratchMaxBytes},
+		Scratch: plan.Scratch{Limit: policy.Resources.ScratchMaxBytes, TemporaryLimit: policy.Resources.TemporaryMaxBytes},
 	})
 	if err != nil {
 		t.Fatal(err)

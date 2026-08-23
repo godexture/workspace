@@ -2,6 +2,7 @@ package mp4
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/godexture/godec/access"
@@ -171,6 +172,16 @@ func trackProperties(value track) (property.Set, error) {
 	if value.audio.Valid() && !value.edits && uint64(value.audio.Rate) == uint64(value.timeScale) {
 		var err error
 		if properties, err = value.audio.Properties(); err != nil {
+			return property.Set{}, err
+		}
+	}
+	// A track records how long it lasts in the timescale its samples are
+	// counted in, which is the one this descriptor states, so a consumer that
+	// needs the end knows it before the first sample is read. The all-ones
+	// value ISO BMFF writes when the length is unknown states nothing.
+	if !value.movieDuration.unknown() && value.duration <= math.MaxInt64 {
+		var err error
+		if properties, err = stream.WithDuration(properties, timing.NewDuration(int64(value.duration))); err != nil {
 			return property.Set{}, err
 		}
 	}

@@ -24,7 +24,7 @@ func TestMP4RemuxResourcesDoNotScaleWithSamples(t *testing.T) {
 		t.Fatalf("buffer grant = %d for 1k samples, %d for 1M", small.memory, large.memory)
 	}
 	if small.scratch != large.scratch {
-		t.Fatalf("scratch reservation = %d for 1k samples, %d for 1M", small.scratch, large.scratch)
+		t.Fatalf("scratch reservation = %#v for 1k samples, %#v for 1M", small.scratch, large.scratch)
 	}
 	// One chunk is one 64-bit journal entry. A journal that grew with samples
 	// would be the same defect as growing the in-memory tables.

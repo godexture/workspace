@@ -31,6 +31,7 @@ type Compilation struct {
 	effects        []Effect
 	resources      resource.Request
 	scratch        resource.Bytes
+	temporary      resource.Bytes
 	estimate       resource.Estimate
 	execution      drive.Binding
 	executionSet   bool
@@ -45,6 +46,7 @@ func (c Compilation) ConfigFingerprint() config.Fingerprint { return c.config }
 func (c Compilation) Effects() []Effect                     { return append([]Effect(nil), c.effects...) }
 func (c Compilation) Resources() resource.Request           { return c.resources }
 func (c Compilation) Scratch() resource.Bytes               { return c.scratch }
+func (c Compilation) Temporary() resource.Bytes             { return c.temporary }
 func (c Compilation) Estimate() resource.Estimate           { return c.estimate }
 
 func OutputsOf[D any](compilation Compilation) (flow.Descriptors[D], bool) {
@@ -143,6 +145,9 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	if uint64(compiled.scratch) > math.MaxInt64 {
 		items = append(items, diagnostic.NewItem("plugin.compile-scratch", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned a scratch claim outside the runtime range", nil))
 	}
+	if uint64(compiled.temporary) > math.MaxInt64 {
+		items = append(items, diagnostic.NewItem("plugin.compile-temporary", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned a temporary claim outside the runtime range", nil))
+	}
 	if len(items) != 0 {
 		return Compilation{}, diagnostic.NewError(prefixComponent(items, component.identity)...)
 	}
@@ -157,6 +162,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		effects:        append([]Effect(nil), compiled.effects...),
 		resources:      compiled.resources,
 		scratch:        compiled.scratch,
+		temporary:      compiled.temporary,
 		estimate:       compiled.estimate,
 		execution:      component.execution,
 		executionSet:   component.executionSet,

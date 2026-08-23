@@ -69,12 +69,19 @@ func (p *Prepared) releaseScratch() []Failure {
 	p.scratchReleased.Do(func() {
 		var failures []Failure
 		for _, node := range p.program.Nodes() {
-			journal := p.scratch[node.ID()]
-			if journal == nil {
-				continue
-			}
-			if err := protectedCall(node.ID().String(), "scratch/close", journal.Close); err != nil {
-				failures = append(failures, failureOf(ResourcePhase, node.ID().String(), "scratch/close", err))
+			// Both stores of one node are released in a fixed order, so what a
+			// run reports about a failing release is the same every time.
+			stores := [...]struct {
+				name  string
+				store scratchLease
+			}{{name: "scratch", store: p.scratch[node.ID()]}, {name: "temporary", store: p.temporary[node.ID()]}}
+			for _, entry := range stores {
+				if entry.store == nil {
+					continue
+				}
+				if err := protectedCall(node.ID().String(), entry.name+"/close", entry.store.Close); err != nil {
+					failures = append(failures, failureOf(ResourcePhase, node.ID().String(), entry.name+"/close", err))
+				}
 			}
 		}
 		p.scratchFailures = failures
@@ -85,4 +92,30 @@ func (p *Prepared) releaseScratch() []Failure {
 		result[index].Stack = append([]byte(nil), result[index].Stack...)
 	}
 	return result
+}
+
+// openTemporary opens the node-local stores that grow rather than reserve.
+// They share one ceiling, so they share one budget: what bounds them is the
+// running total of what they have written, not an amount set aside before the
+// run began.
+func openTemporary(program program.Program) (map[job.NodeID]scratchLease, error) {
+	claims, err := program.TemporaryClaims()
+	if err != nil {
+		return nil, err
+	}
+	values := make([]scratchClaim, 0, len(claims))
+	for _, node := range program.Nodes() {
+		claim, ok := claims[node.ID()]
+		if !ok {
+			continue
+		}
+		values = append(values, scratchClaim{node: node.ID(), maximum: claim})
+	}
+	if len(values) == 0 {
+		return map[job.NodeID]scratchLease{}, nil
+	}
+	budget := program.TemporaryBudget()
+	return openScratchClaims(values, func(maximum resource.Bytes) (scratchLease, error) {
+		return scratch.OpenGrowing(budget, maximum)
+	})
 }

@@ -72,6 +72,9 @@ type OpenServices struct {
 	// Scratch is the optional node-local temporary byte journal reserved by
 	// this component's Compile result. It is borrowed for Open-to-Close only.
 	Scratch Scratch
+	// Temporary is the optional node-local store this component grows into.
+	// It is borrowed for Open-to-Close only.
+	Temporary Scratch
 }
 
 // NewOpenContext snapshots the narrow services granted to one component
@@ -90,6 +93,7 @@ func NewOpenContext(ctx context.Context, services OpenServices) OpenContext {
 		boundary:    services.Boundary,
 		source:      services.Source,
 		scratch:     services.Scratch,
+		temporary:   services.Temporary,
 	}
 }
 
@@ -102,6 +106,7 @@ type OpenContext struct {
 	boundary    any
 	source      any
 	scratch     Scratch
+	temporary   Scratch
 }
 
 func (c OpenContext) Context() context.Context {
@@ -159,6 +164,12 @@ func Source[T any](c OpenContext) (T, bool) {
 // unless this component declared a positive scratch claim during Compile.
 func (c OpenContext) Scratch() Scratch { return c.scratch }
 
+// Temporary returns the node-local store this component grows into, which is
+// nil unless it declared a positive temporary claim during Compile. What
+// bounds it is that claim and the ceiling the job shares between every such
+// store, charged as bytes are written rather than reserved beforehand.
+func (c OpenContext) Temporary() Scratch { return c.temporary }
+
 type CompileFunc[C, P, D any] func(CompileContext, C, flow.Descriptors[D]) (Compiled[P, D], error)
 type SuggestFunc[C, D any] func(SuggestContext, Suggestion[D]) []C
 type OpenFunc[P any] func(OpenContext, P) (flow.Operator, error)
@@ -184,7 +195,12 @@ type Compiled[P, D any] struct {
 	Effects      []Effect
 	Resources    resource.Request
 	Scratch      resource.Bytes
-	Estimate     resource.Estimate
+	// Temporary is a node-local store this component grows into rather than
+	// reserves. A stage that holds a stream whose length nobody stated cannot
+	// say how much it needs before it runs, so this is the ceiling it refuses
+	// to pass rather than an amount set aside for it.
+	Temporary resource.Bytes
+	Estimate  resource.Estimate
 }
 
 type componentImplementation struct {
@@ -205,6 +221,7 @@ type compiledErased struct {
 	effects      []Effect
 	resources    resource.Request
 	scratch      resource.Bytes
+	temporary    resource.Bytes
 	estimate     resource.Estimate
 }
 
@@ -241,6 +258,7 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 				effects:      append([]Effect(nil), compiled.Effects...),
 				resources:    compiled.Resources,
 				scratch:      compiled.Scratch,
+				temporary:    compiled.Temporary,
 				estimate:     compiled.Estimate,
 			}, err
 		}

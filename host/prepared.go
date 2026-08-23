@@ -43,6 +43,7 @@ type Prepared struct {
 	sources        formatSources
 	direct         []bound.Entry
 	scratch        map[job.NodeID]scratchLease
+	temporary      map[job.NodeID]scratchLease
 	cleanupTimeout time.Duration
 
 	mu              sync.Mutex
@@ -94,6 +95,7 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		byNode:         make(map[job.NodeID]*memory.Lease),
 		bySession:      make(map[string]acquiredSession),
 		scratch:        make(map[job.NodeID]scratchLease),
+		temporary:      make(map[job.NodeID]scratchLease),
 		sources:        make(formatSources, len(planning.sources)),
 		sessions:       append([]acquiredSession(nil), planning.sessions...),
 		probeStores:    append([]*probeStore(nil), planning.stores...),
@@ -143,6 +145,10 @@ func (h *Host) Prepare(ctx context.Context, request job.Job) (*Prepared, error) 
 		prepared.byNode[node.ID()] = lease
 	}
 	prepared.scratch, err = openScratch(selected)
+	if err != nil {
+		return fail(ResourcePhase, err)
+	}
+	prepared.temporary, err = openTemporary(selected)
 	if err != nil {
 		return fail(ResourcePhase, err)
 	}

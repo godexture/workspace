@@ -22,6 +22,10 @@ type Journal struct {
 	temporary *Temporary
 	file      journalFile
 	maximum   int64
+	// budget is the job-wide ceiling a growing journal is charged against. It
+	// is nil for a journal whose size was reserved up front, because that one
+	// was already counted before anything opened.
+	budget *Budget
 
 	mu       sync.Mutex
 	extent   int64
@@ -66,6 +70,11 @@ func (j *Journal) Append(ctx context.Context, source []byte) (int64, error) {
 	end := offset + int64(len(source))
 	if end > j.maximum {
 		return 0, ErrQuota
+	}
+	if j.budget != nil {
+		if err := j.budget.charge(int64(len(source))); err != nil {
+			return 0, err
+		}
 	}
 	count, err := j.file.WriteAt(source, offset)
 	if count < 0 || count > len(source) {
@@ -158,6 +167,10 @@ func (j *Journal) Close() error {
 		return j.closeErr
 	}
 	j.closed = true
+	if j.budget != nil {
+		j.budget.repay(j.extent)
+		j.budget = nil
+	}
 	if j.file != nil {
 		j.closeErr = j.file.Close()
 		j.file = nil
@@ -187,4 +200,19 @@ func contextFailure(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+// OpenGrowing opens a journal whose size was not known at Compile. Its own
+// ceiling still applies, and every byte it writes is charged to the ceiling
+// the job shares between all of them.
+func OpenGrowing(budget *Budget, maximum resource.Bytes) (*Journal, error) {
+	if !budget.Enabled() {
+		return nil, ErrDisabled
+	}
+	journal, err := Open(maximum)
+	if err != nil {
+		return nil, err
+	}
+	journal.budget = budget
+	return journal, nil
 }

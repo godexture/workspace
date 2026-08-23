@@ -186,7 +186,8 @@ func TestPositionedOutputSpoolsToSequentialSinkWithExplicitPlanProjection(t *tes
 				t.Fatal(err)
 			}
 			boundary := outputBoundary(t, prepared.Plan())
-			if got := prepared.Plan().Scratch(); got != (plan.Scratch{Limit: 1 << 20, Reserved: 1 << 20}) {
+			if want := (plan.Scratch{Limit: 1 << 20, Reserved: 1 << 20, TemporaryLimit: prepared.Plan().EffectivePolicy().Resources.TemporaryMaxBytes}); prepared.Plan().Scratch() != want {
+				got := prepared.Plan().Scratch()
 				t.Fatalf("spooled scratch reservation = %#v", got)
 			}
 			if len(boundary.Available) != 1 || boundary.Available[0] != access.SequentialWrite ||

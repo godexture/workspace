@@ -35,15 +35,28 @@ type Node struct {
 	Contract  plugin.Contract
 	Resources resource.Request
 	Scratch   resource.Bytes
+	Temporary resource.Bytes
 	Estimate  resource.Estimate
 }
 
-// Scratch projects the fixed aggregate temporary-byte reservation. Limit comes
-// from the effective resource policy; Reserved is the sum of every node claim
-// and selected output spool ceiling.
+// Scratch projects what the job may spend on temporary bytes, which it does in
+// two ways that must not be read as one. Limit and Reserved are the fixed
+// aggregate reservation: a ceiling from the effective resource policy, and the
+// sum of every node claim and selected output spool ceiling, all of it settled
+// before anything opens.
+//
+// TemporaryLimit and TemporaryClaimed describe the stores that grow instead.
+// Nothing there is set aside, so TemporaryClaimed is the sum of the ceilings
+// the nodes said they would not pass rather than an amount now unavailable,
+// and it may exceed TemporaryLimit: what is actually enforced is the running
+// total as those stores are written. TemporaryUnlimited says the job lifted
+// that ceiling altogether.
 type Scratch struct {
-	Limit    resource.Bytes
-	Reserved resource.Bytes
+	Limit              resource.Bytes
+	Reserved           resource.Bytes
+	TemporaryLimit     resource.Bytes
+	TemporaryClaimed   resource.Bytes
+	TemporaryUnlimited bool
 }
 
 type Edge struct {

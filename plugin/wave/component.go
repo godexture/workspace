@@ -2,6 +2,7 @@ package wave
 
 import (
 	"errors"
+	"math"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
@@ -69,6 +70,18 @@ func demuxerComponent() plugin.Component {
 			if inspected.geometry.parameters.Valid() {
 				if properties, err = codec.WithParameters(properties, inspected.geometry.parameters); err != nil {
 					return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+				}
+			}
+			// The data chunk states its own size, so the length of the stream
+			// follows from it -- but only where one block is one sample frame.
+			// A codec that packs many samples into a block states how many,
+			// and this reader is not the one that knows.
+			if !inspected.geometry.stated() && inspected.blockAlign > 0 {
+				samples := inspected.dataSize / uint64(inspected.blockAlign)
+				if samples <= math.MaxInt64 {
+					if properties, err = stream.WithDuration(properties, timing.NewDuration(int64(samples))); err != nil {
+						return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
+					}
 				}
 			}
 			output, err := stream.NewDescriptor(input.ID(), mediaformat.Chunks().Descriptor(), timing.MustBase(1, int64(inspected.signal.Rate)), properties)

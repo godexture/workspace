@@ -173,7 +173,7 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	description := testDescription(t)
 	description.RequestedPolicy.Resources.ScratchMaxBytes = 4096
 	description.EffectivePolicy.Resources.ScratchMaxBytes = 4096
-	description.Scratch = Scratch{Limit: 4096, Reserved: 4096}
+	description.Scratch = Scratch{Limit: 4096, Reserved: 4096, TemporaryLimit: description.EffectivePolicy.Resources.TemporaryMaxBytes}
 	description.Boundaries = []Boundary{{
 		Direction:            OutputBoundary,
 		Kind:                 ProviderBoundary,
@@ -197,7 +197,7 @@ func TestPlanSpoolProjectionAffectsExecutionIdentity(t *testing.T) {
 	changed.Boundaries = description.Boundaries
 	changed.RequestedPolicy.Resources.ScratchMaxBytes = 8192
 	changed.EffectivePolicy.Resources.ScratchMaxBytes = 8192
-	changed.Scratch = Scratch{Limit: 8192, Reserved: 8192}
+	changed.Scratch = Scratch{Limit: 8192, Reserved: 8192, TemporaryLimit: changed.EffectivePolicy.Resources.TemporaryMaxBytes}
 	changed.Boundaries[0].Spool, err = access.NewSpoolSpec(8192, 0, access.MemorySpool, 0, true, access.AtomicReplace)
 	if err != nil {
 		t.Fatal(err)
@@ -216,12 +216,12 @@ func TestPlanScratchProjectionIsCanonicalAndValidated(t *testing.T) {
 	description.RequestedPolicy.Resources.ScratchMaxBytes = 8
 	description.EffectivePolicy.Resources.ScratchMaxBytes = 8
 	description.Nodes[0].Scratch = 2
-	description.Scratch = Scratch{Limit: 8, Reserved: 2}
+	description.Scratch = Scratch{Limit: 8, Reserved: 2, TemporaryLimit: description.EffectivePolicy.Resources.TemporaryMaxBytes}
 	first, err := New(description)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := first.Scratch(); got != (Scratch{Limit: 8, Reserved: 2}) {
+	if got := first.Scratch(); got != (Scratch{Limit: 8, Reserved: 2, TemporaryLimit: description.EffectivePolicy.Resources.TemporaryMaxBytes}) {
 		t.Fatalf("scratch projection = %#v", got)
 	}
 	changed := description
@@ -251,7 +251,7 @@ func TestPlanScratchAggregatesNodeAndSpoolClaims(t *testing.T) {
 	description.RequestedPolicy.Resources.ScratchMaxBytes = 6
 	description.EffectivePolicy.Resources.ScratchMaxBytes = 6
 	description.Nodes[0].Scratch = 2
-	description.Scratch = Scratch{Limit: 6, Reserved: 6}
+	description.Scratch = Scratch{Limit: 6, Reserved: 6, TemporaryLimit: description.EffectivePolicy.Resources.TemporaryMaxBytes}
 	description.Boundaries = []Boundary{{
 		Direction:            OutputBoundary,
 		Kind:                 ProviderBoundary,
@@ -304,7 +304,7 @@ func testDescription(t *testing.T) Description {
 			{ID: "sink", Origin: Requested, Component: "fixture.sink", DisplayName: "Sink", Variant: "fixture.sink#default", Version: "1", Config: resolved.Summary(), Inputs: []PortDescriptor{{Port: "in", Descriptor: descriptor}}, Contract: contract},
 		},
 		Edges:    []Edge{{FromNode: "source", FromPort: "out", ToNode: "sink", ToPort: "in", Origin: Requested}},
-		Scratch:  Scratch{Limit: policy.Resources.ScratchMaxBytes},
+		Scratch:  Scratch{Limit: policy.Resources.ScratchMaxBytes, TemporaryLimit: policy.Resources.TemporaryMaxBytes},
 		Warnings: []string{"display warning"},
 	}
 }
