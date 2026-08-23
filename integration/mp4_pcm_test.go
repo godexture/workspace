@@ -56,7 +56,7 @@ func TestMP4PCMBindsOnlyWhenTheOutputNeedsIt(t *testing.T) {
 			var components []string
 			for _, node := range prepared.Plan().Nodes() {
 				components = append(components, node.Component)
-				if node.Component == linear.DecoderIdentity().String() {
+				if node.Component == linear.DecoderIdentity(sample.S16).String() {
 					decoded = true
 				}
 			}

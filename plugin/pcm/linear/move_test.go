@@ -44,14 +44,14 @@ func (s *writeSink) Emit(_ context.Context, item *flow.Item[access.Write]) error
 // Retaining instead would allocate one lease per item per hop, which the
 // hot-path contract forbids for a linear ownership transfer.
 func TestPayloadRewrappingHopsAllocateNothing(t *testing.T) {
-	configuration := configuration{Layout: sample.Stereo(), ValidBits: 16, Rate: 48_000, Endian: "little", ChunkSamples: 4}
+	blockBytes := configuration{Coding: sample.S16, Layout: sample.Stereo()}.wire().BlockBytes()
 
 	t.Run("parser", func(t *testing.T) {
 		allocator, err := buffer.NewAllocator(1 << 20)
 		if err != nil {
 			t.Fatal(err)
 		}
-		operator := &parserOperator{operatorBase: operatorBase{buffers: allocator}, configuration: configuration}
+		operator := &parserOperator{operatorBase: operatorBase{buffers: allocator}, blockBytes: blockBytes}
 		sink := &packetSink{}
 		var cell flow.Item[packet.Chunk]
 		cell.Bind(format.Chunks(), &testDomain)

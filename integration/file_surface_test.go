@@ -101,7 +101,7 @@ func TestDefaultWAVEToWAVEPlanAvoidsCodecRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, node := range selected.Nodes() {
-		if node.Component == linear.DecoderIdentity().String() || node.Component == linear.EncoderIdentity().String() {
+		if node.Component == linear.DecoderIdentity(sample.S16).String() || node.Component == linear.EncoderIdentity(sample.S16).String() {
 			t.Fatalf("default WAVE remux selected codec round-trip node %#v", node)
 		}
 	}

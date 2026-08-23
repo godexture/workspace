@@ -170,10 +170,10 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if index.Len() != 5 {
+	if index.Len() != 11 {
 		t.Fatalf("component count = %d", index.Len())
 	}
-	if !Binding().Valid() || !Raw().Valid() {
+	if !Raw().Valid() {
 		t.Fatal("linear PCM declarations are incomplete")
 	}
 	read, readOK := format.ReadOf(componentByIdentity(t, ReaderIdentity()))
@@ -208,11 +208,11 @@ func TestCompositionDeclaresRealFormatParserAndCodec(t *testing.T) {
 		writerShape.Outputs[0].Schema().Identity() != access.Writes().Identity() {
 		t.Fatal("linear PCM components do not use canonical media schemas")
 	}
-	targets := Binding().Targets()
-	decoder, decoderOK := targets[0].Component()
-	parser, parserOK := targets[1].Component()
-	if !decoderOK || !parserOK || decoder != DecoderIdentity() || parser != ParserIdentity() {
-		t.Fatalf("binding targets = %v", targets)
+	for _, coding := range []sample.Coding{sample.U8, sample.S8, sample.S16, sample.S24, sample.S32, sample.F32, sample.F64} {
+		decoder, encoder := DecoderIdentity(coding), EncoderIdentity(coding)
+		if decoder.IsZero() || encoder.IsZero() || decoder == encoder {
+			t.Fatalf("%s codecs = %v, %v", coding, decoder, encoder)
+		}
 	}
 }
 
@@ -236,10 +236,13 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 			planes:      [][]int16{{-32768, 0, 32767}, {32767, -1, 1}},
 		},
 		{
+			// Twelve valid bits live in the top of the 16-bit container, so a
+			// decoded sample keeps the scale of its schema and ValidBits stays
+			// a statement about the source rather than a shift.
 			name:        "twelve bit left justified",
 			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12},
 			input:       []byte{0xf0, 0xff, 0x10, 0x00, 0x00, 0x80, 0xf0, 0x7f},
-			planes:      [][]int16{{-1, 1, -2048, 2047}},
+			planes:      [][]int16{{-16, 16, -32768, 32752}},
 		},
 	}
 
@@ -375,7 +378,7 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 		t.Fatal(err)
 	}
 	input := stream.MustDescriptor("pcm", codec.Packets().Descriptor(), timing.MustBase(1, 32_000), properties)
-	component := componentByIdentity(t, DecoderIdentity())
+	component := componentByIdentity(t, DecoderIdentity(sample.S16))
 	resolved, err := component.Resolve(config.NewPatch().SetText("rate", "32000").SetText("validBits", "12"))
 	if err != nil {
 		t.Fatal(err)
@@ -475,9 +478,9 @@ func compilePCMProgram(t *testing.T, description sample.Description) pcmFixture 
 		[]job.Node{
 			job.NewNode("source", plugin.IdentityOf[fixtureSourceID](), config.NewPatch()),
 			job.NewNode("reader", ReaderIdentity(), patch),
-			job.NewNode("decoder", DecoderIdentity(), patch),
+			job.NewNode("decoder", DecoderIdentity(sample.S16), patch),
 			job.NewNode("observer", plugin.IdentityOf[fixtureObserveID](), config.NewPatch()),
-			job.NewNode("encoder", EncoderIdentity(), patch),
+			job.NewNode("encoder", EncoderIdentity(sample.S16), patch),
 			job.NewNode("writer", WriterIdentity(), patch),
 			job.NewNode("sink", plugin.IdentityOf[fixtureSinkID](), config.NewPatch()),
 		},

@@ -4,6 +4,7 @@ package standard
 import (
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
 	"github.com/godexture/godec/plugin/mp4"
@@ -15,12 +16,12 @@ import (
 // linear PCM processing.
 func Set() plugin.Set {
 	result := plugin.NewSet(file.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin()).
-		AddDeclaration(codec.Bind(wave.PCMTag(), codec.New(linear.DecoderIdentity()), codec.NewParser(linear.ParserIdentity())))
+		AddDeclaration(codec.Bind(wave.PCMTag(), codec.New(linear.DecoderIdentity(sample.S16)), codec.NewParser(linear.ParserIdentity())))
 	// MP4 carries linear PCM in already packetized sample entries, so these
 	// bind the decoder without a parser. A planner only reaches for them when
 	// copying the packets cannot satisfy the output.
 	for _, entry := range []string{"sowt", "twos"} {
-		result = result.AddDeclaration(codec.BindWithoutParser(mp4.SampleEntryTag(entry), codec.New(linear.DecoderIdentity())))
+		result = result.AddDeclaration(codec.BindWithoutParser(mp4.SampleEntryTag(entry), codec.New(linear.DecoderIdentity(sample.S16))))
 	}
 	return result
 }

@@ -3,8 +3,10 @@ package cli
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/internal/surface"
@@ -15,16 +17,33 @@ import (
 
 var errHelp = errors.New("help requested")
 
-const usage = `usage: godec [options] INPUT OUTPUT
+// rawFields are the media properties a headerless PCM stream cannot state for
+// itself. Each one names the raw reader config field the flag sets, so the CLI
+// vocabulary and the component schema stay in step.
+var rawFields = []struct{ flag, field, argument, help string }{
+	{"raw-rate", "rate", "HZ", "raw PCM sample rate"},
+	{"raw-coding", "coding", "CODING", "raw PCM sample coding (u8, s8, s16, s24, s32, f32, f64)"},
+	{"raw-layout", "layout", "LAYOUT", "raw PCM channel layout (mono, stereo, 6ch, FL+FR+FC+LFE)"},
+	{"raw-endian", "endian", "ENDIAN", "raw PCM byte order (little, big)"},
+	{"raw-valid-bits", "validBits", "BITS", "raw PCM bits carrying information"},
+}
+
+var usage = buildUsage()
+
+func buildUsage() string {
+	var builder strings.Builder
+	builder.WriteString(`usage: godec [options] INPUT OUTPUT
 
 options:
   --plan                  inspect and print a Plan without creating OUTPUT
   --input-format EXT      explicitly select an input Format extension
-  --raw-rate HZ           raw PCM sample rate
-  --raw-valid-bits BITS   raw PCM valid bits per sample
-  --raw-layout LAYOUT     raw PCM channel layout
-  --raw-endian ENDIAN     raw PCM byte order
-`
+`)
+	for _, entry := range rawFields {
+		option := "--" + entry.flag + " " + entry.argument
+		builder.WriteString(fmt.Sprintf("  %-22s%s\n", option, entry.help))
+	}
+	return builder.String()
+}
 
 type invocation struct {
 	input       string
@@ -40,11 +59,12 @@ func parse(args []string) (invocation, error) {
 	set.SetOutput(io.Discard)
 	set.BoolVar(&result.planOnly, "plan", false, "")
 	set.StringVar(&result.inputFormat, "input-format", "", "")
-	var rate, bits, layout, endian string
-	set.StringVar(&rate, "raw-rate", "", "")
-	set.StringVar(&bits, "raw-valid-bits", "", "")
-	set.StringVar(&layout, "raw-layout", "", "")
-	set.StringVar(&endian, "raw-endian", "", "")
+	values := make(map[string]*string, len(rawFields))
+	fields := make(map[string]string, len(rawFields))
+	for _, entry := range rawFields {
+		values[entry.flag] = set.String(entry.flag, "", "")
+		fields[entry.flag] = entry.field
+	}
 	if err := set.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return invocation{}, errHelp
@@ -55,17 +75,9 @@ func parse(args []string) (invocation, error) {
 		return invocation{}, errors.New("exactly one INPUT and OUTPUT path are required")
 	}
 	result.input, result.output = set.Arg(0), set.Arg(1)
-	values := map[string]string{"rate": rate, "validBits": bits, "layout": layout, "endian": endian}
 	set.Visit(func(item *flag.Flag) {
-		switch item.Name {
-		case "raw-rate":
-			result.rawFields["rate"] = values["rate"]
-		case "raw-valid-bits":
-			result.rawFields["validBits"] = values["validBits"]
-		case "raw-layout":
-			result.rawFields["layout"] = values["layout"]
-		case "raw-endian":
-			result.rawFields["endian"] = values["endian"]
+		if field, ok := fields[item.Name]; ok {
+			result.rawFields[field] = *values[item.Name]
 		}
 	})
 	return result, nil

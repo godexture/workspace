@@ -206,3 +206,20 @@ func TestFramesCarriesOwnershipAndTimingTraits(t *testing.T) {
 		t.Fatalf("allocator retained %d bytes", used)
 	}
 }
+
+func TestStoresMatchesWireCodingsToTheirFrameType(t *testing.T) {
+	if CodingOf[int16]() != S16 || CodingOf[float64]() != F64 || CodingOf[uint8]() != "" {
+		t.Fatal("scalar type does not map to its canonical coding")
+	}
+	for coding, want := range map[Coding]bool{U8: true, S8: true, S16: true, S24: false, F32: false} {
+		if got := Stores[int16](coding); got != want {
+			t.Errorf("Stores[int16](%s) = %v, want %v", coding, got, want)
+		}
+	}
+	if !Stores[int32](S24) || !Stores[int32](S32) || Stores[int32](S16) {
+		t.Error("24 and 32 bit wire codings do not both store in int32 frames")
+	}
+	if Stores[uint8](U8) {
+		t.Error("a scalar type outside the canonical four accepted a coding")
+	}
+}
