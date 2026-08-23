@@ -23,6 +23,7 @@ const (
 	ds64PayloadSize = 28
 
 	formatPCM        = uint16(1)
+	formatFloat      = uint16(3)
 	formatExtensible = uint16(0xfffe)
 )
 

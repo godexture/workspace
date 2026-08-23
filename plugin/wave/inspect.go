@@ -91,7 +91,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	result.rf64 = rf64
 	result.rootEnd = rootEnd
 	result.sourceSize = sourceSize
-	result.codecTag = PCMTag()
+
 	document := metadata.NewBuilder(metadata.StreamScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
@@ -171,6 +171,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			}
 			result.description = description
 			result.blockAlign = blockAlign
+			result.codecTag = CodecTag(description.Coding)
 			formatFound = true
 		case tagDATA:
 			preserve = false
@@ -293,11 +294,7 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	if size < 16 {
 		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk is shorter than 16 bytes", ErrMalformed)
 	}
-	readSize := size
-	if readSize > 40 {
-		readSize = 40
-	}
-	buffer := make([]byte, int(readSize))
+	buffer := make([]byte, int(min(size, 40)))
 	if err := access.ReadFullAt(ctx, reader, buffer, int64(offset)); err != nil {
 		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
 	}
@@ -316,37 +313,43 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 		validBits = binary.LittleEndian.Uint16(buffer[18:20])
 		channelMask = binary.LittleEndian.Uint32(buffer[20:24])
 		subFormat := buffer[24:40]
-		if binary.LittleEndian.Uint16(subFormat[0:2]) != formatPCM || subFormat[2] != 0 || subFormat[3] != 0 || !bytes.Equal(subFormat[4:], extensibleBase[:]) {
-			return sample.Description{}, 0, fmt.Errorf("%w: extensible subformat is not linear PCM", ErrUnsupported)
+		if subFormat[2] != 0 || subFormat[3] != 0 || !bytes.Equal(subFormat[4:], extensibleBase[:]) {
+			return sample.Description{}, 0, fmt.Errorf("%w: extensible subformat is not a linear PCM GUID", ErrUnsupported)
 		}
-		audioFormat = formatPCM
+		audioFormat = binary.LittleEndian.Uint16(subFormat[0:2])
 	}
-	if audioFormat != formatPCM || bits != 16 || validBits == 0 || validBits > bits || rate == 0 {
-		return sample.Description{}, 0, fmt.Errorf("%w: only 16-bit integer PCM is supported", ErrUnsupported)
+	coding := codingOf(audioFormat, int(bits))
+	if !coding.Valid() || validBits == 0 || validBits > bits || rate == 0 {
+		return sample.Description{}, 0, fmt.Errorf("%w: format %#04x at %d bits is not linear PCM this reader can express", ErrUnsupported, audioFormat, bits)
 	}
 	layout, ok := sample.FromMask(channelMask, int(channels))
-	if !ok || layout.Count() > 2 {
-		return sample.Description{}, 0, fmt.Errorf("%w: channel layout %d/%#x is unsupported", ErrUnsupported, channels, channelMask)
+	if !ok {
+		return sample.Description{}, 0, fmt.Errorf("%w: channel mask %#x does not describe %d channels", ErrUnsupported, channelMask, channels)
 	}
 	if channelMask == 0 {
-		if layout.Count() == 1 {
-			layout = sample.Mono()
-		} else {
-			layout = sample.Stereo()
-		}
+		layout = conventionalLayout(int(channels))
 	}
-	expectedAlign := uint64(channels) * 2
+	expectedAlign := uint64(channels) * uint64(coding.Bytes())
 	expectedRate := uint64(rate) * expectedAlign
 	if uint64(blockAlign) != expectedAlign || expectedRate > math.MaxUint32 || uint64(byteRate) != expectedRate {
 		return sample.Description{}, 0, fmt.Errorf("%w: PCM byte rate or block alignment is inconsistent", ErrMalformed)
 	}
 	description := sample.Description{
-		Coding:    sample.S16,
+		Coding:    coding,
 		Packing:   sample.Interleaved,
 		Endian:    sample.LittleEndian,
 		Rate:      int(rate),
 		Layout:    layout,
 		ValidBits: int(validBits),
+	}
+	if coding.Bytes() == 1 {
+		description.Endian = sample.NoEndian
+	}
+	if coding.Float() {
+		description.ValidBits = coding.Bits()
+	}
+	if !description.Valid() {
+		return sample.Description{}, 0, fmt.Errorf("%w: fmt chunk does not describe a usable stream", ErrUnsupported)
 	}
 	return description, int(blockAlign), nil
 }
