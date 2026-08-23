@@ -15,12 +15,14 @@ type (
 // The four canonical decoded frame schemas, one per Go scalar type. A wire
 // coding narrower than its canonical type keeps its effective depth in
 // Description.ValidBits rather than in a schema of its own.
-var (
-	s16 = defineFrames[s16SchemaID, int16]()
-	s32 = defineFrames[s32SchemaID, int32]()
-	f32 = defineFrames[f32SchemaID, float32]()
-	f64 = defineFrames[f64SchemaID, float64]()
-)
+var frameSchemas = map[Coding]any{
+	S16: defineFrames[s16SchemaID, int16](),
+	S32: defineFrames[s32SchemaID, int32](),
+	F32: defineFrames[f32SchemaID, float32](),
+	F64: defineFrames[f64SchemaID, float64](),
+}
+
+var frameDescriptors = erasedFrameSchemas()
 
 func defineFrames[Marker any, S audio.Sample]() schema.Type[audio.Frame[S]] {
 	return schema.Define[Marker](schema.Traits[audio.Frame[S]]{
@@ -34,24 +36,37 @@ func defineFrames[Marker any, S audio.Sample]() schema.Type[audio.Frame[S]] {
 	})
 }
 
+func erasedFrameSchemas() map[Coding]schema.Descriptor {
+	type described interface{ Descriptor() schema.Descriptor }
+	result := make(map[Coding]schema.Descriptor, len(frameSchemas))
+	for coding, value := range frameSchemas {
+		result[coding] = value.(described).Descriptor()
+	}
+	return result
+}
+
+// CodingOf returns the canonical coding a frame of the scalar type S stores.
+// It is empty for a type outside the four canonical representations.
+func CodingOf[S audio.Sample]() Coding {
+	switch any(*new(S)).(type) {
+	case int16:
+		return S16
+	case int32:
+		return S32
+	case float32:
+		return F32
+	case float64:
+		return F64
+	default:
+		return ""
+	}
+}
+
 // Frames returns the canonical planar frame schema for the scalar type S. A
 // type outside the four canonical representations yields an invalid schema,
 // which the port and component that declared it report.
 func Frames[S audio.Sample]() schema.Type[audio.Frame[S]] {
-	var erased any
-	switch any(*new(S)).(type) {
-	case int16:
-		erased = s16
-	case int32:
-		erased = s32
-	case float32:
-		erased = f32
-	case float64:
-		erased = f64
-	default:
-		return schema.Type[audio.Frame[S]]{}
-	}
-	typed, _ := erased.(schema.Type[audio.Frame[S]])
+	typed, _ := frameSchemas[CodingOf[S]()].(schema.Type[audio.Frame[S]])
 	return typed
 }
 
@@ -59,16 +74,12 @@ func Frames[S audio.Sample]() schema.Type[audio.Frame[S]] {
 // coding. Wire codings have no schema of their own; Coding.Decoded names the
 // canonical coding they widen into.
 func Schema(coding Coding) (schema.Descriptor, bool) {
-	switch coding {
-	case S16:
-		return s16.Descriptor(), true
-	case S32:
-		return s32.Descriptor(), true
-	case F32:
-		return f32.Descriptor(), true
-	case F64:
-		return f64.Descriptor(), true
-	default:
-		return schema.Descriptor{}, false
-	}
+	value, ok := frameDescriptors[coding]
+	return value, ok
+}
+
+// Stores reports whether a wire coding decodes into frames of the scalar type
+// S, which is what a codec component with a static frame port can accept.
+func Stores[S audio.Sample](coding Coding) bool {
+	return coding.Valid() && coding.Decoded() == CodingOf[S]()
 }

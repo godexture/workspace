@@ -299,8 +299,8 @@ func automaticPCMRequest(t *testing.T, preset job.Preset, input job.Input, outpu
 	requested, err := job.NewGraph(
 		[]job.Node{
 			job.NewNode("parser", linear.ParserIdentity(), patch),
-			job.NewNode("decoder", linear.DecoderIdentity(), patch),
-			job.NewNode("encoder", linear.EncoderIdentity(), patch),
+			job.NewNode("decoder", linear.DecoderIdentity(sample.S16), patch),
+			job.NewNode("encoder", linear.EncoderIdentity(sample.S16), patch),
 			job.NewNode("writer", linear.WriterIdentity(), patch),
 		},
 		[]job.Edge{

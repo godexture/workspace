@@ -18,6 +18,6 @@ func ExampleSet() {
 		}
 	}
 	// Output:
-	// 5
+	// 11
 	// sequential-read
 }

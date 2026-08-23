@@ -104,7 +104,7 @@ func TestRunAcceptsExplicitRawPropertiesWithoutCLIDefaults(t *testing.T) {
 	result := Run(t.Context(), instance, []string{
 		"--input-format", "raw",
 		"--raw-rate", "48000",
-		"--raw-valid-bits", "16",
+		"--raw-coding", "s16",
 		"--raw-layout", "mono",
 		"--raw-endian", "little",
 		inputPath, outputPath,

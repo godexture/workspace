@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
@@ -29,8 +30,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 12 {
-		t.Fatalf("catalog components = %d, want 12", first.Catalog().Len())
+	if first.Catalog().Len() != 18 {
+		t.Fatalf("catalog components = %d, want 18", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -40,8 +41,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		file.SinkIdentity(),
 		linear.ReaderIdentity(),
 		linear.ParserIdentity(),
-		linear.DecoderIdentity(),
-		linear.EncoderIdentity(),
+		linear.DecoderIdentity(sample.S16),
+		linear.EncoderIdentity(sample.S16),
 		linear.WriterIdentity(),
 		mp4.DemuxerIdentity(),
 		mp4.MuxerIdentity(),
@@ -71,7 +72,7 @@ func TestNewHostAddsDefinitionThroughTheSameComposition(t *testing.T) {
 		Build:       plugin.BuildModePureGo,
 	}, plugin.NewComponent[extraComponentID](plugin.Descriptor{DisplayName: "Extra trait"}, schema,
 		plugin.WithTrait(plugin.TraitKeyOf[extraTraitKey](), "extra=true", plugin.PortShapeOptional, struct{}{}),
-	)).WithDeclarations(codec.BindWithoutParser(tag, codec.New(linear.DecoderIdentity())))
+	)).WithDeclarations(codec.BindWithoutParser(tag, codec.New(linear.DecoderIdentity(sample.S16))))
 
 	instance, err := standard.NewHost(extra)
 	if err != nil {

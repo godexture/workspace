@@ -90,8 +90,8 @@ func runWAVEFileToRawPCM(t *testing.T, preset job.Preset, automatic bool) {
 		SetText("endian", "little").
 		SetText("chunkSamples", "2")
 	nodes := []job.Node{
-		job.NewNode("decoder", linear.DecoderIdentity(), patch),
-		job.NewNode("encoder", linear.EncoderIdentity(), patch),
+		job.NewNode("decoder", linear.DecoderIdentity(sample.S16), patch),
+		job.NewNode("encoder", linear.EncoderIdentity(sample.S16), patch),
 		job.NewNode("writer", linear.WriterIdentity(), patch),
 	}
 	edges := []job.Edge{
@@ -265,7 +265,7 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			var decoyCompiles atomic.Int32
 			decoy := waveDecoyParser(&decoyCompiles)
 			set := standard.Set().Add(plugin.Define[waveDecoyPluginID](plugin.Descriptor{DisplayName: "other codec", Version: "1"}, decoy)).
-				AddDeclaration(codec.Bind(mediaformat.NewTag("fixture", "other"), codec.New(linear.DecoderIdentity()), codec.NewParser(decoy.Identity())))
+				AddDeclaration(codec.Bind(mediaformat.NewTag("fixture", "other"), codec.New(linear.DecoderIdentity(sample.S16)), codec.NewParser(decoy.Identity())))
 			instance, err := host.New(
 				host.Plugins(set),
 				host.PlatformSnapshot(plan.Platform{OS: "test", Arch: "test", Toolchain: "go-test"}),
@@ -282,8 +282,8 @@ func TestWAVEMetadataRoundTripUsesTagBoundParser(t *testing.T) {
 			requested, err := job.NewGraph(
 				[]job.Node{
 					job.NewNode("demux", wave.DemuxerIdentity(), config.NewPatch()),
-					job.NewNode("decoder", linear.DecoderIdentity(), patch),
-					job.NewNode("encoder", linear.EncoderIdentity(), patch),
+					job.NewNode("decoder", linear.DecoderIdentity(sample.S16), patch),
+					job.NewNode("encoder", linear.EncoderIdentity(sample.S16), patch),
 					job.NewNode("mux", wave.MuxerIdentity(), config.NewPatch()),
 				},
 				[]job.Edge{

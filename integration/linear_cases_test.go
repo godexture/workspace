@@ -81,7 +81,7 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		},
 	)
 	testkit.Codec(t,
-		testkit.Track(testkit.SubjectIn(set, linear.DecoderIdentity(), "packets", codec.Packets(), "frames", sample.Frames[int16]()), coverage),
+		testkit.Track(testkit.SubjectIn(set, linear.DecoderIdentity(sample.S16), "packets", codec.Packets(), "frames", sample.Frames[int16]()), coverage),
 		testkit.Case[packet.Packet, audio.Frame[int16]]{
 			Name:   "twelve-bit-left-justified",
 			Config: patch,
@@ -95,7 +95,7 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 		decoderBigEndianCase(),
 	)
 	testkit.Codec(t,
-		testkit.Track(testkit.SubjectIn(set, linear.EncoderIdentity(), "frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
+		testkit.Track(testkit.SubjectIn(set, linear.EncoderIdentity(sample.S16), "frames", sample.Frames[int16](), "packets", codec.Packets()), coverage),
 		testkit.Case[audio.Frame[int16], packet.Packet]{
 			Name:   "twelve-bit-left-justify",
 			Config: patch,
@@ -196,11 +196,11 @@ func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Covera
 	}{
 		{identity: linear.ReaderIdentity(), input: "bytes", output: "chunks", run: suggestBytesToChunks},
 		{identity: linear.ParserIdentity(), input: "chunks", output: "packets", run: suggestChunksToPackets},
-		{identity: linear.DecoderIdentity(), input: "packets", output: "frames", run: suggestPacketsToFrames},
-		{identity: linear.EncoderIdentity(), input: "frames", output: "packets", run: suggestFramesToPackets},
+		{identity: linear.DecoderIdentity(sample.S16), input: "packets", output: "frames", run: suggestPacketsToFrames},
+		{identity: linear.EncoderIdentity(sample.S16), input: "frames", output: "packets", run: suggestFramesToPackets},
 		{identity: linear.WriterIdentity(), input: "packets", output: "writes", run: suggestPacketsToWrites},
 	} {
-		subject.run(t, set, subject.identity, coverage, linearSuggestionCases(t, subject.input, subject.output, subject.identity == linear.DecoderIdentity(), linearDescriptor(t, input)))
+		subject.run(t, set, subject.identity, coverage, linearSuggestionCases(t, subject.input, subject.output, subject.identity == linear.DecoderIdentity(sample.S16), linearDescriptor(t, input)))
 	}
 }
 
