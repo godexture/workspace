@@ -42,6 +42,10 @@ func TestOfficialPluginConformance(t *testing.T) {
 	// multi-track Host run is the semantic gate for those, so its Plan is the
 	// coverage evidence rather than a case the runner cannot express.
 	coverage.Observe(t, mp4ConformancePlan(t), set)
+	// The typed runner drives one stream through one input port, so it cannot
+	// express a mixer either. Its two-input Host run is the semantic gate, and
+	// the Plan it ran is the coverage evidence.
+	coverage.Observe(t, mixerConformancePlan(t), set)
 	coverage.VerifyExecutable(t, set)
 	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity())
 	for _, assignment := range []struct {
