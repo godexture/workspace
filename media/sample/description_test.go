@@ -13,7 +13,7 @@ import (
 type foreignPropertyID struct{}
 
 func wireDescription() Description {
-	return Description{Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Stereo(), ValidBits: 16}
+	return Description{Signal: Signal{Rate: 48_000, Layout: Stereo(), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: LittleEndian}
 }
 
 func TestDescriptionRoundTripAndCanonicalState(t *testing.T) {
@@ -32,12 +32,12 @@ func TestDescriptionRoundTripAndCanonicalState(t *testing.T) {
 
 	// Every axis has to reach the canonical state a plan is compared by.
 	for name, changed := range map[string]Description{
-		"endian":    {Coding: S16, Packing: Interleaved, Endian: BigEndian, Rate: 48_000, Layout: Stereo(), ValidBits: 16},
-		"coding":    {Coding: S32, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Stereo(), ValidBits: 16},
-		"packing":   {Coding: S16, Packing: Planar, Endian: NoEndian, Rate: 48_000, Layout: Stereo(), ValidBits: 16},
-		"rate":      {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 44_100, Layout: Stereo(), ValidBits: 16},
-		"layout":    {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Channels(2), ValidBits: 16},
-		"validBits": {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Stereo(), ValidBits: 12},
+		"endian":    {Signal: Signal{Rate: 48_000, Layout: Stereo(), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: BigEndian},
+		"coding":    {Signal: Signal{Rate: 48_000, Layout: Stereo(), ValidBits: 16}, Coding: S32, Packing: Interleaved, Endian: LittleEndian},
+		"packing":   {Signal: Signal{Rate: 48_000, Layout: Stereo(), ValidBits: 16}, Coding: S16, Packing: Planar, Endian: NoEndian},
+		"rate":      {Signal: Signal{Rate: 44_100, Layout: Stereo(), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
+		"layout":    {Signal: Signal{Rate: 48_000, Layout: Channels(2), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
+		"validBits": {Signal: Signal{Rate: 48_000, Layout: Stereo(), ValidBits: 12}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
 	} {
 		other, err := changed.Properties()
 		if err != nil {
@@ -76,7 +76,7 @@ func TestDecodedWidensCodingAndKeepsValidBits(t *testing.T) {
 		F32: {F32, 32},
 	}
 	for wire, want := range cases {
-		description := Description{Coding: wire, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Mono(), ValidBits: wire.Bits()}
+		description := Description{Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: wire.Bits()}, Coding: wire, Packing: Interleaved, Endian: LittleEndian}
 		if wire.Bytes() == 1 {
 			description.Endian = NoEndian
 		}
@@ -95,14 +95,14 @@ func TestDecodedWidensCodingAndKeepsValidBits(t *testing.T) {
 
 func TestInconsistentDescriptionsAreRejected(t *testing.T) {
 	cases := map[string]Description{
-		"interleaved without byte order": {Coding: S16, Packing: Interleaved, Endian: NoEndian, Rate: 48_000, Layout: Mono(), ValidBits: 16},
-		"planar with byte order":         {Coding: S16, Packing: Planar, Endian: LittleEndian, Rate: 48_000, Layout: Mono(), ValidBits: 16},
-		"byte order on a single byte":    {Coding: U8, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Mono(), ValidBits: 8},
-		"planar wire-only coding":        {Coding: S24, Packing: Planar, Endian: NoEndian, Rate: 48_000, Layout: Mono(), ValidBits: 24},
-		"valid bits wider than coding":   {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Mono(), ValidBits: 24},
-		"narrowed float":                 {Coding: F32, Packing: Planar, Endian: NoEndian, Rate: 48_000, Layout: Mono(), ValidBits: 24},
-		"no layout":                      {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, ValidBits: 16},
-		"no rate":                        {Coding: S16, Packing: Interleaved, Endian: LittleEndian, Layout: Mono(), ValidBits: 16},
+		"interleaved without byte order": {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: NoEndian},
+		"planar with byte order":         {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 16}, Coding: S16, Packing: Planar, Endian: LittleEndian},
+		"byte order on a single byte":    {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 8}, Coding: U8, Packing: Interleaved, Endian: LittleEndian},
+		"planar wire-only coding":        {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 24}, Coding: S24, Packing: Planar, Endian: NoEndian},
+		"valid bits wider than coding":   {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 24}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
+		"narrowed float":                 {Signal: Signal{Rate: 48_000, Layout: Mono(), ValidBits: 24}, Coding: F32, Packing: Planar, Endian: NoEndian},
+		"no layout":                      {Signal: Signal{Rate: 48_000, ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
+		"no rate":                        {Signal: Signal{Layout: Mono(), ValidBits: 16}, Coding: S16, Packing: Interleaved, Endian: LittleEndian},
 	}
 	for name, value := range cases {
 		if value.Valid() {
@@ -147,7 +147,7 @@ func TestDeclarationsCoverVocabulary(t *testing.T) {
 }
 
 func TestBlockBytesCoversEveryChannel(t *testing.T) {
-	description := Description{Coding: S24, Packing: Interleaved, Endian: LittleEndian, Rate: 48_000, Layout: Channels(6), ValidBits: 24}
+	description := Description{Signal: Signal{Rate: 48_000, Layout: Channels(6), ValidBits: 24}, Coding: S24, Packing: Interleaved, Endian: LittleEndian}
 	if got := description.BlockBytes(); got != 18 {
 		t.Fatalf("block bytes = %d", got)
 	}

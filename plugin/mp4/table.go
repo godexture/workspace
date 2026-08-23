@@ -143,12 +143,10 @@ func parseAudioEntry(data []byte, coding mediasample.Description) mediasample.De
 		return mediasample.Description{}
 	}
 	result := mediasample.Description{
-		Coding:    coding.Coding,
-		Packing:   mediasample.Interleaved,
-		Endian:    coding.Endian,
-		Rate:      int(rate >> 16),
-		Layout:    layout,
-		ValidBits: coding.Coding.Bits(),
+		Signal:  mediasample.Signal{Rate: int(rate >> 16), Layout: layout, ValidBits: coding.Coding.Bits()},
+		Coding:  coding.Coding,
+		Packing: mediasample.Interleaved,
+		Endian:  coding.Endian,
 	}
 	if !result.Valid() {
 		return mediasample.Description{}

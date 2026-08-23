@@ -141,8 +141,10 @@ func audioGateRequest(t testing.TB, filters int) job.Job {
 
 func audioGateDescription(coding sample.Coding) sample.Description {
 	return sample.Description{
-		Coding: coding, Packing: sample.Planar, Endian: sample.NoEndian,
-		Rate: 48_000, Layout: sample.Stereo(), ValidBits: coding.Bits(),
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Stereo(), ValidBits: coding.Bits()},
+		Coding:  coding,
+		Packing: sample.Planar,
+		Endian:  sample.NoEndian,
 	}
 }
 

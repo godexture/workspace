@@ -38,25 +38,25 @@ func SampleRate() property.Key[int]        { return sampleRate }
 func ChannelLayout() property.Key[Layout]  { return channelLayout }
 func ValidBits() property.Key[int]         { return validBits }
 
-// Description is the complete stream-invariant sample representation.
+// Description is a Signal whose samples are stored one scalar each. A
+// companded or compressed stream has a Signal and no Description; the three
+// fields below are exactly what a decoder, encoder or converter changes.
 //
-// Decoded frames are stored at the full scale of their canonical coding, so a
-// wire coding narrower than its container is most-significant-bit aligned as
-// WAVEFORMATEXTENSIBLE defines it. ValidBits records how many of those bits
-// carry information; it never changes how a value is scaled.
+// Samples are stored at the full scale of their coding, so a wire coding
+// narrower than its container is most-significant-bit aligned as the container
+// formats that carry it define. Signal.ValidBits records how many of those
+// bits carry information; it never changes how a value is scaled.
 type Description struct {
-	Coding    Coding
-	Packing   Packing
-	Endian    Endian
-	Rate      int
-	Layout    Layout
-	ValidBits int
+	Signal
+	Coding  Coding
+	Packing Packing
+	Endian  Endian
 }
 
 var ErrInvalidDescription = errors.New("sample description is invalid")
 
 func (d Description) Valid() bool {
-	if !d.Coding.Valid() || !d.Packing.Valid() || !d.Layout.Valid() || d.Rate <= 0 {
+	if !d.Signal.Valid() || !d.Coding.Valid() || !d.Packing.Valid() {
 		return false
 	}
 	if d.ValidBits <= 0 || d.ValidBits > d.Coding.Bits() {
@@ -75,7 +75,8 @@ func (d Description) Valid() bool {
 }
 
 // Decoded returns the canonical planar description a decoder produces for this
-// wire description.
+// wire description. The signal is what decoding preserves, so only the storage
+// representation changes.
 func (d Description) Decoded() Description {
 	d.Coding, d.Packing, d.Endian = d.Coding.Decoded(), Planar, NoEndian
 	return d
@@ -96,21 +97,22 @@ func (d Description) Apply(result property.Set) (property.Set, error) {
 	if !d.Valid() {
 		return property.Set{}, ErrInvalidDescription
 	}
+	result, err := d.Signal.Apply(result)
+	if err != nil {
+		return property.Set{}, err
+	}
 	accumulator := putter{set: result}
 	put(&accumulator, sampleCoding, d.Coding)
 	put(&accumulator, samplePacking, d.Packing)
 	put(&accumulator, byteOrder, d.Endian)
-	put(&accumulator, sampleRate, d.Rate)
-	put(&accumulator, channelLayout, d.Layout)
-	put(&accumulator, validBits, d.ValidBits)
 	if accumulator.err != nil {
 		return property.Set{}, accumulator.err
 	}
 	return accumulator.set, nil
 }
 
-// putter accumulates typed puts so Apply stays a flat list of keys instead
-// of six repetitions of the same error check.
+// putter accumulates typed puts so a caller stays a flat list of keys instead
+// of one error check per key.
 type putter struct {
 	set property.Set
 	err error
@@ -123,16 +125,16 @@ func put[T any](target *putter, key property.Key[T], value T) {
 	target.set, target.err = property.Put(target.set, key, value)
 }
 
-// FromProperties decodes and validates a complete sample description.
+// FromProperties decodes and validates a complete sample description. It fails
+// for a stream that states a signal but no storage representation, which is
+// how a consumer that can only read stored scalars declines a compressed one.
 func FromProperties(properties property.Set) (Description, error) {
+	signal, signalErr := SignalOf(properties)
 	coding, codingOK := sampleCoding.Get(properties)
 	packing, packingOK := samplePacking.Get(properties)
 	endian, endianOK := byteOrder.Get(properties)
-	rate, rateOK := sampleRate.Get(properties)
-	layout, layoutOK := channelLayout.Get(properties)
-	bits, bitsOK := validBits.Get(properties)
-	result := Description{Coding: coding, Packing: packing, Endian: endian, Rate: rate, Layout: layout, ValidBits: bits}
-	if !codingOK || !packingOK || !endianOK || !rateOK || !layoutOK || !bitsOK || !result.Valid() {
+	result := Description{Signal: signal, Coding: coding, Packing: packing, Endian: endian}
+	if signalErr != nil || !codingOK || !packingOK || !endianOK || !result.Valid() {
 		return Description{}, fmt.Errorf("%w: sample properties are incomplete or inconsistent", ErrInvalidDescription)
 	}
 	return result, nil

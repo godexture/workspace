@@ -68,7 +68,9 @@ func runConversion[From, To audio.Sample](t *testing.T, set plugin.Set, coverage
 
 func planarDescription(coding sample.Coding) sample.Description {
 	return sample.Description{
-		Coding: coding, Packing: sample.Planar, Endian: sample.NoEndian,
-		Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits(),
+		Signal:  sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: coding.Bits()},
+		Coding:  coding,
+		Packing: sample.Planar,
+		Endian:  sample.NoEndian,
 	}
 }

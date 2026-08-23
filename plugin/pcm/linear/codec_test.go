@@ -44,8 +44,10 @@ func wireDescription(coding sample.Coding, endian sample.Endian, layout sample.L
 		endian = sample.NoEndian
 	}
 	return sample.Description{
-		Coding: coding, Packing: sample.Interleaved, Endian: endian,
-		Rate: 48_000, Layout: layout, ValidBits: coding.Bits(),
+		Signal:  sample.Signal{Rate: 48_000, Layout: layout, ValidBits: coding.Bits()},
+		Coding:  coding,
+		Packing: sample.Interleaved,
+		Endian:  endian,
 	}
 }
 

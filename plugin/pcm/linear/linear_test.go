@@ -225,13 +225,13 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 	}{
 		{
 			name:        "little endian mono",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16},
+			description: sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
 			input:       []byte{0x00, 0x80, 0xff, 0xff, 0x00, 0x00, 0x01, 0x00, 0xff, 0x7f},
 			planes:      [][]int16{{-32768, -1, 0, 1, 32767}},
 		},
 		{
 			name:        "big endian stereo",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian, Rate: 44_100, Layout: sample.Stereo(), ValidBits: 16},
+			description: sample.Description{Signal: sample.Signal{Rate: 44_100, Layout: sample.Stereo(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.BigEndian},
 			input:       []byte{0x80, 0x00, 0x7f, 0xff, 0x00, 0x00, 0xff, 0xff, 0x7f, 0xff, 0x00, 0x01},
 			planes:      [][]int16{{-32768, 0, 32767}, {32767, -1, 1}},
 		},
@@ -240,7 +240,7 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 			// decoded sample keeps the scale of its schema and ValidBits stays
 			// a statement about the source rather than a shift.
 			name:        "twelve bit left justified",
-			description: sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12},
+			description: sample.Description{Signal: sample.Signal{Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian},
 			input:       []byte{0xf0, 0xff, 0x10, 0x00, 0x00, 0x80, 0xf0, 0x7f},
 			planes:      [][]int16{{-16, 16, -32768, 32752}},
 		},
@@ -273,7 +273,7 @@ func TestPlannerRunsKnownPCMBytesThroughIdentityParser(t *testing.T) {
 }
 
 func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	input := []byte{
 		0, 0, 1, 0, 2, 0, 3, 0, 4, 0,
 		5, 0, 6, 0, 7, 0, 8, 0,
@@ -313,7 +313,7 @@ func TestPCMGrantAccountsFastAndRealtimeQueueDepth(t *testing.T) {
 }
 
 func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	fixture := compilePCMProgram(t, description)
 	graph, ok := fixture.request.Graph()
 	if !ok {
@@ -348,7 +348,7 @@ func TestRealtimePlanFixesTraitAwareQueueBounds(t *testing.T) {
 }
 
 func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	fixture := compilePCMProgram(t, description)
 	fixture.state.block = true
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -368,7 +368,7 @@ func TestPCMHostRunCancellationSkipsSuccessfulFinalization(t *testing.T) {
 func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) {
 	type foreignID struct{}
 	foreign := property.Define[foreignID](property.Scalar[string]())
-	description := sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}
+	description := sample.Description{Signal: sample.Signal{Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
 	properties, err := description.Properties()
 	if err != nil {
 		t.Fatal(err)
@@ -396,7 +396,7 @@ func TestPCMCompilePreservesUnknownPropertiesAcrossRepresentation(t *testing.T) 
 		t.Fatalf("decoder output = %#v", output)
 	}
 	decoded, err := sample.FromProperties(output.Properties())
-	if err != nil || decoded != (sample.Description{Coding: sample.S16, Packing: sample.Planar, Endian: sample.NoEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}) {
+	if err != nil || decoded != (sample.Description{Signal: sample.Signal{Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}, Coding: sample.S16, Packing: sample.Planar, Endian: sample.NoEndian}) {
 		t.Fatalf("decoded properties = %#v, %v", decoded, err)
 	}
 	if value, ok := foreign.Get(output.Properties()); !ok || value != "preserved" {
@@ -430,7 +430,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 		t.Fatalf("reader output descriptor = %#v", chunks)
 	}
 	description, err := sample.FromProperties(chunks.Properties())
-	if err != nil || description != (sample.Description{Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian, Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}) {
+	if err != nil || description != (sample.Description{Signal: sample.Signal{Rate: 32_000, Layout: sample.Mono(), ValidBits: 12}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}) {
 		t.Fatalf("reader output properties = %#v, %v", description, err)
 	}
 

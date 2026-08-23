@@ -24,8 +24,10 @@ import (
 func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	t.Helper()
 	wire := sample.Description{
-		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
-		Layout: sample.Mono(), Endian: sample.LittleEndian,
+		Signal:  sample.Signal{ValidBits: 12, Rate: 32_000, Layout: sample.Mono()},
+		Coding:  sample.S16,
+		Packing: sample.Interleaved,
+		Endian:  sample.LittleEndian,
 	}
 	planar := wire.Decoded()
 	patch := linearPatch(wire, 2)
@@ -133,8 +135,10 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 
 func decoderBigEndianCase() testkit.Case[packet.Packet, audio.Frame[int16]] {
 	wire := sample.Description{
-		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 16, Rate: 44_100,
-		Layout: sample.Stereo(), Endian: sample.BigEndian,
+		Signal:  sample.Signal{ValidBits: 16, Rate: 44_100, Layout: sample.Stereo()},
+		Coding:  sample.S16,
+		Packing: sample.Interleaved,
+		Endian:  sample.BigEndian,
 	}
 	return testkit.Case[packet.Packet, audio.Frame[int16]]{
 		Name:   "sixteen-bit-big-endian-stereo",
@@ -151,8 +155,10 @@ func decoderBigEndianCase() testkit.Case[packet.Packet, audio.Frame[int16]] {
 
 func encoderBigEndianCase() testkit.Case[audio.Frame[int16], packet.Packet] {
 	wire := sample.Description{
-		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 16, Rate: 44_100,
-		Layout: sample.Stereo(), Endian: sample.BigEndian,
+		Signal:  sample.Signal{ValidBits: 16, Rate: 44_100, Layout: sample.Stereo()},
+		Coding:  sample.S16,
+		Packing: sample.Interleaved,
+		Endian:  sample.BigEndian,
 	}
 	planar := wire.Decoded()
 	return testkit.Case[audio.Frame[int16], packet.Packet]{
@@ -185,8 +191,10 @@ func linearPatch(description sample.Description, chunkSamples int) config.Patch 
 func runLinearSuggestions(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	t.Helper()
 	input := sample.Description{
-		Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
-		Layout: sample.Stereo(), Endian: sample.BigEndian,
+		Signal:  sample.Signal{ValidBits: 12, Rate: 32_000, Layout: sample.Stereo()},
+		Coding:  sample.S16,
+		Packing: sample.Interleaved,
+		Endian:  sample.BigEndian,
 	}
 
 	for _, subject := range []struct {
@@ -231,8 +239,10 @@ func linearSuggestionCases(t *testing.T, inputPort, outputPort string, wireIsInp
 			Demands: []plugin.Demand[stream.Descriptor]{wireDemand(plugin.DescriptorNeed(
 				"linear.config",
 				linearDescriptor(t, sample.Description{
-					Coding: sample.S16, Packing: sample.Interleaved, ValidBits: 12, Rate: 32_000,
-					Layout: sample.Stereo(), Endian: sample.LittleEndian,
+					Signal:  sample.Signal{ValidBits: 12, Rate: 32_000, Layout: sample.Stereo()},
+					Coding:  sample.S16,
+					Packing: sample.Interleaved,
+					Endian:  sample.LittleEndian,
 				}),
 			))},
 			Want: []testkit.Candidate{{
