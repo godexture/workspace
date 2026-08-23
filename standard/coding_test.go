@@ -131,3 +131,66 @@ func TestConvertCopiesACompandedStream(t *testing.T) {
 		})
 	}
 }
+
+// Asking for a linear coding on a companded stream is the case the muxer
+// cannot describe in advance: the depth decoding recovers belongs to the
+// codec, not to the header. It states the condition instead, and the planner
+// closes the gap by finding a path whose result the muxer accepts.
+func TestConvertRewritesACompandedStreamIntoLinearPCM(t *testing.T) {
+	coded := []byte{0x00, 0x80, 0xff, 0x7f, 0x10, 0x90}
+	source := waveFile(waveShape{channels: 1, bits: 8, formatTag: 7}, coded)
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input.wav")
+	output := filepath.Join(directory, "output.wav")
+	if err := os.WriteFile(input, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := standard.NewHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	extension, err := format.ParseExtension("wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := job.SelectFormatExtension(extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := standard.NewFileJob(input, output,
+		standard.WithOutputFormat(selector.WithConfig(config.NewPatch().SetText("coding", "s16"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := instance.Plan(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expansions := 0
+	for _, node := range compiled.Nodes() {
+		for _, effect := range node.Effects {
+			if effect.Detail == "g711.expand" {
+				expansions++
+			}
+		}
+	}
+	if expansions != 1 {
+		t.Fatalf("expansions in the plan = %d, want 1", expansions)
+	}
+	if _, err := instance.Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	converted, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// mu-law 0x00 is the most negative code and 0x80 the most positive; the
+	// header has to say sixteen-bit PCM once those are expanded.
+	want := []byte{0x84, 0x82, 0x7c, 0x7d}
+	if !bytes.Contains(converted, want) {
+		t.Fatalf("converted payload = %x, want it to carry %x", converted, want)
+	}
+	if !bytes.Contains(converted, waveFormat(waveShape{channels: 1, bits: 16}, 2)) {
+		t.Fatalf("converted header does not declare 16-bit PCM: %x", converted)
+	}
+}

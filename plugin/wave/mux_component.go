@@ -254,11 +254,12 @@ func muxCodec(input stream.Descriptor, signal sample.Signal, requested sample.Co
 		return waveCodec{}, sample.Description{}, none, unsupportedCodec(tag.String())
 	}
 	if requested.Valid() {
-		// Rewriting companded samples into a linear coding means decoding
-		// them, and the depth that decoding recovers is the codec's to state,
-		// not this header's. Until a caller needs it, say so instead of
-		// guessing a description the planner would have to match exactly.
-		return waveCodec{}, sample.Description{}, none, fmt.Errorf("%w: cannot rewrite %s into %s", ErrUnsupported, entry.name, requested)
+		// Rewriting companded samples into a linear coding means decoding them,
+		// and the depth decoding recovers is the codec to state, not this
+		// header. So state the condition rather than a descriptor: a gap is
+		// closed when this Compile stops asking for anything, not when an
+		// input matches a descriptor named in advance.
+		return waveCodec{}, sample.Description{}, plugin.Require("packets", plugin.ConditionNeed[stream.Descriptor]("wave.linear-samples")), nil
 	}
 	return entry, sample.Description{}, none, nil
 }
