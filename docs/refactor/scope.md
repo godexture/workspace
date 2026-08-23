@@ -240,3 +240,17 @@ M6 時点で foundation が定義する trait 種は Access（source/sink）、F
 `flow.Direct` は MP4 mux の packets port を consumer に持つ。runtime の topology gate、`plan.FanIn.Direct` 投影、`plan.Buffer.Connections` はいずれもこの一つの宣言を説明するために存在する。
 
 `job.Mapping` の input/output index は M7 では 0 だけを受け付ける。複数 input/output を持つ surface が現れる M9 まで、この二つは「将来の値域を先に型へ置いた」のではなく、mapping が結び付ける両端を名前で指すための識別子として使う。M9 で rich selector を追加する時に、値域の拡張と duplication/並べ替えを同時に扱う。
+
+## M8 の contract 分類
+
+`sample.Coding`、`sample.Packing`、`sample.Endian`、`sample.Description` は `plugin/pcm/linear` の decoder/encoder、`plugin/wave` の fmt header、`plugin/mp4` の sample entry を実 consumer に持つ。`sample.Frames`、`sample.Schema`、`sample.CodingOf`、`sample.Stores` は canonical schema 四つと scalar 型の対応を一箇所に集める。`Frames` は port 宣言、`Schema` は testkit の fixture 検証、`CodingOf`/`Stores` は codec component が扱えない coding を Compile で閉じるために使う。
+
+`sample.LayoutCodec`/`CodingCodec`/`EndianCodec` は `plugin/pcm/linear` の config schema を consumer に持つ。個々の plugin が同じ enum を書き直さないための共有であり、M8-3 の processor と M8-6 の FLAC encoder が同じものを使う。
+
+`sample.Layout` の `Count`/`Mask`/`FromMask` は WAVE の `dwChannelMask` を実 consumer に持つ。`Positioned`、`At`、`Has` は現在 `Layout.String` と test だけが呼ぶ。channel 位置を見て動く実 component は M8-3 の mixer/channel 処理が最初になるので、そこを consumer とする。位置を問い合わせられない layout は書き込み専用の値になるため、三つは M8-1 で置く。
+
+`audio.Plane` は testkit の frame fixture、`plugin/pcm/linear` の pack/unpack、`plugin/audio` の converter を consumer に持つ。leased plane を typed slice として読む唯一の入口であり、`unsafe` を三箇所へ複製しないために置く。
+
+`plugin/audio.ConverterIdentity` は explicit graph が converter を名前で指すための入口である。planner は descriptor 探索で converter を選ぶので composition の binding は要らないが、`linear.DecoderIdentity` と同じく「その component を Job から指名する」公開 API として置く。
+
+`plugin/wave.CodecTag`/`Codings` と `plugin/mp4.SampleEntryCodings` は `standard` の composition を実 consumer に持つ。format が宣言する codec tag と、その tag を読む component の対応を composition だけが持つという [M8-C02](m8-0.md) の形を、公式 family でそのまま満たすための入口である。

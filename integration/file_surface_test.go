@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
@@ -162,7 +163,7 @@ func TestFileJobRequiresRawMediaConfigBeyondPathExtension(t *testing.T) {
 	}
 	_, err = instance.Plan(t.Context(), request)
 	items := host.Diagnostics(err)
-	if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "endian,layout,rate,validBits" {
+	if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "coding,endian,layout,rate" {
 		t.Fatalf("raw config diagnostic = %#v, %v", items, err)
 	}
 	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -408,7 +409,7 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 		}
 		err := standard.Convert(t.Context(), inputPath, outputPath)
 		items := host.Diagnostics(err)
-		if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "endian,layout,rate,validBits" {
+		if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "coding,endian,layout,rate" {
 			t.Fatalf("raw one-line diagnostic = %#v, %v", items, err)
 		}
 		if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -433,7 +434,7 @@ func assertOutputFormatNode(t testing.TB, value plan.Plan, extension string) {
 				for _, field := range node.Config.Fields() {
 					fields[field.ID] = field.Value
 				}
-				if fields["rate"] != "44100" || fields["layout"] != "stereo" {
+				if fields["rate"] != "44100" || fields["layout"] != "FL+FR" {
 					t.Fatalf("raw output did not inherit inspected properties: %#v", node.Config.Fields())
 				}
 			}

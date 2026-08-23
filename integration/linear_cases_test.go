@@ -89,7 +89,7 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 				Sequence: 3, PTS: timing.SomePTS(timing.NewPTS(9)), DTS: timing.UnknownDTS(), Duration: timing.SomeDuration(timing.NewDuration(4)), Bytes: raw,
 			}}),
 			Want: testkit.WantFrames(testkit.Frame[int16]{
-				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-1, 1, -2048, 2047}},
+				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-16, 16, -32768, 32752}},
 			}),
 		},
 		decoderBigEndianCase(),
@@ -100,7 +100,7 @@ func runLinearCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 			Name:   "twelve-bit-left-justify",
 			Config: patch,
 			Input: testkit.FrameInput(planar, []testkit.Frame[int16]{{
-				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-1, 1, -2048, 2047}},
+				PTS: timing.SomePTS(timing.NewPTS(9)), Planes: [][]int16{{-16, 16, -32768, 32752}},
 			}}),
 			Want: testkit.WantPackets(testkit.Packet{
 				Sequence: 0, PTS: timing.SomePTS(timing.NewPTS(9)), DTS: timing.SomeDTS(timing.NewDTS(9)), Duration: timing.SomeDuration(timing.NewDuration(4)), Bytes: raw,
@@ -171,6 +171,7 @@ func encoderBigEndianCase() testkit.Case[audio.Frame[int16], packet.Packet] {
 func linearPatch(description sample.Description, chunkSamples int) config.Patch {
 	return config.NewPatch().
 		SetText("rate", strconv.Itoa(description.Rate)).
+		SetText("coding", string(description.Coding)).
 		SetText("validBits", strconv.Itoa(description.ValidBits)).
 		SetText("layout", description.Layout.String()).
 		SetText("endian", string(description.Endian)).
@@ -221,7 +222,7 @@ func linearSuggestionCases(t *testing.T, inputPort, outputPort string, wireIsInp
 			Inputs:  flow.NewDescriptors(flow.Describe(inputPort, input)),
 			Demands: []plugin.Demand[stream.Descriptor]{plugin.OutputDemand(outputPort, plugin.ConditionNeed[stream.Descriptor]("linear.config"))},
 			Want: []testkit.Candidate{{
-				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "big",
+				"rate": "32000", "coding": "s16", "validBits": "12", "layout": "FL+FR", "endian": "big",
 			}},
 		},
 		{
@@ -235,7 +236,7 @@ func linearSuggestionCases(t *testing.T, inputPort, outputPort string, wireIsInp
 				}),
 			))},
 			Want: []testkit.Candidate{{
-				"rate": "32000", "validBits": "12", "layout": "stereo", "endian": "little",
+				"rate": "32000", "coding": "s16", "validBits": "12", "layout": "FL+FR", "endian": "little",
 			}},
 		},
 		{

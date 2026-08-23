@@ -19,6 +19,7 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/packet"
+	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plan"
 	"github.com/godexture/godec/plugin"
