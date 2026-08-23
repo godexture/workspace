@@ -1137,3 +1137,108 @@ func TestZipJoinerOutlastsAnInputThatEnds(t *testing.T) {
 	}
 	requireNoFailures(t, ledger)
 }
+
+// recordingJoiner remembers which ordinals arrived in which round, which is
+// what a prior declaration is about: not what a component computes, but when
+// it is allowed to see each of its inputs.
+type recordingJoiner struct {
+	operatorBase
+	output schema.Type[owned]
+	rounds [][]int
+}
+
+func (j *recordingJoiner) Process(ctx context.Context, batch flow.Batch[owned], output flow.Emitter[owned]) error {
+	var round []int
+	total := 0
+	for index := range batch.Len() {
+		if value, ok := batch.Value(index); ok {
+			round = append(round, index)
+			total += value.value
+		}
+	}
+	j.rounds = append(j.rounds, round)
+	item := flow.NewItem(owned{value: total}, j.output, &testDomain)
+	if err := output.Emit(ctx, &item); err != nil {
+		item.Drop()
+		return err
+	}
+	return nil
+}
+
+func (*recordingJoiner) Flush(context.Context, flow.Emitter[owned]) error { return nil }
+
+// A prior input is read to completion before the others are read at all, so
+// what reaches the component is every cell of the prior input first and none
+// of the rest until it has ended.
+func TestFanInReadsAPriorInputToCompletionFirst(t *testing.T) {
+	in := ownedSchema[driveInputID](&ownership{})
+	out := ownedSchema[driveOutputID](&ownership{})
+	ports := []flow.Port{flow.In("ir", in, flow.Prior()), flow.In("signal", in)}
+	joinShape := flow.NewShape(ports, []flow.Port{flow.Out("out", out)})
+	sinkShape := flow.NewShape([]flow.Port{flow.In("in", out)}, nil)
+	joiner := &recordingJoiner{operatorBase: operatorBase{joinShape}, output: out}
+	sink := &recordingWriter{operatorBase: operatorBase{sinkShape}}
+	sinkLink, err := NewSink("in", out).OpenSink(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := NewFanIn(ports, in, flow.ZipFanIn, "out", out)
+	if err := binding.Validate(joinShape); err != nil {
+		t.Fatal(err)
+	}
+	ledger, owner := testOwner("join")
+	inputs, task, err := binding.OpenJoiner(joiner, 2, queue.Limit{Items: 4}, 0, sinkLink, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producerEnd(inputs...)
+	impulse, _ := deliveryOf[owned](inputs[0])
+	signal, _ := deliveryOf[owned](inputs[1])
+	result := make(chan error, 1)
+	go func() { result <- perform(context.Background(), task) }()
+
+	send := func(target delivery[owned], value int) {
+		t.Helper()
+		item := flow.NewItem(owned{value: value}, in, &testDomain)
+		if err := target.Emit(context.Background(), &item); err != nil {
+			t.Fatal(err)
+		}
+		item.Drop()
+	}
+	// The signal is offered first and still arrives second, because the
+	// impulse response has not ended yet.
+	send(signal, 100)
+	send(impulse, 1)
+	send(impulse, 2)
+	if err := impulse.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	send(signal, 200)
+	if err := signal.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	quiesce, giveUp := context.WithTimeout(context.Background(), time.Second)
+	defer giveUp()
+	if err := task.Barrier(quiesce); err != nil {
+		t.Fatalf("barrier after a drained join = %v", err)
+	}
+	if err := task.Finish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]int{{0}, {0}, {1}, {1}}
+	if len(joiner.rounds) != len(want) {
+		t.Fatalf("rounds = %v, want %v", joiner.rounds, want)
+	}
+	for index := range want {
+		if len(joiner.rounds[index]) != 1 || joiner.rounds[index][0] != want[index][0] {
+			t.Fatalf("rounds = %v, want %v", joiner.rounds, want)
+		}
+	}
+	if got := sink.Values(); len(got) != 4 || got[0] != 1 || got[1] != 2 || got[2] != 100 || got[3] != 200 {
+		t.Fatalf("values = %v", got)
+	}
+	requireNoFailures(t, ledger)
+}

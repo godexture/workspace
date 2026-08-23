@@ -70,3 +70,12 @@ func ExecutionOf(compilation Compilation) (any, bool) {
 	}
 	return compilation.execution, true
 }
+
+// WithFanIn binds a component whose inputs arrive on more than one port to
+// flow.Joiner[I,O]. Every port carries the same item type; what tells them
+// apart is what the component does with each, so batch ordinals follow the
+// order the ports are declared in. A port declared flow.Prior is read to
+// completion before any of the others is read at all.
+func WithFanIn[I, O any](inputs []flow.Port, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) ComponentOption {
+	return withExecution(drive.NewFanIn(inputs, in, policy, output, out))
+}

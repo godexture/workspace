@@ -307,3 +307,62 @@ func edgeKey(value job.Edge) string { return value.From().String() + "->" + valu
 func connectionKey(value job.Edge, route, input int) string {
 	return edgeKey(value) + "[" + strconv.Itoa(route) + ":" + strconv.Itoa(input) + "]"
 }
+
+// ErrPriorBranch reports a prior input whose branch is not independent of the
+// node's other inputs.
+var ErrPriorBranch = errors.New("prior input shares an upstream node with the inputs it precedes")
+
+// validatePriorInputs enforces flow.Prior. Reading one input to completion
+// before the others works because the others simply wait: their queues fill
+// and their producers block. That only bounds anything while the two branches
+// are independent -- a node feeding both would have to buffer everything it
+// produced for the waiting side in order to finish the prior one, which is the
+// unbounded hold the declaration exists to avoid.
+func (t Template) validatePriorInputs() error {
+	for index, value := range t.nodes {
+		prior, others := map[int]struct{}{}, map[int]struct{}{}
+		found := false
+		for _, port := range value.shape.Inputs {
+			found = found || port.Prior()
+		}
+		if !found {
+			continue
+		}
+		for _, connectionIndex := range t.incoming[index] {
+			connection := t.connections[connectionIndex]
+			target := t.edges[connection.logical].value.To().ID()
+			reached := prior
+			if !t.priorPort(value.shape, target) {
+				reached = others
+			}
+			t.reachable(connection.from, reached)
+		}
+		for node := range prior {
+			if _, shared := others[node]; shared {
+				return errors.Join(ErrTopology, ErrPriorBranch)
+			}
+		}
+	}
+	return nil
+}
+
+func (Template) priorPort(shape flow.Shape, id string) bool {
+	for _, port := range shape.Inputs {
+		if port.ID() == id {
+			return port.Prior()
+		}
+	}
+	return false
+}
+
+// reachable collects every node that can reach the given one, which is the
+// whole of the branch feeding it.
+func (t Template) reachable(index int, into map[int]struct{}) {
+	if _, seen := into[index]; seen {
+		return
+	}
+	into[index] = struct{}{}
+	for _, connectionIndex := range t.incoming[index] {
+		t.reachable(t.connections[connectionIndex].from, into)
+	}
+}

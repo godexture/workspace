@@ -5,6 +5,7 @@ package run
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/godexture/godec/flow"
@@ -131,6 +132,9 @@ func Compile(values []Node, logicalEdges []job.Edge, queuePolicy job.QueuePolicy
 	if err := result.validateDirectInputs(); err != nil {
 		return Template{}, err
 	}
+	if err := result.validatePriorInputs(); err != nil {
+		return Template{}, err
+	}
 	result.projection = result.project()
 	result.executable = true
 	return result, nil
@@ -177,8 +181,12 @@ func (t Template) validateEdges() error {
 		default:
 			return ErrTopology
 		}
+		accepted := value.binding.Inputs()
+		if len(accepted) == 0 {
+			accepted = []string{value.binding.Input()}
+		}
 		for _, connectionIndex := range t.incoming[index] {
-			if t.edges[t.connections[connectionIndex].logical].value.To().ID() != value.binding.Input() {
+			if !slices.Contains(accepted, t.edges[t.connections[connectionIndex].logical].value.To().ID()) {
 				return ErrTopology
 			}
 		}

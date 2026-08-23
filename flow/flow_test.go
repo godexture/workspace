@@ -698,3 +698,22 @@ func TestOwnershipHandedToAnAbsentSlotIsRefusedLoudly(t *testing.T) {
 		t.Fatal("an absent slot accepted ownership silently")
 	}
 }
+
+// A prior input is one input among several. A shape where every input is prior
+// has ordered nothing, and a many port cannot be prior because its branches
+// have no order between them.
+func TestPriorMustDistinguishOneInputFromTheRest(t *testing.T) {
+	typ := flowSchema()
+	if err := NewShape([]Port{In("ir", typ, Prior()), In("in", typ)}, []Port{Out("out", typ)}).Validate(); err != nil {
+		t.Fatalf("one prior input among two = %v", err)
+	}
+	if err := NewShape([]Port{In("ir", typ, Prior())}, []Port{Out("out", typ)}).Validate(); err == nil {
+		t.Fatal("a shape whose only input is prior was accepted")
+	}
+	if err := NewShape([]Port{In("many", typ, Many(), WithFanIn(ZipFanIn), Prior()), In("in", typ)}, nil).Validate(); err == nil {
+		t.Fatal("a many port was accepted as prior")
+	}
+	if err := NewShape([]Port{In("in", typ)}, []Port{Out("out", typ, Prior())}).Validate(); err == nil {
+		t.Fatal("an output was accepted as prior")
+	}
+}

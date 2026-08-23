@@ -50,8 +50,15 @@ type Measures struct {
 }
 
 type Binding struct {
-	kind             Kind
-	input            port
+	kind  Kind
+	input port
+	// inputs is the ordered set of input ports a fan-in spans. It is empty for
+	// every other kind and for a fan-in over one many port, whose single port
+	// is input above.
+	inputs []port
+	// prior marks the inputs read to completion before the rest, aligned with
+	// inputs.
+	prior            []bool
 	output           port
 	inputStats       Measures
 	outputStats      Measures
@@ -65,7 +72,7 @@ type Binding struct {
 	fanout           func([]Link, string) (Link, error)
 	buffer           func(queue.Limit, Link, *journal.Domain) (Link, Task, error)
 	observe          func(Link, *observe.Local) (Link, error)
-	openJoiner       func(flow.Operator, int, queue.Limit, int64, Link, *journal.Domain) ([]Link, Task, error)
+	openJoiner       func(flow.Operator, int, []bool, queue.Limit, int64, Link, *journal.Domain) ([]Link, Task, error)
 	validate         func(flow.Operator) error
 }
 
@@ -80,7 +87,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 		outputStats: measuresOf(traits),
 		fanoutSafe:  traits.Drop == nil || traits.Fork != nil,
 		fanIn:       policy,
-		openJoiner: func(operator flow.Operator, inputs int, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
+		openJoiner: func(operator flow.Operator, inputs int, prior []bool, limit queue.Limit, tolerance int64, next Link, owner *journal.Domain) ([]Link, Task, error) {
 			joiner, ok := operator.(flow.Joiner[I, O])
 			if !ok {
 				return nil, Task{}, fmt.Errorf("%w: want flow.Joiner[%s,%s], got %T", ErrOperator, reflect.TypeFor[I](), reflect.TypeFor[O](), operator)
@@ -91,7 +98,7 @@ func NewJoiner[I, O any](input string, in schema.Type[I], policy flow.FanInPolic
 			}
 			switch policy {
 			case flow.ZipFanIn:
-				return zipJoiner(joiner, inputs, limit, tolerance, in, target, owner)
+				return zipJoiner(joiner, inputs, prior, limit, tolerance, in, target, owner)
 			case flow.SerialFanIn:
 				return serialFanIn(joiner, inputs, tolerance, in, target, owner)
 			default:
@@ -311,7 +318,23 @@ func (b Binding) Validate(shape flow.Shape) error {
 			return ErrBinding
 		}
 	case Joiner:
-		if len(shape.Inputs) != 1 || len(shape.Outputs) != 1 || shape.Inputs[0].Multiplicity() != flow.ManyMultiplicity || shape.Inputs[0].FanIn() != b.fanIn || !matches(shape.Inputs[0], b.input) || !matches(shape.Outputs[0], b.output) {
+		if len(shape.Outputs) != 1 || !matches(shape.Outputs[0], b.output) {
+			return ErrBinding
+		}
+		if len(b.inputs) != 0 {
+			// A fan-in over several ports: one edge each, in the order the
+			// shape declares them.
+			if len(shape.Inputs) != len(b.inputs) {
+				return ErrBinding
+			}
+			for index, declared := range shape.Inputs {
+				if declared.Multiplicity() != flow.One || !matches(declared, b.inputs[index]) || declared.Prior() != b.prior[index] {
+					return ErrBinding
+				}
+			}
+			break
+		}
+		if len(shape.Inputs) != 1 || shape.Inputs[0].Multiplicity() != flow.ManyMultiplicity || shape.Inputs[0].FanIn() != b.fanIn || !matches(shape.Inputs[0], b.input) {
 			return ErrBinding
 		}
 	case Sink:
@@ -406,7 +429,7 @@ func (b Binding) OpenJoiner(operator flow.Operator, inputs int, limit queue.Limi
 		return nil, Task{}, ErrDomain
 	}
 	next.bind(owner)
-	return b.openJoiner(operator, inputs, limit, tolerance, next, owner)
+	return b.openJoiner(operator, inputs, b.prior, limit, tolerance, next, owner)
 }
 
 // Fanout groups this node's outputs. The branch slots it retains belong to
@@ -447,3 +470,35 @@ func matches(declared flow.Port, runtime port) bool {
 	return declared.ID() == runtime.id &&
 		declared.Schema().Equal(runtime.schema)
 }
+
+// NewFanIn binds a component whose inputs arrive on more than one port. Every
+// port carries the same item type; what distinguishes them is what the
+// component does with each, so the ordinals follow the order the ports are
+// declared in. A port declared prior is read to completion before any of the
+// others is read at all.
+func NewFanIn[I, O any](inputs []flow.Port, in schema.Type[I], policy flow.FanInPolicy, output string, out schema.Type[O]) Binding {
+	binding := NewJoiner(inputs[0].ID(), in, policy, output, out)
+	binding.inputs = make([]port, len(inputs))
+	binding.prior = make([]bool, len(inputs))
+	for index, declared := range inputs {
+		binding.inputs[index] = port{id: declared.ID(), schema: in.Descriptor()}
+		binding.prior[index] = declared.Prior()
+	}
+	return binding
+}
+
+// Inputs returns the ordered input ports a fan-in spans, which is empty for a
+// fan-in over one many port.
+func (b Binding) Inputs() []string {
+	if len(b.inputs) == 0 {
+		return nil
+	}
+	result := make([]string, len(b.inputs))
+	for index, value := range b.inputs {
+		result[index] = value.id
+	}
+	return result
+}
+
+// Prior reports which of those inputs are read to completion first.
+func (b Binding) Prior() []bool { return append([]bool(nil), b.prior...) }
