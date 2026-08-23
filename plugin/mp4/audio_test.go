@@ -23,30 +23,44 @@ func TestParseAudioEntryDescribesLinearPCM(t *testing.T) {
 		channels uint16
 		size     uint16
 		rate     uint32
-		endian   mediasample.Endian
+		entry    boxType
 		want     mediasample.Description
 	}{
 		{
-			name: "stereo little endian", channels: 2, size: 16, rate: 48_000 << 16, endian: mediasample.LittleEndian,
+			name: "stereo little endian", channels: 2, size: 16, rate: 48_000 << 16, entry: typeSOWT,
 			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.LittleEndian, Rate: 48_000, Layout: mediasample.Stereo(), ValidBits: 16},
 		},
 		{
-			name: "mono big endian", channels: 1, size: 16, rate: 44_100 << 16, endian: mediasample.BigEndian,
+			name: "mono big endian", channels: 1, size: 16, rate: 44_100 << 16, entry: typeTWOS,
 			want: mediasample.Description{Coding: mediasample.S16, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 44_100, Layout: mediasample.Mono(), ValidBits: 16},
 		},
-		{name: "unsupported channel count", channels: 6, size: 16, rate: 48_000 << 16, endian: mediasample.LittleEndian},
-		{name: "unsupported sample size", channels: 2, size: 24, rate: 48_000 << 16, endian: mediasample.LittleEndian},
-		{name: "fractional rate", channels: 2, size: 16, rate: 48_000<<16 | 1, endian: mediasample.LittleEndian},
-		{name: "zero rate", channels: 2, size: 16, rate: 0, endian: mediasample.LittleEndian},
+		{
+			name: "unsigned eight bit", channels: 1, size: 8, rate: 8_000 << 16, entry: typeRAW,
+			want: mediasample.Description{Coding: mediasample.U8, Packing: mediasample.Interleaved, Endian: mediasample.NoEndian, Rate: 8_000, Layout: mediasample.Mono(), ValidBits: 8},
+		},
+		{
+			name: "twenty four bit", channels: 2, size: 24, rate: 44_100 << 16, entry: typeIN24,
+			want: mediasample.Description{Coding: mediasample.S24, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 44_100, Layout: mediasample.Stereo(), ValidBits: 24},
+		},
+		{
+			name: "double precision surround", channels: 6, size: 64, rate: 48_000 << 16, entry: typeFL64,
+			want: mediasample.Description{Coding: mediasample.F64, Packing: mediasample.Interleaved, Endian: mediasample.BigEndian, Rate: 48_000, Layout: mediasample.Channels(6), ValidBits: 64},
+		},
+		{name: "sample size contradicts the entry", channels: 2, size: 24, rate: 48_000 << 16, entry: typeSOWT},
+		{name: "fractional rate", channels: 2, size: 16, rate: 48_000<<16 | 1, entry: typeSOWT},
+		{name: "zero rate", channels: 2, size: 16, rate: 0, entry: typeSOWT},
+		{name: "no channels", channels: 0, size: 16, rate: 48_000 << 16, entry: typeSOWT},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			got := parseAudioEntry(audioEntryBytesFor(testCase.channels, testCase.size, testCase.rate), testCase.endian)
+			coding, _ := linearPCMEntry(testCase.entry)
+			got := parseAudioEntry(audioEntryBytesFor(testCase.channels, testCase.size, testCase.rate), coding)
 			if got != testCase.want {
 				t.Fatalf("parseAudioEntry() = %#v, want %#v", got, testCase.want)
 			}
 		})
 	}
-	if got := parseAudioEntry(make([]byte, audioEntryBytes-1), mediasample.LittleEndian); got != (mediasample.Description{}) {
+	sowt, _ := linearPCMEntry(typeSOWT)
+	if got := parseAudioEntry(make([]byte, audioEntryBytes-1), sowt); got != (mediasample.Description{}) {
 		t.Fatalf("truncated entry = %#v", got)
 	}
 }
@@ -54,18 +68,26 @@ func TestParseAudioEntryDescribesLinearPCM(t *testing.T) {
 func TestLinearPCMEntryCoversTheDecodableSampleEntries(t *testing.T) {
 	for _, testCase := range []struct {
 		typeID boxType
-		endian mediasample.Endian
+		coding mediasample.Coding
 		linear bool
 	}{
-		{typeID: typeSOWT, endian: mediasample.LittleEndian, linear: true},
-		{typeID: typeTWOS, endian: mediasample.BigEndian, linear: true},
-		{typeID: boxTypeOf("mp4a"), endian: mediasample.NoEndian},
-		{typeID: boxTypeOf("avc1"), endian: mediasample.NoEndian},
-		{typeID: boxTypeOf("in24"), endian: mediasample.NoEndian},
+		{typeID: typeSOWT, coding: mediasample.S16, linear: true},
+		{typeID: typeTWOS, coding: mediasample.S16, linear: true},
+		{typeID: typeRAW, coding: mediasample.U8, linear: true},
+		{typeID: typeIN24, coding: mediasample.S24, linear: true},
+		{typeID: typeIN32, coding: mediasample.S32, linear: true},
+		{typeID: typeFL32, coding: mediasample.F32, linear: true},
+		{typeID: typeFL64, coding: mediasample.F64, linear: true},
+		{typeID: boxTypeOf("mp4a")},
+		{typeID: boxTypeOf("avc1")},
+		// An entry that names its representation in a child box rather than in
+		// its type stays opaque, so the track is copied instead of decoded.
+		{typeID: boxTypeOf("lpcm")},
+		{typeID: boxTypeOf("ipcm")},
 	} {
-		endian, linear := linearPCMEntry(testCase.typeID)
-		if endian != testCase.endian || linear != testCase.linear {
-			t.Fatalf("linearPCMEntry(%q) = %v, %t", testCase.typeID, endian, linear)
+		description, linear := linearPCMEntry(testCase.typeID)
+		if description.Coding != testCase.coding || linear != testCase.linear {
+			t.Fatalf("linearPCMEntry(%q) = %v, %t", testCase.typeID, description.Coding, linear)
 		}
 	}
 }
