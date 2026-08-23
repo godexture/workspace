@@ -26,7 +26,7 @@ foundation は contract、capability negotiation、lifecycle、policy hook を�
 - Demuxer factory は `io.Reader` を受けた後、各 format が `io.ReadSeeker` へ type assertion する。
 - resolver は format 候補ごとに同じ cursor を `Seek(0)` して probe する。
 - CLI、web example、WASM が別々に file、temporary file、`[]byte`、close を管理する。
-- transactional output は CLI の local file にだけあり、mux `Finalize` と sink `Commit` が一つの lifecycle になっていない。
+- transactional output は CLI の local file にだけあり、mux の終端と sink `Commit` が一つの lifecycle になっていない。
 - Oto playback は generic graph endpoint ではなく、conversion package 固有の `PlaybackSink` 経路を持つ。
 - WASM は input/output を全量 `[]byte`/`bytes.Buffer` にし、large input と incremental I/O に対応しにくい。
 
@@ -140,7 +140,7 @@ Normalize Job
   -> begin output transactions
   -> Open operators/endpoints
   -> Run
-  -> Finalize codecs/formats
+  -> Flush codecs/formats
   -> flush/sync sinks
   -> commit outputs
   -> Close
@@ -270,7 +270,7 @@ byte object output は `io.Writer` だけでなく transaction として扱う�
 ```text
 Begin private/staged sink
   -> Write / optional WriteAt
-  -> Format Finalize
+  -> Format Flush
   -> Flush
   -> Sync if policy requires
   -> PrepareCommit
@@ -562,7 +562,7 @@ M6 は Access contract が最初の実 I/O consumer を得る milestone であ�
 - **byte schema の descriptor は media 意味を持たない。** carrier descriptor が運ぶのは stream id と metadata までとし、sample properties や media の time base を載せない。filesystem provider は media format を知らないのでそれらを設定できず、planner にも下流から source へ descriptor を逆伝播する仕組みは無い。この規則は source 側と sink 側の両方に適用する。byte を消費する component（raw PCM reader、WAVE demux）は入力 descriptor に media 意味を要求せず、自分の config または container header から**出力**の properties と time base を確定する。byte を produce する component（raw PCM writer、WAVE mux）も同様に carrier descriptor を出す。
 - **carrier descriptor の time base は canonical な placeholder とする。** `stream.NewDescriptor` は有効な time base を必須とするが、`access.Bytes()` は `Time` trait を持たないため byte edge の time base を消費する経路は存在しない（`Limit.Time` は schema が `Time` trait を提供する edge にだけ設定される）。値を再導出させないよう `access` が名前付きで公開し、byte schema と同じ場所で carrier 契約を完結させる。placeholder であることを godoc に明記し、timeline を持たない stream を型で表す正直な形は [scope](scope.md#m6-の-contract-分類) のとおり M7 が担当する。
 - **sink 側の item は書き込み位置を表現できる。** 読み側の item は順序どおりの byte 列でよいが、書き側は「末尾へ追加する」と「絶対 offset を patch する」を区別できなければならない。sink 専用の canonical schema を置き、payload は引き続き `buffer.Handle` とする。読み側の item に意味のない append 印を持たせない。M5/M6-1 の file sink は全 handle を自前追跡の offset へ順次書いており、`RandomWrite` を選んでも「現在位置への位置指定書き」にしかならない。
-- **mux は自分で I/O せず、位置を item として下流へ渡す。** boundary の narrow view は Provider node にだけ渡り、隣接する Format component には渡らない。これは意図した境界であり、mux が直接 sink へ書くと graph、queue、ownership、transaction をすべて迂回して二つの writer が同じ対象を書くことになる。したがって header patch は `Finalize` の後に `Flush` から位置付き item として emit し、sink が `Appender`/`Patcher` へ適用する。`Finalize` に emitter を持たせない設計は変えない。
+- **mux は自分で I/O せず、位置を item として下流へ渡す。** boundary の narrow view は Provider node にだけ渡り、隣接する Format component には渡らない。これは意図した境界であり、mux が直接 sink へ書くと graph、queue、ownership、transaction をすべて迂回して二つの writer が同じ対象を書くことになる。したがって header patch は `Flush` から位置付き item として emit し、sink が `Appender`/`Patcher` へ適用する。mux が入力の総量を知るのは `Flush` を求められた時点であり、それは上流がすべて `Flush` を終えた後だからである。
 - **boundary component が port schema を満たすことを composition で検証する。** `access.Source` の出力 port と Format read trait の入力 port が読み側 schema、`access.Sink` の入力 port と Format write trait の出力 port が書き側 schema であることを `internal/catalog` の trait 走査が検査する。Provider と Format が実際に接続可能であることを Host 構築時に保証し、graph 検証まで持ち越さない。
 - **write 側の capability 語彙と narrow view を新設する。** M5 時点の `access` は read 側 6 capability と `Sequential`/`Random` view しか持たない。sink の逐次書きと位置指定書きを別 capability として宣言でき、component は宣言した view だけを受け取る。あわせて `internal/bind` の出力 boundary が入力側と同じ経路で capability を選択する。M5 時点の `bindOutput` は選択を行わず空の `Selection` を渡している。
 - **Prepare が session を acquire し、宣言 capability ではなく実 session の capability を検証する。** manifest が宣言した capability を実際に開けなかった場合は、Open 後の type assertion ではなく Prepare の構造化 diagnostic になる。
@@ -577,7 +577,7 @@ M6 は Access contract が最初の実 I/O consumer を得る milestone であ�
 - **spool は capability を変換する Host-owned adapter である。** 逐次書きのみの sink を実効的な位置指定書きへ変換する。`SequentialWrite` そのものを「patch 可能な代替」として扱わない。sink boundary を spool 付きへ差し替える形は変えず、graph node は増やさない。`plan.Boundary` には**元の capability、適応後の capability、`SpoolSpec` を分けて**記録し、「何が足りず、何で埋め、何を代償にしたか」が Plan から読めるようにする。runtime に第二の実行モードを持ち込まない。
 - **spool の storage は Host が所有し、上限を予約ではなく quota で表す。** `job.ResourcePolicy` に spool 専用の上限（最大 bytes と storage 種別）を持たせ、Host が Job 単位で spool を所有する。`resource.Request`/`Grant` の予約次元へは戻さない。spool を使う理由が「最終 size が確定しないこと」であり、Open 前に確定量を予約する `memory.Manager` の model と一致しないためである。上限検査は spool-local counter で行い、中央 manager を item ごとに呼ばない。cancel、rollback、Job 終了で必ず削除する。
 - spool を Host 内部に閉じ、`plugin.OpenServices` へ temporary service を公開しない。M6 の唯一の consumer が sink boundary の decorator であり、公開すると consumer を持たない plugin API を凍結することになる。第二の consumer が現れた milestone で共通 service へ昇格させるかを決める。
-- **transactional file output が実装される。** 同じ filesystem 上の temporary file へ書き、Finalize → Flush → Sync → PrepareCommit → Commit が成功した後に replace する。replace は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため既存 target を置換でき、外部 dependency を増やさない。`ReplaceFile` による ACL/attribute の継承は行わず、その差分を [capability](capability.md#挙動変更の記録) の B5 として記録する。失敗と cancel では元 target を残す。non-seekable/stdout sink で rollback できないことを `Plan` に示す。
+- **transactional file output が実装される。** 同じ filesystem 上の temporary file へ書き、Flush → Sync → PrepareCommit → Commit が成功した後に replace する。replace は `os.Rename` とする。Windows でも `MoveFileEx` の `MOVEFILE_REPLACE_EXISTING` に写るため既存 target を置換でき、外部 dependency を増やさない。`ReplaceFile` による ACL/attribute の継承は行わず、その差分を [capability](capability.md#挙動変更の記録) の B5 として記録する。失敗と cancel では元 target を残す。non-seekable/stdout sink で rollback できないことを `Plan` に示す。
 - 引き継いだ宣言が consumer を得る。`SpoolSpec`、`SpoolStorage`、`job.ResourcePolicy.AllowSpool`、Source/Sink capability の `Own`/`Borrow`、`ProbeView`、`RangeRequest` のうち M6 が使うものを示し、使わないものは担当 milestone とともに [scope](scope.md#m6-の-contract-分類) へ残す。
 - 上記を unit/property test、`integration` の end-to-end test、[quality](quality.md#m6-完了条件) の Access Provider testkit で検査する。cancel、部分書き込み、commit 失敗、spool 中断で temporary file と spool storage が残らないことを含める。
 
@@ -592,7 +592,7 @@ M6 では次を未完了事項として残す。HTTP/S3 等の remote Provider�
 - seek/read-at/size 不足が Open 後の type assertion ではなく Compile diagnostic になる。
 - Probe が source cursor を変更せず、全候補で byte budget と cache を共有する。
 - non-seekable input を対応 Format が spool なしで処理できる。
-- mux Finalize、sink flush/sync、commit/abort が一つの failure-safe lifecycle になる。
+- mux の終端、sink flush/sync、commit/abort が一つの failure-safe lifecycle になる。
 - direct reader/writer 利用者は ownership を明示でき、Provider plugin を作らなくてよい。
 - dry-run は output 作成・truncate・commit を起こさない。
 - device/RTSP/HLS 等を seekable byte stream と偽装しない。

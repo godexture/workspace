@@ -1,6 +1,6 @@
 # runtime と lifecycle
 
-この文書は graph 実行、ownership、resource、cancel、Finalize、error、observability を定義する。候補探索と自動挿入は [planner](planner.md)、数値・再現性 policy は [performance](performance.md) を正本とする。
+この文書は graph 実行、ownership、resource、cancel、終端、error、observability を定義する。候補探索と自動挿入は [planner](planner.md)、数値・再現性 policy は [performance](performance.md) を正本とする。
 
 ## routing の重複をなくす
 
@@ -96,7 +96,7 @@ begin output transactions
 
 各 step を scope に登録し、失敗時は逆順に rollback する。temporary output は commit 前に公開しない。Open の途中で作った goroutine は host task group に属し、rollback で cancel/join する。
 
-成功時は codec/format/Endpoint の Finalize、sink Flush/Sync、全 output の PrepareCommit、Commit の順とする。いずれかが失敗したら未 commit sink を Abort し、既に commit 済みの output と outcome unknown を構造化 result に残す。
+成功時は依存順の Flush、sink Sync、全 output の PrepareCommit、Commit の順とする。いずれかが失敗したら未 commit sink を Abort し、既に commit 済みの output と outcome unknown を構造化 result に残す。
 
 `Close` の error は最初の error だけに潰さず、primary failure と cleanup failures を構造化して返す。
 `Prepared.Close` は並行 caller に対しても barrier を持つ。最初の cleanup が child を解放している間、後続 caller は待機し、release callback を再実行せず、memoized な同じ cleanup result を受け取る。timeout で停止済みと偽ることはなく、provider callback が戻らない場合は cleanup bound の制約を Result に残す。observer の `Collector.Close` も同様に bounded wait と pending delivery の精算だけを行い、Ledger へ直接 failure を書かない。
@@ -267,7 +267,7 @@ domain の報告面は `Domain.At(node) *Site` である。ownership slot が bi
 
 `Failure` は `ID`/`Kind`/`Operation`/`Task`/`Node`/`Err`/`Stack` を持つ。`Operation` は phase 写像用の metadata であり、identity には関与しない。`Kind` は「仕事を止めたもの」と「解放・close できなかったもの」を分け、それぞれの error 形と panic 形を区別する。
 
-`Operation` はこの codebase で唯一の lifecycle 語彙である。`journal.Operation` に `Prepare`/`Open`/`Run`/`Observation`/`Finalize`/`Flush`/`Sync`/`PrepareCommit`/`Commit`/`Abort`/`Close`/`Join`/`Discard`/`Resource` を置き、`host.Phase` はその public な射影に過ぎない。Host はこの対応を一つの pair table で両方向に検索し、未知の値を Run として黙って扱わない。bounded overflow group のように operation 自体を保持していない集約だけは `UnknownPhase` として返す。
+`Operation` はこの codebase で唯一の lifecycle 語彙である。`journal.Operation` に `Prepare`/`Open`/`Run`/`Observation`/`Flush`/`Sync`/`PrepareCommit`/`Commit`/`Abort`/`Close`/`Join`/`Discard`/`Resource` を置き、`host.Phase` はその public な射影に過ぎない。Host はこの対応を一つの pair table で両方向に検索し、未知の値を Run として黙って扱わない。bounded overflow group のように operation 自体を保持していない集約だけは `UnknownPhase` として返す。
 
 Span を持たない domain ── component が lifecycle 全体で持つ Owner が、二つの step の間で retain していた payload を解放する場合 ── も、bind/open 時に固定した Site/Home attribution と、所有側が明示した operation の下に記録される。mutable な stage、`Enter`/`Leave`、`Span.node` を暗黙の provenance として持ち回らないため、記録されないことも node が後から変わることも無い。
 
@@ -331,7 +331,7 @@ peer が bare な `context.Canceled` を返す場合は、`task.Group.settle` �
 
 そこで `task.Group.StartDomain` は、Span が閉じた**後**にだけ呼ばれる `sealed func(error)` を受け取る。`Execution.Start` は source の完了信号をここからだけ送り、`zipState` も `done` をここから閉じる。`WaitSources` と barrier が読む信号は、これで happens-before の内側に入る。
 
-その条件を満たす相手にだけ、`Execution.Finish` は Flush Span を開く。source は `WaitSources` がその信号を観測済みなので該当し、join は barrier が同じ信号を待ってから Quiesce が成功するので該当する。bounded edge は該当しない ── その barrier は ring が idle だとしか言わず、drain task は Finalize が生む遅延 Flush 出力を同じ queue で受け取るために意図的に生き続ける。したがって bounded edge の下流 close は、その drain task 自身が EOF を見た時に自分の domain 上で行う。
+その条件を満たす相手にだけ、`Execution.Finish` は Flush Span を開く。source は `WaitSources` がその信号を観測済みなので該当し、join は barrier が同じ信号を待ってから Quiesce が成功するので該当する。bounded edge は該当しない ── その barrier は ring が idle だとしか言わず、drain task は上流の Flush が生む遅延出力を同じ queue で受け取るために意図的に生き続ける。したがって bounded edge の下流 close は、その drain task 自身が EOF を見た時に自分の domain 上で行う。
 
 Flush が**同じ domain**の上で行われることが、retain された cell にとって本質的である。`Emitter.Own` で埋められて `Process` を跨いで保持される cell は、埋められた時点の Site を憶えており、payload を持つ slot は rebind されない。Flush が別 domain を使えば、その cell は Run が終われば誰も読まない場所へ報告し続けることになる。同じ domain を使う限り、解放がどの step で起きるかは「どの operation の下に記録されるか」だけを決め、「記録されるかどうか」は決めない。
 
@@ -364,7 +364,7 @@ type Result struct {
 
 task の外で走る cleanup ── `Queue.Drain`、`Execution.Discard` ── は domain を引数で受け取らない。解放される payload は、それを所有していた task の domain のものだからである。`Execution.Discard` はその domain 上に Discard Span を開き、それが lifecycle 上の位置を与えると同時に、他の owner を巻き込む declared `Drop` の panic を recover する。
 
-runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Finalize と Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
+runtime が queue から取り出した item は、その処理が終わるまで edge の `active` に数えられ、barrier はそれが 0 になるのを待つ。item を終えたと言えるのは、consumer に `Emit` で渡す機会を与え、consumer が受け取らなかった payload の解放まで成功した時である。error、panic、宣言された `Drop` の panic のいずれも、そこへ届かなかったという同じ一つの事実であり、error を軽い場合として扱わない。drain task は保持中かどうかを task 単位の flag で持ち、戻り道の defer で必ず精算する。精算は `Complete` ではなく `Abandon` で行う。処理中の item は無くなるので count は正しくなるが、その item は下流で完了していないため、edge は quiescent にならない。ここで idle を返すと、data path が死んだ後の Flush を通してしまい、failure の phase も本来の run から後段へずれる。item を abandon するのは失敗した consumer だけであり、その失敗が barrier の context を cancel するため、待ちはその failure で終わる。
 
 fan-in の quiescence は edge の idle 状態ではなく task 自身の結末で決まる。一つの batch が全 input にまたがるためである。input を EOF まで drain し、**かつ戻り道の cleanup がすべて成功した時だけ** quiesce したものとする。EOF に達しても、join が保持していた未 join の batch を解放できなければ task は失敗しており、失敗した task は quiesce していない。error や panic で止まった join も同じで、barrier は idle を返さず cancel を待つ。
 
@@ -504,13 +504,15 @@ host は timeout 後に「停止した」と偽らず、join できない task �
 
 queue の終端には成功の `Seal` と停止の `Abort` という別状態を置く。`Seal` だけが、既に入った item を drain した後の `io.EOF` と downstream の `Flush` を許す。cancel/failure cleanup は `Execution.Abort` を通じて未終端 edge を `Abort` し、`Pop` は EOF ではなく context cause を返す。cause がまだ無い内部停止だけは task が消費する control value であり、Ledger の Secondary にはしない。いったん successful finalization が `Seal` した edge は `Abort` が書き換えない。これは fan-out の一枝が Flush に失敗しても、既に EOF を受け取った sibling を独立に close して両方の failure を残すためである。
 
-`Push`/`Pop` は lock を取得した直後にも `context.Cause` を検査し、terminal state、利用可能な item、sealed-empty の EOF より先に cause を返す。したがって pre-canceled context が graceful EOF や queued delivery に化けることはなく、cause の無い `Abort` だけが `ErrAbandoned` になる。正常な finish では close transaction が phase context を bounded edge に先に宣言してから `Seal` する。peer の Flush failure は job context を止めても phase context を止めず、準備済み sibling は全件 Flush を試行する。一方 caller の cancel、Run/Finalize の failure、または準備前の停止は phase context も止め、EOF/Flush を開始しない。prepare は context の記録だけを processor/fan-out/observed wrapper 越しに先行させ、各 buffer の close が delayed output を受け入れた後に `Seal` する。
+`Push`/`Pop` は lock を取得した直後にも `context.Cause` を検査し、terminal state、利用可能な item、sealed-empty の EOF より先に cause を返す。したがって pre-canceled context が graceful EOF や queued delivery に化けることはなく、cause の無い `Abort` だけが `ErrAbandoned` になる。正常な finish では close transaction が phase context を bounded edge に先に宣言してから `Seal` する。peer の Flush failure は job context を止めても phase context を止めず、準備済み sibling は全件 Flush を試行する。一方 caller の cancel、Run の failure、または準備前の停止は phase context も止め、EOF/Flush を開始しない。prepare は context の記録だけを processor/fan-out/observed wrapper 越しに先行させ、各 buffer の close が delayed output を受け入れた後に `Seal` する。
 
 ### EOF
 
-通常 EOF は data sentinel ではなく edge `Seal` で表す。decoder flush は sealed input を drain して EOF を受けた時だけ `Flush` を呼ぶ。abort/cancel は EOF ではなく停止であり、Finalizer と delayed output の成功 flush を起動しない。動的な stream add/remove は専用 control event schema とする。
+通常 EOF は data sentinel ではなく edge `Seal` で表す。decoder flush は sealed input を drain して EOF を受けた時だけ `Flush` を呼ぶ。abort/cancel は EOF ではなく停止であり、成功時の Flush を起動しない。動的な stream add/remove は専用 control event schema とする。
 
-### Finalize
+### 終端
+
+stream の終端で行うことを、依存順の一つの pass にまとめる。
 
 - encoder delayed packet の排出
 - final codec parameter/statistics
@@ -518,8 +520,10 @@ queue の終端には成功の `Seal` と停止の `Abort` という別状態を
 - metadata flush
 - output fsync/atomic commit
 
-を明示した依存順で行う。`Close` に成功処理を押し込まない。
-
+これは `Flush` 一つが担う。node は「抱えていたもの」と「入力全体が確定して初めて決まるもの」の二つを言うが、
+両者は同じ順序制約に従う ── 上流が言い終わってから下流が言う ── ので、別の phase に分けない。edge は上流の
+`Flush` 出力を drain して EOF を見た時点で下流の `Flush` を起動するため、node が `Flush` を求められた時点で
+自分の入力は確定している。`Close` に成功処理を押し込まない。
 ## multi-input と ordering
 
 複数 input の意味は component が選ぶ fan-in policy で決める。`SerialFanIn` は callback を同期直列化し、
@@ -647,7 +651,7 @@ Result {
 
 ## M5 完了条件
 
-M5 は execution island、ownership、queue、cancel、Finalize、既に bound 済み operator/output の transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、Provider session の acquire、共有 probe、Format inspect、spool と実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
+M5 は execution island、ownership、queue、cancel、終端、既に bound 済み operator/output の transactional Open/Close を実装する milestone である。planner と `Plan`/`Program` の生成は M4、Provider session の acquire、共有 probe、Format inspect、spool と実 Format/Codec は M6 の担当であり、M5 には要求しない。planner 側の条件は [planner](planner.md#m4-完了条件) を参照する。
 
 > **2026-08-08 完了。** 下記条件を ownership/queue/task/Host failure matrix、PCM public Host walking skeleton、hot-path allocation test、同一 process paired benchmark で逐条確認した。その後に最終 cut を適用し、scalar/SIMD 全 package test、対象 race/vet、generator、docs check を新 stack だけで通した。性能証拠は [performance](performance.md#m5-runtime-performance-gate)、切断結果は [inventory](inventory.md#m5-の切断) を正本とする。
 
@@ -660,9 +664,9 @@ M5 は execution island、ownership、queue、cancel、Finalize、既に bound �
 - M5 時点の実 queue は bounded で、`job.QueuePolicy` から Plan/Program に固定した `Limit` の items/bytes/time を扱った。byte/time は対応 trait がある edge だけで有効にし、当時の window は planning 時に stream-local tick へ変換した。この完了記録の window は現行 API ではなく、上の「queue と backpressure」に記した physical `Span` と Zip `Alignment` に置き換え済みである。M3 の仮 `schema.Queue`/`Fanout` は削除し、typed component execution binding が traits を private runtime の queue/fan-out factory へ渡す。
 - resource accounting が packet/frame ごとに中央 manager を呼ばない。局所 counter に蓄積し、metrics export 時に集約する。
 - job context cancel が source、queue、operator、sink、host task group へ伝播し、block 中の read/write を解除する。edge close が idempotent で、send-after-close と double-close を plugin の責任にしない。join できない task を「停止した」と偽らず diagnostic にする。
-- EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は `Finalize` の明示 contract で渡り、data packet に混ざらない。
+- EOF が data sentinel ではなく edge close で表される。decoder flush が input close を受けて `Flush` を呼ぶ。最終 codec parameters は descriptor が運び、data packet に混ざらない。
 - Open が transaction として行われ、途中失敗で既に開いた component/Endpoint/resource/output transaction を逆順に閉じ、sink を Abort し、Open 中に作った goroutine を cancel/join する。
-- 成功時に Finalize → Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
+- 成功時に Flush → Sync → PrepareCommit → Commit の順で進み、失敗時は未 commit sink を Abort して、committed / aborted / outcome unknown / rollback attempted を構造化 result に残す。
 - primary failure と cleanup failure が分けて集約される。`Close`、`Abort`、output rollback、shutdown の error を `_ =` で捨てる経路がない（[F50](findings.md)）。cleanup は cancel 済み context ではなく bounded cleanup context で全対象へ試行する。M6 の temporary storage も同じ集約へ接続する。
 - **Historical status (superseded by M7):** M5 の multi-input contract は fan-in policy を宣言し、goroutine の
   到着順だけで timestamp semantics を選ばないことを求めた（[F22](findings.md)）。M5 時点では必要な buffering と
@@ -674,10 +678,10 @@ M5 は execution island、ownership、queue、cancel、Finalize、既に bound �
 - `Fast`/`Stable`/`Portable`/`Realtime` が Run の分岐にならず、Host が Compile 前に policy vector へ展開する。item loop が preset、CPU feature、catalog を参照しない。
 - **hot-path 性能契約の 12 条を代表 benchmark と test で確認する。** 特に hop ごとの必須 allocation、linear ownership の refcount、node ごとの goroutine/channel、observation off の atomic を数値で示す。
 - **旧 pipeline と新 runtime の paired benchmark を同一 harness へ接続する。** M0 baseline は旧 pipeline を測っており、旧 contract 層を切断した後では比較対象が失われる（[refactor.md](../refactor.md#実装ロードマップ)）。この benchmark を取り終えることが次項の切断の前提条件である。
-- **walking skeleton が新 runtime で通る。** M4 が planner 経由にした経路を、island、queue、cancel、Finalize を含む実行で流し、bytes、item 数、順序、timestamp が同じであることを検査する。
+- **walking skeleton が新 runtime で通る。** M4 が planner 経由にした経路を、island、queue、cancel、終端を含む実行で流し、bytes、item 数、順序、timestamp が同じであることを検査する。
 - M3 専用の `host.Open(identity)` が残っていない。M4 で置き換えられていなければここで削除する。
 - **新規 export ごとに、呼び出し元を示すか、宣言のみとして [scope](scope.md) の分類節へ consumer を作る milestone とともに記載する。** どちらもできない export を残さない。
-- 上記を unit/property/race test で検査する。cancel、panic、partial Open、fan-out、Finalize/Commit failure で item、goroutine、resource、temporary output が leak しないことを含める。
+- 上記を unit/property/race test で検査する。cancel、panic、partial Open、fan-out、Flush/Commit failure で item、goroutine、resource、temporary output が leak しないことを含める。
 
 ### M5 最終単位: 旧 contract 層の切断
 
@@ -700,6 +704,6 @@ M5 では次を未完了事項として残す。Provider session の acquire、�
 - node ごとの goroutine/channel を要求せず、queue が必要な境界にだけ現れる。
 - ownership、cancel、rollback、cleanup が contract として test され、plugin author が手動 refcount を扱わない。
 - mutable state が Host → Job → component/worker → item lease の最小 owner に置かれ、package-level mutable state を暗黙の owner にしない。
-- Finalize、flush/sync、commit/abort が一つの failure-safe lifecycle になり、primary と cleanup の failure を区別して報告する。
+- flush/sync、commit/abort が一つの failure-safe lifecycle になり、primary と cleanup の failure を区別して報告する。
 - observability が同じ event model から集約され、observation off が hot path に追加コストを持ち込まない。
 - runtime internal を交換しても公式・第三者 plugin の public API を変更しない。

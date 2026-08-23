@@ -97,7 +97,7 @@ func Plugin() plugin.Definition {
 
 ### 高度な component
 
-codec、parser、mixer、session/device Endpoint 等は Operator、Shape、Host Tasks、Resource Request、Finalize を段階的に利用できる。簡単な component と別 runtime/API family にはしない。background task を開始する component は `Compile` で最大同時実行数を `resource.Request.Workers` に宣言し、`OpenContext.Tasks().Start` を使う。未宣言または grant 超過時は `plugin.ErrWorkerLimit` になり、動く正本は [`plugin.ExampleOpenContext_Tasks`](../../plugin/example_test.go) とする。object storage の開発者は typed media を扱わず、byte component へ Access source/sink trait を付けて conformance だけを実装できる。
+codec、parser、mixer、session/device Endpoint 等は Operator、Shape、Host Tasks、Resource Request を段階的に利用できる。簡単な component と別 runtime/API family にはしない。background task を開始する component は `Compile` で最大同時実行数を `resource.Request.Workers` に宣言し、`OpenContext.Tasks().Start` を使う。未宣言または grant 超過時は `plugin.ErrWorkerLimit` になり、動く正本は [`plugin.ExampleOpenContext_Tasks`](../../plugin/example_test.go) とする。object storage の開発者は typed media を扱わず、byte component へ Access source/sink trait を付けて conformance だけを実装できる。
 
 ### 開発用の保証
 

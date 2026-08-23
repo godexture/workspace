@@ -85,7 +85,7 @@ plugin の数値 algorithm は優先度を下げ、まず contract と依存方�
 | `plugins/codec-flac/internal/{decoder,encoder,flac}` | 維持・非公開 | pure-Go algorithm と並列実装を維持。integer exact path と FMA bounded-difference path を別 variant contract とし、Host task/resource/typed audio contract に接続 |
 | `plugins/format-flac` | 統合 | 同じ`plugin/flac`親のinternal format/parser実装。親が別componentとして公開し、codec contractとは分離 |
 | `plugins/format-flac/{frame,seektable,streaminfo}` | 再評価 | parser/format/codec 間で共有する型は同 module に凝集。第三者 contract でなければ internal 化 |
-| `plugins/format-flac/internal` | 維持・置換 | demux/mux/probe logic を Format/Carrier/Parser/Finalize contract へ接続 |
+| `plugins/format-flac/internal` | 維持・置換 | demux/mux/probe logic を Format/Carrier/Parser contract へ接続 |
 | `plugins/codec-mp3` | 統合 | `plugin/mp3/internal/codec`。親`mp3`がpublic component definitionを提供し、decode algorithmは非公開に維持 |
 | `plugins/codec-mp3/internal/{domain,mp3,mp3/domain,mp3/layer12,mp3/layer3}` | 維持・非公開 | algorithm/domain を plugin internal に凝集し、generic media domain と混同しない |
 | `plugins/format-mp3` | 統合 | 同じ`plugin/mp3`親のinternal elementary format/parser実装。親が別componentとして公開し、ID3 encodingを直接所有しない |
