@@ -49,6 +49,12 @@ type (
 	resampleConfigID   struct{}
 	retimeID           struct{}
 	retimeConfigID     struct{}
+	normalizeID        struct{}
+	normalizeConfigID  struct{}
+	fadeID             struct{}
+	fadeConfigID       struct{}
+	trimID             struct{}
+	trimConfigID       struct{}
 )
 
 type conversion struct {
@@ -112,6 +118,9 @@ const (
 	Remix      Processor = "remix"
 	Resample   Processor = "resample"
 	Retime     Processor = "retime"
+	Normalize  Processor = "normalize"
+	Fade       Processor = "fade"
+	Trim       Processor = "trim"
 )
 
 type entry struct {
@@ -132,6 +141,9 @@ var processors = []entry{
 	{name: Remix, component: newRemix()},
 	{name: Resample, component: newResample()},
 	{name: Retime, component: newRetime()},
+	{name: Normalize, component: newNormalize()},
+	{name: Fade, component: newFade()},
+	{name: Trim, component: newTrim()},
 }
 
 // ProcessorIdentity returns the component implementing one processor. An

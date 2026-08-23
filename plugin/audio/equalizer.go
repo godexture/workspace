@@ -76,7 +76,7 @@ func newEqualizer() plugin.Component {
 		detail:  "audio.equalizer",
 		schema:  equalizerSchema(),
 		samples: func(value *equalizerConfig) *int { return &value.MaxSamples },
-		check: func(value equalizerConfig, signal sample.Signal) error {
+		check: func(value equalizerConfig, signal filterStream) error {
 			for _, band := range value.Bands {
 				if float64(band.Frequency) >= float64(signal.Rate)/2 {
 					return fmt.Errorf("%w: a band at %d Hz is at or above half of this stream's %d Hz",
@@ -85,8 +85,8 @@ func newEqualizer() plugin.Component {
 			}
 			return nil
 		},
-		build: func(value equalizerConfig, signal sample.Signal) (filter, error) {
-			return newEqualizerKernel(value.Bands, signal), nil
+		build: func(value equalizerConfig, signal filterStream) (filter, error) {
+			return newEqualizerKernel(value.Bands, signal.Signal), nil
 		},
 	})
 }

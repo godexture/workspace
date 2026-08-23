@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/godexture/godec/config"
-	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -40,7 +39,7 @@ func newDelay() plugin.Component {
 		detail:  "audio.delay",
 		schema:  delaySchema(),
 		samples: func(value *delayConfig) *int { return &value.MaxSamples },
-		build: func(value delayConfig, signal sample.Signal) (filter, error) {
+		build: func(value delayConfig, signal filterStream) (filter, error) {
 			length := max(int(math.Round(value.Time.Seconds()*float64(signal.Rate))), 1)
 			lines := make([][]float32, signal.Layout.Count())
 			for channel := range lines {
