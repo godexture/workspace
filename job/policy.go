@@ -109,6 +109,30 @@ func (p ContinuityPolicy) Valid() bool {
 	return p >= PreserveContinuity && p <= ConcealContinuity
 }
 
+// MetadataPolicy says what a job makes of metadata a carrier cannot hold as the
+// document stated it.
+type MetadataPolicy uint8
+
+const (
+	// PreserveMetadata writes what the carrier can hold and reports the rest.
+	// What a carrier can say is a fact about the carrier, so refusing the whole
+	// conversion over it would make ordinary work impossible.
+	PreserveMetadata MetadataPolicy = iota + 1
+	// StrictMetadata refuses to plan a conversion that would lose any of it.
+	// It is opt-in because the answer it wants -- nothing lost -- is not
+	// available from every pair of formats.
+	StrictMetadata
+)
+
+func (p MetadataPolicy) Valid() bool { return p >= PreserveMetadata && p <= StrictMetadata }
+
+func (p MetadataPolicy) String() string {
+	if p == StrictMetadata {
+		return "strict"
+	}
+	return "preserve"
+}
+
 // ResourcePolicy bounds planning-visible coarse resources. A zero Limit with
 // Limited false means that the Host decides the grant during preparation.
 type ResourcePolicy struct {
@@ -186,6 +210,7 @@ type Policy struct {
 	Artifact       ArtifactPolicy
 	Implementation ImplementationPolicy
 	Continuity     ContinuityPolicy
+	Metadata       MetadataPolicy
 	Alignment      AlignmentPolicy
 	Resources      ResourcePolicy
 }
@@ -215,6 +240,9 @@ func (p Policy) diagnostics() (items []diagnostic.Item) {
 	}
 	if !p.Continuity.Valid() {
 		items = append(items, policyDiagnostic("job.invalid-policy-continuity", "policy continuity behavior is invalid", "continuity"))
+	}
+	if !p.Metadata.Valid() {
+		items = append(items, policyDiagnostic("job.invalid-policy-metadata", "policy metadata behavior is invalid", "metadata"))
 	}
 	queue := p.Resources.Queue
 	if !queue.validItems() {
@@ -253,6 +281,7 @@ func PolicyFor(preset Preset) (Policy, bool) {
 		Artifact:       ArtifactNone,
 		Implementation: implementation,
 		Continuity:     PreserveContinuity,
+		Metadata:       PreserveMetadata,
 		Alignment:      AlignmentPolicy{},
 		Resources:      ResourcePolicy{Queue: QueuePolicy{Items: 4}, ScratchMaxBytes: defaultScratchMaxBytes, TemporaryMaxBytes: defaultTemporaryMaxBytes},
 	}
