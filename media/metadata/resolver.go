@@ -6,6 +6,7 @@ import (
 
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -56,7 +57,7 @@ func (r Resolver) Parse(ctx context.Context, slot carrier.ID, block BlockID, sco
 	return value, nil
 }
 
-func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, document Document) (Blob, []Loss, error) {
+func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, document Document) (Blob, []loss.Report, error) {
 	resolved, err := r.lookup(slot)
 	if err != nil {
 		return Blob{}, nil, err
@@ -65,7 +66,11 @@ func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, d
 	if err != nil {
 		return Blob{}, nil, resolverDiagnostic("metadata.marshal", "metadata document could not be marshalled for its carrier", slot, resolved.identity, err)
 	}
-	return value, lost, nil
+	reports := make([]loss.Report, len(lost))
+	for index, value := range lost {
+		reports[index] = loss.Report{Carrier: slot, Encoding: resolved.identity.String(), Block: string(block), Loss: value}
+	}
+	return value, reports, nil
 }
 
 func (r Resolver) lookup(slot carrier.ID) (resolvedEncoding, error) {

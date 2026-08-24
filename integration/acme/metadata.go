@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -42,16 +43,16 @@ func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
 // hold several, because multiplicity is a fact about a document rather than
 // about any one carrier; folding them is this encoding's job, and saying what
 // the fold cost is the other half of that job.
-func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 	values := metadata.Values(ctx.Document(), Label())
 	if len(values) == 0 || values[0] == "" || len(values[0]) > maxLabelBytes || !utf8.ValidString(values[0]) {
 		return metadata.Blob{}, nil, errors.Join(ErrMalformed, errors.New("ACME metadata requires a valid label"))
 	}
-	var lost []metadata.Loss
+	var lost []loss.Loss
 	for range values[1:] {
-		lost = append(lost, metadata.Loss{
+		lost = append(lost, loss.Loss{
 			Key:    Label().ID(),
-			Kind:   metadata.Folded,
+			Kind:   loss.Folded,
 			Native: "label",
 			Detail: "acme.single-label",
 		})

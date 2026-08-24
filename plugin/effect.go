@@ -11,7 +11,6 @@ const (
 	StructuralEffect EffectKind = iota + 1
 	RepresentationEffect
 	CompressionEffect
-	MetadataEffect
 	ContentEffect
 	TimelineEffect
 	TopologyEffect
@@ -37,11 +36,6 @@ type Effect struct {
 	Kind   EffectKind
 	Loss   Loss
 	Detail string
-	// Item names what the effect is about where the effect is about one thing:
-	// the metadata key a carrier could not carry, for instance. Like Detail it
-	// is a stable identifier rather than a message, so a surface can group and
-	// count effects without parsing them.
-	Item string
 }
 
 func (e Effect) Valid() bool {

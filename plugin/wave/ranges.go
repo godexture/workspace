@@ -30,6 +30,7 @@ type sourceRanges struct {
 	afterData    sourceRange
 	trailer      sourceRange
 	info         sourceRange
+	infoAnchor   chunkAnchor
 	infoCount    uint8
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -125,7 +126,7 @@ func metadataBindingComponent() plugin.Component {
 		func(ctx metadata.ParseContext) (metadata.Document, error) {
 			return metadata.NewBuilder(ctx.Scope()).Build()
 		},
-		func(metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+		func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 			return metadata.NewBlob("", nil), nil, nil
 		},
 	))

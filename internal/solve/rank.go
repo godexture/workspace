@@ -46,6 +46,11 @@ func (r rank) addCompilation(component plugin.Component, resolved config.Resolve
 		}
 		r.loss = saturatingInt(r.loss, int(effect.Loss))
 	}
+	for _, report := range compilation.MetadataReports() {
+		if report.Report.Lossy() {
+			r.loss = saturatingInt(r.loss, 1)
+		}
+	}
 	contract := component.Contract()
 	if contract.Accuracy != plugin.ExactContract {
 		r.contract = saturatingInt(r.contract, 1)

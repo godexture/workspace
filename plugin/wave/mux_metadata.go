@@ -8,7 +8,10 @@ import (
 	"sort"
 
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 )
+
+const generatedInfoBlock = metadata.BlockID("wave/info/0")
 
 type muxChunks struct {
 	reservation  []byte
@@ -16,10 +19,10 @@ type muxChunks struct {
 	beforeData   []byte
 	afterData    []byte
 	trailer      []byte
-	// lost is what the carriers could not say as the document stated it. It
+	// reports are what the carriers could not say as the document stated it. It
 	// travels with the chunks because it is settled by the same pass that
 	// writes them.
-	lost []metadata.Loss
+	reports []loss.Report
 }
 
 type positionedMuxChunk struct {
@@ -36,7 +39,8 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		}
 		return muxChunks{}, fmt.Errorf("%w: WAVE metadata document has no valid scope", ErrMalformed)
 	}
-	var lost []metadata.Loss
+	var reports []loss.Report
+	hasInfo := false
 	positioned := make([]positionedMuxChunk, 0, len(blocks))
 	positions := make(map[uint64]struct{}, len(blocks))
 	for _, block := range blocks {
@@ -57,6 +61,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			}
 			payload = block.Payload().AppendTo(nil)
 		case chunkInfo:
+			hasInfo = true
 			if block.Carrier() != RIFFInfo() {
 				return muxChunks{}, fmt.Errorf("%w: RIFF INFO chunk %s has incompatible carrier", ErrMalformed, block.ID())
 			}
@@ -64,7 +69,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			if err != nil {
 				return muxChunks{}, err
 			}
-			lost = append(lost, blockLost...)
+			reports = append(reports, blockLost...)
 			payload = value.AppendTo(nil)
 		default:
 			return muxChunks{}, fmt.Errorf("%w: WAVE metadata chunk %s has an unsupported kind", ErrUnsupported, block.ID())
@@ -91,7 +96,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 	}
 	sort.Slice(positioned, func(left, right int) bool { return positioned[left].position < positioned[right].position })
 
-	result := muxChunks{lost: lost}
+	result := muxChunks{reports: reports}
 	for _, chunk := range positioned {
 		var err error
 		switch chunk.anchor {
@@ -115,6 +120,28 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		if err != nil {
 			return muxChunks{}, err
 		}
+	}
+	if document.Len() != 0 && !hasInfo {
+		value, lost, err := resolver.Marshal(ctx, RIFFInfo(), generatedInfoBlock, document)
+		if err != nil {
+			return muxChunks{}, err
+		}
+		payload := value.AppendTo(nil)
+		identity, err := validateMuxChunk(payload)
+		if err != nil {
+			return muxChunks{}, fmt.Errorf("%s: %w", generatedInfoBlock, err)
+		}
+		if identity != tagLIST {
+			return muxChunks{}, fmt.Errorf("%w: RIFF INFO encoding returned %q instead of LIST", ErrMalformed, identity)
+		}
+		if _, err := infoPayload(payload); err != nil {
+			return muxChunks{}, err
+		}
+		result.beforeData, err = appendMuxChunk(result.beforeData, payload)
+		if err != nil {
+			return muxChunks{}, err
+		}
+		result.reports = append(result.reports, lost...)
 	}
 	return result, nil
 }

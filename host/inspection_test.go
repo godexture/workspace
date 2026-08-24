@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -168,7 +169,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 				}
 				return metadata.NewBuilder(ctx.Scope()).Build()
 			},
-			func(metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+			func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 				return metadata.NewBlob("", nil), nil, nil
 			},
 		),

@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -39,7 +40,7 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 				builder.AddBlock(metadata.NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 				return builder.Build()
 			},
-			func(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+			func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 				marshalled.Add(1)
 				block, ok := ctx.Document().Block(ctx.Block())
 				if !ok {

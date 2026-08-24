@@ -52,10 +52,15 @@ func writerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[writerPlan, stream.Descriptor]{}, err
 			}
+			compiledReports := make([]plugin.MetadataReport, len(lost))
+			for index, report := range lost {
+				compiledReports[index] = plugin.MetadataReport{Output: "writes", Report: report}
+			}
 			return plugin.Compiled[writerPlan, stream.Descriptor]{
 				Plan: writerPlan{shape: shape.Clone(), header: header}, Outputs: flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
-				Effects:   append([]plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "acme-mux"}}, labelLossEffects(lost)...),
-				Resources: resource.Request{Memory: resource.Bytes(len(header) + 1)},
+				Effects:         []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "acme-mux"}},
+				MetadataReports: compiledReports,
+				Resources:       resource.Request{Memory: resource.Bytes(len(header) + 1)},
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan writerPlan) (flow.Operator, error) {
@@ -131,19 +136,4 @@ func (o *writerOperator) Flush(context.Context, flow.Emitter[access.Write]) erro
 		return ErrMalformed
 	}
 	return nil
-}
-
-// labelLossEffects puts what the carrier could not say into the Plan, so a
-// caller sees the cost of a conversion before it runs rather than after.
-func labelLossEffects(values []metadata.Loss) []plugin.Effect {
-	result := make([]plugin.Effect, 0, len(values))
-	for _, value := range values {
-		result = append(result, plugin.Effect{
-			Kind:   plugin.MetadataEffect,
-			Loss:   plugin.Lossy,
-			Detail: value.Detail,
-			Item:   value.Key.String(),
-		})
-	}
-	return result
 }

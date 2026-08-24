@@ -71,6 +71,9 @@ func (p Plan) Boundaries() []Boundary          { return p.Description().Boundari
 func (p Plan) Runtime() Runtime                { return cloneRuntime(p.description.Runtime) }
 func (p Plan) Scratch() Scratch                { return p.description.Scratch }
 func (p Plan) Warnings() []string              { return append([]string(nil), p.description.Warnings...) }
+func (p Plan) PredictedMetadataLosses() []PredictedMetadataLoss {
+	return append([]PredictedMetadataLoss(nil), p.description.PredictedMetadataLosses...)
+}
 
 func validate(description Description) error {
 	if !description.RequestedPolicy.Valid() || !description.EffectivePolicy.Valid() {
@@ -89,6 +92,7 @@ func validate(description Description) error {
 		return errors.New("plan has no nodes")
 	}
 	seen := make(map[string]struct{}, len(description.Nodes))
+	components := make(map[string]string, len(description.Nodes))
 	ports := make(map[string]struct{}, len(description.Nodes))
 	for _, node := range description.Nodes {
 		if node.ID == "" || !node.Origin.Valid() || node.Component == "" || node.Variant == "" || node.Version == "" || !node.Config.Valid() || !node.Contract.Valid() || !node.Estimate.Valid() || uint64(node.Scratch) > math.MaxInt64 || node.Origin == Automatic && node.Reason == "" {
@@ -98,6 +102,7 @@ func validate(description Description) error {
 			return errors.New("plan contains duplicate node IDs")
 		}
 		seen[node.ID] = struct{}{}
+		components[node.ID] = node.Component
 		for _, descriptor := range node.Inputs {
 			ports["input:"+node.ID+":"+descriptor.Port] = struct{}{}
 		}
@@ -127,6 +132,7 @@ func validate(description Description) error {
 		}
 	}
 	seenBoundaries := make(map[[2]int]struct{}, len(description.Boundaries))
+	outputBoundaries := make(map[int]Boundary, len(description.Boundaries))
 	for _, boundary := range description.Boundaries {
 		if !boundary.Valid() {
 			return errors.New("plan contains an invalid boundary binding")
@@ -145,6 +151,30 @@ func validate(description Description) error {
 		}
 		if _, ok := ports[direction+boundary.Node+":"+boundary.Port]; !ok {
 			return errors.New("plan boundary port is absent or has the wrong direction")
+		}
+		if boundary.Direction == OutputBoundary {
+			outputBoundaries[boundary.Choice] = boundary
+		}
+	}
+	for _, value := range description.PredictedMetadataLosses {
+		if !value.Valid() {
+			return errors.New("plan contains an invalid metadata loss")
+		}
+		if _, exists := seenBoundaries[[2]int{int(OutputBoundary), value.Output}]; !exists {
+			return errors.New("plan metadata loss output boundary is absent")
+		}
+		if _, exists := seen[value.Node]; !exists {
+			return errors.New("plan metadata loss producer node is absent")
+		}
+		if components[value.Node] != value.Component {
+			return errors.New("plan metadata loss producer component does not match its node")
+		}
+		if _, exists := ports["output:"+value.Node+":"+value.Port]; !exists {
+			return errors.New("plan metadata loss producer port is absent or is not an output")
+		}
+		boundary := outputBoundaries[value.Output]
+		if !hasEdge(description.Edges, value.Node, value.Port, boundary.Node, boundary.Port) {
+			return errors.New("plan metadata loss does not reach its output boundary")
 		}
 	}
 	seenMappings := make(map[Mapping]struct{}, len(description.Mappings))
@@ -242,6 +272,15 @@ func edgeKey(edge Edge) string {
 	return edge.FromNode + ":" + edge.FromPort + "->" + edge.ToNode + ":" + edge.ToPort
 }
 
+func hasEdge(edges []Edge, fromNode, fromPort, toNode, toPort string) bool {
+	for _, edge := range edges {
+		if edge.FromNode == fromNode && edge.FromPort == fromPort && edge.ToNode == toNode && edge.ToPort == toPort {
+			return true
+		}
+	}
+	return false
+}
+
 type canonicalConfig struct {
 	Schema      string
 	Version     string
@@ -265,15 +304,36 @@ type canonicalNode struct {
 }
 
 type canonicalExecution struct {
-	Catalog    string
-	Policy     job.Policy
-	Platform   Platform
-	Nodes      []canonicalNode
-	Edges      []Edge
-	Mappings   []Mapping
-	Boundaries []canonicalBoundary
-	Runtime    Runtime
-	Scratch    Scratch
+	Catalog        string
+	Policy         job.Policy
+	Platform       Platform
+	Nodes          []canonicalNode
+	Edges          []Edge
+	Mappings       []Mapping
+	Boundaries     []canonicalBoundary
+	Runtime        Runtime
+	Scratch        Scratch
+	MetadataLosses []canonicalMetadataLoss
+}
+
+type canonicalMetadataLoss struct {
+	Output         int
+	Node           string
+	Component      string
+	Port           string
+	Carrier        string
+	Encoding       string
+	Block          string
+	Key            string
+	Kind           string
+	Native         string
+	Mapping        string
+	Target         string
+	Detail         string
+	SourceCarrier  string
+	SourceEncoding string
+	SourceBlock    string
+	SourceNative   string
 }
 
 type canonicalBoundary struct {
@@ -360,7 +420,18 @@ func canonicalExecutionOf(description Description) canonicalExecution {
 			Ownership:            boundary.Ownership,
 		}
 	}
-	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Mappings: append([]Mapping(nil), description.Mappings...), Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime), Scratch: description.Scratch}
+	metadataLosses := make([]canonicalMetadataLoss, len(description.PredictedMetadataLosses))
+	for index, value := range description.PredictedMetadataLosses {
+		metadataLosses[index] = canonicalMetadataLoss{
+			Output: value.Output, Node: value.Node, Component: value.Component, Port: value.Port,
+			Carrier: value.Report.Carrier.String(), Encoding: value.Report.Encoding, Block: value.Report.Block,
+			Key: value.Report.Loss.Key.String(), Kind: value.Report.Loss.Kind.String(), Native: value.Report.Loss.Native,
+			Mapping: value.Report.Loss.Mapping.String(), Target: value.Report.Loss.Target.String(), Detail: value.Report.Loss.Detail,
+			SourceCarrier: value.Report.Loss.Source.Carrier.String(), SourceEncoding: value.Report.Loss.Source.Encoding,
+			SourceBlock: value.Report.Loss.Source.Block, SourceNative: value.Report.Loss.Source.Native,
+		}
+	}
+	return canonicalExecution{Catalog: description.CatalogFingerprint, Policy: description.EffectivePolicy, Platform: description.Platform, Nodes: nodes, Edges: edges, Mappings: append([]Mapping(nil), description.Mappings...), Boundaries: boundaries, Runtime: cloneRuntime(description.Runtime), Scratch: description.Scratch, MetadataLosses: metadataLosses}
 }
 
 func canonicalSpoolOf(value access.SpoolSpec) canonicalSpool {

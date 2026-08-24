@@ -108,11 +108,13 @@ func (s OutputState) String() string {
 // OutputOutcome reports each sink independently because multi-output commit
 // cannot generally be atomic across providers.
 type OutputOutcome struct {
+	Choice            int
 	Node              string
 	Component         string
 	Class             access.TransactionClass
 	State             OutputState
 	RollbackAttempted bool
+	MetadataLosses    []ActualMetadataLoss
 }
 
 type EventKind uint8
@@ -260,6 +262,21 @@ type Result struct {
 	Outputs     []OutputOutcome
 	Events      []Event
 	Observation ObservationSummary
+}
+
+// ActualMetadataLosses returns the encoding evidence for outputs whose bytes
+// committed. OutputOutcome.MetadataLosses is the authoritative association;
+// this method is the convenient aggregate view for callers with one job-wide
+// warning surface.
+func (r Result) ActualMetadataLosses() []ActualMetadataLoss {
+	var values []ActualMetadataLoss
+	for _, output := range r.Outputs {
+		if output.State != OutputCommitted {
+			continue
+		}
+		values = append(values, output.MetadataLosses...)
+	}
+	return append([]ActualMetadataLoss(nil), values...)
 }
 
 func (r Result) Succeeded() bool {

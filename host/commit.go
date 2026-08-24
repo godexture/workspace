@@ -46,6 +46,7 @@ func (r *runner) finishOutputs() *Failure {
 		if output.transaction == nil {
 			output.committed = true
 			r.result.Outputs[output.outcome].State = OutputCommitted
+			r.commitMetadataLosses(output.outcome)
 			continue
 		}
 		node := r.result.Outputs[output.outcome].Node
@@ -56,6 +57,29 @@ func (r *runner) finishOutputs() *Failure {
 		}
 		output.committed = true
 		r.result.Outputs[output.outcome].State = OutputCommitted
+		r.commitMetadataLosses(output.outcome)
 	}
 	return nil
+}
+
+func (r *runner) commitMetadataLosses(outcome int) {
+	if outcome < 0 || outcome >= len(r.result.Outputs) {
+		return
+	}
+	output := &r.result.Outputs[outcome]
+	if output.State != OutputCommitted || output.Choice < 0 {
+		return
+	}
+	for _, value := range r.metadataLosses {
+		if value.Output != output.Choice {
+			continue
+		}
+		actual := ActualMetadataLoss{
+			Output: value.Output, Node: value.Node, Component: value.Component, Port: value.Port, Report: value.Report,
+		}
+		output.MetadataLosses = append(output.MetadataLosses, actual)
+		if actual.Lossy() {
+			r.diag.metadataLoss(actual)
+		}
+	}
 }

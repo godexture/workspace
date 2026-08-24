@@ -102,19 +102,20 @@ func (p Platform) Valid() bool { return p.OS != "" && p.Arch != "" && p.Toolchai
 
 // Description is the DTO-ready, inert input used to build a Plan.
 type Description struct {
-	RequestedPolicy    job.Policy
-	EffectivePolicy    job.Policy
-	Budget             job.Budget
-	Usage              Usage
-	CatalogFingerprint string
-	Platform           Platform
-	Nodes              []Node
-	Edges              []Edge
-	Mappings           []Mapping
-	Boundaries         []Boundary
-	Runtime            Runtime
-	Scratch            Scratch
-	Warnings           []string
+	RequestedPolicy         job.Policy
+	EffectivePolicy         job.Policy
+	Budget                  job.Budget
+	Usage                   Usage
+	CatalogFingerprint      string
+	Platform                Platform
+	Nodes                   []Node
+	Edges                   []Edge
+	Mappings                []Mapping
+	Boundaries              []Boundary
+	Runtime                 Runtime
+	Scratch                 Scratch
+	PredictedMetadataLosses []PredictedMetadataLoss
+	Warnings                []string
 }
 
 func cloneNode(node Node) Node {
@@ -138,6 +139,7 @@ func cloneDescription(description Description) Description {
 		description.Boundaries[index] = cloneBoundary(description.Boundaries[index])
 	}
 	description.Runtime = cloneRuntime(description.Runtime)
+	description.PredictedMetadataLosses = append([]PredictedMetadataLoss(nil), description.PredictedMetadataLosses...)
 	description.Warnings = append([]string(nil), description.Warnings...)
 	description.Platform.Features = append([]string(nil), description.Platform.Features...)
 	return description

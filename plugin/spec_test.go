@@ -13,6 +13,9 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/schema"
 )
 
@@ -20,6 +23,8 @@ type specUnitID struct{}
 type specOtherID struct{}
 type specTraitID struct{}
 type specUnit struct{ Value int }
+type specMetadataCarrierID struct{}
+type specMetadataKeyID struct{}
 type specPlan struct {
 	shape flow.Shape
 	value int
@@ -696,6 +701,39 @@ func TestCompileRejectsIncompleteContractResults(t *testing.T) {
 	resolved, _ = component.Resolve(config.NewPatch())
 	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-effect") {
 		t.Fatalf("invalid effect error = %v", err)
+	}
+
+	invalidReport := testSpec(nil, nil)
+	invalidReport.Compile = func(_ CompileContext, _ pluginConfig, inputs flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		input, _ := inputs.One("in")
+		return Compiled[specPlan, int]{
+			Outputs: flow.NewDescriptors(flow.Describe("out", input)),
+			MetadataReports: []MetadataReport{{Output: "missing", Report: loss.Report{
+				Carrier: carrier.Define[specMetadataCarrierID](), Encoding: "fixture.encoding", Block: "fixture/block",
+				Loss: loss.Loss{Key: key.Define[specMetadataKeyID, string]().ID(), Kind: loss.Dropped, Detail: "fixture.drop"},
+			}}},
+		}, nil
+	}
+	component = NewComponent[specUnitID](Descriptor{DisplayName: "invalid metadata report"}, pluginSchema(1), WithSpec(invalidReport))
+	resolved, _ = component.Resolve(config.NewPatch())
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-metadata-report") {
+		t.Fatalf("invalid metadata report error = %v", err)
+	}
+
+	missingReportDescriptor := testSpec(nil, nil)
+	missingReportDescriptor.Compile = func(_ CompileContext, _ pluginConfig, _ flow.Descriptors[int]) (Compiled[specPlan, int], error) {
+		return Compiled[specPlan, int]{
+			Outputs: flow.NewDescriptors[int](),
+			MetadataReports: []MetadataReport{{Output: "out", Report: loss.Report{
+				Carrier: carrier.Define[specMetadataCarrierID](), Encoding: "fixture.encoding", Block: "fixture/block",
+				Loss: loss.Loss{Key: key.Define[specMetadataKeyID, string]().ID(), Kind: loss.Dropped, Detail: "fixture.drop"},
+			}}},
+		}, nil
+	}
+	component = NewComponent[specUnitID](Descriptor{DisplayName: "metadata report without descriptor"}, pluginSchema(1), WithSpec(missingReportDescriptor))
+	resolved, _ = component.Resolve(config.NewPatch())
+	if _, err := Compile(component, CompileContext{}, resolved, flow.NewDescriptors(flow.Describe("in", 1))); !hasDiagnostic(err, "plugin.compile-metadata-report") {
+		t.Fatalf("metadata report without output descriptor error = %v", err)
 	}
 }
 

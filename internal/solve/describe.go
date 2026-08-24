@@ -2,9 +2,6 @@ package solve
 
 import (
 	"errors"
-	"github.com/godexture/godec/diagnostic"
-	"github.com/godexture/godec/job"
-	"github.com/godexture/godec/plugin"
 
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/graph"
@@ -80,8 +77,16 @@ func (p *planner) buildProgram(compiled graph.Graph) (program.Program, error) {
 			Estimate:    compilation.Estimate(),
 		})
 	}
-	if err := strictMetadata(p.policy, description.Nodes); err != nil {
+	metadataLosses, err := projectMetadataLosses(compiled, description.Boundaries)
+	if err != nil {
 		return program.Program{}, err
+	}
+	description.PredictedMetadataLosses = metadataLosses
+	if err := strictMetadata(p.policy, metadataLosses); err != nil {
+		return program.Program{}, err
+	}
+	if warning := metadataWarning(metadataLosses); warning != "" {
+		description.Warnings = append(description.Warnings, warning)
 	}
 	for _, edge := range compiled.Edges() {
 		metadata, ok := p.edges[edgeKey(edge)]
@@ -144,33 +149,4 @@ func projectBindings(bindings flow.Descriptors[stream.Descriptor]) ([]plan.PortD
 		result[index] = plan.PortDescriptor{Port: binding.Port(), Descriptor: descriptor}
 	}
 	return result, nil
-}
-
-// strictMetadata refuses a plan that would lose metadata when the job said it
-// must not. The encodings answer the same way either way -- what a carrier can
-// hold is a fact about the carrier -- so the choice of whether that is fatal
-// belongs here, once, rather than in each of them.
-func strictMetadata(policy job.Policy, nodes []plan.Node) error {
-	if policy.Metadata != job.StrictMetadata {
-		return nil
-	}
-	var items []diagnostic.Item
-	for _, node := range nodes {
-		for _, effect := range node.Effects {
-			if effect.Kind != plugin.MetadataEffect || effect.Loss == plugin.NoLoss {
-				continue
-			}
-			detail := map[string]string{"node": node.ID, "reason": effect.Detail}
-			if effect.Item != "" {
-				detail["key"] = effect.Item
-			}
-			items = append(items, diagnostic.NewItem("solve.metadata-loss", diagnostic.ErrorSeverity,
-				diagnostic.Path{Component: node.Component},
-				"this conversion cannot carry metadata the job asked it to keep", detail))
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return diagnostic.NewError(items...)
 }

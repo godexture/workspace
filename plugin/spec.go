@@ -193,8 +193,12 @@ type Compiled[P, D any] struct {
 	Outputs      flow.Descriptors[D]
 	Requirements []Requirement[D]
 	Effects      []Effect
-	Resources    resource.Request
-	Scratch      resource.Bytes
+	// MetadataReports are target-output metadata encoding facts. They remain
+	// separate from Effects because generic transformations cannot retain the
+	// vocabulary and carrier context required by a public loss report.
+	MetadataReports []MetadataReport
+	Resources       resource.Request
+	Scratch         resource.Bytes
 	// Temporary is a node-local store this component grows into rather than
 	// reserves. A stage that holds a stream whose length nobody stated cannot
 	// say how much it needs before it runs, so this is the ceiling it refuses
@@ -215,14 +219,15 @@ type componentImplementation struct {
 }
 
 type compiledErased struct {
-	plan         any
-	outputs      any
-	requirements any
-	effects      []Effect
-	resources    resource.Request
-	scratch      resource.Bytes
-	temporary    resource.Bytes
-	estimate     resource.Estimate
+	plan            any
+	outputs         any
+	requirements    any
+	effects         []Effect
+	metadataReports []MetadataReport
+	resources       resource.Request
+	scratch         resource.Bytes
+	temporary       resource.Bytes
+	estimate        resource.Estimate
 }
 
 // WithSpec type-erases one typed Spec at component construction time.
@@ -252,14 +257,15 @@ func WithSpec[C, P, D any](spec Spec[C, P, D]) ComponentOption {
 			}
 			compiled, err := spec.Compile(ctx, value, typedInputs)
 			return compiledErased{
-				plan:         compiled.Plan,
-				outputs:      compiled.Outputs,
-				requirements: append([]Requirement[D](nil), compiled.Requirements...),
-				effects:      append([]Effect(nil), compiled.Effects...),
-				resources:    compiled.Resources,
-				scratch:      compiled.Scratch,
-				temporary:    compiled.Temporary,
-				estimate:     compiled.Estimate,
+				plan:            compiled.Plan,
+				outputs:         compiled.Outputs,
+				requirements:    append([]Requirement[D](nil), compiled.Requirements...),
+				effects:         append([]Effect(nil), compiled.Effects...),
+				metadataReports: append([]MetadataReport(nil), compiled.MetadataReports...),
+				resources:       compiled.Resources,
+				scratch:         compiled.Scratch,
+				temporary:       compiled.Temporary,
+				estimate:        compiled.Estimate,
 			}, err
 		}
 	}

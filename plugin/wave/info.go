@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
@@ -153,7 +154,7 @@ func rewriteInfoSource(value []byte, document metadata.Document) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	entries := document.Entries()
+	entries, _ := expressibleInfoEntries(document.Entries())
 	used := make([]bool, len(entries))
 	matched := make([]int, len(carrier.semantic))
 	for index := range matched {
@@ -233,20 +234,7 @@ func rewriteInfoSource(value []byte, document metadata.Document) ([]byte, error)
 	return marshalInfoChunk(tagLIST, resultPayload)
 }
 
-func validateSemanticInfoDocument(document metadata.Document) error {
-	for _, entry := range document.Entries() {
-		mapping, ok := infoMappingForKey(entry.Key())
-		if !ok {
-			return fmt.Errorf("%w: metadata key %s has no RIFF INFO representation", ErrUnsupported, entry.Key())
-		}
-		if _, err := mapping.marshal(entry.Value()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 	if original, ok := ctx.Document().Block(ctx.Block()); ok {
 		if original.Carrier() != ctx.Carrier() || original.Encoding() != ctx.Encoding() {
 			return metadata.Blob{}, nil, fmt.Errorf("%w: RIFF INFO block %s belongs to another encoding", ErrMalformed, ctx.Block())
@@ -292,18 +280,24 @@ func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, e
 // A key with no INFO name is not a mistake by whoever asked for it -- it is a
 // fact about RIFF -- so it is reported and the rest of the document is still
 // written. A job that would rather lose nothing says so in its policy.
-func expressibleInfoEntries(entries []metadata.Entry) ([]metadata.Entry, []metadata.Loss) {
+func expressibleInfoEntries(entries []metadata.Entry) ([]metadata.Entry, []loss.Loss) {
 	var kept []metadata.Entry
-	var lost []metadata.Loss
+	var lost []loss.Loss
 	for _, entry := range entries {
 		if _, ok := infoMappingForKey(entry.Key()); ok {
 			kept = append(kept, entry)
 			continue
 		}
-		lost = append(lost, metadata.Loss{
+		origin := entry.Origin()
+		lossOrigin := loss.Origin{Carrier: origin.Carrier, Encoding: origin.Encoding.String(), Block: string(origin.Block), Native: origin.Native}
+		if !lossOrigin.Valid() {
+			lossOrigin = loss.Origin{}
+		}
+		lost = append(lost, loss.Loss{
 			Key:    entry.Key(),
-			Kind:   metadata.Dropped,
+			Kind:   loss.Dropped,
 			Detail: "wave.info-unrepresentable",
+			Source: lossOrigin,
 		})
 	}
 	return kept, lost

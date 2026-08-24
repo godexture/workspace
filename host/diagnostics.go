@@ -46,6 +46,18 @@ func (d *diagnosticLog) failure(code string, failure Failure) {
 	d.append(diagnostic.NewItem(code, diagnostic.ErrorSeverity, diagnostic.Path{Component: failure.Node}, failure.Err.Error(), detail))
 }
 
+func (d *diagnosticLog) metadataLoss(value ActualMetadataLoss) {
+	detail := map[string]string{
+		"output": strconv.Itoa(value.Output), "node": value.Node, "port": value.Port,
+		"carrier": value.Report.Carrier.String(), "encoding": value.Report.Encoding, "block": value.Report.Block,
+		"key": value.Report.Loss.Key.String(), "kind": value.Report.Loss.Kind.String(), "native": value.Report.Loss.Native,
+		"target": value.Report.Loss.Target.String(), "mapping": value.Report.Loss.Mapping.String(), "reason": value.Report.Loss.Detail,
+	}
+	d.append(diagnostic.NewItem("host.metadata-loss", diagnostic.WarningSeverity,
+		diagnostic.Path{Component: value.Component, Descriptor: value.Port},
+		"committed output could not carry metadata exactly", detail))
+}
+
 // suppressed records repetition the run counted rather than copied, so a
 // surface that only reads diagnostics still learns the total and the fact that
 // detail was dropped.

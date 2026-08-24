@@ -6,6 +6,7 @@ import (
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -64,7 +65,7 @@ func ExampleBind() {
 func ExampleMap() {
 	mood := key.Define[metadataExampleMoodID, string]()
 	genre := key.Define[metadataExampleGenreID, string]()
-	mapping := metadata.Map(mood, genre, metadata.Ambiguous, 10, func(value string) (string, bool) {
+	mapping := metadata.Map(mood, genre, loss.Ambiguous, 10, func(value string) (string, bool) {
 		if value == "melancholic" {
 			return "Blues", true
 		}

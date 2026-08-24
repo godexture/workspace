@@ -276,8 +276,10 @@ func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver met
 	}
 	if ranges.infoCount == 1 {
 		ranges.info = value
+		ranges.infoAnchor = anchor
 	} else {
 		ranges.info = sourceRange{}
+		ranges.infoAnchor = 0
 	}
 	builder.Append(semantic)
 	return nil
