@@ -44,9 +44,9 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| processor 17 種 | compressor、convert、convolver、dcoffset、delay、equalizer、fade、gain、gate、linear、mixer、normalize、remix、resample、retime、reverb、trim | 維持 | M8 | impulse/step/sine/noise と chunk 境界不変性 |
-| filter ごとの byte↔float 変換 | 各 filter が個別に実施 | 廃止 | M8 | 変換回数が filter 数に比例しないことを benchmark counter で確認 |
-| 並列 convolver / FLAC | worker 数指定 | 維持 | M5/M8 | M5 は `resource.Grant`、`TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen`、node-local task starter で Job-local grant の予約と実消費上限を確認済み。worker 1/N の出力不変 test は実 codec を戻す M8 |
+| processor 17 種 | compressor、convert、convolver、dcoffset、delay、equalizer、fade、gain、gate、linear、mixer、normalize、remix、resample、retime、reverb、trim | 維持 | M8 | 確認済み (M8-3): 全 17 が `plugin/audio` に揃い、公式 composition の conformance を通る。state を持つ kernel は `chunkInvariant` が impulse/step/sine/noise で chunk 境界不変性を検査する。mixer と convolver は typed runner が駆動できないため、実 Host run の Plan を coverage 証跡とする（`integration.TestMixerAddsItsInputsAtTheLevelsItWasGiven`、`TestConvolverWithAnImpulseReturnsTheSignal`）。equalizer・remix・mixer・trim は config の形と終端の意味を変えた（[B19](#挙動変更の記録)〜[B22](#挙動変更の記録)） |
+| filter ごとの byte↔float 変換 | 各 filter が個別に実施 | 廃止 | M8 | 確認済み (M8-3): `integration.TestAFilterRegionConvertsAtItsEdgesOnly` が 1/4/16 filter のいずれでも Plan 上の変換を 2 回に保つことを、`plugin/audio.TestAFilterChainAllocatesTheSameForOneFilterAsForSixteen` が 1 filter と 16 filter で frame あたり allocation が一致することを検査する |
+| 並列 convolver / FLAC | worker 数指定 | 変更 | M5/M8 | M5 は `resource.Grant`、`TestPrepareRejectsAggregateRuntimeResourcesBeforeOpen`、node-local task starter で Job-local grant の予約と実消費上限を確認済み。M8-3 の convolver は partition の前方変換を直列で行う（[B25](#挙動変更の記録)）。worker 1/N の出力不変 test は FLAC を戻す M8-6 |
 
 ## runtime と観測
 
@@ -108,6 +108,14 @@ M5 cut 後はいったん surface 実装を置かず、旧 CLI/WASM/demo source 
 | B16 | decoded frame は canonical coding の full scale で値を保持し、`ValidBits` は scale を変えない。旧経路は wire を `16 - validBits` 分だけ右へ寄せ、frame の値域を有効 bit 数に合わせていた | container format は有効 bit を container の上位側へ詰めると定めており（WAVEFORMATEXTENSIBLE の `wValidBitsPerSample`）、左詰めのままにすれば decode/encode から shift が消え、item loop から wire 形状の分岐が外れる。値の scale が schema だけで決まるので、filter は `ValidBits` を知らずに済み、24 bit を `S32` へ、8 bit を `S16` へ広げる canonical schema 四つという [M8-C01](m8-0.md) の形と整合する。roundtrip は左詰めのままでも exact である | M8 |
 | B17 | WAVE の fmt chunk は source の byte 列ではなく description から書き直す。extensible header は valid bits か channel mask が plain header で表せない時だけ書く | [B7](#挙動変更の記録) と同じ理由で、fmt は preserved source range ではなく description の投影である。同じ情報を持つ header の表現が一つに定まるので、`ValidBits == 容器幅` かつ conventional layout の extensible 入力は plain header として出力される。情報は失われないが byte 列は変わる | M8 |
 | B18 | stream の終端は `Flush` 一つの依存順 pass になり、独立した `Finalize` phase は無い。`flow.Finalizer`、`plugin.Finalization`、`host.FinalizePhase`、`journal.Finalize` を削除した | [runtime](runtime.md) の終端節は最初から「encoder delayed packet の排出」と「muxer header patch」を依存順で行うと定めていたが、実装は前者を `Flush`、後者を `Finalize` に割り、`Finalize` を全 node について先に走らせていた。そのため block を貯める coder が最後の block を `Flush` で出すと、既に総量を確定した muxer に届いて run が失敗した。両者は同じ順序制約（上流が言い終わってから下流が言う）に従うので、別 phase にする理由が無い。`Flush` は既に依存順で起動されるため、node は求められた時点で自分の入力の確定を知っている | M8 |
+
+| B19 | equalizer の band は comma 区切り string と `mode` の組ではなく、type・frequency・gain・Q を持つ値の順序付き slice で表す。log 等間隔の軸を自動生成する `multiband` mode は無い。level 変化を求めない peak/shelf band は section を作らない | [config](config.md#動的-field-と-topology) が「可変長 equalizer は comma 区切り string と動的 slot の組で表さず、型付き slice にする」と定めていた。Q を 0 にすると隣接 band から幅を導出する挙動は残るので、graphic equalizer 的な使い方は band 列を書けば同じ音になる。軸の自動生成は band 列を作る純粋な計算であり、必要になった surface が helper として持てばよい。0 dB の section を作らないのは、five coefficients を通す意味が無いうえ、float32 では「変化させない」が exact でなくなるためである | M8 |
+| B20 | remix の LFE mix level は `-inf dB` ではなく「値が無い」で表す。center・surround も同じく optional であり、値が無い channel は落とす | 単位付き値の codec は非有限を拒否する（[config](config.md#field-type-と-codec) の canonical 表現の要求）。「その channel を混ぜない」は level が負の無限大であることではなく level が無いことなので、`Optional` の不在がその意味を直接表す | M8 |
+| B21 | mixer は N入力×M出力の重み matrix ではなく N→1 である。終端は「先に終わった入力は無音を寄与し、全入力が終わるまで mix を続ける」を維持する | 出力の複製は runtime が全 edge について行う fan-out なので、それを兼ねる component は二つの概念が同居していた。matrix は mixer を M 個並べれば表せるため表現力は落ちない。終端を維持できたのは `ZipFanIn` の終端契約を直したためで、詳細は [M8-3 の確定事項](m8-0.md#m8-3-の確定事項) | M8 |
+| B22 | trim の `approximate-silence`（無音尾を形だけ保持して digital silence として再生成する opt-in）は無い。保持は常に exact で、上限は `maxBytes` が明示する | 旧経路でこの mode があったのは、無音尾の保持が memory 上限を超えると temp file へ無制限に spill したからである。node-local temporary は run 全体の上限を job が持ち、node ごとの上限も config が持つので、非有界になる経路が無い。また store は新しい run を前の run へ上書きするため、journal の高水位は「全無音の合計」ではなく「最長 run」になる | M8 |
+| B23 | fade は fade-out を求められたとき、stream が長さを述べていなければ planning 時に拒否する。stream 全体を保持して終わりを探すことはしない | 長さが分かっていれば fade は family 中で最も安い processor であり、container が既に記録している数を得るためだけに stream 全体を抱えるのは本末転倒である。WAVE と MP4 は長さを述べるので、通常の file 入力では streaming で成立する。述べない stream に対しては、何が足りないかを名指して落ちる | M8 |
+| B24 | 明示 schema の tag 由来 adaptor は作らない | [config](config.md#schema) が M8 へ送った判断事項である。field 数が最多の 3 つで compressor 27 行 / 7 field、gate 43 行 / 8 field、equalizer 31 行 / 6 field となり、1 field あたり 4〜5 行、うち 2〜3 行は help と range だった。想定された「数百行」に達しなかったので、第三者の参入コストを理由に主契約を二つ持つ必要が無い | M8 |
+| B25 | convolver は impulse response の partition を直列に前方変換する。旧経路は `WorkerPool` へ投げていた | 前方変換は response を受け取った直後の一度だけで、run 全体の中では定数の作業である。並列化が効くのは長い response を持つ長い stream であり、そこで支配的なのは hop ごとの畳み込みのほうである。node-local task starter で並列化するのは worker 数が出力を変えないことを検査してからにしたく、その gate は FLAC と同じ M8-6/M8-7 に属する | M8 |
 
 ## 更新規則
 
