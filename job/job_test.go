@@ -430,6 +430,7 @@ func TestJobReportsEveryInvalidPolicyDimension(t *testing.T) {
 		"job.invalid-policy-artifact":       "policy.artifact",
 		"job.invalid-policy-implementation": "policy.implementation",
 		"job.invalid-policy-continuity":     "policy.continuity",
+		"job.invalid-policy-metadata":       "policy.metadata",
 		"job.invalid-policy-queue-items":    "policy.resources.queue.items",
 		"job.invalid-policy-queue-bytes":    "policy.resources.queue.bytes",
 		"job.invalid-policy-queue-span":     "policy.resources.queue.span",
