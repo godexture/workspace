@@ -515,7 +515,7 @@ func parseSkeletonMetadata(ctx metadata.ParseContext) (metadata.Document, error)
 	return builder.Build()
 }
 
-func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, error) {
+func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
 	document := ctx.Document()
 	result := make([]byte, 0, document.Len()*8)
 	for _, entry := range document.Entries() {
@@ -523,32 +523,32 @@ func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, error)
 		case tag.Title().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
-				return metadata.Blob{}, fmt.Errorf("metadata title entry has type %T", entry.Value())
+				return metadata.Blob{}, nil, fmt.Errorf("metadata title entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataTitle, []byte(value))
 		case tag.Artist().ID():
 			value, ok := entry.Value().(string)
 			if !ok {
-				return metadata.Blob{}, fmt.Errorf("metadata artist entry has type %T", entry.Value())
+				return metadata.Blob{}, nil, fmt.Errorf("metadata artist entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataArtist, []byte(value))
 		case tag.Date().ID():
 			value, ok := entry.Value().(tag.PartialDate)
 			if !ok {
-				return metadata.Blob{}, fmt.Errorf("metadata date entry has type %T", entry.Value())
+				return metadata.Blob{}, nil, fmt.Errorf("metadata date entry has type %T", entry.Value())
 			}
 			result = appendSkeletonMetadataRecord(result, skeletonMetadataDate, []byte(value.ToISOString()))
 		default:
-			return metadata.Blob{}, fmt.Errorf("metadata key %s cannot be represented by fixture encoding", entry.Key())
+			return metadata.Blob{}, nil, fmt.Errorf("metadata key %s cannot be represented by fixture encoding", entry.Key())
 		}
 	}
 	for _, block := range document.Blocks() {
 		if block.Carrier() != ctx.Carrier() || block.Encoding() != ctx.Encoding() {
-			return metadata.Blob{}, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
+			return metadata.Blob{}, nil, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
 		}
 		result = append(result, block.Payload().AppendTo(nil)...)
 	}
-	return metadata.NewBlob("application/octet-stream", result), nil
+	return metadata.NewBlob("application/octet-stream", result), nil, nil
 }
 
 func appendSkeletonMetadataRecord(destination []byte, kind byte, value []byte) []byte {
@@ -1083,7 +1083,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 		t.Fatalf("raw blocks = %#v", blocks)
 	}
 
-	reencoded, err := resolver.Marshal(t.Context(), skeletonMetadataCarrier, "fixture", document)
+	reencoded, _, err := resolver.Marshal(t.Context(), skeletonMetadataCarrier, "fixture", document)
 	if err != nil {
 		t.Fatal(err)
 	}

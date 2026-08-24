@@ -68,7 +68,11 @@ func (c MarshalContext) valid() bool {
 }
 
 type ParseFunc func(ParseContext) (Document, error)
-type MarshalFunc func(MarshalContext) (Blob, error)
+
+// MarshalFunc writes one carrier block and says what it could not carry as the
+// document stated it. Reporting rather than failing is what makes best effort
+// the default; a job that would rather fail says so in its policy.
+type MarshalFunc func(MarshalContext) (Blob, []Loss, error)
 
 // Encoding is the pure Parse/Marshal behavior attached to one control-plane
 // component. It has no Open or payload-grant lifecycle.
@@ -108,19 +112,24 @@ func (e Encoding) Parse(ctx ParseContext) (Document, error) {
 	return value, nil
 }
 
-func (e Encoding) Marshal(ctx MarshalContext) (Blob, error) {
+func (e Encoding) Marshal(ctx MarshalContext) (Blob, []Loss, error) {
 	if !e.Valid() {
-		return Blob{}, ErrInvalidEncoding
+		return Blob{}, nil, ErrInvalidEncoding
 	}
 	if !ctx.valid() {
-		return Blob{}, ErrInvalidContext
+		return Blob{}, nil, ErrInvalidContext
 	}
-	value, err := e.marshal(ctx)
+	value, lost, err := e.marshal(ctx)
 	if err != nil {
-		return Blob{}, err
+		return Blob{}, nil, err
 	}
 	if !value.Valid() {
-		return Blob{}, errors.Join(ErrInvalidEncoding, errors.New("Marshal returned an invalid payload"))
+		return Blob{}, nil, errors.Join(ErrInvalidEncoding, errors.New("Marshal returned an invalid payload"))
 	}
-	return value, nil
+	for _, loss := range lost {
+		if !loss.Valid() {
+			return Blob{}, nil, errors.Join(ErrInvalidEncoding, errors.New("Marshal reported an invalid loss"))
+		}
+	}
+	return value, append([]Loss(nil), lost...), nil
 }

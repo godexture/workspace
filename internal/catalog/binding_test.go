@@ -125,7 +125,9 @@ func metadataBindingComponent() plugin.Component {
 		func(ctx metadata.ParseContext) (metadata.Document, error) {
 			return metadata.NewBuilder(ctx.Scope()).Build()
 		},
-		func(metadata.MarshalContext) (metadata.Blob, error) { return metadata.NewBlob("", nil), nil },
+		func(metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+			return metadata.NewBlob("", nil), nil, nil
+		},
 	))
 }
 

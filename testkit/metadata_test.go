@@ -39,13 +39,13 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 				builder.AddBlock(metadata.NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 				return builder.Build()
 			},
-			func(ctx metadata.MarshalContext) (metadata.Blob, error) {
+			func(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
 				marshalled.Add(1)
 				block, ok := ctx.Document().Block(ctx.Block())
 				if !ok {
-					return metadata.Blob{}, errors.New("metadata raw block is absent")
+					return metadata.Blob{}, nil, errors.New("metadata raw block is absent")
 				}
-				return block.Payload(), nil
+				return block.Payload(), nil, nil
 			},
 		),
 	)
