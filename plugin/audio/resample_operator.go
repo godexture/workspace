@@ -70,7 +70,7 @@ func (o *resampleOperator) Process(ctx context.Context, input *flow.Item[mediaau
 		return errors.New("resampler received an unowned frame")
 	}
 	frame := input.Value()
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return errFilterPlanes
 	}
 	samples := frame.Samples()

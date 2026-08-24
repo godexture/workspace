@@ -151,7 +151,7 @@ func (o *encoderOperator[S]) Process(ctx context.Context, input *flow.Item[audio
 		return errors.New("linear PCM encoder received an unowned frame")
 	}
 	frame := input.Value()
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return ErrPlaneCount
 	}
 	samples := frame.Samples()

@@ -63,7 +63,7 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 		return errors.New("ADPCM encoder received an unowned frame")
 	}
 	frame := input.Value()
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return errors.New("ADPCM frame plane count does not match its channel layout")
 	}
 	if o.held == 0 {

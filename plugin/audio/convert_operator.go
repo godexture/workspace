@@ -43,7 +43,7 @@ func (o *operator[From, To]) Process(ctx context.Context, input *flow.Item[media
 		return errors.New("sample conversion received an unowned frame")
 	}
 	source := input.Value()
-	if len(source.Planes().Layout().Planes) != o.channels {
+	if source.PlaneCount() != o.channels {
 		return errors.New("sample conversion frame plane count does not match its channel layout")
 	}
 	samples := source.Samples()

@@ -136,7 +136,11 @@ func (f Frame[S]) WithPTS(value timing.OptionalPTS) Frame[S] { f.pts = value; re
 
 // Planes returns a borrowed view valid until the frame owner is released.
 // Call View.Share when the planes must outlive this frame.
-func (f Frame[S]) Planes() buffer.View                   { return f.planes.Borrow() }
+func (f Frame[S]) Planes() buffer.View { return f.planes.Borrow() }
+
+// PlaneCount reports how many planes back this frame, which is how many
+// channels it carries. It copies nothing, unlike reading the whole layout.
+func (f Frame[S]) PlaneCount() int                       { return f.planes.Borrow().PlaneCount() }
 func (f Frame[S]) Plane(index int) (buffer.Bytes, error) { return f.planes.Borrow().Plane(index) }
 
 // PlaneSamples returns a borrowed typed plane valid until the frame owner is
