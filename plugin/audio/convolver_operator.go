@@ -83,7 +83,7 @@ func (o *convolverOperator) Flush(ctx context.Context, output flow.Emitter[media
 }
 
 func (o *convolverOperator) collect(frame mediaaudio.Frame[float32]) error {
-	planes := len(frame.Planes().Layout().Planes)
+	planes := frame.PlaneCount()
 	if o.impulse == nil {
 		o.impulse = make([][]float32, planes)
 	}
@@ -120,7 +120,7 @@ func (o *convolverOperator) build() error {
 }
 
 func (o *convolverOperator) accept(frame mediaaudio.Frame[float32]) error {
-	if len(frame.Planes().Layout().Planes) != o.plan.channels {
+	if frame.PlaneCount() != o.plan.channels {
 		return errFilterPlanes
 	}
 	if !o.haveBase {

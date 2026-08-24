@@ -80,7 +80,7 @@ func (o *mixerOperator) Flush(ctx context.Context, output flow.Emitter[mediaaudi
 }
 
 func (o *mixerOperator) take(index int, frame mediaaudio.Frame[float32]) error {
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return errFilterPlanes
 	}
 	if !o.haveBase {

@@ -171,7 +171,7 @@ func (o *encoderOperator) Process(ctx context.Context, input *flow.Item[audio.Fr
 		return errors.New("companded encoder received an unowned frame")
 	}
 	frame := input.Value()
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return ErrPlaneCount
 	}
 	samples := frame.Samples()

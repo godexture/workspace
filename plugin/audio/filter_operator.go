@@ -17,16 +17,22 @@ type filterOperator struct {
 	channels int
 	planes   [][]float32
 	out      flow.Item[mediaaudio.Frame[float32]]
+	// edit is this operator's own apply, bound once. Handing a method value
+	// to Transfer on every frame would allocate a closure per frame per
+	// filter, which is exactly the cost a chain of them must not have.
+	edit func(mediaaudio.Frame[float32]) (mediaaudio.Frame[float32], error)
 }
 
 func newFilterOperator[C any](plan filterPlan[C], kernel filter, buffers *buffer.Allocator) *filterOperator {
-	return &filterOperator{
+	result := &filterOperator{
 		shape:    plan.shape.Clone(),
 		buffers:  buffers,
 		kernel:   kernel,
 		channels: plan.channels,
 		planes:   make([][]float32, 0, plan.channels),
 	}
+	result.edit = result.apply
+	return result
 }
 
 func (o *filterOperator) Ports() flow.Shape { return o.shape.Clone() }
@@ -37,7 +43,7 @@ func (o *filterOperator) Process(ctx context.Context, input *flow.Item[mediaaudi
 	if !input.Valid() {
 		return errors.New("filter received an unowned frame")
 	}
-	if err := flow.Transfer(input, &o.out, output, o.apply); err != nil {
+	if err := flow.Transfer(input, &o.out, output, o.edit); err != nil {
 		return err
 	}
 	defer o.out.Drop()
@@ -51,7 +57,7 @@ func (o *filterOperator) Process(ctx context.Context, input *flow.Item[mediaaudi
 // with is what bounds it.
 func (o *filterOperator) apply(frame mediaaudio.Frame[float32]) (mediaaudio.Frame[float32], error) {
 	var zero mediaaudio.Frame[float32]
-	if len(frame.Planes().Layout().Planes) != o.channels {
+	if frame.PlaneCount() != o.channels {
 		return zero, errFilterPlanes
 	}
 	editor, err := frame.Edit(o.buffers)

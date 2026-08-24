@@ -474,11 +474,25 @@ func (v View) Share() Handle {
 	return Handle{lease: newLease(v.lease.storage, v.lease.offset, v.lease.layout)}
 }
 
+// Layout returns an independent copy, so a caller cannot reach the planes this
+// view describes by writing into the slice it was handed. Reading only how
+// many there are does not need that copy; use PlaneCount.
 func (v View) Layout() Layout {
 	if !v.Valid() {
 		return Layout{}
 	}
 	return v.lease.layout.Clone()
+}
+
+// PlaneCount reports how many planes this view describes without copying what
+// describes them. Every stage checks the count against the channels it was
+// compiled for, once per frame, and a check that allocated would put that cost
+// on every stage of every chain.
+func (v View) PlaneCount() int {
+	if !v.Valid() {
+		return 0
+	}
+	return len(v.lease.layout.Planes)
 }
 
 func (v View) Bytes() Bytes {

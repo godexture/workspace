@@ -65,7 +65,7 @@ func (o *producerOperator) Process(ctx context.Context, input *flow.Item[mediaau
 		return errors.New("filter received an unowned frame")
 	}
 	frame := input.Value()
-	if len(frame.Planes().Layout().Planes) != o.inputs {
+	if frame.PlaneCount() != o.inputs {
 		return errFilterPlanes
 	}
 	samples := frame.Samples()

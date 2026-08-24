@@ -112,7 +112,7 @@ func (o *fixtureObserver) Process(ctx context.Context, input *flow.Item[audio.Fr
 	frame := input.Value()
 	o.state.mu.Lock()
 	if o.state.planes == nil {
-		o.state.planes = make([][]int16, len(frame.Planes().Layout().Planes))
+		o.state.planes = make([][]int16, frame.PlaneCount())
 	}
 	for index := range o.state.planes {
 		plane, err := frame.PlaneSamples(index)
