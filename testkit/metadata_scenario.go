@@ -40,6 +40,7 @@ type metadataEvaluator struct {
 type metadataOutcome struct {
 	document metadata.Document
 	payload  metadata.Blob
+	lost     []metadata.Loss
 	err      error
 	panicErr error
 }
@@ -98,10 +99,13 @@ func (e metadataEvaluator) evaluate(ctx context.Context) metadataOutcome {
 	if panicErr != nil || parseErr != nil {
 		return metadataOutcome{err: parseErr, panicErr: panicErr}
 	}
+	var lost []metadata.Loss
 	payload, marshalErr, panicErr := safeMetadataMarshal(func() (metadata.Blob, error) {
-		return e.resolver.Marshal(ctx, e.input.carrier, e.input.block, document)
+		value, values, err := e.resolver.Marshal(ctx, e.input.carrier, e.input.block, document)
+		lost = values
+		return value, err
 	})
-	return metadataOutcome{document: document, payload: payload, err: marshalErr, panicErr: panicErr}
+	return metadataOutcome{document: document, payload: payload, lost: lost, err: marshalErr, panicErr: panicErr}
 }
 
 func (e metadataEvaluator) verify(outcome metadataOutcome) error {

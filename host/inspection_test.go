@@ -168,7 +168,9 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 				}
 				return metadata.NewBuilder(ctx.Scope()).Build()
 			},
-			func(metadata.MarshalContext) (metadata.Blob, error) { return metadata.NewBlob("", nil), nil },
+			func(metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+				return metadata.NewBlob("", nil), nil, nil
+			},
 		),
 	)
 	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink, terminal, encoding)).AddDeclaration(metadata.Bind(slot, encoding.Identity()))

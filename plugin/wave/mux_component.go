@@ -68,6 +68,7 @@ func muxerComponent() plugin.Component {
 			if description.Valid() {
 				signal = description.Signal
 			}
+			var metadataLost []metadata.Loss
 			var muxHeaderValue muxHeader
 			var rewrite metadata.Document
 			var rewriteNeeded bool
@@ -117,6 +118,7 @@ func muxerComponent() plugin.Component {
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
+				metadataLost = chunks.lost
 				geometry, err := muxGeometry(outputCodec, signal, input, header{})
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
@@ -133,7 +135,8 @@ func muxerComponent() plugin.Component {
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
 				Plan:    muxPlan{shape: shape.Clone(), header: muxHeaderValue, rewrite: rewrite, rewriteNeeded: rewriteNeeded},
 				Outputs: flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
-				Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
+				Effects: append([]plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
+					metadataLossEffects(metadataLost)...),
 				Resources: resource.Request{Memory: resource.Bytes(func() int {
 					if muxHeaderValue.rangeMode {
 						return max(muxHeaderValue.payloadBytes(), wavePageSize)
@@ -350,4 +353,23 @@ func muxGeometry(outputCodec waveCodec, signal sample.Signal, input stream.Descr
 		return blockGeometry{}, fmt.Errorf("%w: WAVE byte rate exceeds its header field", ErrUnsupported)
 	}
 	return blockGeometry{align: block.Bytes, byteRate: uint32(rate), parameters: parameters}, nil
+}
+
+// metadataLossEffects states in the Plan what the carrier could not say. The
+// effect names the key rather than describing it, so a surface can group and
+// count what a conversion would cost before it runs.
+func metadataLossEffects(values []metadata.Loss) []plugin.Effect {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]plugin.Effect, 0, len(values))
+	for _, value := range values {
+		result = append(result, plugin.Effect{
+			Kind:   plugin.MetadataEffect,
+			Loss:   plugin.Lossy,
+			Detail: value.Detail,
+			Item:   value.Key.String(),
+		})
+	}
+	return result
 }

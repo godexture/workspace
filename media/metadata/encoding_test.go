@@ -26,13 +26,13 @@ func TestEncodingTraitIsPureControlPlaneBehavior(t *testing.T) {
 			builder.AddBlock(NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 			return builder.Build()
 		},
-		func(ctx MarshalContext) (Blob, error) {
+		func(ctx MarshalContext) (Blob, []Loss, error) {
 			marshalCalls++
 			block, ok := ctx.Document().Block(ctx.Block())
 			if !ok || block.Carrier() != ctx.Carrier() || block.Encoding() != ctx.Encoding() {
-				return Blob{}, errors.New("raw block does not belong to encoding")
+				return Blob{}, nil, errors.New("raw block does not belong to encoding")
 			}
-			return block.Payload(), nil
+			return block.Payload(), nil, nil
 		},
 	)
 	if items := component.Diagnostics(); len(items) != 0 {
@@ -63,7 +63,7 @@ func TestEncodingTraitIsPureControlPlaneBehavior(t *testing.T) {
 	if first.Scope() != StreamScope || second.Scope() != StreamScope || first.Len() != second.Len() || parseCalls != 2 {
 		t.Fatalf("deterministic Parse = %#v/%#v calls=%d", first, second, parseCalls)
 	}
-	marshalled, err := resolver.Marshal(t.Context(), slot, "block", first)
+	marshalled, _, err := resolver.Marshal(t.Context(), slot, "block", first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestResolverReportsBindingAndEncodingFailures(t *testing.T) {
 	parseFailure := errors.New("parse failed")
 	component := encodingTraitComponent(
 		func(ParseContext) (Document, error) { return Document{}, parseFailure },
-		func(MarshalContext) (Blob, error) { return Blob{}, errors.New("marshal failed") },
+		func(MarshalContext) (Blob, []Loss, error) { return Blob{}, nil, errors.New("marshal failed") },
 	)
 	resolver, err := NewResolver(map[carrier.ID]plugin.Component{slot: component})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestResolverReportsBindingAndEncodingFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolver.Marshal(t.Context(), slot, "block", document); !hasMetadataDiagnostic(err, "metadata.marshal") {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "block", document); !hasMetadataDiagnostic(err, "metadata.marshal") {
 		t.Fatalf("marshal diagnostic = %v", err)
 	}
 

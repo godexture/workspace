@@ -56,16 +56,16 @@ func (r Resolver) Parse(ctx context.Context, slot carrier.ID, block BlockID, sco
 	return value, nil
 }
 
-func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, document Document) (Blob, error) {
+func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, document Document) (Blob, []Loss, error) {
 	resolved, err := r.lookup(slot)
 	if err != nil {
-		return Blob{}, err
+		return Blob{}, nil, err
 	}
-	value, err := resolved.value.Marshal(MarshalContext{context: normalizeContext(ctx), carrier: slot, block: block, encoding: resolved.identity, document: document})
+	value, lost, err := resolved.value.Marshal(MarshalContext{context: normalizeContext(ctx), carrier: slot, block: block, encoding: resolved.identity, document: document})
 	if err != nil {
-		return Blob{}, resolverDiagnostic("metadata.marshal", "metadata document could not be marshalled for its carrier", slot, resolved.identity, err)
+		return Blob{}, nil, resolverDiagnostic("metadata.marshal", "metadata document could not be marshalled for its carrier", slot, resolved.identity, err)
 	}
-	return value, nil
+	return value, lost, nil
 }
 
 func (r Resolver) lookup(slot carrier.ID) (resolvedEncoding, error) {

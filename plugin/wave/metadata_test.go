@@ -187,15 +187,15 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 			func(ctx metadata.ParseContext) (metadata.Document, error) {
 				return metadata.NewBuilder(ctx.Scope()).Build()
 			},
-			func(ctx metadata.MarshalContext) (metadata.Blob, error) {
+			func(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
 				hidden = ctx.Context().Value(cancelInfoContextKey{}) == nil
 				close(started)
 				select {
 				case <-ctx.Context().Done():
 					canceled = errors.Is(ctx.Context().Err(), context.Canceled)
-					return metadata.Blob{}, ctx.Context().Err()
+					return metadata.Blob{}, nil, ctx.Context().Err()
 				case <-time.After(time.Second):
-					return metadata.Blob{}, errors.New("metadata Marshal cancellation was not propagated")
+					return metadata.Blob{}, nil, errors.New("metadata Marshal cancellation was not propagated")
 				}
 			},
 		),

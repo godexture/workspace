@@ -246,42 +246,67 @@ func validateSemanticInfoDocument(document metadata.Document) error {
 	return nil
 }
 
-func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, error) {
+func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
 	if original, ok := ctx.Document().Block(ctx.Block()); ok {
 		if original.Carrier() != ctx.Carrier() || original.Encoding() != ctx.Encoding() {
-			return metadata.Blob{}, fmt.Errorf("%w: RIFF INFO block %s belongs to another encoding", ErrMalformed, ctx.Block())
+			return metadata.Blob{}, nil, fmt.Errorf("%w: RIFF INFO block %s belongs to another encoding", ErrMalformed, ctx.Block())
 		}
 		carrier, err := parseInfoCarrier(original.Payload().AppendTo(nil), ctx.Block())
 		if err != nil {
-			return metadata.Blob{}, err
+			return metadata.Blob{}, nil, err
 		}
 		owned, additions := infoEntriesForBlock(ctx.Document(), ctx.Block(), ctx.Carrier(), ctx.Encoding())
+		owned, ownedLost := expressibleInfoEntries(owned)
+		additions, addedLost := expressibleInfoEntries(additions)
+		lost := append(ownedLost, addedLost...)
 		childrenChanged, err := applyInfoChildren(&carrier, ctx.Document(), ctx.Block(), ctx.Carrier(), ctx.Encoding())
 		if err != nil {
-			return metadata.Blob{}, err
+			return metadata.Blob{}, nil, err
 		}
 		if infoEntriesMatch(carrier.semantic, owned) && !childrenChanged {
 			if len(additions) == 0 && len(owned) == len(carrier.semantic) {
-				return original.Payload(), nil
+				return original.Payload(), lost, nil
 			}
 			value, err := appendInfoEntries(carrier.raw, append(append([]metadata.Entry(nil), owned[len(carrier.semantic):]...), additions...))
 			if err != nil {
-				return metadata.Blob{}, err
+				return metadata.Blob{}, nil, err
 			}
-			return metadata.NewBlob("application/x-riff-info", value), nil
+			return metadata.NewBlob("application/x-riff-info", value), lost, nil
 		}
 		value, err := reencodeInfoCarrier(carrier, append(append([]metadata.Entry(nil), owned...), additions...))
 		if err != nil {
-			return metadata.Blob{}, err
+			return metadata.Blob{}, nil, err
 		}
-		return metadata.NewBlob("application/x-riff-info", value), nil
+		return metadata.NewBlob("application/x-riff-info", value), lost, nil
 	}
 
-	chunk, err := marshalFreshInfoEntries(ctx.Document().Entries())
+	entries, lost := expressibleInfoEntries(ctx.Document().Entries())
+	chunk, err := marshalFreshInfoEntries(entries)
 	if err != nil {
-		return metadata.Blob{}, err
+		return metadata.Blob{}, nil, err
 	}
-	return metadata.NewBlob("application/x-riff-info", chunk), nil
+	return metadata.NewBlob("application/x-riff-info", chunk), lost, nil
+}
+
+// expressibleInfoEntries splits what this carrier can say from what it cannot.
+// A key with no INFO name is not a mistake by whoever asked for it -- it is a
+// fact about RIFF -- so it is reported and the rest of the document is still
+// written. A job that would rather lose nothing says so in its policy.
+func expressibleInfoEntries(entries []metadata.Entry) ([]metadata.Entry, []metadata.Loss) {
+	var kept []metadata.Entry
+	var lost []metadata.Loss
+	for _, entry := range entries {
+		if _, ok := infoMappingForKey(entry.Key()); ok {
+			kept = append(kept, entry)
+			continue
+		}
+		lost = append(lost, metadata.Loss{
+			Key:    entry.Key(),
+			Kind:   metadata.Dropped,
+			Detail: "wave.info-unrepresentable",
+		})
+	}
+	return kept, lost
 }
 
 // infoSubchunk is the parsed projection of one carrier subchunk. Raw keeps

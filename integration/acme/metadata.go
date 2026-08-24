@@ -38,10 +38,23 @@ func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
 	return builder.Build()
 }
 
-func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, error) {
+// marshalLabel writes the one label this carrier has room for. A document may
+// hold several, because multiplicity is a fact about a document rather than
+// about any one carrier; folding them is this encoding's job, and saying what
+// the fold cost is the other half of that job.
+func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
 	values := metadata.Values(ctx.Document(), Label())
-	if len(values) != 1 || values[0] == "" || len(values[0]) > maxLabelBytes || !utf8.ValidString(values[0]) {
-		return metadata.Blob{}, errors.Join(ErrMalformed, errors.New("ACME metadata requires exactly one valid label"))
+	if len(values) == 0 || values[0] == "" || len(values[0]) > maxLabelBytes || !utf8.ValidString(values[0]) {
+		return metadata.Blob{}, nil, errors.Join(ErrMalformed, errors.New("ACME metadata requires a valid label"))
 	}
-	return metadata.NewBlob("text/plain; charset=utf-8", []byte(values[0])), nil
+	var lost []metadata.Loss
+	for range values[1:] {
+		lost = append(lost, metadata.Loss{
+			Key:    Label().ID(),
+			Kind:   metadata.Folded,
+			Native: "label",
+			Detail: "acme.single-label",
+		})
+	}
+	return metadata.NewBlob("text/plain; charset=utf-8", []byte(values[0])), lost, nil
 }

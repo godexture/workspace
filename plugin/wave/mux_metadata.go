@@ -16,6 +16,10 @@ type muxChunks struct {
 	beforeData   []byte
 	afterData    []byte
 	trailer      []byte
+	// lost is what the carriers could not say as the document stated it. It
+	// travels with the chunks because it is settled by the same pass that
+	// writes them.
+	lost []metadata.Loss
 }
 
 type positionedMuxChunk struct {
@@ -32,6 +36,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		}
 		return muxChunks{}, fmt.Errorf("%w: WAVE metadata document has no valid scope", ErrMalformed)
 	}
+	var lost []metadata.Loss
 	positioned := make([]positionedMuxChunk, 0, len(blocks))
 	positions := make(map[uint64]struct{}, len(blocks))
 	for _, block := range blocks {
@@ -55,10 +60,11 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			if block.Carrier() != RIFFInfo() {
 				return muxChunks{}, fmt.Errorf("%w: RIFF INFO chunk %s has incompatible carrier", ErrMalformed, block.ID())
 			}
-			value, err := resolver.Marshal(ctx, RIFFInfo(), block.ID(), document)
+			value, blockLost, err := resolver.Marshal(ctx, RIFFInfo(), block.ID(), document)
 			if err != nil {
 				return muxChunks{}, err
 			}
+			lost = append(lost, blockLost...)
 			payload = value.AppendTo(nil)
 		default:
 			return muxChunks{}, fmt.Errorf("%w: WAVE metadata chunk %s has an unsupported kind", ErrUnsupported, block.ID())
@@ -85,7 +91,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 	}
 	sort.Slice(positioned, func(left, right int) bool { return positioned[left].position < positioned[right].position })
 
-	var result muxChunks
+	result := muxChunks{lost: lost}
 	for _, chunk := range positioned {
 		var err error
 		switch chunk.anchor {
