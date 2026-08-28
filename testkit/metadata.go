@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -66,14 +67,15 @@ type MetadataCase struct {
 type MetadataExpectation struct {
 	document    metadata.Document
 	payload     metadata.Blob
+	reports     []loss.Report
 	failureCode string
 	set         bool
 }
 
-// WantMetadata compares ordered entries, origins, unknown raw blocks, and the
-// exact payload returned by Marshal.
-func WantMetadata(document metadata.Document, payload metadata.Blob) MetadataExpectation {
-	return MetadataExpectation{document: document, payload: payload, set: true}
+// WantMetadata compares ordered entries, origins, unknown raw blocks, exact
+// marshalled payload, and ordered loss reports.
+func WantMetadata(document metadata.Document, payload metadata.Blob, reports ...loss.Report) MetadataExpectation {
+	return MetadataExpectation{document: document, payload: payload, reports: append([]loss.Report(nil), reports...), set: true}
 }
 
 // MetadataFails expects Parse or Marshal to report one diagnostic code.
@@ -140,5 +142,13 @@ func (e MetadataExpectation) valid() bool {
 	if e.failureCode != "" {
 		return e.failureCode == strings.TrimSpace(e.failureCode)
 	}
-	return e.document.Scope().Valid() && e.payload.Valid()
+	if !e.document.Scope().Valid() || !e.payload.Valid() {
+		return false
+	}
+	for _, report := range e.reports {
+		if !report.Valid() {
+			return false
+		}
+	}
+	return true
 }

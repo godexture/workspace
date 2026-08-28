@@ -8,6 +8,7 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
@@ -17,8 +18,13 @@ type metadataRunnerPluginID struct{}
 type metadataRunnerComponentID struct{}
 type metadataRunnerConfigID struct{}
 type metadataRunnerCarrierID struct{}
+type metadataRunnerKeyID struct{}
+type metadataInvalidMappingsPluginID struct{}
+type metadataInvalidMappingsComponentID struct{}
 
 type metadataRunnerConfig struct{}
+
+var metadataRunnerKey = key.Define[metadataRunnerKeyID, string]()
 
 func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 	slot := carrier.Define[metadataRunnerCarrierID]()
@@ -48,6 +54,7 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 				}
 				return block.Payload(), nil, nil
 			},
+			metadataRunnerKey.Erased(),
 		),
 	)
 	definition := plugin.Define[metadataRunnerPluginID](plugin.Descriptor{DisplayName: "metadata runner fixture", Version: "1"}, component)
@@ -95,5 +102,33 @@ func TestMetadataPanicBoundary(t *testing.T) {
 	}
 	if strings.Contains(panicErr.Error(), secret) {
 		t.Error("the Metadata Marshal report exposes the recovered value")
+	}
+}
+
+func TestMetadataScenarioRejectsInvalidMappingTrait(t *testing.T) {
+	slot := carrier.Define[metadataRunnerCarrierID]()
+	schema := config.Struct[metadataRunnerConfigID](func() metadataRunnerConfig { return metadataRunnerConfig{} }).Version("1").Build()
+	component := plugin.NewComponent[metadataRunnerComponentID](plugin.Descriptor{DisplayName: "metadata subject"}, schema,
+		metadata.WithEncoding(
+			func(ctx metadata.ParseContext) (metadata.Document, error) {
+				return metadata.NewBuilder(ctx.Scope()).Build()
+			},
+			func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+				return metadata.NewBlob("application/octet-stream", nil), nil, nil
+			},
+			metadataRunnerKey.Erased(),
+		),
+	)
+	invalid := plugin.NewComponent[metadataInvalidMappingsComponentID](plugin.Descriptor{DisplayName: "invalid mappings"}, schema, metadata.WithMappings())
+	set := plugin.NewSet(
+		plugin.Define[metadataRunnerPluginID](plugin.Descriptor{DisplayName: "metadata subject", Version: "1"}, component),
+		plugin.Define[metadataInvalidMappingsPluginID](plugin.Descriptor{DisplayName: "invalid mappings", Version: "1"}, invalid),
+	)
+	_, err := newMetadataScenario(MetadataIn(set, component.Identity()), MetadataCase{
+		Input: MetadataInput(slot, "block", metadata.StreamScope, metadata.NewBlob("application/octet-stream", []byte{1})),
+		Want:  MetadataFails("metadata.parse"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "Metadata Mapping trait") {
+		t.Fatalf("invalid mapping scenario error = %v", err)
 	}
 }

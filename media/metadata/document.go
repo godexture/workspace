@@ -9,6 +9,7 @@ import (
 
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -55,6 +56,16 @@ type Origin struct {
 	Block BlockID
 	// Native is the key name in the source encoding, such as an ID3 frame ID.
 	Native string
+}
+
+// LossOrigin returns this origin only when it identifies a complete source
+// block, as required by a loss report.
+func (o Origin) LossOrigin() loss.Origin {
+	result := loss.Origin{Carrier: o.Carrier, Encoding: o.Encoding.String(), Block: string(o.Block), Native: o.Native}
+	if !result.Valid() {
+		return loss.Origin{}
+	}
+	return result
 }
 
 // RawBlock keeps an uninterpreted payload: an unknown frame, a vendor field,

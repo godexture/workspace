@@ -63,7 +63,7 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}
 	if !resolver.Valid() {
-		resolver, _ = metadata.NewResolver(nil)
+		resolver, _ = metadata.NewResolver(nil, nil)
 	}
 	semanticLimit := uint64(memoryLimit)
 	if semanticLimit > waveSemanticCap {

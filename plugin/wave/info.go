@@ -22,10 +22,11 @@ const (
 )
 
 type infoMapping struct {
-	native  string
-	key     key.ID
-	parse   func(*metadata.Builder, string, metadata.Origin) error
-	marshal func(any) (string, error)
+	native      string
+	key         key.ID
+	declaration key.Erased
+	parse       func(*metadata.Builder, string, metadata.Origin) error
+	marshal     func(any) (string, error)
 }
 
 var infoMappings = []infoMapping{
@@ -41,8 +42,9 @@ var infoMappings = []infoMapping{
 
 func stringInfoMapping(native string, declaration key.Key[string]) infoMapping {
 	return infoMapping{
-		native: native,
-		key:    declaration.ID(),
+		native:      native,
+		key:         declaration.ID(),
+		declaration: declaration.Erased(),
 		parse: func(builder *metadata.Builder, value string, origin metadata.Origin) error {
 			metadata.Add(builder, declaration, value, origin)
 			return nil
@@ -59,8 +61,9 @@ func stringInfoMapping(native string, declaration key.Key[string]) infoMapping {
 
 func dateInfoMapping() infoMapping {
 	return infoMapping{
-		native: "ICRD",
-		key:    tag.Date().ID(),
+		native:      "ICRD",
+		key:         tag.Date().ID(),
+		declaration: tag.Date().Erased(),
 		parse: func(builder *metadata.Builder, value string, origin metadata.Origin) error {
 			date, err := tag.ParseDate(value)
 			if err != nil {
@@ -77,6 +80,14 @@ func dateInfoMapping() infoMapping {
 			return date.ToISOString(), nil
 		},
 	}
+}
+
+func infoSupportedKeys() []key.Erased {
+	result := make([]key.Erased, len(infoMappings))
+	for index, mapping := range infoMappings {
+		result[index] = mapping.declaration
+	}
+	return result
 }
 
 func parseInfo(ctx metadata.ParseContext) (metadata.Document, error) {
@@ -288,16 +299,11 @@ func expressibleInfoEntries(entries []metadata.Entry) ([]metadata.Entry, []loss.
 			kept = append(kept, entry)
 			continue
 		}
-		origin := entry.Origin()
-		lossOrigin := loss.Origin{Carrier: origin.Carrier, Encoding: origin.Encoding.String(), Block: string(origin.Block), Native: origin.Native}
-		if !lossOrigin.Valid() {
-			lossOrigin = loss.Origin{}
-		}
 		lost = append(lost, loss.Loss{
 			Key:    entry.Key(),
 			Kind:   loss.Dropped,
 			Detail: "wave.info-unrepresentable",
-			Source: lossOrigin,
+			Source: entry.Origin().LossOrigin(),
 		})
 	}
 	return kept, lost

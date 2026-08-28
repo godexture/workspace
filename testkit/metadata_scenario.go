@@ -55,7 +55,11 @@ func newMetadataScenario(subject MetadataSubject, test MetadataCase) (*scenarioC
 	if err != nil {
 		return nil, err
 	}
-	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{test.Input.carrier: component})
+	mappings, err := metadataMappings(subject.set)
+	if err != nil {
+		return nil, err
+	}
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{test.Input.carrier: component}, mappings)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +135,9 @@ func (e metadataEvaluator) verify(outcome metadataOutcome) error {
 	if !outcome.payload.Equal(e.want.payload) {
 		return fmt.Errorf("Metadata payload = %x (%s), want %x (%s)", outcome.payload.AppendTo(nil), outcome.payload.MediaType(), e.want.payload.AppendTo(nil), e.want.payload.MediaType())
 	}
+	if !reflect.DeepEqual(outcome.lost, e.want.reports) {
+		return fmt.Errorf("Metadata reports = %#v, want %#v", outcome.lost, e.want.reports)
+	}
 	return nil
 }
 
@@ -186,7 +193,24 @@ type metadataPuritySnapshot struct {
 	Config   string                   `json:"config"`
 	Document metadataDocumentSnapshot `json:"document"`
 	Payload  metadataBlockSnapshot    `json:"payload"`
+	Reports  []metadataLossSnapshot   `json:"reports"`
 	Error    []string                 `json:"error"`
+}
+
+type metadataLossSnapshot struct {
+	Carrier        string `json:"carrier"`
+	Encoding       string `json:"encoding"`
+	Block          string `json:"block"`
+	Key            string `json:"key"`
+	Kind           string `json:"kind"`
+	Native         string `json:"native"`
+	Mapping        string `json:"mapping"`
+	Target         string `json:"target"`
+	Detail         string `json:"detail"`
+	SourceCarrier  string `json:"sourceCarrier"`
+	SourceEncoding string `json:"sourceEncoding"`
+	SourceBlock    string `json:"sourceBlock"`
+	SourceNative   string `json:"sourceNative"`
 }
 
 func (o metadataOutcome) signature(configFingerprint string) (string, error) {
@@ -199,12 +223,46 @@ func (o metadataOutcome) signature(configFingerprint string) (string, error) {
 	} else {
 		snapshot.Document = snapshotMetadataDocument(o.document)
 		snapshot.Payload = metadataBlockSnapshot{MediaType: o.payload.MediaType(), Payload: o.payload.AppendTo(nil)}
+		snapshot.Reports = snapshotMetadataLosses(o.lost)
 	}
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+func snapshotMetadataLosses(values []loss.Report) []metadataLossSnapshot {
+	result := make([]metadataLossSnapshot, len(values))
+	for index, value := range values {
+		entry := value.Loss
+		result[index] = metadataLossSnapshot{
+			Carrier: value.Carrier.String(), Encoding: value.Encoding, Block: value.Block,
+			Key: entry.Key.String(), Kind: entry.Kind.String(), Native: entry.Native,
+			Mapping: entry.Mapping.String(), Target: entry.Target.String(), Detail: entry.Detail,
+			SourceCarrier: entry.Source.Carrier.String(), SourceEncoding: entry.Source.Encoding,
+			SourceBlock: entry.Source.Block, SourceNative: entry.Source.Native,
+		}
+	}
+	return result
+}
+
+func metadataMappings(set plugin.Set) ([]metadata.Mapping, error) {
+	var result []metadata.Mapping
+	for _, component := range set.Components() {
+		mappings, ok := metadata.MappingsOf(component)
+		if !ok {
+			continue
+		}
+		if !mappings.Valid() {
+			if problem := mappings.Problem(); problem != nil {
+				return nil, fmt.Errorf("Metadata Mapping trait on %s is invalid: %w", component.Identity(), problem)
+			}
+			return nil, fmt.Errorf("Metadata Mapping trait on %s is invalid", component.Identity())
+		}
+		result = append(result, mappings.Values()...)
+	}
+	return result, nil
 }
 
 func snapshotMetadataDocument(document metadata.Document) metadataDocumentSnapshot {

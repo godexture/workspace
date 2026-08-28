@@ -99,13 +99,23 @@ func muxerComponent() plugin.Component {
 					if inspected.ranges.info.length > waveSemanticCap || !semanticWithinCap(input.Metadata(), waveSemanticCap) {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata exceeds the bounded rewrite cap", ErrUnsupported)
 					}
-					_, dropped := expressibleInfoEntries(input.Metadata().Entries())
+					resolver, ok := metadata.ResolverOf(ctx)
+					if !ok {
+						return plugin.Compiled[muxPlan, stream.Descriptor]{}, errors.New("WAVE muxer requires metadata resolver")
+					}
+					block := newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)
+					projected, mapped, err := resolver.Project(RIFFInfo(), block, input.Metadata())
+					if err != nil {
+						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+					}
+					metadataReports = append(metadataReports, mapped...)
+					_, dropped := expressibleInfoEntries(projected.Entries())
 					for _, value := range dropped {
 						metadataReports = append(metadataReports, loss.Report{
-							Carrier: RIFFInfo(), Encoding: InfoEncodingIdentity().String(), Block: string(newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)), Loss: value,
+							Carrier: RIFFInfo(), Encoding: InfoEncodingIdentity().String(), Block: string(block), Loss: value,
 						})
 					}
-					rewrite = input.Metadata()
+					rewrite = projected
 					rewriteNeeded = true
 				}
 			} else {

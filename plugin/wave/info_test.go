@@ -538,7 +538,7 @@ func FuzzRIFFInfoEncodingRoundTripsAcceptedCarriers(f *testing.F) {
 
 func infoTestResolver(t testing.TB) metadata.Resolver {
 	t.Helper()
-	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): infoComponent()})
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): infoComponent()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

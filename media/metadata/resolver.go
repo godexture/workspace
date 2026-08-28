@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/carrier"
@@ -23,15 +24,16 @@ type resolvedEncoding struct {
 
 type resolverState struct {
 	bindings map[carrier.ID]resolvedEncoding
+	mappings []Mapping
 }
 
 // Resolver exposes only carrier Parse/Marshal operations selected by Host
 // composition. It does not expose components, declarations, or the catalog.
 type Resolver struct{ state *resolverState }
 
-// NewResolver snapshots carrier-to-component resolutions from a validated
-// composition.
-func NewResolver(components map[carrier.ID]plugin.Component) (Resolver, error) {
+// NewResolver snapshots carrier-to-component resolutions and semantic mapping
+// declarations from a validated composition.
+func NewResolver(components map[carrier.ID]plugin.Component, mappings []Mapping) (Resolver, error) {
 	bindings := make(map[carrier.ID]resolvedEncoding, len(components))
 	for slot, component := range components {
 		value, ok := EncodingOf(component)
@@ -40,7 +42,12 @@ func NewResolver(components map[carrier.ID]plugin.Component) (Resolver, error) {
 		}
 		bindings[slot] = resolvedEncoding{identity: component.Identity(), value: value}
 	}
-	return Resolver{state: &resolverState{bindings: bindings}}, nil
+	if err := validateResolverMappings(mappings); err != nil {
+		return Resolver{}, ErrInvalidResolver
+	}
+	ordered := append([]Mapping(nil), mappings...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left].Better(ordered[right]) })
+	return Resolver{state: &resolverState{bindings: bindings, mappings: ordered}}, nil
 }
 
 func (r Resolver) Valid() bool { return r.state != nil }
@@ -62,15 +69,85 @@ func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, d
 	if err != nil {
 		return Blob{}, nil, err
 	}
-	value, lost, err := resolved.value.Marshal(MarshalContext{context: normalizeContext(ctx), carrier: slot, block: block, encoding: resolved.identity, document: document})
+	projected, reports, err := r.project(resolved, slot, block, document)
+	if err != nil {
+		return Blob{}, nil, err
+	}
+	value, lost, err := resolved.value.Marshal(MarshalContext{context: normalizeContext(ctx), carrier: slot, block: block, encoding: resolved.identity, document: projected})
 	if err != nil {
 		return Blob{}, nil, resolverDiagnostic("metadata.marshal", "metadata document could not be marshalled for its carrier", slot, resolved.identity, err)
 	}
-	reports := make([]loss.Report, len(lost))
-	for index, value := range lost {
-		reports[index] = loss.Report{Carrier: slot, Encoding: resolved.identity.String(), Block: string(block), Loss: value}
+	for _, value := range lost {
+		reports = append(reports, loss.Report{Carrier: slot, Encoding: resolved.identity.String(), Block: string(block), Loss: value})
 	}
 	return value, reports, nil
+}
+
+// Project converts only entries a target encoding cannot directly represent.
+// It preserves document order and multiplicity, and never chains mappings.
+func (r Resolver) Project(slot carrier.ID, block BlockID, document Document) (Document, []loss.Report, error) {
+	resolved, err := r.lookup(slot)
+	if err != nil {
+		return Document{}, nil, err
+	}
+	return r.project(resolved, slot, block, document)
+}
+
+func (r Resolver) project(resolved resolvedEncoding, slot carrier.ID, block BlockID, document Document) (Document, []loss.Report, error) {
+	if block == "" || !document.Scope().Valid() {
+		return Document{}, nil, resolverDiagnostic("metadata.project", "metadata document cannot be projected for its carrier", slot, resolved.identity, ErrInvalidContext)
+	}
+	builder := NewBuilder(document.Scope())
+	for _, raw := range document.Blocks() {
+		builder.AddBlock(raw)
+	}
+	var reports []loss.Report
+	for _, entry := range document.entries {
+		if resolved.value.Supports(entry.Key()) {
+			builder.add(entry.declaration, entry.value, entry.origin)
+			continue
+		}
+		mapped := false
+		for _, mapping := range r.state.mappings {
+			if mapping.Source() != entry.Key() || !resolved.value.Supports(mapping.Target()) {
+				continue
+			}
+			converted, ok := mapping.Convert(entry.value)
+			if !ok {
+				continue
+			}
+			builder.add(mapping.targetDeclaration, converted, Origin{})
+			reports = append(reports, loss.Report{
+				Carrier: slot, Encoding: resolved.identity.String(), Block: string(block),
+				Loss: loss.Loss{Key: entry.Key(), Kind: loss.Converted, Target: mapping.Target(), Mapping: mapping.Lossiness(), Detail: "metadata.mapping", Source: entry.origin.LossOrigin()},
+			})
+			mapped = true
+			break
+		}
+		if !mapped {
+			builder.add(entry.declaration, entry.value, entry.origin)
+		}
+	}
+	projected, err := builder.Build()
+	if err != nil {
+		return Document{}, nil, resolverDiagnostic("metadata.project", "metadata document cannot be projected for its carrier", slot, resolved.identity, err)
+	}
+	return projected, reports, nil
+}
+
+func validateResolverMappings(values []Mapping) error {
+	seen := make(map[mappingContract]struct{}, len(values))
+	for _, value := range values {
+		if !value.Valid() {
+			return ErrInvalidResolver
+		}
+		contract := value.contract()
+		if _, exists := seen[contract]; exists {
+			return ErrInvalidResolver
+		}
+		seen[contract] = struct{}{}
+	}
+	return nil
 }
 
 func (r Resolver) lookup(slot carrier.ID) (resolvedEncoding, error) {
