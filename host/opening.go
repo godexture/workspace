@@ -20,11 +20,19 @@ func (r *runner) initializeOutputs() {
 			continue
 		}
 		class := access.TransactionClass(0)
-		if entry, ok := r.boundary[node.ID().String()]; ok && entry.Projection().Kind == plan.ProviderBoundary {
-			class = entry.SinkTrait().TransactionClass()
+		choice := -1
+		if entry, ok := r.boundary[node.ID().String()]; ok {
+			projection := entry.Projection()
+			if projection.Direction == plan.OutputBoundary {
+				choice = projection.Choice
+			}
+			if projection.Kind == plan.ProviderBoundary {
+				class = entry.SinkTrait().TransactionClass()
+			}
 		}
 		outcome := len(r.result.Outputs)
 		r.result.Outputs = append(r.result.Outputs, OutputOutcome{
+			Choice:    choice,
 			Node:      node.ID().String(),
 			Component: node.Component().String(),
 			Class:     class,

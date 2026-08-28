@@ -5,37 +5,8 @@ import (
 	"fmt"
 
 	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/metadata/loss"
 )
-
-// Lossiness states how much of the source value survives a mapping. The host
-// never guesses this: the declaring side asserts it, and a lossy mapping is
-// reported as an effect rather than applied silently.
-type Lossiness uint8
-
-const (
-	// Lossless keeps the full meaning of the source value.
-	Lossless Lossiness = iota + 1
-	// Approximate keeps the meaning but not every detail, such as a date
-	// narrowed to its year.
-	Approximate
-	// Ambiguous asserts a correspondence that is a judgement call, such as one
-	// vocabulary's mood mapped onto another's genre.
-	Ambiguous
-)
-
-func (l Lossiness) Valid() bool { return l >= Lossless && l <= Ambiguous }
-
-func (l Lossiness) String() string {
-	switch l {
-	case Lossless:
-		return "lossless"
-	case Approximate:
-		return "approximate"
-	case Ambiguous:
-		return "ambiguous"
-	}
-	return "unknown"
-}
 
 // Mapping declares that one key's value can express another key's value.
 //
@@ -46,7 +17,7 @@ func (l Lossiness) String() string {
 type Mapping struct {
 	source    key.ID
 	target    key.ID
-	lossiness Lossiness
+	lossiness loss.Lossiness
 	priority  int
 	convert   func(any) (any, bool)
 	problem   string
@@ -55,7 +26,7 @@ type Mapping struct {
 // Map declares a typed conversion from source to target. Priority orders
 // competing mappings for the same target; higher wins, and ties are resolved by
 // the source key identity so selection stays deterministic.
-func Map[S, T any](source key.Key[S], target key.Key[T], lossiness Lossiness, priority int, convert func(S) (T, bool)) Mapping {
+func Map[S, T any](source key.Key[S], target key.Key[T], lossiness loss.Lossiness, priority int, convert func(S) (T, bool)) Mapping {
 	mapping := Mapping{source: source.ID(), target: target.ID(), lossiness: lossiness, priority: priority}
 	switch {
 	case source.Problem() != nil:
@@ -84,11 +55,11 @@ func Map[S, T any](source key.Key[S], target key.Key[T], lossiness Lossiness, pr
 	return mapping
 }
 
-func (m Mapping) Source() key.ID       { return m.source }
-func (m Mapping) Target() key.ID       { return m.target }
-func (m Mapping) Lossiness() Lossiness { return m.lossiness }
-func (m Mapping) Priority() int        { return m.priority }
-func (m Mapping) Valid() bool          { return m.convert != nil && m.problem == "" }
+func (m Mapping) Source() key.ID            { return m.source }
+func (m Mapping) Target() key.ID            { return m.target }
+func (m Mapping) Lossiness() loss.Lossiness { return m.lossiness }
+func (m Mapping) Priority() int             { return m.priority }
+func (m Mapping) Valid() bool               { return m.convert != nil && m.problem == "" }
 
 // Problem returns the mapping declaration problem, if any.
 func (m Mapping) Problem() error {

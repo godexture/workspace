@@ -12,6 +12,9 @@ import (
 	"github.com/godexture/godec/endpoint"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/job"
+	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -23,6 +26,10 @@ import (
 type planConfigID struct{}
 type planSchemaID struct{}
 type planUnit struct{}
+type planLossCarrierID struct{}
+type planLossSourceCarrierID struct{}
+type planLossKeyID struct{}
+type planLossTargetID struct{}
 
 type planConfig struct {
 	Mode  string
@@ -405,6 +412,49 @@ func TestPlanMappingProjectionIsImmutableAndAffectsIdentity(t *testing.T) {
 	missing.Boundaries = description.Boundaries[:1]
 	if _, err := New(missing); err == nil {
 		t.Fatal("mapping with a missing output boundary was accepted")
+	}
+}
+
+func TestPlanMetadataLossProjectionIsImmutableAndAffectsIdentity(t *testing.T) {
+	sourceCarrier := carrier.Define[planLossSourceCarrierID]()
+	sourceKey := key.Define[planLossKeyID, string]().ID()
+	target := key.Define[planLossTargetID, string]().ID()
+	value := PredictedMetadataLoss{
+		Output: 0, Node: "source", Component: "fixture.source", Port: "out",
+		Report: loss.Report{
+			Carrier: carrier.Define[planLossCarrierID](), Encoding: "fixture.encoding", Block: "fixture/block",
+			Loss: loss.Loss{
+				Key: sourceKey, Kind: loss.Converted, Native: "fixture/native", Target: target, Mapping: loss.Lossless, Detail: "fixture.mapping",
+				Source: loss.Origin{Carrier: sourceCarrier, Encoding: "fixture.source", Block: "fixture/source", Native: "fixture/source-native"},
+			},
+		},
+	}
+	description := testDescription(t)
+	description.Boundaries = mappingBoundaries()
+	description.PredictedMetadataLosses = []PredictedMetadataLoss{value}
+	planned, err := New(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := planned.PredictedMetadataLosses()
+	if len(got) != 1 || got[0] != value {
+		t.Fatalf("metadata losses = %#v, want %#v", got, []PredictedMetadataLoss{value})
+	}
+	got[0].Report.Loss.Detail = "changed"
+	if planned.PredictedMetadataLosses()[0].Report.Loss.Detail != "fixture.mapping" {
+		t.Fatal("Plan exposed metadata loss storage")
+	}
+
+	changed := testDescription(t)
+	changed.Boundaries = mappingBoundaries()
+	changed.PredictedMetadataLosses = []PredictedMetadataLoss{value}
+	changed.PredictedMetadataLosses[0].Report.Loss.Detail = "fixture.other-mapping"
+	other, err := New(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.Fingerprint() == other.Fingerprint() || planned.ExecutionSignature() == other.ExecutionSignature() {
+		t.Fatal("metadata loss report did not affect Plan identity")
 	}
 }
 

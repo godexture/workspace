@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
 	"github.com/godexture/godec/media/stream"
@@ -40,7 +41,7 @@ type metadataEvaluator struct {
 type metadataOutcome struct {
 	document metadata.Document
 	payload  metadata.Blob
-	lost     []metadata.Loss
+	lost     []loss.Report
 	err      error
 	panicErr error
 }
@@ -99,7 +100,7 @@ func (e metadataEvaluator) evaluate(ctx context.Context) metadataOutcome {
 	if panicErr != nil || parseErr != nil {
 		return metadataOutcome{err: parseErr, panicErr: panicErr}
 	}
-	var lost []metadata.Loss
+	var lost []loss.Report
 	payload, marshalErr, panicErr := safeMetadataMarshal(func() (metadata.Blob, error) {
 		value, values, err := e.resolver.Marshal(ctx, e.input.carrier, e.input.block, document)
 		lost = values

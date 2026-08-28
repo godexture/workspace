@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -68,7 +69,7 @@ func muxerComponent() plugin.Component {
 			if description.Valid() {
 				signal = description.Signal
 			}
-			var metadataLost []metadata.Loss
+			var metadataReports []loss.Report
 			var muxHeaderValue muxHeader
 			var rewrite metadata.Document
 			var rewriteNeeded bool
@@ -92,33 +93,32 @@ func muxerComponent() plugin.Component {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
 				if !sameSemanticDocument(input.Metadata(), inspected.metadata) {
-					if inspected.ranges.infoCount != 1 || !inspected.ranges.info.valid() {
+					if inspected.ranges.infoCount != 1 || !inspected.ranges.info.valid() || inspected.ranges.infoAnchor == 0 {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata changed but no bounded LIST/INFO rewrite is available", ErrUnsupported)
 					}
 					if inspected.ranges.info.length > waveSemanticCap || !semanticWithinCap(input.Metadata(), waveSemanticCap) {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata exceeds the bounded rewrite cap", ErrUnsupported)
 					}
-					if err := validateSemanticInfoDocument(input.Metadata()); err != nil {
-						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+					_, dropped := expressibleInfoEntries(input.Metadata().Entries())
+					for _, value := range dropped {
+						metadataReports = append(metadataReports, loss.Report{
+							Carrier: RIFFInfo(), Encoding: InfoEncodingIdentity().String(), Block: string(newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)), Loss: value,
+						})
 					}
 					rewrite = input.Metadata()
 					rewriteNeeded = true
 				}
 			} else {
 				// A writer with no source inspection is a new WAVE output. Keep
-				// this bounded construction path for standalone component use;
-				// source-derived metadata must arrive through the handoff above.
-				for _, block := range input.Metadata().Blocks() {
-					if _, ok := parseChunkBlockID(block.ID()); ok {
-						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux requires the same-format inspection handoff for source metadata", ErrUnsupported)
-					}
-				}
+				// this bounded construction path for standalone component use.
+				// Metadata blobs are immutable values, so explicitly supplied raw
+				// chunks are safe to carry into a fresh output as well.
 				resolver, _ := metadata.ResolverOf(ctx)
 				chunks, err := marshalMuxChunks(ctx.Context(), resolver, input.Metadata())
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
-				metadataLost = chunks.lost
+				metadataReports = chunks.reports
 				geometry, err := muxGeometry(outputCodec, signal, input, header{})
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
@@ -132,11 +132,15 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
+			compiledReports := make([]plugin.MetadataReport, len(metadataReports))
+			for index, report := range metadataReports {
+				compiledReports[index] = plugin.MetadataReport{Output: "writes", Report: report}
+			}
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
-				Plan:    muxPlan{shape: shape.Clone(), header: muxHeaderValue, rewrite: rewrite, rewriteNeeded: rewriteNeeded},
-				Outputs: flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
-				Effects: append([]plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
-					metadataLossEffects(metadataLost)...),
+				Plan:            muxPlan{shape: shape.Clone(), header: muxHeaderValue, rewrite: rewrite, rewriteNeeded: rewriteNeeded},
+				Outputs:         flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
+				Effects:         []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
+				MetadataReports: compiledReports,
 				Resources: resource.Request{Memory: resource.Bytes(func() int {
 					if muxHeaderValue.rangeMode {
 						return max(muxHeaderValue.payloadBytes(), wavePageSize)
@@ -353,23 +357,4 @@ func muxGeometry(outputCodec waveCodec, signal sample.Signal, input stream.Descr
 		return blockGeometry{}, fmt.Errorf("%w: WAVE byte rate exceeds its header field", ErrUnsupported)
 	}
 	return blockGeometry{align: block.Bytes, byteRate: uint32(rate), parameters: parameters}, nil
-}
-
-// metadataLossEffects states in the Plan what the carrier could not say. The
-// effect names the key rather than describing it, so a surface can group and
-// count what a conversion would cost before it runs.
-func metadataLossEffects(values []metadata.Loss) []plugin.Effect {
-	if len(values) == 0 {
-		return nil
-	}
-	result := make([]plugin.Effect, 0, len(values))
-	for _, value := range values {
-		result = append(result, plugin.Effect{
-			Kind:   plugin.MetadataEffect,
-			Loss:   plugin.Lossy,
-			Detail: value.Detail,
-			Item:   value.Key.String(),
-		})
-	}
-	return result
 }

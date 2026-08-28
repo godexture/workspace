@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -26,7 +27,7 @@ func TestEncodingTraitIsPureControlPlaneBehavior(t *testing.T) {
 			builder.AddBlock(NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 			return builder.Build()
 		},
-		func(ctx MarshalContext) (Blob, []Loss, error) {
+		func(ctx MarshalContext) (Blob, []loss.Loss, error) {
 			marshalCalls++
 			block, ok := ctx.Document().Block(ctx.Block())
 			if !ok || block.Carrier() != ctx.Carrier() || block.Encoding() != ctx.Encoding() {
@@ -96,7 +97,7 @@ func TestResolverReportsBindingAndEncodingFailures(t *testing.T) {
 	parseFailure := errors.New("parse failed")
 	component := encodingTraitComponent(
 		func(ParseContext) (Document, error) { return Document{}, parseFailure },
-		func(MarshalContext) (Blob, []Loss, error) { return Blob{}, nil, errors.New("marshal failed") },
+		func(MarshalContext) (Blob, []loss.Loss, error) { return Blob{}, nil, errors.New("marshal failed") },
 	)
 	resolver, err := NewResolver(map[carrier.ID]plugin.Component{slot: component})
 	if err != nil {

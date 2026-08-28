@@ -9,6 +9,7 @@ import (
 	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
@@ -617,7 +618,7 @@ func TestRIFFInfoReportsKeysItHasNoNameForRatherThanRefusing(t *testing.T) {
 	if len(lost) != 1 {
 		t.Fatalf("loss report = %#v, want one entry", lost)
 	}
-	if lost[0].Key != tag.Composer().ID() || lost[0].Kind != metadata.Dropped {
+	if lost[0].Loss.Key != tag.Composer().ID() || lost[0].Loss.Kind != loss.Dropped {
 		t.Fatalf("loss report = %#v", lost[0])
 	}
 }

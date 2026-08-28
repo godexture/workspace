@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -16,14 +17,14 @@ func moodToGenre(value string) (string, bool) {
 }
 
 func TestMappingDeclaresDirectionLossinessAndPriority(t *testing.T) {
-	mapping := Map(mood, genre, Ambiguous, 10, moodToGenre)
+	mapping := Map(mood, genre, loss.Ambiguous, 10, moodToGenre)
 	if !mapping.Valid() {
 		t.Fatalf("mapping problem = %v", mapping.Problem())
 	}
 	if mapping.Source() != mood.ID() || mapping.Target() != genre.ID() {
 		t.Fatalf("mapping direction = %s -> %s", mapping.Source(), mapping.Target())
 	}
-	if mapping.Lossiness() != Ambiguous || mapping.Priority() != 10 {
+	if mapping.Lossiness() != loss.Ambiguous || mapping.Priority() != 10 {
 		t.Fatalf("mapping = %v, %d", mapping.Lossiness(), mapping.Priority())
 	}
 	value, ok := mapping.Convert("melancholic")
@@ -33,7 +34,7 @@ func TestMappingDeclaresDirectionLossinessAndPriority(t *testing.T) {
 }
 
 func TestMappingDeclinesRatherThanGuessing(t *testing.T) {
-	mapping := Map(mood, genre, Ambiguous, 0, moodToGenre)
+	mapping := Map(mood, genre, loss.Ambiguous, 0, moodToGenre)
 	// A value the conversion does not recognise is declined, so the caller
 	// reports a loss instead of inventing a target value.
 	if _, ok := mapping.Convert("unmapped"); ok {
@@ -46,34 +47,34 @@ func TestMappingDeclinesRatherThanGuessing(t *testing.T) {
 }
 
 func TestMappingWithoutADeclaredContractIsRejected(t *testing.T) {
-	if Map(mood, genre, Ambiguous, 0, nil).Valid() {
+	if Map(mood, genre, loss.Ambiguous, 0, nil).Valid() {
 		t.Fatal("mapping without a conversion accepted")
 	}
-	if Map(mood, genre, Lossiness(0), 0, moodToGenre).Valid() {
+	if Map(mood, genre, loss.Lossiness(0), 0, moodToGenre).Valid() {
 		t.Fatal("mapping without declared lossiness accepted")
 	}
-	if Map(mood, mood, Lossless, 0, func(value string) (string, bool) { return value, true }).Valid() {
+	if Map(mood, mood, loss.Lossless, 0, func(value string) (string, bool) { return value, true }).Valid() {
 		t.Fatal("mapping from a key to itself accepted")
 	}
-	problem := Map(mood, genre, Lossiness(0), 0, moodToGenre).Problem()
+	problem := Map(mood, genre, loss.Lossiness(0), 0, moodToGenre).Problem()
 	if problem == nil || !strings.Contains(problem.Error(), "lossiness") {
 		t.Fatalf("problem = %v", problem)
 	}
 }
 
 func TestMappingOrderIsTotalAndIndependentOfDeclarationOrder(t *testing.T) {
-	high := Map(mood, genre, Ambiguous, 10, moodToGenre)
-	low := Map(mood, genre, Lossless, 1, moodToGenre)
+	high := Map(mood, genre, loss.Ambiguous, 10, moodToGenre)
+	low := Map(mood, genre, loss.Lossless, 1, moodToGenre)
 	if !high.Better(low) || low.Better(high) {
 		t.Fatal("priority did not decide")
 	}
-	lossless := Map(artist, genre, Lossless, 5, func(value string) (string, bool) { return value, true })
-	ambiguous := Map(mood, genre, Ambiguous, 5, moodToGenre)
+	lossless := Map(artist, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
+	ambiguous := Map(mood, genre, loss.Ambiguous, 5, moodToGenre)
 	if !lossless.Better(ambiguous) || ambiguous.Better(lossless) {
 		t.Fatal("lossiness did not break the priority tie")
 	}
-	first := Map(artist, genre, Lossless, 5, func(value string) (string, bool) { return value, true })
-	second := Map(title, genre, Lossless, 5, func(value string) (string, bool) { return value, true })
+	first := Map(artist, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
+	second := Map(title, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
 	if first.Better(second) == second.Better(first) {
 		t.Fatal("equally ranked mappings have no stable order")
 	}

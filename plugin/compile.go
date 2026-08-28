@@ -21,20 +21,21 @@ var (
 // Compilation is the immutable, type-erased Host view of one Compile result.
 // Its private plan can only be consumed by Component.Open.
 type Compilation struct {
-	component      Identity
-	implementation *componentImplementation
-	config         config.Fingerprint
-	shape          flow.Shape
-	plan           any
-	outputs        any
-	requirements   any
-	effects        []Effect
-	resources      resource.Request
-	scratch        resource.Bytes
-	temporary      resource.Bytes
-	estimate       resource.Estimate
-	execution      drive.Binding
-	executionSet   bool
+	component       Identity
+	implementation  *componentImplementation
+	config          config.Fingerprint
+	shape           flow.Shape
+	plan            any
+	outputs         any
+	requirements    any
+	effects         []Effect
+	metadataReports []MetadataReport
+	resources       resource.Request
+	scratch         resource.Bytes
+	temporary       resource.Bytes
+	estimate        resource.Estimate
+	execution       drive.Binding
+	executionSet    bool
 }
 
 func (c Compilation) Valid() bool {
@@ -44,10 +45,13 @@ func (c Compilation) Valid() bool {
 func (c Compilation) Component() Identity                   { return c.component }
 func (c Compilation) ConfigFingerprint() config.Fingerprint { return c.config }
 func (c Compilation) Effects() []Effect                     { return append([]Effect(nil), c.effects...) }
-func (c Compilation) Resources() resource.Request           { return c.resources }
-func (c Compilation) Scratch() resource.Bytes               { return c.scratch }
-func (c Compilation) Temporary() resource.Bytes             { return c.temporary }
-func (c Compilation) Estimate() resource.Estimate           { return c.estimate }
+func (c Compilation) MetadataReports() []MetadataReport {
+	return append([]MetadataReport(nil), c.metadataReports...)
+}
+func (c Compilation) Resources() resource.Request { return c.resources }
+func (c Compilation) Scratch() resource.Bytes     { return c.scratch }
+func (c Compilation) Temporary() resource.Bytes   { return c.temporary }
+func (c Compilation) Estimate() resource.Estimate { return c.estimate }
 
 func OutputsOf[D any](compilation Compilation) (flow.Descriptors[D], bool) {
 	value, ok := compilation.outputs.(flow.Descriptors[D])
@@ -107,6 +111,7 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		return Compilation{}, component.phaseError("plugin.compile-requirement", "component Compile returned the wrong requirement type", "")
 	}
 	items := validateDescriptorPorts("plugin.compile", "output", shape.Outputs, outputs.Bindings())
+	outputCounts := descriptorCounts(outputs.Bindings())
 	inputCounts := descriptorCounts(inputs.Bindings())
 	requirementPorts := make(map[string]struct{}, len(requirements))
 	for _, requirement := range requirements {
@@ -127,7 +132,6 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		}
 	}
 	if len(requirements) == 0 {
-		outputCounts := descriptorCounts(outputs.Bindings())
 		for _, port := range shape.Outputs {
 			if port.Required() && outputCounts[port.ID()] == 0 {
 				items = append(items, diagnostic.NewItem("plugin.compile-required-output", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: port.ID()}, "component Compile omitted a required output descriptor", nil))
@@ -137,6 +141,11 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 	for _, effect := range compiled.effects {
 		if !effect.Valid() {
 			items = append(items, diagnostic.NewItem("plugin.compile-effect", diagnostic.ErrorSeverity, diagnostic.Path{}, "component Compile returned an invalid effect", nil))
+		}
+	}
+	for _, value := range compiled.metadataReports {
+		if !value.valid() || !shapeHasPort(shape.Outputs, value.Output) || outputCounts[value.Output] == 0 {
+			items = append(items, diagnostic.NewItem("plugin.compile-metadata-report", diagnostic.ErrorSeverity, diagnostic.Path{Descriptor: value.Output}, "component Compile returned metadata evidence without a valid output port", nil))
 		}
 	}
 	if !compiled.estimate.Valid() {
@@ -152,20 +161,21 @@ func Compile[D any](component Component, ctx CompileContext, resolved config.Res
 		return Compilation{}, diagnostic.NewError(prefixComponent(items, component.identity)...)
 	}
 	return Compilation{
-		component:      component.identity,
-		implementation: component.implementation,
-		config:         resolved.Fingerprint(),
-		shape:          shape.Clone(),
-		plan:           compiled.plan,
-		outputs:        outputs,
-		requirements:   append([]Requirement[D](nil), requirements...),
-		effects:        append([]Effect(nil), compiled.effects...),
-		resources:      compiled.resources,
-		scratch:        compiled.scratch,
-		temporary:      compiled.temporary,
-		estimate:       compiled.estimate,
-		execution:      component.execution,
-		executionSet:   component.executionSet,
+		component:       component.identity,
+		implementation:  component.implementation,
+		config:          resolved.Fingerprint(),
+		shape:           shape.Clone(),
+		plan:            compiled.plan,
+		outputs:         outputs,
+		requirements:    append([]Requirement[D](nil), requirements...),
+		effects:         append([]Effect(nil), compiled.effects...),
+		metadataReports: append([]MetadataReport(nil), compiled.metadataReports...),
+		resources:       compiled.resources,
+		scratch:         compiled.scratch,
+		temporary:       compiled.temporary,
+		estimate:        compiled.estimate,
+		execution:       component.execution,
+		executionSet:    component.executionSet,
 	}, nil
 }
 

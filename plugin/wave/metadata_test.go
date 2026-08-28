@@ -17,6 +17,8 @@ import (
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
+	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -177,6 +179,157 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	}
 }
 
+func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.T) {
+	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
+	unknown := infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xa2)
+	infoChunk := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
+	data := []byte{7, 8}
+	original := waveTestRIFF(t, formatChunk, infoChunk, waveTestChunk(t, tagDATA, data, 0))
+	resolver := infoTestResolver(t)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(original), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedBlock := newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)
+	edited := inspected.metadata.Edit()
+	metadata.Add(edited, tag.Title(), "Edited", metadata.Origin{})
+	metadata.Add(edited, tag.Composer(), "Not representable in RIFF INFO", metadata.Origin{})
+	document, err := edited.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileContext, err = mediaformat.WithInspection(compileContext, mediaformat.NewInspection(WAVE(), inspected))
+	if err != nil {
+		t.Fatal(err)
+	}
+	properties, err := inspected.description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(document)
+	component := muxerComponent()
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := compiled.MetadataReports()
+	if len(reports) != 1 {
+		t.Fatalf("rewrite metadata reports = %#v", reports)
+	}
+	report := reports[0]
+	if report.Output != "writes" || report.Report.Carrier != RIFFInfo() || report.Report.Encoding != InfoEncodingIdentity().String() || report.Report.Block != string(expectedBlock) || report.Report.Loss.Key != tag.Composer().ID() || report.Report.Loss.Kind != loss.Dropped || report.Report.Loss.Detail != "wave.info-unrepresentable" || report.Report.Loss.Source != (loss.Origin{}) {
+		t.Fatalf("rewrite metadata report = %#v", report)
+	}
+
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: mustBufferAllocator(t, wavePageSize*2), Source: rangeSourceOpening(t, &rangeSourceSession{data: original}),
+	}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, len(data))
+	handle, err := packetBuffers.FromBytes(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputItem := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &inputItem, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, []byte("Edited")) || !bytes.Contains(encoded, unknown) {
+		t.Fatalf("rewritten WAVE metadata = %x", encoded)
+	}
+}
+
+func TestMuxSynthesizesRIFFInfoForNewMetadata(t *testing.T) {
+	unknown := waveTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xa2)
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	builder.AddBlock(metadata.NewRawBlock(newChunkBlockID(1, chunkBeforeFormat, chunkRaw), rawChunkCarrier(), plugin.Identity{}, metadata.NewBlob("application/x-wave-raw", unknown)))
+	metadata.Add(builder, tag.Title(), "Generated", metadata.Origin{})
+	metadata.Add(builder, tag.Composer(), "Not representable in RIFF INFO", metadata.Origin{})
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := infoTestResolver(t)
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
+	properties, err := description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(document)
+	component := muxerComponent()
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := compiled.MetadataReports()
+	if len(reports) != 1 || reports[0].Output != "writes" || reports[0].Report.Block != string(generatedInfoBlock) || reports[0].Report.Loss.Key != tag.Composer().ID() || reports[0].Report.Loss.Detail != "wave.info-unrepresentable" {
+		t.Fatalf("new-output metadata reports = %#v", reports)
+	}
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{Buffers: mustBufferAllocator(t, wavePageSize*2)}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, 2)
+	handle, err := packetBuffers.FromBytes([]byte{7, 8}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputItem := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &inputItem, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if !bytes.Contains(encoded, []byte("Generated")) || bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, unknown) {
+		t.Fatalf("new WAVE metadata = %x", encoded)
+	}
+	if count := bytes.Count(encoded, []byte(tagLIST)); count != 1 {
+		t.Fatalf("generated LIST/INFO count = %d, want 1", count)
+	}
+
+	withInfo := document.Edit()
+	withInfo.AddBlock(metadata.NewRawBlock(newChunkBlockID(2, chunkBeforeData, chunkInfo), RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/x-riff-info", infoTestList(t))))
+	documentWithInfo, err := withInfo.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := marshalMuxChunks(t.Context(), resolver, documentWithInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := bytes.Count(chunks.beforeData, []byte(tagLIST)); count != 1 {
+		t.Fatalf("existing LIST/INFO produced %d carriers, want 1", count)
+	}
+}
+
 func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 	started := make(chan struct{})
 	hidden, canceled := false, false
@@ -187,7 +340,7 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 			func(ctx metadata.ParseContext) (metadata.Document, error) {
 				return metadata.NewBuilder(ctx.Scope()).Build()
 			},
-			func(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+			func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 				hidden = ctx.Context().Value(cancelInfoContextKey{}) == nil
 				close(started)
 				select {

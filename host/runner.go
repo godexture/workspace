@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/internal/observe"
 	runtimeflow "github.com/godexture/godec/internal/run"
 	"github.com/godexture/godec/internal/task"
+	"github.com/godexture/godec/plan"
 )
 
 type runner struct {
@@ -26,15 +27,16 @@ type runner struct {
 	plugins     *task.Group
 	data        *task.Group
 
-	operators []flow.Operator
-	nodes     []graph.Node
-	opened    []int
-	owners    []*journal.Domain
-	boundary  map[string]bound.Entry
-	outputs   []*outputRuntime
-	byOutput  map[int]*outputRuntime
-	execution *runtimeflow.Execution
-	result    Result
+	operators      []flow.Operator
+	nodes          []graph.Node
+	opened         []int
+	owners         []*journal.Domain
+	boundary       map[string]bound.Entry
+	outputs        []*outputRuntime
+	byOutput       map[int]*outputRuntime
+	metadataLosses []plan.PredictedMetadataLoss
+	execution      *runtimeflow.Execution
+	result         Result
 }
 
 // Run opens and executes a Prepared job exactly once. All operators and
@@ -100,18 +102,19 @@ func newRunner(prepared *Prepared, ctx context.Context, cancel context.CancelCau
 		ledger.EnableOwnershipAudit()
 	}
 	r := &runner{
-		prepared:    prepared,
-		ctx:         ctx,
-		cancel:      cancel,
-		phase:       phase,
-		phaseCancel: phaseCancel,
-		diag:        &diagnosticLog{},
-		ledger:      ledger,
-		nodes:       nodes,
-		operators:   make([]flow.Operator, len(nodes)),
-		owners:      make([]*journal.Domain, len(nodes)),
-		boundary:    make(map[string]bound.Entry),
-		byOutput:    make(map[int]*outputRuntime),
+		prepared:       prepared,
+		ctx:            ctx,
+		cancel:         cancel,
+		phase:          phase,
+		phaseCancel:    phaseCancel,
+		diag:           &diagnosticLog{},
+		ledger:         ledger,
+		nodes:          nodes,
+		operators:      make([]flow.Operator, len(nodes)),
+		owners:         make([]*journal.Domain, len(nodes)),
+		boundary:       make(map[string]bound.Entry),
+		byOutput:       make(map[int]*outputRuntime),
+		metadataLosses: prepared.program.Plan().PredictedMetadataLosses(),
 	}
 	r.observe = r.newObservationCollector(options, observationContext)
 	fail := func(err error) {

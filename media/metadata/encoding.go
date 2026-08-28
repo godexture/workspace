@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -72,7 +73,7 @@ type ParseFunc func(ParseContext) (Document, error)
 // MarshalFunc writes one carrier block and says what it could not carry as the
 // document stated it. Reporting rather than failing is what makes best effort
 // the default; a job that would rather fail says so in its policy.
-type MarshalFunc func(MarshalContext) (Blob, []Loss, error)
+type MarshalFunc func(MarshalContext) (Blob, []loss.Loss, error)
 
 // Encoding is the pure Parse/Marshal behavior attached to one control-plane
 // component. It has no Open or payload-grant lifecycle.
@@ -112,7 +113,7 @@ func (e Encoding) Parse(ctx ParseContext) (Document, error) {
 	return value, nil
 }
 
-func (e Encoding) Marshal(ctx MarshalContext) (Blob, []Loss, error) {
+func (e Encoding) Marshal(ctx MarshalContext) (Blob, []loss.Loss, error) {
 	if !e.Valid() {
 		return Blob{}, nil, ErrInvalidEncoding
 	}
@@ -131,5 +132,5 @@ func (e Encoding) Marshal(ctx MarshalContext) (Blob, []Loss, error) {
 			return Blob{}, nil, errors.Join(ErrInvalidEncoding, errors.New("Marshal reported an invalid loss"))
 		}
 	}
-	return value, append([]Loss(nil), lost...), nil
+	return value, append([]loss.Loss(nil), lost...), nil
 }

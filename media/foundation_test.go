@@ -26,6 +26,7 @@ import (
 	"github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
@@ -515,7 +516,7 @@ func parseSkeletonMetadata(ctx metadata.ParseContext) (metadata.Document, error)
 	return builder.Build()
 }
 
-func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, []metadata.Loss, error) {
+func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 	document := ctx.Document()
 	result := make([]byte, 0, document.Len()*8)
 	for _, entry := range document.Entries() {
