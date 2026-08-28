@@ -1,6 +1,10 @@
 package catalog
 
 import (
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/endpoint"
@@ -49,7 +53,20 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 			items = append(items, validateFormatDeclaration(component.Identity(), trait.Format(), formats)...)
 		}
 		if trait, ok := metadata.EncodingOf(component); ok && !trait.Valid() {
-			items = append(items, traitItem("catalog.metadata-trait", component.Identity(), "Metadata Encoding trait is invalid", nil))
+			cause := "metadata encoding trait is invalid"
+			if problem := trait.Problem(); problem != nil {
+				cause = problem.Error()
+			}
+			items = append(items, traitItem("catalog.metadata-trait", component.Identity(), "Metadata Encoding trait is invalid", map[string]string{"cause": cause}))
+		}
+		if mappings, ok := metadata.MappingsOf(component); ok {
+			if !mappings.Valid() {
+				cause := "metadata mapping trait is invalid"
+				if problem := mappings.Problem(); problem != nil {
+					cause = problem.Error()
+				}
+				items = append(items, traitItem("catalog.metadata-mapping", component.Identity(), "Metadata Mapping trait is invalid", map[string]string{"cause": cause}))
+			}
 		}
 		if trait, ok := endpoint.TraitOf(component); ok {
 			if !trait.Valid() {
@@ -63,6 +80,44 @@ func validateTraits(components []plugin.Component) []diagnostic.Item {
 		}
 	}
 	return items
+}
+
+func collectMetadataMappings(components []plugin.Component) ([]metadata.Mapping, []diagnostic.Item) {
+	type seenMapping struct{ component plugin.Identity }
+	seen := make(map[string]seenMapping)
+	var values []metadata.Mapping
+	var items []diagnostic.Item
+	for _, component := range components {
+		mappings, ok := metadata.MappingsOf(component)
+		if !ok {
+			continue
+		}
+		if !mappings.Valid() {
+			continue
+		}
+		for _, mapping := range mappings.Values() {
+			if !mapping.Valid() {
+				continue
+			}
+			contract := mappingContractKey(mapping)
+			if previous, exists := seen[contract]; exists {
+				items = append(items, traitItem("catalog.metadata-mapping-duplicate", component.Identity(), "Metadata Mapping contract is declared more than once", map[string]string{
+					"source": mapping.Source().String(), "target": mapping.Target().String(), "previous": previous.component.String(),
+				}))
+				continue
+			}
+			seen[contract] = seenMapping{component: component.Identity()}
+			values = append(values, mapping)
+		}
+	}
+	sort.Slice(values, func(left, right int) bool { return values[left].Better(values[right]) })
+	return values, items
+}
+
+func mappingContractKey(value metadata.Mapping) string {
+	return strings.Join([]string{
+		value.Source().String(), value.Target().String(), value.Lossiness().String(), strconv.Itoa(value.Priority()),
+	}, "\x00")
 }
 
 func validateFormatDeclaration(identity plugin.Identity, value mediaformat.Format, seen map[plugin.Identity]formatUse) []diagnostic.Item {

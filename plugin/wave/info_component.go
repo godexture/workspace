@@ -9,6 +9,6 @@ func infoComponent() plugin.Component {
 	return plugin.NewComponent[infoID](
 		plugin.Descriptor{DisplayName: "RIFF INFO metadata encoding"},
 		configurationSchema(),
-		metadata.WithEncoding(parseInfo, marshalInfo),
+		metadata.WithEncoding(parseInfo, marshalInfo, infoSupportedKeys()...),
 	)
 }

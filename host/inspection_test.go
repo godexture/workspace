@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
@@ -31,14 +32,16 @@ type inspectTerminalID struct{}
 type inspectFormatID struct{}
 type inspectEncodingID struct{}
 type inspectCarrierID struct{}
+type inspectMetadataKeyID struct{}
 type inspectSchemaAID struct{}
 type inspectSchemaBID struct{}
 type inspectUnit int
 type inspectConfig struct{}
 
 var (
-	inspectSchemaA = schema.Define[inspectSchemaAID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
-	inspectSchemaB = schema.Define[inspectSchemaBID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
+	inspectSchemaA     = schema.Define[inspectSchemaAID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
+	inspectSchemaB     = schema.Define[inspectSchemaBID, inspectUnit](schema.Traits[inspectUnit]{Time: func(inspectUnit) (int64, bool) { return 0, true }})
+	inspectMetadataKey = key.Define[inspectMetadataKeyID, string]()
 )
 
 type inspectPlan struct{ shape flow.Shape }
@@ -172,6 +175,7 @@ func TestPlanInspectsOnceAndReusesResultAcrossCompileFixpoints(t *testing.T) {
 			func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
 				return metadata.NewBlob("", nil), nil, nil
 			},
+			inspectMetadataKey.Erased(),
 		),
 	)
 	set := plugin.NewSet(plugin.Define[inspectPluginID](plugin.Descriptor{DisplayName: "inspection", Version: "1"}, source, reader, bridge, sink, terminal, encoding)).AddDeclaration(metadata.Bind(slot, encoding.Identity()))

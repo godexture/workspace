@@ -777,7 +777,7 @@ func skeletonComponents(data []byte, trace *skeletonTrace) plugin.Definition {
 		plugin.NewComponent[skeletonSinkID](plugin.Descriptor{DisplayName: "sink"}, configSchema, plugin.WithSpec(skeletonSpec(sinkShape, structural("sink"), skeletonSinkPlanner("chunks"), func(_ plugin.OpenContext, plan skeletonPlan) (flow.Operator, error) {
 			return skeletonNoopOperator{shape: plan.shape}, nil
 		}))),
-		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, metadata.WithEncoding(parseSkeletonMetadata, marshalSkeletonMetadata)),
+		plugin.NewComponent[skeletonMetadataEncodingID](plugin.Descriptor{DisplayName: "metadata encoding"}, configSchema, metadata.WithEncoding(parseSkeletonMetadata, marshalSkeletonMetadata, tag.Title().Erased(), tag.Artist().Erased(), tag.Date().Erased())),
 	)
 }
 
@@ -1056,7 +1056,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 	if !ok {
 		t.Fatal("metadata encoding component is absent from the catalog")
 	}
-	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{skeletonMetadataCarrier: component})
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{skeletonMetadataCarrier: component}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,6 +24,7 @@ type Index struct {
 	byDeclaration map[plugin.DeclarationKey]int
 	codecBindings map[plugin.Identity][]CodecBinding
 	formats       formatIndex
+	mappings      []metadata.Mapping
 	fingerprint   [32]byte
 }
 
@@ -101,6 +102,8 @@ func Build(set plugin.Set) (Index, error) {
 		}
 	}
 	items = append(items, validateTraits(components)...)
+	mappings, mappingItems := collectMetadataMappings(components)
+	items = append(items, mappingItems...)
 
 	declarations := set.Declarations()
 	seenDeclarations := make(map[plugin.DeclarationKey]plugin.Declaration, len(declarations))
@@ -192,6 +195,7 @@ func Build(set plugin.Set) (Index, error) {
 		byDeclaration: byDeclaration,
 		codecBindings: indexCodecBindings(declarations),
 		formats:       indexFormats(components),
+		mappings:      append([]metadata.Mapping(nil), mappings...),
 		fingerprint:   catalogFingerprint(definitions, components, declarations),
 	}, nil
 }
@@ -212,6 +216,12 @@ func (i Index) LookupDeclaration(key plugin.DeclarationKey) (plugin.Declaration,
 // Components returns copied component definitions in stable identity order.
 func (i Index) Components() []plugin.Component {
 	return copyComponents(i.components)
+}
+
+// MetadataMappings returns a snapshot of conversion declarations from the
+// validated composition, in deterministic projection order.
+func (i Index) MetadataMappings() []metadata.Mapping {
+	return append([]metadata.Mapping(nil), i.mappings...)
 }
 
 // Views returns copied read-only component descriptions.

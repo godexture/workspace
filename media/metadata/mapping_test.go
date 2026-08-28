@@ -1,12 +1,21 @@
 package metadata
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/plugin"
 )
+
+type mappingBytesSourceID struct{}
+type mappingBytesTargetID struct{}
+
+var mappingBytesSource = key.Define[mappingBytesSourceID, []byte](func(value []byte) []byte { return append([]byte(nil), value...) })
+var mappingBytesTarget = key.Define[mappingBytesTargetID, []byte](func(value []byte) []byte { return append([]byte(nil), value...) })
 
 func moodToGenre(value string) (string, bool) {
 	switch value {
@@ -56,6 +65,13 @@ func TestMappingWithoutADeclaredContractIsRejected(t *testing.T) {
 	if Map(mood, mood, loss.Lossless, 0, func(value string) (string, bool) { return value, true }).Valid() {
 		t.Fatal("mapping from a key to itself accepted")
 	}
+	var missing key.Key[string]
+	if Map(missing, genre, loss.Lossless, 0, func(value string) (string, bool) { return value, true }).Valid() {
+		t.Fatal("mapping with an invalid source key accepted")
+	}
+	if Map(mood, missing, loss.Lossless, 0, func(value string) (string, bool) { return value, true }).Valid() {
+		t.Fatal("mapping with an invalid target key accepted")
+	}
 	problem := Map(mood, genre, loss.Lossiness(0), 0, moodToGenre).Problem()
 	if problem == nil || !strings.Contains(problem.Error(), "lossiness") {
 		t.Fatalf("problem = %v", problem)
@@ -73,10 +89,55 @@ func TestMappingOrderIsTotalAndIndependentOfDeclarationOrder(t *testing.T) {
 	if !lossless.Better(ambiguous) || ambiguous.Better(lossless) {
 		t.Fatal("lossiness did not break the priority tie")
 	}
-	first := Map(artist, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
-	second := Map(title, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
+	first := Map(mood, genre, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
+	second := Map(mood, title, loss.Lossless, 5, func(value string) (string, bool) { return value, true })
 	if first.Better(second) == second.Better(first) {
 		t.Fatal("equally ranked mappings have no stable order")
+	}
+}
+
+func TestMappingTraitValidatesAndDoesNotExposeItsStorage(t *testing.T) {
+	mapping := Map(mood, genre, loss.Lossless, 3, func(value string) (string, bool) { return value, true })
+	component := plugin.NewComponent[encodingTraitComponentID](plugin.Descriptor{DisplayName: "mapping"}, config.Struct[encodingTraitConfigID](func() struct{} { return struct{}{} }).Version("1").Build(), WithMappings(mapping))
+	declared, ok := MappingsOf(component)
+	if !ok || !declared.Valid() || len(declared.Values()) != 1 {
+		t.Fatalf("MappingsOf = %#v/%v", declared, ok)
+	}
+	values := declared.Values()
+	values[0].priority = 99
+	if got := declared.Values()[0].Priority(); got != 3 {
+		t.Fatalf("Mappings.Values exposed trait storage: priority = %d", got)
+	}
+	if traits := component.Traits(); len(traits) != 1 || !strings.Contains(traits[0].Manifest, mapping.Source().String()+">"+mapping.Target().String()) {
+		t.Fatalf("mapping manifest = %#v", traits)
+	}
+	if value := newMappings(nil); value.Valid() {
+		t.Fatal("empty mapping trait is valid")
+	}
+	if value := newMappings([]Mapping{mapping, mapping}); value.Valid() {
+		t.Fatal("duplicate mapping trait is valid")
+	}
+}
+
+func TestMappingSnapshotsReferenceSourceBeforeConversion(t *testing.T) {
+	component, _ := projectionEncoding(mappingBytesTarget.Erased())
+	mapping := Map(mappingBytesSource, mappingBytesTarget, loss.Lossless, 0, func(value []byte) ([]byte, bool) {
+		value[0] = 9
+		return value, true
+	})
+	resolver := projectionResolver(t, component, mapping)
+	document := projectionDocument(t, func(builder *Builder) {
+		Add(builder, mappingBytesSource, []byte{1, 2}, Origin{})
+	})
+	projected, _, err := resolver.Project(testCarrier, "target", document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source := Values(document, mappingBytesSource); len(source) != 1 || !bytes.Equal(source[0], []byte{1, 2}) {
+		t.Fatalf("source document was mutated by converter: %v", source)
+	}
+	if target := Values(projected, mappingBytesTarget); len(target) != 1 || !bytes.Equal(target[0], []byte{9, 2}) {
+		t.Fatalf("projected target = %v", target)
 	}
 }
 

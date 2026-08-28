@@ -7,6 +7,16 @@ import (
 	"github.com/godexture/godec/media/carrier"
 )
 
+func TestOriginLossOriginRequiresCompleteSource(t *testing.T) {
+	complete := Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source", Native: "native"}
+	if got := complete.LossOrigin(); !got.Valid() || got.Carrier != complete.Carrier || got.Encoding != complete.Encoding.String() || got.Block != string(complete.Block) || got.Native != complete.Native {
+		t.Fatalf("complete loss origin = %#v", got)
+	}
+	if got := (Origin{Carrier: testCarrier, Encoding: encodingIdentity()}).LossOrigin(); !got.IsZero() {
+		t.Fatalf("partial loss origin = %#v", got)
+	}
+}
+
 func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
 	builder := NewBuilder(StreamScope)
 	Add(builder, title, "First", Origin{Encoding: encodingIdentity(), Native: "TIT2"})

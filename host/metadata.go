@@ -72,7 +72,7 @@ func (h *Host) metadataResolver(carriers []carrier.ID) (metadata.Resolver, error
 		}
 		components[slot] = component
 	}
-	return metadata.NewResolver(components)
+	return metadata.NewResolver(components, h.index.MetadataMappings())
 }
 
 func formatCarriers(component plugin.Component) []carrier.ID {

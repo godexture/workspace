@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
+	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -23,7 +24,8 @@ func Label() key.Key[string]   { return label }
 
 func encodingComponent() plugin.Component {
 	return plugin.NewComponent[encodingID](plugin.Descriptor{DisplayName: "ACME label encoding"}, configurationSchema(),
-		metadata.WithEncoding(parseLabel, marshalLabel))
+		metadata.WithEncoding(parseLabel, marshalLabel, Label().Erased()),
+		metadata.WithMappings(metadata.Map(Label(), tag.Title(), loss.Lossless, 0, func(value string) (string, bool) { return value, true })))
 }
 
 func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
@@ -44,12 +46,28 @@ func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
 // about any one carrier; folding them is this encoding's job, and saying what
 // the fold cost is the other half of that job.
 func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
-	values := metadata.Values(ctx.Document(), Label())
-	if len(values) == 0 || values[0] == "" || len(values[0]) > maxLabelBytes || !utf8.ValidString(values[0]) {
-		return metadata.Blob{}, nil, errors.Join(ErrMalformed, errors.New("ACME metadata requires a valid label"))
-	}
+	var label string
+	found := false
 	var lost []loss.Loss
-	for range values[1:] {
+	for _, entry := range ctx.Document().Entries() {
+		if entry.Key() != Label().ID() {
+			lost = append(lost, loss.Loss{
+				Key:    entry.Key(),
+				Kind:   loss.Dropped,
+				Detail: "acme.label-unrepresentable",
+				Source: entry.Origin().LossOrigin(),
+			})
+			continue
+		}
+		value, ok := entry.Value().(string)
+		if !ok {
+			return metadata.Blob{}, nil, errors.Join(ErrMalformed, errors.New("ACME metadata label has an invalid value"))
+		}
+		if !found {
+			label = value
+			found = true
+			continue
+		}
 		lost = append(lost, loss.Loss{
 			Key:    Label().ID(),
 			Kind:   loss.Folded,
@@ -57,5 +75,8 @@ func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, erro
 			Detail: "acme.single-label",
 		})
 	}
-	return metadata.NewBlob("text/plain; charset=utf-8", []byte(values[0])), lost, nil
+	if !found || label == "" || len(label) > maxLabelBytes || !utf8.ValidString(label) {
+		return metadata.Blob{}, nil, errors.Join(ErrMalformed, errors.New("ACME metadata requires a valid label"))
+	}
+	return metadata.NewBlob("text/plain; charset=utf-8", []byte(label)), lost, nil
 }

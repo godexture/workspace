@@ -16,6 +16,7 @@ import (
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/packet"
@@ -29,6 +30,9 @@ import (
 
 type cancelInfoEncodingID struct{}
 type cancelInfoContextKey struct{}
+type rewriteLabelKeyID struct{}
+
+var rewriteLabel = key.Define[rewriteLabelKeyID, string]()
 
 func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	beforeFormat := waveTestChunk(t, "JUNK", []byte{1, 2, 3}, 0x91)
@@ -185,14 +189,19 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 	infoChunk := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
 	data := []byte{7, 8}
 	original := waveTestRIFF(t, formatChunk, infoChunk, waveTestChunk(t, tagDATA, data, 0))
-	resolver := infoTestResolver(t)
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): infoComponent()}, []metadata.Mapping{
+		metadata.Map(rewriteLabel, tag.Title(), loss.Lossless, 0, func(value string) (string, bool) { return value, true }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(original), resolver)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expectedBlock := newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)
 	edited := inspected.metadata.Edit()
-	metadata.Add(edited, tag.Title(), "Edited", metadata.Origin{})
+	metadata.Add(edited, rewriteLabel, "Mapped", metadata.Origin{})
 	metadata.Add(edited, tag.Composer(), "Not representable in RIFF INFO", metadata.Origin{})
 	document, err := edited.Build()
 	if err != nil {
@@ -221,12 +230,15 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 		t.Fatal(err)
 	}
 	reports := compiled.MetadataReports()
-	if len(reports) != 1 {
+	if len(reports) != 2 {
 		t.Fatalf("rewrite metadata reports = %#v", reports)
 	}
-	report := reports[0]
-	if report.Output != "writes" || report.Report.Carrier != RIFFInfo() || report.Report.Encoding != InfoEncodingIdentity().String() || report.Report.Block != string(expectedBlock) || report.Report.Loss.Key != tag.Composer().ID() || report.Report.Loss.Kind != loss.Dropped || report.Report.Loss.Detail != "wave.info-unrepresentable" || report.Report.Loss.Source != (loss.Origin{}) {
-		t.Fatalf("rewrite metadata report = %#v", report)
+	mapped, dropped := reports[0], reports[1]
+	if mapped.Output != "writes" || mapped.Report.Carrier != RIFFInfo() || mapped.Report.Encoding != InfoEncodingIdentity().String() || mapped.Report.Block != string(expectedBlock) || mapped.Report.Loss.Key != rewriteLabel.ID() || mapped.Report.Loss.Kind != loss.Converted || mapped.Report.Loss.Target != tag.Title().ID() || mapped.Report.Loss.Mapping != loss.Lossless || mapped.Report.Loss.Detail != "metadata.mapping" || mapped.Report.Loss.Source != (loss.Origin{}) {
+		t.Fatalf("rewrite mapping report = %#v", mapped)
+	}
+	if dropped.Output != "writes" || dropped.Report.Carrier != RIFFInfo() || dropped.Report.Encoding != InfoEncodingIdentity().String() || dropped.Report.Block != string(expectedBlock) || dropped.Report.Loss.Key != tag.Composer().ID() || dropped.Report.Loss.Kind != loss.Dropped || dropped.Report.Loss.Detail != "wave.info-unrepresentable" || dropped.Report.Loss.Source != (loss.Origin{}) {
+		t.Fatalf("rewrite drop report = %#v", dropped)
 	}
 
 	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
@@ -250,7 +262,7 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 		t.Fatal(err)
 	}
 	encoded := applyWrites(t, collector.items)
-	if bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, []byte("Edited")) || !bytes.Contains(encoded, unknown) {
+	if bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, []byte("Mapped")) || !bytes.Contains(encoded, unknown) {
 		t.Fatalf("rewritten WAVE metadata = %x", encoded)
 	}
 }
@@ -351,9 +363,10 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 					return metadata.Blob{}, nil, errors.New("metadata Marshal cancellation was not propagated")
 				}
 			},
+			tag.Title().Erased(),
 		),
 	)
-	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): encoding})
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): encoding}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
