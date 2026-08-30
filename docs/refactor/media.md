@@ -325,7 +325,7 @@ catalog     conflict の検出と報告
 
 `Title` は単一値、`Artist` は複数値、という規格上の差を key は宣言しない。
 
-この情報の consumer は、出力 carrier が一値しか持てない時に畳み込みが loss かどうかを判断する metadata encoding であり、それが現れるのは実 ID3/Vorbis Comment を移す M8 である。それ以前に凍結しない理由は、多重度が二値とは限らないためである。ID3 は言語違いの `TIT2` を、Vorbis Comment は複数の `TITLE` を正当に持てるため、実際に必要な区分は「単一 / 複数 / 修飾子付き複数」になり得る。実 encoding を前にせずに選ぶと作り直しになる。
+この情報の consumer は、出力 carrier が一値しか持てない時に畳み込みが loss かどうかを判断する metadata encoding であり、それが現れるのは実 ID3/Vorbis Comment を移す M8 である。それ以前に凍結しない理由は、多重度が二値とは限らないためである。ID3v2.4 の text frame は複数値を、`COMM`/`USLT` は language/description を伴う値を正当に持て、Vorbis Comment も複数の `TITLE` を持てるため、実際に必要な区分は「単一 / 複数 / 修飾子付き複数」になり得る。実 encoding を前にせずに選ぶと作り直しになる。
 
 M8 が [capability](capability.md) の ID3/Vorbis Comment 移行でこれを決める。それまで `Values` と `First` の両方を全 key に提供し、規格上の制約は encoding 側が持つ。
 
