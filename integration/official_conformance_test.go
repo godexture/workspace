@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/plugin/id3"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/linear"
+	"github.com/godexture/godec/plugin/vorbiscomment"
 	"github.com/godexture/godec/plugin/wave"
 	"github.com/godexture/godec/standard"
 	"github.com/godexture/godec/testkit"
@@ -23,6 +24,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 
 	testkit.Plugin(t, file.Plugin())
 	testkit.Plugin(t, id3.Plugin())
+	testkit.Plugin(t, vorbiscomment.Plugin())
 	testkit.Plugin(t, linear.Plugin())
 	testkit.Plugin(t, wave.Plugin())
 	testkit.Plugin(t, mp4.Plugin())
@@ -40,6 +42,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	runRIFFInfoCases(t, set, coverage)
 	runID3V1Cases(t, set, coverage)
 	runID3V2Cases(t, set, coverage)
+	runVorbisCommentCases(t, set, coverage)
 
 	// The shared typed runner models one stream and cannot drive MP4's
 	// carrier-less reader or the repeated descriptors its muxer consumes. The
@@ -52,7 +55,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	coverage.Observe(t, mixerConformancePlan(t), set)
 	coverage.Observe(t, convolverConformancePlan(t), set)
 	coverage.VerifyExecutable(t, set)
-	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity(), id3.V1EncodingIdentity(), id3.V2EncodingIdentity())
+	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity(), id3.V1EncodingIdentity(), id3.V2EncodingIdentity(), vorbiscomment.EncodingIdentity())
 	for _, assignment := range []struct {
 		identity  string
 		milestone string

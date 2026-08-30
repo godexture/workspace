@@ -21,6 +21,7 @@ var officialFamilies = []string{
 	modulePath + "/plugin/pcm/adpcm",
 	modulePath + "/plugin/pcm/g711",
 	modulePath + "/plugin/pcm/linear",
+	modulePath + "/plugin/vorbiscomment",
 	modulePath + "/plugin/wave",
 }
 
