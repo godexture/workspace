@@ -134,7 +134,7 @@ func v2DecodeAPIC(version byte, data metadata.Blob) (tag.Artwork, bool) {
 		return tag.Artwork{}, false
 	}
 	mime, ok := v2Read(data, 1, mimeEnd-1)
-	if !ok || !v2MediaTypeValid(string(mime)) {
+	if !ok || !tag.IsImageMediaType(string(mime)) {
 		return tag.Artwork{}, false
 	}
 	pictureType, ok := v2Read(data, mimeEnd+1, 1)
@@ -232,21 +232,6 @@ func v2EncodedTerminator(data metadata.Blob, start, width int) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func v2MediaTypeValid(value string) bool {
-	major, minor, ok := strings.Cut(value, "/")
-	if !ok || !strings.EqualFold(major, "image") || minor == "" || strings.Contains(minor, "/") {
-		return false
-	}
-	for _, part := range []string{major, minor} {
-		for _, rune := range part {
-			if !(rune >= 'a' && rune <= 'z') && !(rune >= 'A' && rune <= 'Z') && !(rune >= '0' && rune <= '9') && !strings.ContainsRune("!#$&^_.+-", rune) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 type v2OrdinalPair struct {
