@@ -55,6 +55,16 @@ func (b Blob) Reader() *bytes.Reader {
 	return bytes.NewReader(b.state.data)
 }
 
+// Slice returns an immutable zero-copy view of bytes in b with mediaType.
+// The view and its parent share backing storage, but neither exposes a mutable
+// slice, so both remain immutable.
+func (b Blob) Slice(mediaType string, start, end int) (Blob, bool) {
+	if b.state == nil || start < 0 || end < start || end > len(b.state.data) {
+		return Blob{}, false
+	}
+	return Blob{state: &blobState{mediaType: mediaType, data: b.state.data[start:end]}}, true
+}
+
 // Equal reports payload equality. Blobs from different sources compare by
 // content, so a re-encoded document can be checked against its original.
 func (b Blob) Equal(other Blob) bool {
