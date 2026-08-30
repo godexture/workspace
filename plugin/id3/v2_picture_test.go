@@ -95,6 +95,9 @@ func TestV2RetainsInvalidPictureFramesOpaque(t *testing.T) {
 		{version: 4, frame: v2BuildFrame("APIC", []byte{3, '-', '-', '>', 0, byte(tag.ArtworkFrontCover), 0, 1})},
 		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'f', 'o', 'o', 0, byte(tag.ArtworkFrontCover), 0, 1})},
 		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'a', 'p', 'p', 'l', 'i', 'c', 'a', 't', 'i', 'o', 'n', '/', 'p', 'd', 'f', 0, byte(tag.ArtworkFrontCover), 0, 1})},
+		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'i', 'm', 'a', 'g', 'e', '/', 'p', 'n', 'g', ';', 'f', 'o', 'o', 0, byte(tag.ArtworkFrontCover), 0, 1})},
+		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'i', 'm', 'a', 'g', 'e', '/', 'p', 'n', 'g', ' ', 'f', 'o', 'o', 0, byte(tag.ArtworkFrontCover), 0, 1})},
+		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'i', 'm', 'a', 'g', 'e', '/', 0, byte(tag.ArtworkFrontCover), 0, 1})},
 		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'i', 'm', 'a', 'g', 'e', '/', 'p', 'n', 'g', 0, 0x15, 0, 1})},
 		{version: 4, frame: v2BuildFrame("APIC", []byte{3, 'i', 'm', 'a', 'g', 'e', '/', 'p', 'n', 'g', 0, byte(tag.ArtworkFrontCover), 0})},
 		{version: 2, frame: v2TestFrame(2, "PIC", []byte{0, 'G', 'I', 'F', byte(tag.ArtworkFrontCover), 0, 1}, [2]byte{})},
@@ -165,6 +168,9 @@ func TestV2DropsFreshPictureWithNonMIMEOrReservedType(t *testing.T) {
 	for _, picture := range []tag.Artwork{
 		{Data: metadata.NewBlob("-->", []byte{1}), MediaType: "-->", Type: tag.ArtworkFrontCover},
 		{Data: metadata.NewBlob("application/pdf", []byte{1}), MediaType: "application/pdf", Type: tag.ArtworkFrontCover},
+		{Data: metadata.NewBlob("image/png;foo", []byte{1}), MediaType: "image/png;foo", Type: tag.ArtworkFrontCover},
+		{Data: metadata.NewBlob("image/png foo", []byte{1}), MediaType: "image/png foo", Type: tag.ArtworkFrontCover},
+		{Data: metadata.NewBlob("image/", []byte{1}), MediaType: "image/", Type: tag.ArtworkFrontCover},
 		{Data: metadata.NewBlob("image/png", []byte{1}), MediaType: "image/png", Type: tag.ArtworkType(0x15)},
 		{Data: metadata.NewBlob("image/png", nil), MediaType: "image/png", Type: tag.ArtworkFrontCover},
 	} {

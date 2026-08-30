@@ -376,7 +376,7 @@ func v2CanonicalURLFrame(entry metadata.Entry, _ string) ([]v2SemanticFrame, []l
 func v2CanonicalPictureFrame(entry metadata.Entry, _ string) ([]v2SemanticFrame, []loss.Loss) {
 	picture, ok := entry.Value().(tag.Artwork)
 	mediaType := picture.EffectiveMediaType()
-	if !ok || !picture.Valid() || picture.Data.Len() == 0 || !v2MediaTypeValid(mediaType) || picture.Type > 0x14 {
+	if !ok || !picture.Valid() || picture.Data.Len() == 0 || !tag.IsImageMediaType(mediaType) || picture.Type > 0x14 {
 		return nil, []loss.Loss{v2Loss(entry, loss.Dropped, "APIC", "id3v2.picture-unrepresentable")}
 	}
 	description, substituted := v2CanonicalText(picture.Description)
