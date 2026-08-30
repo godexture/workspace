@@ -73,3 +73,20 @@ func TestStrictMetadataIgnoresLosslessConversion(t *testing.T) {
 		t.Fatalf("lossless conversion warning = %q", warning)
 	}
 }
+
+func TestStrictMetadataTreatsSubstitutionAsLossy(t *testing.T) {
+	preserve, _ := job.PolicyFor(job.Fast)
+	losses := lossyMetadata()
+	losses[0].Report.Loss = loss.Loss{Key: metadataLossKey, Kind: loss.Substituted, Detail: "fixture.substitution"}
+	if err := strictMetadata(preserve, losses); err != nil {
+		t.Fatalf("preserve refused a substitution: %v", err)
+	}
+	if warning := metadataWarning(losses); warning == "" {
+		t.Fatal("substitution produced no metadata warning")
+	}
+	strict := preserve
+	strict.Metadata = job.StrictMetadata
+	if err := strictMetadata(strict, losses); err == nil {
+		t.Fatal("strict accepted a substitution")
+	}
+}

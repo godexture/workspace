@@ -25,7 +25,7 @@ func runRIFFInfoCases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) 
 		return metadata.Origin{Encoding: wave.InfoEncodingIdentity(), Carrier: wave.RIFFInfo(), Block: block, Native: native}
 	}
 	builder := metadata.NewBuilder(metadata.StreamScope)
-	builder.AddBlock(metadata.NewRawBlock(block, wave.RIFFInfo(), wave.InfoEncodingIdentity(), payload))
+	builder.AddBlock(metadata.NewSourceBlock(block, wave.RIFFInfo(), wave.InfoEncodingIdentity(), payload))
 	unknownOffset := 4 + len(title) + len(artistFirst) + len(artistSecond)
 	builder.AddBlock(metadata.NewRawBlock(
 		metadata.BlockID(fmt.Sprintf("%s/field/%08d", block, unknownOffset)),

@@ -45,10 +45,10 @@ func TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding(t *testing.T
 		}
 	}
 	blocks := document.Blocks()
-	if len(blocks) != 2 || blocks[0].ID() != "list-0" || !bytes.Equal(blocks[0].Payload().AppendTo(nil), value) {
+	if len(blocks) != 2 || blocks[0].ID() != "list-0" || !blocks[0].Source() || !bytes.Equal(blocks[0].Payload().AppendTo(nil), value) {
 		t.Fatalf("RIFF INFO raw blocks = %#v", blocks)
 	}
-	if !bytes.Equal(blocks[1].Payload().AppendTo(nil), unknown) {
+	if blocks[1].Source() || !bytes.Equal(blocks[1].Payload().AppendTo(nil), unknown) {
 		t.Fatalf("unknown INFO field = %x, want %x", blocks[1].Payload().AppendTo(nil), unknown)
 	}
 
@@ -305,15 +305,21 @@ func TestRIFFInfoEncodingRejectsForeignChildProvenance(t *testing.T) {
 		name     string
 		carrier  carrier.ID
 		encoding plugin.Identity
+		source   bool
 	}{
 		{name: "carrier", carrier: carrier.Define[infoOtherCarrierID](), encoding: child.Encoding()},
 		{name: "encoding", carrier: child.Carrier(), encoding: plugin.IdentityOf[infoOtherEncodingID]()},
+		{name: "source", carrier: child.Carrier(), encoding: child.Encoding(), source: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			builder := metadata.NewBuilder(metadata.StreamScope)
 			for _, block := range document.Blocks() {
 				if block.ID() == child.ID() {
-					block = metadata.NewRawBlock(block.ID(), test.carrier, test.encoding, block.Payload())
+					if test.source {
+						block = metadata.NewSourceBlock(block.ID(), test.carrier, test.encoding, block.Payload())
+					} else {
+						block = metadata.NewRawBlock(block.ID(), test.carrier, test.encoding, block.Payload())
+					}
 				}
 				builder.AddBlock(block)
 			}

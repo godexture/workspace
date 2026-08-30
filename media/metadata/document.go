@@ -41,7 +41,7 @@ func (s Scope) String() string {
 	return "unknown"
 }
 
-// BlockID links an entry back to the raw block it was parsed from. The
+// BlockID links an entry back to the source block it was parsed from. The
 // producing encoding chooses the value; core never interprets it.
 type BlockID string
 
@@ -52,7 +52,7 @@ type Origin struct {
 	Encoding plugin.Identity
 	// Carrier is the format or bitstream slot the payload was read from.
 	Carrier carrier.ID
-	// Block links to a RawBlock in the same document.
+	// Block links to a source block in the same document.
 	Block BlockID
 	// Native is the key name in the source encoding, such as an ID3 frame ID.
 	Native string
@@ -68,16 +68,23 @@ func (o Origin) LossOrigin() loss.Origin {
 	return result
 }
 
-// RawBlock keeps an uninterpreted payload: an unknown frame, a vendor field,
-// or the original bytes of a block that was parsed. Preserving it is what lets
-// an unchanged carrier be written back losslessly.
+// RawBlock records either the source bytes that semantic entries came from or
+// an opaque payload that no semantic Origin references. Opaque blocks are only
+// safe to carry through an owner that understands their carrier and encoding.
 type RawBlock struct {
 	id       BlockID
 	carrier  carrier.ID
 	encoding plugin.Identity
 	payload  Blob
+	source   bool
 }
 
+// NewSourceBlock records parsed source bytes that entries may name in Origin.
+func NewSourceBlock(id BlockID, slot carrier.ID, encoding plugin.Identity, payload Blob) RawBlock {
+	return RawBlock{id: id, carrier: slot, encoding: encoding, payload: payload, source: true}
+}
+
+// NewRawBlock records an opaque payload that an entry Origin cannot reference.
 func NewRawBlock(id BlockID, slot carrier.ID, encoding plugin.Identity, payload Blob) RawBlock {
 	return RawBlock{id: id, carrier: slot, encoding: encoding, payload: payload}
 }
@@ -86,7 +93,10 @@ func (b RawBlock) ID() BlockID               { return b.id }
 func (b RawBlock) Carrier() carrier.ID       { return b.carrier }
 func (b RawBlock) Encoding() plugin.Identity { return b.encoding }
 func (b RawBlock) Payload() Blob             { return b.payload }
-func (b RawBlock) Valid() bool               { return b.id != "" && b.payload.Valid() }
+func (b RawBlock) Source() bool              { return b.source }
+func (b RawBlock) Valid() bool {
+	return b.id != "" && b.carrier.Valid() && b.payload.Valid() && (!b.source || !b.encoding.IsZero())
+}
 
 // Entry is one ordered semantic value. The same key may appear more than once,
 // and the order entries were parsed in is preserved.
@@ -110,8 +120,8 @@ func (e Entry) Value() any {
 	return value
 }
 
-// Document is an immutable ordered set of entries plus the raw blocks they
-// were parsed from. Entries and Blocks return copies, so a document cannot be
+// Document is an immutable ordered set of entries plus source and opaque
+// blocks. Entries and Blocks return copies, so a document cannot be
 // changed through a slice a caller obtained from it.
 type Document struct {
 	scope   Scope
@@ -126,7 +136,7 @@ func (d Document) Entries() []Entry { return append([]Entry(nil), d.entries...) 
 
 func (d Document) Blocks() []RawBlock { return append([]RawBlock(nil), d.blocks...) }
 
-// Block returns one raw block by identity.
+// Block returns one source or opaque block by identity.
 func (d Document) Block(id BlockID) (RawBlock, bool) {
 	for _, block := range d.blocks {
 		if block.id == id {
@@ -173,18 +183,18 @@ func Add[T any](builder *Builder, declaration key.Key[T], value T, origin Origin
 	return builder.add(declaration.Erased(), value, origin)
 }
 
-// AddBlock appends a raw block. Blocks keep their parse order too.
+// AddBlock appends a source or opaque block. Blocks keep their parse order too.
 func (b *Builder) AddBlock(block RawBlock) *Builder {
 	if b == nil {
 		return b
 	}
 	if !block.Valid() {
-		b.problems = append(b.problems, fmt.Errorf("metadata raw block %q needs an identity and a payload", block.id))
+		b.problems = append(b.problems, fmt.Errorf("metadata block %q needs an identity and a payload", block.id))
 		return b
 	}
 	for _, existing := range b.blocks {
 		if existing.id == block.id {
-			b.problems = append(b.problems, fmt.Errorf("metadata raw block %q is repeated", block.id))
+			b.problems = append(b.problems, fmt.Errorf("metadata block %q is repeated", block.id))
 			return b
 		}
 	}
@@ -241,11 +251,25 @@ func (b *Builder) Build() (Document, error) {
 	}
 	problems := append([]error(nil), b.problems...)
 	for _, entry := range b.entries {
-		if entry.origin.Block == "" {
+		origin := entry.origin
+		if origin == (Origin{}) {
 			continue
 		}
-		if _, ok := b.block(entry.origin.Block); !ok {
-			problems = append(problems, fmt.Errorf("metadata entry %s names raw block %q, which is not in the document", entry.Key(), entry.origin.Block))
+		if origin.Block == "" || !origin.Carrier.Valid() || origin.Encoding.IsZero() {
+			problems = append(problems, fmt.Errorf("metadata entry %s has an incomplete source origin", entry.Key()))
+			continue
+		}
+		block, ok := b.block(origin.Block)
+		if !ok {
+			problems = append(problems, fmt.Errorf("metadata entry %s names source block %q, which is not in the document", entry.Key(), origin.Block))
+			continue
+		}
+		if !block.Source() {
+			problems = append(problems, fmt.Errorf("metadata entry %s names opaque block %q as its source", entry.Key(), origin.Block))
+			continue
+		}
+		if block.Carrier() != origin.Carrier || block.Encoding() != origin.Encoding {
+			problems = append(problems, fmt.Errorf("metadata entry %s names source block %q with incompatible provenance", entry.Key(), origin.Block))
 		}
 	}
 	if len(problems) > 0 {

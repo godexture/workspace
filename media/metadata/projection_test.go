@@ -55,7 +55,7 @@ func TestResolverProjectPreservesDirectKeysAndConvertsOneSourceEntry(t *testing.
 	mapping := Map(mood, genre, loss.Lossless, 0, func(value string) (string, bool) { return "genre:" + value, true })
 	resolver := projectionResolver(t, component, mapping)
 	document := projectionDocument(t, func(builder *Builder) {
-		builder.AddBlock(NewRawBlock("source", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1})))
+		builder.AddBlock(NewSourceBlock("source", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1})))
 		Add(builder, title, "direct", Origin{Encoding: encodingIdentity(), Carrier: testCarrier, Block: "source", Native: "TITLE"})
 		Add(builder, mood, "calm", Origin{Encoding: encodingIdentity(), Carrier: testCarrier, Block: "source", Native: "MOOD"})
 	})
@@ -66,6 +66,9 @@ func TestResolverProjectPreservesDirectKeysAndConvertsOneSourceEntry(t *testing.
 	entries := projected.Entries()
 	if len(entries) != 2 || entries[0].Key() != title.ID() || entries[0].Value() != "direct" || entries[0].Origin() != document.Entries()[0].Origin() || entries[1].Key() != genre.ID() || entries[1].Value() != "genre:calm" || entries[1].Origin() != (Origin{}) {
 		t.Fatalf("projected entries = %#v", entries)
+	}
+	if blocks := projected.Blocks(); len(blocks) != 1 || !blocks[0].Source() {
+		t.Fatalf("projected blocks = %#v", blocks)
 	}
 	want := loss.Report{Carrier: testCarrier, Encoding: component.Identity().String(), Block: "target", Loss: loss.Loss{
 		Key: mood.ID(), Kind: loss.Converted, Target: genre.ID(), Mapping: loss.Lossless, Detail: "metadata.mapping",
