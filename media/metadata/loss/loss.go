@@ -17,9 +17,10 @@ const (
 	Folded
 	Truncated
 	Converted
+	Substituted
 )
 
-func (k Kind) Valid() bool { return k >= Dropped && k <= Converted }
+func (k Kind) Valid() bool { return k >= Dropped && k <= Substituted }
 
 func (k Kind) String() string {
 	switch k {
@@ -31,6 +32,8 @@ func (k Kind) String() string {
 		return "truncated"
 	case Converted:
 		return "converted"
+	case Substituted:
+		return "substituted"
 	}
 	return "unknown"
 }

@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/plugin"
 )
+
+type otherTestCarrierID struct{}
 
 func TestOriginLossOriginRequiresCompleteSource(t *testing.T) {
 	complete := Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source", Native: "native"}
@@ -19,9 +22,13 @@ func TestOriginLossOriginRequiresCompleteSource(t *testing.T) {
 
 func TestDocumentKeepsOrderDuplicateKeysAndOrigin(t *testing.T) {
 	builder := NewBuilder(StreamScope)
-	Add(builder, title, "First", Origin{Encoding: encodingIdentity(), Native: "TIT2"})
-	Add(builder, artist, "A", Origin{Encoding: encodingIdentity(), Native: "TPE1"})
-	Add(builder, artist, "B", Origin{Encoding: encodingIdentity(), Native: "TPE1"})
+	builder.AddBlock(NewSourceBlock("source", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1})))
+	origin := func(native string) Origin {
+		return Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source", Native: native}
+	}
+	Add(builder, title, "First", origin("TIT2"))
+	Add(builder, artist, "A", origin("TPE1"))
+	Add(builder, artist, "B", origin("TPE1"))
 	document, err := builder.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +107,87 @@ func TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite(t *testing.T) {
 	}
 }
 
+func TestBlocksSeparateSourceAnchorsFromOpaquePayload(t *testing.T) {
+	payload := NewBlob("application/octet-stream", []byte{1})
+	source := NewSourceBlock("source", testCarrier, encodingIdentity(), payload)
+	if !source.Valid() || !source.Source() {
+		t.Fatalf("source block = %#v", source)
+	}
+	if NewSourceBlock("source", carrier.ID{}, encodingIdentity(), payload).Valid() {
+		t.Fatal("source block without carrier accepted")
+	}
+	if NewSourceBlock("source", testCarrier, plugin.Identity{}, payload).Valid() {
+		t.Fatal("source block without encoding accepted")
+	}
+	opaque := NewRawBlock("opaque", testCarrier, plugin.Identity{}, payload)
+	if !opaque.Valid() || opaque.Source() {
+		t.Fatalf("opaque block = %#v", opaque)
+	}
+	if NewRawBlock("opaque", carrier.ID{}, plugin.Identity{}, payload).Valid() {
+		t.Fatal("opaque block without carrier accepted")
+	}
+}
+
+func TestEntryOriginMustNameMatchingSourceBlock(t *testing.T) {
+	payload := NewBlob("application/octet-stream", []byte{1})
+	for _, test := range []struct {
+		name   string
+		block  RawBlock
+		origin Origin
+		valid  bool
+	}{
+		{
+			name:   "matching source",
+			block:  NewSourceBlock("source", testCarrier, encodingIdentity(), payload),
+			origin: Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source"},
+			valid:  true,
+		},
+		{
+			name:   "opaque source",
+			block:  NewRawBlock("source", testCarrier, encodingIdentity(), payload),
+			origin: Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source"},
+		},
+		{
+			name:   "foreign carrier",
+			block:  NewSourceBlock("source", testCarrier, encodingIdentity(), payload),
+			origin: Origin{Carrier: carrier.Define[otherTestCarrierID](), Encoding: encodingIdentity(), Block: "source"},
+		},
+		{
+			name:   "foreign encoding",
+			block:  NewSourceBlock("source", testCarrier, encodingIdentity(), payload),
+			origin: Origin{Carrier: testCarrier, Encoding: otherEncodingIdentity(), Block: "source"},
+		},
+	} {
+		builder := NewBuilder(StreamScope)
+		builder.AddBlock(test.block)
+		Add(builder, title, "value", test.origin)
+		_, err := builder.Build()
+		if (err == nil) != test.valid {
+			t.Errorf("%s Build error = %v, valid = %v", test.name, err, test.valid)
+		}
+	}
+}
+
+func TestEntryOriginMustBeAbsentOrComplete(t *testing.T) {
+	for _, origin := range []Origin{
+		{Carrier: testCarrier},
+		{Encoding: encodingIdentity()},
+		{Native: "TITLE"},
+		{Carrier: testCarrier, Encoding: encodingIdentity()},
+		{Carrier: testCarrier, Block: "source"},
+		{Encoding: encodingIdentity(), Block: "source"},
+	} {
+		builder := NewBuilder(StreamScope)
+		Add(builder, title, "value", origin)
+		if _, err := builder.Build(); err == nil {
+			t.Fatalf("partial origin accepted: %#v", origin)
+		}
+	}
+	if _, err := Add(NewBuilder(StreamScope), title, "new", Origin{}).Build(); err != nil {
+		t.Fatalf("absent origin rejected: %v", err)
+	}
+}
+
 func TestBuildReportsEveryProblemAtOnce(t *testing.T) {
 	builder := NewBuilder(Scope(0))
 	builder.AddBlock(NewRawBlock("", carrier.ID{}, encodingIdentity(), NewBlob("", nil)))
@@ -109,7 +197,7 @@ func TestBuildReportsEveryProblemAtOnce(t *testing.T) {
 		t.Fatal("invalid document accepted")
 	}
 	message := err.Error()
-	for _, want := range []string{"scope", "raw block", "missing"} {
+	for _, want := range []string{"scope", "block", "incomplete source origin"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("aggregate error %q does not mention %q", message, want)
 		}
@@ -127,15 +215,15 @@ func TestDuplicateRawBlockIdentityIsRejected(t *testing.T) {
 
 func TestBuilderAppendPreservesDocumentAndRawBlockOrder(t *testing.T) {
 	firstBuilder := NewBuilder(StreamScope)
-	firstBuilder.AddBlock(NewRawBlock("first", testCarrier, encodingIdentity(), NewBlob("", []byte{1})))
-	Add(firstBuilder, title, "Primary", Origin{Block: "first"})
+	firstBuilder.AddBlock(NewSourceBlock("first", testCarrier, encodingIdentity(), NewBlob("", []byte{1})))
+	Add(firstBuilder, title, "Primary", Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "first"})
 	first, err := firstBuilder.Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondBuilder := NewBuilder(StreamScope)
-	secondBuilder.AddBlock(NewRawBlock("second", testCarrier, encodingIdentity(), NewBlob("", []byte{2})))
-	Add(secondBuilder, title, "Alternate", Origin{Block: "second"})
+	secondBuilder.AddBlock(NewSourceBlock("second", testCarrier, encodingIdentity(), NewBlob("", []byte{2})))
+	Add(secondBuilder, title, "Alternate", Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "second"})
 	second, err := secondBuilder.Build()
 	if err != nil {
 		t.Fatal(err)

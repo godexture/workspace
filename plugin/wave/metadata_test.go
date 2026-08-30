@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -28,9 +29,10 @@ import (
 	"github.com/godexture/godec/plugin"
 )
 
-type cancelInfoEncodingID struct{}
 type cancelInfoContextKey struct{}
 type rewriteLabelKeyID struct{}
+type foreignMetadataCarrierID struct{}
+type foreignMetadataEncodingID struct{}
 
 var rewriteLabel = key.Define[rewriteLabelKeyID, string]()
 
@@ -342,10 +344,75 @@ func TestMuxSynthesizesRIFFInfoForNewMetadata(t *testing.T) {
 	}
 }
 
+func TestMuxRejectsForeignAndOrphanOpaqueMetadataBlocks(t *testing.T) {
+	resolver := infoTestResolver(t)
+	for _, test := range []struct {
+		name  string
+		block metadata.RawBlock
+	}{
+		{
+			name:  "foreign",
+			block: metadata.NewRawBlock("foreign/opaque", carrier.Define[foreignMetadataCarrierID](), plugin.IdentityOf[foreignMetadataEncodingID](), metadata.NewBlob("application/octet-stream", []byte("opaque"))),
+		},
+		{
+			name:  "foreign WAVE-shaped identifier",
+			block: metadata.NewRawBlock(newChunkBlockID(48, chunkBeforeData, chunkRaw), carrier.Define[foreignMetadataCarrierID](), plugin.IdentityOf[foreignMetadataEncodingID](), metadata.NewBlob("application/octet-stream", []byte("opaque"))),
+		},
+		{
+			name:  "orphan INFO child",
+			block: metadata.NewRawBlock("wave/chunk/orphan/field/00000000", RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/octet-stream", []byte("opaque"))),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := metadata.NewBuilder(metadata.StreamScope).AddBlock(test.block).Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := marshalMuxChunks(t.Context(), resolver, document); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("opaque metadata error = %v, want ErrUnsupported", err)
+			}
+		})
+	}
+}
+
+func TestMuxAllowsForeignSourceMetadataBlock(t *testing.T) {
+	document, err := metadata.NewBuilder(metadata.StreamScope).
+		AddBlock(metadata.NewSourceBlock(newChunkBlockID(48, chunkBeforeData, chunkInfo), carrier.Define[foreignMetadataCarrierID](), plugin.IdentityOf[foreignMetadataEncodingID](), metadata.NewBlob("application/octet-stream", []byte("source")))).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunks, err := marshalMuxChunks(t.Context(), infoTestResolver(t), document); err != nil || !bytes.Equal(chunks.beforeData, nil) {
+		t.Fatalf("foreign source chunks = %#v, error = %v", chunks, err)
+	}
+}
+
+func TestMuxPreservesSameFormatOpaqueInfoRoot(t *testing.T) {
+	title := infoTestChunk(t, "INAM", []byte("Song\x00"), 0xa5)
+	unknown := infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xcc)
+	payload := infoTestList(t, title, unknown)
+	block := newChunkBlockID(48, chunkBeforeData, chunkInfo)
+	child := metadata.BlockID(fmt.Sprintf("%s/field/%08d", block, 4+len(title)))
+	document, err := metadata.NewBuilder(metadata.StreamScope).
+		AddBlock(metadata.NewRawBlock(block, RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/x-riff-info", payload))).
+		AddBlock(metadata.NewRawBlock(child, RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/octet-stream", unknown))).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := marshalMuxChunks(t.Context(), infoTestResolver(t), document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(chunks.beforeData, payload) {
+		t.Fatalf("opaque RIFF INFO = %x, want %x", chunks.beforeData, payload)
+	}
+}
+
 func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 	started := make(chan struct{})
 	hidden, canceled := false, false
-	encoding := plugin.NewComponent[cancelInfoEncodingID](
+	encoding := plugin.NewComponent[infoID](
 		plugin.Descriptor{DisplayName: "canceling RIFF INFO encoding"},
 		configurationSchema(),
 		metadata.WithEncoding(

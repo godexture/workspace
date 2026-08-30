@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
@@ -39,11 +40,17 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		}
 		return muxChunks{}, fmt.Errorf("%w: WAVE metadata document has no valid scope", ErrMalformed)
 	}
+	if err := validateOpaqueMuxBlocks(blocks); err != nil {
+		return muxChunks{}, err
+	}
 	var reports []loss.Report
 	hasInfo := false
 	positioned := make([]positionedMuxChunk, 0, len(blocks))
 	positions := make(map[uint64]struct{}, len(blocks))
 	for _, block := range blocks {
+		if block.Source() && (block.Carrier() != RIFFInfo() || block.Encoding() != InfoEncodingIdentity()) {
+			continue
+		}
 		placement, ok := parseChunkBlockID(block.ID())
 		if !ok {
 			continue
@@ -144,6 +151,48 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 		result.reports = append(result.reports, lost...)
 	}
 	return result, nil
+}
+
+func validateOpaqueMuxBlocks(blocks []metadata.RawBlock) error {
+	infoRoots := make(map[metadata.BlockID]struct{})
+	for _, block := range blocks {
+		placement, ok := parseChunkBlockID(block.ID())
+		if ok && placement.kind == chunkInfo && block.Carrier() == RIFFInfo() && block.Encoding() == InfoEncodingIdentity() {
+			infoRoots[block.ID()] = struct{}{}
+		}
+	}
+	for _, block := range blocks {
+		if block.Source() {
+			continue
+		}
+		if placement, ok := parseChunkBlockID(block.ID()); ok {
+			switch placement.kind {
+			case chunkRaw:
+				if block.Carrier() == rawChunkCarrier() && block.Encoding().IsZero() {
+					continue
+				}
+			case chunkInfo:
+				if block.Carrier() == RIFFInfo() && block.Encoding() == InfoEncodingIdentity() {
+					continue
+				}
+			}
+			return fmt.Errorf("%w: WAVE-shaped opaque metadata block %s has foreign provenance", ErrUnsupported, block.ID())
+		}
+		if block.Carrier() == RIFFInfo() && block.Encoding() == InfoEncodingIdentity() && isInfoChild(block.ID(), infoRoots) {
+			continue
+		}
+		return fmt.Errorf("%w: WAVE cannot carry opaque metadata block %s", ErrUnsupported, block.ID())
+	}
+	return nil
+}
+
+func isInfoChild(child metadata.BlockID, roots map[metadata.BlockID]struct{}) bool {
+	for root := range roots {
+		if strings.HasPrefix(string(child), string(root)+"/field/") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateMuxChunk(value []byte) (string, error) {

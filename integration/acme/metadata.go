@@ -2,6 +2,7 @@ package acme
 
 import (
 	"errors"
+	"fmt"
 	"unicode/utf8"
 
 	"github.com/godexture/godec/media/carrier"
@@ -34,7 +35,7 @@ func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
 		return metadata.Document{}, ErrMalformed
 	}
 	builder := metadata.NewBuilder(ctx.Scope())
-	builder.AddBlock(metadata.NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+	builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 	metadata.Add(builder, Label(), string(value), metadata.Origin{
 		Encoding: ctx.Encoding(), Carrier: ctx.Carrier(), Block: ctx.Block(), Native: "label",
 	})
@@ -46,6 +47,11 @@ func parseLabel(ctx metadata.ParseContext) (metadata.Document, error) {
 // about any one carrier; folding them is this encoding's job, and saying what
 // the fold cost is the other half of that job.
 func marshalLabel(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+	for _, block := range ctx.Document().Blocks() {
+		if !block.Source() {
+			return metadata.Blob{}, nil, fmt.Errorf("%w: ACME label cannot carry opaque metadata block %s", ErrUnsupported, block.ID())
+		}
+	}
 	var label string
 	found := false
 	var lost []loss.Loss

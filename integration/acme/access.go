@@ -25,7 +25,10 @@ const (
 	maxObjectBytes = 256
 )
 
-var ErrMalformed = errors.New("malformed ACME stream")
+var (
+	ErrMalformed   = errors.New("malformed ACME stream")
+	ErrUnsupported = errors.New("unsupported ACME stream")
+)
 
 var sourceCaps = mustCapabilities(access.SequentialRead, access.RandomRead, access.StableSize)
 

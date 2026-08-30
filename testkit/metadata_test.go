@@ -43,7 +43,7 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 					deadlines.Add(1)
 				}
 				builder := metadata.NewBuilder(ctx.Scope())
-				builder.AddBlock(metadata.NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+				builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 				return builder.Build()
 			},
 			func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
@@ -60,7 +60,7 @@ func TestMetadataRunnerUsesTraitOnlyEncodingAndCancellation(t *testing.T) {
 	definition := plugin.Define[metadataRunnerPluginID](plugin.Descriptor{DisplayName: "metadata runner fixture", Version: "1"}, component)
 	payload := metadata.NewBlob("application/octet-stream", []byte{1, 2, 3})
 	builder := metadata.NewBuilder(metadata.StreamScope)
-	builder.AddBlock(metadata.NewRawBlock("block", slot, identity, payload))
+	builder.AddBlock(metadata.NewSourceBlock("block", slot, identity, payload))
 	want, err := builder.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -130,5 +130,37 @@ func TestMetadataScenarioRejectsInvalidMappingTrait(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "Metadata Mapping trait") {
 		t.Fatalf("invalid mapping scenario error = %v", err)
+	}
+}
+
+func TestMetadataDocumentComparisonAndPurityIncludeBlockSourceRole(t *testing.T) {
+	slot := carrier.Define[metadataRunnerCarrierID]()
+	identity := plugin.IdentityOf[metadataRunnerComponentID]()
+	payload := metadata.NewBlob("application/octet-stream", []byte{1})
+	build := func(block metadata.RawBlock) metadata.Document {
+		document, err := metadata.NewBuilder(metadata.StreamScope).AddBlock(block).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	source := build(metadata.NewSourceBlock("block", slot, identity, payload))
+	opaque := build(metadata.NewRawBlock("block", slot, identity, payload))
+	if err := compareMetadataDocuments(source, opaque); err == nil {
+		t.Fatal("metadata document comparison ignored source block role")
+	}
+	if snapshot := snapshotMetadataDocument(source); len(snapshot.Blocks) != 1 || !snapshot.Blocks[0].Source {
+		t.Fatalf("source metadata snapshot = %#v", snapshot)
+	}
+	sourceSignature, err := (metadataOutcome{document: source, payload: payload}).signature("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opaqueSignature, err := (metadataOutcome{document: opaque, payload: payload}).signature("fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceSignature == opaqueSignature {
+		t.Fatal("metadata purity signature ignored source block role")
 	}
 }

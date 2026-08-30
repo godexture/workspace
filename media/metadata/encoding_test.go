@@ -31,7 +31,7 @@ func TestEncodingTraitIsPureControlPlaneBehavior(t *testing.T) {
 		func(ctx ParseContext) (Document, error) {
 			parseCalls++
 			builder := NewBuilder(ctx.Scope())
-			builder.AddBlock(NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+			builder.AddBlock(NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 			return builder.Build()
 		},
 		func(ctx MarshalContext) (Blob, []loss.Loss, error) {

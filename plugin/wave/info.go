@@ -97,7 +97,7 @@ func parseInfo(ctx metadata.ParseContext) (metadata.Document, error) {
 		return metadata.Document{}, err
 	}
 	builder := metadata.NewBuilder(ctx.Scope())
-	builder.AddBlock(metadata.NewRawBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+	builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 	for offset := 4; offset < len(payload); {
 		if len(payload)-offset < 8 {
 			return metadata.Document{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
@@ -262,6 +262,9 @@ func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error
 		if err != nil {
 			return metadata.Blob{}, nil, err
 		}
+		if !original.Source() && ctx.Document().Len() == 0 && !childrenChanged {
+			return original.Payload(), lost, nil
+		}
 		if infoEntriesMatch(carrier.semantic, owned) && !childrenChanged {
 			if len(additions) == 0 && len(owned) == len(carrier.semantic) {
 				return original.Payload(), lost, nil
@@ -374,6 +377,9 @@ func applyInfoChildren(carrier *infoCarrier, document metadata.Document, block m
 	for _, raw := range document.Blocks() {
 		if !strings.HasPrefix(string(raw.ID()), prefix) {
 			continue
+		}
+		if raw.Source() {
+			return false, fmt.Errorf("%w: RIFF INFO child block %s must be opaque", ErrMalformed, raw.ID())
 		}
 		if raw.Carrier() != slot || raw.Encoding() != encoding {
 			return false, fmt.Errorf("%w: RIFF INFO child block %s has incompatible provenance", ErrMalformed, raw.ID())

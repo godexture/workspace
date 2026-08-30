@@ -108,7 +108,7 @@ func acmeDocument(t testing.TB, label string, raw bool) metadata.Document {
 	if raw {
 		block := metadata.BlockID("acme/label")
 		blob := metadata.NewBlob("text/plain; charset=utf-8", []byte(label))
-		builder.AddBlock(metadata.NewRawBlock(block, acme.LabelCarrier(), acme.EncodingIdentity(), blob))
+		builder.AddBlock(metadata.NewSourceBlock(block, acme.LabelCarrier(), acme.EncodingIdentity(), blob))
 		origin = metadata.Origin{Encoding: acme.EncodingIdentity(), Carrier: acme.LabelCarrier(), Block: block, Native: "label"}
 	}
 	metadata.Add(builder, acme.Label(), label, origin)

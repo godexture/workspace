@@ -27,17 +27,39 @@ func TestLossValidatesItsKindSpecificContract(t *testing.T) {
 	}{
 		{name: "dropped", value: Loss{Key: testKey, Kind: Dropped, Detail: "fixture.drop"}, valid: true},
 		{name: "folded", value: Loss{Key: testKey, Kind: Folded, Native: "TIT2", Detail: "fixture.fold"}, valid: true},
+		{name: "substituted", value: Loss{Key: testKey, Kind: Substituted, Detail: "fixture.substitute"}, valid: true},
 		{name: "converted", value: Loss{Key: testKey, Kind: Converted, Target: testTarget, Mapping: Approximate, Detail: "fixture.convert"}, valid: true},
 		{name: "converted without target", value: Loss{Key: testKey, Kind: Converted, Mapping: Lossless, Detail: "fixture.convert"}},
 		{name: "converted without mapping", value: Loss{Key: testKey, Kind: Converted, Target: testTarget, Detail: "fixture.convert"}},
 		{name: "dropped with target", value: Loss{Key: testKey, Kind: Dropped, Target: testTarget, Detail: "fixture.drop"}},
 		{name: "dropped with mapping", value: Loss{Key: testKey, Kind: Dropped, Mapping: Lossless, Detail: "fixture.drop"}},
+		{name: "substituted with target", value: Loss{Key: testKey, Kind: Substituted, Target: testTarget, Detail: "fixture.substitute"}},
 		{name: "blank detail", value: Loss{Key: testKey, Kind: Dropped, Detail: " \t "}},
 		{name: "partial origin", value: Loss{Key: testKey, Kind: Dropped, Detail: "fixture.drop", Source: Origin{Carrier: testSourceCarrier, Encoding: "fixture.source"}}},
 	} {
 		if got := test.value.Valid(); got != test.valid {
 			t.Errorf("%s valid = %v, want %v", test.name, got, test.valid)
 		}
+	}
+}
+
+func TestKindStringAndValidationAreStable(t *testing.T) {
+	for _, test := range []struct {
+		kind Kind
+		text string
+	}{
+		{Dropped, "dropped"},
+		{Folded, "folded"},
+		{Truncated, "truncated"},
+		{Converted, "converted"},
+		{Substituted, "substituted"},
+	} {
+		if !test.kind.Valid() || test.kind.String() != test.text {
+			t.Errorf("kind %d = %q, valid %v", test.kind, test.kind.String(), test.kind.Valid())
+		}
+	}
+	if Kind(0).Valid() || Kind(Substituted+1).Valid() {
+		t.Fatal("out-of-range loss kind accepted")
 	}
 }
 
@@ -50,6 +72,9 @@ func TestLossinessKeepsLosslessConversionVisibleWithoutCallingItLossy(t *testing
 	}
 	if !(Loss{Key: testKey, Kind: Dropped, Detail: "fixture.drop"}).Lossy() {
 		t.Fatal("dropped value is not lossy")
+	}
+	if !(Loss{Key: testKey, Kind: Substituted, Detail: "fixture.substitute"}).Lossy() {
+		t.Fatal("substituted value is not lossy")
 	}
 }
 

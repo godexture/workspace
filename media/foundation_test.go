@@ -480,6 +480,7 @@ type skeletonMetadataEvent struct {
 func parseSkeletonMetadata(ctx metadata.ParseContext) (metadata.Document, error) {
 	payload := ctx.Payload().AppendTo(nil)
 	builder := metadata.NewBuilder(ctx.Scope())
+	builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
 	for offset := 0; offset < len(payload); {
 		if len(payload)-offset < 2 {
 			return metadata.Document{}, fmt.Errorf("metadata record at %d is truncated", offset)
@@ -492,7 +493,7 @@ func parseSkeletonMetadata(ctx metadata.ParseContext) (metadata.Document, error)
 		}
 		record := append([]byte(nil), payload[offset:end]...)
 		value := payload[offset+2 : end]
-		origin := metadata.Origin{Encoding: ctx.Encoding(), Carrier: ctx.Carrier()}
+		origin := metadata.Origin{Encoding: ctx.Encoding(), Carrier: ctx.Carrier(), Block: ctx.Block()}
 		switch kind {
 		case skeletonMetadataTitle:
 			origin.Native = "TITLE"
@@ -544,6 +545,9 @@ func marshalSkeletonMetadata(ctx metadata.MarshalContext) (metadata.Blob, []loss
 		}
 	}
 	for _, block := range document.Blocks() {
+		if block.Source() {
+			continue
+		}
 		if block.Carrier() != ctx.Carrier() || block.Encoding() != ctx.Encoding() {
 			return metadata.Blob{}, nil, fmt.Errorf("raw block %s does not belong to fixture encoding", block.ID())
 		}
@@ -1080,7 +1084,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 		t.Fatalf("title = %q, %v", title, ok)
 	}
 	blocks := document.Blocks()
-	if len(blocks) != 1 || !bytes.Equal(blocks[0].Payload().AppendTo(nil), rawRecord) {
+	if len(blocks) != 2 || !blocks[0].Source() || !bytes.Equal(blocks[0].Payload().AppendTo(nil), payload) || blocks[1].Source() || !bytes.Equal(blocks[1].Payload().AppendTo(nil), rawRecord) {
 		t.Fatalf("raw blocks = %#v", blocks)
 	}
 

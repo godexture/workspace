@@ -185,6 +185,7 @@ type metadataBlockSnapshot struct {
 	ID        string `json:"id"`
 	Carrier   string `json:"carrier"`
 	Encoding  string `json:"encoding"`
+	Source    bool   `json:"source"`
 	MediaType string `json:"mediaType"`
 	Payload   []byte `json:"payload"`
 }
@@ -277,7 +278,7 @@ func snapshotMetadataDocument(document metadata.Document) metadataDocumentSnapsh
 	for _, block := range document.Blocks() {
 		result.Blocks = append(result.Blocks, metadataBlockSnapshot{
 			ID: string(block.ID()), Carrier: block.Carrier().String(), Encoding: block.Encoding().String(),
-			MediaType: block.Payload().MediaType(), Payload: block.Payload().AppendTo(nil),
+			Source: block.Source(), MediaType: block.Payload().MediaType(), Payload: block.Payload().AppendTo(nil),
 		})
 	}
 	return result
@@ -305,7 +306,7 @@ func compareMetadataDocuments(actual, expected metadata.Document) error {
 	}
 	for index := range actualBlocks {
 		left, right := actualBlocks[index], expectedBlocks[index]
-		if left.ID() != right.ID() || left.Carrier() != right.Carrier() || left.Encoding() != right.Encoding() || !left.Payload().Equal(right.Payload()) {
+		if left.ID() != right.ID() || left.Carrier() != right.Carrier() || left.Encoding() != right.Encoding() || left.Source() != right.Source() || !left.Payload().Equal(right.Payload()) {
 			return fmt.Errorf("Metadata raw block %d differs", index)
 		}
 	}
