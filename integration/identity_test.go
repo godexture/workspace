@@ -27,6 +27,7 @@ func TestOfficialComponentMarkerIdentities(t *testing.T) {
 		{linear.EncoderIdentity(sample.F64), "github.com/godexture/godec/plugin/pcm/linear", "encoderF64ID"},
 		{linear.WriterIdentity(), "github.com/godexture/godec/plugin/pcm/linear", "writerID"},
 		{id3.V1EncodingIdentity(), "github.com/godexture/godec/plugin/id3", "v1ID"},
+		{id3.V2EncodingIdentity(), "github.com/godexture/godec/plugin/id3", "v2ID"},
 		{wave.DemuxerIdentity(), "github.com/godexture/godec/plugin/wave", "demuxerID"},
 		{wave.MuxerIdentity(), "github.com/godexture/godec/plugin/wave", "muxerID"},
 		{wave.InfoEncodingIdentity(), "github.com/godexture/godec/plugin/wave", "infoID"},
