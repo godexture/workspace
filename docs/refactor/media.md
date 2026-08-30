@@ -233,7 +233,11 @@ immutable payload は同じ file の `ExampleNewBlob` を正本とする。
 
 実際の API では slice の直接 mutation を許さず、persistent/immutable value または builder を使う。
 
-`RawBlock` は未解釈 block、未知 frame、vendor field、元 byte 列を保持する。同じ format/carrier へ変更なしで出力する場合は raw copy を優先し、metadata を編集した時だけ影響 block を再 encode する。
+`RawBlock` は source anchor と opaque payload を同じ順序付き集合に記録する。`NewSourceBlock` は semantic entry の
+完全な `Origin` が参照できる元 bytes であり、carrier、encoding、block が一致する同一 Document の anchor だけを
+参照できる。`NewRawBlock` は unknown frame、vendor field など Origin から参照できない opaque bytes である。同じ
+format owner は opaque bytes を byte exact に保持できるが、foreign opaque block を表現できない出力は error にして
+黙って落とさない。metadata を編集した時だけ影響する source block を再 encode する。
 
 artwork の大きな byte slice は entry clone のたびに複製せず、immutable `Blob`/reference-counted buffer を参照する。
 
@@ -383,7 +387,7 @@ Mapping は source key、target key、lossiness、priority を宣言する。曖
 
 出力 carrier/encoding が entry を表現できない場合は三段階で処理する。
 
-1. raw block を同じ carrier へ保持できるなら lossless copy
+1. 同じ format owner の opaque block を保持できるなら lossless copy
 2. 共通 key または明示 Mapping で表現できるなら変換
 3. どちらも不可能なら loss report
 
@@ -415,7 +419,7 @@ typed frame は `media/audio` だけを M3 で実装する。`media/video` と `
 - Format、Codec、Carrier、Metadata Encoding、Metadata Document、Binding が別の型として分かれ、Format が特定の decoder/metadata parser/Access Provider を import しない構造になっている。
 - container chunk と codec packet が別の型で、Parser を第一級 component として宣言できる。bitstream filter を `Packet -> Packet` として表現できる。
 - codec Binding と metadata Binding を composition 時に登録でき、同じ binding key が異なる対象を指す場合に host 構築を失敗させる。意図的な置換は明示 override だけで行う。
-- `metadata.Document` が順序付き entry、`Origin`、未解釈 `RawBlock` を保持し、slice の直接 mutation を許さない。第三者が core を変更せず固有 key を定義でき、共通 vocabulary は `tag` package が持つ。
+- `metadata.Document` が順序付き entry、完全な source `Origin`、source/opaque を区別する `RawBlock` を保持し、slice の直接 mutation を許さない。第三者が core を変更せず固有 key を定義でき、共通 vocabulary は `tag` package が持つ。
 - `media/side` が packet/frame の immutable side data を提供し、第三者 key の clone 規則を `media/metadata` と共有する。side data を持たない item は追加 allocation や間接参照を必要とせず、`media/stream.Event` は live topology の既定 policy を暗黙に選ばない。
 - metadata Mapping が source key、target key、lossiness、priority を宣言でき、host が曖昧な変換を推測しない。
 - metadata scope（asset/program/stream/chapter）を表現でき、時刻に沿って変化する metadata は static document ではなく typed event stream として宣言できる。
