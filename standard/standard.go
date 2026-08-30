@@ -7,6 +7,7 @@ import (
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/audio"
 	"github.com/godexture/godec/plugin/file"
+	"github.com/godexture/godec/plugin/id3"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/adpcm"
 	"github.com/godexture/godec/plugin/pcm/g711"
@@ -15,10 +16,10 @@ import (
 	"github.com/godexture/godec/plugin/wave"
 )
 
-// Set returns the immutable official composition for file-backed MP4/WAVE and
-// linear PCM processing.
+// Set returns the immutable official composition for file-backed processing
+// and standalone metadata encodings.
 func Set() plugin.Set {
-	result := plugin.NewSet(adpcm.Plugin(), audio.Plugin(), file.Plugin(), g711.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
+	result := plugin.NewSet(adpcm.Plugin(), audio.Plugin(), file.Plugin(), g711.Plugin(), id3.Plugin(), linear.Plugin(), mp4.Plugin(), wave.Plugin())
 	// A container names a codec; the components that implement it live in
 	// families that never import the container or each other. This is where
 	// the two meet, and it is the only place that knows which component reads

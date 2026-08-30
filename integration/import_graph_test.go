@@ -14,7 +14,12 @@ import (
 const modulePath = "github.com/godexture/godec"
 
 var officialFamilies = []string{
+	modulePath + "/plugin/audio",
 	modulePath + "/plugin/file",
+	modulePath + "/plugin/id3",
+	modulePath + "/plugin/mp4",
+	modulePath + "/plugin/pcm/adpcm",
+	modulePath + "/plugin/pcm/g711",
 	modulePath + "/plugin/pcm/linear",
 	modulePath + "/plugin/wave",
 }

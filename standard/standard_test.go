@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
+	"github.com/godexture/godec/plugin/id3"
 	"github.com/godexture/godec/plugin/mp4"
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
@@ -30,8 +31,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 56 {
-		t.Fatalf("catalog components = %d, want 56", first.Catalog().Len())
+	if first.Catalog().Len() != 57 {
+		t.Fatalf("catalog components = %d, want 57", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -46,6 +47,7 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		linear.WriterIdentity(),
 		mp4.DemuxerIdentity(),
 		mp4.MuxerIdentity(),
+		id3.V1EncodingIdentity(),
 		wave.DemuxerIdentity(),
 		wave.MuxerIdentity(),
 		wave.InfoEncodingIdentity(),
