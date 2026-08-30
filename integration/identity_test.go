@@ -6,6 +6,7 @@ import (
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/plugin"
 	"github.com/godexture/godec/plugin/file"
+	"github.com/godexture/godec/plugin/id3"
 	"github.com/godexture/godec/plugin/pcm/linear"
 	"github.com/godexture/godec/plugin/wave"
 )
@@ -25,6 +26,7 @@ func TestOfficialComponentMarkerIdentities(t *testing.T) {
 		{linear.EncoderIdentity(sample.S16), "github.com/godexture/godec/plugin/pcm/linear", "encoderS16ID"},
 		{linear.EncoderIdentity(sample.F64), "github.com/godexture/godec/plugin/pcm/linear", "encoderF64ID"},
 		{linear.WriterIdentity(), "github.com/godexture/godec/plugin/pcm/linear", "writerID"},
+		{id3.V1EncodingIdentity(), "github.com/godexture/godec/plugin/id3", "v1ID"},
 		{wave.DemuxerIdentity(), "github.com/godexture/godec/plugin/wave", "demuxerID"},
 		{wave.MuxerIdentity(), "github.com/godexture/godec/plugin/wave", "muxerID"},
 		{wave.InfoEncodingIdentity(), "github.com/godexture/godec/plugin/wave", "infoID"},
