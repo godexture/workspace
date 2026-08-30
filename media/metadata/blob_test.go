@@ -66,3 +66,31 @@ func TestBlobEqualityComparesContentAcrossSources(t *testing.T) {
 		t.Fatal("two absent payloads compared unequal")
 	}
 }
+
+func TestBlobSliceSharesImmutableBackingWithBoundsAndMediaType(t *testing.T) {
+	parent := NewBlob("application/octet-stream", []byte{1, 2, 3, 4})
+	child, ok := parent.Slice("image/jpeg", 1, 3)
+	if !ok || child.MediaType() != "image/jpeg" || child.Len() != 2 || string(child.AppendTo(nil)) != string([]byte{2, 3}) {
+		t.Fatalf("slice = %#v/%v", child, ok)
+	}
+	if &child.state.data[0] != &parent.state.data[1] {
+		t.Fatal("slice copied immutable backing")
+	}
+	copy := child.AppendTo(nil)
+	copy[0] = 9
+	if got := parent.AppendTo(nil); got[1] != 2 {
+		t.Fatalf("slice exposed parent backing: %v", got)
+	}
+	empty, ok := parent.Slice("", 2, 2)
+	if !ok || !empty.Valid() || empty.Len() != 0 {
+		t.Fatalf("empty slice = %#v/%v", empty, ok)
+	}
+	for _, bounds := range [][2]int{{-1, 0}, {0, 5}, {3, 2}} {
+		if _, ok := parent.Slice("", bounds[0], bounds[1]); ok {
+			t.Fatalf("Slice(%d, %d) succeeded", bounds[0], bounds[1])
+		}
+	}
+	if _, ok := (Blob{}).Slice("", 0, 0); ok {
+		t.Fatal("zero blob sliced successfully")
+	}
+}

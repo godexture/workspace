@@ -41,6 +41,30 @@ func runID3V1Cases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
 	)
 }
 
+type id3V2CarrierID struct{}
+
+func runID3V2Cases(t *testing.T, set plugin.Set, coverage *testkit.Coverage) {
+	t.Helper()
+	slot := carrier.Define[id3V2CarrierID]()
+	block := metadata.BlockID("id3v2/tag")
+	payload := id3V2Fixture()
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	builder.AddBlock(metadata.NewSourceBlock(block, slot, id3.V2EncodingIdentity(), payload))
+	metadata.Add(builder, tag.Title(), "Song", metadata.Origin{Carrier: slot, Encoding: id3.V2EncodingIdentity(), Block: block, Native: "TIT2"})
+	want, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testkit.Metadata(t,
+		testkit.TrackMetadata(testkit.MetadataIn(set, id3.V2EncodingIdentity()), coverage),
+		testkit.MetadataCase{
+			Name:  "v2-source-roundtrip",
+			Input: testkit.MetadataInput(slot, block, metadata.StreamScope, payload),
+			Want:  testkit.WantMetadata(want, payload),
+		},
+	)
+}
+
 func id3V1Fixture() metadata.Blob {
 	value := make([]byte, 128)
 	copy(value, "TAG")
@@ -50,4 +74,10 @@ func id3V1Fixture() metadata.Blob {
 	value[126] = 7
 	value[127] = 17
 	return metadata.NewBlob("application/x-id3v1", value)
+}
+
+func id3V2Fixture() metadata.Blob {
+	frame := append([]byte("TIT2"), 0, 0, 0, 5, 0, 0, 3, 'S', 'o', 'n', 'g')
+	value := append([]byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, byte(len(frame))}, frame...)
+	return metadata.NewBlob("application/x-id3v2", value)
 }
