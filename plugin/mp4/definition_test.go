@@ -1,6 +1,11 @@
 package mp4
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/tag"
+)
 
 func TestMP4Definition(t *testing.T) {
 	value := MP4()
@@ -14,4 +19,18 @@ func TestMP4Definition(t *testing.T) {
 	if !value.Same(MP4()) {
 		t.Fatal("MP4 declaration is not stable")
 	}
+}
+
+func TestPluginIncludesStandaloneIlstEncoding(t *testing.T) {
+	for _, component := range Plugin().Components() {
+		if component.Identity() != IlstEncodingIdentity() {
+			continue
+		}
+		encoding, ok := metadata.EncodingOf(component)
+		if !ok || !encoding.Valid() || !encoding.Supports(tag.Title().ID()) {
+			t.Fatalf("ilst encoding = %#v/%v", encoding, ok)
+		}
+		return
+	}
+	t.Fatal("MP4 plugin has no ilst encoding component")
 }

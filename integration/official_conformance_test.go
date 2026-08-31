@@ -43,6 +43,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	runID3V1Cases(t, set, coverage)
 	runID3V2Cases(t, set, coverage)
 	runVorbisCommentCases(t, set, coverage)
+	runIlstCases(t, set, coverage)
 
 	// The shared typed runner models one stream and cannot drive MP4's
 	// carrier-less reader or the repeated descriptors its muxer consumes. The
@@ -55,7 +56,7 @@ func TestOfficialPluginConformance(t *testing.T) {
 	coverage.Observe(t, mixerConformancePlan(t), set)
 	coverage.Observe(t, convolverConformancePlan(t), set)
 	coverage.VerifyExecutable(t, set)
-	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity(), id3.V1EncodingIdentity(), id3.V2EncodingIdentity(), vorbiscomment.EncodingIdentity())
+	coverage.VerifyIdentities(t, set, wave.InfoEncodingIdentity(), id3.V1EncodingIdentity(), id3.V2EncodingIdentity(), vorbiscomment.EncodingIdentity(), mp4.IlstEncodingIdentity())
 	for _, assignment := range []struct {
 		identity  string
 		milestone string
