@@ -5,6 +5,7 @@ import (
 	"github.com/godexture/godec/media/format"
 	mediasample "github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
+	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -12,6 +13,7 @@ type (
 	pluginID  struct{}
 	demuxerID struct{}
 	muxerID   struct{}
+	ilstID    struct{}
 	formatID  struct{}
 )
 
@@ -20,6 +22,9 @@ func DemuxerIdentity() plugin.Identity { return plugin.IdentityOf[demuxerID]() }
 
 // MuxerIdentity identifies the ISO BMFF same-format remuxer.
 func MuxerIdentity() plugin.Identity { return plugin.IdentityOf[muxerID]() }
+
+// IlstEncodingIdentity identifies standalone iTunes ilst metadata.
+func IlstEncodingIdentity() plugin.Identity { return plugin.IdentityOf[ilstID]() }
 
 // MP4 identifies ISO Base Media File Format streams carried as MP4 files.
 func MP4() format.Format {
@@ -47,8 +52,10 @@ func Plugin() plugin.Definition {
 		Version:     "0.1.0",
 		License:     "MIT",
 		Build:       plugin.BuildModePureGo,
-	}, demuxerComponent(), muxerComponent())
-	return definition.WithDeclarations(append(codec.Declarations(), stream.Declarations()...)...)
+	}, demuxerComponent(), muxerComponent(), ilstComponent())
+	declarations := append(codec.Declarations(), stream.Declarations()...)
+	declarations = append(declarations, tag.Declarations()...)
+	return definition.WithDeclarations(declarations...)
 }
 
 // Set returns the self-contained MP4 composition.

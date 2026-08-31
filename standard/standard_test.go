@@ -32,8 +32,8 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Catalog().Len() != 59 {
-		t.Fatalf("catalog components = %d, want 59", first.Catalog().Len())
+	if first.Catalog().Len() != 60 {
+		t.Fatalf("catalog components = %d, want 60", first.Catalog().Len())
 	}
 	if first.Catalog().Fingerprint() != second.Catalog().Fingerprint() {
 		t.Fatal("equivalent standard compositions have different fingerprints")
@@ -48,6 +48,7 @@ func TestSetBuildsCompleteDeterministicCatalog(t *testing.T) {
 		linear.WriterIdentity(),
 		mp4.DemuxerIdentity(),
 		mp4.MuxerIdentity(),
+		mp4.IlstEncodingIdentity(),
 		id3.V1EncodingIdentity(),
 		id3.V2EncodingIdentity(),
 		vorbiscomment.EncodingIdentity(),
