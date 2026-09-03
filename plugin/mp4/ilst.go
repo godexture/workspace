@@ -75,13 +75,25 @@ func marshalIlstSource(ctx metadata.MarshalContext, source metadata.RawBlock) (m
 	if err != nil {
 		return metadata.Blob{}, nil, err
 	}
-	if sameIlstDocument(ctx.Document(), parsed) {
+	if sameIlstSourceDocument(ctx.Document(), parsed, source.ID()) {
 		return source.Payload(), nil, nil
 	}
 	return marshalIlstCanonical(ctx.Document(), &layout, ctx.Carrier(), ctx.Encoding(), ctx.Block())
 }
 
-func sameIlstDocument(left, right metadata.Document) bool {
+func sameIlstMuxDocument(left, right metadata.Document) bool {
+	leftBlocks, rightBlocks := left.Blocks(), right.Blocks()
+	leftEmpty := left.Len() == 0 && len(leftBlocks) == 0
+	rightEmpty := right.Len() == 0 && len(rightBlocks) == 0
+	if leftEmpty && rightEmpty {
+		if left.Scope() == right.Scope() {
+			return left.Scope() == 0 || left.Scope() == metadata.AssetScope
+		}
+		return (left.Scope() == 0 && right.Scope() == metadata.AssetScope) || (left.Scope() == metadata.AssetScope && right.Scope() == 0)
+	}
+	if left.Scope() != right.Scope() {
+		return false
+	}
 	leftEntries, rightEntries := left.Entries(), right.Entries()
 	if len(leftEntries) != len(rightEntries) {
 		return false
@@ -91,20 +103,47 @@ func sameIlstDocument(left, right metadata.Document) bool {
 			return false
 		}
 	}
+	if len(leftBlocks) != len(rightBlocks) {
+		return false
+	}
+	for index := range leftBlocks {
+		leftBlock, rightBlock := leftBlocks[index], rightBlocks[index]
+		if leftBlock.ID() != rightBlock.ID() || leftBlock.Carrier() != rightBlock.Carrier() || leftBlock.Encoding() != rightBlock.Encoding() || leftBlock.Source() != rightBlock.Source() || !leftBlock.Payload().Equal(rightBlock.Payload()) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameIlstSourceDocument(left, right metadata.Document, source metadata.BlockID) bool {
+	if left.Scope() != right.Scope() {
+		return false
+	}
+	leftEntries, rightEntries := left.Entries(), right.Entries()
+	if len(leftEntries) != len(rightEntries) {
+		return false
+	}
+	for index := range leftEntries {
+		if !ilstSameEntry(leftEntries[index], rightEntries[index]) {
+			return false
+		}
+	}
+	leftSource, leftOK := left.Block(source)
+	rightSource, rightOK := right.Block(source)
+	if !leftOK || !rightOK || !sameIlstBlock(leftSource, rightSource) {
+		return false
+	}
 	return sameIlstOpaque(left.Blocks(), right.Blocks())
 }
 
-func ilstSameEntry(left, right metadata.Entry) bool {
-	return left.Key() == right.Key() && left.Origin() == right.Origin() && reflect.DeepEqual(left.Value(), right.Value())
-}
-
 func sameIlstOpaque(left, right []metadata.RawBlock) bool {
-	left, right = ilstOpaqueBlocks(left), ilstOpaqueBlocks(right)
+	left = ilstOpaqueBlocks(left)
+	right = ilstOpaqueBlocks(right)
 	if len(left) != len(right) {
 		return false
 	}
 	for index := range left {
-		if left[index].ID() != right[index].ID() || left[index].Carrier() != right[index].Carrier() || left[index].Encoding() != right[index].Encoding() || !left[index].Payload().Equal(right[index].Payload()) {
+		if !sameIlstBlock(left[index], right[index]) {
 			return false
 		}
 	}
@@ -119,6 +158,14 @@ func ilstOpaqueBlocks(values []metadata.RawBlock) []metadata.RawBlock {
 		}
 	}
 	return result
+}
+
+func sameIlstBlock(left, right metadata.RawBlock) bool {
+	return left.ID() == right.ID() && left.Carrier() == right.Carrier() && left.Encoding() == right.Encoding() && left.Source() == right.Source() && left.Payload().Equal(right.Payload())
+}
+
+func ilstSameEntry(left, right metadata.Entry) bool {
+	return left.Key() == right.Key() && left.Origin() == right.Origin() && reflect.DeepEqual(left.Value(), right.Value())
 }
 
 func ilstLoss(entry metadata.Entry, kind loss.Kind, native, detail string) loss.Loss {

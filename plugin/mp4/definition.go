@@ -1,8 +1,10 @@
 package mp4
 
 import (
+	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	mediasample "github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/tag"
@@ -10,11 +12,12 @@ import (
 )
 
 type (
-	pluginID  struct{}
-	demuxerID struct{}
-	muxerID   struct{}
-	ilstID    struct{}
-	formatID  struct{}
+	pluginID      struct{}
+	demuxerID     struct{}
+	muxerID       struct{}
+	ilstID        struct{}
+	ilstCarrierID struct{}
+	formatID      struct{}
 )
 
 // DemuxerIdentity identifies the ISO BMFF packet reader.
@@ -26,9 +29,17 @@ func MuxerIdentity() plugin.Identity { return plugin.IdentityOf[muxerID]() }
 // IlstEncodingIdentity identifies standalone iTunes ilst metadata.
 func IlstEncodingIdentity() plugin.Identity { return plugin.IdentityOf[ilstID]() }
 
+// IlstCarrier identifies the iTunes item-atom payload inside an MP4 metadata
+// envelope. The MP4 owner finds the envelope; the encoding remains standalone.
+func IlstCarrier() carrier.ID { return carrier.Define[ilstCarrierID]() }
+
+// IlstBinding connects the MP4 metadata payload to its encoding in a
+// composition.
+func IlstBinding() metadata.Binding { return metadata.Bind(IlstCarrier(), IlstEncodingIdentity()) }
+
 // MP4 identifies ISO Base Media File Format streams carried as MP4 files.
 func MP4() format.Format {
-	value, err := format.DefinePacketized[formatID](nil, format.WithExtensions("mp4"))
+	value, err := format.DefinePacketized[formatID]([]carrier.ID{IlstCarrier()}, format.WithExtensions("mp4"))
 	if err != nil {
 		panic(err)
 	}
@@ -55,6 +66,7 @@ func Plugin() plugin.Definition {
 	}, demuxerComponent(), muxerComponent(), ilstComponent())
 	declarations := append(codec.Declarations(), stream.Declarations()...)
 	declarations = append(declarations, tag.Declarations()...)
+	declarations = append(declarations, IlstBinding())
 	return definition.WithDeclarations(declarations...)
 }
 

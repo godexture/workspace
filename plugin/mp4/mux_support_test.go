@@ -74,6 +74,9 @@ func compileMP4Mux(t testing.TB, inspected movie) (plugin.Component, plugin.Comp
 			t.Fatal(err)
 		}
 		input := stream.MustDescriptor(trackStreamID(track.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(track.timeScale)), properties)
+		if inspected.metadata.Scope().Valid() {
+			input = input.WithMetadata(inspected.metadata)
+		}
 		inputs = append(inputs, flow.Describe("packets", input))
 	}
 	component := muxerComponent()

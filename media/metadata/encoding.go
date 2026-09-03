@@ -72,6 +72,11 @@ func (c MarshalContext) valid() bool {
 	return c.carrier.Valid() && c.block != "" && !c.encoding.IsZero() && c.document.Scope().Valid()
 }
 
+// ParseFunc parses one carrier payload into an immutable Document. Implementations
+// should keep retained storage realistically linear in ParseContext.Payload and
+// share large source or opaque bytes through its Blob or Blob.Slice. Encoding has
+// no payload-size cap or heap estimator; disproportionate hidden allocation is a
+// plugin bug, and InspectMemory is not an arbitrary Go heap sandbox.
 type ParseFunc func(ParseContext) (Document, error)
 
 // MarshalFunc writes one carrier block and says what it could not carry as the
@@ -170,6 +175,7 @@ func (e Encoding) clone() Encoding {
 	return e
 }
 
+// Parse invokes the encoding parser and validates its returned Document scope.
 func (e Encoding) Parse(ctx ParseContext) (Document, error) {
 	if !e.Valid() {
 		return Document{}, ErrInvalidEncoding
