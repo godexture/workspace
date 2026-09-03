@@ -43,7 +43,8 @@ func NewInspectContext(ctx context.Context, opening access.Opening, prepared plu
 func (c InspectContext) Limit() resource.Bytes { return c.limit }
 
 // MemoryLimit reports the bytes a Format may retain in its immutable
-// inspection model. It is separate from Limit, which accounts source reads.
+// inspection model. A source-aware format may also use it for a bounded
+// rewrite workspace. It is separate from Limit, which accounts source reads.
 func (c InspectContext) MemoryLimit() resource.Bytes { return c.memory }
 
 func (c InspectContext) Context() context.Context {

@@ -2,6 +2,7 @@ package wave
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -19,6 +20,9 @@ import (
 const (
 	tagLIST = "LIST"
 	tagINFO = "INFO"
+	// LIST's 32-bit size field covers its payload; the extra byte is the
+	// optional RIFF pad and the other eight bytes are the chunk header.
+	maxInfoCarrierBytes = uint64(math.MaxUint32) + 9
 )
 
 type infoMapping struct {
@@ -28,6 +32,25 @@ type infoMapping struct {
 	parse       func(*metadata.Builder, string, metadata.Origin) error
 	marshal     func(any) (string, error)
 }
+
+// infoRewriteLayout is the compact source-side index retained for the one
+// INFO carrier that a range mux may rewrite. It records only accepted
+// semantic children; Open scans the source plane directly, so invalid and
+// unknown children remain opaque without being parsed or copied into a
+// temporary model.
+type infoRewriteLayout struct {
+	present  bool
+	semantic []infoSemanticChild
+}
+
+type infoSemanticChild struct {
+	// offset is relative to the beginning of the LIST carrier.
+	offset uint64
+	length uint64
+	key    key.ID
+}
+
+func (l infoRewriteLayout) valid() bool { return l.present }
 
 var infoMappings = []infoMapping{
 	stringInfoMapping("INAM", tag.Title()),
@@ -122,24 +145,22 @@ func parseInfo(ctx metadata.ParseContext) (metadata.Document, error) {
 	return builder.Build()
 }
 
-// parseInfoSemantic parses only the bounded semantic projection used by a
-// WAVE inspection. The carrier's opaque bytes stay in the inspected source
-// range; they must not become metadata.Blob values in the long-lived model.
-func parseInfoSemantic(value []byte) (metadata.Document, error) {
+func parseInfoSemanticLayout(value []byte) (metadata.Document, infoRewriteLayout, error) {
 	payload, err := infoPayload(value)
 	if err != nil {
-		return metadata.Document{}, err
+		return metadata.Document{}, infoRewriteLayout{}, err
 	}
 	builder := metadata.NewBuilder(metadata.StreamScope)
+	layout := infoRewriteLayout{present: true}
 	for offset := 4; offset < len(payload); {
 		if len(payload)-offset < 8 {
-			return metadata.Document{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
+			return metadata.Document{}, infoRewriteLayout{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
 		}
 		native := string(payload[offset : offset+4])
 		size := uint64(binary.LittleEndian.Uint32(payload[offset+4 : offset+8]))
 		end, ok := infoChunkEnd(uint64(offset), size, uint64(len(payload)))
 		if !ok {
-			return metadata.Document{}, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
+			return metadata.Document{}, infoRewriteLayout{}, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
 		}
 		payloadEnd := uint64(offset+8) + size
 		mapping, known := infoMappingForNative(native)
@@ -149,100 +170,227 @@ func parseInfoSemantic(value []byte) (metadata.Document, error) {
 				// Provenance points at an opaque source range, not a metadata
 				// block. Keeping it empty lets the document remain Blob-free.
 				_ = mapping.parse(builder, text, metadata.Origin{})
+				layout.semantic = append(layout.semantic, infoSemanticChild{
+					offset: uint64(offset + 8),
+					length: end - uint64(offset),
+					key:    mapping.key,
+				})
 			}
 		}
 		offset = int(end)
 	}
-	return builder.Build()
+	document, err := builder.Build()
+	if err != nil {
+		return metadata.Document{}, infoRewriteLayout{}, err
+	}
+	return document, layout, nil
 }
 
-// rewriteInfoSource applies a bounded semantic edit to one source LIST/INFO
-// carrier. Unknown child records and their padding are copied from the
-// bounded source value. This is used only after Open has borrowed the source;
-// Inspection and Compile never read source bytes.
+// infoEntryCursor walks only the expressible target entries without exposing
+// the document's backing slice. Compile and Open retain the immutable target
+// document, while this cursor keeps no per-entry snapshot.
+type infoEntryCursor struct {
+	document metadata.Document
+	index    int
+}
+
+func (c *infoEntryCursor) next(ctx context.Context) (metadata.Entry, bool, error) {
+	for c.index < c.document.Len() {
+		if ctx != nil {
+			if err := context.Cause(ctx); err != nil {
+				return metadata.Entry{}, false, err
+			}
+		}
+		entry, ok := c.document.EntryAt(c.index)
+		c.index++
+		if !ok {
+			continue
+		}
+		if _, ok := infoMappingForKey(entry.Key()); ok {
+			return entry, true, nil
+		}
+	}
+	return metadata.Entry{}, false, nil
+}
+
+// validateInfoRewrite checks the immutable source and target documents against
+// the compact source layout. No Entries snapshot or matching array is retained
+// by the mux plan; Open obtains those facts from the documents while scanning
+// the source once in wire order.
+func validateInfoRewrite(original, document metadata.Document, layout infoRewriteLayout) error {
+	if !original.Valid() || !document.Valid() || original.Scope() != document.Scope() || !layout.valid() {
+		return fmt.Errorf("%w: RIFF INFO rewrite documents or source layout are invalid", ErrUnsupported)
+	}
+	if original.Len() != len(layout.semantic) {
+		return fmt.Errorf("%w: RIFF INFO semantic source layout is inconsistent", ErrUnsupported)
+	}
+	for index, child := range layout.semantic {
+		entry, ok := original.EntryAt(index)
+		if !ok || child.key != entry.Key() {
+			return fmt.Errorf("%w: RIFF INFO semantic source layout does not match its document", ErrUnsupported)
+		}
+	}
+	return nil
+}
+
+// rewriteInfoSource applies a semantic edit to one source LIST/INFO carrier.
+// It remains a convenient allocating wrapper for tests and standalone
+// callers; the mux Open path uses the plan form below with allocator planes.
 func rewriteInfoSource(value []byte, document metadata.Document) ([]byte, error) {
-	carrier, err := parseInfoCarrier(value, "wave/rewrite")
+	layoutDocument, layout, err := parseInfoSemanticLayout(value)
 	if err != nil {
 		return nil, err
 	}
-	entries, _ := expressibleInfoEntries(document.Entries())
-	used := make([]bool, len(entries))
-	matched := make([]int, len(carrier.semantic))
-	for index := range matched {
-		matched[index] = -1
+	if err := validateInfoRewrite(layoutDocument, document, layout); err != nil {
+		return nil, err
 	}
-	// Prefer an unchanged value, then retain the original key position for a
-	// changed value. This keeps unknown child records and known-field order.
-	for index, original := range carrier.semantic {
-		for pass := 0; pass < 2 && matched[index] < 0; pass++ {
-			for entryIndex, entry := range entries {
-				if used[entryIndex] || entry.Key() != original.key {
-					continue
-				}
-				if pass == 0 && !reflect.DeepEqual(entry.Value(), original.value) {
-					continue
-				}
-				matched[index] = entryIndex
-				used[entryIndex] = true
-				break
-			}
-		}
+	_, output, err := infoRewriteWorkspaceAgainst(uint64(len(value)), layoutDocument, document)
+	if err != nil {
+		return nil, err
 	}
-	resultPayload := []byte(tagINFO)
-	consumedSemantic := make([]bool, len(carrier.semantic))
-	for _, subchunk := range carrier.subchunks {
-		if !subchunk.semantic {
-			resultPayload = append(resultPayload, subchunk.raw...)
+	if output > uint64(math.MaxInt) {
+		return nil, fmt.Errorf("%w: RIFF INFO rewrite output exceeds runtime memory", ErrUnsupported)
+	}
+	return rewriteInfoSourceIntoPlan(context.Background(), value, layoutDocument, layout, document, make([]byte, int(output)))
+}
+
+func rewriteInfoSourceIntoPlan(ctx context.Context, value []byte, original metadata.Document, layout infoRewriteLayout, target metadata.Document, destination []byte) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !original.Valid() || !target.Valid() || original.Scope() != target.Scope() || !layout.valid() || original.Len() != len(layout.semantic) {
+		return nil, fmt.Errorf("%w: RIFF INFO rewrite documents or source layout are invalid", ErrUnsupported)
+	}
+	payload, err := infoPayload(value)
+	if err != nil {
+		return nil, err
+	}
+	childrenEnd := 8 + len(payload)
+	if childrenEnd < 12 {
+		return nil, fmt.Errorf("%w: RIFF INFO carrier is shorter than its type", ErrMalformed)
+	}
+	if len(destination) < 12 {
+		return nil, fmt.Errorf("%w: RIFF INFO rewrite destination is too small", ErrUnsupported)
+	}
+	copy(destination[0:4], tagLIST)
+	binary.LittleEndian.PutUint32(destination[4:8], 0)
+	copy(destination[8:12], tagINFO)
+	position := 12
+	writeRaw := func(raw []byte) error {
+		if len(raw) > len(destination)-position {
+			return fmt.Errorf("%w: RIFF INFO rewrite destination is too small", ErrUnsupported)
+		}
+		copy(destination[position:], raw)
+		position += len(raw)
+		return nil
+	}
+	writeEntry := func(entry metadata.Entry) error {
+		if position > len(destination) {
+			return fmt.Errorf("%w: RIFF INFO rewrite destination is too small", ErrUnsupported)
+		}
+		written, writeErr := writeInfoEntryInto(destination[position:], entry)
+		if writeErr != nil {
+			return writeErr
+		}
+		position += written
+		return nil
+	}
+	childBounds := func(offset int) (int, error) {
+		if offset < 12 || offset > childrenEnd || childrenEnd-offset < 8 {
+			return 0, fmt.Errorf("%w: RIFF INFO subchunk header at %d is truncated", ErrMalformed, offset)
+		}
+		size := uint64(binary.LittleEndian.Uint32(value[offset+4 : offset+8]))
+		end, ok := infoChunkEnd(uint64(offset-8), size, uint64(childrenEnd-8))
+		if !ok || end > uint64(childrenEnd-8) {
+			return 0, fmt.Errorf("%w: RIFF INFO subchunk at %d exceeds its carrier", ErrMalformed, offset)
+		}
+		absolute := end + 8
+		if absolute > uint64(childrenEnd) || absolute > uint64(math.MaxInt) {
+			return 0, fmt.Errorf("%w: RIFF INFO subchunk exceeds runtime memory", ErrUnsupported)
+		}
+		return int(absolute), nil
+	}
+	childRaw := func(child infoSemanticChild) ([]byte, error) {
+		if child.offset > uint64(len(value)) || child.length > uint64(len(value))-child.offset || child.offset > uint64(math.MaxInt) || child.length > uint64(math.MaxInt) {
+			return nil, fmt.Errorf("%w: RIFF INFO source child exceeds runtime memory", ErrUnsupported)
+		}
+		start := int(child.offset)
+		end := start + int(child.length)
+		if end < start || end > len(value) {
+			return nil, fmt.Errorf("%w: RIFF INFO source child is outside its carrier", ErrMalformed)
+		}
+		return value[start:end], nil
+	}
+	targetCursor := infoEntryCursor{document: target}
+	semanticOrdinal := 0
+	for offset := 12; offset < childrenEnd; {
+		if err := context.Cause(ctx); err != nil {
+			return nil, err
+		}
+		end, endErr := childBounds(offset)
+		if endErr != nil {
+			return nil, endErr
+		}
+		semantic := semanticOrdinal < len(layout.semantic) && layout.semantic[semanticOrdinal].offset == uint64(offset)
+		if semanticOrdinal < len(layout.semantic) && layout.semantic[semanticOrdinal].offset < uint64(offset) {
+			return nil, fmt.Errorf("%w: RIFF INFO semantic source layout is stale", ErrUnsupported)
+		}
+		if !semantic {
+			if rawErr := writeRaw(value[offset:end]); rawErr != nil {
+				return nil, rawErr
+			}
+			offset = end
 			continue
 		}
-		semanticIndex := -1
-		for candidateIndex, candidate := range carrier.semantic {
-			if consumedSemantic[candidateIndex] {
-				continue
-			}
-			if candidate.native == subchunk.native && candidate.raw != nil && bytes.Equal(candidate.raw, subchunk.raw) {
-				semanticIndex = candidateIndex
-				consumedSemantic[candidateIndex] = true
-				break
-			}
+		child := layout.semantic[semanticOrdinal]
+		semanticOrdinal++
+		if child.length != uint64(end-offset) {
+			return nil, fmt.Errorf("%w: RIFF INFO source semantic layout is stale", ErrUnsupported)
 		}
-		if semanticIndex < 0 {
-			for candidateIndex, candidate := range carrier.semantic {
-				if !consumedSemantic[candidateIndex] && candidate.native == subchunk.native {
-					semanticIndex = candidateIndex
-					consumedSemantic[candidateIndex] = true
-					break
+		targetEntry, targetOK, targetErr := targetCursor.next(ctx)
+		if targetErr != nil {
+			return nil, targetErr
+		}
+		if targetOK {
+			source, sourceOK := original.EntryAt(semanticOrdinal - 1)
+			if sourceOK && source.Key() == targetEntry.Key() && reflect.DeepEqual(source.Value(), targetEntry.Value()) {
+				raw, rawErr := childRaw(child)
+				if rawErr != nil {
+					return nil, rawErr
 				}
+				if rawErr = writeRaw(raw); rawErr != nil {
+					return nil, rawErr
+				}
+			} else if entryErr := writeEntry(targetEntry); entryErr != nil {
+				return nil, entryErr
 			}
 		}
-		entryIndex := -1
-		if semanticIndex >= 0 {
-			entryIndex = matched[semanticIndex]
-		}
-		if entryIndex < 0 || entryIndex >= len(entries) {
-			continue
-		}
-		if reflect.DeepEqual(entries[entryIndex].Value(), subchunk.value) {
-			resultPayload = append(resultPayload, subchunk.raw...)
-			continue
-		}
-		encoded, err := marshalInfoEntry(entries[entryIndex])
+		offset = end
+	}
+	for {
+		target, ok, err := targetCursor.next(ctx)
 		if err != nil {
 			return nil, err
 		}
-		resultPayload = append(resultPayload, encoded...)
-	}
-	for entryIndex, entry := range entries {
-		if used[entryIndex] {
-			continue
+		if !ok {
+			break
 		}
-		encoded, err := marshalInfoEntry(entry)
-		if err != nil {
-			return nil, err
+		if entryErr := writeEntry(target); entryErr != nil {
+			return nil, entryErr
 		}
-		resultPayload = append(resultPayload, encoded...)
 	}
-	return marshalInfoChunk(tagLIST, resultPayload)
+	if uint64(position-8) > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: RIFF INFO rewrite exceeds its size field", ErrUnsupported)
+	}
+	binary.LittleEndian.PutUint32(destination[4:8], uint32(position-8))
+	if (position-8)&1 != 0 {
+		if position >= len(destination) {
+			return nil, fmt.Errorf("%w: RIFF INFO rewrite destination is too small", ErrUnsupported)
+		}
+		destination[position] = 0
+		position++
+	}
+	return destination[:position], nil
 }
 
 func marshalInfo(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
@@ -335,7 +483,7 @@ func parseInfoCarrier(value []byte, block metadata.BlockID) (infoCarrier, error)
 	if err != nil {
 		return infoCarrier{}, err
 	}
-	carrier := infoCarrier{raw: append([]byte(nil), value...)}
+	carrier := infoCarrier{raw: value}
 	for offset := 4; offset < len(payload); {
 		if len(payload)-offset < 8 {
 			return infoCarrier{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
@@ -347,7 +495,7 @@ func parseInfoCarrier(value []byte, block metadata.BlockID) (infoCarrier, error)
 			return infoCarrier{}, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
 		}
 		payloadEnd := uint64(offset+8) + size
-		raw := append([]byte(nil), payload[offset:int(end)]...)
+		raw := payload[offset:int(end)]
 		subchunk := infoSubchunk{raw: raw, native: native}
 		mapping, known := infoMappingForNative(native)
 		if known {
@@ -515,9 +663,8 @@ func appendInfoEntries(original []byte, entries []metadata.Entry) ([]byte, error
 }
 
 func reencodeInfoCarrier(carrier infoCarrier, entries []metadata.Entry) ([]byte, error) {
-	matched, entryMatch := matchInfoEntries(carrier.semantic, entries)
 	payload := []byte(tagINFO)
-	semanticIndex := 0
+	entryIndex := 0
 	for _, subchunk := range carrier.subchunks {
 		if !subchunk.semantic {
 			if len(subchunk.raw) == 0 {
@@ -526,12 +673,11 @@ func reencodeInfoCarrier(carrier infoCarrier, entries []metadata.Entry) ([]byte,
 			payload = append(payload, subchunk.raw...)
 			continue
 		}
-		entryIndex := matched[semanticIndex]
-		semanticIndex++
-		if entryIndex < 0 {
+		if entryIndex >= len(entries) {
 			continue
 		}
 		entry := entries[entryIndex]
+		entryIndex++
 		if entry.Key() == subchunk.key && reflect.DeepEqual(entry.Value(), subchunk.value) {
 			payload = append(payload, subchunk.raw...)
 			continue
@@ -542,10 +688,8 @@ func reencodeInfoCarrier(carrier infoCarrier, entries []metadata.Entry) ([]byte,
 		}
 		payload = append(payload, encoded...)
 	}
-	for entryIndex, entry := range entries {
-		if entryMatch[entryIndex] >= 0 {
-			continue
-		}
+	for ; entryIndex < len(entries); entryIndex++ {
+		entry := entries[entryIndex]
 		encoded, err := marshalInfoEntry(entry)
 		if err != nil {
 			return nil, err
@@ -553,107 +697,6 @@ func reencodeInfoCarrier(carrier infoCarrier, entries []metadata.Entry) ([]byte,
 		payload = append(payload, encoded...)
 	}
 	return marshalInfoChunk(tagLIST, payload)
-}
-
-func matchInfoEntries(original []infoSubchunk, entries []metadata.Entry) ([]int, []int) {
-	matched := make([]int, len(original))
-	for index := range matched {
-		matched[index] = -1
-	}
-	entryMatch := make([]int, len(entries))
-	for index := range entryMatch {
-		entryMatch[index] = -1
-	}
-	if len(entries) == len(original) {
-		for index := range entries {
-			matched[index] = index
-			entryMatch[index] = index
-		}
-		return matched, entryMatch
-	}
-	if len(entries) > len(original) {
-		return matchInfoSubsequence(original, entries, matched, entryMatch)
-	}
-	matched, entryMatch = matchInfoSubsequence(original, entries, matched, entryMatch)
-	return assignInfoSubsequence(original, entries, matched, entryMatch)
-}
-
-func matchInfoSubsequence(original []infoSubchunk, entries []metadata.Entry, matched, entryMatch []int) ([]int, []int) {
-	rows := len(entries) + 1
-	columns := len(original) + 1
-	dp := make([]int, rows*columns)
-	for row := len(entries) - 1; row >= 0; row-- {
-		for column := len(original) - 1; column >= 0; column-- {
-			best := dp[(row+1)*columns+column]
-			if value := dp[row*columns+column+1]; value > best {
-				best = value
-			}
-			if entries[row].Origin().Block != "" && infoSemanticEqual(original[column], entries[row], true) {
-				value := 1 + dp[(row+1)*columns+column+1]
-				if value > best {
-					best = value
-				}
-			}
-			dp[row*columns+column] = best
-		}
-	}
-	row, column := 0, 0
-	for row < len(entries) && column < len(original) {
-		if entries[row].Origin().Block != "" && infoSemanticEqual(original[column], entries[row], true) && dp[row*columns+column] == 1+dp[(row+1)*columns+column+1] {
-			matched[column] = row
-			entryMatch[row] = column
-			row++
-			column++
-			continue
-		}
-		if dp[(row+1)*columns+column] >= dp[row*columns+column+1] {
-			row++
-		} else {
-			column++
-		}
-	}
-	return matched, entryMatch
-}
-
-func assignInfoSubsequence(original []infoSubchunk, entries []metadata.Entry, matched, entryMatch []int) ([]int, []int) {
-	for entryIndex := range entries {
-		if entryMatch[entryIndex] >= 0 {
-			continue
-		}
-		previous := -1
-		for index := entryIndex - 1; index >= 0; index-- {
-			if entryMatch[index] >= 0 {
-				previous = entryMatch[index]
-				break
-			}
-		}
-		next := len(original)
-		for index := entryIndex + 1; index < len(entries); index++ {
-			if entryMatch[index] >= 0 {
-				next = entryMatch[index]
-				break
-			}
-		}
-		for slot := previous + 1; slot < next; slot++ {
-			if matched[slot] < 0 {
-				matched[slot] = entryIndex
-				entryMatch[entryIndex] = slot
-				break
-			}
-		}
-	}
-	return matched, entryMatch
-}
-
-func infoSemanticEqual(subchunk infoSubchunk, entry metadata.Entry, exactValue bool) bool {
-	if entry.Key() != subchunk.key {
-		return false
-	}
-	origin := entry.Origin()
-	if origin.Native != "" && origin.Native != subchunk.native {
-		return false
-	}
-	return !exactValue || reflect.DeepEqual(entry.Value(), subchunk.value)
 }
 
 func marshalFreshInfoEntries(entries []metadata.Entry) ([]byte, error) {
@@ -669,15 +712,121 @@ func marshalFreshInfoEntries(entries []metadata.Entry) ([]byte, error) {
 }
 
 func marshalInfoEntry(entry metadata.Entry) ([]byte, error) {
-	mapping, ok := infoMappingForKey(entry.Key())
-	if !ok {
-		return nil, fmt.Errorf("%w: metadata key %s has no RIFF INFO representation", ErrUnsupported, entry.Key())
-	}
-	text, err := mapping.marshal(entry.Value())
+	size, err := infoEntryWireSize(entry)
 	if err != nil {
 		return nil, err
 	}
-	return marshalInfoChunk(mapping.native, append([]byte(text), 0))
+	result := make([]byte, size)
+	if _, err := writeInfoEntryInto(result, entry); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func infoEntryText(entry metadata.Entry) (infoMapping, string, error) {
+	mapping, ok := infoMappingForKey(entry.Key())
+	if !ok {
+		return infoMapping{}, "", fmt.Errorf("%w: metadata key %s has no RIFF INFO representation", ErrUnsupported, entry.Key())
+	}
+	value := entry.Value()
+	if mapping.native != "ICRD" {
+		text, ok := value.(string)
+		if !ok {
+			return infoMapping{}, "", fmt.Errorf("RIFF INFO %s value has type %T", mapping.native, value)
+		}
+		return mapping, text, nil
+	}
+	text, err := mapping.marshal(value)
+	if err != nil {
+		return infoMapping{}, "", err
+	}
+	return mapping, text, nil
+}
+
+func infoEntryWireSize(entry metadata.Entry) (int, error) {
+	_, text, err := infoEntryText(entry)
+	if err != nil {
+		return 0, err
+	}
+	if uint64(len(text)) >= math.MaxUint32 {
+		return 0, fmt.Errorf("%w: RIFF INFO entry text exceeds its size field", ErrUnsupported)
+	}
+	payload := uint64(len(text)) + 1
+	total := uint64(8) + payload + payload&1
+	if total > uint64(math.MaxInt) || total > maxInfoCarrierBytes {
+		return 0, fmt.Errorf("%w: RIFF INFO entry exceeds runtime memory", ErrUnsupported)
+	}
+	return int(total), nil
+}
+
+// writeInfoEntryInto writes directly into a caller-owned fixed plane. It
+// never converts string values to a second byte slice, which keeps Open's
+// rewrite allocation independent of artwork/text payload length.
+func writeInfoEntryInto(destination []byte, entry metadata.Entry) (int, error) {
+	mapping, text, err := infoEntryText(entry)
+	if err != nil {
+		return 0, err
+	}
+	if uint64(len(text)) >= math.MaxUint32 {
+		return 0, fmt.Errorf("%w: RIFF INFO entry text exceeds its size field", ErrUnsupported)
+	}
+	payload := uint64(len(text)) + 1
+	total := uint64(8) + payload + payload&1
+	if total > uint64(math.MaxInt) || total > maxInfoCarrierBytes || total > uint64(len(destination)) {
+		return 0, fmt.Errorf("%w: RIFF INFO entry destination is too small", ErrUnsupported)
+	}
+	if len(mapping.native) != 4 {
+		return 0, fmt.Errorf("%w: RIFF INFO entry identity is unsupported", ErrUnsupported)
+	}
+	copy(destination[0:4], mapping.native)
+	binary.LittleEndian.PutUint32(destination[4:8], uint32(payload))
+	copy(destination[8:], text)
+	destination[8+len(text)] = 0
+	if payload&1 != 0 {
+		destination[8+int(payload)] = 0
+	}
+	return int(total), nil
+}
+
+// infoRewriteWorkspaceAgainst returns the source-plus-output workspace
+// required by a source-aware edit. The source range is retained while the
+// replacement is assembled, and the output bound conservatively includes
+// every expressible target entry in addition to the source bytes preserved for
+// unknown fields. Both planes are checked because RIFF fields and runtime
+// slices have finite widths.
+func infoRewriteWorkspaceAgainst(sourceLength uint64, original, document metadata.Document) (workspace, output uint64, err error) {
+	if !original.Valid() || !document.Valid() || original.Scope() != document.Scope() || sourceLength > uint64(math.MaxInt) {
+		return 0, 0, fmt.Errorf("%w: RIFF INFO source exceeds runtime memory", ErrUnsupported)
+	}
+	output = sourceLength
+	cursor := infoEntryCursor{document: document}
+	for {
+		entry, cursorOK, cursorErr := cursor.next(nil)
+		if cursorErr != nil {
+			return 0, 0, cursorErr
+		}
+		if !cursorOK {
+			break
+		}
+		encodedSize, encodeErr := infoEntryWireSize(entry)
+		if encodeErr != nil {
+			return 0, 0, encodeErr
+		}
+		var addOK bool
+		output, addOK = checkedAdd(output, uint64(encodedSize))
+		if !addOK || output > uint64(math.MaxInt) {
+			return 0, 0, fmt.Errorf("%w: RIFF INFO rewrite output exceeds runtime memory", ErrUnsupported)
+		}
+	}
+	if output > maxInfoCarrierBytes {
+		output = maxInfoCarrierBytes
+	}
+	var ok bool
+	workspace, ok = checkedAdd(sourceLength, output)
+	if !ok || workspace > uint64(math.MaxInt) {
+		return 0, 0, fmt.Errorf("%w: RIFF INFO rewrite workspace exceeds runtime memory", ErrUnsupported)
+	}
+	return workspace, output, nil
 }
 
 func infoPayload(value []byte) ([]byte, error) {
@@ -688,7 +837,13 @@ func infoPayload(value []byte) ([]byte, error) {
 	if size < 4 {
 		return nil, fmt.Errorf("%w: LIST/INFO payload is shorter than its type", ErrMalformed)
 	}
+	if size > uint64(math.MaxInt)-8 {
+		return nil, fmt.Errorf("%w: LIST/INFO payload exceeds runtime memory", ErrUnsupported)
+	}
 	total := uint64(8) + size + size&1
+	if total > uint64(math.MaxInt) {
+		return nil, fmt.Errorf("%w: LIST/INFO carrier exceeds runtime memory", ErrUnsupported)
+	}
 	if total != uint64(len(value)) {
 		return nil, fmt.Errorf("%w: LIST/INFO size is %d but carrier has %d bytes", ErrMalformed, size, len(value)-8)
 	}
@@ -714,10 +869,14 @@ func infoChunkEnd(offset, size, limit uint64) (uint64, bool) {
 }
 
 func marshalInfoChunk(native string, payload []byte) ([]byte, error) {
-	if len(native) != 4 || uint64(len(payload)) > math.MaxUint32 {
+	if len(native) != 4 || uint64(len(payload)) > math.MaxUint32 || len(payload) > math.MaxInt-8 {
 		return nil, fmt.Errorf("%w: RIFF INFO chunk identity or size is unsupported", ErrUnsupported)
 	}
-	result := make([]byte, 8+len(payload)+(len(payload)&1))
+	total := 8 + len(payload) + (len(payload) & 1)
+	if total < len(payload) || total > math.MaxInt {
+		return nil, fmt.Errorf("%w: RIFF INFO chunk exceeds runtime memory", ErrUnsupported)
+	}
+	result := make([]byte, total)
 	copy(result[0:4], native)
 	binary.LittleEndian.PutUint32(result[4:8], uint32(len(payload)))
 	copy(result[8:], payload)

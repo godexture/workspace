@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/godexture/godec/host"
@@ -121,7 +122,7 @@ func TestRIFFInfoEncodingKeepsUnknownSlotsWhenSemanticEntriesAreRemoved(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := infoTestList(t, unknown, artist)
+	want := infoTestList(t, infoTestChunk(t, "IART", []byte("Artist\x00"), 0), unknown)
 	if !bytes.Equal(encoded.AppendTo(nil), want) {
 		t.Fatalf("removed RIFF INFO entry = %x, want %x", encoded.AppendTo(nil), want)
 	}
@@ -394,6 +395,46 @@ func TestRIFFInfoEncodingRespectsDuplicateDocumentOrder(t *testing.T) {
 	want := infoTestList(t, infoTestChunk(t, "IART", []byte("Second\x00"), 0), unknown, infoTestChunk(t, "IART", []byte("First\x00"), 0))
 	if got := encoded.AppendTo(nil); !bytes.Equal(got, want) {
 		t.Fatalf("duplicate document order = %x, want %x", got, want)
+	}
+}
+
+func TestRIFFInfoEncodingHandlesManySemanticEntriesWithoutQuadraticMatching(t *testing.T) {
+	const count = 4096
+	entries := make([]metadata.Entry, count-1)
+	carrier := []byte(tagINFO)
+	for index := 0; index < count; index++ {
+		text := "artist-" + strconv.Itoa(index)
+		field := infoTestChunk(t, "IART", append([]byte(text), 0), 0)
+		carrier = append(carrier, field...)
+	}
+	source, err := marshalInfoChunk(tagLIST, carrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := infoTestResolver(t).Parse(t.Context(), RIFFInfo(), "many", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedEntries := parsed.Entries()
+	copy(entries, parsedEntries[:count/2])
+	copy(entries[count/2:], parsedEntries[count/2+1:])
+	carrierView, err := parseInfoCarrier(source, "many")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := reencodeInfoCarrier(carrierView, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reparsed, err := infoTestResolver(t).Parse(t.Context(), RIFFInfo(), "many", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reparsed.Len() != count-1 {
+		t.Fatalf("many-entry rewrite length = %d, want %d", reparsed.Len(), count-1)
+	}
+	if got := reparsed.Entries()[count/2].Value(); got != "artist-2049" {
+		t.Fatalf("many-entry positional deletion value = %v, want artist-2049", got)
 	}
 }
 

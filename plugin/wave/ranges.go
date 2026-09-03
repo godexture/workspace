@@ -32,6 +32,10 @@ type sourceRanges struct {
 	info         sourceRange
 	infoAnchor   chunkAnchor
 	infoCount    uint8
+	// infoLayout is retained only while infoCount is one; repeated INFO
+	// carriers deliberately clear it so a semantic edit cannot pick one
+	// source carrier arbitrarily.
+	infoLayout infoRewriteLayout
 }
 
 func (r sourceRanges) any() bool {

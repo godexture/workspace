@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
 	"github.com/godexture/godec/media/metadata"
@@ -21,13 +22,15 @@ import (
 )
 
 type muxPlan struct {
-	shape  flow.Shape
-	header muxHeader
-	// rewrite is semantic metadata only. The source carrier is read at Open
-	// and rewritten into a bounded payload there; no source bytes or handle
-	// are retained by Compile.
-	rewrite       metadata.Document
+	shape         flow.Shape
+	header        muxHeader
 	rewriteNeeded bool
+	// rewriteWorkspace is the checked source-plus-output workspace charged to
+	// the source-aware INFO edit. rewriteOutput is the second plane's upper
+	// bound.
+	rewriteWorkspace uint64
+	rewriteOutput    uint64
+	rewrite          metadata.Document
 }
 
 func muxerShape() flow.Shape {
@@ -76,8 +79,9 @@ func muxerComponent() plugin.Component {
 			}
 			var metadataReports []loss.Report
 			var muxHeaderValue muxHeader
-			var rewrite metadata.Document
 			var rewriteNeeded bool
+			var rewriteWorkspace, rewriteOutput uint64
+			var rewrite metadata.Document
 			inspected, handedOff := mediaformat.InspectionOf[header](ctx, WAVE())
 			if handedOff {
 				if !inspected.valid() {
@@ -89,7 +93,7 @@ func muxerComponent() plugin.Component {
 				if inspected.ranges.any() && (description != inspected.description || signal != inspected.signal) {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE source ranges cannot be reused after changing the stream", ErrUnsupported)
 				}
-				if len(inputMetadata.Blocks()) != 0 {
+				if inputMetadata.BlockCount() != 0 {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux metadata contains source blobs without a range inspection handoff", ErrUnsupported)
 				}
 				geometry, err := muxGeometry(outputCodec, signal, input, inspected)
@@ -101,11 +105,8 @@ func muxerComponent() plugin.Component {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
 				if !sameSemanticDocument(inputMetadata, inspected.metadata) {
-					if inspected.ranges.infoCount != 1 || !inspected.ranges.info.valid() || inspected.ranges.infoAnchor == 0 {
+					if inspected.ranges.infoCount != 1 || !inspected.ranges.info.valid() || inspected.ranges.infoAnchor == 0 || !inspected.ranges.infoLayout.valid() {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata changed but no bounded LIST/INFO rewrite is available", ErrUnsupported)
-					}
-					if inspected.ranges.info.length > waveSemanticCap || !semanticWithinCap(inputMetadata, waveSemanticCap) {
-						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata exceeds the bounded rewrite cap", ErrUnsupported)
 					}
 					resolver, ok := metadata.ResolverOf(ctx)
 					if !ok {
@@ -121,13 +122,31 @@ func muxerComponent() plugin.Component {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 					}
 					metadataReports = append(metadataReports, mapped...)
-					_, dropped := expressibleInfoEntries(projected.Entries())
-					for _, value := range dropped {
+					for index := 0; index < projected.Len(); index++ {
+						value, ok := projected.EntryAt(index)
+						if !ok {
+							continue
+						}
+						if _, ok := infoMappingForKey(value.Key()); ok {
+							continue
+						}
 						metadataReports = append(metadataReports, loss.Report{
-							Carrier: RIFFInfo(), Encoding: InfoEncodingIdentity().String(), Block: string(block), Loss: value,
+							Carrier: RIFFInfo(), Encoding: InfoEncodingIdentity().String(), Block: string(block), Loss: loss.Loss{
+								Key: value.Key(), Kind: loss.Dropped, Detail: "wave.info-unrepresentable", Source: value.Origin().LossOrigin(),
+							},
 						})
 					}
+					if err := validateInfoRewrite(inspected.metadata, projected, inspected.ranges.infoLayout); err != nil {
+						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+					}
 					rewrite = projected
+					rewriteWorkspace, rewriteOutput, err = infoRewriteWorkspaceAgainst(inspected.ranges.info.length, inspected.metadata, projected)
+					if err != nil {
+						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+					}
+					if rewriteWorkspace > inspected.infoMemoryLimit {
+						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE INFO rewrite needs %d bytes with %d available", ErrUnsupported, rewriteWorkspace, inspected.infoMemoryLimit)
+					}
 					rewriteNeeded = true
 				}
 			} else {
@@ -158,17 +177,23 @@ func muxerComponent() plugin.Component {
 			for index, report := range metadataReports {
 				compiledReports[index] = plugin.MetadataReport{Output: "writes", Report: report}
 			}
+			memory := uint64(muxHeaderValue.payloadBytes())
+			if muxHeaderValue.rangeMode && uint64(wavePageSize) > memory {
+				memory = uint64(wavePageSize)
+			}
+			if rewriteNeeded {
+				var ok bool
+				memory, ok = checkedAdd(memory, rewriteWorkspace)
+				if !ok || memory > uint64(math.MaxInt) {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux workspace exceeds runtime memory", ErrUnsupported)
+				}
+			}
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
-				Plan:            muxPlan{shape: shape.Clone(), header: muxHeaderValue, rewrite: rewrite, rewriteNeeded: rewriteNeeded},
+				Plan:            muxPlan{shape: shape.Clone(), header: muxHeaderValue, rewriteNeeded: rewriteNeeded, rewriteWorkspace: rewriteWorkspace, rewriteOutput: rewriteOutput, rewrite: rewrite},
 				Outputs:         flow.NewDescriptors(flow.Describe("writes", output.WithMetadata(input.Metadata()))),
 				Effects:         []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "wave-mux"}},
 				MetadataReports: compiledReports,
-				Resources: resource.Request{Memory: resource.Bytes(func() int {
-					if muxHeaderValue.rangeMode {
-						return max(muxHeaderValue.payloadBytes(), wavePageSize)
-					}
-					return muxHeaderValue.payloadBytes()
-				}())},
+				Resources:       resource.Request{Memory: resource.Bytes(memory)},
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan muxPlan) (flow.Operator, error) {
@@ -188,21 +213,51 @@ func muxerComponent() plugin.Component {
 					return nil, err
 				}
 				if plan.rewriteNeeded {
-					if plan.header.ranges.info.length > waveSemanticCap || plan.header.ranges.info.offset > uint64(^uint64(0)>>1) {
+					if plan.header.ranges.info.length > uint64(math.MaxInt) || plan.header.ranges.info.offset > uint64(math.MaxInt64) || plan.rewriteOutput > uint64(math.MaxInt) {
 						return nil, fmt.Errorf("%w: WAVE LIST/INFO rewrite exceeds runtime limits", ErrUnsupported)
 					}
-					raw := make([]byte, int(plan.header.ranges.info.length))
-					if err := access.ReadFullAt(ctx.Context(), operator.source, raw, int64(plan.header.ranges.info.offset)); err != nil {
-						return nil, fmt.Errorf("%w: WAVE LIST/INFO rewrite source: %w", ErrTruncatedData, err)
-					}
-					payload, err := rewriteInfoSource(raw, plan.rewrite)
+					lease, err := ctx.Buffers().Overwrite(buffer.Spec{Alignment: 1, Planes: []buffer.PlaneSpec{
+						{Size: int(plan.header.ranges.info.length)},
+						{Size: int(plan.rewriteOutput)},
+					}})
 					if err != nil {
 						return nil, err
 					}
-					if uint64(len(payload)) > waveSemanticCap {
-						return nil, fmt.Errorf("%w: WAVE LIST/INFO rewrite exceeds the bounded cap", ErrUnsupported)
+					var outputLength int
+					if err := lease.Fill(func(storage buffer.Mutable) error {
+						source, sourceErr := storage.Plane(0)
+						if sourceErr != nil {
+							return sourceErr
+						}
+						if err := access.ReadFullAt(ctx.Context(), operator.source, source, int64(plan.header.ranges.info.offset)); err != nil {
+							return fmt.Errorf("%w: WAVE LIST/INFO rewrite source: %w", ErrTruncatedData, err)
+						}
+						output, outputErr := storage.Plane(1)
+						if outputErr != nil {
+							return outputErr
+						}
+						rewritten, rewriteErr := rewriteInfoSourceIntoPlan(ctx.Context(), source, plan.header.infoDocument, plan.header.ranges.infoLayout, plan.rewrite, output)
+						if rewriteErr != nil {
+							return rewriteErr
+						}
+						outputLength = len(rewritten)
+						return nil
+					}); err != nil {
+						lease.Discard()
+						return nil, err
+					}
+					workspace, err := lease.Commit()
+					if err != nil {
+						return nil, err
+					}
+					outputOffset := workspace.Layout().Planes[1].Offset
+					payload, err := workspace.Range(outputOffset, outputLength)
+					workspace.Release()
+					if err != nil {
+						return nil, err
 					}
 					if err := operator.header.applyReplacement(sourceReplacement{source: plan.header.ranges.info, payload: payload}); err != nil {
+						payload.Release()
 						return nil, err
 					}
 				}

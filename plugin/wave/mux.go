@@ -53,6 +53,10 @@ func (m *muxer) setSource(ctx context.Context, opening access.Opening) error {
 
 func (m *muxer) Ports() flow.Shape { return m.shape.Clone() }
 func (m *muxer) Close() error {
+	if m.header.replacement.payload.Valid() {
+		m.header.replacement.payload.Release()
+		m.header.replacement.payload = buffer.Handle{}
+	}
 	m.source = nil
 	return nil
 }
@@ -209,12 +213,27 @@ func (m *muxer) emitRange(ctx context.Context, value sourceRange, output flow.Em
 		if err := m.emitSourceSpan(ctx, start, replacement.offset, output); err != nil {
 			return err
 		}
-		if err := m.emitAppend(ctx, m.header.replacement.payload, output); err != nil {
+		if err := m.emitReplacement(ctx, output); err != nil {
 			return err
 		}
 		start = replacementEnd
 	}
 	return m.emitSourceSpan(ctx, start, end, output)
+}
+
+func (m *muxer) emitReplacement(ctx context.Context, output flow.Emitter[access.Write]) error {
+	payload := m.header.replacement.payload
+	if !payload.Valid() || uint64(payload.Bytes().Len()) != m.header.replacement.length {
+		return fmt.Errorf("%w: WAVE source replacement payload is unavailable", ErrUnsupported)
+	}
+	m.header.replacement.payload = buffer.Handle{}
+	write, err := access.Append(payload)
+	if err != nil {
+		return err
+	}
+	output.Own(&m.out, write)
+	defer m.out.Drop()
+	return output.Emit(ctx, &m.out)
 }
 
 func rangesOverlap(left, right sourceRange) bool {

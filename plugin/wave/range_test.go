@@ -3,6 +3,7 @@ package wave
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/godexture/godec/media/tag"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type rangeSourceSession struct {
@@ -140,6 +142,231 @@ func TestRewriteInfoSourceKeepsUnknownFieldsAndPadding(t *testing.T) {
 	}
 	if encoded[len(encoded)-1] != 0xcc {
 		t.Fatalf("rewritten INFO lost unknown padding: %x", encoded)
+	}
+}
+
+func TestRewriteInfoSourceFollowsTargetEntryOrder(t *testing.T) {
+	source := infoTestList(t,
+		infoTestChunk(t, "INAM", []byte("Song\x00"), 0),
+		infoTestChunk(t, "IART", []byte("Artist\x00"), 0),
+	)
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	metadata.Add(builder, tag.Artist(), "Artist", metadata.Origin{})
+	metadata.Add(builder, tag.Title(), "Song", metadata.Origin{})
+	target, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := rewriteInfoSource(source, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := infoPayload(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(payload[4:8]); got != "IART" {
+		t.Fatalf("reordered first INFO child = %q, want IART", got)
+	}
+	firstSize := int(binary.LittleEndian.Uint32(payload[8:12]))
+	second := 8 + firstSize + firstSize&1
+	if got := string(payload[second+4 : second+8]); got != "INAM" {
+		t.Fatalf("reordered second INFO child = %q, want INAM", got)
+	}
+}
+
+func TestRewriteInfoSourceSwapsDuplicateEntriesAndKeepsInvalidOpaqueChildren(t *testing.T) {
+	first := infoTestChunk(t, "IART", []byte("First\x00"), 0x71)
+	invalid := infoTestChunk(t, "ICRD", []byte("not-a-date\x00"), 0x62)
+	second := infoTestChunk(t, "IART", []byte("Second\x00"), 0xa4)
+	unknown := infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xcc)
+	source := infoTestList(t, first, invalid, second, unknown)
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	metadata.Add(builder, tag.Artist(), "Second", metadata.Origin{})
+	metadata.Add(builder, tag.Artist(), "First", metadata.Origin{})
+	date, err := tag.ParseDate("2026-08-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.Add(builder, tag.Date(), date, metadata.Origin{})
+	target, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := rewriteInfoSource(source, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, invalid) || !bytes.Contains(encoded, unknown) {
+		t.Fatalf("rewrite lost invalid or unknown INFO child: %x", encoded)
+	}
+	payload, err := infoPayload(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, 5)
+	var rawChildren [][]byte
+	for offset := 4; offset < len(payload); {
+		if len(payload)-offset < 8 {
+			t.Fatalf("rewritten INFO child header truncated at %d", offset)
+		}
+		size := uint64(binary.LittleEndian.Uint32(payload[offset+4 : offset+8]))
+		end, ok := infoChunkEnd(uint64(offset), size, uint64(len(payload)))
+		if !ok || end > uint64(len(payload)) {
+			t.Fatalf("rewritten INFO child at %d has invalid size %d", offset, size)
+		}
+		ids = append(ids, string(payload[offset:offset+4]))
+		rawChildren = append(rawChildren, payload[offset:int(end)])
+		offset = int(end)
+	}
+	wantIDs := []string{"IART", "ICRD", "IART", "XTRA", "ICRD"}
+	if len(ids) != len(wantIDs) {
+		t.Fatalf("rewritten INFO child identities = %v, want %v", ids, wantIDs)
+	}
+	for index := range wantIDs {
+		if ids[index] != wantIDs[index] {
+			t.Fatalf("rewritten INFO child %d = %q, want %q", index, ids[index], wantIDs[index])
+		}
+	}
+	if !bytes.Equal(rawChildren[1], invalid) || !bytes.Equal(rawChildren[3], unknown) {
+		t.Fatalf("opaque INFO children moved or changed: invalid=%x unknown=%x", rawChildren[1], rawChildren[3])
+	}
+	if !bytes.Contains(rawChildren[0], []byte("Second")) || !bytes.Contains(rawChildren[2], []byte("First")) {
+		t.Fatalf("duplicate swap target order = %q/%q", rawChildren[0], rawChildren[2])
+	}
+	parsed, err := infoTestResolver(t).Parse(t.Context(), RIFFInfo(), "rewritten", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artists := metadata.Values(parsed, tag.Artist())
+	if len(artists) != 2 || artists[0] != "Second" || artists[1] != "First" {
+		t.Fatalf("duplicate swap semantic order = %v", artists)
+	}
+}
+
+func TestLargeInfoRewriteUsesInspectionWorkspaceGrant(t *testing.T) {
+	unknown := infoTestChunk(t, "XTRA", bytes.Repeat([]byte{0xa5}, 70<<10), 0xcc)
+	info := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
+	source := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		info,
+		waveTestChunk(t, tagDATA, []byte{1, 0, 2, 0}, 0),
+	)
+	resolver := infoTestResolver(t)
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(source), uint64(len(source)), true, resolver, resource.Bytes(1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := inspected.metadata.Edit()
+	metadata.Add(edited, tag.Title(), "Edited", metadata.Origin{})
+	document, err := edited.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, output, err := infoRewriteWorkspaceAgainst(inspected.ranges.info.length, inspected.metadata, document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace <= inspected.ranges.info.length || output <= inspected.ranges.info.length {
+		t.Fatalf("workspace upper bound = %d, output %d, source %d", workspace, output, inspected.ranges.info.length)
+	}
+	if want := inspected.ranges.info.length + output; workspace != want {
+		t.Fatalf("rewrite workspace = %d, want source-plus-output %d", workspace, want)
+	}
+	compiled, component, componentErr := compileWaveMuxMetadataStateWithComponent(t, inspected, metadata.MustAvailable(document))
+	if componentErr != nil {
+		t.Fatal(componentErr)
+	}
+	rangeHeader, err := newLinearRangeMuxHeader(inspected.description, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMemory := uint64(max(rangeHeader.payloadBytes(), wavePageSize)) + workspace
+	if uint64(compiled.Resources().Memory) != wantMemory {
+		t.Fatalf("large rewrite grant = %d, want %d", compiled.Resources().Memory, wantMemory)
+	}
+	muxBuffers := mustBufferAllocator(t, int(compiled.Resources().Memory))
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: muxBuffers, Source: rangeSourceOpening(t, &rangeSourceSession{data: source}),
+	}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packetBuffers := mustBufferAllocator(t, 4)
+	handle, err := packetBuffers.FromBytes([]byte{1, 0, 2, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	mux := operator.(*muxer)
+	if err := mux.Process(t.Context(), &item, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if !bytes.Contains(encoded, []byte("Edited")) || !bytes.Contains(encoded, unknown) {
+		t.Fatalf("large rewrite lost edited/opaque INFO bytes")
+	}
+	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(encoded), uint64(len(encoded)), true, resolver, resource.Bytes(1<<20)); err != nil {
+		t.Fatalf("rewritten large INFO did not re-inspect: %v", err)
+	}
+	if err := operator.Close(); err != nil {
+		t.Fatalf("large rewrite Close = %v", err)
+	}
+	if muxBuffers.Used() != 0 {
+		t.Fatalf("large rewrite retained allocator bytes after Close: %d", muxBuffers.Used())
+	}
+
+	earlyBuffers := mustBufferAllocator(t, int(compiled.Resources().Memory))
+	early, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: earlyBuffers, Source: rangeSourceOpening(t, &rangeSourceSession{data: source}),
+	}), compiled)
+	if err != nil {
+		t.Fatalf("large rewrite early Open = %v", err)
+	}
+	if earlyBuffers.Used() == 0 {
+		t.Fatal("large rewrite early Open retained no replacement workspace")
+	}
+	if err := early.Close(); err != nil {
+		t.Fatalf("large rewrite early Close = %v", err)
+	}
+	if earlyBuffers.Used() != 0 {
+		t.Fatalf("large rewrite early Close retained allocator bytes: %d", earlyBuffers.Used())
+	}
+
+	inspected.infoMemoryLimit = workspace - 1
+	if _, err := compileWaveMuxMetadataState(t, inspected, metadata.MustAvailable(document)); err == nil {
+		t.Fatalf("one-byte-short rewrite workspace = %v, want unsupported", err)
+	}
+}
+
+func TestLargeInfoUnchangedRemuxKeepsPageGrant(t *testing.T) {
+	unknown := infoTestChunk(t, "XTRA", bytes.Repeat([]byte{0xa5}, 70<<10), 0xcc)
+	info := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
+	source := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		info,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(source), uint64(len(source)), true, infoTestResolver(t), resource.Bytes(1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, component := compileRangeMux(t, inspected)
+	if compiled.Resources().Memory != resource.Bytes(wavePageSize) {
+		t.Fatalf("unchanged large INFO grant = %d, want %d", compiled.Resources().Memory, wavePageSize)
+	}
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: mustBufferAllocator(t, wavePageSize), Source: rangeSourceOpening(t, &rangeSourceSession{data: source}),
+	}), compiled)
+	if err != nil {
+		t.Fatalf("unchanged large INFO Open = %v", err)
+	}
+	if err := operator.Close(); err != nil {
+		t.Fatalf("unchanged large INFO Close = %v", err)
 	}
 }
 

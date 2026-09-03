@@ -21,6 +21,7 @@ import (
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
+	"github.com/godexture/godec/resource"
 )
 
 type memoryRandom []byte
@@ -268,6 +269,79 @@ func TestInspectOpaqueRangesDoNotReadTheirPayload(t *testing.T) {
 	}
 }
 
+func TestInspectLargeRIFFInfoUsesInspectMemoryBudget(t *testing.T) {
+	field := infoTestChunk(t, "INAM", bytes.Repeat([]byte{'x'}, 70<<10), 0)
+	list := infoTestList(t, field)
+	value := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		list,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), resource.Bytes(len(list)-1)); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("large INFO with narrow memory = %v, want unsupported", err)
+	}
+	if inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), resource.Bytes(len(list))); err != nil || inspected.metadata.Len() != 1 {
+		t.Fatalf("large INFO with exact memory = %#v, %v", inspected, err)
+	}
+}
+
+func TestInspectChargesAllRIFFInfoCarriersAgainstOneMemoryBudget(t *testing.T) {
+	first := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0))
+	second := infoTestList(t, infoTestChunk(t, "IART", []byte("Artist\x00"), 0))
+	value := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		first,
+		second,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	limit := resource.Bytes(len(first) + len(second))
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), limit)
+	if err != nil {
+		t.Fatalf("two INFO carriers with exact cumulative memory = %v", err)
+	}
+	if inspected.metadata.Len() != 2 {
+		t.Fatalf("two INFO carriers metadata length = %d, want 2", inspected.metadata.Len())
+	}
+	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), limit-1); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("two INFO carriers one byte short = %v, want unsupported", err)
+	}
+}
+
+func TestInspectLargeNonInfoListReadsOnlySubtype(t *testing.T) {
+	payload := append([]byte("adtl"), bytes.Repeat([]byte{0x7f}, 1<<20)...)
+	list := waveTestChunk(t, tagLIST, payload, 0)
+	value := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		list,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	reader := &trackedRandom{data: memoryRandom(value)}
+	inspected, err := inspectHeaderWithSize(t.Context(), reader, uint64(len(value)), true, infoTestResolver(t), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.metadata.Len() != 0 || reader.maxRead > 40 {
+		t.Fatalf("non-INFO LIST inspection = metadata %d, largest read %d", inspected.metadata.Len(), reader.maxRead)
+	}
+}
+
+func TestInspectReadBudgetFailureIsUnsupported(t *testing.T) {
+	field := infoTestChunk(t, "INAM", []byte("Song\x00"), 0)
+	info := infoTestList(t, field)
+	value := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		info,
+		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
+	)
+	// Root/chunk/fmt headers and the INFO subtype consume 48 bytes before
+	// the full carrier is requested; leave that request one byte short.
+	readLimit := resource.Bytes(48 + len(info) - 1)
+	_, err := inspectHeaderWithLimits(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), 1<<20, readLimit)
+	if !errors.Is(err, ErrUnsupported) || !errors.Is(err, errInspectReadBudget) {
+		t.Fatalf("WAVE read budget error = %v, want unsupported budget failure", err)
+	}
+}
+
 func TestInspectPreservesNonInfoListAsAnOpaqueRange(t *testing.T) {
 	list := waveTestChunk(t, tagLIST, append([]byte("adtl"), []byte{1, 2, 3}...), 0xa4)
 	value := waveTestRIFF(t,
@@ -275,7 +349,7 @@ func TestInspectPreservesNonInfoListAsAnOpaqueRange(t *testing.T) {
 		list,
 		waveTestChunk(t, tagDATA, []byte{1, 0}, 0),
 	)
-	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, waveSemanticCap)
+	inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, metadata.Resolver{}, 1<<20)
 	if err != nil {
 		t.Fatalf("non-INFO LIST rejected: %v", err)
 	}
