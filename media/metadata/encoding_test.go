@@ -19,6 +19,7 @@ type encodingTraitConfigID struct{}
 type encodingTraitCarrierID struct{}
 type encodingTraitKeyID struct{}
 type encodingTraitOtherKeyID struct{}
+type encodingTraitPresenceID struct{}
 
 var encodingTraitDeclaration = key.Define[encodingTraitKeyID, string]()
 var encodingTraitOtherDeclaration = key.Define[encodingTraitOtherKeyID, string]()
@@ -121,12 +122,52 @@ func TestResolverReportsBindingAndEncodingFailures(t *testing.T) {
 		t.Fatalf("marshal diagnostic = %v", err)
 	}
 
-	invalid := encodingTraitComponent(nil, nil)
-	if value, ok := EncodingOf(invalid); !ok || value.Valid() {
+	invalidComponent := encodingTraitComponent(nil, nil)
+	if value, ok := EncodingOf(invalidComponent); !ok || value.Valid() {
 		t.Fatalf("invalid EncodingOf = %#v/%v", value, ok)
 	}
-	if _, err := NewResolver(map[carrier.ID]plugin.Component{slot: invalid}, nil); !errors.Is(err, ErrInvalidResolver) {
+	if _, err := NewResolver(map[carrier.ID]plugin.Component{slot: invalidComponent}, nil); !errors.Is(err, ErrInvalidResolver) {
 		t.Fatalf("invalid resolver error = %v", err)
+	}
+}
+
+func TestResolverBindingProbesAreReadOnlyAndFalseForInvalidOrMissingSlots(t *testing.T) {
+	slot := carrier.Define[encodingTraitCarrierID]()
+	other := carrier.Define[encodingTraitOtherKeyID]()
+	component := encodingTraitComponent(
+		func(ctx ParseContext) (Document, error) { return NewBuilder(ctx.Scope()).Build() },
+		func(MarshalContext) (Blob, []loss.Loss, error) {
+			return NewBlob("application/octet-stream", nil), nil, nil
+		},
+	)
+	resolver, err := NewResolver(map[carrier.ID]plugin.Component{slot: component}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolver.HasBinding(slot) || resolver.HasBinding(other) || resolver.HasBinding(carrier.ID{}) {
+		t.Fatalf("resolver binding probe = present %v, missing %v, invalid %v", resolver.HasBinding(slot), resolver.HasBinding(other), resolver.HasBinding(carrier.ID{}))
+	}
+	var invalidResolver Resolver
+	if invalidResolver.HasBinding(slot) {
+		t.Fatal("invalid resolver reported a binding")
+	}
+	presence := plugin.TraitKeyOf[encodingTraitPresenceID]()
+	withTrait := plugin.NewComponent[encodingTraitComponentID](plugin.Descriptor{DisplayName: "encoding with probe trait"}, config.Struct[encodingTraitConfigID](func() struct{} { return struct{}{} }).Version("1").Build(),
+		WithEncoding(
+			func(ctx ParseContext) (Document, error) { return NewBuilder(ctx.Scope()).Build() },
+			func(MarshalContext) (Blob, []loss.Loss, error) {
+				return NewBlob("application/octet-stream", nil), nil, nil
+			},
+			encodingTraitDeclaration.Erased(),
+		),
+		plugin.WithTrait(presence, "test.presence=1", plugin.PortShapeOptional, struct{}{}),
+	)
+	traitResolver, err := NewResolver(map[carrier.ID]plugin.Component{slot: withTrait}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !traitResolver.BindingHasTrait(slot, presence) || traitResolver.BindingHasTrait(slot, plugin.TraitKey{}) || traitResolver.BindingHasTrait(other, presence) {
+		t.Fatal("binding trait probe did not preserve only the declared trait")
 	}
 }
 

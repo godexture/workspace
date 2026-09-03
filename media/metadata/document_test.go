@@ -1,10 +1,12 @@
 package metadata
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/godexture/godec/media/carrier"
+	"github.com/godexture/godec/media/key"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -125,6 +127,62 @@ func TestDocumentIdentityIsSharedByCopiesAndRebuiltByEdit(t *testing.T) {
 	}
 	if edited.identity == original.identity {
 		t.Fatalf("edited document reused identity %p", edited.identity)
+	}
+}
+
+func TestDocumentDetachSourceKeepsSemanticValuesAndDropsLineage(t *testing.T) {
+	builder := NewBuilder(AssetScope)
+	builder.AddBlock(NewSourceBlock("source", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1, 2, 3})))
+	Add(builder, title, "First", Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source", Native: "TITLE"})
+	Add(builder, artist, "Second", Origin{Carrier: testCarrier, Encoding: encodingIdentity(), Block: "source", Native: "ARTIST"})
+	original, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	detached, err := original.DetachSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detached.Valid() || detached.Scope() != original.Scope() || detached.Len() != original.Len() || detached.BlockCount() != 0 {
+		t.Fatalf("detached shape = valid %v, scope %s, entries %d, blocks %d", detached.Valid(), detached.Scope(), detached.Len(), detached.BlockCount())
+	}
+	if detached.identity == original.identity {
+		t.Fatal("detached document reused source identity")
+	}
+	for index, want := range []struct {
+		key   key.ID
+		value string
+	}{
+		{key: title.ID(), value: "First"},
+		{key: artist.ID(), value: "Second"},
+	} {
+		entry, ok := detached.EntryAt(index)
+		if !ok || entry.Key() != want.key || entry.Value() != want.value {
+			t.Fatalf("detached entry %d = %#v/%v", index, entry, ok)
+		}
+		if entry.Origin() != (Origin{}) {
+			t.Fatalf("detached entry %d kept source origin %#v", index, entry.Origin())
+		}
+	}
+	entries := detached.Entries()
+	entries[0] = Entry{}
+	if entry, ok := detached.EntryAt(0); !ok || entry.Key() != title.ID() {
+		t.Fatal("detached semantic entries were mutable through a returned slice")
+	}
+}
+
+func TestDocumentDetachSourceRejectsOpaqueOrInvalidDocuments(t *testing.T) {
+	if _, err := (Document{}).DetachSource(); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("invalid document detach error = %v", err)
+	}
+	builder := NewBuilder(StreamScope)
+	builder.AddBlock(NewRawBlock("opaque", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1})))
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := document.DetachSource(); !errors.Is(err, ErrMetadataOpaque) {
+		t.Fatalf("opaque document detach error = %v", err)
 	}
 }
 
