@@ -5,6 +5,7 @@ import (
 
 	"github.com/godexture/godec/config"
 	"github.com/godexture/godec/flow"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/media/stream"
@@ -105,6 +106,25 @@ func compileMixer(shape flow.Shape, configuration mixerConfig, inputs flow.Descr
 	if err != nil {
 		return plugin.Compiled[mixerPlan, stream.Descriptor]{}, err
 	}
+	attachments := make([]metadata.Attachment, len(connected))
+	expectedScope := metadata.Scope(0)
+	for index, descriptor := range connected {
+		attachment := descriptor.Metadata()
+		if !attachment.Valid() {
+			return plugin.Compiled[mixerPlan, stream.Descriptor]{}, metadata.ErrInvalidAttachment
+		}
+		attachments[index] = attachment
+		if expectedScope == 0 && !attachment.IsAbsent() {
+			expectedScope = attachment.Scope()
+		}
+	}
+	metadataAttachment := metadata.Absent()
+	if expectedScope != 0 {
+		metadataAttachment, err = metadata.Merge(expectedScope, attachments...)
+		if err != nil {
+			return plugin.Compiled[mixerPlan, stream.Descriptor]{}, err
+		}
+	}
 	output, err := stream.NewDescriptor(first.ID(), shape.Outputs[0].Schema(), first.TimeBase(), properties)
 	if err != nil {
 		return plugin.Compiled[mixerPlan, stream.Descriptor]{}, err
@@ -117,7 +137,7 @@ func compileMixer(shape flow.Shape, configuration mixerConfig, inputs flow.Descr
 			channels: channels,
 			samples:  configuration.MaxSamples,
 		},
-		Outputs:   flow.NewDescriptors(flow.Describe("mixed", output.WithMetadata(first.Metadata()))),
+		Outputs:   flow.NewDescriptors(flow.Describe("mixed", output.WithMetadata(metadataAttachment))),
 		Effects:   []plugin.Effect{{Kind: plugin.ContentEffect, Loss: plugin.Lossy, Detail: "audio.mix"}},
 		Resources: resource.Request{Memory: resource.Bytes(planeBytes[float32](configuration.MaxSamples, channels))},
 	}, nil

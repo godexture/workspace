@@ -43,7 +43,7 @@ func TestParseAndUnchangedMarshalPreserveSource(t *testing.T) {
 	if len(blocks) != 4 || !blocks[0].Source() || blocks[1].ID() != vendorBlockID("comment") || blocks[1].Payload().MediaType() != vendorMediaType {
 		t.Fatalf("blocks = %#v", blocks)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -66,7 +66,7 @@ func TestRFCFieldSyntaxAndUTF8Values(t *testing.T) {
 	if title, ok := metadata.First(document, tag.Title()); !ok || title != "שלום" {
 		t.Fatalf("Hebrew title = %q/%v", title, ok)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("RFC source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -100,7 +100,7 @@ func TestUnsafeSourceIsExactOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), test.payload) {
 				t.Fatalf("unsafe exact = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 			}
@@ -110,7 +110,7 @@ func TestUnsafeSourceIsExactOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := resolver.Marshal(t.Context(), slot, "comment", edited); !errors.Is(err, errUnsupported) {
+			if _, _, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited)); !errors.Is(err, errUnsupported) {
 				t.Fatalf("unsafe edit error = %v", err)
 			}
 		})
@@ -131,7 +131,7 @@ func TestCanonicalPreservesRawFieldSequenceAndVendor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("rewrite reports %#v, error %v", reports, err)
 	}
@@ -153,7 +153,7 @@ func TestFreshPreservesEmptyDuplicateAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("fresh reports %#v, error %v", reports, err)
 	}
@@ -185,7 +185,7 @@ func TestOrdinalFieldsUseUnsignedDecimalAndFreshSeparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), slot, "comment", fresh)
+	encoded, _, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(fresh))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,10 +209,10 @@ func TestRawSafetyAndForeignOpaquePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", edited); !errors.Is(err, errUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited)); !errors.Is(err, errUnsupported) {
 		t.Fatalf("unsafe source edit error = %v", err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), unsafe) {
 		t.Fatalf("unsafe source exact = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -224,7 +224,7 @@ func TestRawSafetyAndForeignOpaquePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", injected); !errors.Is(err, errUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(injected)); !errors.Is(err, errUnsupported) {
 		t.Fatalf("semantic raw injection error = %v", err)
 	}
 
@@ -236,7 +236,7 @@ func TestRawSafetyAndForeignOpaquePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", document); !errors.Is(err, errUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document)); !errors.Is(err, errUnsupported) {
 		t.Fatalf("foreign opaque error = %v", err)
 	}
 	builder = metadata.NewBuilder(metadata.AssetScope)
@@ -246,7 +246,7 @@ func TestRawSafetyAndForeignOpaquePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("foreign source error = %v, reports %#v", err, reports)
 	}
@@ -270,7 +270,7 @@ func TestEditedSourceRetainsSafeRawFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("safe raw rewrite reports %#v, error %v", reports, err)
 	}
@@ -353,7 +353,7 @@ func TestUnsupportedSemanticReportsOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	_, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 1 || reports[0].Loss.Kind != loss.Dropped {
 		t.Fatalf("unsupported reports %#v, error %v", reports, err)
 	}
@@ -378,7 +378,7 @@ func TestMarshalLossReportsCarryEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reports, err := resolver.Marshal(t.Context(), slot, "output", document)
+	_, reports, err := resolver.Marshal(t.Context(), slot, "output", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -129,7 +129,7 @@ func TestMappingSnapshotsReferenceSourceBeforeConversion(t *testing.T) {
 	document := projectionDocument(t, func(builder *Builder) {
 		Add(builder, mappingBytesSource, []byte{1, 2}, Origin{})
 	})
-	projected, _, err := resolver.Project(testCarrier, "target", document)
+	projected, _, err := resolver.Project(testCarrier, "target", MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -125,11 +125,11 @@ func acmePacketDescriptor(t testing.TB, document metadata.Document) stream.Descr
 	if err != nil {
 		t.Fatal(err)
 	}
-	return stream.MustDescriptor("acme", codec.Packets().Descriptor(), timing.MustBase(1, 1), properties).WithMetadata(document)
+	return stream.MustDescriptor("acme", codec.Packets().Descriptor(), timing.MustBase(1, 1), properties).WithMetadata(metadata.MustAvailable(document))
 }
 
 func acmeValueDescriptor(document metadata.Document) stream.Descriptor {
-	return stream.MustDescriptor("acme", acme.Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(document)
+	return stream.MustDescriptor("acme", acme.Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustAvailable(document))
 }
 
 func mustACME(t testing.TB, label string, payload []byte) []byte {

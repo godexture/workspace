@@ -227,7 +227,7 @@ func compileRangeMux(t testing.TB, inspected header) (plugin.Compilation, plugin
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(inspected.metadata)
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(inspected.metadataAttachment())
 	compileContext, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(WAVE(), inspected))
 	if err != nil {
 		t.Fatal(err)

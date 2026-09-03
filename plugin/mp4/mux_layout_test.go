@@ -10,6 +10,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/internal/scratch"
 	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
@@ -102,7 +103,7 @@ func compileMuxSelection(t testing.TB, inspected movie, indexes ...int) (muxLayo
 	for _, index := range indexes {
 		input := muxInputDescriptor(t, inspected.tracks[index])
 		if inspected.metadata.Scope().Valid() {
-			input = input.WithMetadata(inspected.metadata)
+			input = input.WithMetadata(metadata.MustAvailable(inspected.metadata))
 		}
 		inputs = append(inputs, input)
 	}

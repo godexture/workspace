@@ -21,7 +21,7 @@ import (
 
 type streamOptions struct {
 	id       stream.ID
-	metadata metadata.Document
+	metadata metadata.Attachment
 	length   timing.OptionalDuration
 }
 
@@ -33,7 +33,19 @@ func WithStreamID(id stream.ID) StreamOption { return func(options *streamOption
 
 // WithMetadata attaches immutable stream metadata to the fixture descriptor.
 func WithMetadata(document metadata.Document) StreamOption {
-	return func(options *streamOptions) { options.metadata = document }
+	return func(options *streamOptions) {
+		if document.Valid() {
+			options.metadata = metadata.MustAvailable(document)
+			return
+		}
+		options.metadata = metadata.Absent()
+	}
+}
+
+// WithMetadataAttachment attaches an explicit metadata availability state to
+// the fixture descriptor.
+func WithMetadataAttachment(value metadata.Attachment) StreamOption {
+	return func(options *streamOptions) { options.metadata = value }
 }
 
 // WithDuration states how long the fixture stream lasts, counted in its own

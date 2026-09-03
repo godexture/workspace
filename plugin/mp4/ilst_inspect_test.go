@@ -31,6 +31,15 @@ type ilstInspectOverrideKeyID struct{}
 
 var ilstInspectOverrideKey = key.Define[ilstInspectOverrideKeyID, string]()
 
+func mustMetadataDocument(t testing.TB, value metadata.Attachment) metadata.Document {
+	t.Helper()
+	document, err := value.Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
 func ilstInspectOverrideComponent() plugin.Component {
 	return plugin.NewComponent[ilstInspectOverrideID](plugin.Descriptor{DisplayName: "test ilst binding override"}, configurationSchema(),
 		metadata.WithEncoding(
@@ -117,7 +126,7 @@ func TestMP4InspectRetainsResolvedIlstDocument(t *testing.T) {
 		t.Fatalf("demux outputs = %#v/%v", outputs, ok)
 	}
 	for _, output := range outputs.At("packets") {
-		if !sameIlstMuxDocument(output.Metadata(), document) {
+		if !sameIlstMuxDocument(mustMetadataDocument(t, output.Metadata()), document) {
 			t.Fatalf("track %q metadata = %#v, want resolved asset document", output.ID(), output.Metadata())
 		}
 	}
@@ -174,7 +183,7 @@ func TestMP4InspectUsesResolvedIlstBindingDocument(t *testing.T) {
 		t.Fatalf("override demux outputs = %#v/%v", outputs, ok)
 	}
 	for _, output := range outputs.At("packets") {
-		if !sameIlstMuxDocument(output.Metadata(), document) {
+		if !sameIlstMuxDocument(mustMetadataDocument(t, output.Metadata()), document) {
 			t.Fatalf("track %q metadata = %#v, want override document", output.ID(), output.Metadata())
 		}
 	}
@@ -200,7 +209,7 @@ func TestMP4IlstMetadataAllowsUnchangedMuxAndRejectsEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputs = append([]stream.Descriptor(nil), inputs...)
-	inputs[0] = inputs[0].WithMetadata(edited)
+	inputs[0] = inputs[0].WithMetadata(metadata.MustAvailable(edited))
 	if _, err := compileMux(inputs, inspected); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("edited metadata mux error = %v, want unsupported", err)
 	}
@@ -216,7 +225,7 @@ func TestMP4IlstMetadataAllowsUnchangedMuxAndRejectsEdit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inputs[0] = outputs.At("packets")[0].WithMetadata(foreignDocument)
+		inputs[0] = outputs.At("packets")[0].WithMetadata(metadata.MustAvailable(foreignDocument))
 		if _, err := compileMux(inputs, inspected); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("foreign %t block mux error = %v, want unsupported", block.Source(), err)
 		}

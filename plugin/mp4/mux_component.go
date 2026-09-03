@@ -67,7 +67,7 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
-			output = output.WithMetadata(layout.document)
+			output = output.WithMetadata(layout.attachment)
 			metadataReports := make([]plugin.MetadataReport, len(layout.reports))
 			for index, report := range layout.reports {
 				metadataReports[index] = plugin.MetadataReport{Output: "writes", Report: report}

@@ -11,6 +11,7 @@ import (
 	"github.com/godexture/godec/internal/scratch"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
@@ -226,7 +227,7 @@ func runSubsetMux(t testing.TB, data []byte, selectedIndex int) []byte {
 	}
 	input := stream.MustDescriptor(trackStreamID(selected.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(selected.timeScale)), properties)
 	if inspected.metadata.Scope().Valid() {
-		input = input.WithMetadata(inspected.metadata)
+		input = input.WithMetadata(metadata.MustAvailable(inspected.metadata))
 	}
 	context, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(MP4(), inspected))
 	if err != nil {
@@ -272,7 +273,7 @@ func openSubsetMuxForTest(t testing.TB, data []byte, source access.Opening, jour
 	}
 	input := stream.MustDescriptor(trackStreamID(selected.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(selected.timeScale)), properties)
 	if inspected.metadata.Scope().Valid() {
-		input = input.WithMetadata(inspected.metadata)
+		input = input.WithMetadata(metadata.MustAvailable(inspected.metadata))
 	}
 	context, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(MP4(), inspected))
 	if err != nil {

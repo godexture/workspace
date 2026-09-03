@@ -106,7 +106,7 @@ func (e metadataEvaluator) evaluate(ctx context.Context) metadataOutcome {
 	}
 	var lost []loss.Report
 	payload, marshalErr, panicErr := safeMetadataMarshal(func() (metadata.Blob, error) {
-		value, values, err := e.resolver.Marshal(ctx, e.input.carrier, e.input.block, document)
+		value, values, err := e.resolver.Marshal(ctx, e.input.carrier, e.input.block, metadata.MustAvailable(document))
 		lost = values
 		return value, err
 	})

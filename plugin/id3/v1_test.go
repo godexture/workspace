@@ -64,7 +64,7 @@ func TestV1ParseAndUnchangedMarshalPreserveTheTagBytes(t *testing.T) {
 	if date.Origin() != wantDateOrigin {
 		t.Fatalf("ID3v1 date origin = %#v, want %#v", date.Origin(), wantDateOrigin)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("unchanged ID3v1 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -94,7 +94,7 @@ func TestV1MarshalSelectsFirstRepresentableValuesAndReportsActualLosses(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestV1RejectsMalformedPayloadAndOpaqueBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "tail", document); !errors.Is(err, errV1Unsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document)); !errors.Is(err, errV1Unsupported) {
 		t.Fatalf("opaque ID3v1 block error = %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestV1ParsePreservesWhitespaceAndInternalNUL(t *testing.T) {
 	if !ok || title != "  A\x00B  " {
 		t.Fatalf("ID3v1 title = %q/%v", title, ok)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("whitespace-preserving ID3v1 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -182,7 +182,7 @@ func TestV1CanonicalizationReportsUnparsedSourceFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unchanged, reports, err := resolver.Marshal(t.Context(), slot, "tail", parsed)
+	unchanged, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(parsed))
 	if err != nil || len(reports) != 0 || !bytes.Equal(unchanged.AppendTo(nil), payload) {
 		t.Fatalf("unchanged invalid source = %x, reports %#v, error %v", unchanged.AppendTo(nil), reports, err)
 	}
@@ -202,7 +202,7 @@ func TestV1CanonicalizationReportsUnparsedSourceFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(edited))
 	if err != nil || string(encoded.AppendTo(nil)[3:9]) != "Edited" {
 		t.Fatalf("canonicalized invalid source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -234,7 +234,7 @@ func TestV1ParsesV10Comment(t *testing.T) {
 	if _, ok := metadata.First(document, tag.TrackNumber()); ok {
 		t.Fatal("ID3v1.0 comment unexpectedly has a track number")
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("ID3v1.0 roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -247,7 +247,7 @@ func TestV1FreshEmptyDocumentIsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || encoded.Len() != 0 || encoded.MediaType() != "application/x-id3v1" {
 		t.Fatalf("fresh empty ID3v1 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -265,7 +265,7 @@ func TestV1CanonicalDocumentWithoutRepresentableEntriesIsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || encoded.Len() != 0 || encoded.MediaType() != "application/x-id3v1" {
 		t.Fatalf("unrepresentable ID3v1 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -292,7 +292,7 @@ func TestV1ExistingEmptyTagRemainsByteExact(t *testing.T) {
 	if err != nil || document.Len() != 0 {
 		t.Fatalf("empty ID3v1 Parse = %#v, %v", document, err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("empty ID3v1 roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -310,7 +310,7 @@ func TestV1IgnoresForeignSourceBlocksWithCollidingBlockID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "tail", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || string(encoded.AppendTo(nil)[:3]) != v1Tag {
 		t.Fatalf("foreign source ID3v1 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}

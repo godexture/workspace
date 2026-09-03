@@ -71,7 +71,7 @@ func TestEncodingTraitIsPureControlPlaneBehavior(t *testing.T) {
 	if first.Scope() != StreamScope || second.Scope() != StreamScope || first.Len() != second.Len() || parseCalls != 2 {
 		t.Fatalf("deterministic Parse = %#v/%#v calls=%d", first, second, parseCalls)
 	}
-	marshalled, _, err := resolver.Marshal(t.Context(), slot, "block", first)
+	marshalled, _, err := resolver.Marshal(t.Context(), slot, "block", MustAvailable(first))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestResolverReportsBindingAndEncodingFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "block", document); !hasMetadataDiagnostic(err, "metadata.marshal") {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "block", MustAvailable(document)); !hasMetadataDiagnostic(err, "metadata.marshal") {
 		t.Fatalf("marshal diagnostic = %v", err)
 	}
 

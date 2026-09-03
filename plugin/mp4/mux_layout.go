@@ -19,11 +19,11 @@ import (
 // other box is either copied verbatim or resized in place, and the fields that
 // record a byte offset or a derived duration are patched afterwards.
 type muxLayout struct {
-	pieces   []muxPiece
-	tracks   []muxTrack
-	document metadata.Document
-	rewrite  muxIlstRewrite
-	reports  []loss.Report
+	pieces     []muxPiece
+	tracks     []muxTrack
+	attachment metadata.Attachment
+	rewrite    muxIlstRewrite
+	reports    []loss.Report
 	// payload indexes the rebuilt mdat payload within pieces.
 	payload int
 	size    uint64
@@ -81,7 +81,7 @@ type muxPiece struct {
 }
 
 func (l muxLayout) valid() bool {
-	return len(l.tracks) != 0 && l.payload > 0 && l.payload < len(l.pieces) && l.pieces[l.payload].kind == muxPayload
+	return l.attachment.Valid() && len(l.tracks) != 0 && l.payload > 0 && l.payload < len(l.pieces) && l.pieces[l.payload].kind == muxPayload
 }
 
 func (l muxLayout) prefix() []muxPiece { return l.pieces[:l.payload] }
@@ -332,13 +332,13 @@ func (b *muxLayoutBuilder) build() (muxLayout, error) {
 		return muxLayout{}, err
 	}
 	result := muxLayout{
-		pieces:   b.pieces,
-		tracks:   b.tracks,
-		document: b.metadataPlan.document,
-		rewrite:  b.metadataPlan.rewrite,
-		reports:  append([]loss.Report(nil), b.metadataPlan.reports...),
-		payload:  b.payload,
-		size:     b.cursor,
+		pieces:     b.pieces,
+		tracks:     b.tracks,
+		attachment: b.metadataPlan.attachment,
+		rewrite:    b.metadataPlan.rewrite,
+		reports:    append([]loss.Report(nil), b.metadataPlan.reports...),
+		payload:    b.payload,
+		size:       b.cursor,
 	}
 	if !result.valid() || len(result.tracks) != len(b.order) {
 		return muxLayout{}, fmt.Errorf("%w: MP4 output layout is incomplete", ErrMalformed)

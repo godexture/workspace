@@ -1,10 +1,26 @@
 package wave
 
 import (
+	"errors"
 	"reflect"
 
 	"github.com/godexture/godec/media/metadata"
 )
+
+func waveSemanticDocument(value metadata.Attachment) (metadata.Document, error) {
+	document, err := value.Semantic()
+	if errors.Is(err, metadata.ErrMetadataAbsent) {
+		return metadata.Document{}, nil
+	}
+	return document, err
+}
+
+func (h header) metadataAttachment() metadata.Attachment {
+	if h.ranges.infoCount != 0 && h.metadata.Valid() && h.metadata.Scope() == metadata.StreamScope {
+		return metadata.MustAvailable(h.metadata)
+	}
+	return metadata.Absent()
+}
 
 func sameSemanticDocument(left, right metadata.Document) bool {
 	if left.Len() == 0 && right.Len() == 0 {

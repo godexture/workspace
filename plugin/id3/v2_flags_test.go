@@ -41,7 +41,7 @@ func TestV2DecodesTagAndFrameUnsynchronisationWithoutTouchingFrameHeaders(t *tes
 			if !ok || title != "A\u00ffB" {
 				t.Fatalf("unsynchronised title = %q/%v", title, ok)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 				t.Fatalf("unchanged unsynchronised tag = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 			}
@@ -67,7 +67,7 @@ func TestV2RejectsStatusAndGroupingFramesWhenEditing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := resolver.Marshal(t.Context(), slot, "head", edited); !errors.Is(err, errV2Unsupported) {
+		if _, _, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited)); !errors.Is(err, errV2Unsupported) {
 			t.Fatalf("flagged frame migration error = %v", err)
 		}
 	}

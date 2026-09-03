@@ -32,7 +32,11 @@ type positionedMuxChunk struct {
 	payload  []byte
 }
 
-func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document metadata.Document) (muxChunks, error) {
+func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, attachment metadata.Attachment) (muxChunks, error) {
+	document, err := waveSemanticDocument(attachment)
+	if err != nil {
+		return muxChunks{}, err
+	}
 	blocks := document.Blocks()
 	if !document.Scope().Valid() {
 		if document.Len() == 0 && len(blocks) == 0 {
@@ -72,7 +76,7 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			if block.Carrier() != RIFFInfo() {
 				return muxChunks{}, fmt.Errorf("%w: RIFF INFO chunk %s has incompatible carrier", ErrMalformed, block.ID())
 			}
-			value, blockLost, err := resolver.Marshal(ctx, RIFFInfo(), block.ID(), document)
+			value, blockLost, err := resolver.Marshal(ctx, RIFFInfo(), block.ID(), attachment)
 			if err != nil {
 				return muxChunks{}, err
 			}
@@ -128,8 +132,8 @@ func marshalMuxChunks(ctx context.Context, resolver metadata.Resolver, document 
 			return muxChunks{}, err
 		}
 	}
-	if document.Len() != 0 && !hasInfo {
-		value, lost, err := resolver.Marshal(ctx, RIFFInfo(), generatedInfoBlock, document)
+	if attachment.IsAvailable() && !hasInfo {
+		value, lost, err := resolver.Marshal(ctx, RIFFInfo(), generatedInfoBlock, attachment)
 		if err != nil {
 			return muxChunks{}, err
 		}

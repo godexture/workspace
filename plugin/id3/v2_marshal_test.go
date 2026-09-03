@@ -36,7 +36,7 @@ func TestV2FreshCanonicalizesTextDateQualifiersAndOrdinalPairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("fresh ID3v2 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -62,7 +62,7 @@ func TestV2OrdinalTotalsWithoutNumbersAreDropped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || encoded.Len() != 0 {
 		t.Fatalf("total-only ID3v2 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -96,7 +96,7 @@ func TestV2ReinsertsSafeOpaqueFrameAfterGroupedMultiValueText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("edited ID3v2 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -125,7 +125,7 @@ func TestV2RejectsUnsafeOrForeignOpaqueFramesDuringCanonicalization(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "head", edited); !errors.Is(err, errV2Unsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited)); !errors.Is(err, errV2Unsupported) {
 		t.Fatalf("unsafe opaque frame error = %v", err)
 	}
 	foreign := carrier.Define[v2ForeignCarrierID]()
@@ -136,7 +136,7 @@ func TestV2RejectsUnsafeOrForeignOpaqueFramesDuringCanonicalization(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "head", edited); !errors.Is(err, errV2Unsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited)); !errors.Is(err, errV2Unsupported) {
 		t.Fatalf("foreign opaque frame error = %v", err)
 	}
 }
@@ -152,7 +152,7 @@ func TestV2IgnoresForeignSourceBlocksDuringFreshMarshal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Contains(encoded.AppendTo(nil), []byte("TIT2")) {
 		t.Fatalf("foreign source fresh marshal = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -182,7 +182,7 @@ func TestV2CanonicalGroupsTextDateAndOrdinalValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("grouped canonical = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -215,7 +215,7 @@ func TestV2EditGroupsRepeatedSourceTextFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("group repeated source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -241,7 +241,7 @@ func TestV2CanonicalFoldsCanonicalQualifiersAndDuplicatePictures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestV2CanonicalPictureGroupsAfterDescriptionSubstitution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || bytes.Count(encoded.AppendTo(nil), []byte("APIC")) != 1 {
 		t.Fatalf("canonical picture = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}

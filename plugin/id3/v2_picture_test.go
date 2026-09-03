@@ -50,7 +50,7 @@ func TestV2ParsesAPICAndPICWithImmutableImagePayload(t *testing.T) {
 			if !ok || picture.MediaType != test.mediaType || picture.Type != test.pictureType || picture.Description != test.description || picture.Data.Len() != len(image) || !bytes.Equal(picture.Data.AppendTo(nil), image) {
 				t.Fatalf("picture = %#v/%v", picture, ok)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 				t.Fatalf("unchanged picture = %d bytes, reports %#v, error %v", encoded.Len(), reports, err)
 			}
@@ -70,7 +70,7 @@ func TestV2CanonicalizesPictureAndReportsUnrepresentableDimensions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || !bytes.Contains(encoded.AppendTo(nil), []byte("APIC")) {
 		t.Fatalf("canonical picture = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -128,7 +128,7 @@ func TestV2EditingSourceRewritesAPICAsCanonicalV24(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("edited APIC = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -155,7 +155,7 @@ func TestV2UnsynchronisedAPICDecodesImageBytes(t *testing.T) {
 		if !ok || !bytes.Equal(picture.Data.AppendTo(nil), []byte{0xff, 0}) {
 			t.Fatalf("unsynchronised APIC = %#v/%v", picture, ok)
 		}
-		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 		if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 			t.Fatalf("unchanged unsynchronised APIC = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 		}
@@ -180,7 +180,7 @@ func TestV2DropsFreshPictureWithNonMIMEOrReservedType(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 		if err != nil || encoded.Len() != 0 || len(reports) != 1 || reports[0].Loss.Kind != loss.Dropped {
 			t.Fatalf("invalid fresh picture = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 		}
@@ -199,7 +199,7 @@ func TestV2FreshLargeAPICUsesSyncSafeFrameSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("large APIC marshal reports %#v, error %v", reports, err)
 	}
@@ -245,7 +245,7 @@ func BenchmarkV2MarshalLargeAPIC(b *testing.B) {
 	b.SetBytes(int64(len(image)))
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, _, err := resolver.Marshal(b.Context(), slot, "head", document); err != nil {
+		if _, _, err := resolver.Marshal(b.Context(), slot, "head", metadata.MustAvailable(document)); err != nil {
 			b.Fatal(err)
 		}
 	}

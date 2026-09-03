@@ -33,7 +33,7 @@ type Descriptor struct {
 	schema     schema.Descriptor
 	timeBase   timing.Base
 	properties property.Set
-	metadata   metadata.Document
+	metadata   metadata.Attachment
 }
 
 func NewDescriptor(id ID, descriptor schema.Descriptor, timeBase timing.Base, properties property.Set) (Descriptor, error) {
@@ -56,7 +56,8 @@ func MustDescriptor(id ID, schemaDescriptor schema.Descriptor, timeBase timing.B
 
 func (d Descriptor) Valid() bool {
 	return !d.id.IsZero() && d.schema.Valid() &&
-		((d.schema.HasTime() && d.timeBase.Valid()) || (!d.schema.HasTime() && d.timeBase == (timing.Base{})))
+		((d.schema.HasTime() && d.timeBase.Valid()) || (!d.schema.HasTime() && d.timeBase == (timing.Base{}))) &&
+		d.metadata.Valid()
 }
 func (d Descriptor) ID() ID                              { return d.id }
 func (d Descriptor) Schema() schema.ID                   { return d.schema.Identity() }
@@ -65,14 +66,13 @@ func (d Descriptor) HasTimeline() bool                   { return d.schema.HasTi
 func (d Descriptor) TimeBase() timing.Base               { return d.timeBase }
 func (d Descriptor) Properties() property.Set            { return d.properties }
 
-// Metadata returns the static document describing this stream. It is empty
-// when the source carried none. Metadata that varies over time belongs in a
-// typed event stream, not here.
-func (d Descriptor) Metadata() metadata.Document { return d.metadata }
+// Metadata returns the static metadata state describing this stream.
+// Metadata that varies over time belongs in a typed event stream, not here.
+func (d Descriptor) Metadata() metadata.Attachment { return d.metadata }
 
-// WithMetadata returns a copy carrying document. The receiver is unchanged, so
+// WithMetadata returns a copy carrying metadata state. The receiver is unchanged, so
 // a descriptor handed to a component cannot gain metadata behind its back.
-func (d Descriptor) WithMetadata(document metadata.Document) Descriptor {
-	d.metadata = document
+func (d Descriptor) WithMetadata(value metadata.Attachment) Descriptor {
+	d.metadata = value
 	return d
 }

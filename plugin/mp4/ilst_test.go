@@ -56,7 +56,7 @@ func TestIlstParsesSemanticsAndPreservesSource(t *testing.T) {
 	if len(pictures) != 2 || pictures[0].MediaType != "image/jpeg" || !bytes.Equal(pictures[0].Data.AppendTo(nil), []byte{1, 2}) || pictures[1].MediaType != "image/png" || !bytes.Equal(pictures[1].Data.AppendTo(nil), []byte{3, 4}) {
 		t.Fatalf("pictures = %#v", pictures)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -82,7 +82,7 @@ func TestIlstSourceReuseIgnoresForeignSourceAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || encoded != sourcePayload {
 		t.Fatalf("source reuse with foreign anchor = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -108,7 +108,7 @@ func TestIlstSourceReuseRejectsOwnedMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || encoded.Equal(sourcePayload) {
 		t.Fatalf("owned opaque mutation reused source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -143,7 +143,7 @@ func TestIlstSourceReuseRejectsSourceMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || encoded.Equal(mutatedPayload) {
 		t.Fatalf("source mutation reused source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -219,7 +219,7 @@ func TestIlstParsesLargeDataAtom(t *testing.T) {
 	if title, ok := metadata.First(document, tag.Title()); !ok || title != "large" {
 		t.Fatalf("large data title = %q/%v", title, ok)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !encoded.Equal(metadata.NewBlob(ilstMediaType, payload)) {
 		t.Fatalf("large data source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -271,7 +271,7 @@ func TestIlstCanonicalOrdinalAndPictureLosses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 2 || reports[0].Loss.Kind != loss.Truncated || reports[1].Loss.Kind != loss.Folded {
 		t.Fatalf("canonical reports %#v, error %v", reports, err)
 	}
@@ -314,7 +314,7 @@ func TestIlstRewriteRetainsOpaquePositionAndUnchangedKnownItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("rewrite reports %#v, error %v", reports, err)
 	}
@@ -364,7 +364,7 @@ func TestIlstRetainsUnrepresentableItemsOpaque(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", edited)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(edited))
 			if err != nil || len(reports) != 0 {
 				t.Fatalf("opaque rewrite reports %#v, error %v", reports, err)
 			}
@@ -400,7 +400,7 @@ func TestIlstRetainsUnknownItemsWithoutDecodingTheirPayload(t *testing.T) {
 			if document.Len() != 0 || len(document.Blocks()) != 2 {
 				t.Fatalf("unknown item document = %#v", document)
 			}
-			unchanged, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+			unchanged, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(unchanged.AppendTo(nil), item) {
 				t.Fatalf("unknown source roundtrip = %x, reports %#v, error %v", unchanged.AppendTo(nil), reports, err)
 			}
@@ -410,7 +410,7 @@ func TestIlstRetainsUnknownItemsWithoutDecodingTheirPayload(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", edited)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(edited))
 			if err != nil || len(reports) != 0 {
 				t.Fatalf("unknown rewrite reports %#v, error %v", reports, err)
 			}
@@ -437,7 +437,7 @@ func TestIlstTreatsEmptyCoverAsOpaqueAndDropsFreshValue(t *testing.T) {
 	if _, ok := metadata.First(document, tag.Picture()); ok || document.Len() != 0 || len(document.Blocks()) != 2 {
 		t.Fatalf("empty covr document = %#v", document)
 	}
-	unchanged, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	unchanged, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(unchanged.AppendTo(nil), item) {
 		t.Fatalf("empty covr source roundtrip = %x, reports %#v, error %v", unchanged.AppendTo(nil), reports, err)
 	}
@@ -447,7 +447,7 @@ func TestIlstTreatsEmptyCoverAsOpaqueAndDropsFreshValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 || !bytes.HasPrefix(encoded.AppendTo(nil), item) {
 		t.Fatalf("empty covr rewrite = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -458,7 +458,7 @@ func TestIlstTreatsEmptyCoverAsOpaqueAndDropsFreshValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", fresh)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(fresh))
 	if err != nil || encoded.Len() != 0 || len(reports) != 1 || reports[0].Loss.Kind != loss.Dropped || reports[0].Loss.Detail != "mp4.ilst.picture-unrepresentable" {
 		t.Fatalf("empty fresh covr = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -488,7 +488,7 @@ func TestIlstFoldsDuplicateTextAndOrdinalValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 1 || reports[0].Loss.Kind != loss.Folded || reports[0].Loss.Key != tag.Title().ID() {
 		t.Fatalf("text fold reports %#v, error %v", reports, err)
 	}
@@ -506,7 +506,7 @@ func TestIlstFoldsDuplicateTextAndOrdinalValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", ordinals)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(ordinals))
 	if err != nil || len(reports) != 2 || reports[0].Loss.Kind != loss.Folded || reports[1].Loss.Kind != loss.Dropped {
 		t.Fatalf("ordinal reports %#v, error %v", reports, err)
 	}
@@ -544,7 +544,7 @@ func TestIlstRejectsMalformedAndUnsafeRaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", document); !errors.Is(err, ErrUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("semantic raw injection error = %v", err)
 	}
 }
@@ -556,7 +556,7 @@ func TestIlstForeignBlocksAndEmptyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", empty)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(empty))
 	if err != nil || encoded.Len() != 0 || len(reports) != 0 {
 		t.Fatalf("empty ilst = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -568,7 +568,7 @@ func TestIlstForeignBlocksAndEmptyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", document); !errors.Is(err, ErrUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("foreign opaque error = %v", err)
 	}
 	builder = metadata.NewBuilder(metadata.AssetScope)
@@ -578,7 +578,7 @@ func TestIlstForeignBlocksAndEmptyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", document)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || encoded.Len() == 0 {
 		t.Fatalf("foreign source error = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -589,7 +589,7 @@ func TestIlstForeignBlocksAndEmptyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", document); !errors.Is(err, ErrUnsupported) {
+	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("foreign opaque with source error = %v, want unsupported", err)
 	}
 }
@@ -604,7 +604,7 @@ func FuzzIlstAcceptedSourceRoundTrip(f *testing.F) {
 		if err != nil {
 			return
 		}
-		encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+		encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", metadata.MustAvailable(document))
 		if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 			t.Fatalf("accepted source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 		}

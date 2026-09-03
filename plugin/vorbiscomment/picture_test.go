@@ -32,7 +32,7 @@ func TestPictureFieldClosureAndEmptyMIMEConvention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("picture marshal reports %#v, error %v", reports, err)
 	}
@@ -63,7 +63,7 @@ func TestPictureFieldClosureAndEmptyMIMEConvention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "comment", edited)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("empty MIME rewrite reports %#v, error %v", reports, err)
 	}
@@ -118,7 +118,7 @@ func TestPictureKeepsInvalidFileIconAsSafeOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || encoded.Len() == 0 || len(reports) != 1 || reports[0].Loss.Kind != loss.Dropped {
 		t.Fatalf("invalid icon = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -165,7 +165,7 @@ func TestPictureDropsInvalidFreshMediaType(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+		encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 		if err != nil || len(reports) != 1 || reports[0].Loss.Kind != loss.Dropped {
 			t.Fatalf("invalid fresh MIME %q = %x, reports %#v, error %v", mediaType, encoded.AppendTo(nil), reports, err)
 		}
@@ -208,7 +208,7 @@ func testSafeOpaquePicture(t testing.TB, resolver metadata.Resolver, slot carrie
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", edited)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("safe opaque rewrite reports %#v, error %v", reports, err)
 	}
@@ -234,7 +234,7 @@ func TestPictureUniqueIconsFoldButOtherPicturesDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 2 || reports[0].Loss.Kind != loss.Folded || reports[1].Loss.Kind != loss.Folded {
 		t.Fatalf("picture fold reports %#v, error %v", reports, err)
 	}
@@ -270,7 +270,7 @@ func TestPictureLargeClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "comment", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("large picture marshal reports %#v, error %v", reports, err)
 	}
@@ -298,7 +298,7 @@ func BenchmarkMarshalLargePicture(b *testing.B) {
 	b.SetBytes(int64(len(image)))
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, _, err := resolver.Marshal(b.Context(), slot, "comment", document); err != nil {
+		if _, _, err := resolver.Marshal(b.Context(), slot, "comment", metadata.MustAvailable(document)); err != nil {
 			b.Fatal(err)
 		}
 	}
