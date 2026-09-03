@@ -130,6 +130,14 @@ type Document struct {
 	identity *documentIdentity
 }
 
+var (
+	// ErrInvalidDocument identifies a zero or otherwise invalid Document.
+	ErrInvalidDocument = errors.New("metadata document is invalid")
+	// ErrMetadataOpaque identifies a Document whose opaque blocks cannot be
+	// detached without losing source bytes.
+	ErrMetadataOpaque = errors.New("metadata document contains opaque blocks")
+)
+
 // documentIdentity is intentionally private. It lets owners recognize that
 // several descriptors carry the same immutable document without exposing a
 // public equality contract for semantic values.
@@ -160,6 +168,26 @@ func (d Document) Blocks() []RawBlock { return append([]RawBlock(nil), d.blocks.
 // BlockCount reports the number of source and opaque blocks without exposing
 // the document's backing slice.
 func (d Document) BlockCount() int { return len(d.blocks) }
+
+// DetachSource returns a semantic-only copy of d. Source origins and source
+// blocks are omitted, while entry values retain their immutable key-defined
+// snapshots. An opaque block makes detachment unsafe and is rejected so an
+// owner cannot silently lose bytes it does not understand.
+func (d Document) DetachSource() (Document, error) {
+	if !d.Valid() {
+		return Document{}, ErrInvalidDocument
+	}
+	for _, block := range d.blocks {
+		if !block.Source() {
+			return Document{}, ErrMetadataOpaque
+		}
+	}
+	builder := NewBuilder(d.scope)
+	for _, entry := range d.entries {
+		builder.entries = append(builder.entries, Entry{declaration: entry.declaration, value: entry.value})
+	}
+	return builder.Build()
+}
 
 // Block returns one source or opaque block by identity.
 func (d Document) Block(id BlockID) (RawBlock, bool) {

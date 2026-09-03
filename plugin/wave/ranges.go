@@ -31,7 +31,7 @@ type sourceRanges struct {
 	trailer      sourceRange
 	info         sourceRange
 	infoAnchor   chunkAnchor
-	infoCount    uint8
+	infoCount    uint64
 	// infoLayout is retained only while infoCount is one; repeated INFO
 	// carriers deliberately clear it so a semantic edit cannot pick one
 	// source carrier arbitrarily.
@@ -88,5 +88,23 @@ func (r sourceRanges) rangeFor(anchor chunkAnchor) sourceRange {
 		return r.trailer
 	default:
 		return sourceRange{}
+	}
+}
+
+func (r *sourceRanges) addInfo(value sourceRange, anchor chunkAnchor) {
+	if r == nil {
+		return
+	}
+	switch r.infoCount {
+	case 0:
+		r.info = value
+		r.infoAnchor = anchor
+	case 1:
+		r.info = sourceRange{}
+		r.infoAnchor = 0
+		r.infoLayout = infoRewriteLayout{}
+	}
+	if r.infoCount != math.MaxUint64 {
+		r.infoCount++
 	}
 }

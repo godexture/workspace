@@ -55,7 +55,7 @@ type header struct {
 	rf64        bool
 	codecTag    format.Tag
 	geometry    blockGeometry
-	metadata    metadata.Document
+	metadata    metadata.Attachment
 	ranges      sourceRanges
 	// infoMemoryLimit is handed off by Inspect for a source-aware INFO
 	// rewrite. It is immutable after inspection and is deliberately separate
@@ -64,7 +64,7 @@ type header struct {
 }
 
 func (h header) valid() bool {
-	return h.signal.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid()
+	return h.signal.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid() && h.metadata.Valid()
 }
 
 // linear reports whether the stream stores its samples one scalar each, which

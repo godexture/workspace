@@ -20,6 +20,7 @@ var resolverKey = plugin.TraitKeyOf[resolverTraitKey]()
 type resolvedEncoding struct {
 	identity plugin.Identity
 	value    Encoding
+	traits   map[string]struct{}
 }
 
 type resolverState struct {
@@ -27,8 +28,9 @@ type resolverState struct {
 	mappings []Mapping
 }
 
-// Resolver exposes only carrier Parse/Marshal operations selected by Host
-// composition. It does not expose components, declarations, or the catalog.
+// Resolver exposes only carrier binding probes and Parse/Marshal operations
+// selected by Host composition. It does not expose components, declarations,
+// or the catalog.
 type Resolver struct{ state *resolverState }
 
 // NewResolver snapshots carrier-to-component resolutions and semantic mapping
@@ -40,7 +42,12 @@ func NewResolver(components map[carrier.ID]plugin.Component, mappings []Mapping)
 		if !slot.Valid() || component.Identity().IsZero() || !ok || !value.Valid() {
 			return Resolver{}, ErrInvalidResolver
 		}
-		bindings[slot] = resolvedEncoding{identity: component.Identity(), value: value}
+		traitDescriptors := component.Traits()
+		traits := make(map[string]struct{}, len(traitDescriptors))
+		for _, trait := range traitDescriptors {
+			traits[trait.Key] = struct{}{}
+		}
+		bindings[slot] = resolvedEncoding{identity: component.Identity(), value: value, traits: traits}
 	}
 	if err := validateResolverMappings(mappings); err != nil {
 		return Resolver{}, ErrInvalidResolver
@@ -51,6 +58,32 @@ func NewResolver(components map[carrier.ID]plugin.Component, mappings []Mapping)
 }
 
 func (r Resolver) Valid() bool { return r.state != nil }
+
+// HasBinding reports whether an encoding is bound to slot. It is a read-only
+// composition probe for format owners that must classify a present carrier
+// before asking its encoding to parse the payload; it does not invoke Parse.
+func (r Resolver) HasBinding(slot carrier.ID) bool {
+	if !r.Valid() || !slot.Valid() {
+		return false
+	}
+	_, ok := r.state.bindings[slot]
+	return ok
+}
+
+// BindingHasTrait reports whether the encoding bound to slot declares trait.
+// Only trait presence is retained; the live trait value never crosses the
+// resolver's composition boundary.
+func (r Resolver) BindingHasTrait(slot carrier.ID, trait plugin.TraitKey) bool {
+	if !r.Valid() || !slot.Valid() || !trait.Valid() {
+		return false
+	}
+	value, ok := r.state.bindings[slot]
+	if !ok {
+		return false
+	}
+	_, ok = value.traits[trait.String()]
+	return ok
+}
 
 func (r Resolver) Parse(ctx context.Context, slot carrier.ID, block BlockID, scope Scope, payload Blob) (Document, error) {
 	resolved, err := r.lookup(slot)

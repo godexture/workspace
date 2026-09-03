@@ -6,7 +6,6 @@ import (
 	"math"
 
 	"github.com/godexture/godec/media/buffer"
-	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
 )
 
@@ -28,9 +27,8 @@ type muxHeader struct {
 	dataOffset     int64
 	// factOffset is where the sample count goes, or zero when the output has
 	// no sample-count chunk.
-	factOffset   int64
-	blockAlign   uint64
-	infoDocument metadata.Document
+	factOffset int64
+	blockAlign uint64
 }
 
 type sourceReplacement struct {
@@ -94,7 +92,6 @@ func newRangeMuxHeader(codec waveCodec, signal sample.Signal, geometry blockGeom
 		dataOffset:     int64(dataOffset),
 		factOffset:     factSlotInDataTag(int64(dataOffset), dataTag),
 		blockAlign:     uint64(blockAlign),
-		infoDocument:   inspected.metadata,
 	}, nil
 }
 

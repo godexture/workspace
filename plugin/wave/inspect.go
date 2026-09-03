@@ -106,6 +106,7 @@ func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSi
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
 	var infoMemoryUsed uint64
+	allInfoComplete := true
 	offset := uint64(12)
 	for {
 		if err := context.Cause(ctx); err != nil {
@@ -248,8 +249,12 @@ func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSi
 						return header{}, fmt.Errorf("%w: WAVE LIST/INFO carriers need %d bytes with %d available", ErrUnsupported, value.length, remaining)
 					}
 					infoMemoryUsed += value.length
-					if err := inspectInfoSemantic(ctx, reader, resolver, document, &result.ranges, value, anchor); err != nil {
+					complete, err := inspectInfoSemantic(ctx, reader, resolver, document, &result.ranges, value, anchor)
+					if err != nil {
 						return header{}, err
+					}
+					if !complete {
+						allInfoComplete = false
 					}
 				}
 			}
@@ -272,7 +277,14 @@ func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSi
 	if err != nil {
 		return header{}, fmt.Errorf("%w: WAVE metadata document: %w", ErrMalformed, err)
 	}
-	result.metadata = parsed
+	switch {
+	case result.ranges.infoCount == 0:
+		result.metadata = metadata.Absent()
+	case allInfoComplete:
+		result.metadata = metadata.MustAvailable(parsed)
+	default:
+		result.metadata = metadata.MustUnavailable(metadata.StreamScope)
+	}
 	if !result.valid() {
 		return header{}, fmt.Errorf("%w: PCM description and data block disagree", ErrMalformed)
 	}
@@ -311,46 +323,88 @@ func readListSubtype(ctx context.Context, reader access.Random, value sourceRang
 	return string(subtype[:]), nil
 }
 
-func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, ranges *sourceRanges, value sourceRange, anchor chunkAnchor) error {
+func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, ranges *sourceRanges, value sourceRange, anchor chunkAnchor) (bool, error) {
+	if err := context.Cause(ctx); err != nil {
+		return false, err
+	}
+	block := newChunkBlockID(value.offset, anchor, chunkInfo)
+	if !resolver.HasBinding(RIFFInfo()) {
+		// Probe the resolver before allocating the carrier. lookup is what emits
+		// the stable structured binding-missing diagnostic.
+		_, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("", nil))
+		if err == nil {
+			return false, fmt.Errorf("%w: WAVE INFO binding probe unexpectedly succeeded", ErrUnsupported)
+		}
+		if cause := context.Cause(ctx); cause != nil {
+			return false, cause
+		}
+		return false, err
+	}
 	if value.length > uint64(math.MaxInt) || value.offset > math.MaxInt64 {
-		return fmt.Errorf("%w: LIST/INFO carrier exceeds runtime address space", ErrUnsupported)
+		return false, fmt.Errorf("%w: LIST/INFO carrier exceeds runtime address space", ErrUnsupported)
 	}
 	raw := make([]byte, int(value.length))
 	if err := access.ReadFullAt(ctx, reader, raw, int64(value.offset)); err != nil {
 		if errors.Is(err, errInspectReadBudget) {
-			return err
+			return false, err
 		}
-		return fmt.Errorf("%w: LIST/INFO carrier at %d: %w", ErrMalformed, value.offset, err)
+		return false, fmt.Errorf("%w: LIST/INFO carrier at %d: %w", ErrMalformed, value.offset, err)
 	}
-	// LIST is a generic RIFF carrier. Only its INFO subtype contributes
-	// semantic metadata; every other subtype remains an opaque source range.
+	if len(raw) < 12 {
+		return false, fmt.Errorf("%w: LIST/INFO carrier is shorter than its type", ErrMalformed)
+	}
+	// The caller already checked the LIST subtype; repeat it after the full read
+	// so a source that changes between reads cannot be parsed as another carrier.
 	if string(raw[8:12]) != tagINFO {
-		return nil
+		return false, nil
 	}
-	block := newChunkBlockID(value.offset, anchor, chunkInfo)
-	// Resolver.Parse is the binding/encoding validation boundary. Its result
-	// is deliberately discarded because it contains source-backed Blobs.
-	if _, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw)); err != nil {
-		return err
-	}
-	semantic, layout, err := parseInfoSemanticLayout(raw)
+	ranges.addInfo(value, anchor)
+	// Resolver.Parse is the semantic authority. Its source and opaque blocks
+	// are detached below after the binding has validated the returned scope.
+	parsed, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw))
 	if err != nil {
-		return err
+		if cause := context.Cause(ctx); cause != nil {
+			return false, cause
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
+		return false, nil
 	}
-	if ranges.infoCount < 2 {
-		ranges.infoCount++
+	if err := context.Cause(ctx); err != nil {
+		return false, err
 	}
-	if ranges.infoCount == 1 {
-		ranges.info = value
-		ranges.infoAnchor = anchor
-		ranges.infoLayout = layout
-	} else {
-		ranges.info = sourceRange{}
-		ranges.infoAnchor = 0
-		ranges.infoLayout = infoRewriteLayout{}
+	semantic, err := parsed.DetachSource()
+	if err != nil {
+		if errors.Is(err, metadata.ErrMetadataOpaque) {
+			return false, nil
+		}
+		return false, fmt.Errorf("%w: WAVE INFO semantic document: %w", ErrMalformed, err)
+	}
+	if resolver.BindingHasTrait(RIFFInfo(), infoRewriteTrait) && hasInfoSourceRoot(parsed, block) {
+		layout, complete, layoutErr := inspectInfoRewriteLayout(ctx, raw)
+		if layoutErr != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return false, cause
+			}
+			if !errors.Is(layoutErr, ErrMalformed) {
+				return false, layoutErr
+			}
+			complete = false
+		}
+		if complete && layoutErr == nil && validateInfoRewrite(semantic, semantic, layout) == nil && ranges.infoCount == 1 {
+			ranges.infoLayout = layout
+		}
+		builder.Append(semantic)
+		return true, nil
 	}
 	builder.Append(semantic)
-	return nil
+	return true, nil
+}
+
+func hasInfoSourceRoot(document metadata.Document, block metadata.BlockID) bool {
+	root, ok := document.Block(block)
+	return ok && root.Source() && root.Carrier() == RIFFInfo() && root.Encoding() == InfoEncodingIdentity()
 }
 
 // validateSourceEnd rejects a RIFF chunk that claims more than the source

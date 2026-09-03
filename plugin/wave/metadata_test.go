@@ -33,8 +33,162 @@ type cancelInfoContextKey struct{}
 type rewriteLabelKeyID struct{}
 type foreignMetadataCarrierID struct{}
 type foreignMetadataEncodingID struct{}
+type failingInfoID struct{}
+type customInfoID struct{}
+type customOpaqueInfoID struct{}
+type customInfoKeyID struct{}
 
 var rewriteLabel = key.Define[rewriteLabelKeyID, string]()
+var customInfoKey = key.Define[customInfoKeyID, string]()
+var errFailingInfoParse = errors.New("test INFO parser failure")
+
+func failingInfoComponent() plugin.Component {
+	return plugin.NewComponent[failingInfoID](
+		plugin.Descriptor{DisplayName: "failing RIFF INFO metadata encoding"},
+		configurationSchema(),
+		metadata.WithEncoding(
+			func(metadata.ParseContext) (metadata.Document, error) {
+				return metadata.Document{}, errFailingInfoParse
+			},
+			func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+				return metadata.NewBlob("application/octet-stream", []byte("ok")), nil, nil
+			},
+			tag.Title().Erased(),
+		),
+	)
+}
+
+func customInfoComponent() plugin.Component {
+	return customInfoComponentWithCounter(nil)
+}
+
+func customInfoComponentWithCounter(marshalCalls *int) plugin.Component {
+	return plugin.NewComponent[customInfoID](
+		plugin.Descriptor{DisplayName: "custom RIFF INFO metadata encoding"},
+		configurationSchema(),
+		metadata.WithEncoding(
+			func(ctx metadata.ParseContext) (metadata.Document, error) {
+				if _, err := infoPayload(ctx.Payload().AppendTo(nil)); err != nil {
+					return metadata.Document{}, err
+				}
+				builder := metadata.NewBuilder(ctx.Scope())
+				builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+				metadata.Add(builder, customInfoKey, "custom XTRA", metadata.Origin{
+					Encoding: ctx.Encoding(), Carrier: ctx.Carrier(), Block: ctx.Block(), Native: "XTRA",
+				})
+				return builder.Build()
+			},
+			func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+				if marshalCalls != nil {
+					(*marshalCalls)++
+				}
+				var fields []byte
+				for _, entry := range ctx.Document().Entries() {
+					if entry.Key() != customInfoKey.ID() {
+						continue
+					}
+					value, ok := entry.Value().(string)
+					if !ok {
+						return metadata.Blob{}, nil, fmt.Errorf("custom RIFF INFO value has type %T", entry.Value())
+					}
+					field, err := marshalInfoChunk("XTRA", append([]byte(value), 0))
+					if err != nil {
+						return metadata.Blob{}, nil, err
+					}
+					fields = append(fields, field...)
+				}
+				payload := append([]byte(tagINFO), fields...)
+				value, err := marshalInfoChunk(tagLIST, payload)
+				if err != nil {
+					return metadata.Blob{}, nil, err
+				}
+				return metadata.NewBlob("application/x-riff-info", value), nil, nil
+			},
+			customInfoKey.Erased(),
+		),
+	)
+}
+
+func customOpaqueInfoComponent() plugin.Component {
+	return plugin.NewComponent[customOpaqueInfoID](
+		plugin.Descriptor{DisplayName: "opaque custom RIFF INFO metadata encoding"},
+		configurationSchema(),
+		metadata.WithEncoding(
+			func(ctx metadata.ParseContext) (metadata.Document, error) {
+				if _, err := infoPayload(ctx.Payload().AppendTo(nil)); err != nil {
+					return metadata.Document{}, err
+				}
+				builder := metadata.NewBuilder(ctx.Scope())
+				builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+				builder.AddBlock(metadata.NewRawBlock(metadata.BlockID(string(ctx.Block())+"/opaque"), ctx.Carrier(), ctx.Encoding(), metadata.NewBlob("application/octet-stream", []byte("opaque"))))
+				metadata.Add(builder, customInfoKey, "opaque custom", metadata.Origin{
+					Encoding: ctx.Encoding(), Carrier: ctx.Carrier(), Block: ctx.Block(), Native: "XTRA",
+				})
+				return builder.Build()
+			},
+			func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+				value, err := marshalInfoChunk(tagLIST, []byte(tagINFO))
+				if err != nil {
+					return metadata.Blob{}, nil, err
+				}
+				return metadata.NewBlob("application/x-riff-info", value), nil, nil
+			},
+			customInfoKey.Erased(),
+		),
+	)
+}
+
+func identityReplacementInfoComponent() plugin.Component {
+	return plugin.NewComponent[infoID](
+		plugin.Descriptor{DisplayName: "replacement RIFF INFO metadata encoding"},
+		configurationSchema(),
+		metadata.WithEncoding(parseInfo, marshalInfo, infoSupportedKeys()...),
+	)
+}
+
+func mustWaveMetadata(t testing.TB, attachment metadata.Attachment) metadata.Document {
+	t.Helper()
+	document, err := attachment.Semantic()
+	if err != nil {
+		t.Fatalf("WAVE metadata attachment %s has no semantic document: %v", attachment.State(), err)
+	}
+	return document
+}
+
+func mustEmptyStream(t testing.TB) metadata.Document {
+	t.Helper()
+	document, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func TestInspectRIFFInfoAvailabilityStates(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		chunks [][]byte
+		want   metadata.Availability
+	}{
+		{name: "no INFO", want: metadata.AttachmentAbsent},
+		{name: "non-INFO LIST", chunks: [][]byte{waveTestChunk(t, tagLIST, []byte("adtl"), 0)}, want: metadata.AttachmentAbsent},
+		{name: "empty INFO", chunks: [][]byte{infoTestList(t)}, want: metadata.AttachmentAvailable},
+		{name: "known INFO", chunks: [][]byte{infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0))}, want: metadata.AttachmentAvailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			chunks := append([][]byte(nil), test.chunks...)
+			chunks = append(chunks, waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0))
+			chunks = append(chunks, waveTestChunk(t, tagDATA, []byte{1, 2}, 0))
+			inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(waveTestRIFF(t, chunks...)), infoTestResolver(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := inspected.metadata.State(); got != test.want {
+				t.Fatalf("RIFF INFO metadata state = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
 
 func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	beforeFormat := waveTestChunk(t, "JUNK", []byte{1, 2, 3}, 0x91)
@@ -49,12 +203,11 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if title, ok := metadata.First(inspected.metadata, tag.Title()); !ok || title != "Song" {
-		t.Fatalf("WAVE title = %q/%v", title, ok)
+	if !inspected.metadata.IsUnavailable() {
+		t.Fatalf("WAVE unknown INFO metadata state = %s, want unavailable", inspected.metadata.State())
 	}
-	blocks := inspected.metadata.Blocks()
-	if len(blocks) != 0 {
-		t.Fatalf("WAVE inspection retained opaque blocks = %#v", blocks)
+	if _, err := inspected.metadata.Semantic(); !errors.Is(err, metadata.ErrMetadataUnavailable) {
+		t.Fatalf("WAVE unknown INFO semantic access = %v, want unavailable", err)
 	}
 	if got := sourceRangeBytes(t, value, inspected.ranges.beforeFormat); !bytes.Equal(got, beforeFormat) {
 		t.Fatalf("before-format range = %x, want %x", got, beforeFormat)
@@ -101,13 +254,344 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if !ok {
 		t.Fatal("WAVE demux output is absent")
 	}
-	outputMetadata, err := output.Metadata().Semantic()
+	if !output.Metadata().IsUnavailable() {
+		t.Fatalf("merged WAVE metadata state = %s, want unavailable", output.Metadata().State())
+	}
+}
+
+func TestInspectClassifiesIncompleteRIFFInfoAsUnavailable(t *testing.T) {
+	malformedField := append([]byte("XTRA\x04\x00\x00\x00"), 1, 2)
+	oversizedField := append([]byte("XTRA\xff\xff\xff\x7f"), 1)
+	trailingField := append(infoTestChunk(t, "INAM", []byte("Song\x00"), 0), 0x99)
+	for _, test := range []struct {
+		name  string
+		field []byte
+	}{
+		{name: "invalid known value", field: infoTestChunk(t, "ICRD", []byte("not-a-date\x00"), 0x62)},
+		{name: "unknown child", field: infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xcc)},
+		{name: "truncated child", field: malformedField},
+		{name: "oversized child", field: oversizedField},
+		{name: "trailing child bytes", field: trailingField},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := waveTestRIFF(t,
+				waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+				infoTestList(t, test.field),
+				waveTestChunk(t, tagDATA, []byte{1, 2}, 0),
+			)
+			inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(source), infoTestResolver(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !inspected.metadata.IsUnavailable() {
+				t.Fatalf("incomplete INFO metadata state = %s, want unavailable", inspected.metadata.State())
+			}
+			if _, err := inspected.metadata.Semantic(); !errors.Is(err, metadata.ErrMetadataUnavailable) {
+				t.Fatalf("incomplete INFO semantic access = %v, want unavailable", err)
+			}
+			if !inspected.ranges.info.valid() {
+				t.Fatal("incomplete INFO did not retain its source range")
+			}
+		})
+	}
+}
+
+func TestInspectClassifiesBindingParseFailureAsUnavailable(t *testing.T) {
+	source := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0)),
+		waveTestChunk(t, tagDATA, []byte{1, 2}, 0),
+	)
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): failingInfoComponent()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := outputMetadata.Entries()
-	if len(entries) != 2 || entries[0].Key() != tag.Comment().ID() || entries[1].Key() != tag.Title().ID() {
-		t.Fatalf("merged WAVE metadata order = %#v", entries)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(source), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsUnavailable() {
+		t.Fatalf("binding parse failure metadata state = %s, want unavailable", inspected.metadata.State())
+	}
+	if _, err := inspected.metadata.Semantic(); !errors.Is(err, metadata.ErrMetadataUnavailable) {
+		t.Fatalf("binding parse failure semantic access = %v, want unavailable", err)
+	}
+}
+
+func TestCustomRIFFInfoBindingPublishesParsedSemanticDocument(t *testing.T) {
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): customInfoComponent()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := infoTestList(t, infoTestChunk(t, "XTRA", []byte("custom XTRA\x00"), 0))
+	source := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		info,
+		waveTestChunk(t, tagDATA, []byte{1, 2}, 0),
+	)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(source), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsAvailable() || inspected.ranges.infoLayout.valid() {
+		t.Fatalf("custom INFO inspection state/layout = %s/%v", inspected.metadata.State(), inspected.ranges.infoLayout.valid())
+	}
+	document, err := inspected.metadata.Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := document.EntryAt(0)
+	if !ok || entry.Key() != customInfoKey.ID() || entry.Value() != "custom XTRA" || entry.Origin() != (metadata.Origin{}) {
+		t.Fatalf("custom semantic entry = %#v/%v", entry, ok)
+	}
+	parsed, err := resolver.Parse(t.Context(), RIFFInfo(), "custom", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", info))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, ok := parsed.Block("custom")
+	if !ok || !block.Source() || block.Carrier() != RIFFInfo() || block.Encoding() != customInfoComponent().Identity() {
+		t.Fatalf("custom source block = %#v/%v", block, ok)
+	}
+}
+
+func TestCustomRIFFInfoBindingExactRemuxAndInspectedEditGate(t *testing.T) {
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): customInfoComponent()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte{1, 2}
+	original := waveTestRIFF(t,
+		waveTestChunk(t, tagJUNK, bytes.Repeat([]byte{0x5a}, ds64PayloadSize), 0),
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		infoTestList(t, infoTestChunk(t, "XTRA", []byte("custom XTRA\x00"), 0)),
+		waveTestChunk(t, tagDATA, data, 0),
+	)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(original), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, component, err := compileWaveMuxMetadataStateWithResolver(t, inspected, inspected.metadata, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: mustBufferAllocator(t, int(compiled.Resources().Memory)), Source: rangeSourceOpening(t, &rangeSourceSession{data: original}),
+	}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, len(data))
+	handle, err := packetBuffers.FromBytes(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &item, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if err := mux.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, original) {
+		t.Fatalf("custom exact remux changed source: got %x, want %x", encoded, original)
+	}
+
+	document, err := inspected.metadata.Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err := metadata.Add(document.Edit(), customInfoKey, "edited", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := compileWaveMuxMetadataStateWithResolver(t, inspected, metadata.MustAvailable(edited), resolver); err == nil {
+		t.Fatal("custom inspected semantic edit unexpectedly compiled without rewrite layout")
+	}
+}
+
+func TestFreshCustomRIFFInfoBindingMarshalsAvailableDocument(t *testing.T) {
+	marshalCalls := 0
+	component := customInfoComponentWithCounter(&marshalCalls)
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): component}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), customInfoKey, "custom XTRA", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
+	properties, err := description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(metadata.MustAvailable(document))
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	muxComponent := muxerComponent()
+	muxResolved, err := muxComponent.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plugin.Compile(muxComponent, compileContext, muxResolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marshalCalls != 1 {
+		t.Fatalf("fresh custom Marshal calls = %d, want 1", marshalCalls)
+	}
+	operator, err := muxComponent.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{Buffers: mustBufferAllocator(t, wavePageSize*2)}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, 2)
+	handle, err := packetBuffers.FromBytes([]byte{1, 2}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &item, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if err := mux.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte("XTRA")) || !bytes.Contains(encoded, []byte("custom XTRA")) {
+		t.Fatalf("fresh custom INFO payload = %x", encoded)
+	}
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(encoded), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsAvailable() {
+		t.Fatalf("fresh custom INFO reinspection state = %s", inspected.metadata.State())
+	}
+	value, err := inspected.metadata.Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, ok := value.EntryAt(0); !ok || entry.Key() != customInfoKey.ID() {
+		t.Fatalf("fresh custom semantic entry = %#v/%v", entry, ok)
+	}
+}
+
+func TestCustomRIFFInfoOpaqueDocumentIsUnavailableAndOnlyExactHandoffWorks(t *testing.T) {
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): customOpaqueInfoComponent()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte{1, 2}
+	original := waveTestRIFF(t,
+		waveTestChunk(t, tagJUNK, bytes.Repeat([]byte{0x5a}, ds64PayloadSize), 0),
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		infoTestList(t, infoTestChunk(t, "XTRA", []byte("opaque custom\x00"), 0)),
+		waveTestChunk(t, tagDATA, data, 0),
+	)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(original), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsUnavailable() || !inspected.ranges.info.valid() {
+		t.Fatalf("opaque custom INFO state/range = %s/%v", inspected.metadata.State(), inspected.ranges.info.valid())
+	}
+	for _, attachment := range []metadata.Attachment{metadata.Absent(), metadata.MustAvailable(mustEmptyStream(t))} {
+		if _, _, err := compileWaveMuxMetadataStateWithResolver(t, inspected, attachment, resolver); err == nil {
+			t.Fatalf("opaque custom %s state mismatch unexpectedly compiled", attachment.State())
+		}
+	}
+	compiled, component, err := compileWaveMuxMetadataStateWithResolver(t, inspected, inspected.metadata, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: mustBufferAllocator(t, wavePageSize*2), Source: rangeSourceOpening(t, &rangeSourceSession{data: original}),
+	}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, len(data))
+	handle, err := packetBuffers.FromBytes(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &item, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if err := mux.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, original) {
+		t.Fatalf("opaque custom exact remux changed source: got %x, want %x", encoded, original)
+	}
+
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
+	properties, err := description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshInput := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(inspected.metadata)
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	muxComponent := muxerComponent()
+	muxResolved, err := muxComponent.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Compile(muxComponent, compileContext, muxResolved, flow.NewDescriptors(flow.Describe("packets", freshInput))); err == nil {
+		t.Fatal("fresh WAVE mux accepted unavailable custom metadata")
+	}
+}
+
+func TestSameIdentityRIFFInfoReplacementNeedsRewriteTrait(t *testing.T) {
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): identityReplacementInfoComponent()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := waveTestRIFF(t,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0)),
+		waveTestChunk(t, tagDATA, []byte{1, 2}, 0),
+	)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(source), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsAvailable() || inspected.ranges.infoLayout.valid() {
+		t.Fatalf("replacement INFO inspection state/layout = %s/%v", inspected.metadata.State(), inspected.ranges.infoLayout.valid())
+	}
+	document, err := inspected.metadata.Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err := metadata.Add(document.Edit(), tag.Title(), "Edited", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := compileWaveMuxMetadataStateWithResolver(t, inspected, metadata.MustAvailable(edited), resolver); err == nil {
+		t.Fatal("same-identity replacement unexpectedly enabled official rewrite layout")
 	}
 }
 
@@ -136,6 +620,9 @@ func TestWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	withEmptyInfo, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(waveTestRIFF(t, formatChunk, infoTestList(t), dataChunk)), infoTestResolver(t))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !withEmptyInfo.metadata.IsAvailable() {
+		t.Fatalf("empty INFO metadata state = %s, want available", withEmptyInfo.metadata.State())
 	}
 	if _, err := compileWaveMuxMetadataState(t, withEmptyInfo, metadata.Absent()); err == nil {
 		t.Fatalf("empty INFO with absent input error = %v", err)
@@ -168,6 +655,87 @@ func TestWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	}
 }
 
+func TestUnavailableWaveInspectionRemuxesExactSource(t *testing.T) {
+	reservation := waveTestChunk(t, tagJUNK, bytes.Repeat([]byte{0x5a}, ds64PayloadSize), 0)
+	unknown := infoTestChunk(t, "XTRA", []byte{4, 5, 6}, 0xa2)
+	data := []byte{7, 8}
+	original := waveTestRIFF(t,
+		reservation,
+		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
+		infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown),
+		waveTestChunk(t, tagDATA, data, 0),
+	)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(original), infoTestResolver(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspected.metadata.IsUnavailable() {
+		t.Fatalf("unavailable source state = %s", inspected.metadata.State())
+	}
+	emptyDocument, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attachment := range []metadata.Attachment{metadata.Absent(), metadata.MustAvailable(emptyDocument)} {
+		if _, err := compileWaveMuxMetadataState(t, inspected, attachment); err == nil {
+			t.Fatalf("unavailable source with %s input state compiled", attachment.State())
+		}
+	}
+	compiled, component, err := compileWaveMuxMetadataStateWithComponent(t, inspected, inspected.metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := component.Open(plugin.NewOpenContext(t.Context(), plugin.OpenServices{
+		Buffers: mustBufferAllocator(t, int(compiled.Resources().Memory)), Source: rangeSourceOpening(t, &rangeSourceSession{data: original}),
+	}), compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := operator.(*muxer)
+	packetBuffers := mustBufferAllocator(t, len(data))
+	handle, err := packetBuffers.FromBytes(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := flow.NewItem(packet.NewPacket(0, timing.UnknownPTS(), timing.UnknownDTS(), timing.UnknownDuration(), handle), codec.Packets(), &testDomain)
+	collector := &writeCollector{failAt: -1}
+	if err := mux.Process(t.Context(), &item, collector); err != nil {
+		t.Fatal(err)
+	}
+	if err := mux.Flush(t.Context(), collector); err != nil {
+		t.Fatal(err)
+	}
+	encoded := applyWrites(t, collector.items)
+	if err := mux.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, original) {
+		t.Fatalf("unavailable exact remux changed source: got %x, want %x", encoded, original)
+	}
+}
+
+func TestFreshWaveMuxRejectsUnavailableMetadata(t *testing.T) {
+	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
+	properties, err := description.Properties()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(metadata.MustUnavailable(metadata.StreamScope))
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), infoTestResolver(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	component := muxerComponent()
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	if err == nil {
+		t.Fatal("fresh unavailable metadata unexpectedly compiled")
+	}
+}
+
 func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	resolver := infoTestResolver(t)
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
@@ -183,7 +751,7 @@ func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 		name       string
 		attachment metadata.Attachment
 		wantInfo   bool
-		wantCount  uint8
+		wantCount  uint64
 	}{
 		{name: "absent", attachment: metadata.Absent()},
 		{name: "available empty", attachment: metadata.MustAvailable(emptyStream), wantInfo: true, wantCount: 1},
@@ -250,13 +818,17 @@ func compileWaveMuxMetadataState(t testing.TB, inspected header, attachment meta
 }
 
 func compileWaveMuxMetadataStateWithComponent(t testing.TB, inspected header, attachment metadata.Attachment) (plugin.Compilation, plugin.Component, error) {
+	return compileWaveMuxMetadataStateWithResolver(t, inspected, attachment, infoTestResolver(t))
+}
+
+func compileWaveMuxMetadataStateWithResolver(t testing.TB, inspected header, attachment metadata.Attachment, resolver metadata.Resolver) (plugin.Compilation, plugin.Component, error) {
 	t.Helper()
 	properties, err := inspected.description.Properties()
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(attachment)
-	context, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), infoTestResolver(t))
+	context, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +876,7 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(metadata.MustAvailable(inspected.metadata))
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, int64(inspected.description.Rate)), properties).WithMetadata(inspected.metadata)
 	component := muxerComponent()
 	resolved, err := component.Resolve(config.NewPatch())
 	if err != nil {
@@ -338,8 +910,7 @@ func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 
 func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.T) {
 	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
-	unknown := infoTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xa2)
-	infoChunk := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
+	infoChunk := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0))
 	data := []byte{7, 8}
 	original := waveTestRIFF(t, formatChunk, infoChunk, waveTestChunk(t, tagDATA, data, 0))
 	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): infoComponent()}, []metadata.Mapping{
@@ -353,7 +924,7 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 		t.Fatal(err)
 	}
 	expectedBlock := newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)
-	edited := inspected.metadata.Edit()
+	edited := mustWaveMetadata(t, inspected.metadata).Edit()
 	metadata.Add(edited, rewriteLabel, "Mapped", metadata.Origin{})
 	metadata.Add(edited, tag.Composer(), "Not representable in RIFF INFO", metadata.Origin{})
 	document, err := edited.Build()
@@ -415,7 +986,7 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 		t.Fatal(err)
 	}
 	encoded := applyWrites(t, collector.items)
-	if bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, []byte("Mapped")) || !bytes.Contains(encoded, unknown) {
+	if bytes.Contains(encoded, []byte("Not representable in RIFF INFO")) || !bytes.Contains(encoded, []byte("Mapped")) {
 		t.Fatalf("rewritten WAVE metadata = %x", encoded)
 	}
 }
@@ -486,7 +1057,7 @@ func TestMuxSynthesizesRIFFInfoForNewMetadata(t *testing.T) {
 	if !reinspected.metadataAttachment().IsAvailable() {
 		t.Fatalf("fresh nonempty metadata reinspection state = %s", reinspected.metadataAttachment().State())
 	}
-	if title, ok := metadata.First(reinspected.metadata, tag.Title()); !ok || title != "Generated" {
+	if title, ok := metadata.First(mustWaveMetadata(t, reinspected.metadata), tag.Title()); !ok || title != "Generated" {
 		t.Fatalf("fresh nonempty metadata title = %q/%v", title, ok)
 	}
 
@@ -848,8 +1419,8 @@ func TestInspectPreservesBytesPastTheRIFFChunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trailing bytes rejected the stream: %v", err)
 	}
-	if blocks := inspected.metadata.Blocks(); len(blocks) != 0 {
-		t.Fatalf("inspection retained trailing Blob blocks = %d", len(blocks))
+	if !inspected.metadata.IsAbsent() {
+		t.Fatalf("inspection trailing metadata state = %s, want absent", inspected.metadata.State())
 	}
 	if got := sourceRangeBytes(t, source, inspected.ranges.trailer); !bytes.Equal(got, trailer) {
 		t.Fatalf("preserved trailer range = %q, want %q", got, trailer)

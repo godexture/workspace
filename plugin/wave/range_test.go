@@ -133,7 +133,7 @@ func TestRewriteInfoSourceKeepsUnknownFieldsAndPadding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := rewriteInfoSource(carrier, edited)
+	encoded, err := rewriteInfoSource(carrier, detachedInfoDocument(t, carrier), edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRewriteInfoSourceFollowsTargetEntryOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := rewriteInfoSource(source, target)
+	encoded, err := rewriteInfoSource(source, detachedInfoDocument(t, source), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestRewriteInfoSourceSwapsDuplicateEntriesAndKeepsInvalidOpaqueChildren(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := rewriteInfoSource(source, target)
+	encoded, err := rewriteInfoSource(source, detachedInfoDocument(t, source), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,8 +245,8 @@ func TestRewriteInfoSourceSwapsDuplicateEntriesAndKeepsInvalidOpaqueChildren(t *
 }
 
 func TestLargeInfoRewriteUsesInspectionWorkspaceGrant(t *testing.T) {
-	unknown := infoTestChunk(t, "XTRA", bytes.Repeat([]byte{0xa5}, 70<<10), 0xcc)
-	info := infoTestList(t, infoTestChunk(t, "INAM", []byte("Song\x00"), 0), unknown)
+	largeTitle := append(bytes.Repeat([]byte{'x'}, 70<<10), 0)
+	info := infoTestList(t, infoTestChunk(t, "INAM", largeTitle, 0))
 	source := waveTestRIFF(t,
 		waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0),
 		info,
@@ -257,13 +257,14 @@ func TestLargeInfoRewriteUsesInspectionWorkspaceGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edited := inspected.metadata.Edit()
+	inspectedMetadata := mustWaveMetadata(t, inspected.metadata)
+	edited := inspectedMetadata.Edit()
 	metadata.Add(edited, tag.Title(), "Edited", metadata.Origin{})
 	document, err := edited.Build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, output, err := infoRewriteWorkspaceAgainst(inspected.ranges.info.length, inspected.metadata, document)
+	workspace, output, err := infoRewriteWorkspaceAgainst(inspected.ranges.info.length, inspectedMetadata, document)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +308,8 @@ func TestLargeInfoRewriteUsesInspectionWorkspaceGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := applyWrites(t, collector.items)
-	if !bytes.Contains(encoded, []byte("Edited")) || !bytes.Contains(encoded, unknown) {
-		t.Fatalf("large rewrite lost edited/opaque INFO bytes")
+	if !bytes.Contains(encoded, []byte("Edited")) || !bytes.Contains(encoded, largeTitle) {
+		t.Fatalf("large rewrite lost edited/retained INFO bytes")
 	}
 	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(encoded), uint64(len(encoded)), true, resolver, resource.Bytes(1<<20)); err != nil {
 		t.Fatalf("rewritten large INFO did not re-inspect: %v", err)
@@ -473,4 +474,25 @@ func mustBufferAllocator(t testing.TB, grant int) *buffer.Allocator {
 		t.Fatal(err)
 	}
 	return value
+}
+
+func detachedInfoDocument(t testing.TB, value []byte) metadata.Document {
+	t.Helper()
+	document, err := infoTestResolver(t).Parse(t.Context(), RIFFInfo(), "rewrite", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detached, err := document.DetachSource()
+	if err == nil {
+		return detached
+	}
+	// The range rewrite tests intentionally retain opaque source children in
+	// the wire value while supplying only the semantic source projection.
+	builder := metadata.NewBuilder(metadata.StreamScope)
+	copyInfoEntries(builder, document.Entries(), false)
+	detached, err = builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return detached
 }
