@@ -225,6 +225,9 @@ func runSubsetMux(t testing.TB, data []byte, selectedIndex int) []byte {
 		t.Fatal(err)
 	}
 	input := stream.MustDescriptor(trackStreamID(selected.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(selected.timeScale)), properties)
+	if inspected.metadata.Scope().Valid() {
+		input = input.WithMetadata(inspected.metadata)
+	}
 	context, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(MP4(), inspected))
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +271,9 @@ func openSubsetMuxForTest(t testing.TB, data []byte, source access.Opening, jour
 		t.Fatal(err)
 	}
 	input := stream.MustDescriptor(trackStreamID(selected.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(selected.timeScale)), properties)
+	if inspected.metadata.Scope().Valid() {
+		input = input.WithMetadata(inspected.metadata)
+	}
 	context, err := mediaformat.WithInspection(plugin.CompileContext{}, mediaformat.NewInspection(MP4(), inspected))
 	if err != nil {
 		t.Fatal(err)

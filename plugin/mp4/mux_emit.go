@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/metadata"
 )
 
 func (m *muxer) start(ctx context.Context, output flow.Emitter[access.Write]) error {
@@ -43,9 +44,39 @@ func (m *muxer) emitPieces(ctx context.Context, pieces []muxPiece, output flow.E
 			if err := m.emitBytes(ctx, piece.header[:piece.size], output); err != nil {
 				return err
 			}
+		case muxBlob:
+			if !piece.blob.Valid() || uint64(piece.blob.Len()) != piece.size {
+				return fmt.Errorf("%w: MP4 metadata blob piece is invalid", ErrMalformed)
+			}
+			if err := m.emitBlob(ctx, piece.blob, output); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("%w: MP4 output payload is written from packets", ErrMalformed)
 		}
+	}
+	return nil
+}
+
+func (m *muxer) emitBlob(ctx context.Context, value metadata.Blob, output flow.Emitter[access.Write]) error {
+	for offset := 0; offset < value.Len(); {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		count := min(value.Len()-offset, muxPageBytes)
+		page, ok := value.Slice(value.MediaType(), offset, offset+count)
+		if !ok {
+			return fmt.Errorf("%w: MP4 metadata blob page is outside its payload", ErrMalformed)
+		}
+		if err := m.emitFill(ctx, count, func(storage buffer.Mutable) error {
+			page.AppendTo(storage.Bytes()[:0])
+			return nil
+		}, func(payload buffer.Handle) (access.Write, error) {
+			return access.Append(payload)
+		}, output); err != nil {
+			return err
+		}
+		offset += count
 	}
 	return nil
 }

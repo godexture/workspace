@@ -1,12 +1,14 @@
 package mp4
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
 
 	"github.com/godexture/godec/media/codec"
 	"github.com/godexture/godec/media/metadata"
+	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/resource"
@@ -17,8 +19,11 @@ import (
 // other box is either copied verbatim or resized in place, and the fields that
 // record a byte offset or a derived duration are patched afterwards.
 type muxLayout struct {
-	pieces []muxPiece
-	tracks []muxTrack
+	pieces   []muxPiece
+	tracks   []muxTrack
+	document metadata.Document
+	rewrite  muxIlstRewrite
+	reports  []loss.Report
 	// payload indexes the rebuilt mdat payload within pieces.
 	payload int
 	size    uint64
@@ -62,6 +67,8 @@ const (
 	muxHeader
 	// muxPayload is the mdat payload, written from the arriving packets.
 	muxPayload
+	// muxBlob writes an immutable metadata payload page by page.
+	muxBlob
 )
 
 type muxPiece struct {
@@ -70,6 +77,7 @@ type muxPiece struct {
 	size   uint64
 	source uint64
 	header [16]byte
+	blob   metadata.Blob
 }
 
 func (l muxLayout) valid() bool {
@@ -92,11 +100,7 @@ func (l muxLayout) journalBytes() resource.Bytes { return resource.Bytes(l.journ
 // output bytes. Inputs name inspected tracks in inspection order; a shorter
 // input list keeps that subset and rebuilds the movie around it.
 func compileMux(inputs []stream.Descriptor, inspected movie) (muxLayout, error) {
-	selected, err := selectMuxTracks(inputs, inspected)
-	if err != nil {
-		return muxLayout{}, err
-	}
-	return buildMuxLayout(inspected, selected)
+	return compileMuxWithResolver(context.Background(), metadata.Resolver{}, inputs, inspected)
 }
 
 func selectMuxTracks(inputs []stream.Descriptor, inspected movie) ([]int, error) {
@@ -118,7 +122,7 @@ func selectMuxTracks(inputs []stream.Descriptor, inspected movie) ([]int, error)
 			return nil, fmt.Errorf("%w: MP4 mux keeps inspected tracks in order and cannot repeat one", ErrUnsupported)
 		}
 		previous = position
-		if err := validateMuxInput(input, inspected.tracks[position], inspected.metadata, route); err != nil {
+		if err := validateMuxInput(input, inspected.tracks[position], route); err != nil {
 			return nil, err
 		}
 		result = append(result, position)
@@ -126,7 +130,7 @@ func selectMuxTracks(inputs []stream.Descriptor, inspected movie) ([]int, error)
 	return result, nil
 }
 
-func validateMuxInput(input stream.Descriptor, value track, expected metadata.Document, route int) error {
+func validateMuxInput(input stream.Descriptor, value track, route int) error {
 	if !input.Valid() || !input.SchemaDescriptor().Equal(codec.Packets().Descriptor()) || input.ID() != trackStreamID(value.id) || input.TimeBase() != timing.MustBase(1, int64(value.timeScale)) {
 		return fmt.Errorf("%w: packet input %d does not match inspected track %d", ErrUnsupported, route, value.id)
 	}
@@ -134,20 +138,17 @@ func validateMuxInput(input stream.Descriptor, value track, expected metadata.Do
 	if !ok || tag != SampleEntryTag(string(value.codec[:])) {
 		return fmt.Errorf("%w: packet input %d changes track %d sample entry", ErrUnsupported, route, value.id)
 	}
-	if !sameIlstMuxDocument(input.Metadata(), expected) {
-		return fmt.Errorf("%w: packet input %d changes MP4 metadata", ErrUnsupported, route)
-	}
 	return nil
 }
 
-func buildMuxLayout(value movie, selected []int) (muxLayout, error) {
+func buildMuxLayout(value movie, selected []int, metadataPlan muxMetadataPlan) (muxLayout, error) {
 	if err := validateMuxMovie(value); err != nil {
 		return muxLayout{}, err
 	}
 	if err := validateMuxRanges(value); err != nil {
 		return muxLayout{}, err
 	}
-	builder, err := newMuxLayoutBuilder(value, selected)
+	builder, err := newMuxLayoutBuilder(value, selected, metadataPlan)
 	if err != nil {
 		return muxLayout{}, err
 	}
@@ -194,7 +195,8 @@ func chunkTableBytes(value track) (uint64, bool) {
 }
 
 type muxLayoutBuilder struct {
-	movie movie
+	movie        movie
+	metadataPlan muxMetadataPlan
 	// order lists the selected track indexes in output order, and kept answers
 	// the same question by inspection index.
 	order []int
@@ -214,8 +216,8 @@ type muxLayoutBuilder struct {
 	payload int
 }
 
-func newMuxLayoutBuilder(value movie, selected []int) (*muxLayoutBuilder, error) {
-	result := &muxLayoutBuilder{movie: value, order: selected, kept: make([]bool, len(value.tracks)), payload: -1}
+func newMuxLayoutBuilder(value movie, selected []int, metadataPlan muxMetadataPlan) (*muxLayoutBuilder, error) {
+	result := &muxLayoutBuilder{movie: value, metadataPlan: metadataPlan, order: selected, kept: make([]bool, len(value.tracks)), payload: -1}
 	for _, index := range selected {
 		if index < 0 || index >= len(value.tracks) || result.kept[index] {
 			return nil, fmt.Errorf("%w: MP4 track selection %v is invalid", ErrMalformed, selected)
@@ -235,13 +237,22 @@ func newMuxLayoutBuilder(value movie, selected []int) (*muxLayoutBuilder, error)
 			return nil, fmt.Errorf("%w: MP4 selected sample bytes overflow", ErrUnsupported)
 		}
 	}
-	if removed > value.moov.payloadSize {
+	moovPayload := value.moov.payloadSize
+	if metadataPlan.rewrite.active {
+		var ok bool
+		moovPayload, ok = replaceBoxChildSize(moovPayload, metadataPlan.rewrite.envelope.udta.size, metadataPlan.rewrite.udta.size)
+		if !ok {
+			return nil, fmt.Errorf("%w: MP4 ilst envelope does not fit in moov", ErrMalformed)
+		}
+	}
+	if removed > moovPayload {
 		return nil, fmt.Errorf("%w: MP4 dropped track bytes exceed moov", ErrMalformed)
 	}
+	moovPayload -= removed
 	if err := result.planSelection(); err != nil {
 		return nil, err
 	}
-	if err := result.planSizes(value.moov.payloadSize - removed); err != nil {
+	if err := result.planSizes(moovPayload); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -276,36 +287,23 @@ func (b *muxLayoutBuilder) planSelection() error {
 
 func (b *muxLayoutBuilder) planSizes(moovPayload uint64) error {
 	var ok bool
-	if b.moovSize, b.moovHeader, ok = boxSize(b.movie.moov, moovPayload); !ok {
+	if b.metadataPlan.rewrite.active {
+		b.moovSize, b.moovHeader, ok = resizedBox(b.movie.moov, moovPayload)
+	} else {
+		b.moovSize, b.moovHeader, ok = boxSize(b.movie.moov, moovPayload)
+	}
+	if !ok {
 		return fmt.Errorf("%w: MP4 output moov size overflows", ErrUnsupported)
 	}
-	if b.mediaSize, b.mediaHeader, ok = boxSize(b.movie.media, b.payloadBytes); !ok {
+	if b.mediaSize, b.mediaHeader, ok = resizedBox(b.movie.media, b.payloadBytes); !ok {
 		return fmt.Errorf("%w: MP4 output mdat size overflows", ErrUnsupported)
 	}
 	return nil
 }
 
-// boxSize keeps the inspected header when the payload is unchanged, so a full
-// selection stays byte exact, and compacts the header otherwise.
+// boxSize sizes a rebuilt box while preserving a source large-size header.
 func boxSize(value box, payload uint64) (size, headerSize uint64, ok bool) {
-	if payload == value.payloadSize {
-		return value.size, value.headerSize, true
-	}
-	if headerSize, ok = compactBoxHeader(payload); !ok {
-		return 0, 0, false
-	}
-	size, ok = checkedBoxAdd(headerSize, payload)
-	return size, headerSize, ok
-}
-
-func compactBoxHeader(payload uint64) (uint64, bool) {
-	if payload <= math.MaxUint32-8 {
-		return 8, true
-	}
-	if payload <= math.MaxUint64-16 {
-		return 16, true
-	}
-	return 0, false
+	return resizedBox(value, payload)
 }
 
 func (b *muxLayoutBuilder) build() (muxLayout, error) {
@@ -333,7 +331,15 @@ func (b *muxLayoutBuilder) build() (muxLayout, error) {
 	if err := b.copy(secondEnd, b.movie.sourceEnd); err != nil {
 		return muxLayout{}, err
 	}
-	result := muxLayout{pieces: b.pieces, tracks: b.tracks, payload: b.payload, size: b.cursor}
+	result := muxLayout{
+		pieces:   b.pieces,
+		tracks:   b.tracks,
+		document: b.metadataPlan.document,
+		rewrite:  b.metadataPlan.rewrite,
+		reports:  append([]loss.Report(nil), b.metadataPlan.reports...),
+		payload:  b.payload,
+		size:     b.cursor,
+	}
 	if !result.valid() || len(result.tracks) != len(b.order) {
 		return muxLayout{}, fmt.Errorf("%w: MP4 output layout is incomplete", ErrMalformed)
 	}
@@ -346,10 +352,13 @@ func (b *muxLayoutBuilder) build() (muxLayout, error) {
 	if err := b.locateDuration(&result); err != nil {
 		return muxLayout{}, err
 	}
+	if b.metadataPlan.rewrite.active && b.movie.offsetIndex {
+		return muxLayout{}, fmt.Errorf("%w: MP4 metadata rewrite cannot move a movie with external byte offsets", ErrUnsupported)
+	}
 	if b.movie.offsetIndex && !result.reproduces(b.movie) {
 		return muxLayout{}, fmt.Errorf("%w: MP4 records byte offsets outside the sample tables, and this selection does not reproduce the source", ErrUnsupported)
 	}
-	result.verbatim = b.movie.offsetIndex
+	result.verbatim = b.movie.offsetIndex && !b.metadataPlan.rewrite.active
 	return result, nil
 }
 
@@ -416,6 +425,9 @@ func (b *muxLayoutBuilder) writeMoov() error {
 	boxEnd, boxOK := checkedBoxAdd(source.offset, source.size)
 	if !ok || !boxOK {
 		return fmt.Errorf("%w: MP4 moov range overflows", ErrMalformed)
+	}
+	if b.metadataPlan.rewrite.active {
+		return b.writeMoovWithIlst()
 	}
 	if b.moovSize == source.size {
 		if err := b.copy(source.offset, boxEnd); err != nil {
@@ -533,6 +545,14 @@ func (b *muxLayoutBuilder) boxHeader(typeID boxType, size, headerSize uint64) er
 	default:
 		return fmt.Errorf("%w: MP4 %s size %d does not fit a %d byte header", ErrMalformed, string(typeID[:]), size, headerSize)
 	}
+	return b.add(piece)
+}
+
+func (b *muxLayoutBuilder) openEndedHeader(typeID boxType) error {
+	var piece muxPiece
+	piece.kind = muxHeader
+	piece.size = 8
+	copy(piece.header[4:8], typeID[:])
 	return b.add(piece)
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
@@ -56,7 +57,8 @@ func muxerComponent() plugin.Component {
 					"mp4.inspection", diagnostic.ErrorSeverity, diagnostic.Path{}, "MP4 muxer requires a prepared movie inspection", nil,
 				))
 			}
-			layout, err := compileMux(packets, inspected)
+			resolver, _ := metadata.ResolverOf(ctx)
+			layout, err := compileMuxWithResolver(ctx.Context(), resolver, packets, inspected)
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
@@ -65,12 +67,18 @@ func muxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 			}
+			output = output.WithMetadata(layout.document)
+			metadataReports := make([]plugin.MetadataReport, len(layout.reports))
+			for index, report := range layout.reports {
+				metadataReports[index] = plugin.MetadataReport{Output: "writes", Report: report}
+			}
 			return plugin.Compiled[muxPlan, stream.Descriptor]{
-				Plan:      muxPlan{shape: shape.Clone(), movie: inspected, layout: layout, scratch: scratch},
-				Outputs:   flow.NewDescriptors(flow.Describe("writes", output)),
-				Effects:   []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-remux"}},
-				Resources: resource.Request{Memory: muxPageBytes},
-				Scratch:   scratch,
+				Plan:            muxPlan{shape: shape.Clone(), movie: inspected, layout: layout, scratch: scratch},
+				Outputs:         flow.NewDescriptors(flow.Describe("writes", output)),
+				Effects:         []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "mp4-remux"}},
+				MetadataReports: metadataReports,
+				Resources:       resource.Request{Memory: muxMemory(layout)},
+				Scratch:         scratch,
 			}, nil
 		},
 		Open: func(ctx plugin.OpenContext, plan muxPlan) (flow.Operator, error) {
@@ -92,6 +100,18 @@ func validateMuxLayout(value movie, layout muxLayout) error {
 	}
 	if !layout.valid() || layout.size == 0 {
 		return fmt.Errorf("%w: MP4 output layout is incomplete", ErrMalformed)
+	}
+	if layout.rewrite.active {
+		if value.offsetIndex {
+			return fmt.Errorf("%w: MP4 metadata rewrite cannot move a movie with external byte offsets", ErrUnsupported)
+		}
+		expected, err := newIlstRewrite(layout.rewrite.envelope, layout.rewrite.payload)
+		if err != nil {
+			return err
+		}
+		if expected != layout.rewrite {
+			return fmt.Errorf("%w: MP4 metadata rewrite geometry changed after compile", ErrMalformed)
+		}
 	}
 	previous := -1
 	var payload uint64
@@ -115,6 +135,18 @@ func validateMuxLayout(value movie, layout muxLayout) error {
 		return fmt.Errorf("%w: MP4 output layout no longer reproduces a movie that records external byte offsets", ErrMalformed)
 	}
 	return nil
+}
+
+func muxMemory(layout muxLayout) resource.Bytes {
+	result := resource.Bytes(muxPageBytes)
+	if !layout.rewrite.active {
+		return result
+	}
+	retained := uint64(layout.rewrite.payload.Len())
+	if retained > uint64(result) {
+		result = resource.Bytes(retained)
+	}
+	return result
 }
 
 func validateMuxMovie(value movie) error {

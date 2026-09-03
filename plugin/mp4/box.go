@@ -23,6 +23,7 @@ type box struct {
 	payloadSize   uint64
 	userType      [16]byte
 	hasUserType   bool
+	openEnded     bool
 }
 
 type boxScope struct {
@@ -134,6 +135,7 @@ func readBox(ctx context.Context, reader access.Random, scope boxScope, offset u
 			return box{}, fmt.Errorf("%w: nested box at %d has size zero", errMalformedBox, offset)
 		}
 		declaredSize = scope.sourceEnd - offset
+		value.openEnded = true
 	}
 	if declaredSize < headerSize {
 		return box{}, fmt.Errorf("%w: box at %d is smaller than its header", errMalformedBox, offset)
