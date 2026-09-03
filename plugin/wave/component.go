@@ -88,7 +88,7 @@ func demuxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			metadataAttachment, err := metadata.Merge(metadata.StreamScope, input.Metadata(), inspected.metadataAttachment())
+			metadataAttachment, err := metadata.Merge(metadata.AssetScope, input.Metadata(), inspected.metadataAttachment())
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}

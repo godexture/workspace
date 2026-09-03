@@ -84,7 +84,7 @@ func TestThirdPartyPluginConformance(t *testing.T) {
 		testkit.TrackMetadata(testkit.MetadataIn(set, acme.EncodingIdentity()), coverage),
 		testkit.MetadataCase{
 			Name:  "label-roundtrip",
-			Input: testkit.MetadataInput(acme.LabelCarrier(), "acme/label", metadata.StreamScope, metadataPayload),
+			Input: testkit.MetadataInput(acme.LabelCarrier(), "acme/label", metadata.AssetScope, metadataPayload),
 			Want:  testkit.WantMetadata(document, metadataPayload),
 		},
 	)
@@ -103,7 +103,7 @@ func mustACMEReference(t testing.TB, encoded []byte) access.Reference {
 
 func acmeDocument(t testing.TB, label string, raw bool) metadata.Document {
 	t.Helper()
-	builder := metadata.NewBuilder(metadata.StreamScope)
+	builder := metadata.NewBuilder(metadata.AssetScope)
 	origin := metadata.Origin{}
 	if raw {
 		block := metadata.BlockID("acme/label")

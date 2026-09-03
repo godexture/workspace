@@ -3,6 +3,7 @@ package acme
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/flow"
@@ -19,6 +20,16 @@ import (
 type writerPlan struct {
 	shape  flow.Shape
 	header []byte
+}
+
+func validateACMEMetadataAttachment(value metadata.Attachment) error {
+	if !value.Valid() {
+		return fmt.Errorf("%w: ACME metadata attachment is invalid", ErrUnsupported)
+	}
+	if !value.IsAbsent() && value.Scope() != metadata.AssetScope {
+		return fmt.Errorf("%w: ACME metadata attachment must use AssetScope", ErrUnsupported)
+	}
+	return nil
 }
 
 func writerComponent() plugin.Component {
@@ -39,7 +50,11 @@ func writerComponent() plugin.Component {
 			if !ok {
 				return plugin.Compiled[writerPlan, stream.Descriptor]{}, errors.New("ACME writer requires metadata resolver")
 			}
-			label, lost, err := resolver.Marshal(ctx.Context(), LabelCarrier(), "acme/label", input.Metadata())
+			inputAttachment := input.Metadata()
+			if err := validateACMEMetadataAttachment(inputAttachment); err != nil {
+				return plugin.Compiled[writerPlan, stream.Descriptor]{}, err
+			}
+			label, lost, err := resolver.Marshal(ctx.Context(), LabelCarrier(), "acme/label", inputAttachment)
 			if err != nil {
 				return plugin.Compiled[writerPlan, stream.Descriptor]{}, err
 			}

@@ -131,7 +131,7 @@ func TestWriterRejectsUnavailableMetadataWithoutMarshal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("values", Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustUnavailable(metadata.StreamScope))
+	input := stream.MustDescriptor("values", Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustUnavailable(metadata.AssetScope))
 	component := writerComponent()
 	resolved, err := component.Resolve(config.NewPatch())
 	if err != nil {
@@ -150,5 +150,43 @@ func TestWriterRejectsUnavailableMetadataWithoutMarshal(t *testing.T) {
 	}
 	if len(compiled.MetadataReports()) != 0 {
 		t.Fatalf("failed writer metadata reports = %#v", compiled.MetadataReports())
+	}
+}
+
+func TestWriterRejectsNonAssetMetadataBeforeMarshal(t *testing.T) {
+	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), tag.Title(), "foreign scope", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := metadata.MustAvailable(document)
+	if err := validateACMEMetadataAttachment(attachment); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("non-AssetScope validation error = %v, want ErrUnsupported", err)
+	}
+
+	marshalCalls := 0
+	encoding := plugin.NewComponent[encodingID](plugin.Descriptor{DisplayName: "counting ACME label encoding"}, configurationSchema(),
+		metadata.WithEncoding(parseLabel, func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+			marshalCalls++
+			return marshalLabel(ctx)
+		}, Label().Erased()))
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{LabelCarrier(): encoding}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("values", Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(attachment)
+	component := writerComponent()
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Compile(component, compileContext, resolved, flow.NewDescriptors(flow.Describe("values", input))); err == nil {
+		t.Fatal("non-AssetScope metadata unexpectedly compiled")
+	}
+	if marshalCalls != 0 {
+		t.Fatalf("non-AssetScope metadata marshal calls = %d, want zero", marshalCalls)
 	}
 }

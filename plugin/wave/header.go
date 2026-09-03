@@ -64,7 +64,7 @@ type header struct {
 }
 
 func (h header) valid() bool {
-	return h.signal.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid() && h.metadata.Valid()
+	return h.signal.Valid() && h.dataOffset >= 0 && h.blockAlign > 0 && h.dataSize%uint64(h.blockAlign) == 0 && h.codecTag.Valid() && waveMetadataAttachmentValid(h.metadata)
 }
 
 // linear reports whether the stream stores its samples one scalar each, which

@@ -155,9 +155,9 @@ func mustWaveMetadata(t testing.TB, attachment metadata.Attachment) metadata.Doc
 	return document
 }
 
-func mustEmptyStream(t testing.TB) metadata.Document {
+func mustEmptyAssetMetadata(t testing.TB) metadata.Document {
 	t.Helper()
-	document, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	document, err := metadata.NewBuilder(metadata.AssetScope).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestInspectPreservesRIFFInfoAndUnknownChunkPlacement(t *testing.T) {
 		t.Fatalf("unknown INFO field was not in the source range: %x", infoRange)
 	}
 
-	provider := metadata.NewBuilder(metadata.StreamScope)
+	provider := metadata.NewBuilder(metadata.AssetScope)
 	metadata.Add(provider, tag.Comment(), "provider", metadata.Origin{})
 	providerDocument, err := provider.Build()
 	if err != nil {
@@ -344,7 +344,7 @@ func TestCustomRIFFInfoBindingPublishesParsedSemanticDocument(t *testing.T) {
 	if !ok || entry.Key() != customInfoKey.ID() || entry.Value() != "custom XTRA" || entry.Origin() != (metadata.Origin{}) {
 		t.Fatalf("custom semantic entry = %#v/%v", entry, ok)
 	}
-	parsed, err := resolver.Parse(t.Context(), RIFFInfo(), "custom", metadata.StreamScope, metadata.NewBlob("application/x-riff-info", info))
+	parsed, err := resolver.Parse(t.Context(), RIFFInfo(), "custom", metadata.AssetScope, metadata.NewBlob("application/x-riff-info", info))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestFreshCustomRIFFInfoBindingMarshalsAvailableDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), customInfoKey, "custom XTRA", metadata.Origin{}).Build()
+	document, err := metadata.Add(metadata.NewBuilder(metadata.AssetScope), customInfoKey, "custom XTRA", metadata.Origin{}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestCustomRIFFInfoOpaqueDocumentIsUnavailableAndOnlyExactHandoffWorks(t *te
 	if !inspected.metadata.IsUnavailable() || !inspected.ranges.info.valid() {
 		t.Fatalf("opaque custom INFO state/range = %s/%v", inspected.metadata.State(), inspected.ranges.info.valid())
 	}
-	for _, attachment := range []metadata.Attachment{metadata.Absent(), metadata.MustAvailable(mustEmptyStream(t))} {
+	for _, attachment := range []metadata.Attachment{metadata.Absent(), metadata.MustAvailable(mustEmptyAssetMetadata(t))} {
 		if _, _, err := compileWaveMuxMetadataStateWithResolver(t, inspected, attachment, resolver); err == nil {
 			t.Fatalf("opaque custom %s state mismatch unexpectedly compiled", attachment.State())
 		}
@@ -613,7 +613,7 @@ func TestInspectReportsMissingRIFFInfoBinding(t *testing.T) {
 func TestWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
 	dataChunk := waveTestChunk(t, tagDATA, []byte{1, 2}, 0)
-	emptyStream, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	emptyMetadata, err := metadata.NewBuilder(metadata.AssetScope).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +627,7 @@ func TestWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	if _, err := compileWaveMuxMetadataState(t, withEmptyInfo, metadata.Absent()); err == nil {
 		t.Fatalf("empty INFO with absent input error = %v", err)
 	}
-	compiled, err := compileWaveMuxMetadataState(t, withEmptyInfo, metadata.MustAvailable(emptyStream))
+	compiled, err := compileWaveMuxMetadataState(t, withEmptyInfo, metadata.MustAvailable(emptyMetadata))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +650,7 @@ func TestWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	} else if value, ok := output.One("writes"); !ok || !value.Metadata().IsAbsent() {
 		t.Fatalf("no INFO mux output metadata = %#v", output)
 	}
-	if _, err := compileWaveMuxMetadataState(t, withoutInfo, metadata.MustAvailable(emptyStream)); err == nil {
+	if _, err := compileWaveMuxMetadataState(t, withoutInfo, metadata.MustAvailable(emptyMetadata)); err == nil {
 		t.Fatalf("no INFO with available empty input error = %v", err)
 	}
 }
@@ -672,7 +672,7 @@ func TestUnavailableWaveInspectionRemuxesExactSource(t *testing.T) {
 	if !inspected.metadata.IsUnavailable() {
 		t.Fatalf("unavailable source state = %s", inspected.metadata.State())
 	}
-	emptyDocument, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	emptyDocument, err := metadata.NewBuilder(metadata.AssetScope).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ func TestFreshWaveMuxRejectsUnavailableMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(metadata.MustUnavailable(metadata.StreamScope))
+	input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(metadata.MustUnavailable(metadata.AssetScope))
 	compileContext, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), infoTestResolver(t))
 	if err != nil {
 		t.Fatal(err)
@@ -736,6 +736,34 @@ func TestFreshWaveMuxRejectsUnavailableMetadata(t *testing.T) {
 	}
 }
 
+func TestWaveMuxRejectsNonAssetMetadataBeforeSemanticAccess(t *testing.T) {
+	formatChunk := waveTestChunk(t, tagFMT, pcmFormat(1, 48_000, 16), 0)
+	dataChunk := waveTestChunk(t, tagDATA, []byte{1, 2}, 0)
+	inspected, err := inspectHeaderWithMetadata(t.Context(), memoryRandom(waveTestRIFF(t, formatChunk, dataChunk)), infoTestResolver(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := metadata.Add(metadata.NewBuilder(metadata.StreamScope), tag.Title(), "foreign scope", metadata.Origin{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marshalCalls := 0
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{RIFFInfo(): customInfoComponentWithCounter(&marshalCalls)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWaveMetadataAttachment(metadata.MustAvailable(foreign)); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("non-AssetScope validation error = %v, want ErrUnsupported", err)
+	}
+	_, _, err = compileWaveMuxMetadataStateWithResolver(t, inspected, metadata.MustAvailable(foreign), resolver)
+	if err == nil {
+		t.Fatal("non-AssetScope metadata unexpectedly compiled")
+	}
+	if marshalCalls != 0 {
+		t.Fatalf("non-AssetScope metadata marshal calls = %d, want zero", marshalCalls)
+	}
+}
+
 func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	resolver := infoTestResolver(t)
 	description := sample.Description{Signal: sample.Signal{Rate: 48_000, Layout: sample.Mono(), ValidBits: 16}, Coding: sample.S16, Packing: sample.Interleaved, Endian: sample.LittleEndian}
@@ -743,7 +771,7 @@ func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	emptyStream, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	emptyMetadata, err := metadata.NewBuilder(metadata.AssetScope).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +782,7 @@ func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 		wantCount  uint64
 	}{
 		{name: "absent", attachment: metadata.Absent()},
-		{name: "available empty", attachment: metadata.MustAvailable(emptyStream), wantInfo: true, wantCount: 1},
+		{name: "available empty", attachment: metadata.MustAvailable(emptyMetadata), wantInfo: true, wantCount: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := stream.MustDescriptor("wave", codec.Packets().Descriptor(), timing.MustBase(1, 48_000), properties).WithMetadata(test.attachment)
@@ -993,7 +1021,7 @@ func TestInspectedMuxReportsAndSkipsUnrepresentableMetadataOnRewrite(t *testing.
 
 func TestMuxSynthesizesRIFFInfoForNewMetadata(t *testing.T) {
 	unknown := waveTestChunk(t, "XTRA", []byte{1, 2, 3}, 0xa2)
-	builder := metadata.NewBuilder(metadata.StreamScope)
+	builder := metadata.NewBuilder(metadata.AssetScope)
 	builder.AddBlock(metadata.NewRawBlock(newChunkBlockID(1, chunkBeforeFormat, chunkRaw), rawChunkCarrier(), plugin.Identity{}, metadata.NewBlob("application/x-wave-raw", unknown)))
 	metadata.Add(builder, tag.Title(), "Generated", metadata.Origin{})
 	metadata.Add(builder, tag.Composer(), "Not representable in RIFF INFO", metadata.Origin{})
@@ -1096,7 +1124,7 @@ func TestMuxRejectsForeignAndOrphanOpaqueMetadataBlocks(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			document, err := metadata.NewBuilder(metadata.StreamScope).AddBlock(test.block).Build()
+			document, err := metadata.NewBuilder(metadata.AssetScope).AddBlock(test.block).Build()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1108,7 +1136,7 @@ func TestMuxRejectsForeignAndOrphanOpaqueMetadataBlocks(t *testing.T) {
 }
 
 func TestMuxAllowsForeignSourceMetadataBlock(t *testing.T) {
-	document, err := metadata.NewBuilder(metadata.StreamScope).
+	document, err := metadata.NewBuilder(metadata.AssetScope).
 		AddBlock(metadata.NewSourceBlock(newChunkBlockID(48, chunkBeforeData, chunkInfo), carrier.Define[foreignMetadataCarrierID](), plugin.IdentityOf[foreignMetadataEncodingID](), metadata.NewBlob("application/octet-stream", []byte("source")))).
 		Build()
 	if err != nil {
@@ -1125,7 +1153,7 @@ func TestMuxPreservesSameFormatOpaqueInfoRoot(t *testing.T) {
 	payload := infoTestList(t, title, unknown)
 	block := newChunkBlockID(48, chunkBeforeData, chunkInfo)
 	child := metadata.BlockID(fmt.Sprintf("%s/field/%08d", block, 4+len(title)))
-	document, err := metadata.NewBuilder(metadata.StreamScope).
+	document, err := metadata.NewBuilder(metadata.AssetScope).
 		AddBlock(metadata.NewRawBlock(block, RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/x-riff-info", payload))).
 		AddBlock(metadata.NewRawBlock(child, RIFFInfo(), InfoEncodingIdentity(), metadata.NewBlob("application/octet-stream", unknown))).
 		Build()
@@ -1170,7 +1198,7 @@ func TestMuxCompilePropagatesCancellationToMetadataMarshal(t *testing.T) {
 		t.Fatal(err)
 	}
 	blockID := newChunkBlockID(48, chunkBeforeData, chunkInfo)
-	document, err := metadata.NewBuilder(metadata.StreamScope).
+	document, err := metadata.NewBuilder(metadata.AssetScope).
 		AddBlock(metadata.NewRawBlock(blockID, RIFFInfo(), encoding.Identity(), metadata.NewBlob("application/x-riff-info", infoTestList(t)))).
 		Build()
 	if err != nil {
