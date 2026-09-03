@@ -40,6 +40,27 @@ func muxMetadataConsensus(inputs []stream.Descriptor) (metadata.Attachment, erro
 		return metadata.Absent(), fmt.Errorf("%w: MP4 mux has no metadata-bearing tracks", ErrUnsupported)
 	}
 	result := inputs[0].Metadata()
+	if !result.Valid() {
+		return metadata.Absent(), fmt.Errorf("%w: MP4 mux input metadata state is invalid", ErrUnsupported)
+	}
+	if !muxAssetAttachment(result) {
+		return metadata.Absent(), fmt.Errorf("%w: MP4 mux input metadata is not an asset attachment", ErrUnsupported)
+	}
+	for index := 1; index < len(inputs); index++ {
+		valueAttachment := inputs[index].Metadata()
+		if !valueAttachment.Valid() {
+			return metadata.Absent(), fmt.Errorf("%w: MP4 mux input metadata state is invalid", ErrUnsupported)
+		}
+		if !muxAssetAttachment(valueAttachment) {
+			return metadata.Absent(), fmt.Errorf("%w: MP4 mux input metadata is not an asset attachment", ErrUnsupported)
+		}
+		if !result.SameState(valueAttachment) {
+			return metadata.Absent(), fmt.Errorf("%w: MP4 selected tracks disagree on metadata state", ErrUnsupported)
+		}
+	}
+	if !result.IsAvailable() {
+		return result, nil
+	}
 	document, err := muxSemanticDocument(result)
 	if err != nil {
 		return metadata.Absent(), err
@@ -49,9 +70,6 @@ func muxMetadataConsensus(inputs []stream.Descriptor) (metadata.Attachment, erro
 	}
 	for index := 1; index < len(inputs); index++ {
 		valueAttachment := inputs[index].Metadata()
-		if !result.SameState(valueAttachment) {
-			return metadata.Absent(), fmt.Errorf("%w: MP4 selected tracks disagree on metadata state", ErrUnsupported)
-		}
 		value, err := muxSemanticDocument(valueAttachment)
 		if err != nil {
 			return metadata.Absent(), err
@@ -81,15 +99,28 @@ func muxAssetDocument(value metadata.Document) bool {
 	return value.Scope() == metadata.AssetScope
 }
 
+func muxAssetAttachment(value metadata.Attachment) bool {
+	return value.IsAbsent() || value.Scope() == metadata.AssetScope
+}
+
 func planMuxMetadata(ctx context.Context, resolver metadata.Resolver, inspected movie, attachment metadata.Attachment) (muxMetadataPlan, error) {
+	result := muxMetadataPlan{attachment: attachment}
+	sourceAttachment := inspected.metadataAttachment()
+	if !attachment.Valid() || !sourceAttachment.Valid() {
+		return muxMetadataPlan{}, fmt.Errorf("%w: MP4 metadata state is invalid", ErrUnsupported)
+	}
+	if !muxAssetAttachment(attachment) || !muxAssetAttachment(sourceAttachment) {
+		return muxMetadataPlan{}, fmt.Errorf("%w: MP4 metadata is not an asset attachment", ErrUnsupported)
+	}
+	if !attachment.SameState(sourceAttachment) {
+		return muxMetadataPlan{}, fmt.Errorf("%w: MP4 metadata state does not match inspected source", ErrUnsupported)
+	}
+	if sourceAttachment.IsUnavailable() || sourceAttachment.IsAbsent() {
+		return result, nil
+	}
 	document, err := muxSemanticDocument(attachment)
 	if err != nil {
 		return muxMetadataPlan{}, err
-	}
-	result := muxMetadataPlan{attachment: attachment}
-	sourceAttachment := inspected.metadataAttachment()
-	if !attachment.SameState(sourceAttachment) {
-		return muxMetadataPlan{}, fmt.Errorf("%w: MP4 metadata state does not match inspected source", ErrUnsupported)
 	}
 	sourceDocument, err := muxSemanticDocument(sourceAttachment)
 	if err != nil {

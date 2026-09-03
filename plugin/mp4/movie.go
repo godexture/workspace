@@ -97,18 +97,15 @@ func parseMovieWithMetadata(ctx context.Context, reader access.Random, sourceEnd
 		return movie{}, normalizeMovieError(err)
 	}
 	result.offsetIndex = result.offsetIndex || metadataInspection.offsetIndex
-	if metadataInspection.available {
-		result.metadata = metadataInspection.document
+	result.metadata = metadataInspection.metadata
+	if metadataInspection.metadata.IsAvailable() {
 		result.ilst = metadataInspection.envelope
 	}
 	return result, nil
 }
 
 func (m movie) metadataAttachment() metadata.Attachment {
-	if m.ilst.valid() && m.metadata.Valid() && m.metadata.Scope() == metadata.AssetScope {
-		return metadata.MustAvailable(m.metadata)
-	}
-	return metadata.Absent()
+	return m.metadata
 }
 
 // moovRecordsOffsets reports an iloc item index directly under moov. Deeper

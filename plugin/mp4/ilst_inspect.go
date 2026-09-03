@@ -19,9 +19,8 @@ type ilstEnvelope struct {
 }
 
 type ilstMetadataInspection struct {
-	document    metadata.Document
+	metadata    metadata.Attachment
 	envelope    ilstEnvelope
-	available   bool
 	offsetIndex bool
 }
 
@@ -29,6 +28,7 @@ type ilstEnvelopeScan struct {
 	envelope    ilstEnvelope
 	found       bool
 	ambiguous   bool
+	unsafe      bool
 	offsetIndex bool
 }
 
@@ -40,20 +40,28 @@ func ilstSourceBlockID(value box) metadata.BlockID {
 	return metadata.BlockID(fmt.Sprintf("mp4/ilst/%016x", value.offset))
 }
 
-// inspectIlstMetadata treats envelope discovery and resolver format errors as
-// optional. Once a recognized envelope is fixed, retained-payload budget and
-// read failures remain Inspect errors because they are execution constraints.
+// inspectIlstMetadata classifies the supported moov/udta/meta iTunes region.
+// Structure and encoding-content failures become Unavailable, while source
+// execution failures remain inspection errors.
 func inspectIlstMetadata(ctx context.Context, reader access.Random, sourceEnd uint64, moov box, resolver metadata.Resolver, budget *movieBudget) (ilstMetadataInspection, error) {
-	var result ilstMetadataInspection
+	result := ilstMetadataInspection{metadata: metadata.Absent()}
 	if budget == nil {
 		return result, nil
 	}
 	scan, err := findIlstEnvelope(ctx, reader, sourceEnd, moov)
 	result.offsetIndex = scan.offsetIndex
 	if err != nil {
-		return ilstMetadataFailure(result, err)
+		if ilstRequiredMetadataFailure(err) {
+			return result, err
+		}
+		result.metadata = metadata.MustUnavailable(metadata.AssetScope)
+		return result, nil
 	}
-	if !scan.found || scan.ambiguous {
+	if scan.unsafe || scan.ambiguous {
+		result.metadata = metadata.MustUnavailable(metadata.AssetScope)
+		return result, nil
+	}
+	if !scan.found {
 		return result, nil
 	}
 	if !resolver.Valid() {
@@ -63,6 +71,13 @@ func inspectIlstMetadata(ctx context.Context, reader access.Random, sourceEnd ui
 		}
 	}
 	envelope := scan.envelope
+	if !resolver.HasBinding(IlstCarrier()) {
+		_, err := resolver.Parse(ctx, IlstCarrier(), envelope.block, metadata.AssetScope, metadata.NewBlob(ilstMediaType, nil))
+		if err == nil {
+			return result, fmt.Errorf("%w: ilst resolver binding is missing", errUnsupportedMovie)
+		}
+		return result, err
+	}
 	if envelope.ilst.payloadSize > uint64(math.MaxInt) {
 		return result, fmt.Errorf("%w: iTunes ilst payload %d exceeds runtime memory", errUnsupportedMovie, envelope.ilst.payloadSize)
 	}
@@ -77,21 +92,21 @@ func inspectIlstMetadata(ctx context.Context, reader access.Random, sourceEnd ui
 	payload := metadata.NewBlob(ilstMediaType, raw)
 	parsed, err := resolver.Parse(ctx, IlstCarrier(), envelope.block, metadata.AssetScope, payload)
 	if err != nil {
-		if errors.Is(err, errMalformedMovie) || errors.Is(err, errUnsupportedMovie) {
-			return result, nil
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errInspectReadBudget) {
+			return result, err
 		}
+		result.metadata = metadata.MustUnavailable(metadata.AssetScope)
+		return result, nil
+	}
+	if err := context.Cause(ctx); err != nil {
 		return result, err
 	}
-	result.document = parsed
+	if !parsed.Valid() || parsed.Scope() != metadata.AssetScope {
+		result.metadata = metadata.MustUnavailable(metadata.AssetScope)
+		return result, nil
+	}
+	result.metadata = metadata.MustAvailable(parsed)
 	result.envelope = envelope
-	result.available = true
-	return result, nil
-}
-
-func ilstMetadataFailure(result ilstMetadataInspection, err error) (ilstMetadataInspection, error) {
-	if ilstRequiredMetadataFailure(err) {
-		return result, err
-	}
 	return result, nil
 }
 
@@ -116,6 +131,9 @@ func ilstRequiredMetadataFailure(err error) bool {
 	if errors.Is(err, errInspectReadBudget) {
 		return true
 	}
+	if errors.Is(err, errRuntimeRange) {
+		return true
+	}
 	return !errors.Is(err, errMalformedMovie) && !errors.Is(err, errMalformedBox) && !errors.Is(err, errUnsupportedMovie)
 }
 func findIlstEnvelope(ctx context.Context, reader access.Random, sourceEnd uint64, moov box) (ilstEnvelopeScan, error) {
@@ -124,12 +142,19 @@ func findIlstEnvelope(ctx context.Context, reader access.Random, sourceEnd uint6
 		if child.typeID != typeUDTA {
 			return nil
 		}
-		return scanChildBoxes(ctx, reader, sourceEnd, child, func(meta box) error {
+		err := scanChildBoxes(ctx, reader, sourceEnd, child, func(meta box) error {
 			if meta.typeID != typeMETA {
 				return nil
 			}
 			candidate, present, err := findIlstInMeta(ctx, reader, sourceEnd, meta, &result)
 			if err != nil {
+				if !ilstRequiredMetadataFailure(err) {
+					result.unsafe = true
+					if ilstOptionalTraversalFailure(err) {
+						result.offsetIndex = true
+					}
+					return nil
+				}
 				return err
 			}
 			if !present {
@@ -144,9 +169,21 @@ func findIlstEnvelope(ctx context.Context, reader access.Random, sourceEnd uint6
 			result.envelope, result.found = candidate, true
 			return nil
 		})
+		if err != nil {
+			if !ilstRequiredMetadataFailure(err) {
+				result.unsafe = true
+				if ilstOptionalTraversalFailure(err) {
+					result.offsetIndex = true
+				}
+				return nil
+			}
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		if ilstOptionalTraversalFailure(err) {
+			result.unsafe = true
 			result.offsetIndex = true
 		}
 		return result, err
@@ -155,9 +192,9 @@ func findIlstEnvelope(ctx context.Context, reader access.Random, sourceEnd uint6
 }
 
 // ilstOptionalTraversalFailure reports a box walk that stopped before it
-// could establish the absence of offset records. A malformed child scan and
-// an exhausted inspect-read budget are content classifications; source I/O,
-// cancellation, and truncation remain required failures and are propagated.
+// could establish the absence of offset records. Malformed/unsupported
+// structure is classified as content; read-budget, source I/O, cancellation,
+// and truncation remain required failures and are propagated.
 func ilstOptionalTraversalFailure(err error) bool {
 	return !ilstRequiredMetadataFailure(err)
 }
@@ -165,19 +202,25 @@ func ilstOptionalTraversalFailure(err error) bool {
 func findIlstInMeta(ctx context.Context, reader access.Random, sourceEnd uint64, value box, result *ilstEnvelopeScan) (ilstEnvelope, bool, error) {
 	var prefix [4]byte
 	if err := readBoxPrefix(ctx, reader, value, prefix[:], "meta"); err != nil {
+		if !ilstRequiredMetadataFailure(err) {
+			result.unsafe = true
+		}
 		return ilstEnvelope{}, false, err
 	}
 	if prefix != [4]byte{} {
+		result.unsafe = true
 		result.offsetIndex = true
 		return ilstEnvelope{}, false, nil
 	}
 	start, ok := checkedBoxAdd(value.payloadOffset, uint64(len(prefix)))
 	end, endOK := payloadEnd(value)
 	if !ok || !endOK || start > end {
+		result.unsafe = true
 		return ilstEnvelope{}, false, fmt.Errorf("%w: meta payload range", errMalformedMovie)
 	}
 	var handler box
 	var ilst box
+	hasIloc := false
 	var handlerCount, ilstCount int
 	err := scanBoxes(ctx, reader, boxScope{sourceEnd: sourceEnd, start: start, end: end}, func(child box) error {
 		switch child.typeID {
@@ -188,31 +231,45 @@ func findIlstInMeta(ctx context.Context, reader access.Random, sourceEnd uint64,
 			ilstCount++
 			ilst = child
 		case typeILOC:
+			hasIloc = true
 			result.offsetIndex = true
 		}
 		return nil
 	})
 	if err != nil {
+		result.unsafe = true
 		// The meta is proven ISO FullBox but its child list cannot prove that no
 		// direct iloc records stale output offsets.
 		result.offsetIndex = true
 		return ilstEnvelope{}, false, err
 	}
 	if handlerCount > 1 {
+		result.unsafe = true
 		result.ambiguous = true
 		return ilstEnvelope{}, false, nil
 	}
 	if handlerCount == 0 {
+		if ilstCount > 0 || hasIloc {
+			result.unsafe = true
+		}
 		return ilstEnvelope{}, false, nil
 	}
 	mdir, err := isIlstHandler(ctx, reader, handler)
 	if err != nil {
+		if !ilstRequiredMetadataFailure(err) {
+			result.unsafe = true
+			return ilstEnvelope{}, false, nil
+		}
 		return ilstEnvelope{}, false, err
 	}
 	if !mdir {
+		result.unsafe = true
 		return ilstEnvelope{}, false, nil
 	}
 	if ilstCount != 1 {
+		if ilstCount > 1 || hasIloc {
+			result.unsafe = true
+		}
 		if ilstCount > 1 {
 			result.ambiguous = true
 			return ilstEnvelope{}, false, nil
