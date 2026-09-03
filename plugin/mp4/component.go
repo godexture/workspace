@@ -85,9 +85,7 @@ func compileDemux(shape flow.Shape, inspected movie, selection mediaformat.Selec
 		if err != nil {
 			return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 		}
-		if inspected.metadata.Scope().Valid() {
-			descriptor = descriptor.WithMetadata(inspected.metadata)
-		}
+		descriptor = descriptor.WithMetadata(inspected.metadataAttachment())
 		outputs = append(outputs, flow.Describe("packets", descriptor))
 		if size := resource.Bytes(value.maxSampleSize); size > memory {
 			memory = size

@@ -7,10 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godexture/godec/config"
+	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/flow"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
+	"github.com/godexture/godec/media/property"
+	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/tag"
+	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/plugin"
 )
 
@@ -35,7 +41,7 @@ func TestLabelMarshalReportsEveryUnrepresentableEntryInDocumentOrder(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, reports, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", document)
+	payload, reports, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +81,7 @@ func TestLabelMarshalKeepsInvalidFirstLabelFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reports, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", document)
+	_, reports, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", metadata.MustAvailable(document))
 	if !errors.Is(err, ErrMalformed) || len(reports) != 0 {
 		t.Fatalf("invalid first label = reports %#v, error %v", reports, err)
 	}
@@ -100,12 +106,49 @@ func TestLabelMarshalRejectsForeignOpaqueBlockButAllowsForeignSource(t *testing.
 	foreignCarrier := carrier.Define[foreignMetadataCarrierID]()
 	foreignEncoding := plugin.IdentityOf[foreignMetadataEncodingID]()
 	foreign := metadata.NewRawBlock("foreign/opaque", foreignCarrier, foreignEncoding, metadata.NewBlob("application/octet-stream", []byte("opaque")))
-	if _, _, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", build(foreign)); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), string(foreign.ID())) {
+	if _, _, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", metadata.MustAvailable(build(foreign))); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), string(foreign.ID())) {
 		t.Fatalf("foreign opaque metadata error = %v, want ErrUnsupported with block ID", err)
 	}
 	foreignSource := metadata.NewSourceBlock("foreign/source", foreignCarrier, foreignEncoding, metadata.NewBlob("application/octet-stream", []byte("source")))
-	payload, _, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", build(foreignSource))
+	payload, _, err := resolver.Marshal(t.Context(), LabelCarrier(), "target", metadata.MustAvailable(build(foreignSource)))
 	if err != nil || !bytes.Equal(payload.AppendTo(nil), []byte("label")) {
 		t.Fatalf("foreign source marshal = %q, %v", payload.AppendTo(nil), err)
+	}
+}
+
+func TestWriterRejectsUnavailableMetadataWithoutMarshal(t *testing.T) {
+	marshalCalls := 0
+	encoding := plugin.NewComponent[encodingID](plugin.Descriptor{DisplayName: "counting ACME label encoding"}, configurationSchema(),
+		metadata.WithEncoding(parseLabel, func(ctx metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+			marshalCalls++
+			return marshalLabel(ctx)
+		}, Label().Erased()))
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{LabelCarrier(): encoding}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stream.MustDescriptor("values", Values().Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustUnavailable(metadata.StreamScope))
+	component := writerComponent()
+	resolved, err := component.Resolve(config.NewPatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plugin.Compile(component, context, resolved, flow.NewDescriptors(flow.Describe("values", input)))
+	if err == nil {
+		t.Fatal("unavailable metadata unexpectedly compiled")
+	}
+	items := diagnostic.ItemsOf(err)
+	if len(items) != 1 || !strings.Contains(items[0].Detail["cause"], "metadata.unavailable") || !strings.Contains(items[0].Detail["cause"], metadata.ErrMetadataUnavailable.Error()) {
+		t.Fatalf("unavailable writer diagnostic = %#v/%v", items, err)
+	}
+	if marshalCalls != 0 {
+		t.Fatalf("unavailable writer marshal calls = %d, want 0", marshalCalls)
+	}
+	if len(compiled.MetadataReports()) != 0 {
+		t.Fatalf("failed writer metadata reports = %#v", compiled.MetadataReports())
 	}
 }

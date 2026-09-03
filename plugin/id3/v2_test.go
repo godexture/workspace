@@ -29,7 +29,7 @@ func TestV2ParseAndUnchangedMarshalPreserveSourceBytes(t *testing.T) {
 	if !ok || !block.Source() || !bytes.Equal(block.Payload().AppendTo(nil), payload) {
 		t.Fatalf("ID3v2 source block = %#v/%v", block, ok)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("ID3v2 unchanged = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -44,7 +44,7 @@ func TestV2FreshTitleWritesV24UTF8(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("fresh ID3v2 = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -94,7 +94,7 @@ func FuzzV2UnchangedDocumentsReturnExactSource(f *testing.F) {
 		if err != nil {
 			return
 		}
-		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+		encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 		if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), value) {
 			t.Fatalf("roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 		}

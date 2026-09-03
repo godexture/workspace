@@ -73,11 +73,15 @@ func TestDescriptorCarriesImmutableStaticMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withMetadata := descriptor.WithMetadata(document)
-	if descriptor.Metadata().Len() != 0 || withMetadata.Metadata().Len() != 1 {
-		t.Fatalf("metadata lengths = %d, %d", descriptor.Metadata().Len(), withMetadata.Metadata().Len())
+	withMetadata := descriptor.WithMetadata(metadata.MustAvailable(document))
+	if !descriptor.Metadata().IsAbsent() || !withMetadata.Metadata().IsAvailable() {
+		t.Fatalf("metadata states = %s, %s", descriptor.Metadata().State(), withMetadata.Metadata().State())
 	}
-	if value, ok := metadata.First(withMetadata.Metadata(), title); !ok || value != "stream title" {
+	semantic, err := withMetadata.Metadata().Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := metadata.First(semantic, title); !ok || value != "stream title" {
 		t.Fatalf("metadata title = %q, %v", value, ok)
 	}
 }
@@ -148,5 +152,38 @@ func TestDescriptorFingerprintIncludesPayloadType(t *testing.T) {
 	}
 	if firstFingerprint == secondFingerprint || first.SameState(second) {
 		t.Fatal("same marker with different payload types was accepted as the same stream state")
+	}
+}
+
+func TestDescriptorFingerprintIncludesMetadataAvailabilityAndScope(t *testing.T) {
+	type availabilityID struct{}
+	type availabilityValue struct{}
+	typ := schema.Define[availabilityID, availabilityValue](schema.Traits[availabilityValue]{})
+	base := MustDescriptor("stream", typ.Descriptor(), timing.Base{}, property.New())
+	document, err := metadata.NewBuilder(metadata.StreamScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	available := base.WithMetadata(metadata.MustAvailable(document))
+	unavailable := base.WithMetadata(metadata.MustUnavailable(metadata.StreamScope))
+	assetUnavailable := base.WithMetadata(metadata.MustUnavailable(metadata.AssetScope))
+	availableFingerprint, err := available.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailableFingerprint, err := unavailable.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetFingerprint, err := assetUnavailable.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availableFingerprint == unavailableFingerprint || unavailableFingerprint == assetFingerprint || available.SameState(unavailable) || unavailable.SameState(assetUnavailable) {
+		t.Fatal("metadata availability or scope was omitted from descriptor state")
+	}
+	baseFingerprint, err := base.Fingerprint()
+	if err != nil || !base.Metadata().IsAbsent() || baseFingerprint.IsZero() {
+		t.Fatal("zero metadata attachment was not a valid absent state")
 	}
 }

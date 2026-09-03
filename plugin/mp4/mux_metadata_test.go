@@ -58,7 +58,7 @@ func TestMP4IlstMuxRewritesConsensusDocument(t *testing.T) {
 		t.Fatalf("edited representable metadata reports = %#v", compiled.MetadataReports())
 	}
 	outputs, ok := plugin.OutputsOf[stream.Descriptor](compiled)
-	if !ok || len(outputs.At("writes")) != 1 || !sameIlstMuxDocument(outputs.At("writes")[0].Metadata(), edited) {
+	if !ok || len(outputs.At("writes")) != 1 || !sameIlstMuxDocument(mustMetadataDocument(t, outputs.At("writes")[0].Metadata()), edited) {
 		t.Fatalf("mux output metadata = %#v", outputs)
 	}
 
@@ -211,13 +211,46 @@ func TestMP4IlstMuxRejectsConsensusMismatchBeforeMarshal(t *testing.T) {
 	first := muxEditedTitle(t, inspected.metadata, "First")
 	second := muxEditedTitle(t, inspected.metadata, "Second")
 	inputs := muxMetadataInputs(t, inspected, first)
-	inputs[1] = flow.Describe("packets", inputs[1].Descriptor().WithMetadata(second))
+	inputs[1] = flow.Describe("packets", inputs[1].Descriptor().WithMetadata(metadata.MustAvailable(second)))
 	resolver, calls := muxSpyResolver(t)
 	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(inputs), inspected); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("metadata mismatch error = %v", err)
 	}
 	if *calls != 0 {
 		t.Fatalf("metadata mismatch marshal calls = %d, want 0", *calls)
+	}
+}
+
+func TestMP4MuxPreservesMetadataPresenceState(t *testing.T) {
+	emptyAsset, err := metadata.NewBuilder(metadata.AssetScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	withEmptyIlst := inspectMovieWithIlst(t, ilstMovieFixture("mdir"))
+	if _, err := compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(muxMetadataInputsWithAttachment(t, withEmptyIlst, metadata.Absent())[:1]), withEmptyIlst); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("empty ilst with absent input error = %v", err)
+	}
+	availableInputs := muxMetadataInputsWithAttachment(t, withEmptyIlst, metadata.MustAvailable(withEmptyIlst.metadata))
+	layout, err := compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(availableInputs), withEmptyIlst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !layout.attachment.IsAvailable() || layout.attachment.Scope() != metadata.AssetScope {
+		t.Fatalf("empty ilst output metadata state = %s/%s", layout.attachment.State(), layout.attachment.Scope())
+	}
+
+	withoutIlst := inspectMovie(t, twoTrackMovie(false, "isom", "iso2"))
+	absentInputs := muxMetadataInputsWithAttachment(t, withoutIlst, metadata.Absent())
+	layout, err = compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(absentInputs[:1]), withoutIlst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !layout.attachment.IsAbsent() {
+		t.Fatalf("no ilst output metadata state = %s", layout.attachment.State())
+	}
+	availableInputs = muxMetadataInputsWithAttachment(t, withoutIlst, metadata.MustAvailable(emptyAsset))
+	if _, err := compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(availableInputs[:1]), withoutIlst); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("no ilst with available empty input error = %v", err)
 	}
 }
 
@@ -494,13 +527,22 @@ func muxEditedTitle(t testing.TB, source metadata.Document, title string) metada
 
 func muxMetadataInputs(t testing.TB, inspected movie, document metadata.Document) []flow.PortDescriptor[stream.Descriptor] {
 	t.Helper()
+	attachment := metadata.Absent()
+	if document.Valid() {
+		attachment = metadata.MustAvailable(document)
+	}
+	return muxMetadataInputsWithAttachment(t, inspected, attachment)
+}
+
+func muxMetadataInputsWithAttachment(t testing.TB, inspected movie, attachment metadata.Attachment) []flow.PortDescriptor[stream.Descriptor] {
+	t.Helper()
 	result := make([]flow.PortDescriptor[stream.Descriptor], 0, len(inspected.tracks))
 	for _, track := range inspected.tracks {
 		properties, err := codec.WithTag(property.New(), SampleEntryTag(string(track.codec[:])))
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := stream.MustDescriptor(trackStreamID(track.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(track.timeScale)), properties).WithMetadata(document)
+		input := stream.MustDescriptor(trackStreamID(track.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(track.timeScale)), properties).WithMetadata(attachment)
 		result = append(result, flow.Describe("packets", input))
 	}
 	return result

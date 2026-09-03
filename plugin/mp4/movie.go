@@ -104,6 +104,13 @@ func parseMovieWithMetadata(ctx context.Context, reader access.Random, sourceEnd
 	return result, nil
 }
 
+func (m movie) metadataAttachment() metadata.Attachment {
+	if m.ilst.valid() && m.metadata.Valid() && m.metadata.Scope() == metadata.AssetScope {
+		return metadata.MustAvailable(m.metadata)
+	}
+	return metadata.Absent()
+}
+
 // moovRecordsOffsets reports an iloc item index directly under moov. Deeper
 // nesting is not searched: iloc lives at moov or file level, while the meta box
 // under udta holds vocabulary metadata and follows the QuickTime layout in some

@@ -64,8 +64,12 @@ func (r Resolver) Parse(ctx context.Context, slot carrier.ID, block BlockID, sco
 	return value, nil
 }
 
-func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, document Document) (Blob, []loss.Report, error) {
+func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, attachment Attachment) (Blob, []loss.Report, error) {
 	resolved, err := r.lookup(slot)
+	if err != nil {
+		return Blob{}, nil, err
+	}
+	document, err := semanticAttachment(slot, block, attachment, "marshal")
 	if err != nil {
 		return Blob{}, nil, err
 	}
@@ -85,12 +89,32 @@ func (r Resolver) Marshal(ctx context.Context, slot carrier.ID, block BlockID, d
 
 // Project converts only entries a target encoding cannot directly represent.
 // It preserves document order and multiplicity, and never chains mappings.
-func (r Resolver) Project(slot carrier.ID, block BlockID, document Document) (Document, []loss.Report, error) {
+func (r Resolver) Project(slot carrier.ID, block BlockID, attachment Attachment) (Document, []loss.Report, error) {
 	resolved, err := r.lookup(slot)
 	if err != nil {
 		return Document{}, nil, err
 	}
+	document, err := semanticAttachment(slot, block, attachment, "project")
+	if err != nil {
+		return Document{}, nil, err
+	}
 	return r.project(resolved, slot, block, document)
+}
+
+func semanticAttachment(slot carrier.ID, block BlockID, attachment Attachment, operation string) (Document, error) {
+	document, err := attachment.Semantic()
+	if err == nil {
+		return document, nil
+	}
+	code, message := "metadata.invalid", "metadata attachment is invalid"
+	switch {
+	case errors.Is(err, ErrMetadataAbsent):
+		code, message = "metadata.absent", "metadata carrier has no semantic document"
+	case errors.Is(err, ErrMetadataUnavailable):
+		code, message = "metadata.unavailable", "metadata carrier metadata is unavailable"
+	}
+	diagnosticError := resolverDiagnostic(code, message, slot, plugin.Identity{}, err)
+	return Document{}, errors.Join(diagnosticError, err, errors.New("metadata "+operation+" requires semantic metadata"))
 }
 
 func (r Resolver) project(resolved resolvedEncoding, slot carrier.ID, block BlockID, document Document) (Document, []loss.Report, error) {

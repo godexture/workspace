@@ -42,7 +42,7 @@ func TestV2RetainsBoundarySafeMalformedFrameOpaque(t *testing.T) {
 	if len(document.Entries()) != 0 || len(document.Blocks()) != 2 || document.Blocks()[1].Source() {
 		t.Fatalf("boundary-safe malformed frame = %#v", document)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || string(encoded.AppendTo(nil)) != string(payload) {
 		t.Fatalf("boundary-safe malformed roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -78,7 +78,7 @@ func TestV2CanonicalEditOmitsSafeExtendedHeadersAndRejectsRestrictions(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, _, err := resolver.Marshal(t.Context(), slot, "head", edited)
+			encoded, _, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited))
 			if test.restrictions {
 				if !errors.Is(err, errV2Unsupported) {
 					t.Fatalf("restricted edit error = %v", err)
@@ -101,7 +101,7 @@ func TestV2AcceptsTrailingZeroPaddingExceptWithFooter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || string(encoded.AppendTo(nil)) != string(padded) {
 		t.Fatalf("padded tag roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}

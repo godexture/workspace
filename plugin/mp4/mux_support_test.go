@@ -12,6 +12,7 @@ import (
 	"github.com/godexture/godec/media/buffer"
 	"github.com/godexture/godec/media/codec"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/packet"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/stream"
@@ -75,7 +76,7 @@ func compileMP4Mux(t testing.TB, inspected movie) (plugin.Component, plugin.Comp
 		}
 		input := stream.MustDescriptor(trackStreamID(track.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(track.timeScale)), properties)
 		if inspected.metadata.Scope().Valid() {
-			input = input.WithMetadata(inspected.metadata)
+			input = input.WithMetadata(metadata.MustAvailable(inspected.metadata))
 		}
 		inputs = append(inputs, flow.Describe("packets", input))
 	}

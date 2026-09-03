@@ -87,6 +87,24 @@ func TestEditProducesANewDocumentAndLeavesTheOriginal(t *testing.T) {
 	}
 }
 
+func TestDocumentIdentityIsSharedByCopiesAndRebuiltByEdit(t *testing.T) {
+	original, err := NewBuilder(AssetScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy := original
+	if original.identity == nil || copy.identity != original.identity {
+		t.Fatalf("document copy identity = %p/%p", original.identity, copy.identity)
+	}
+	edited, err := original.Edit().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.identity == original.identity {
+		t.Fatalf("edited document reused identity %p", edited.identity)
+	}
+}
+
 func TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite(t *testing.T) {
 	payload := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 	block := NewRawBlock("unknown-frame", testCarrier, otherEncodingIdentity(), NewBlob("", payload))

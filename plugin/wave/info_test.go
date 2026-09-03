@@ -52,7 +52,7 @@ func TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding(t *testing.T
 		t.Fatalf("unknown INFO field = %x, want %x", blocks[1].Payload().AppendTo(nil), unknown)
 	}
 
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", document)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestRIFFInfoEncodingAppendsEditsWithoutDiscardingOriginalBytes(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestRIFFInfoEncodingKeepsUnknownSlotsWhenSemanticEntriesAreRemoved(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestRIFFInfoEncodingPreservesUnchangedRawSlotsWhenAnotherEntryChanges(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestRIFFInfoEncodingMatchesDuplicateNativeEntriesByOriginAndValue(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestRIFFInfoEncodingTracksUnknownChildBlockEdits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+			encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,7 +282,7 @@ func TestRIFFInfoEncodingAppendsNewChildrenInDocumentOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestRIFFInfoEncodingRejectsForeignChildProvenance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+			_, _, err = resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 			if !errors.Is(err, ErrMalformed) {
 				t.Fatalf("foreign %s child error = %v, want ErrMalformed", test.name, err)
 			}
@@ -360,7 +360,7 @@ func TestRIFFInfoEncodingRejectsMalformedChangedChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = resolver.Marshal(t.Context(), RIFFInfo(), "list-0", edited)
+	_, _, err = resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(edited))
 	if !errors.Is(err, ErrMalformed) {
 		t.Fatalf("malformed changed child error = %v, want ErrMalformed", err)
 	}
@@ -387,7 +387,7 @@ func TestRIFFInfoEncodingRespectsDuplicateDocumentOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", reordered)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(reordered))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestRIFFInfoEncodingDoesNotSilentlyReturnRawForReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", replaced)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(replaced))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestRIFFInfoEncodingBuildsSemanticDocumentInEntryOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolver := infoTestResolver(t)
-	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "new-list", document)
+	encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "new-list", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ func FuzzRIFFInfoEncodingRoundTripsAcceptedCarriers(f *testing.F) {
 		if err != nil {
 			return
 		}
-		encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "fuzz", document)
+		encoded, _, err := resolver.Marshal(t.Context(), RIFFInfo(), "fuzz", metadata.MustAvailable(document))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -611,7 +611,7 @@ func TestRIFFInfoReportsKeysItHasNoNameForRatherThanRefusing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, lost, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", document)
+	encoded, lost, err := resolver.Marshal(t.Context(), RIFFInfo(), "list-0", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatalf("marshal refused a document it could partly write: %v", err)
 	}

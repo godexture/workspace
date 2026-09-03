@@ -59,7 +59,7 @@ func TestResolverProjectPreservesDirectKeysAndConvertsOneSourceEntry(t *testing.
 		Add(builder, title, "direct", Origin{Encoding: encodingIdentity(), Carrier: testCarrier, Block: "source", Native: "TITLE"})
 		Add(builder, mood, "calm", Origin{Encoding: encodingIdentity(), Carrier: testCarrier, Block: "source", Native: "MOOD"})
 	})
-	projected, reports, err := resolver.Project(testCarrier, "target", document)
+	projected, reports, err := resolver.Project(testCarrier, "target", MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestResolverProjectPreservesMultipleValuesAndSelectsDeterministically(t *te
 			Add(builder, mood, "first", Origin{})
 			Add(builder, artist, "second", Origin{})
 		})
-		projected, reports, err := resolver.Project(testCarrier, "target", document)
+		projected, reports, err := resolver.Project(testCarrier, "target", MustAvailable(document))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +105,7 @@ func TestResolverProjectPreservesMultipleValuesAndSelectsDeterministically(t *te
 			Map(mood, title, loss.Ambiguous, 2, func(string) (string, bool) { return "high", true }),
 		)
 		document := projectionDocument(t, func(builder *Builder) { Add(builder, mood, "value", Origin{}) })
-		projected, reports, err := resolver.Project(testCarrier, "target", document)
+		projected, reports, err := resolver.Project(testCarrier, "target", MustAvailable(document))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +117,7 @@ func TestResolverProjectPreservesMultipleValuesAndSelectsDeterministically(t *te
 			Map(mood, genre, loss.Approximate, 3, func(string) (string, bool) { return "approximate", true }),
 			Map(mood, title, loss.Lossless, 3, func(string) (string, bool) { return "lossless", true }),
 		)
-		projected, reports, err = resolver.Project(testCarrier, "target", document)
+		projected, reports, err = resolver.Project(testCarrier, "target", MustAvailable(document))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestResolverProjectPreservesMultipleValuesAndSelectsDeterministically(t *te
 			Add(builder, mood, "mapped", Origin{})
 			Add(builder, rating, 5, Origin{})
 		})
-		projected, reports, err := resolver.Project(testCarrier, "target", document)
+		projected, reports, err := resolver.Project(testCarrier, "target", MustAvailable(document))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,14 +153,14 @@ func TestResolverMarshalProjectsOnce(t *testing.T) {
 		Map(artist, genre, loss.Lossless, 0, func(value string) (string, bool) { return value, true }),
 	)
 	document := projectionDocument(t, func(builder *Builder) { Add(builder, mood, "once", Origin{}) })
-	_, reports, err := resolver.Marshal(t.Context(), testCarrier, "target", document)
+	_, reports, err := resolver.Marshal(t.Context(), testCarrier, "target", MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if value, ok := First(*captured, artist); !ok || value != "once" || len(reports) != 1 || reports[0].Loss.Target != artist.ID() {
 		t.Fatalf("Marshal projection = %#v/%#v", captured.Entries(), reports)
 	}
-	projected, reports, err := resolver.Project(testCarrier, "target", *captured)
+	projected, reports, err := resolver.Project(testCarrier, "target", MustAvailable(*captured))
 	if err != nil {
 		t.Fatal(err)
 	}

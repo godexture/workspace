@@ -8,6 +8,7 @@ package media_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -426,11 +427,20 @@ func newSkeletonDescriptor(id stream.ID, schemaDescriptor schema.Descriptor, bas
 	if err != nil {
 		return stream.Descriptor{}, err
 	}
-	return descriptor.WithMetadata(document), nil
+	if !document.Valid() {
+		return descriptor, nil
+	}
+	return descriptor.WithMetadata(metadata.MustAvailable(document)), nil
 }
 
 func deriveSkeletonDescriptor(input stream.Descriptor, schemaDescriptor schema.Descriptor, base timing.Base) (stream.Descriptor, error) {
-	return newSkeletonDescriptor(input.ID(), schemaDescriptor, base, input.Properties(), input.Metadata())
+	document, err := input.Metadata().Semantic()
+	if errors.Is(err, metadata.ErrMetadataAbsent) {
+		document = metadata.Document{}
+	} else if err != nil {
+		return stream.Descriptor{}, err
+	}
+	return newSkeletonDescriptor(input.ID(), schemaDescriptor, base, input.Properties(), document)
 }
 
 type skeletonMuxerOperator struct {
@@ -1043,7 +1053,11 @@ func TestWalkingSkeletonPreservesBytesTimingOrderAndOwnership(t *testing.T) {
 	if value, ok := skeletonSampleRate.Get(terminal.Properties()); !ok || value != 48000 {
 		t.Fatalf("terminal sample rate = %d, %v", value, ok)
 	}
-	if title, ok := metadata.First(terminal.Metadata(), tag.Title()); !ok || title != "skeleton stream" {
+	terminalMetadata, err := terminal.Metadata().Semantic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title, ok := metadata.First(terminalMetadata, tag.Title()); !ok || title != "skeleton stream" {
 		t.Fatalf("terminal metadata title = %q, %v", title, ok)
 	}
 	if len(trace.propertyReads) != 1 || trace.propertyReads[0] != (skeletonPropertyRead{component: "decoder", id: skeletonSampleRate.ID()}) {
@@ -1088,7 +1102,7 @@ func TestWalkingSkeletonMetadataEncodingPreservesRawAndOrder(t *testing.T) {
 		t.Fatalf("raw blocks = %#v", blocks)
 	}
 
-	reencoded, _, err := resolver.Marshal(t.Context(), skeletonMetadataCarrier, "fixture", document)
+	reencoded, _, err := resolver.Marshal(t.Context(), skeletonMetadataCarrier, "fixture", metadata.MustAvailable(document))
 	if err != nil {
 		t.Fatal(err)
 	}

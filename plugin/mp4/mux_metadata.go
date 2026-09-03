@@ -2,6 +2,7 @@ package mp4
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/godexture/godec/media/metadata"
@@ -13,9 +14,9 @@ import (
 // immutable inspection. A rewrite owns the encoded ilst payload and the
 // envelope geometry needed by the layout writer.
 type muxMetadataPlan struct {
-	document metadata.Document
-	rewrite  muxIlstRewrite
-	reports  []loss.Report
+	attachment metadata.Attachment
+	rewrite    muxIlstRewrite
+	reports    []loss.Report
 }
 
 func compileMuxWithResolver(ctx context.Context, resolver metadata.Resolver, inputs []stream.Descriptor, inspected movie) (muxLayout, error) {
@@ -23,32 +24,54 @@ func compileMuxWithResolver(ctx context.Context, resolver metadata.Resolver, inp
 	if err != nil {
 		return muxLayout{}, err
 	}
-	document, err := muxMetadataConsensus(inputs)
+	attachment, err := muxMetadataConsensus(inputs)
 	if err != nil {
 		return muxLayout{}, err
 	}
-	metadataPlan, err := planMuxMetadata(ctx, resolver, inspected, document)
+	metadataPlan, err := planMuxMetadata(ctx, resolver, inspected, attachment)
 	if err != nil {
 		return muxLayout{}, err
 	}
 	return buildMuxLayout(inspected, selected, metadataPlan)
 }
 
-func muxMetadataConsensus(inputs []stream.Descriptor) (metadata.Document, error) {
+func muxMetadataConsensus(inputs []stream.Descriptor) (metadata.Attachment, error) {
 	if len(inputs) == 0 {
-		return metadata.Document{}, fmt.Errorf("%w: MP4 mux has no metadata-bearing tracks", ErrUnsupported)
+		return metadata.Absent(), fmt.Errorf("%w: MP4 mux has no metadata-bearing tracks", ErrUnsupported)
 	}
 	result := inputs[0].Metadata()
-	if !muxAssetDocument(result) {
-		return metadata.Document{}, fmt.Errorf("%w: MP4 mux input metadata is not an asset document", ErrUnsupported)
+	document, err := muxSemanticDocument(result)
+	if err != nil {
+		return metadata.Absent(), err
+	}
+	if !muxAssetDocument(document) {
+		return metadata.Absent(), fmt.Errorf("%w: MP4 mux input metadata is not an asset document", ErrUnsupported)
 	}
 	for index := 1; index < len(inputs); index++ {
-		value := inputs[index].Metadata()
-		if !muxAssetDocument(value) || !sameIlstMuxDocument(result, value) {
-			return metadata.Document{}, fmt.Errorf("%w: MP4 selected tracks disagree on metadata", ErrUnsupported)
+		valueAttachment := inputs[index].Metadata()
+		if !result.SameState(valueAttachment) {
+			return metadata.Absent(), fmt.Errorf("%w: MP4 selected tracks disagree on metadata state", ErrUnsupported)
+		}
+		value, err := muxSemanticDocument(valueAttachment)
+		if err != nil {
+			return metadata.Absent(), err
+		}
+		if !muxAssetDocument(value) || !sameIlstMuxDocument(document, value) {
+			return metadata.Absent(), fmt.Errorf("%w: MP4 selected tracks disagree on metadata", ErrUnsupported)
 		}
 	}
 	return result, nil
+}
+
+func muxSemanticDocument(value metadata.Attachment) (metadata.Document, error) {
+	document, err := value.Semantic()
+	if errors.Is(err, metadata.ErrMetadataAbsent) {
+		return metadata.Document{}, nil
+	}
+	if err != nil {
+		return metadata.Document{}, fmt.Errorf("%w: MP4 mux input metadata is unavailable: %w", ErrUnsupported, err)
+	}
+	return document, nil
 }
 
 func muxAssetDocument(value metadata.Document) bool {
@@ -58,9 +81,21 @@ func muxAssetDocument(value metadata.Document) bool {
 	return value.Scope() == metadata.AssetScope
 }
 
-func planMuxMetadata(ctx context.Context, resolver metadata.Resolver, inspected movie, document metadata.Document) (muxMetadataPlan, error) {
-	result := muxMetadataPlan{document: document}
-	if sameIlstMuxDocument(document, inspected.metadata) {
+func planMuxMetadata(ctx context.Context, resolver metadata.Resolver, inspected movie, attachment metadata.Attachment) (muxMetadataPlan, error) {
+	document, err := muxSemanticDocument(attachment)
+	if err != nil {
+		return muxMetadataPlan{}, err
+	}
+	result := muxMetadataPlan{attachment: attachment}
+	sourceAttachment := inspected.metadataAttachment()
+	if !attachment.SameState(sourceAttachment) {
+		return muxMetadataPlan{}, fmt.Errorf("%w: MP4 metadata state does not match inspected source", ErrUnsupported)
+	}
+	sourceDocument, err := muxSemanticDocument(sourceAttachment)
+	if err != nil {
+		return muxMetadataPlan{}, err
+	}
+	if sameIlstMuxDocument(document, sourceDocument) {
 		return result, nil
 	}
 	if !inspected.ilst.valid() {
@@ -73,10 +108,10 @@ func planMuxMetadata(ctx context.Context, resolver metadata.Resolver, inspected 
 			return muxMetadataPlan{}, err
 		}
 	}
-	if err := validateIlstRewriteLineage(inspected.metadata, inspected.ilst, document); err != nil {
+	if err := validateIlstRewriteLineage(sourceDocument, inspected.ilst, document); err != nil {
 		return muxMetadataPlan{}, err
 	}
-	payload, reports, err := resolver.Marshal(ctx, IlstCarrier(), inspected.ilst.block, document)
+	payload, reports, err := resolver.Marshal(ctx, IlstCarrier(), inspected.ilst.block, attachment)
 	if err != nil {
 		return muxMetadataPlan{}, err
 	}

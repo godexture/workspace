@@ -211,8 +211,8 @@ func validateBridgeResult(component plugin.Component, compilation plugin.Compila
 	if output.ID() != input.ID() {
 		return stream.Descriptor{}, rejectError{code: "stream-identity"}
 	}
-	if output.Metadata().Scope() != input.Metadata().Scope() {
-		return stream.Descriptor{}, rejectError{code: "metadata-scope"}
+	if !output.Metadata().SameState(input.Metadata()) {
+		return stream.Descriptor{}, rejectError{code: "metadata-state"}
 	}
 	if err := validateAutomaticCompilation(component, compilation, policy, platform); err != nil {
 		return stream.Descriptor{}, err

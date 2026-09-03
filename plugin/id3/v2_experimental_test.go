@@ -35,7 +35,7 @@ func TestV2ExperimentalTagsDecodeButCannotBeEdited(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := resolver.Marshal(t.Context(), slot, "head", edited); !errors.Is(err, errV2Unsupported) {
+		if _, _, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited)); !errors.Is(err, errV2Unsupported) {
 			t.Fatalf("experimental v2.%d edit error = %v", test.version, err)
 		}
 	}

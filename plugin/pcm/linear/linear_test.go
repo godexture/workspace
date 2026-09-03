@@ -404,7 +404,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	carrier := stream.MustDescriptor("pcm", access.Bytes().Descriptor(), timing.Base{}, property.New()).WithMetadata(document)
+	carrier := stream.MustDescriptor("pcm", access.Bytes().Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustAvailable(document))
 	patch := config.NewPatch().SetText("rate", "32000").SetText("validBits", "12")
 
 	reader := componentByIdentity(t, ReaderIdentity())
@@ -434,7 +434,7 @@ func TestPCMCompileKeepsMediaMeaningOffByteCarrierDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packets := stream.MustDescriptor(carrier.ID(), codec.Packets().Descriptor(), timing.MustBase(1, 32_000), chunks.Properties()).WithMetadata(document)
+	packets := stream.MustDescriptor(carrier.ID(), codec.Packets().Descriptor(), timing.MustBase(1, 32_000), chunks.Properties()).WithMetadata(metadata.MustAvailable(document))
 	compiledWriter, err := plugin.Compile(writer, plugin.CompileContext{}, resolvedWriter, flow.NewDescriptors(flow.Describe("packets", packets)))
 	if err != nil {
 		t.Fatal(err)

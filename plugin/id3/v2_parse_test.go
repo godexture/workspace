@@ -35,7 +35,7 @@ func TestV2ParsesTitleAcrossSupportedVersions(t *testing.T) {
 			if !ok || title != "Title" {
 				t.Fatalf("ID3v2.%d title = %q/%v", test.version, title, ok)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 				t.Fatalf("ID3v2.%d exact = %x, reports %#v, error %v", test.version, encoded.AppendTo(nil), reports, err)
 			}
@@ -55,7 +55,7 @@ func TestV2PreservesFooterUntilSemanticEditCanonicalizesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 	if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 		t.Fatalf("footer source roundtrip = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -65,7 +65,7 @@ func TestV2PreservesFooterUntilSemanticEditCanonicalizesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, reports, err = resolver.Marshal(t.Context(), slot, "head", edited)
+	encoded, reports, err = resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(edited))
 	if err != nil || len(reports) != 0 {
 		t.Fatalf("footer source edit = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 	}
@@ -103,7 +103,7 @@ func TestV2TextFrameEncodingMatrix(t *testing.T) {
 			if !ok || title != "A漢" {
 				t.Fatalf("%s title = %q/%v", test.name, title, ok)
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 				t.Fatalf("%s exact = %x, reports %#v, error %v", test.name, encoded.AppendTo(nil), reports, err)
 			}
@@ -188,7 +188,7 @@ func TestV2CombinesLegacyDateTuplesByOrdinal(t *testing.T) {
 			if len(dates) != 1 || dates[0].ToISOString() != "2024-06-17T12:34" || document.Entries()[0].Origin().Native != test.year {
 				t.Fatalf("legacy date = %#v, entries %#v", dates, document.Entries())
 			}
-			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", document)
+			encoded, reports, err := resolver.Marshal(t.Context(), slot, "head", metadata.MustAvailable(document))
 			if err != nil || len(reports) != 0 || !bytes.Equal(encoded.AppendTo(nil), payload) {
 				t.Fatalf("legacy date exact = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
 			}

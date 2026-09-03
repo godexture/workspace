@@ -68,13 +68,13 @@ func readerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
-			document, err := metadata.NewBuilder(metadata.StreamScope).Append(input.Metadata()).Append(inspected.metadata).Build()
+			metadataAttachment, err := metadata.Merge(metadata.StreamScope, input.Metadata(), metadata.MustAvailable(inspected.metadata))
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
 			return plugin.Compiled[readerPlan, stream.Descriptor]{
 				Plan:    readerPlan{shape: shape.Clone(), offset: inspected.offset},
-				Outputs: flow.NewDescriptors(flow.Describe("packets", output.WithMetadata(document))),
+				Outputs: flow.NewDescriptors(flow.Describe("packets", output.WithMetadata(metadataAttachment))),
 				Effects: []plugin.Effect{{Kind: plugin.StructuralEffect, Loss: plugin.NoLoss, Detail: "acme-demux"}},
 			}, nil
 		},

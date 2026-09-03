@@ -14,6 +14,7 @@ import (
 	"github.com/godexture/godec/job"
 	"github.com/godexture/godec/media/carrier"
 	"github.com/godexture/godec/media/key"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/metadata/loss"
 	"github.com/godexture/godec/media/property"
 	"github.com/godexture/godec/media/schema"
@@ -327,6 +328,67 @@ func TestProjectDescriptorPreservesUntimedTimelineState(t *testing.T) {
 	}
 	if !descriptor.Valid() || descriptor.HasTimeline || descriptor.TimeBaseNumerator != 0 || descriptor.TimeBaseDenominator != 0 {
 		t.Fatalf("untimed plan descriptor = %#v", descriptor)
+	}
+}
+
+func TestProjectDescriptorProjectsMetadataAvailability(t *testing.T) {
+	type carrierID struct{}
+	type carrierValue struct{}
+	typ := schema.Define[carrierID, carrierValue](schema.Traits[carrierValue]{})
+	value := stream.MustDescriptor("bytes", typ.Descriptor(), timing.Base{}, property.New()).WithMetadata(metadata.MustUnavailable(metadata.AssetScope))
+	descriptor, err := ProjectDescriptor(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !descriptor.Valid() || descriptor.MetadataAvailability != "unavailable" || descriptor.MetadataScope != "asset" {
+		t.Fatalf("metadata projection = %#v", descriptor)
+	}
+}
+
+func TestPlanDescriptorValidatesMetadataAvailabilityAndScopePair(t *testing.T) {
+	descriptor := testDescription(t).Nodes[0].Outputs[0].Descriptor
+	for name, value := range map[string]Descriptor{
+		"absent with unknown scope": descriptor,
+		"available with asset scope": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability, copy.MetadataScope = "available", "asset"
+			return copy
+		}(),
+		"unavailable with stream scope": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability, copy.MetadataScope = "unavailable", "stream"
+			return copy
+		}(),
+	} {
+		if !value.Valid() {
+			t.Fatalf("valid metadata pair %s rejected: %#v", name, value)
+		}
+	}
+	for name, value := range map[string]Descriptor{
+		"absent with asset scope": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability, copy.MetadataScope = "absent", "asset"
+			return copy
+		}(),
+		"available with unknown scope": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability, copy.MetadataScope = "available", "unknown"
+			return copy
+		}(),
+		"unavailable with unknown scope": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability, copy.MetadataScope = "unavailable", "unknown"
+			return copy
+		}(),
+		"unknown availability": func() Descriptor {
+			copy := descriptor
+			copy.MetadataAvailability = "future"
+			return copy
+		}(),
+	} {
+		if value.Valid() {
+			t.Fatalf("invalid metadata pair %s accepted: %#v", name, value)
+		}
 	}
 }
 

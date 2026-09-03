@@ -69,6 +69,11 @@ func muxerComponent() plugin.Component {
 			if description.Valid() {
 				signal = description.Signal
 			}
+			inputAttachment := input.Metadata()
+			inputMetadata, err := waveSemanticDocument(inputAttachment)
+			if err != nil {
+				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+			}
 			var metadataReports []loss.Report
 			var muxHeaderValue muxHeader
 			var rewrite metadata.Document
@@ -78,10 +83,13 @@ func muxerComponent() plugin.Component {
 				if !inspected.valid() {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux received an invalid inspection", ErrMalformed)
 				}
+				if !inputAttachment.SameState(inspected.metadataAttachment()) {
+					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE metadata state does not match inspected source", ErrUnsupported)
+				}
 				if inspected.ranges.any() && (description != inspected.description || signal != inspected.signal) {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE source ranges cannot be reused after changing the stream", ErrUnsupported)
 				}
-				if len(input.Metadata().Blocks()) != 0 {
+				if len(inputMetadata.Blocks()) != 0 {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE mux metadata contains source blobs without a range inspection handoff", ErrUnsupported)
 				}
 				geometry, err := muxGeometry(outputCodec, signal, input, inspected)
@@ -92,11 +100,11 @@ func muxerComponent() plugin.Component {
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}
-				if !sameSemanticDocument(input.Metadata(), inspected.metadata) {
+				if !sameSemanticDocument(inputMetadata, inspected.metadata) {
 					if inspected.ranges.infoCount != 1 || !inspected.ranges.info.valid() || inspected.ranges.infoAnchor == 0 {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata changed but no bounded LIST/INFO rewrite is available", ErrUnsupported)
 					}
-					if inspected.ranges.info.length > waveSemanticCap || !semanticWithinCap(input.Metadata(), waveSemanticCap) {
+					if inspected.ranges.info.length > waveSemanticCap || !semanticWithinCap(inputMetadata, waveSemanticCap) {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, fmt.Errorf("%w: WAVE semantic metadata exceeds the bounded rewrite cap", ErrUnsupported)
 					}
 					resolver, ok := metadata.ResolverOf(ctx)
@@ -104,7 +112,11 @@ func muxerComponent() plugin.Component {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, errors.New("WAVE muxer requires metadata resolver")
 					}
 					block := newChunkBlockID(inspected.ranges.info.offset, inspected.ranges.infoAnchor, chunkInfo)
-					projected, mapped, err := resolver.Project(RIFFInfo(), block, input.Metadata())
+					attachment := metadata.Absent()
+					if inputMetadata.Valid() {
+						attachment = metadata.MustAvailable(inputMetadata)
+					}
+					projected, mapped, err := resolver.Project(RIFFInfo(), block, attachment)
 					if err != nil {
 						return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 					}
@@ -124,7 +136,7 @@ func muxerComponent() plugin.Component {
 				// Metadata blobs are immutable values, so explicitly supplied raw
 				// chunks are safe to carry into a fresh output as well.
 				resolver, _ := metadata.ResolverOf(ctx)
-				chunks, err := marshalMuxChunks(ctx.Context(), resolver, input.Metadata())
+				chunks, err := marshalMuxChunks(ctx.Context(), resolver, inputAttachment)
 				if err != nil {
 					return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
 				}

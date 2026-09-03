@@ -88,14 +88,11 @@ func demuxerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			document, err := metadata.NewBuilder(metadata.StreamScope).
-				Append(input.Metadata()).
-				Append(inspected.metadata).
-				Build()
+			metadataAttachment, err := metadata.Merge(metadata.StreamScope, input.Metadata(), inspected.metadataAttachment())
 			if err != nil {
 				return plugin.Compiled[demuxPlan, stream.Descriptor]{}, err
 			}
-			output = output.WithMetadata(document)
+			output = output.WithMetadata(metadataAttachment)
 			return plugin.Compiled[demuxPlan, stream.Descriptor]{
 				Plan:      demuxPlan{shape: shape.Clone(), header: inspected},
 				Outputs:   flow.NewDescriptors(flow.Describe("chunks", output)),

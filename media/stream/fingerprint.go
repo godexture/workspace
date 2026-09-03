@@ -10,8 +10,9 @@ import (
 
 // Fingerprint identifies the canonical planning state of one stream
 // descriptor. Metadata values are deliberately not encoded: arbitrary
-// metadata keys do not require canonical encoders. Their scope participates,
-// while preservation and loss remain explicit Effect and Plan facts.
+// metadata keys do not require canonical encoders. Availability and scope
+// participate, while preservation and loss remain explicit Effect and Plan
+// facts.
 type Fingerprint [32]byte
 
 func (f Fingerprint) IsZero() bool { return f == Fingerprint{} }
@@ -25,7 +26,7 @@ func (d Descriptor) Fingerprint() (Fingerprint, error) {
 		return Fingerprint{}, ErrInvalidDescriptor
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("godec/stream/fingerprint/v3\x00"))
+	_, _ = hash.Write([]byte("godec/stream/fingerprint/v4\x00"))
 	writeStatePart(hash, []byte(d.id.String()))
 	writeStatePart(hash, []byte(d.schema.Identity().String()))
 	writeStatePart(hash, []byte(gotype.Canonical(d.schema.Payload())))
@@ -40,7 +41,7 @@ func (d Descriptor) Fingerprint() (Fingerprint, error) {
 	writeStatePart(hash, timeBase[:])
 	properties := d.properties.Fingerprint()
 	writeStatePart(hash, properties[:])
-	writeStatePart(hash, []byte{byte(d.metadata.Scope())})
+	writeStatePart(hash, []byte{byte(d.metadata.State()), byte(d.metadata.Scope())})
 	var result Fingerprint
 	copy(result[:], hash.Sum(nil))
 	return result, nil
@@ -53,7 +54,7 @@ func (d Descriptor) SameState(other Descriptor) bool {
 		d.schema.Equal(other.schema) &&
 		d.timeBase == other.timeBase &&
 		d.properties.Equal(other.properties) &&
-		d.metadata.Scope() == other.metadata.Scope()
+		d.metadata.SameState(other.metadata)
 }
 
 func writeStatePart(hash interface{ Write([]byte) (int, error) }, value []byte) {

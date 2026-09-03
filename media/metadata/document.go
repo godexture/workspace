@@ -124,10 +124,21 @@ func (e Entry) Value() any {
 // blocks. Entries and Blocks return copies, so a document cannot be
 // changed through a slice a caller obtained from it.
 type Document struct {
-	scope   Scope
-	entries []Entry
-	blocks  []RawBlock
+	scope    Scope
+	entries  []Entry
+	blocks   []RawBlock
+	identity *documentIdentity
 }
+
+// documentIdentity is intentionally private. It lets owners recognize that
+// several descriptors carry the same immutable document without exposing a
+// public equality contract for semantic values.
+type documentIdentity struct{ marker byte }
+
+// Valid reports whether the document has a usable scope. Documents are
+// constructed through Builder, which enforces entry, block, and origin
+// invariants before storing them.
+func (d Document) Valid() bool { return d.scope.Valid() && d.identity != nil }
 
 func (d Document) Scope() Scope { return d.scope }
 func (d Document) Len() int     { return len(d.entries) }
@@ -276,9 +287,10 @@ func (b *Builder) Build() (Document, error) {
 		return Document{}, errors.Join(problems...)
 	}
 	return Document{
-		scope:   b.scope,
-		entries: append([]Entry(nil), b.entries...),
-		blocks:  append([]RawBlock(nil), b.blocks...),
+		scope:    b.scope,
+		entries:  append([]Entry(nil), b.entries...),
+		blocks:   append([]RawBlock(nil), b.blocks...),
+		identity: &documentIdentity{marker: 1},
 	}, nil
 }
 
