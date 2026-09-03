@@ -100,7 +100,11 @@ func compileMuxSelection(t testing.TB, inspected movie, indexes ...int) (muxLayo
 	t.Helper()
 	inputs := make([]stream.Descriptor, 0, len(indexes))
 	for _, index := range indexes {
-		inputs = append(inputs, muxInputDescriptor(t, inspected.tracks[index]))
+		input := muxInputDescriptor(t, inspected.tracks[index])
+		if inspected.metadata.Scope().Valid() {
+			input = input.WithMetadata(inspected.metadata)
+		}
+		inputs = append(inputs, input)
 	}
 	return compileMux(inputs, inspected)
 }
