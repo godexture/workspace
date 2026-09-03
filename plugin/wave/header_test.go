@@ -241,8 +241,8 @@ func TestInspectPreservesChunksBeyondTheMemoryBudgetAsARange(t *testing.T) {
 	if inspected.ranges.beforeFormat.length != uint64(len(payload)+8) {
 		t.Fatalf("preserved range length = %d, want %d", inspected.ranges.beforeFormat.length, len(payload)+8)
 	}
-	if len(inspected.metadata.Blocks()) != 0 {
-		t.Fatalf("opaque chunk became metadata blocks: %#v", inspected.metadata.Blocks())
+	if !inspected.metadata.IsAbsent() {
+		t.Fatalf("opaque chunk metadata state = %s, want absent", inspected.metadata.State())
 	}
 }
 
@@ -262,8 +262,8 @@ func TestInspectOpaqueRangesDoNotReadTheirPayload(t *testing.T) {
 			if reader.maxRead > 40 {
 				t.Fatalf("opaque %d-byte chunk caused a %d-byte Inspect read", payloadSize, reader.maxRead)
 			}
-			if len(inspected.metadata.Blocks()) != 0 {
-				t.Fatalf("opaque chunk became metadata blocks: %#v", inspected.metadata.Blocks())
+			if !inspected.metadata.IsAbsent() {
+				t.Fatalf("opaque chunk metadata state = %s, want absent", inspected.metadata.State())
 			}
 		})
 	}
@@ -280,8 +280,10 @@ func TestInspectLargeRIFFInfoUsesInspectMemoryBudget(t *testing.T) {
 	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), resource.Bytes(len(list)-1)); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("large INFO with narrow memory = %v, want unsupported", err)
 	}
-	if inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), resource.Bytes(len(list))); err != nil || inspected.metadata.Len() != 1 {
+	if inspected, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), resource.Bytes(len(list))); err != nil {
 		t.Fatalf("large INFO with exact memory = %#v, %v", inspected, err)
+	} else if document, documentErr := inspected.metadata.Semantic(); documentErr != nil || document.Len() != 1 {
+		t.Fatalf("large INFO with exact memory document = %#v, %v", document, documentErr)
 	}
 }
 
@@ -299,8 +301,9 @@ func TestInspectChargesAllRIFFInfoCarriersAgainstOneMemoryBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("two INFO carriers with exact cumulative memory = %v", err)
 	}
-	if inspected.metadata.Len() != 2 {
-		t.Fatalf("two INFO carriers metadata length = %d, want 2", inspected.metadata.Len())
+	document, err := inspected.metadata.Semantic()
+	if err != nil || document.Len() != 2 {
+		t.Fatalf("two INFO carriers metadata = %#v, %v", document, err)
 	}
 	if _, err := inspectHeaderWithSize(t.Context(), memoryRandom(value), uint64(len(value)), true, infoTestResolver(t), limit-1); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("two INFO carriers one byte short = %v, want unsupported", err)
@@ -320,8 +323,8 @@ func TestInspectLargeNonInfoListReadsOnlySubtype(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspected.metadata.Len() != 0 || reader.maxRead > 40 {
-		t.Fatalf("non-INFO LIST inspection = metadata %d, largest read %d", inspected.metadata.Len(), reader.maxRead)
+	if !inspected.metadata.IsAbsent() || reader.maxRead > 40 {
+		t.Fatalf("non-INFO LIST inspection state = %s, largest read %d", inspected.metadata.State(), reader.maxRead)
 	}
 }
 
@@ -356,7 +359,7 @@ func TestInspectPreservesNonInfoListAsAnOpaqueRange(t *testing.T) {
 	if got := sourceRangeBytes(t, value, inspected.ranges.beforeData); !bytes.Equal(got, list) {
 		t.Fatalf("non-INFO LIST range = %x, want %x", got, list)
 	}
-	if inspected.metadata.Len() != 0 || len(inspected.metadata.Blocks()) != 0 {
-		t.Fatalf("non-INFO LIST became semantic metadata: %#v", inspected.metadata)
+	if !inspected.metadata.IsAbsent() {
+		t.Fatalf("non-INFO LIST metadata state = %s, want absent", inspected.metadata.State())
 	}
 }

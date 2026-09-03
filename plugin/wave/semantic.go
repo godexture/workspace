@@ -16,10 +16,7 @@ func waveSemanticDocument(value metadata.Attachment) (metadata.Document, error) 
 }
 
 func (h header) metadataAttachment() metadata.Attachment {
-	if h.ranges.infoCount != 0 && h.metadata.Valid() && h.metadata.Scope() == metadata.StreamScope {
-		return metadata.MustAvailable(h.metadata)
-	}
-	return metadata.Absent()
+	return h.metadata
 }
 
 func sameSemanticDocument(left, right metadata.Document) bool {

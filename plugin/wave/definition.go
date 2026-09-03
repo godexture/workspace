@@ -12,17 +12,20 @@ import (
 )
 
 type (
-	pluginID  struct{}
-	demuxerID struct{}
-	muxerID   struct{}
-	infoID    struct{}
-	waveID    struct{}
-	infoSlot  struct{}
+	pluginID           struct{}
+	demuxerID          struct{}
+	muxerID            struct{}
+	infoID             struct{}
+	waveID             struct{}
+	infoSlot           struct{}
+	infoRewriteTraitID struct{}
 )
 
 func DemuxerIdentity() plugin.Identity      { return plugin.IdentityOf[demuxerID]() }
 func MuxerIdentity() plugin.Identity        { return plugin.IdentityOf[muxerID]() }
 func InfoEncodingIdentity() plugin.Identity { return plugin.IdentityOf[infoID]() }
+
+var infoRewriteTrait = plugin.TraitKeyOf[infoRewriteTraitID]()
 
 // RIFFInfo identifies a LIST/INFO metadata carrier inside WAVE.
 func RIFFInfo() carrier.ID { return carrier.Define[infoSlot]() }

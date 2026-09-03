@@ -145,45 +145,51 @@ func parseInfo(ctx metadata.ParseContext) (metadata.Document, error) {
 	return builder.Build()
 }
 
-func parseInfoSemanticLayout(value []byte) (metadata.Document, infoRewriteLayout, error) {
+func inspectInfoRewriteLayout(ctx context.Context, value []byte) (infoRewriteLayout, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := context.Cause(ctx); err != nil {
+		return infoRewriteLayout{}, false, err
+	}
 	payload, err := infoPayload(value)
 	if err != nil {
-		return metadata.Document{}, infoRewriteLayout{}, err
+		return infoRewriteLayout{}, false, err
 	}
-	builder := metadata.NewBuilder(metadata.StreamScope)
 	layout := infoRewriteLayout{present: true}
+	complete := true
 	for offset := 4; offset < len(payload); {
+		if err := context.Cause(ctx); err != nil {
+			return infoRewriteLayout{}, false, err
+		}
 		if len(payload)-offset < 8 {
-			return metadata.Document{}, infoRewriteLayout{}, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
+			return infoRewriteLayout{}, false, fmt.Errorf("%w: LIST/INFO subchunk header at %d is truncated", ErrMalformed, offset)
 		}
 		native := string(payload[offset : offset+4])
 		size := uint64(binary.LittleEndian.Uint32(payload[offset+4 : offset+8]))
 		end, ok := infoChunkEnd(uint64(offset), size, uint64(len(payload)))
 		if !ok {
-			return metadata.Document{}, infoRewriteLayout{}, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
+			return infoRewriteLayout{}, false, fmt.Errorf("%w: LIST/INFO subchunk %q at %d exceeds its carrier", ErrMalformed, native, offset)
 		}
 		payloadEnd := uint64(offset+8) + size
 		mapping, known := infoMappingForNative(native)
 		if known {
 			text := string(bytes.TrimRight(payload[offset+8:int(payloadEnd)], "\x00"))
 			if _, ok := parseInfoValue(mapping, text); ok {
-				// Provenance points at an opaque source range, not a metadata
-				// block. Keeping it empty lets the document remain Blob-free.
-				_ = mapping.parse(builder, text, metadata.Origin{})
 				layout.semantic = append(layout.semantic, infoSemanticChild{
 					offset: uint64(offset + 8),
 					length: end - uint64(offset),
 					key:    mapping.key,
 				})
+			} else {
+				complete = false
 			}
+		} else {
+			complete = false
 		}
 		offset = int(end)
 	}
-	document, err := builder.Build()
-	if err != nil {
-		return metadata.Document{}, infoRewriteLayout{}, err
-	}
-	return document, layout, nil
+	return layout, complete, nil
 }
 
 // infoEntryCursor walks only the expressible target entries without exposing
@@ -234,24 +240,24 @@ func validateInfoRewrite(original, document metadata.Document, layout infoRewrit
 }
 
 // rewriteInfoSource applies a semantic edit to one source LIST/INFO carrier.
-// It remains a convenient allocating wrapper for tests and standalone
-// callers; the mux Open path uses the plan form below with allocator planes.
-func rewriteInfoSource(value []byte, document metadata.Document) ([]byte, error) {
-	layoutDocument, layout, err := parseInfoSemanticLayout(value)
+// The caller supplies the authoritative detached source document; the mux
+// Open path uses the plan form below with allocator planes.
+func rewriteInfoSource(value []byte, original, document metadata.Document) ([]byte, error) {
+	layout, _, err := inspectInfoRewriteLayout(context.Background(), value)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInfoRewrite(layoutDocument, document, layout); err != nil {
+	if err := validateInfoRewrite(original, document, layout); err != nil {
 		return nil, err
 	}
-	_, output, err := infoRewriteWorkspaceAgainst(uint64(len(value)), layoutDocument, document)
+	_, output, err := infoRewriteWorkspaceAgainst(uint64(len(value)), original, document)
 	if err != nil {
 		return nil, err
 	}
 	if output > uint64(math.MaxInt) {
 		return nil, fmt.Errorf("%w: RIFF INFO rewrite output exceeds runtime memory", ErrUnsupported)
 	}
-	return rewriteInfoSourceIntoPlan(context.Background(), value, layoutDocument, layout, document, make([]byte, int(output)))
+	return rewriteInfoSourceIntoPlan(context.Background(), value, original, layout, document, make([]byte, int(output)))
 }
 
 func rewriteInfoSourceIntoPlan(ctx context.Context, value []byte, original metadata.Document, layout infoRewriteLayout, target metadata.Document, destination []byte) ([]byte, error) {

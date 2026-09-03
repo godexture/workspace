@@ -554,7 +554,7 @@ func TestWAVESetCarriesRIFFInfoEncodingAndBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, ok := instance.Catalog().Lookup(InfoEncodingIdentity())
-	if !ok || view.Executable || view.HasSpec || len(view.Traits) != 1 {
+	if !ok || view.Executable || view.HasSpec || len(view.Traits) != 2 {
 		t.Fatalf("RIFF INFO component = %#v/%v", view, ok)
 	}
 	carriers := WAVE().Carriers()
@@ -617,25 +617,29 @@ func infoTestChunk(t testing.TB, native string, payload []byte, padding byte) []
 	return value
 }
 
-func copyInfoEntries(builder *metadata.Builder, entries []metadata.Entry) {
+func copyInfoEntries(builder *metadata.Builder, entries []metadata.Entry, preserveOrigin ...bool) {
 	for _, entry := range entries {
+		origin := entry.Origin()
+		if len(preserveOrigin) != 0 && !preserveOrigin[0] {
+			origin = metadata.Origin{}
+		}
 		switch entry.Key() {
 		case tag.Title().ID():
-			metadata.Add(builder, tag.Title(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Title(), entry.Value().(string), origin)
 		case tag.Artist().ID():
-			metadata.Add(builder, tag.Artist(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Artist(), entry.Value().(string), origin)
 		case tag.Album().ID():
-			metadata.Add(builder, tag.Album(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Album(), entry.Value().(string), origin)
 		case tag.Date().ID():
-			metadata.Add(builder, tag.Date(), entry.Value().(tag.PartialDate), entry.Origin())
+			metadata.Add(builder, tag.Date(), entry.Value().(tag.PartialDate), origin)
 		case tag.Comment().ID():
-			metadata.Add(builder, tag.Comment(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Comment(), entry.Value().(string), origin)
 		case tag.Genre().ID():
-			metadata.Add(builder, tag.Genre(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Genre(), entry.Value().(string), origin)
 		case tag.Encoder().ID():
-			metadata.Add(builder, tag.Encoder(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Encoder(), entry.Value().(string), origin)
 		case tag.Copyright().ID():
-			metadata.Add(builder, tag.Copyright(), entry.Value().(string), entry.Origin())
+			metadata.Add(builder, tag.Copyright(), entry.Value().(string), origin)
 		}
 	}
 }
