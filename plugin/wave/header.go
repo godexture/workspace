@@ -57,6 +57,10 @@ type header struct {
 	geometry    blockGeometry
 	metadata    metadata.Document
 	ranges      sourceRanges
+	// infoMemoryLimit is handed off by Inspect for a source-aware INFO
+	// rewrite. It is immutable after inspection and is deliberately separate
+	// from the source-range layout.
+	infoMemoryLimit uint64
 }
 
 func (h header) valid() bool {

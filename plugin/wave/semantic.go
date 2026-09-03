@@ -24,44 +24,19 @@ func (h header) metadataAttachment() metadata.Attachment {
 
 func sameSemanticDocument(left, right metadata.Document) bool {
 	if left.Len() == 0 && right.Len() == 0 {
-		return len(left.Blocks()) == 0 && len(right.Blocks()) == 0
+		return left.BlockCount() == 0 && right.BlockCount() == 0
 	}
 	if left.Scope() != right.Scope() || left.Len() != right.Len() {
 		return false
 	}
-	leftEntries, rightEntries := left.Entries(), right.Entries()
-	if len(leftEntries) != len(rightEntries) || len(left.Blocks()) != 0 || len(right.Blocks()) != 0 {
+	if left.BlockCount() != 0 || right.BlockCount() != 0 {
 		return false
 	}
-	for index := range leftEntries {
-		if leftEntries[index].Key() != rightEntries[index].Key() || !reflect.DeepEqual(leftEntries[index].Value(), rightEntries[index].Value()) {
+	for index := 0; index < left.Len(); index++ {
+		leftEntry, leftOK := left.EntryAt(index)
+		rightEntry, rightOK := right.EntryAt(index)
+		if !leftOK || !rightOK || leftEntry.Key() != rightEntry.Key() || !reflect.DeepEqual(leftEntry.Value(), rightEntry.Value()) {
 			return false
-		}
-	}
-	return true
-}
-
-func semanticWithinCap(document metadata.Document, cap uint64) bool {
-	if uint64(len(document.Entries())) > cap {
-		return false
-	}
-	used := uint64(0)
-	for _, entry := range document.Entries() {
-		value := entry.Value()
-		switch typed := value.(type) {
-		case string:
-			if used > cap || uint64(len(typed)) > cap-used {
-				return false
-			}
-			used += uint64(len(typed))
-		default:
-			// WAVE INFO's supported values are strings and bounded date
-			// structs. A small fixed allowance covers the latter without
-			// retaining arbitrary payloads.
-			if used > cap || 64 > cap-used {
-				return false
-			}
-			used += 64
 		}
 	}
 	return true

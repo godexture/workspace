@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 
@@ -20,11 +21,12 @@ const (
 	// A page is also the largest source read performed by the range-preserving
 	// mux. It is intentionally independent of the size of any source chunk.
 	wavePageSize = 64 << 10
-	// Semantic INFO values are useful control-plane data, while opaque source
-	// bytes remain ranges. This cap bounds the temporary parser and rewrite
-	// buffers even when the input has a very large LIST carrier.
-	waveSemanticCap = 64 << 10
 )
+
+// errInspectReadBudget is kept private because callers only need the stable
+// ErrUnsupported classification. Keeping a distinct cause lets the bounded
+// reader preserve that classification when access.ReadFullAt adds context.
+var errInspectReadBudget = errors.New("WAVE inspection read budget exhausted")
 
 func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
 	random, ok := access.RandomOf(ctx.Opening())
@@ -43,7 +45,7 @@ func inspectWAVE(ctx mediaformat.InspectContext) (mediaformat.Inspection, error)
 		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is negative", ErrMalformed)
 	}
 	resolver, _ := metadata.ResolverOf(ctx.Prepared())
-	value, err := inspectHeaderWithSize(ctx.Context(), random, uint64(size), true, resolver, ctx.MemoryLimit())
+	value, err := inspectHeaderWithLimits(ctx.Context(), random, uint64(size), true, resolver, ctx.MemoryLimit(), ctx.Limit())
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}
@@ -59,18 +61,24 @@ func inspectHeaderWithMetadata(ctx context.Context, reader access.Random, resolv
 }
 
 func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, memoryLimit resource.Bytes) (header, error) {
+	return inspectHeaderWithLimits(ctx, reader, sourceSize, sizeKnown, resolver, memoryLimit, 0)
+}
+
+func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSize uint64, sizeKnown bool, resolver metadata.Resolver, memoryLimit, readLimit resource.Bytes) (header, error) {
 	if reader == nil {
 		return header{}, fmt.Errorf("%w: random reader is nil", ErrMalformed)
 	}
 	if !resolver.Valid() {
 		resolver, _ = metadata.NewResolver(nil, nil)
 	}
-	semanticLimit := uint64(memoryLimit)
-	if semanticLimit > waveSemanticCap {
-		semanticLimit = waveSemanticCap
+	if readLimit != 0 {
+		reader = newWaveInspectReader(reader, readLimit)
 	}
 	var root [12]byte
 	if err := access.ReadFullAt(ctx, reader, root[:], 0); err != nil {
+		if errors.Is(err, errInspectReadBudget) {
+			return header{}, err
+		}
 		return header{}, fmt.Errorf("%w: RIFF header: %w", ErrMalformed, err)
 	}
 	rf64 := string(root[0:4]) == tagRF64
@@ -92,10 +100,12 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	result.rf64 = rf64
 	result.rootEnd = rootEnd
 	result.sourceSize = sourceSize
+	result.infoMemoryLimit = uint64(memoryLimit)
 
 	document := metadata.NewBuilder(metadata.StreamScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
+	var infoMemoryUsed uint64
 	offset := uint64(12)
 	for {
 		if err := context.Cause(ctx); err != nil {
@@ -120,6 +130,9 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 		}
 		var chunk [8]byte
 		if err := access.ReadFullAt(ctx, reader, chunk[:], int64(offset)); err != nil {
+			if errors.Is(err, errInspectReadBudget) {
+				return header{}, err
+			}
 			return header{}, fmt.Errorf("%w: chunk header at %d: %w", ErrMalformed, offset, err)
 		}
 		id := string(chunk[0:4])
@@ -146,6 +159,9 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			}
 			var payload [28]byte
 			if err := access.ReadFullAt(ctx, reader, payload[:], int64(payloadOffset)); err != nil {
+				if errors.Is(err, errInspectReadBudget) {
+					return header{}, err
+				}
 				return header{}, fmt.Errorf("%w: ds64 chunk: %w", ErrMalformed, err)
 			}
 			riffSize := binary.LittleEndian.Uint64(payload[0:8])
@@ -217,9 +233,24 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 			if err := result.ranges.add(anchor, value); err != nil {
 				return header{}, fmt.Errorf("%w: non-contiguous WAVE preservation range", err)
 			}
-			if id == tagLIST && declaredSize >= 4 && uint64(declaredSize)+8+(declaredSize&1) == value.length && uint64(declaredSize)+8 <= semanticLimit {
-				if err := inspectInfoSemantic(ctx, reader, resolver, document, &result.ranges, value, anchor); err != nil {
+			if id == tagLIST && declaredSize >= 4 && uint64(declaredSize)+8+(declaredSize&1) == value.length {
+				subtype, err := readListSubtype(ctx, reader, value)
+				if err != nil {
 					return header{}, err
+				}
+				if subtype == tagINFO {
+					available := uint64(memoryLimit)
+					remaining := uint64(0)
+					if infoMemoryUsed <= available {
+						remaining = available - infoMemoryUsed
+					}
+					if infoMemoryUsed > available || value.length > remaining {
+						return header{}, fmt.Errorf("%w: WAVE LIST/INFO carriers need %d bytes with %d available", ErrUnsupported, value.length, remaining)
+					}
+					infoMemoryUsed += value.length
+					if err := inspectInfoSemantic(ctx, reader, resolver, document, &result.ranges, value, anchor); err != nil {
+						return header{}, err
+					}
 				}
 			}
 		}
@@ -248,12 +279,47 @@ func inspectHeaderWithSize(ctx context.Context, reader access.Random, sourceSize
 	return result, nil
 }
 
+type waveInspectReader struct {
+	reader    access.Random
+	remaining uint64
+}
+
+func newWaveInspectReader(reader access.Random, limit resource.Bytes) *waveInspectReader {
+	return &waveInspectReader{reader: reader, remaining: uint64(limit)}
+}
+
+func (r *waveInspectReader) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
+	if uint64(len(destination)) > r.remaining {
+		return 0, fmt.Errorf("%w: %w (needs %d bytes with %d remaining)", ErrUnsupported, errInspectReadBudget, len(destination), r.remaining)
+	}
+	r.remaining -= uint64(len(destination))
+	return r.reader.ReadAt(ctx, destination, offset)
+}
+
+func readListSubtype(ctx context.Context, reader access.Random, value sourceRange) (string, error) {
+	offset, ok := checkedAdd(value.offset, 8)
+	if !ok || offset > math.MaxInt64 {
+		return "", fmt.Errorf("%w: LIST subtype offset exceeds runtime range", ErrUnsupported)
+	}
+	var subtype [4]byte
+	if err := access.ReadFullAt(ctx, reader, subtype[:], int64(offset)); err != nil {
+		if errors.Is(err, errInspectReadBudget) {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: LIST subtype at %d: %w", ErrMalformed, offset, err)
+	}
+	return string(subtype[:]), nil
+}
+
 func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver metadata.Resolver, builder *metadata.Builder, ranges *sourceRanges, value sourceRange, anchor chunkAnchor) error {
 	if value.length > uint64(math.MaxInt) || value.offset > math.MaxInt64 {
 		return fmt.Errorf("%w: LIST/INFO carrier exceeds runtime address space", ErrUnsupported)
 	}
 	raw := make([]byte, int(value.length))
 	if err := access.ReadFullAt(ctx, reader, raw, int64(value.offset)); err != nil {
+		if errors.Is(err, errInspectReadBudget) {
+			return err
+		}
 		return fmt.Errorf("%w: LIST/INFO carrier at %d: %w", ErrMalformed, value.offset, err)
 	}
 	// LIST is a generic RIFF carrier. Only its INFO subtype contributes
@@ -267,7 +333,7 @@ func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver met
 	if _, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw)); err != nil {
 		return err
 	}
-	semantic, err := parseInfoSemantic(raw)
+	semantic, layout, err := parseInfoSemanticLayout(raw)
 	if err != nil {
 		return err
 	}
@@ -277,9 +343,11 @@ func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver met
 	if ranges.infoCount == 1 {
 		ranges.info = value
 		ranges.infoAnchor = anchor
+		ranges.infoLayout = layout
 	} else {
 		ranges.info = sourceRange{}
 		ranges.infoAnchor = 0
+		ranges.infoLayout = infoRewriteLayout{}
 	}
 	builder.Append(semantic)
 	return nil
@@ -303,6 +371,9 @@ func inspectFormat(ctx context.Context, reader access.Random, offset, size uint6
 	}
 	buffer := make([]byte, int(min(size, formatChunkCap)))
 	if err := access.ReadFullAt(ctx, reader, buffer, int64(offset)); err != nil {
+		if errors.Is(err, errInspectReadBudget) {
+			return formatChunk{}, err
+		}
 		return formatChunk{}, fmt.Errorf("%w: fmt chunk: %w", ErrMalformed, err)
 	}
 	audioFormat := binary.LittleEndian.Uint16(buffer[0:2])

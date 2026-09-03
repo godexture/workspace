@@ -145,7 +145,21 @@ func (d Document) Len() int     { return len(d.entries) }
 
 func (d Document) Entries() []Entry { return append([]Entry(nil), d.entries...) }
 
+// EntryAt returns one entry without exposing the document's backing slice.
+// It is useful to readers that already have a bounded index and should not
+// need a snapshot allocation merely to inspect one value.
+func (d Document) EntryAt(index int) (Entry, bool) {
+	if index < 0 || index >= len(d.entries) {
+		return Entry{}, false
+	}
+	return d.entries[index], true
+}
+
 func (d Document) Blocks() []RawBlock { return append([]RawBlock(nil), d.blocks...) }
+
+// BlockCount reports the number of source and opaque blocks without exposing
+// the document's backing slice.
+func (d Document) BlockCount() int { return len(d.blocks) }
 
 // Block returns one source or opaque block by identity.
 func (d Document) Block(id BlockID) (RawBlock, bool) {

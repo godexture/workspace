@@ -19,11 +19,14 @@ type Budget struct {
 	ProbeRounds        int
 	// InspectBytes bounds what the selected Format may read from one source
 	// while establishing its stream descriptor. It is also the accounting unit
-	// reported in plan.Usage; it does not bound the retained inspection model.
+	// reported in plan.Usage; callers can raise it with WithBudget when a valid
+	// source needs more inspection reads.
 	InspectBytes resource.Bytes
 	// InspectMemory bounds the retained model that a selected Format may build
 	// while inspecting one source. It is independent from InspectBytes because
 	// a format may need to read a compact index before retaining a larger model.
+	// Source-aware rewrites may also use this budget for their bounded workspace;
+	// callers can raise it with WithBudget for valid large metadata.
 	InspectMemory resource.Bytes
 	Duration      time.Duration
 }

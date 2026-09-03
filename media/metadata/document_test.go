@@ -71,6 +71,29 @@ func TestDocumentCannotBeChangedThroughTheSlicesItReturns(t *testing.T) {
 	}
 }
 
+func TestDocumentIndexedReadsAvoidSnapshotSlices(t *testing.T) {
+	builder := NewBuilder(StreamScope)
+	Add(builder, title, "Song", Origin{})
+	builder.AddBlock(NewRawBlock("block-1", testCarrier, encodingIdentity(), NewBlob("application/octet-stream", []byte{1})))
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := document.EntryAt(0)
+	if !ok || entry.Key() != title.ID() || entry.Value() != "Song" {
+		t.Fatalf("indexed entry = %#v/%v", entry, ok)
+	}
+	if _, ok := document.EntryAt(-1); ok {
+		t.Fatal("negative indexed entry unexpectedly exists")
+	}
+	if _, ok := document.EntryAt(document.Len()); ok {
+		t.Fatal("out-of-range indexed entry unexpectedly exists")
+	}
+	if document.BlockCount() != 1 {
+		t.Fatalf("block count = %d, want 1", document.BlockCount())
+	}
+}
+
 func TestEditProducesANewDocumentAndLeavesTheOriginal(t *testing.T) {
 	builder := NewBuilder(AssetScope)
 	Add(builder, title, "Original", Origin{})

@@ -2,6 +2,7 @@ package mp4
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/resource"
 )
+
+var errInspectReadBudget = errors.New("MP4 inspection read budget exhausted")
 
 func inspectMP4(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
 	random, ok := access.RandomOf(ctx.Opening())
@@ -52,7 +55,7 @@ func newInspectReader(reader access.Random, limit resource.Bytes) *inspectReader
 
 func (r *inspectReader) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
 	if uint64(len(destination)) > r.remaining {
-		return 0, fmt.Errorf("%w: inspect read limit needs %d bytes with %d remaining", errUnsupportedMovie, len(destination), r.remaining)
+		return 0, fmt.Errorf("%w: %w: inspect read limit needs %d bytes with %d remaining", errUnsupportedMovie, errInspectReadBudget, len(destination), r.remaining)
 	}
 	r.remaining -= uint64(len(destination))
 	if offset < 0 || len(destination) > 0 && offset > math.MaxInt64-int64(len(destination)-1) {

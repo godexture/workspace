@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/godexture/godec/media/buffer"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/sample"
 )
 
@@ -26,13 +28,15 @@ type muxHeader struct {
 	dataOffset     int64
 	// factOffset is where the sample count goes, or zero when the output has
 	// no sample-count chunk.
-	factOffset int64
-	blockAlign uint64
+	factOffset   int64
+	blockAlign   uint64
+	infoDocument metadata.Document
 }
 
 type sourceReplacement struct {
 	source  sourceRange
-	payload []byte
+	payload buffer.Handle
+	length  uint64
 }
 
 type headerPatch struct {
@@ -88,8 +92,9 @@ func newRangeMuxHeader(codec waveCodec, signal sample.Signal, geometry blockGeom
 		reserveOffset:  reserveOffset,
 		dataSizeOffset: int64(dataOffset - 4),
 		dataOffset:     int64(dataOffset),
-		factOffset:     factSlot(fact, int64(dataOffset)-int64(len(dataTag))),
+		factOffset:     factSlotInDataTag(int64(dataOffset), dataTag),
 		blockAlign:     uint64(blockAlign),
+		infoDocument:   inspected.metadata,
 	}, nil
 }
 
@@ -101,6 +106,18 @@ func factSlot(present bool, chunk int64) int64 {
 		return 0
 	}
 	return chunk + 8
+}
+
+func factSlotInDataTag(dataOffset int64, dataTag []byte) int64 {
+	const factBytes = 12
+	if len(dataTag) != factBytes+8 || string(dataTag[0:4]) != tagFACT || binary.LittleEndian.Uint32(dataTag[4:8]) != 4 || string(dataTag[factBytes:factBytes+4]) != tagDATA {
+		return 0
+	}
+	factStart := dataOffset - int64(len(dataTag))
+	if factStart < 0 || factStart > math.MaxInt64-8 {
+		return 0
+	}
+	return factStart + 8
 }
 
 func newMuxHeaderWithChunks(codec waveCodec, signal sample.Signal, geometry blockGeometry, fact bool, chunks muxChunks) (muxHeader, error) {
@@ -346,7 +363,7 @@ func (h muxHeader) outputRangeLengths() (beforeFormat, beforeData, afterData, tr
 		return beforeFormat, beforeData, afterData, trailer, true
 	}
 	old := h.replacement.source.length
-	newLength := uint64(len(h.replacement.payload))
+	newLength := h.replacement.length
 	if old > newLength {
 		shrink := old - newLength
 		switch {
@@ -394,9 +411,10 @@ func (h muxHeader) outputRangeLengths() (beforeFormat, beforeData, afterData, tr
 }
 
 func (h *muxHeader) applyReplacement(value sourceReplacement) error {
-	if h == nil || !h.rangeMode || !value.source.valid() {
+	if h == nil || !h.rangeMode || !value.source.valid() || !value.payload.Valid() {
 		return fmt.Errorf("%w: WAVE source replacement is invalid", ErrMalformed)
 	}
+	value.length = uint64(value.payload.Bytes().Len())
 	h.replacement = value
 	beforeFormat, beforeData, _, _, ok := h.outputRangeLengths()
 	if !ok {
@@ -412,6 +430,7 @@ func (h *muxHeader) applyReplacement(value sourceReplacement) error {
 	}
 	h.dataOffset = int64(dataOffset)
 	h.dataSizeOffset = h.dataOffset - 4
+	h.factOffset = factSlotInDataTag(h.dataOffset, h.dataTag)
 	return nil
 }
 

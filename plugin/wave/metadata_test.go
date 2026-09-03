@@ -245,6 +245,11 @@ func TestFreshWaveMuxPreservesMetadataPresenceState(t *testing.T) {
 }
 
 func compileWaveMuxMetadataState(t testing.TB, inspected header, attachment metadata.Attachment) (plugin.Compilation, error) {
+	compiled, _, err := compileWaveMuxMetadataStateWithComponent(t, inspected, attachment)
+	return compiled, err
+}
+
+func compileWaveMuxMetadataStateWithComponent(t testing.TB, inspected header, attachment metadata.Attachment) (plugin.Compilation, plugin.Component, error) {
 	t.Helper()
 	properties, err := inspected.description.Properties()
 	if err != nil {
@@ -264,7 +269,8 @@ func compileWaveMuxMetadataState(t testing.TB, inspected header, attachment meta
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plugin.Compile(component, context, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	compiled, err := plugin.Compile(component, context, resolved, flow.NewDescriptors(flow.Describe("packets", input)))
+	return compiled, component, err
 }
 
 func TestMuxRestoresRIFFInfoAndUnknownChunkPlacement(t *testing.T) {

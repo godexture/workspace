@@ -464,7 +464,7 @@ func TestMP4IlstMetadataPropagatesTruncatedSourceRead(t *testing.T) {
 	}
 }
 
-func TestMP4IlstMetadataDoesNotSpendRequiredReadBudget(t *testing.T) {
+func TestMP4IlstMetadataReadBudgetFailureIsExplicit(t *testing.T) {
 	base := ilstMovieFixtureWithExtra(nil)
 	counter := &ilstCountingRandom{Random: memoryRandom(base)}
 	if _, err := parseMovie(t.Context(), counter, uint64(len(base)), 1<<20, 1<<20); err != nil {
@@ -477,12 +477,9 @@ func TestMP4IlstMetadataDoesNotSpendRequiredReadBudget(t *testing.T) {
 	children = append(children, fixtureBox("ilst", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title")))))
 	data := ilstMovieFixtureWithExtra(ilstMetaFixture("mdir", children...))
 	read := resource.Bytes(counter.read + 16)
-	inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), read, 1<<20, ilstTestResolver(t, IlstCarrier()))
-	if err != nil {
-		t.Fatalf("required MP4 inspection lost its read budget: %v", err)
-	}
-	if !inspected.valid() || inspected.metadata.Scope().Valid() {
-		t.Fatalf("tight-budget inspection = %#v", inspected)
+	_, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), read, 1<<20, ilstTestResolver(t, IlstCarrier()))
+	if !errors.Is(err, ErrUnsupported) || !errors.Is(err, errInspectReadBudget) {
+		t.Fatalf("tight-budget inspection error = %v, want read-budget unsupported", err)
 	}
 }
 
@@ -562,24 +559,9 @@ func TestMP4IlstReadBudgetBeforeLateIlocFailsClosed(t *testing.T) {
 	}
 	children = append(children, fixtureBox("iloc", nil), fixtureBox("ilst", valid))
 	data := ilstMovieFixtureWithExtra(ilstMetaFixture("mdir", children...))
-	inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 4096, 1<<20, ilstTestResolver(t, IlstCarrier()))
-	if err != nil {
-		t.Fatalf("optional read-budget metadata = %v", err)
-	}
-	if inspected.metadata.Scope().Valid() || !inspected.offsetIndex {
-		t.Fatalf("read-budget traversal before late iloc = %#v, want unavailable with offset index", inspected)
-	}
-	if _, compiled := compileMP4Mux(t, inspected); !compiled.Valid() {
-		t.Fatal("unavailable metadata prevented unchanged remux")
-	}
-	selected := inspected.tracks[1]
-	properties, err := codec.WithTag(property.New(), SampleEntryTag(string(selected.codec[:])))
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := stream.MustDescriptor(trackStreamID(selected.id), codec.Packets().Descriptor(), timing.MustBase(1, int64(selected.timeScale)), properties)
-	if _, err := compileMux([]stream.Descriptor{input}, inspected); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("read-budget late iloc subset mux error = %v, want unsupported", err)
+	_, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 4096, 1<<20, ilstTestResolver(t, IlstCarrier()))
+	if !errors.Is(err, ErrUnsupported) || !errors.Is(err, errInspectReadBudget) {
+		t.Fatalf("read-budget traversal error = %v, want hard unsupported", err)
 	}
 }
 

@@ -113,6 +113,9 @@ func ilstRequiredMetadataFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errTruncatedMovie) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
+	if errors.Is(err, errInspectReadBudget) {
+		return true
+	}
 	return !errors.Is(err, errMalformedMovie) && !errors.Is(err, errMalformedBox) && !errors.Is(err, errUnsupportedMovie)
 }
 func findIlstEnvelope(ctx context.Context, reader access.Random, sourceEnd uint64, moov box) (ilstEnvelopeScan, error) {
