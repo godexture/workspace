@@ -8,10 +8,15 @@ import (
 	"io"
 
 	"github.com/godexture/godec/access"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/resource"
 )
 
 func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, readLimit, memoryLimit resource.Bytes) (movie, error) {
+	return parseMovieWithMetadata(ctx, reader, sourceEnd, readLimit, memoryLimit, metadata.Resolver{})
+}
+
+func parseMovieWithMetadata(ctx context.Context, reader access.Random, sourceEnd uint64, readLimit, memoryLimit resource.Bytes, resolver metadata.Resolver) (movie, error) {
 	if reader == nil || sourceEnd == 0 || readLimit == 0 || memoryLimit == 0 {
 		return movie{}, fmt.Errorf("%w: parser input is invalid", errMalformedMovie)
 	}
@@ -86,6 +91,15 @@ func parseMovie(ctx context.Context, reader access.Random, sourceEnd uint64, rea
 		if !ok {
 			return movie{}, fmt.Errorf("%w: movie sample payload total overflows", errMalformedMovie)
 		}
+	}
+	metadataInspection, err := inspectIlstMetadata(ctx, inspection, sourceEnd, result.moov, resolver, &budget)
+	if err != nil {
+		return movie{}, normalizeMovieError(err)
+	}
+	result.offsetIndex = result.offsetIndex || metadataInspection.offsetIndex
+	if metadataInspection.available {
+		result.metadata = metadataInspection.document
+		result.ilst = metadataInspection.envelope
 	}
 	return result, nil
 }

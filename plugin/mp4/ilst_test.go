@@ -62,6 +62,149 @@ func TestIlstParsesSemanticsAndPreservesSource(t *testing.T) {
 	}
 }
 
+func TestIlstSourceReuseIgnoresForeignSourceAnchor(t *testing.T) {
+	slot := carrier.Define[ilstTestCarrierID]()
+	resolver := ilstTestResolver(t, slot)
+	artwork := bytes.Repeat([]byte{0x5a}, 1<<20)
+	payload := bytes.Join([][]byte{
+		ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))),
+		ilstTestItem(ilstCover, ilstTestData(ilstDataTypeJPEG, 0, artwork)),
+	}, nil)
+	sourcePayload := metadata.NewBlob(ilstMediaType, payload)
+	parsed, err := resolver.Parse(t.Context(), slot, "ilst", metadata.AssetScope, sourcePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := carrier.Define[ilstForeignCarrierID]()
+	builder := parsed.Edit()
+	builder.AddBlock(metadata.NewSourceBlock("foreign/source", foreign, IlstEncodingIdentity(), metadata.NewBlob("application/octet-stream", bytes.Repeat([]byte{1}, 1<<20))))
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	if err != nil || len(reports) != 0 || encoded != sourcePayload {
+		t.Fatalf("source reuse with foreign anchor = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
+	}
+}
+
+func TestIlstSourceReuseRejectsOwnedMutation(t *testing.T) {
+	slot := carrier.Define[ilstTestCarrierID]()
+	resolver := ilstTestResolver(t, slot)
+	item := ilstTestItem(ilstType{'-', '-', '-', '-'}, []byte{1})
+	sourcePayload := metadata.NewBlob(ilstMediaType, item)
+	parsed, err := resolver.Parse(t.Context(), slot, "ilst", metadata.AssetScope, sourcePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := metadata.NewBuilder(metadata.AssetScope)
+	for _, block := range parsed.Blocks() {
+		if !block.Source() {
+			block = metadata.NewRawBlock(block.ID(), block.Carrier(), block.Encoding(), metadata.NewBlob(ilstItemMediaType, ilstTestAtom(ilstType{'-', '-', '-', '-'}, []byte{2})))
+		}
+		builder.AddBlock(block)
+	}
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	if err != nil || len(reports) != 0 || encoded.Equal(sourcePayload) {
+		t.Fatalf("owned opaque mutation reused source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
+	}
+}
+
+func TestIlstSourceReuseRejectsSourceMutation(t *testing.T) {
+	slot := carrier.Define[ilstTestCarrierID]()
+	resolver := ilstTestResolver(t, slot)
+	item := ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title")))
+	sourcePayload := metadata.NewBlob(ilstMediaType, item)
+	parsed, err := resolver.Parse(t.Context(), slot, "ilst", metadata.AssetScope, sourcePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := sourcePayload.AppendTo(nil)
+	start := bytes.Index(mutated, []byte("Title"))
+	if start < 0 {
+		t.Fatal("source fixture does not contain title")
+	}
+	copy(mutated[start:start+len("Title")], []byte("Other"))
+	mutatedPayload := metadata.NewBlob(ilstMediaType, mutated)
+	builder := metadata.NewBuilder(metadata.AssetScope)
+	for _, block := range parsed.Blocks() {
+		if block.Source() {
+			block = metadata.NewSourceBlock(block.ID(), block.Carrier(), block.Encoding(), mutatedPayload)
+		}
+		builder.AddBlock(block)
+	}
+	entry := parsed.Entries()[0]
+	metadata.Add(builder, tag.Title(), entry.Value().(string), entry.Origin())
+	document, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, reports, err := resolver.Marshal(t.Context(), slot, "ilst", document)
+	if err != nil || len(reports) != 0 || encoded.Equal(mutatedPayload) {
+		t.Fatalf("source mutation reused source = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
+	}
+}
+
+func TestIlstMuxDocumentComparesEveryField(t *testing.T) {
+	slot := carrier.Define[ilstTestCarrierID]()
+	source := metadata.NewSourceBlock("source", slot, IlstEncodingIdentity(), metadata.NewBlob(ilstMediaType, []byte("source")))
+	opaque := metadata.NewRawBlock("opaque", slot, IlstEncodingIdentity(), metadata.NewBlob(ilstItemMediaType, []byte("opaque")))
+	build := func(blocks ...metadata.RawBlock) metadata.Document {
+		t.Helper()
+		builder := metadata.NewBuilder(metadata.AssetScope)
+		for _, block := range blocks {
+			builder.AddBlock(block)
+		}
+		document, err := builder.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	base := build(source, opaque)
+	foreign := carrier.Define[ilstForeignCarrierID]()
+	mutations := []struct {
+		name  string
+		value metadata.Document
+	}{
+		{name: "source flag", value: build(metadata.NewRawBlock("source", slot, IlstEncodingIdentity(), source.Payload()), opaque)},
+		{name: "block order", value: build(opaque, source)},
+		{name: "carrier", value: build(source, metadata.NewRawBlock("opaque", foreign, IlstEncodingIdentity(), opaque.Payload()))},
+		{name: "encoding", value: build(source, metadata.NewRawBlock("opaque", slot, plugin.Identity{}, opaque.Payload()))},
+		{name: "payload", value: build(source, metadata.NewRawBlock("opaque", slot, IlstEncodingIdentity(), metadata.NewBlob(ilstItemMediaType, []byte("changed"))))},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			if sameIlstMuxDocument(base, mutation.value) {
+				t.Fatalf("mux comparator accepted %s mutation", mutation.name)
+			}
+		})
+	}
+
+	origin := metadata.Origin{Carrier: slot, Encoding: IlstEncodingIdentity(), Block: source.ID(), Native: "source"}
+	withEntry := metadata.NewBuilder(metadata.AssetScope)
+	withEntry.AddBlock(source)
+	metadata.Add(withEntry, tag.Title(), "title", origin)
+	entryDocument, err := withEntry.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedOrigin := metadata.NewBuilder(metadata.AssetScope)
+	changedOrigin.AddBlock(source)
+	metadata.Add(changedOrigin, tag.Title(), "title", metadata.Origin{Carrier: slot, Encoding: IlstEncodingIdentity(), Block: source.ID(), Native: "changed"})
+	changedOriginDocument, err := changedOrigin.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameIlstMuxDocument(entryDocument, changedOriginDocument) {
+		t.Fatal("mux comparator accepted origin mutation")
+	}
+}
+
 func TestIlstParsesLargeDataAtom(t *testing.T) {
 	slot := carrier.Define[ilstTestCarrierID]()
 	resolver := ilstTestResolver(t, slot)
@@ -438,6 +581,16 @@ func TestIlstForeignBlocksAndEmptyDocument(t *testing.T) {
 	encoded, reports, err = resolver.Marshal(t.Context(), slot, "ilst", document)
 	if err != nil || len(reports) != 0 || encoded.Len() == 0 {
 		t.Fatalf("foreign source error = %x, reports %#v, error %v", encoded.AppendTo(nil), reports, err)
+	}
+	builder = metadata.NewBuilder(metadata.AssetScope)
+	builder.AddBlock(metadata.NewSourceBlock("ilst", slot, IlstEncodingIdentity(), metadata.NewBlob(ilstMediaType, nil)))
+	builder.AddBlock(metadata.NewRawBlock("foreign", foreign, IlstEncodingIdentity(), metadata.NewBlob(ilstItemMediaType, ilstTestAtom(ilstType{'f', 'r', 'e', 'e'}, nil))))
+	document, err = builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := resolver.Marshal(t.Context(), slot, "ilst", document); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("foreign opaque with source error = %v, want unsupported", err)
 	}
 }
 

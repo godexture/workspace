@@ -7,6 +7,7 @@ import (
 
 	"github.com/godexture/godec/access"
 	mediaformat "github.com/godexture/godec/media/format"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/resource"
 )
 
@@ -26,7 +27,8 @@ func inspectMP4(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) 
 	if size <= 0 {
 		return mediaformat.Inspection{}, fmt.Errorf("%w: stable source size is %d", ErrMalformed, size)
 	}
-	value, err := parseMovie(ctx.Context(), random, uint64(size), ctx.Limit(), ctx.MemoryLimit())
+	resolver, _ := metadata.ResolverOf(ctx.Prepared())
+	value, err := parseMovieWithMetadata(ctx.Context(), random, uint64(size), ctx.Limit(), ctx.MemoryLimit(), resolver)
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}

@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/godexture/godec/media/codec"
+	"github.com/godexture/godec/media/metadata"
 	"github.com/godexture/godec/media/stream"
 	"github.com/godexture/godec/media/timing"
 	"github.com/godexture/godec/resource"
@@ -117,7 +118,7 @@ func selectMuxTracks(inputs []stream.Descriptor, inspected movie) ([]int, error)
 			return nil, fmt.Errorf("%w: MP4 mux keeps inspected tracks in order and cannot repeat one", ErrUnsupported)
 		}
 		previous = position
-		if err := validateMuxInput(input, inspected.tracks[position], route); err != nil {
+		if err := validateMuxInput(input, inspected.tracks[position], inspected.metadata, route); err != nil {
 			return nil, err
 		}
 		result = append(result, position)
@@ -125,7 +126,7 @@ func selectMuxTracks(inputs []stream.Descriptor, inspected movie) ([]int, error)
 	return result, nil
 }
 
-func validateMuxInput(input stream.Descriptor, value track, route int) error {
+func validateMuxInput(input stream.Descriptor, value track, expected metadata.Document, route int) error {
 	if !input.Valid() || !input.SchemaDescriptor().Equal(codec.Packets().Descriptor()) || input.ID() != trackStreamID(value.id) || input.TimeBase() != timing.MustBase(1, int64(value.timeScale)) {
 		return fmt.Errorf("%w: packet input %d does not match inspected track %d", ErrUnsupported, route, value.id)
 	}
@@ -133,7 +134,7 @@ func validateMuxInput(input stream.Descriptor, value track, route int) error {
 	if !ok || tag != SampleEntryTag(string(value.codec[:])) {
 		return fmt.Errorf("%w: packet input %d changes track %d sample entry", ErrUnsupported, route, value.id)
 	}
-	if input.Metadata().Len() != 0 || len(input.Metadata().Blocks()) != 0 {
+	if !sameIlstMuxDocument(input.Metadata(), expected) {
 		return fmt.Errorf("%w: packet input %d changes MP4 metadata", ErrUnsupported, route)
 	}
 	return nil

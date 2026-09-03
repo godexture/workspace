@@ -6,6 +6,7 @@ import (
 	"math"
 	"unsafe"
 
+	"github.com/godexture/godec/media/metadata"
 	mediasample "github.com/godexture/godec/media/sample"
 	"github.com/godexture/godec/resource"
 )
@@ -66,6 +67,9 @@ var (
 	typeTFRA = boxType{'t', 'f', 'r', 'a'}
 	typeMETA = boxType{'m', 'e', 't', 'a'}
 	typeILOC = boxType{'i', 'l', 'o', 'c'}
+	typeUDTA = boxType{'u', 'd', 't', 'a'}
+	typeILST = boxType{'i', 'l', 's', 't'}
+	typeMDIR = boxType{'m', 'd', 'i', 'r'}
 	typeENCV = boxType{'e', 'n', 'c', 'v'}
 	typeENCA = boxType{'e', 'n', 'c', 'a'}
 	typeURL  = boxType{'u', 'r', 'l', ' '}
@@ -94,6 +98,12 @@ type movie struct {
 	// A preserving remux can reuse the mdat header only when this covers the
 	// complete mdat payload.
 	totalSampleBytes uint64
+	// metadata is the AssetScope document returned by the ilst resolver. Its
+	// immutable source and opaque blocks share the retained ilst payload backing.
+	metadata metadata.Document
+	// ilst keeps only the source ranges and stable block identity needed by the
+	// next rewrite; semantic entries and item layout belong to the encoding.
+	ilst ilstEnvelope
 }
 
 // movieHeader is the parsed mvhd: its source range, the movie timescale and the
