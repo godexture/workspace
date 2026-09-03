@@ -66,6 +66,56 @@ func mp4PCMFixture(entry string, payload []byte) []byte {
 	})
 }
 
+// mp4PCMIlstFixture adds the supported moov/udta/meta/ilst metadata region to
+// the small PCM movie used by the file-surface tests. The insertion helper
+// repairs the moov size and every stco offset because mdat moves with it.
+func mp4PCMIlstFixture(entry string, payload []byte, items ...[]byte) []byte {
+	return mp4FixtureInsertIntoMoov(mp4PCMFixture(entry, payload), mp4FixtureIlstRegion(items...))
+}
+
+func mp4FixtureIlstRegion(items ...[]byte) []byte {
+	handler := make([]byte, 24)
+	copy(handler[8:12], "mdir")
+	metaPayload := mp4FixtureFullBox(0, 0, mp4FixtureBox("hdlr", handler))
+	var ilstPayload []byte
+	for _, item := range items {
+		ilstPayload = append(ilstPayload, item...)
+	}
+	metaPayload = append(metaPayload, mp4FixtureBox("ilst", ilstPayload)...)
+	return mp4FixtureContainer("udta", mp4FixtureBox("meta", metaPayload))
+}
+
+func mp4FixtureIlstText(typeID string, value string) []byte {
+	data := append(mp4FixtureU32(1), mp4FixtureU32(0)...)
+	data = append(data, []byte(value)...)
+	return mp4FixtureBox(typeID, mp4FixtureBox("data", data))
+}
+
+func mp4FixtureInsertIntoMoov(value, box []byte) []byte {
+	var moov mp4FixtureBoxView
+	for _, candidate := range mp4FixtureTopLevel(value) {
+		if candidate.typeID == "moov" {
+			moov = candidate
+			break
+		}
+	}
+	if moov.typeID == "" {
+		return value
+	}
+	moovEnd := moov.start + 8 + len(moov.payload)
+	result := make([]byte, 0, len(value)+len(box))
+	result = append(result, value[:moovEnd]...)
+	result = append(result, box...)
+	result = append(result, value[moovEnd:]...)
+
+	grow := uint32(len(box))
+	mp4FixtureGrowBox(result, moov.start, grow)
+	for _, offset := range mp4FixtureChunkOffsetFields(result) {
+		binary.BigEndian.PutUint32(result[offset:], binary.BigEndian.Uint32(result[offset:])+grow)
+	}
+	return result
+}
+
 // mp4FixtureChunk names one chunk of one track in stored order.
 type mp4FixtureChunk struct {
 	track int

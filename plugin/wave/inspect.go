@@ -102,7 +102,7 @@ func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSi
 	result.sourceSize = sourceSize
 	result.infoMemoryLimit = uint64(memoryLimit)
 
-	document := metadata.NewBuilder(metadata.StreamScope)
+	document := metadata.NewBuilder(metadata.AssetScope)
 	var formatFound, dataFound, ds64Found bool
 	var ds64DataSize uint64
 	var infoMemoryUsed uint64
@@ -283,7 +283,7 @@ func inspectHeaderWithLimits(ctx context.Context, reader access.Random, sourceSi
 	case allInfoComplete:
 		result.metadata = metadata.MustAvailable(parsed)
 	default:
-		result.metadata = metadata.MustUnavailable(metadata.StreamScope)
+		result.metadata = metadata.MustUnavailable(metadata.AssetScope)
 	}
 	if !result.valid() {
 		return header{}, fmt.Errorf("%w: PCM description and data block disagree", ErrMalformed)
@@ -331,7 +331,7 @@ func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver met
 	if !resolver.HasBinding(RIFFInfo()) {
 		// Probe the resolver before allocating the carrier. lookup is what emits
 		// the stable structured binding-missing diagnostic.
-		_, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("", nil))
+		_, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.AssetScope, metadata.NewBlob("", nil))
 		if err == nil {
 			return false, fmt.Errorf("%w: WAVE INFO binding probe unexpectedly succeeded", ErrUnsupported)
 		}
@@ -361,7 +361,7 @@ func inspectInfoSemantic(ctx context.Context, reader access.Random, resolver met
 	ranges.addInfo(value, anchor)
 	// Resolver.Parse is the semantic authority. Its source and opaque blocks
 	// are detached below after the binding has validated the returned scope.
-	parsed, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.StreamScope, metadata.NewBlob("application/x-riff-info", raw))
+	parsed, err := resolver.Parse(ctx, RIFFInfo(), block, metadata.AssetScope, metadata.NewBlob("application/x-riff-info", raw))
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil {
 			return false, cause

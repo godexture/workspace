@@ -68,7 +68,7 @@ func readerComponent() plugin.Component {
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
-			metadataAttachment, err := metadata.Merge(metadata.StreamScope, input.Metadata(), metadata.MustAvailable(inspected.metadata))
+			metadataAttachment, err := metadata.Merge(metadata.AssetScope, input.Metadata(), metadata.MustAvailable(inspected.metadata))
 			if err != nil {
 				return plugin.Compiled[readerPlan, stream.Descriptor]{}, err
 			}
@@ -138,7 +138,7 @@ func inspect(ctx mediaformat.InspectContext) (mediaformat.Inspection, error) {
 	if !ok {
 		return mediaformat.Inspection{}, errors.New("ACME reader requires metadata resolver")
 	}
-	document, err := resolver.Parse(ctx.Context(), LabelCarrier(), "acme/label", metadata.StreamScope, metadata.NewBlob("text/plain; charset=utf-8", labelBytes))
+	document, err := resolver.Parse(ctx.Context(), LabelCarrier(), "acme/label", metadata.AssetScope, metadata.NewBlob("text/plain; charset=utf-8", labelBytes))
 	if err != nil {
 		return mediaformat.Inspection{}, err
 	}

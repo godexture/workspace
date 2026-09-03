@@ -74,6 +74,9 @@ func muxerComponent() plugin.Component {
 				signal = description.Signal
 			}
 			inputAttachment := input.Metadata()
+			if err := validateWaveMetadataAttachment(inputAttachment); err != nil {
+				return plugin.Compiled[muxPlan, stream.Descriptor]{}, err
+			}
 			var inputMetadata metadata.Document
 			var metadataReports []loss.Report
 			var muxHeaderValue muxHeader

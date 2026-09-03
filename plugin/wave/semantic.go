@@ -2,17 +2,35 @@ package wave
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	"github.com/godexture/godec/media/metadata"
 )
 
 func waveSemanticDocument(value metadata.Attachment) (metadata.Document, error) {
+	if err := validateWaveMetadataAttachment(value); err != nil {
+		return metadata.Document{}, err
+	}
 	document, err := value.Semantic()
 	if errors.Is(err, metadata.ErrMetadataAbsent) {
 		return metadata.Document{}, nil
 	}
 	return document, err
+}
+
+func waveMetadataAttachmentValid(value metadata.Attachment) bool {
+	return validateWaveMetadataAttachment(value) == nil
+}
+
+func validateWaveMetadataAttachment(value metadata.Attachment) error {
+	if !value.Valid() {
+		return fmt.Errorf("%w: WAVE metadata attachment is invalid", ErrUnsupported)
+	}
+	if !value.IsAbsent() && value.Scope() != metadata.AssetScope {
+		return fmt.Errorf("%w: WAVE metadata attachment must use AssetScope", ErrUnsupported)
+	}
+	return nil
 }
 
 func (h header) metadataAttachment() metadata.Attachment {
