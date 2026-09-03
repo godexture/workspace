@@ -34,7 +34,7 @@ func TestMP4IlstMuxRewritesConsensusDocument(t *testing.T) {
 	unknown := ilstTestItem(ilstType{'-', '-', '-', '-'}, []byte{0xde, 0xad, 0xbe, 0xef})
 	data := ilstMovieFixture("mdir", unknown, ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
-	edited := muxEditedTitle(t, inspected.metadata, "Edited")
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "Edited")
 	resolver := ilstTestResolver(t, IlstCarrier())
 	prepared, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
 	if err != nil {
@@ -89,10 +89,11 @@ func TestMP4IlstMuxRewritesConsensusDocument(t *testing.T) {
 		t.Fatal("edited metadata remux remained byte exact")
 	}
 	result := inspectMovieWithIlst(t, encoded)
-	if title, ok := metadata.First(result.metadata, tag.Title()); !ok || title != "Edited" {
+	resultDocument := mustMetadataDocument(t, result.metadata)
+	if title, ok := metadata.First(resultDocument, tag.Title()); !ok || title != "Edited" {
 		t.Fatalf("rewritten title = %q/%v", title, ok)
 	}
-	opaque, ok := result.metadata.Block(ilstItemBlockID(result.ilst.block, 0))
+	opaque, ok := resultDocument.Block(ilstItemBlockID(result.ilst.block, 0))
 	if !ok || opaque.Source() || !opaque.Payload().Equal(metadata.NewBlob(ilstItemMediaType, unknown)) {
 		t.Fatalf("rewritten opaque block = %#v/%v", opaque, ok)
 	}
@@ -102,7 +103,7 @@ func TestMP4IlstMuxUsesConsensusAndMarshalsOnce(t *testing.T) {
 	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
 	resolver, calls := muxSpyResolver(t)
-	unchanged := muxMetadataInputs(t, inspected, inspected.metadata)
+	unchanged := muxMetadataInputs(t, inspected, mustMetadataDocument(t, inspected.metadata))
 	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(unchanged), inspected); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestMP4IlstMuxUsesConsensusAndMarshalsOnce(t *testing.T) {
 		t.Fatalf("unchanged metadata marshal calls = %d, want 0", *calls)
 	}
 
-	edited := muxEditedTitle(t, inspected.metadata, "Edited")
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "Edited")
 	changed := muxMetadataInputs(t, inspected, edited)
 	layout, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(changed), inspected)
 	if err != nil {
@@ -144,7 +145,8 @@ func TestMP4IlstMuxCombinesRewriteWithTrackSubset(t *testing.T) {
 			if len(result.tracks) != 1 || result.tracks[0].id != selected.id {
 				t.Fatalf("subset metadata tracks = %#v, want track %d", result.tracks, selected.id)
 			}
-			if title, ok := metadata.First(result.metadata, tag.Title()); !ok || title != "Edited" {
+			resultDocument := mustMetadataDocument(t, result.metadata)
+			if title, ok := metadata.First(resultDocument, tag.Title()); !ok || title != "Edited" {
 				t.Fatalf("subset rewritten title = %q/%v", title, ok)
 			}
 			if result.media.payloadSize != selected.sampleBytes {
@@ -208,8 +210,8 @@ func TestMP4MuxEmitsMetadataBlobPagewise(t *testing.T) {
 func TestMP4IlstMuxRejectsConsensusMismatchBeforeMarshal(t *testing.T) {
 	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
-	first := muxEditedTitle(t, inspected.metadata, "First")
-	second := muxEditedTitle(t, inspected.metadata, "Second")
+	first := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "First")
+	second := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "Second")
 	inputs := muxMetadataInputs(t, inspected, first)
 	inputs[1] = flow.Describe("packets", inputs[1].Descriptor().WithMetadata(metadata.MustAvailable(second)))
 	resolver, calls := muxSpyResolver(t)
@@ -230,7 +232,7 @@ func TestMP4MuxPreservesMetadataPresenceState(t *testing.T) {
 	if _, err := compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(muxMetadataInputsWithAttachment(t, withEmptyIlst, metadata.Absent())[:1]), withEmptyIlst); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("empty ilst with absent input error = %v", err)
 	}
-	availableInputs := muxMetadataInputsWithAttachment(t, withEmptyIlst, metadata.MustAvailable(withEmptyIlst.metadata))
+	availableInputs := muxMetadataInputsWithAttachment(t, withEmptyIlst, withEmptyIlst.metadata)
 	layout, err := compileMuxWithResolver(t.Context(), metadata.Resolver{}, descriptorsToInputs(availableInputs), withEmptyIlst)
 	if err != nil {
 		t.Fatal(err)
@@ -254,20 +256,70 @@ func TestMP4MuxPreservesMetadataPresenceState(t *testing.T) {
 	}
 }
 
+func TestMP4MuxPreservesUnavailableMetadataState(t *testing.T) {
+	item := ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title")))
+	inspected := inspectMovieWithIlst(t, ilstMovieFixture("soun", item))
+	if !inspected.metadata.IsUnavailable() || inspected.ilst.valid() {
+		t.Fatalf("source metadata state = %#v/%#v, want unavailable", inspected.metadata, inspected.ilst)
+	}
+	resolver, calls := muxSpyResolver(t)
+	unchanged := muxMetadataInputsWithAttachment(t, inspected, inspected.metadata)
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(unchanged), inspected); err != nil {
+		t.Fatalf("unavailable exact mux = %v", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("unavailable exact mux marshal calls = %d, want 0", *calls)
+	}
+	subset := muxMetadataInputsWithAttachment(t, inspected, inspected.metadata)[:1]
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(subset), inspected); err != nil {
+		t.Fatalf("unavailable subset mux = %v", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("unavailable subset mux marshal calls = %d, want 0", *calls)
+	}
+	absent := muxMetadataInputsWithAttachment(t, inspected, metadata.Absent())
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(absent[:1]), inspected); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unavailable/absent mux error = %v, want unsupported", err)
+	}
+	empty, err := metadata.NewBuilder(metadata.AssetScope).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	available := muxMetadataInputsWithAttachment(t, inspected, metadata.MustAvailable(empty))
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(available[:1]), inspected); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unavailable/available mux error = %v, want unsupported", err)
+	}
+	streamUnavailable := muxMetadataInputsWithAttachment(t, inspected, metadata.MustUnavailable(metadata.StreamScope))
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(streamUnavailable[:1]), inspected); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("stream-scoped unavailable mux error = %v, want unsupported", err)
+	}
+	withIloc := inspectMovieWithIlst(t, ilstMovieFixtureWithExtra(ilstMetaFixture("soun", fixtureBox("iloc", nil), fixtureBox("ilst", item))))
+	if !withIloc.metadata.IsUnavailable() || !withIloc.offsetIndex {
+		t.Fatalf("unavailable iloc source = %#v, want unavailable with offset index", withIloc)
+	}
+	if _, err := compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(muxMetadataInputsWithAttachment(t, withIloc, withIloc.metadata)[:1]), withIloc); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unavailable iloc subset mux error = %v, want unsupported", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("unavailable iloc subset mux marshal calls = %d, want 0", *calls)
+	}
+}
+
 func TestMP4IlstMuxRejectsDroppedInspectedOpaqueBlock(t *testing.T) {
 	unknown := ilstTestItem(ilstType{'-', '-', '-', '-'}, []byte{1, 2, 3})
 	data := ilstMovieFixture("mdir", unknown, ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
-	if len(inspected.metadata.Blocks()) != 2 {
-		t.Fatalf("opaque fixture blocks = %#v", inspected.metadata.Blocks())
+	document := mustMetadataDocument(t, inspected.metadata)
+	if len(document.Blocks()) != 2 {
+		t.Fatalf("opaque fixture blocks = %#v", document.Blocks())
 	}
 	builder := metadata.NewBuilder(metadata.AssetScope)
-	for _, block := range inspected.metadata.Blocks() {
+	for _, block := range document.Blocks() {
 		if block.Source() {
 			builder.AddBlock(block)
 		}
 	}
-	entry := inspected.metadata.Entries()[0]
+	entry := document.Entries()[0]
 	metadata.Add(builder, tag.Title(), "Edited", entry.Origin())
 	document, err := builder.Build()
 	if err != nil {
@@ -285,7 +337,7 @@ func TestMP4IlstMuxRejectsDroppedInspectedOpaqueBlock(t *testing.T) {
 func TestMP4IlstMuxMissingBindingUsesStructuredDiagnostic(t *testing.T) {
 	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
-	edited := muxEditedTitle(t, inspected.metadata, "Edited")
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "Edited")
 	resolver := metadata.Resolver{}
 	var err error
 	_, err = compileMuxWithResolver(t.Context(), resolver, descriptorsToInputs(muxMetadataInputs(t, inspected, edited)), inspected)
@@ -300,7 +352,7 @@ func TestMP4IlstMuxMissingBindingUsesStructuredDiagnostic(t *testing.T) {
 func TestMP4IlstMuxResourceRetainsRewriteBlob(t *testing.T) {
 	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
 	inspected := inspectMovieWithIlst(t, data)
-	edited := muxEditedTitle(t, inspected.metadata, "Edited")
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), "Edited")
 	payload := metadata.NewBlob(ilstMediaType, bytes.Repeat([]byte{0x6c}, muxPageBytes+1))
 	resolver, _ := muxSpyResolverWithPayload(t, payload)
 	prepared, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
@@ -377,7 +429,7 @@ func ilstMovieFixtureAfterMdat(handler string, items ...[]byte) []byte {
 func runIlstRewriteMux(t testing.TB, data []byte, title string) []byte {
 	t.Helper()
 	inspected := inspectMovieWithIlst(t, data)
-	edited := muxEditedTitle(t, inspected.metadata, title)
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), title)
 	resolver := ilstTestResolver(t, IlstCarrier())
 	prepared, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
 	if err != nil {
@@ -424,7 +476,7 @@ func runIlstRewriteMux(t testing.TB, data []byte, title string) []byte {
 func runIlstRewriteSubsetMux(t testing.TB, data []byte, title string, selectedIndex int) []byte {
 	t.Helper()
 	inspected := inspectMovieWithIlst(t, data)
-	edited := muxEditedTitle(t, inspected.metadata, title)
+	edited := muxEditedTitle(t, mustMetadataDocument(t, inspected.metadata), title)
 	resolver := ilstTestResolver(t, IlstCarrier())
 	prepared, err := metadata.WithResolver(plugin.CompileContextWithContext(plugin.CompileContext{}, t.Context()), resolver)
 	if err != nil {

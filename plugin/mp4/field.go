@@ -19,7 +19,7 @@ func readBoxPrefix(ctx context.Context, reader access.Random, value box, destina
 
 func readMovieAt(ctx context.Context, reader access.Random, destination []byte, offset uint64, what string) error {
 	if offset > math.MaxInt64 || len(destination) > 0 && offset > uint64(math.MaxInt64)-uint64(len(destination)-1) {
-		return fmt.Errorf("%w: %s read range exceeds runtime offsets", errMalformedMovie, what)
+		return fmt.Errorf("%w: %w: %s read range exceeds runtime offsets", errUnsupportedMovie, errRuntimeRange, what)
 	}
 	if err := access.ReadFullAt(ctx, reader, destination, int64(offset)); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

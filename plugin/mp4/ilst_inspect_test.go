@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/godexture/godec/access"
@@ -28,6 +29,8 @@ import (
 type ilstInspectForeignCarrierID struct{}
 type ilstInspectOverrideID struct{}
 type ilstInspectOverrideKeyID struct{}
+type ilstInspectParseFailureID struct{}
+type ilstInspectCancelID struct{}
 
 var ilstInspectOverrideKey = key.Define[ilstInspectOverrideKeyID, string]()
 
@@ -58,6 +61,46 @@ func ilstInspectOverrideComponent() plugin.Component {
 	)
 }
 
+func ilstInspectParseFailureResolver(t testing.TB) metadata.Resolver {
+	t.Helper()
+	component := plugin.NewComponent[ilstInspectParseFailureID](plugin.Descriptor{DisplayName: "test ilst parse failure"}, configurationSchema(), metadata.WithEncoding(
+		func(metadata.ParseContext) (metadata.Document, error) {
+			return metadata.Document{}, errors.New("test ilst content parse failure")
+		},
+		func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+			return metadata.NewBlob(ilstMediaType, nil), nil, nil
+		},
+		tag.Title().Erased(),
+	))
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{IlstCarrier(): component}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolver
+}
+
+func ilstInspectCancelResolver(t testing.TB, cancel context.CancelFunc) metadata.Resolver {
+	t.Helper()
+	component := plugin.NewComponent[ilstInspectCancelID](plugin.Descriptor{DisplayName: "test ilst parse cancellation"}, configurationSchema(), metadata.WithEncoding(
+		func(ctx metadata.ParseContext) (metadata.Document, error) {
+			cancel()
+			builder := metadata.NewBuilder(ctx.Scope())
+			builder.AddBlock(metadata.NewSourceBlock(ctx.Block(), ctx.Carrier(), ctx.Encoding(), ctx.Payload()))
+			metadata.Add(builder, tag.Title(), "Title", metadata.Origin{Carrier: ctx.Carrier(), Encoding: ctx.Encoding(), Block: ctx.Block()})
+			return builder.Build()
+		},
+		func(metadata.MarshalContext) (metadata.Blob, []loss.Loss, error) {
+			return metadata.NewBlob(ilstMediaType, nil), nil, nil
+		},
+		tag.Title().Erased(),
+	))
+	resolver, err := metadata.NewResolver(map[carrier.ID]plugin.Component{IlstCarrier(): component}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolver
+}
+
 func TestMP4InspectRetainsResolvedIlstDocument(t *testing.T) {
 	unknown := ilstTestAtom(ilstType{'-', '-', '-', '-'}, []byte{0xff, 0, 1, 2, 3})
 	items := [][]byte{
@@ -70,7 +113,7 @@ func TestMP4InspectRetainsResolvedIlstDocument(t *testing.T) {
 	data := ilstMovieFixture("mdir", items...)
 	inspected := inspectMovieWithIlst(t, data)
 
-	document := inspected.metadata
+	document := mustMetadataDocument(t, inspected.metadata)
 	if document.Scope() != metadata.AssetScope || len(document.Blocks()) != 2 {
 		t.Fatalf("inspected metadata = scope %s blocks %#v", document.Scope(), document.Blocks())
 	}
@@ -150,7 +193,7 @@ func TestMP4InspectUsesResolvedIlstBindingDocument(t *testing.T) {
 	if !ok {
 		t.Fatal("MP4 inspection did not carry movie")
 	}
-	document := inspected.metadata
+	document := mustMetadataDocument(t, inspected.metadata)
 	if document.Scope() != metadata.AssetScope || document.Len() != 1 || len(document.Blocks()) != 2 {
 		t.Fatalf("override document = %#v", document)
 	}
@@ -265,6 +308,9 @@ func TestMP4IlstMetadataUnavailableKeepsRemuxAvailable(t *testing.T) {
 	malformedMeta := fixtureContainer("udta", fixtureBox("meta", []byte{0, 0, 0, 0, 1}))
 	duplicate := ilstMetaFixture("mdir", fixtureBox("ilst", valid), fixtureBox("ilst", valid))
 	quickTime := fixtureContainer("udta", fixtureBox("meta", fixtureBox("hdlr", make([]byte, 12))))
+	withoutHandler := ilstMetaChildrenFixture(fixtureBox("ilst", valid))
+	duplicateHandlers := ilstMetaChildrenFixture(ilstHandlerBoxFixture(0, "mdir"), ilstHandlerBoxFixture(0, "mdir"), fixtureBox("ilst", valid))
+	nonzeroHandlerFlags := ilstMetaChildrenFixture(ilstHandlerBoxFixture(1, "mdir"), fixtureBox("ilst", valid))
 	shortHandlerPayload := make([]byte, 12)
 	copy(shortHandlerPayload[8:], "mdir")
 	shortHandler := fixtureContainer("udta", fixtureBox("meta", fixtureFullBox(0, 0, append(fixtureBox("hdlr", shortHandlerPayload), fixtureBox("ilst", valid)...))))
@@ -273,16 +319,22 @@ func TestMP4IlstMetadataUnavailableKeepsRemuxAvailable(t *testing.T) {
 		extra         []byte
 		memory        resource.Bytes
 		read          resource.Bytes
+		wantState     metadata.Availability
 		wantOffsetIdx bool
 	}{
-		{name: "absent"},
-		{name: "non-itunes", extra: ilstMetaFixture("soun", fixtureBox("ilst", valid))},
-		{name: "quicktime", extra: quickTime, wantOffsetIdx: true},
-		{name: "short handler", extra: shortHandler},
-		{name: "malformed", extra: malformedMeta},
-		{name: "malformed ilst", extra: ilstMetaFixture("mdir", fixtureBox("ilst", []byte{0, 0, 0, 8}))},
-		{name: "duplicate", extra: duplicate},
-		{name: "unwalkable udta", extra: fixtureContainer("udta", []byte{0, 0, 0, 4}), wantOffsetIdx: true},
+		{name: "absent", wantState: metadata.AttachmentAbsent},
+		{name: "empty mdir", extra: ilstMetaFixture("mdir"), wantState: metadata.AttachmentAbsent},
+		{name: "non-itunes without ilst", extra: ilstMetaFixture("soun"), wantState: metadata.AttachmentUnavailable},
+		{name: "non-itunes", extra: ilstMetaFixture("soun", fixtureBox("ilst", valid)), wantState: metadata.AttachmentUnavailable},
+		{name: "ilst without handler", extra: withoutHandler, wantState: metadata.AttachmentUnavailable},
+		{name: "duplicate handlers", extra: duplicateHandlers, wantState: metadata.AttachmentUnavailable},
+		{name: "nonzero handler flags", extra: nonzeroHandlerFlags, wantState: metadata.AttachmentUnavailable},
+		{name: "quicktime", extra: quickTime, wantState: metadata.AttachmentUnavailable, wantOffsetIdx: true},
+		{name: "short handler", extra: shortHandler, wantState: metadata.AttachmentUnavailable},
+		{name: "malformed", extra: malformedMeta, wantState: metadata.AttachmentUnavailable},
+		{name: "malformed ilst", extra: ilstMetaFixture("mdir", fixtureBox("ilst", []byte{0, 0, 0, 8})), wantState: metadata.AttachmentUnavailable},
+		{name: "duplicate", extra: duplicate, wantState: metadata.AttachmentUnavailable},
+		{name: "unwalkable udta", extra: fixtureContainer("udta", []byte{0, 0, 0, 4}), wantState: metadata.AttachmentUnavailable, wantOffsetIdx: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := ilstMovieFixtureWithExtra(test.extra)
@@ -298,8 +350,8 @@ func TestMP4IlstMetadataUnavailableKeepsRemuxAvailable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("optional metadata parse = %v", err)
 			}
-			if inspected.metadata.Scope().Valid() || inspected.ilst.valid() {
-				t.Fatalf("optional metadata = %#v %#v, want unavailable", inspected.metadata, inspected.ilst)
+			if inspected.metadata.State() != test.wantState || test.wantState == metadata.AttachmentAvailable && !inspected.ilst.valid() || test.wantState != metadata.AttachmentAvailable && inspected.ilst.valid() {
+				t.Fatalf("optional metadata = %#v %#v, want state %s", inspected.metadata, inspected.ilst, test.wantState)
 			}
 			if test.wantOffsetIdx && !inspected.offsetIndex {
 				t.Fatalf("unavailable metadata lost offset index: %#v", inspected)
@@ -308,6 +360,116 @@ func TestMP4IlstMetadataUnavailableKeepsRemuxAvailable(t *testing.T) {
 				t.Fatal("unavailable metadata prevented same-format remux")
 			}
 		})
+	}
+}
+
+func TestMP4IlstValidCandidatePlusUnsafeCandidateIsUnavailable(t *testing.T) {
+	valid := ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title")))
+	data := fixtureMovie(false, "isom", []string{"iso2"}, []fixtureTrack{
+		{id: 1, timeScale: 48_000, handler: "soun", entryType: "mp4a", size: 2, sttsExtra: []fixtureTiming{{count: 1, duration: 1024}}},
+		{id: 2, timeScale: 1_000, handler: "vide", entryType: "avc1", size: 3, sttsExtra: []fixtureTiming{{count: 1, duration: 40}}},
+	}, nil, [][]byte{
+		ilstMetaFixture("mdir", fixtureBox("ilst", valid)),
+		// A second metadata candidate must not be ignored just because the
+		// first candidate was safe.
+		ilstMetaFixture("soun", fixtureBox("ilst", valid)),
+	})
+	inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20, ilstTestResolver(t, IlstCarrier()))
+	if err != nil {
+		t.Fatalf("mixed metadata parse = %v", err)
+	}
+	if !inspected.metadata.IsUnavailable() || inspected.ilst.valid() {
+		t.Fatalf("mixed metadata = %#v/%#v, want unavailable without envelope", inspected.metadata, inspected.ilst)
+	}
+}
+
+func TestMP4IlstValidCandidatePlusMalformedOrDuplicateCandidateIsUnavailable(t *testing.T) {
+	valid := ilstMetaFixture("mdir", fixtureBox("ilst", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title")))))
+	malformed := fixtureContainer("udta", fixtureBox("meta", []byte{0, 0, 0, 0, 1}))
+	duplicate := ilstMetaFixture("mdir", fixtureBox("ilst", []byte{}), fixtureBox("ilst", []byte{}))
+	for _, test := range []struct {
+		name  string
+		other []byte
+	}{
+		{name: "malformed", other: malformed},
+		{name: "duplicate", other: duplicate},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			extra := append(append([]byte(nil), valid...), test.other...)
+			data := ilstMovieFixtureWithExtra(extra)
+			inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20, ilstTestResolver(t, IlstCarrier()))
+			if err != nil {
+				t.Fatalf("mixed metadata parse = %v", err)
+			}
+			if !inspected.metadata.IsUnavailable() || inspected.ilst.valid() {
+				t.Fatalf("mixed metadata = %#v/%#v, want unavailable without envelope", inspected.metadata, inspected.ilst)
+			}
+		})
+	}
+}
+
+func TestMP4IlstInvalidKnownItemRemainsAvailableOpaque(t *testing.T) {
+	// The item is structurally valid but has a data type the built-in ilst
+	// encoding cannot interpret. The encoding owns it as an opaque block.
+	item := ilstTestItem(ilstName, ilstTestData(0, 0, []byte("Title")))
+	data := ilstMovieFixture("mdir", item)
+	inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20, ilstTestResolver(t, IlstCarrier()))
+	if err != nil {
+		t.Fatalf("invalid known item parse = %v", err)
+	}
+	if !inspected.metadata.IsAvailable() || !inspected.ilst.valid() {
+		t.Fatalf("invalid known item state = %#v/%#v", inspected.metadata, inspected.ilst)
+	}
+	document := mustMetadataDocument(t, inspected.metadata)
+	if document.Len() != 0 || document.BlockCount() != 2 {
+		t.Fatalf("invalid known item document = %#v", document)
+	}
+	itemBlock, ok := document.Block(ilstItemBlockID(inspected.ilst.block, 0))
+	if !ok || itemBlock.Source() || !itemBlock.Payload().Equal(metadata.NewBlob(ilstItemMediaType, item)) {
+		t.Fatalf("invalid known item opaque block = %#v/%v", itemBlock, ok)
+	}
+}
+
+func TestMP4IlstBoundParseFailureIsUnavailable(t *testing.T) {
+	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
+	inspected, err := parseMovieWithMetadata(t.Context(), memoryRandom(data), uint64(len(data)), 1<<20, 1<<20, ilstInspectParseFailureResolver(t))
+	if err != nil {
+		t.Fatalf("bound parse failure = %v", err)
+	}
+	if !inspected.metadata.IsUnavailable() || inspected.ilst.valid() {
+		t.Fatalf("bound parse failure state = %#v/%#v, want unavailable", inspected.metadata, inspected.ilst)
+	}
+}
+
+func TestMP4IlstInspectPropagatesParseCancellation(t *testing.T) {
+	data := ilstMovieFixture("mdir", ilstTestItem(ilstName, ilstTestData(ilstDataTypeUTF8, 0, []byte("Title"))))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err := parseMovieWithMetadata(ctx, memoryRandom(data), uint64(len(data)), 1<<20, 1<<20, ilstInspectCancelResolver(t, cancel))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("parse cancellation error = %v, want context canceled", err)
+	}
+}
+
+func TestMP4IlstInspectRuntimeRangeOverflowIsHard(t *testing.T) {
+	max := uint64(math.MaxInt64)
+	udtaOffset := max - 16
+	reader := sparseIlstRandom{udtaOffset: int64(udtaOffset), metaOffset: int64(max - 8)}
+	moov := box{
+		typeID:        typeMOOV,
+		offset:        udtaOffset - 8,
+		size:          48,
+		headerSize:    8,
+		payloadOffset: udtaOffset,
+		payloadSize:   40,
+	}
+	budget := newMovieBudget(1 << 20)
+	inspected, err := inspectIlstMetadata(t.Context(), reader, max+24, moov, ilstTestResolver(t, IlstCarrier()), &budget)
+	if !errors.Is(err, ErrUnsupported) || !errors.Is(err, errRuntimeRange) {
+		t.Fatalf("runtime metadata range error = %v, want hard unsupported runtime range", err)
+	}
+	if !inspected.metadata.IsAbsent() || inspected.envelope.valid() {
+		t.Fatalf("runtime metadata range inspection = %#v/%#v, want no accepted metadata", inspected.metadata, inspected.envelope)
 	}
 }
 
@@ -335,12 +497,13 @@ func TestMP4IlstPayloadBudgetBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("boundary metadata parse = %v", err)
 			}
-			available := inspected.metadata.Scope().Valid()
+			available := inspected.metadata.IsAvailable()
 			if available != test.wantAvailable || available != inspected.ilst.valid() {
 				t.Fatalf("boundary metadata availability = %v/%v, want %v", available, inspected.ilst.valid(), test.wantAvailable)
 			}
 			if available {
-				pictures := metadata.Values(inspected.metadata, tag.Picture())
+				document := mustMetadataDocument(t, inspected.metadata)
+				pictures := metadata.Values(document, tag.Picture())
 				if len(pictures) != 1 || pictures[0].Data.Len() != len(artwork) {
 					t.Fatalf("boundary artwork = %#v, want %d bytes", pictures, len(artwork))
 				}
@@ -387,7 +550,7 @@ func TestMP4IlstDuplicateWithoutIlocAllowsSubsetRemux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate metadata parse = %v", err)
 	}
-	if inspected.metadata.Scope().Valid() || inspected.offsetIndex {
+	if !inspected.metadata.IsUnavailable() || inspected.offsetIndex {
 		t.Fatalf("duplicate metadata = %#v, want unavailable without offset index", inspected)
 	}
 	if encoded := runSubsetMux(t, data, 0); len(encoded) == 0 {
@@ -493,6 +656,7 @@ func TestMP4IlstMetadataKeepsDirectIlocWhenUnavailable(t *testing.T) {
 		extra []byte
 	}{
 		{name: "wrong handler", extra: ilstMetaFixture("soun", fixtureBox("iloc", nil), fixtureBox("ilst", valid))},
+		{name: "handlerless iloc", extra: fixtureContainer("udta", fixtureBox("meta", fixtureFullBox(0, 0, fixtureBox("iloc", nil))))},
 		{name: "malformed payload", extra: ilstMetaFixture("mdir", fixtureBox("iloc", nil), fixtureBox("ilst", []byte{0, 0, 0, 8}))},
 		{name: "duplicate target", extra: ilstMetaFixture("mdir", fixtureBox("iloc", nil), fixtureBox("ilst", valid), fixtureBox("ilst", valid))},
 		{name: "unwalkable fullbox", extra: unwalkable},
@@ -503,7 +667,7 @@ func TestMP4IlstMetadataKeepsDirectIlocWhenUnavailable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("optional metadata = %v", err)
 			}
-			if inspected.metadata.Scope().Valid() || !inspected.offsetIndex {
+			if !inspected.metadata.IsUnavailable() || !inspected.offsetIndex {
 				t.Fatalf("unavailable metadata lost direct iloc constraint: %#v", inspected)
 			}
 			if _, compiled := compileMP4Mux(t, inspected); !compiled.Valid() {
@@ -534,7 +698,7 @@ func TestMP4IlstOptionalTraversalBeforeLateIlocFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("optional malformed metadata = %v", err)
 	}
-	if inspected.metadata.Scope().Valid() || !inspected.offsetIndex {
+	if !inspected.metadata.IsUnavailable() || !inspected.offsetIndex {
 		t.Fatalf("optional traversal before late iloc = %#v, want unavailable with offset index", inspected)
 	}
 	if _, compiled := compileMP4Mux(t, inspected); !compiled.Valid() {
@@ -615,12 +779,23 @@ func ilstMovieFixtureWithExtra(extra []byte) []byte {
 }
 
 func ilstMetaFixture(handler string, children ...[]byte) []byte {
-	handlerPayload := make([]byte, 24)
-	copy(handlerPayload[8:], handler)
 	values := make([][]byte, 0, len(children)+1)
-	values = append(values, fixtureBox("hdlr", handlerPayload))
+	values = append(values, ilstHandlerBoxFixture(0, handler))
 	values = append(values, children...)
-	return fixtureContainer("udta", fixtureBox("meta", fixtureFullBox(0, 0, bytes.Join(values, nil))))
+	return ilstMetaChildrenFixture(values...)
+}
+
+func ilstHandlerBoxFixture(flags uint32, handler string) []byte {
+	payload := make([]byte, 24)
+	payload[1] = byte(flags >> 16)
+	payload[2] = byte(flags >> 8)
+	payload[3] = byte(flags)
+	copy(payload[8:], handler)
+	return fixtureBox("hdlr", payload)
+}
+
+func ilstMetaChildrenFixture(children ...[]byte) []byte {
+	return fixtureContainer("udta", fixtureBox("meta", fixtureFullBox(0, 0, bytes.Join(children, nil))))
 }
 
 func scratchMP4Journal(compiled plugin.Compilation) (*scratch.Journal, error) {
@@ -636,6 +811,33 @@ type ilstFailingRandom struct {
 type ilstCountingRandom struct {
 	access.Random
 	read uint64
+}
+
+type sparseIlstRandom struct {
+	udtaOffset int64
+	metaOffset int64
+}
+
+func (r sparseIlstRandom) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {
+	if err := context.Cause(ctx); err != nil {
+		return 0, err
+	}
+	if len(destination) != 8 {
+		return 0, errors.New("sparse ilst reader received an unexpected read")
+	}
+	var header [8]byte
+	switch offset {
+	case r.udtaOffset:
+		copy(header[:4], []byte{0, 0, 0, 40})
+		copy(header[4:], "udta")
+	case r.metaOffset:
+		copy(header[:4], []byte{0, 0, 0, 32})
+		copy(header[4:], "meta")
+	default:
+		return 0, errors.New("sparse ilst reader received an unexpected offset")
+	}
+	copy(destination, header[:])
+	return len(destination), nil
 }
 
 func (r *ilstCountingRandom) ReadAt(ctx context.Context, destination []byte, offset int64) (int, error) {

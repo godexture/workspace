@@ -24,6 +24,7 @@ var (
 	errMalformedMovie   = ErrMalformed
 	errUnsupportedMovie = ErrUnsupported
 	errTruncatedMovie   = ErrTruncated
+	errRuntimeRange     = errors.New("MP4 runtime read range overflow")
 )
 
 var (
@@ -98,9 +99,10 @@ type movie struct {
 	// A preserving remux can reuse the mdat header only when this covers the
 	// complete mdat payload.
 	totalSampleBytes uint64
-	// metadata is the AssetScope document returned by the ilst resolver. Its
-	// immutable source and opaque blocks share the retained ilst payload backing.
-	metadata metadata.Document
+	// metadata carries the ilst resolver's availability state. Its immutable
+	// source and opaque blocks share the retained ilst payload backing when it
+	// is available.
+	metadata metadata.Attachment
 	// ilst keeps only the source ranges and stable block identity needed by the
 	// next rewrite; semantic entries and item layout belong to the encoding.
 	ilst ilstEnvelope
@@ -227,7 +229,13 @@ type movieBudget struct {
 }
 
 func (m movie) valid() bool {
-	if m.sourceEnd == 0 || m.fileBox.typeID != typeFTYP || m.moov.typeID != typeMOOV || m.header.box.typeID != typeMVHD || m.media.typeID != typeMDAT || len(m.tracks) == 0 {
+	if m.sourceEnd == 0 || m.fileBox.typeID != typeFTYP || m.moov.typeID != typeMOOV || m.header.box.typeID != typeMVHD || m.media.typeID != typeMDAT || len(m.tracks) == 0 || !m.metadata.Valid() {
+		return false
+	}
+	if !m.metadata.IsAbsent() && m.metadata.Scope() != metadata.AssetScope {
+		return false
+	}
+	if m.metadata.IsAvailable() != m.ilst.valid() {
 		return false
 	}
 	for _, track := range m.tracks {
