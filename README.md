@@ -35,7 +35,7 @@ import (
 )
 
 func main() {
-    if err := standard.Convert(context.Background(), "input.wav", "output.wav"); err != nil {
+    if _, err := standard.Convert(context.Background(), "input.wav", "output.wav"); err != nil {
         log.Fatal(err)
     }
 }

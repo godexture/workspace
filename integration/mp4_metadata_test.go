@@ -181,6 +181,27 @@ func TestMP4OpaqueIlstToWAVFailsClosed(t *testing.T) {
 	}
 }
 
+func TestStandardConvertReturnsActualMetadataLosses(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.mp4")
+	outputPath := filepath.Join(directory, "output.wav")
+	inputBytes := mp4PCMIlstFixture("sowt", make([]byte, 8),
+		mp4FixtureIlstText(string([]byte{0xa9, 'n', 'a', 'm'}), "Title"),
+		mp4FixtureIlstText(string([]byte{0xa9, 'w', 'r', 't'}), "Composer"),
+	)
+	if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := standard.Convert(t.Context(), inputPath, outputPath)
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("standard.Convert = %#v, %v", result, err)
+	}
+	actual := result.ActualMetadataLosses()
+	if len(actual) != 1 || actual[0].Report.Loss.Key != tag.Composer().ID() {
+		t.Fatalf("actual metadata losses = %#v", actual)
+	}
+}
+
 func newMP4IlstWAVJob(t testing.TB, inputPath, outputPath string, policy job.Policy) job.Job {
 	t.Helper()
 	input, err := job.InputFromReference(localFileReference(t, inputPath))

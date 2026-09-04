@@ -108,7 +108,7 @@ func TestConvertCopiesACompandedStream(t *testing.T) {
 			if err := os.WriteFile(input, source, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := standard.Convert(context.Background(), input, output); err != nil {
+			if _, err := standard.Convert(context.Background(), input, output); err != nil {
 				t.Fatal(err)
 			}
 			converted, err := os.ReadFile(output)

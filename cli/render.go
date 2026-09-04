@@ -13,6 +13,7 @@ import (
 	"github.com/godexture/godec/access"
 	"github.com/godexture/godec/diagnostic"
 	"github.com/godexture/godec/host"
+	"github.com/godexture/godec/internal/evidence"
 	"github.com/godexture/godec/plan"
 )
 
@@ -183,7 +184,26 @@ func renderPlan(destination io.Writer, selected plan.Plan) error {
 			return err
 		}
 	}
+	for _, value := range selected.PredictedMetadataLosses() {
+		if err := renderPredictedMetadataLoss(destination, value); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func renderPredictedMetadataLoss(destination io.Writer, value plan.PredictedMetadataLoss) error {
+	detail := evidence.MetadataLoss(value.Report)
+	if _, err := fmt.Fprintf(destination, "metadata-loss output=%d node=%s component=%s port=%s", value.Output, value.Node, value.Component, value.Port); err != nil {
+		return err
+	}
+	for _, key := range sortedDetailKeys(detail) {
+		if _, err := fmt.Fprintf(destination, " %s=%s", key, detail[key]); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(destination, "\n")
+	return err
 }
 
 func capabilities(values []access.Capability) string {
@@ -235,12 +255,7 @@ func renderItems(destination io.Writer, items []diagnostic.Item) error {
 		}
 		_, err := fmt.Fprintf(destination, "%s%s: %s: %s", location, item.Severity, item.Code, item.Message)
 		failures = append(failures, err)
-		keys := make([]string, 0, len(item.Detail))
-		for key := range item.Detail {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
+		for _, key := range sortedDetailKeys(item.Detail) {
 			_, err := fmt.Fprintf(destination, " %s=%s", key, item.Detail[key])
 			failures = append(failures, err)
 		}
@@ -248,6 +263,15 @@ func renderItems(destination io.Writer, items []diagnostic.Item) error {
 		failures = append(failures, err)
 	}
 	return errorsJoin(failures)
+}
+
+func sortedDetailKeys(detail map[string]string) []string {
+	keys := make([]string, 0, len(detail))
+	for key := range detail {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func errorsJoin(values []error) error {

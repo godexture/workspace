@@ -6,10 +6,39 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/godexture/godec/host"
 	"github.com/godexture/godec/standard"
 )
+
+func TestConvertReturnsZeroResultForSetupError(t *testing.T) {
+	result, err := standard.Convert(context.Background(), "", filepath.Join(t.TempDir(), "output.wav"))
+	if err == nil {
+		t.Fatal("empty input path unexpectedly converted")
+	}
+	if !reflect.DeepEqual(result, host.Result{}) {
+		t.Fatalf("setup failure result = %#v, want zero Result", result)
+	}
+}
+
+func TestConvertReturnsCommittedRunResult(t *testing.T) {
+	source, _ := linearWave(2, waveShape{channels: 1, bits: 16})
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input.wav")
+	output := filepath.Join(directory, "output.wav")
+	if err := os.WriteFile(input, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := standard.Convert(context.Background(), input, output)
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("Convert = %#v, %v", result, err)
+	}
+	if len(result.Outputs) != 1 || result.Outputs[0].State != host.OutputCommitted {
+		t.Fatalf("Convert outputs = %#v", result.Outputs)
+	}
+}
 
 // TestConvertStreamsInputLargerThanTheSourceGrant converts far more bytes than
 // any single component is granted. It fails if payload memory is charged
@@ -25,7 +54,7 @@ func TestConvertStreamsInputLargerThanTheSourceGrant(t *testing.T) {
 		if err := os.WriteFile(input, source, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := standard.Convert(context.Background(), input, output); err != nil {
+		if _, err := standard.Convert(context.Background(), input, output); err != nil {
 			t.Errorf("%d MiB: %v", megabytes, err)
 			continue
 		}
@@ -61,7 +90,7 @@ func TestConvertKeepsEveryWAVEShapeItCanRead(t *testing.T) {
 			if err := os.WriteFile(input, source, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := standard.Convert(context.Background(), input, output); err != nil {
+			if _, err := standard.Convert(context.Background(), input, output); err != nil {
 				t.Fatal(err)
 			}
 			converted, err := os.ReadFile(output)

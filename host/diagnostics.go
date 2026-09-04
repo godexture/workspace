@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/godexture/godec/diagnostic"
+	"github.com/godexture/godec/internal/evidence"
 	"github.com/godexture/godec/internal/journal"
 )
 
@@ -47,12 +48,10 @@ func (d *diagnosticLog) failure(code string, failure Failure) {
 }
 
 func (d *diagnosticLog) metadataLoss(value ActualMetadataLoss) {
-	detail := map[string]string{
-		"output": strconv.Itoa(value.Output), "node": value.Node, "port": value.Port,
-		"carrier": value.Report.Carrier.String(), "encoding": value.Report.Encoding, "block": value.Report.Block,
-		"key": value.Report.Loss.Key.String(), "kind": value.Report.Loss.Kind.String(), "native": value.Report.Loss.Native,
-		"target": value.Report.Loss.Target.String(), "mapping": value.Report.Loss.Mapping.String(), "reason": value.Report.Loss.Detail,
-	}
+	detail := evidence.MetadataLoss(value.Report)
+	detail["output"] = strconv.Itoa(value.Output)
+	detail["node"] = value.Node
+	detail["port"] = value.Port
 	d.append(diagnostic.NewItem("host.metadata-loss", diagnostic.WarningSeverity,
 		diagnostic.Path{Component: value.Component, Descriptor: value.Port},
 		"committed output could not carry metadata exactly", detail))
