@@ -13,11 +13,13 @@ import (
 )
 
 type metadataLossCarrierID struct{}
+type metadataLossSourceCarrierID struct{}
 type metadataLossKeyID struct{}
 type metadataLossTargetID struct{}
 
 var (
 	metadataLossCarrier = carrier.Define[metadataLossCarrierID]()
+	metadataLossSource  = carrier.Define[metadataLossSourceCarrierID]()
 	metadataLossKey     = key.Define[metadataLossKeyID, string]().ID()
 	metadataLossTarget  = key.Define[metadataLossTargetID, string]().ID()
 )
@@ -26,7 +28,9 @@ func lossyMetadata() []plan.PredictedMetadataLoss {
 	return []plan.PredictedMetadataLoss{{
 		Output: 0, Node: "writer", Component: "fixture.writer", Port: "writes",
 		Report: loss.Report{Carrier: metadataLossCarrier, Encoding: "fixture.encoding", Block: "fixture/block", Loss: loss.Loss{
-			Key: metadataLossKey, Kind: loss.Dropped, Detail: "fixture.unrepresentable",
+			Key: metadataLossKey, Kind: loss.Dropped, Detail: "fixture.unrepresentable", Native: "fixture-native", Source: loss.Origin{
+				Carrier: metadataLossSource, Encoding: "fixture.source", Block: "fixture/source", Native: "source-native",
+			},
 		}},
 	}}
 }
@@ -50,7 +54,7 @@ func TestStrictMetadataRefusesWhatPreserveAccepts(t *testing.T) {
 	if len(items) != 1 || items[0].Code != "solve.metadata-loss" {
 		t.Fatalf("strict diagnostics = %#v", items)
 	}
-	if items[0].Detail["key"] != metadataLossKey.String() || items[0].Detail["node"] != "writer" || items[0].Detail["block"] != "fixture/block" {
+	if items[0].Detail["key"] != metadataLossKey.String() || items[0].Detail["node"] != "writer" || items[0].Detail["block"] != "fixture/block" || items[0].Detail["mapping"] != "none" || items[0].Detail["sourceCarrier"] != metadataLossSource.String() || items[0].Detail["sourceEncoding"] != "fixture.source" || items[0].Detail["sourceBlock"] != "fixture/source" || items[0].Detail["sourceNative"] != "source-native" {
 		t.Fatalf("strict detail = %#v", items[0].Detail)
 	}
 	if !strings.Contains(items[0].Path.String(), "fixture.writer") {

@@ -221,6 +221,7 @@ M5 の切断により、M6 の開始時点で repository には利用 surface �
 
 - 通常利用者の最短経路は `standard.Convert(ctx, "input.wav", "output.wav")` の一行になった。
   利用者が扱う概念は context と二つの path だけで、Host、Job、Format、Provider、transaction は見えない。
+  戻り値の `host.Result` から committed output と実行後の metadata loss evidence も確認できる。
   実行可能な正本は `standard.ExampleConvert`、WAVE/raw と既存 target 置換・rollback・same-file 拒否は
   `integration/file_surface_test.go` が検査する。
 - CLI の content-detectable 入力は `godec input.wav output.wav`、read-only preview は

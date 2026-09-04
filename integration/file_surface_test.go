@@ -294,7 +294,7 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 			if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
+			if _, err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
 				t.Fatal(err)
 			}
 			encoded, err := os.ReadFile(outputPath)
@@ -319,7 +319,10 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 			name string
 			run  func(string) error
 		}{
-			{name: "convenience", run: func(path string) error { return standard.Convert(t.Context(), path, path) }},
+			{name: "convenience", run: func(path string) error {
+				_, err := standard.Convert(t.Context(), path, path)
+				return err
+			}},
 			{name: "job", run: func(path string) error {
 				request, err := standard.NewFileJob(path, path)
 				if err != nil {
@@ -363,7 +366,7 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 		if err := os.WriteFile(outputPath, []byte("existing target"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
+		if _, err := standard.Convert(t.Context(), inputPath, outputPath); err != nil {
 			t.Fatal(err)
 		}
 		encoded, err := os.ReadFile(outputPath)
@@ -388,7 +391,7 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 		if err := os.WriteFile(outputPath, original, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := standard.Convert(t.Context(), inputPath, outputPath); err == nil {
+		if _, err := standard.Convert(t.Context(), inputPath, outputPath); err == nil {
 			t.Fatal("partial PCM conversion unexpectedly succeeded")
 		}
 		got, err := os.ReadFile(outputPath)
@@ -407,7 +410,7 @@ func TestStandardConvertUsesTheSameHostPathAndPreservesAtomicOutput(t *testing.T
 		if err := os.WriteFile(inputPath, []byte("0123456789abcdef"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		err := standard.Convert(t.Context(), inputPath, outputPath)
+		_, err := standard.Convert(t.Context(), inputPath, outputPath)
 		items := host.Diagnostics(err)
 		if len(items) != 1 || items[0].Code != "prepare.format-config-required" || items[0].Detail["required"] != "coding,endian,layout,rate" {
 			t.Fatalf("raw one-line diagnostic = %#v, %v", items, err)

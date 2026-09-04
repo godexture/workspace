@@ -68,7 +68,7 @@ func TestCommittedOutputAloneMakesMetadataLossActual(t *testing.T) {
 		t.Fatalf("actual metadata losses = %#v", actual)
 	}
 	diagnostics := runner.diag.snapshot()
-	if len(diagnostics) != 1 || diagnostics[0].Code != "host.metadata-loss" || diagnostics[0].Detail["block"] != "fixture/first" {
+	if len(diagnostics) != 1 || diagnostics[0].Code != "host.metadata-loss" || diagnostics[0].Detail["block"] != "fixture/first" || diagnostics[0].Detail["mapping"] != "none" || diagnostics[0].Detail["sourceCarrier"] != sourceCarrier.String() || diagnostics[0].Detail["sourceEncoding"] != "fixture.source" || diagnostics[0].Detail["sourceBlock"] != "fixture/source" || diagnostics[0].Detail["sourceNative"] != "fixture/source-native" {
 		t.Fatalf("metadata diagnostics = %#v", diagnostics)
 	}
 }

@@ -57,7 +57,8 @@ selector は最初に canonical stream IDs へ解決し、曖昧さや未一致�
 `Job` の tagged choice と `access.Reference` は一般ケースに必要な表現だが、最も多い「1 file を 1 file へ変換する」利用にそれを要求しない。次の水準を M6 の成果に含める。
 
 ```go
-err := standard.Convert(ctx, "in.flac", "out.wav")
+result, err := standard.Convert(ctx, "in.flac", "out.wav")
+_ = result // committed outputs and actual metadata-loss evidence
 ```
 
 - path から Reference への解決は convenience が行い、利用者に URL 構文を要求しない。
