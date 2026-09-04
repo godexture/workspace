@@ -32,13 +32,13 @@
 
 | 機能 | 現状 | 判断 | 担当 | 確認方法 |
 |---|---|---|---|---|
-| ID3v1 / ID3v2 | parse/marshal | 維持 | M8 | 仕様 vector |
-| Vorbis Comment | parse/marshal | 維持 | M8 | 仕様 vector |
-| RIFF INFO | parse/marshal | 維持 | M6 | 確認済み: `integration.TestOfficialPluginConformance` の parse/marshal、duplicate/order、未知 raw と `TestWAVEMetadataRoundTripUsesTagBoundParser` の container roundtrip |
-| multi-value の順序保持 | WAVE で固定済み | 維持 | M3/M7 | Document の順序 test。M3 分は `media/metadata` の `TestDocumentKeepsOrderDuplicateKeysAndOrigin` で確認済み |
-| 重複 key の保持 | WAVE で固定済み | 維持 | M3/M7 | Document の重複 test。M3 分は同上の test で確認済み |
-| 未知 payload の raw 保持 | WAVE で固定済み | 維持 | M3/M7 | 同形式 owner は opaque `RawBlock` を roundtrip し、foreign opaque は fail closed する。M3 分は `TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite` で確認済み |
-| 未知項目の欠落報告 | 現状は黙って落ちる経路がある | 変更 | M7 | loss report の test |
+| ID3v1 / ID3v2 | parse/marshal | 維持 | M8-4 | 確認済み (M8-4): standalone `plugin/id3` が source bytes、複数値、opaque frame、表現不能値を扱う。`plugin/id3.TestV1ParseAndUnchangedMarshalPreserveTheTagBytes`、`TestV1MarshalSelectsFirstRepresentableValuesAndReportsActualLosses`、`TestV2ParseAndUnchangedMarshalPreserveSourceBytes`、`TestV2FreshCanonicalizesTextDateQualifiersAndOrdinalPairs`、`TestV2ReinsertsSafeOpaqueFrameAfterGroupedMultiValueText` |
+| Vorbis Comment | parse/marshal | 維持 | M8-4 | 確認済み (M8-4): standalone `plugin/vorbiscomment` が vendor、重複/順序、safe raw、表現不能値を扱う。`plugin/vorbiscomment.TestParseAndUnchangedMarshalPreserveSource`、`TestFreshPreservesEmptyDuplicateAndOrder`、`TestRawSafetyAndForeignOpaquePolicy`、`TestMarshalLossReportsCarryEveryField` |
+| RIFF INFO | parse/marshal | 維持 | M6（基礎）/ M8-4（横断完了） | M6 の encoding roundtrip に加え、M8-4 の duplicate/order/raw/loss と ilst→WAVE 変換を確認済み。`plugin/wave.TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding`、`TestRIFFInfoReportsKeysItHasNoNameForRatherThanRefusing`、`integration.TestMP4IlstToWAVMetadata`、`TestWAVEMetadataRoundTripUsesTagBoundParser` |
+| multi-value の順序保持 | Document で順序保持し encoding が規格へ畳み込み | 維持 | M8-4（基盤 M3/M7） | `media/metadata.TestDocumentKeepsOrderDuplicateKeysAndOrigin` の基盤に加え、各 encoding の保持・畳み込みと loss 報告を確認済み。`plugin/vorbiscomment.TestFreshPreservesEmptyDuplicateAndOrder`、`plugin/wave.TestRIFFInfoEncodingRespectsDuplicateDocumentOrder`、`plugin/mp4.TestIlstFoldsDuplicateTextAndOrdinalValues`、`plugin/id3.TestV2CanonicalGroupsTextDateAndOrdinalValues` |
+| 重複 key の保持 | Document で保持し encoding が規格へ畳み込み | 維持 | M8-4（基盤 M3/M7） | `media/metadata.TestDocumentKeepsOrderDuplicateKeysAndOrigin` の基盤に加え、ID3/Vorbis/RIFF INFO/ilst の規格上の畳み込みと順序を確認済み。`plugin/vorbiscomment.TestFreshPreservesEmptyDuplicateAndOrder`、`plugin/wave.TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding`、`plugin/mp4.TestIlstFoldsDuplicateTextAndOrdinalValues`、`plugin/id3.TestV2CanonicalFoldsCanonicalQualifiersAndDuplicatePictures` |
+| 未知 payload の raw 保持 | owner 限定 raw を保持し foreign opaque を拒否 | 維持 | M8-4（基盤 M3/M7） | 同形式 owner は opaque `RawBlock` を byte exact に保持し、foreign opaque は fail closed にする。`media/metadata.TestRawBlockKeepsUninterpretedPayloadForLosslessRewrite`、`plugin/id3.TestV2ReinsertsSafeOpaqueFrameAfterGroupedMultiValueText`、`plugin/vorbiscomment.TestRawSafetyAndForeignOpaquePolicy`、`plugin/wave.TestRIFFInfoEncodingPreservesDuplicatesUnknownFieldsAndPadding`、`plugin/mp4.TestIlstRewriteRetainsOpaquePositionAndUnchangedKnownItems` |
+| 未知項目の欠落報告 | encoding が loss を明示報告 | 維持 | M8-4（基盤 M7） | encoding ごとの unrepresentable/folded/substituted report、declared Mapping、既定 warning/Plan predicted と Result actual、strict failure を確認済み。`plugin/id3.TestV1MarshalSelectsFirstRepresentableValuesAndReportsActualLosses`、`plugin/vorbiscomment.TestMarshalLossReportsCarryEveryField`、`plugin/wave.TestRIFFInfoReportsKeysItHasNoNameForRatherThanRefusing`、`plugin/mp4.TestIlstCanonicalOrdinalAndPictureLosses`、`integration.TestMP4IlstToWAVMetadata`、`internal/solve.TestStrictMetadataRefusesWhatPreserveAccepts`、`cli.TestRenderPlanIncludesPredictedMetadataLossDetails` |
 
 ## 音声処理
 
