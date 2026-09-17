@@ -223,6 +223,31 @@ func TestFreeFormatFrameSizeAndCompatibility(t *testing.T) {
 	}
 }
 
+func TestMaximumFrameBounds(t *testing.T) {
+	raw := testHeader(0, 2, 1, 2, false, 0)
+	header, err := Parse(raw[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := header.MaximumFrameSize(); !ok || got != 2881 {
+		t.Fatalf("MaximumFrameSize() = %d, %v, want 2881", got, ok)
+	}
+	freeRaw := testHeader(3, 1, 0, 0, true, 0)
+	free, err := Parse(freeRaw[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := free.MaximumCompatibleFrameSize(300); !ok || got != 301 {
+		t.Fatalf("MaximumCompatibleFrameSize(300) = %d, %v, want 301", got, ok)
+	}
+	if _, ok := free.MaximumCompatibleFrameSize(0); ok {
+		t.Fatal("MaximumCompatibleFrameSize(0) accepted an unresolved free-format frame")
+	}
+	if got := MaximumTableFrameSize(); got != 2881 {
+		t.Fatalf("MaximumTableFrameSize() = %d, want 2881", got)
+	}
+}
+
 func testHeader(versionID, layerID, bitrate, rate byte, padding bool, emphasis byte) [4]byte {
 	var raw [4]byte
 	raw[0] = 0xff

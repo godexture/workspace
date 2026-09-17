@@ -235,6 +235,74 @@ func (h Header) FrameSize(freeFormatBytes int) (int, error) {
 	return base + boolInt(h.padding), nil
 }
 
+// MaximumFrameSize returns the largest table-sized frame compatible with h,
+// including the largest legal padding slot. Free-format streams have no table
+// bound and report false.
+func (h Header) MaximumFrameSize() (int, bool) {
+	if !h.valid || h.FreeFormat() {
+		return 0, false
+	}
+	maximum := 0
+	for index := byte(1); index < 15; index++ {
+		candidate := h
+		candidate.bitrateIndex = index
+		candidate.bitrateKbps = bitrate(h.version, h.layer, index)
+		candidate.padding = true
+		size, err := candidate.FrameSize(0)
+		if err == nil && size > maximum {
+			maximum = size
+		}
+	}
+	return maximum, maximum > 0
+}
+
+// MaximumCompatibleFrameSize returns the largest frame size compatible with
+// h. A table-coded stream has a finite bound; a free-format stream requires
+// the unpadded size discovered by the scanner.
+func (h Header) MaximumCompatibleFrameSize(freeFormatBytes int) (int, bool) {
+	if !h.valid {
+		return 0, false
+	}
+	if h.FreeFormat() {
+		if freeFormatBytes < 4 {
+			return 0, false
+		}
+		padding := 1
+		if h.layer == LayerI {
+			padding = 4
+		}
+		if freeFormatBytes > int(^uint(0)>>1)-padding {
+			return 0, false
+		}
+		return freeFormatBytes + padding, true
+	}
+	return h.MaximumFrameSize()
+}
+
+// MaximumTableFrameSize returns the largest frame permitted by any MPEG
+// version, layer, sample rate, and table bitrate combination.
+func MaximumTableFrameSize() int {
+	maximum := 0
+	for version := VersionMPEG25; version <= VersionMPEG1; version++ {
+		for layer := LayerI; layer <= LayerIII; layer++ {
+			for rateIndex := byte(0); rateIndex < 3; rateIndex++ {
+				rate := sampleRate(version, rateIndex)
+				if rate == 0 {
+					continue
+				}
+				for bitrateIndex := byte(1); bitrateIndex < 15; bitrateIndex++ {
+					candidate := Header{valid: true, version: version, layer: layer, bitrateIndex: bitrateIndex, bitrateKbps: bitrate(version, layer, bitrateIndex), sampleRateHz: rate, padding: true}
+					size, err := candidate.FrameSize(0)
+					if err == nil && size > maximum {
+						maximum = size
+					}
+				}
+			}
+		}
+	}
+	return maximum
+}
+
 // Compatible reports whether two headers describe the same stream framing.
 // Padding, bitrate, channel mode, and ancillary flags may vary between frames,
 // but version, layer, sample rate, and bitrate mode must agree.
