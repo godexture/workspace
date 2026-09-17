@@ -55,6 +55,16 @@ func TestScanWaitsForFollowingCBRFrameBeforeEOF(t *testing.T) {
 	}
 }
 
+func TestScanKeepsCompleteCBRFrameBeforePartialFrameAtEOF(t *testing.T) {
+	header := testHeader(3, 1, 9, 0, false, 0)
+	data := append(testFrame(header, 417), testFrame(header, 100)...)
+
+	got, ok := Scan(data, 0, true)
+	if !ok || got.Offset != 0 || got.FrameBytes != 417 {
+		t.Fatalf("Scan() = %+v, %v, want complete frame before partial tail", got, ok)
+	}
+}
+
 func TestScanRetainsPartialHeaderSuffix(t *testing.T) {
 	data := []byte{0x01, 0x02, 0xff, 0xfb}
 
@@ -171,6 +181,20 @@ func TestScanWaitsForFollowingFreeFormatFrame(t *testing.T) {
 	got, ok := Scan(data, 300, false)
 	if ok || !got.NeedMore || got.Offset != 0 {
 		t.Fatalf("Scan() = %+v, %v, want more data for hinted frame", got, ok)
+	}
+}
+
+func TestScanKeepsCompleteFreeFormatFrameBeforePartialFrameAtEOF(t *testing.T) {
+	header := testHeader(3, 1, 0, 0, false, 0)
+	data := append(testFrame(header, 300), testFrame(header, 100)...)
+
+	got, ok := Scan(data, 300, true)
+	if !ok || got.Offset != 0 || got.FrameBytes != 300 || got.FreeFormatBytes != 300 {
+		t.Fatalf("Scan() = %+v, %v, want complete frame before partial tail", got, ok)
+	}
+	unresolved, ok := Scan(data, 0, true)
+	if ok || unresolved.Offset != len(data) {
+		t.Fatalf("Scan() without hint = %+v, %v, want unresolved free-format boundary", unresolved, ok)
 	}
 }
 

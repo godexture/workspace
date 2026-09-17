@@ -105,11 +105,14 @@ func verifyCBR(data []byte, offset int, header Header, frameBytes int, final boo
 		return candidateRejected
 	}
 	followingBytes, err := following.FrameSize(0)
-	if err != nil || !fits(data, next, followingBytes) {
-		if !final {
-			return candidateIncomplete
-		}
+	if err != nil {
 		return candidateRejected
+	}
+	if !fits(data, next, followingBytes) {
+		if final {
+			return candidateFound
+		}
+		return candidateIncomplete
 	}
 	return candidateFound
 }
@@ -149,10 +152,10 @@ func resolveFreeFormat(data []byte, offset int, header Header, hint int, final b
 			return 0, 0, candidateRejected
 		}
 		if !fits(data, next, followingBytes) {
-			if !final {
-				return 0, 0, candidateIncomplete
+			if final {
+				return frameBytes, hint, candidateFound
 			}
-			return 0, 0, candidateRejected
+			return 0, 0, candidateIncomplete
 		}
 		return frameBytes, hint, candidateFound
 	}
