@@ -171,6 +171,21 @@ func TestParseRejectsReservedAndMalformedFields(t *testing.T) {
 	}
 }
 
+func TestHeaderTableFields(t *testing.T) {
+	raw := testHeader(3, 2, 8, 2, false, 0)
+	raw[3] = byte(JointStereo)<<6 | 2<<4
+	header, err := Parse(raw[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := header.SampleRateIndex(); got != 2 {
+		t.Fatalf("SampleRateIndex() = %d, want 2", got)
+	}
+	if got := header.ModeExtension(); got != 2 {
+		t.Fatalf("ModeExtension() = %d, want 2", got)
+	}
+}
+
 func TestFreeFormatFrameSizeAndCompatibility(t *testing.T) {
 	raw := testHeader(3, 1, 0, 0, true, 0)
 	header, err := Parse(raw[:])

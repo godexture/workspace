@@ -174,6 +174,9 @@ func (h Header) BitrateKbps() int { return h.bitrateKbps }
 // SampleRateHz returns the sample rate represented by the header.
 func (h Header) SampleRateHz() int { return h.sampleRateHz }
 
+// SampleRateIndex returns the MPEG sample-rate table index.
+func (h Header) SampleRateIndex() byte { return h.sampleRateIndex }
+
 // SamplesPerFrame returns the number of samples represented by one frame.
 func (h Header) SamplesPerFrame() int { return h.samples }
 
@@ -201,6 +204,9 @@ func (h Header) HasCRC() bool { return h.valid && h.raw[1]&0x01 == 0 }
 
 // ChannelMode returns the channel arrangement from the header.
 func (h Header) ChannelMode() ChannelMode { return h.channelMode }
+
+// ModeExtension returns the mode-extension field from the header.
+func (h Header) ModeExtension() byte { return (h.raw[3] >> 4) & 0x03 }
 
 // FrameSize derives the total encoded frame size in bytes. For free-format
 // frames, freeFormatBytes is the unpadded frame size and must be supplied.
